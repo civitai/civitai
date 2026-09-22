@@ -102,7 +102,6 @@ describe('isBoostable', () => {
     expect(isBoostable({ ...preparation, boostedEtaSeconds: null })).toBe(false);
   });
 
-  // Both render "25 min", so the offer would be a charge for two identical printed numbers.
   it('withholds it when the rendered numbers would match', () => {
     expect(isBoostable({ ...preparation, etaSeconds: 1_400, boostedEtaSeconds: 1_360 })).toBe(
       false

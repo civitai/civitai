@@ -7,7 +7,7 @@ import {
   formatDownloadEtaShort,
 } from '~/components/ResourceLoad/download-eta';
 
-/** Two ETAs the floor swallows whatever it is set to, so these cases survive retuning it. */
+/** Both below the floor whatever it is set to, so these cases survive retuning it. */
 const NEAR_FLOOR = ETA_FLOOR_SECONDS - 1;
 const WELL_UNDER_FLOOR = Math.max(1, Math.round(ETA_FLOOR_SECONDS / 4));
 
@@ -38,7 +38,6 @@ describe('formatDownloadEtaShort', () => {
   });
 });
 
-// A 40-second boost promised in 40 seconds is a promise the orchestrator's projection cannot keep.
 describe('the ETA floor', () => {
   it('never advertises anything sooner than the floor', () => {
     for (const seconds of [0, 1, WELL_UNDER_FLOOR, NEAR_FLOOR]) {

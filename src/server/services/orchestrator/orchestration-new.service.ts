@@ -1977,8 +1977,9 @@ export async function generateFromGraph({
   // The submit reply predates the orchestrator queueing any download, so the queue card's first
   // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
   //
-  // 🔴 Never let it hold the reply. A generation that is accepted is the headline property here, and
-  // this only buys the card a head start on numbers its own poll fetches seconds later.
+  // 🔴 Never let the ESTIMATE hold the reply: a generation that is accepted is the headline property,
+  // and this only buys the card a head start on numbers its own poll fetches seconds later. A boosted
+  // submit does wait, because the fee is only charged when its whatIf shows something to download.
   const downloadWhatIf =
     boostWhatIf ??
     ((await hasQueuedDownloads(data))

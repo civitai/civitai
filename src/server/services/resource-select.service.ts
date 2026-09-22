@@ -177,8 +177,9 @@ export function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    // `canGenerateNext`, not `canGenerate`: the live view still gates checkpoints on the auction's
-    // residency list, which hides the community checkpoints paid loading exists to load.
+    // `canGenerateNext`, not `canGenerate`: documents already in the index derived `canGenerate`
+    // from the old view, which required a checkpoint be in the auction's `CoveredCheckpoint` list —
+    // exactly what paid loading exists to load. Both fields go at the cutover.
     canGenerate !== undefined && eq('canGenerateNext', canGenerate),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),

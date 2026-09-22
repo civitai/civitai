@@ -15,11 +15,18 @@ all.
 through `@@map`, and the raw-SQL queries — reads `GenerationCoverageNext`, which production already
 has. The swap itself needs no migration, and `GenerationCoverage` is left as it was.
 
-🔴 **`GenerationCoverageNext`'s own body did change, after it had already been applied.**
-`20260909180000_generation_coverage_next_safetensor_checkpoints` was amended in place on 2026-09-11 to
-add a top-level `AND m.mode IS NULL` — a taken-down or archived model is not covered for any type, so
-moderation blocks generation on the server rather than only greying out the Create button. Apply that
-file again by hand; 1,955 versions lose coverage, of which 1,807 are covered by the live view today.
+🔴 **`GenerationCoverageNext`'s body has been redefined twice since it was first applied, and the one
+in force is the LAST.** `20260909180000_generation_coverage_next_safetensor_checkpoints` was amended in
+place on 2026-09-11 to add a top-level `AND m.mode IS NULL` — a taken-down or archived model is not
+covered for any type, so moderation blocks generation on the server rather than only greying out the
+Create button. Re-applied by hand that day: 1,955 versions lost coverage, 1,807 of them covered by the
+live view. `20260922190000_generation_coverage_next_drop_covered_checkpoint` then replaced the body
+again to remove `CoveredCheckpoint`, and was applied to production on 2026-09-22; it reproduces
+`m.mode IS NULL`.
+
+🔴 **Never re-apply `20260909180000`.** Its body still carries the `CoveredCheckpoint` disjunct, so
+running it restores the auction's excuse from the SafeTensor rule and silently undoes the narrowing
+production already has.
 
 ---
 
@@ -49,7 +56,7 @@ no weights — a guaranteed failure, and a refund once pricing exists. See
    default.
 3. **Checkpoint on a `GenerationBaseModel` base model**, licensed, scanned, `baseModelType =
    'Standard'`, with a loadable file → covered, loadable on demand. This is the population
-   `CoveredCheckpoint` gates today.
+   `CoveredCheckpoint` used to gate.
 
 The existing LORA / TextualInversion / VAE / LoCon / DoRA / Upscaler branch is unchanged.
 
@@ -68,21 +75,21 @@ This is the thing an earlier reading of these docs got wrong, and it inverted a 
 | `EcosystemCheckpoints` | 125 | The generator's **default model per ecosystem**. **62 of the 63 checkpoint defaults are covered through it — and zero through `CoveredCheckpoint`.** Not a loophole; the registry that keeps the generator working. |
 
 ⚠️ **`CoveredCheckpoint` is out of the view entirely** as of
-`20260922190000_generation_coverage_next_drop_covered_checkpoint`. `20260909180000` had kept it as a
-disjunct excusing auction checkpoints from the SafeTensor requirement; Justin's call, 2026-09-22, is
-that a checkpoint meeting none of the other qualifications should not be covered whether or not the
-auction made it resident. Measured against the replica that day: 5 versions lose coverage
-(940,125 → 940,120 rows).
+`20260922190000_generation_coverage_next_drop_covered_checkpoint` — it gates nothing and excuses
+nothing. `20260909180000` had kept it as a disjunct excusing auction checkpoints from the SafeTensor
+requirement; Justin's call, 2026-09-22, is that a checkpoint meeting none of the other qualifications
+is not covered whether or not the auction made it resident. Measured against the replica that day:
+5 versions lose coverage (940,125 → 940,120 rows).
 
-Dropping `CoveredCheckpoint` **as a conjunct** is the feature — it no longer gates anything. It
-survives as a *disjunct* excusing 6 auction-resident checkpoints from the SafeTensor requirement, and
-is deleted when the auction stops writing rows. Dropping `EcosystemCheckpoints` would remove the
-default model from half the ecosystems the generator supports — see
-[the defaults audit](#the-defaults-audit).
+Dropping `EcosystemCheckpoints` instead would remove the default model from half the ecosystems the
+generator supports — see [the defaults audit](#the-defaults-audit).
 
 `CoveredCheckpoint` has five uses:
 
-- the `GenerationCoverage` view
+- the legacy `GenerationCoverage` view — dead **in this repo**: no app code has read it since the
+  Prisma `@@map` swap, and `GenerationCoverageNext` has not referenced the table since
+  `20260922190000`. `event-engine-common` still queries the old view from its own repo — see the
+  post-deploy item in [paid-model-loading.md](paid-model-loading.md#post-deploy-checklist)
 - `handle-auctions.ts` — inserts winners, deletes everything outside the weekly set
 - `toggleCheckpointCoverage` — a moderator tRPC tool
 - `getCheckpointGenerationCoverage` — **zero callers; dead code**
@@ -116,8 +123,9 @@ format under `GenerationCoverage`: 132 Diffusers, 21 Core ML, 2 ONNX.
 
 ⚠️ **Diffusers was ruled loadable (Justin, 2026-09-08) and then narrowed back out for CHECKPOINTS on
 2026-09-09.** The loader serves SafeTensor only, so the checkpoint branch of `GenerationCoverageNext`
-now requires a SafeTensor weight file (migration
-`20260909180000_generation_coverage_next_safetensor_checkpoints`) and `checkLoadable` in
+now requires a SafeTensor weight file unconditionally
+(`20260909180000_generation_coverage_next_safetensor_checkpoints`, narrowed further by
+`20260922190000` — see the migration history at the top), and `checkLoadable` in
 `resource-load.service.ts` refuses everything else with `unsupported-format`. Diffusers remains
 accepted for **every other model type** — the shared `EXISTS` is unchanged, so the Core ML / ONNX
 deny-list still governs LoRA/TI/VAE/LoCon/DoRA/Upscaler.
@@ -312,6 +320,10 @@ read the new view) was dropped with it: the swap shipped without either.
 from `covered`. After the swap, search advertises every one of them as generatable — with no
 indication that many need a paid load first. Load state in search was deliberately deferred, so
 this widens exactly the surface that has no way to express the difference.
+
+Since `db635a3a45` the index also carries a staged `canGenerateNext` / `versions.canGenerateNext`,
+derived from `GenerationCoverageNext` by raw SQL. The picker gates every query on it; why, and when
+both fields go, is in [paid-model-loading.md](paid-model-loading.md).
 
 ### C — display
 

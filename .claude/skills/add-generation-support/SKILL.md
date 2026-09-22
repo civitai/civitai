@@ -312,7 +312,7 @@ See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-au
 
 `GenerationBaseModel` is consulted by **branch 3 only**. For a file-less API model the row is inert — correct to add for the future, but it is not what makes the model generatable, so don't stop there and assume you're done.
 
-`CoveredCheckpoint` no longer gates anything. It survives inside branch 3 as a disjunct excusing an auction-resident checkpoint from the SafeTensor requirement, and goes when the auction stops writing rows. **Never add a row there to make a version generatable.**
+`CoveredCheckpoint` is out of the view entirely as of `20260922190000_generation_coverage_next_drop_covered_checkpoint` — **a row there cannot make a version generatable, so never add one for that.** The auction still writes it weekly and `/api/v1/model-versions/mini/[id]` still reads it for `isPromoted`, so a populated table is not a sign coverage uses it.
 
 ### 1a. `EcosystemCheckpoints` — covers a specific VERSION unconditionally
 

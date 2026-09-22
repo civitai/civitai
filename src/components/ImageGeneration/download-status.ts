@@ -82,8 +82,7 @@ export function mergeDownloadRow(
   if (!live) return prepared;
   const row = toDownloadRow(live.availability, live.size);
   if (!row) return undefined;
-  // Everything a shared download reports is about whoever asked highest, not this workflow — so
-  // without preparation to read, only the facts that hold for every waiter survive.
+  // Without preparation to read, only the facts that hold for every waiter survive.
   if (!prepared) return { progress: row.progress, sizeBytes: row.sizeBytes };
   return {
     ...prepared,
@@ -150,7 +149,7 @@ const maxKnown = (values: (number | null | undefined)[]) => {
 
 /**
  * The generation waits on every download, so it is told through the slowest: the longest ETA, or
- * failing that the first model already in a lane.
+ * failing that the first one already moving.
  */
 export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undefined {
   if (!rows.length) return undefined;

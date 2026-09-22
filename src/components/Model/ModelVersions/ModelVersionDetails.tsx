@@ -754,6 +754,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         }
                         onPurchase={() => onPurchase('generation')}
                         fullWidth
+                        // `GenerateButton` hardcodes 12px padding, which overflows Mantine's fixed
+                        // button height.
                         h="auto"
                       />
                       {features.imageGeneration && (

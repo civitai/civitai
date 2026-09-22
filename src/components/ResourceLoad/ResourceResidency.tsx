@@ -10,11 +10,7 @@ import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 import cardClasses from '~/components/Cards/Cards.module.css';
 
-/**
- * Loaded is the state that arrives while someone is looking at it, and nothing pushes it — the
- * queue card invalidates this query for a model it watches land, and this is the backstop for
- * every other way one becomes resident. Never faster than the server's own 30s cache.
- */
+/** The answer is server-cached for 30s (`RESIDENCY_CACHE_SECONDS`), so a faster poll re-reads it. */
 const RESIDENCY_POLL_MS = 60_000;
 
 const pollWhileAnyIsCold = (query: {
@@ -168,18 +164,6 @@ type LoadedMarkVariant = 'dot' | 'overlay';
 
 const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
 
-/** Renders nothing unless loaded: loaded is the rare state, which is what keeps the mark worth reading. */
-export function ResourceLoadedDot({
-  modelVersionId,
-  variant,
-}: {
-  modelVersionId: number;
-  variant?: LoadedMarkVariant;
-}) {
-  const residency = useResidency(modelVersionId);
-  return residency?.loaded ? <LoadedMark variant={variant} /> : null;
-}
-
 /** For callers that already know the version is loaded, e.g. from the search index. */
 export function LoadedMark({ variant = 'dot' }: { variant?: LoadedMarkVariant }) {
   const dot = <StatusDot color={LOADED.color} filled />;
@@ -228,34 +212,22 @@ export function LoadedCornerBadge({ loaded }: { loaded: boolean }) {
   );
 }
 
-/**
- * The generator's rows, where a cold resource has to say so: the wait is the thing the user is about
- * to pay for in queue time. Live, so it also names a download already running or queued.
- */
-export function ResourceLoadState({ modelVersionId }: { modelVersionId: number }) {
+/** Names the cold state explicitly: a blank reads as missing data, not as "not loaded". */
+export function ResourceResidencyStatus({
+  modelVersionId,
+  className,
+  tooltipWidth = 260,
+}: {
+  modelVersionId: number;
+  className?: string;
+  tooltipWidth?: number;
+}) {
   const residency = useResidency(modelVersionId);
   if (!residency) return null;
 
   return (
-    <Tooltip label={residency.description} withArrow multiline w={240}>
-      <Group gap={6} wrap="nowrap" className="w-fit shrink-0 cursor-default">
-        <StatusDot color={residency.color} filled={residency.loaded} />
-        <Text size="xs" c={`${residency.color}.5`}>
-          {residency.label}
-        </Text>
-      </Group>
-    </Tooltip>
-  );
-}
-
-/** States both outcomes: in a labelled row an empty value reads as missing data, not "not loaded". */
-export function ResourceResidencyStatus({ modelVersionId }: { modelVersionId: number }) {
-  const residency = useResidency(modelVersionId);
-  if (!residency) return null;
-
-  return (
-    <Tooltip multiline w={260} withArrow label={residency.description}>
-      <Group gap={6} wrap="nowrap" className="cursor-default">
+    <Tooltip multiline w={tooltipWidth} withArrow label={residency.description}>
+      <Group gap={6} wrap="nowrap" className={clsx('cursor-default', className)}>
         <StatusDot color={residency.color} filled={residency.loaded} />
         <Text size="xs" c={`${residency.color}.5`}>
           {residency.label}

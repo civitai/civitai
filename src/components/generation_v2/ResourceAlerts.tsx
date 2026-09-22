@@ -242,8 +242,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     return null;
   }
 
-  // Mobile trades the full alert for the confirm on Generate, but that only opens when there is a
-  // boost to sell — so the wait itself still has to be said somewhere.
+  // The confirm only opens when there is a boost to sell, so the wait still has to be said here.
   if (isMobile) {
     const preparation = settled.download?.preparation;
     if (!preparation) return null;
@@ -357,7 +356,6 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
   );
 }
 
-/** Must be used inside generation_v2's WhatIfProvider. */
 export function ReadyAlert() {
   return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }

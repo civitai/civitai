@@ -97,11 +97,13 @@ the wait, the "Normally → Boosted" comparison, then **Boost · N Buzz** or **C
 Dismissing it cancels the submit rather than sending it unboosted, since the user chose neither. That
 confirm only opens when there is a boost to sell, so mobile keeps a one-line notice of the wait itself.
 
-**Load indicators**, every resource type. Loaded versions are marked and the rest are not, since most
-of the catalogue is not loaded: a green dot on the model page's version strip, a dot and **Loaded**
-under each selected resource in the generator and on results in the generation resource picker. The **Create**
-button carries a corner badge that states either outcome — the one place a bare mark is not enough,
-since the question there is whether pressing it starts now.
+**Load indicators**, every resource type. Where the answer is the boolean column, only loaded versions
+are marked and the rest are silent, since most of the catalogue is not loaded: a green dot on the model
+page's version strip, and a dot and **Loaded** on results in the generation resource picker. The
+**Create** button carries a top-left corner badge stating either outcome — the one place a bare mark
+is not enough, since the question there is whether pressing it starts now. The generator's own
+resource rows state either outcome too. Every label takes its dot's colour. Nothing says "needs download": a resource needs **to be loaded**, and it loads **in** the
+generator, not on it (Justin, 2026-09-22).
 
 The model page and the picker read `ModelVersion.generatorLoaded` — the page from its own SSR'd data,
 the picker from the index's `versions.generatorLoaded`. So they render with the page rather than
@@ -111,8 +113,15 @@ the 5-minute sync (plus the index queue, for the picker).
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
 rate-limited, cached 30s per version. That is the generator's marks, whose resources do not come from
 page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
-checkpoint input and the two **Generation** rows (version details, picker card's back) each ask for
-their one id. Naming *downloading* or *queued* is the one thing the boolean column cannot do.
+checkpoint input, the two **Generation** rows (version details, picker card's back) and every
+`ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
+the metadata-extraction panel — each ask for their one id, so a modal listing ten resources is ten
+calls. Naming *downloading* or *queued* is the one thing the boolean column cannot do.
+
+Nothing pushes residency, so those live marks refresh two ways: they poll every 60s while anything on
+screen is cold and stop once it is all loaded, and the queue card's uncached download-status poll
+invalidates every residency query the moment a model reports `available`, so an open generator flips
+to **Loaded** as the download lands rather than waiting out the backstop.
 
 **A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips.
 The index filter keeps a model any of whose versions is resident, because Meilisearch matches the
@@ -126,9 +135,11 @@ per-tier caps, the `resource-load:update` signal and the load-complete toast. Ke
 
 **Coverage** — every reader of `GenerationCoverage` reads `GenerationCoverageNext` (Prisma `@@map`
 plus the raw-SQL queries), which is what lets a normal user pick a checkpoint that is not loaded.
-The models index is the exception: its `canGenerate` stays on the live view until the cutover, so
-the picker gates on the staged `canGenerateNext` instead — the live one still requires the weekly
-auction's residency list, and filtering on it hides exactly the checkpoints this feature loads.
+The models index computes both `canGenerate` (through the `@@map`) and `canGenerateNext` (raw SQL),
+and on this branch they resolve to the same rule — what differs is the **documents**: live ones were
+written when `canGenerate` meant the old view, which required the weekly auction's residency list and
+so hides exactly the checkpoints this feature loads. The picker gates on `canGenerateNext`. Both
+fields go at the cutover.
 
 **Money-path properties worth keeping true:**
 
@@ -293,12 +304,14 @@ Everything here is the deploying engineer's, before this branch merges.
       `pnpm run test:unit:run` once.** Targeted suites are not a substitute for the last one.
 - [ ] **Run `comment-review` over the diff and `docs-drift-review` over the commits.** The two lanes
       with no automated gate.
-- [ ] **Manual pass in a browser**, none of which has been exercised: the queue card's download panel
-      with its per-model rows and Boost button (including in the narrow sidebar layout), the lanes
-      explainer, the pre-submit alert and Boost switch in **both** generator forms, compared against
-      the mockup, the load indicators on the model page, in the generator and in the picker, and —
-      **on a narrow viewport** — that the alert is hidden, that `DownloadBoostConfirm` appears on
-      Generate, and that dismissing it sends nothing rather than submitting unboosted.
+- [ ] **Manual pass in a browser.** The load indicators on the model page and in the generator have
+      had one — Justin's preview review, 2026-09-22, which is where the "Not loaded" wording came from.
+      Still unexercised: the queue card's download panel with its per-model rows and Boost button
+      (including in the narrow sidebar layout), the lanes explainer, the pre-submit alert and Boost
+      switch in **both** generator forms, compared against the mockup, the picker's marks and its
+      **Loaded only** filter, and — **on a narrow viewport** — that the alert is hidden, that
+      `DownloadBoostConfirm` appears on Generate, and that dismissing it sends nothing rather than
+      submitting unboosted.
 - [ ] **Boost a real queued workflow end to end.**
       *Closes when:* the workflow reports `downloadPriority: "high"` and `cost.fixed.downloadPriority`
       was charged.
@@ -326,14 +339,23 @@ Everything here is the deploying engineer's, before this branch merges.
       returns results with and without **Loaded only**.
 - [ ] **Check the preview environment before reading anything into it.** The indicators need main's
       `generatorLoaded` migration applied to the database preview points at, and
-      `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Needs
-      download" on every version while the version strip and the picker mark nothing at all.
+      `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Not
+      loaded" on every version while the version strip and the picker mark nothing at all.
       *Closes when:* a version known to be resident shows the loaded mark on its model page in
       preview.
-- [x] **Apply `20260909180000_generation_coverage_next_safetensor_checkpoints`.** Amended in place
-      2026-09-11 with a top-level `AND m.mode IS NULL` after it had already been applied, so it needed
-      applying again. **Done 2026-09-11**; verified: covered rows 931,496, covered checkpoints 31,486,
-      covered rows whose model carries a `mode` **0**.
+- [x] **`20260909180000_generation_coverage_next_safetensor_checkpoints` — superseded, do NOT apply
+      again.** Amended in place 2026-09-11 with a top-level `AND m.mode IS NULL` after it had already
+      been applied, so it needed applying again. **Done 2026-09-11**; verified: covered rows 931,496,
+      covered checkpoints 31,486, covered rows whose model carries a `mode` **0**. Its body still
+      carries the `CoveredCheckpoint` disjunct that `20260922190000` removed — re-running it would
+      undo the narrowing production has.
+- [x] **Apply `20260922190000_generation_coverage_next_drop_covered_checkpoint`.** Came from `main`;
+      redefines `GenerationCoverageNext` without `CoveredCheckpoint`, so the weekly auction's residency
+      list no longer excuses a checkpoint from the SafeTensor requirement (Justin, 2026-09-22). It
+      reproduces the top-level `m.mode IS NULL`, so it **supersedes `20260909180000` — apply this
+      file, never that one** (why, and the measured delta:
+      [paid-model-loading-coverage.md](paid-model-loading-coverage.md), the migration-history block at
+      the top). **Done 2026-09-22**, on production.
 - [x] **`pnpm run db:check-generated`** after the Prisma `@@map` — passes; the only generated change
       is the Kysely table key.
 
@@ -341,12 +363,14 @@ Everything here is the deploying engineer's, before this branch merges.
 
 ## Post-deploy checklist
 
-- [ ] **Re-queue the models that gain coverage.** The index's `canGenerate` stays on the live view
-      until the cutover; `canGenerateNext` (and `versions.canGenerateNext`) carry the new rule
-      beside it, so only the ~12,900 models that gain coverage need re-queueing rather than all
-      ~705K documents. Both fields go at the cutover, when `canGenerate` answers this on its own.
-      *Closes when:* a newly covered checkpoint (e.g. version 1413133) reports
-      `canGenerateNext: true` in the models index.
+- [ ] **Re-queue EVERY model, not only the ~12,900 that gain coverage.** `canGenerateNext` exists
+      only on documents written since `db635a3a45`, and a Meilisearch filter matches nothing on a
+      document missing the attribute — so while the picker gates every query on it, a document that
+      has not been rebuilt is invisible there. The ~12,900 figure is how many models *change answer*,
+      not how many need re-queueing. Both fields go at the cutover, when `canGenerate` answers this
+      on its own.
+      *Closes when:* the picker returns a full first page of results, and a newly covered checkpoint
+      (e.g. version 1413133) reports `canGenerateNext: true` in the models index.
 - [ ] **Bring `event-engine-common` onto the new coverage.** Its model feed
       (`feeds/models.feed.ts`) and model-data cache (`caches/modelData.cache.ts`) still query
       `GenerationCoverage` in raw SQL, in a separate repo. Either point both at

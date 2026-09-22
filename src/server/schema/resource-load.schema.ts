@@ -47,9 +47,8 @@ export type ResourceAvailability = z.infer<typeof resourceAvailabilitySchema>;
 export type ResourceLoadAvailability = ResourceAvailability | { status: 'unknown' };
 
 /**
- * Waiting in the download queue, in either orchestrator shape. Stated once because the pre-beta.105
- * shape is told apart from "nothing is pulling it" only by the queue position, and four screens were
- * each deciding that for themselves.
+ * Waiting in the download queue, in either orchestrator shape — the pre-beta.105 shape is told apart
+ * from "nothing is pulling it" only by the queue position.
  */
 export function isQueuedAvailability(availability: ResourceLoadAvailability) {
   return (

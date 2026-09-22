@@ -117,9 +117,7 @@ export function ResourceHitList({ query }: { query: string }) {
       return model.versions.filter((version) => {
         return (
           (canGenerate ? canGenerate === version.canGenerateNext : true) &&
-          // The index filter keeps a model any of whose versions is resident; this is what keeps the
-          // card off the ones that are not. Versions are newest-first, so the card's default
-          // selection becomes the latest loaded one.
+          // The index filter only proves SOME version is resident — Meili matches the nested array.
           (!loadedOnly || version.generatorLoaded) &&
           (skipBaseModel ||
             modelBaseModels.length === 0 ||

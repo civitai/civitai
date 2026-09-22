@@ -46,7 +46,6 @@ export function ResourceSelectFiltersDropdown() {
     setFilters: setSelectFilters,
   } = useResourceSelectContext();
   const features = useFeatureFlags();
-  // Load state is a generator fact; the auction and training pickers have no use for it.
   const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();

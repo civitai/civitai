@@ -3801,8 +3801,7 @@ export const comicsRouter = router({
           };
         }
 
-        // `expired` is terminal too: the panel is the only surface that ever left it out, which is
-        // what kept 104 panels spinning on workflows the orchestrator had long since given up on.
+        // `expired` is terminal too — every other surface already treats it that way.
         if (
           workflow.status === 'failed' ||
           workflow.status === 'canceled' ||

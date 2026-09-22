@@ -147,8 +147,6 @@ describe('mergeDownloadRow', () => {
     expect(mergeDownloadRow(prepared, undefined)).toBe(prepared);
   });
 
-  // A download is shared, so its live lane is whoever asked highest — a member's generation put
-  // this card in "Priority" while the workflow itself was in the low lane.
   it('keeps the workflow’s lane, cap and position over the shared download’s', () => {
     const row = mergeDownloadRow(prepared, {
       availability: {
@@ -182,8 +180,6 @@ describe('mergeDownloadRow', () => {
     ).toBeUndefined();
   });
 
-  // Everything a shared download reports — lane, position, ETA, the boosted ETA that drives the paid
-  // offer — describes whoever asked highest. Without preparation, only progress and size survive.
   it('keeps nothing lane-specific for a model the workflow’s preparation does not cover', () => {
     const row = mergeDownloadRow(undefined, {
       availability: {
@@ -249,7 +245,6 @@ describe('isWorthBoosting', () => {
     ).toBe(true);
   });
 
-  // Both print as the floor label, so the offer would be a charge for two identical numbers.
   it('withholds one the floor has collapsed', () => {
     expect(
       isWorthBoosting(

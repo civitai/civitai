@@ -36,6 +36,9 @@ Do **not** rewrite in one pass. Land the low-risk wins first, re-measure, then d
 
 - [ ] **Split "curated list" tabs off InstantSearch.** Render `recent`/`liked`/`featured`/`recommended`/`auction` directly from their tRPC data into the shared card grid; use InstantSearch **only** for the true search tabs (`all`/`official` + query/facets). Removes the `id IN [...]` injection, the `hitsPerPage=1000` hack, and lets the featured podium be an honest curated list.
 - [ ] **De-duplicate version eligibility.** Move `filterVersions` / base-model relaxation into one shared util (or server-side) so the Meili filter and the client filter can't drift.
+  2026-09-22: `canGenerateNext` and `versions.generatorLoaded` joined it — filtered server-side in
+  `resource-select.service.ts`'s `buildFilter` and again per-version in `ResourceHitList`, because the
+  Meili filter only proves *some* version matched.
 - [ ] **Remove the `key={...}` remounts** once the data sources are separated and no longer need forced resets.
 
 ### Phase 3 — one server contract (bigger, optional)

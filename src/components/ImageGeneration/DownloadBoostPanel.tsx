@@ -82,9 +82,8 @@ export function useWorkflowDownloads({
 }
 
 /**
- * This poll is the only place the site learns a model became resident, so the load indicators —
- * which have no push and a 30s server cache — are told from here rather than waiting out their own
- * backstop. Every batch is invalidated: they are keyed by the ids they asked for, so the one
+ * `getDownloadStatus` is uncached, so it sees a model land before the 30s-cached indicator query
+ * would. Every batch is invalidated: they are keyed by the ids each caller asked for, so the one
  * holding this version cannot be named.
  */
 function useInvalidateResidencyOnLanding(
