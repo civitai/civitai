@@ -23,12 +23,16 @@
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
-  import { portalProps } from '$lib/host';
+  import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import { backend, portalProps } from '$lib/host';
+  import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { playOnHover, resetOnLeave } from '$lib/video-preview';
+  import { extOfAir, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
     ToggleGroup,
     ToggleGroupItem,
   } from '@civitai/ui/components/ui/toggle-group/index.js';
-  import { loraTypeById, type LabelType } from '$lib/data/trainingModels';
+  import { loraTypeById, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
@@ -40,6 +44,8 @@
     isTrainable,
     isTriggerTag,
     labelOptions,
+    labelString,
+    parseLabel,
     runCard,
     tagsHaveTrigger,
     type Img,
@@ -70,7 +76,7 @@
      *  models; user-selectable for a `bothLabels` model (e.g. Anima). */
     labelMode: LabelType;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
-    reuseItems?: { air: string; caption: string; name: string; previewUrl: string }[];
+    reuseItems?: ReuseItem[];
     onContinue: () => void;
     onBack: () => void;
   } = $props();
@@ -79,7 +85,12 @@
   onMount(() => {
     if (reuseItems.length)
       addFromBlobs(
-        reuseItems.map((r) => ({ blobId: r.air, url: r.previewUrl, name: r.name, caption: r.caption }))
+        reuseItems.map((r) => ({
+          blobId: r.air,
+          name: r.name,
+          caption: r.caption,
+          previewWorkflowId: r.workflowId,
+        }))
       );
   });
 
@@ -93,15 +104,50 @@
   // locked to one format in Select, so mid-flow switching there could desync them.
   const canChooseLabel = $derived(labelOptions(primaryCard).length > 1 && selection.runs.length === 1);
 
-  // Switching format re-labels from scratch — tags and captions aren't interchangeable, so clear every
-  // image's label and re-run auto-label in the new mode. (No-op for models that can't switch.)
+  // Switching format used to clear every image's label and re-auto-label from scratch — which
+  // silently destroyed captions a tester's dataset arrived with. Now: labels that CAME with the
+  // dataset (`sourceLabel`) always survive a switch (re-applied verbatim in the new format), and a
+  // switch that would discard anything else asks first — convert the text, or re-label from scratch.
+  // `pendingLabelMode` is the dialog's payload and outlives the close animation (nulling it on
+  // close blanks the outgoing frame's copy); `switchDialogOpen` alone drives visibility.
+  let pendingLabelMode = $state<LabelType | null>(null);
+  let switchDialogOpen = $state(false);
+  const switchDiscardCount = $derived(images.filter((i) => isLabeled(i) && !i.sourceLabel).length);
+
   function switchLabelMode(next: LabelType) {
     if (next === labelMode) return;
+    if (switchDiscardCount > 0) {
+      pendingLabelMode = next;
+      switchDialogOpen = true;
+      return;
+    }
+    applyLabelModeSwitch(next, 'convert');
+  }
+
+  function applyLabelModeSwitch(next: LabelType, choice: 'convert' | 'relabel') {
+    const prev = labelMode;
+    switchDialogOpen = false;
+    // Results from a drain still running in the OLD mode would land after the switch, mark tiles
+    // labeled, and train empty labels — kill it. Null the slot synchronously too: the aborted
+    // drain's finally hasn't run yet, and ensureLabeling below would otherwise see it occupied
+    // and start nothing.
+    labelController?.abort();
+    labelController = null;
     labelMode = next;
     for (const img of images) {
-      img.tags = [];
-      img.caption = '';
-      img.labelTried = false;
+      const source = img.sourceLabel?.trim();
+      // Current text first — it carries the user's hand-edits; the imported text is only the
+      // restore fallback for a cleared field. Source-labeled items survive BOTH choices (the
+      // dialog promises it); 'relabel' wipes only machine/hand labels with no imported source.
+      const kept = labelString(img, prev) || source || '';
+      const text = choice === 'relabel' && !source ? '' : kept;
+      const parsed = parseLabel(text, next);
+      img.tags = parsed.tags;
+      img.caption = parsed.caption;
+      img.labelTried = text.length > 0;
+      // The aborted drain's catch skips flag-clearing on abort — without this, mid-flight tiles
+      // stay `labeling` forever and the whole step wedges (toggle disabled, Continue blocked).
+      img.labeling = false;
     }
     void ensureLabeling();
   }
@@ -159,14 +205,16 @@
 
   async function addFiles(list: FileList | null | undefined) {
     if (!list) return;
-    const matched = [...list].filter((f) => f.type.startsWith(`${media}/`));
+    const matched = [...list]
+      .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
+      .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
-    const added: Img[] = matched.map((file) => ({
+    const added: Img[] = matched.map(({ file, fileMediaType }) => ({
       id: ++seq,
       file,
       name: file.name,
       previewUrl: URL.createObjectURL(file),
-      mediaType: media,
+      mediaType: fileMediaType,
       status: 'uploading',
       progress: 0,
       tags: [],
@@ -205,41 +253,92 @@
   // Add items backed by EXISTING orchestrator blobs (a generation or a reused dataset): already uploaded
   // and scanned, so no upload. A `caption` (from a reused dataset) is applied to the right field for the
   // dataset's label type and marks the item labeled; un-captioned items (generations) get auto-labeled.
-  function addFromBlobs(items: { blobId: string; url: string; name: string; caption?: string }[]) {
+  // Items may arrive with a ready `url` (generations) or with a `previewWorkflowId` (reused dataset
+  // blobs, whose previews need an authenticated fetch) — those tiles render placeholders and hydrate
+  // in the background, so seeding never waits on media downloads.
+  function addFromBlobs(
+    items: {
+      blobId: string;
+      name: string;
+      url?: string;
+      caption?: string;
+      previewWorkflowId?: string;
+    }[]
+  ) {
     // Skip blobs already in the dataset — the picker can't see what's here, so re-picking one (or
     // reopening and picking it again) would otherwise add a duplicate tile with the same `air`.
     const have = new Set(images.map((i) => i.blobId).filter(Boolean));
     const fresh = items.filter((item) => !have.has(item.blobId));
     if (fresh.length === 0) return;
-    const isTag = labelMode === 'tag';
+    const toHydrate: { id: number; air: string; workflowId: string }[] = [];
     const added: Img[] = fresh.map((item) => {
       const label = item.caption?.trim() ?? '';
+      const id = ++seq;
+      if (!item.url && item.previewWorkflowId)
+        toHydrate.push({ id, air: item.blobId, workflowId: item.previewWorkflowId });
+      // A video dataset can legitimately hold stills, and a reused blob's air keeps its file
+      // extension — type each tile from it so a still never renders inside a <video>.
+      const ext = extOfAir(item.blobId);
       return {
-        id: ++seq,
+        id,
         name: item.name,
-        previewUrl: item.url,
-        mediaType: media,
+        previewUrl: item.url ?? '',
+        mediaType: (ext && extMedia(ext)) || media,
         status: 'uploaded',
         progress: 1,
         blobId: item.blobId,
         blobUrl: item.url,
-        tags: isTag && label ? label.split(',').map((t) => t.trim()).filter(Boolean) : [],
-        caption: !isTag ? label : '',
+        ...parseLabel(label, labelMode),
+        // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
+        sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
       };
     });
     images = [...images, ...added];
+    void hydrateBlobPreviews(toHydrate);
     void ensureLabeling();
   }
 
-  const MEDIA_EXT: Record<string, Set<string>> = {
-    image: new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']),
-    video: new Set(['mp4', 'webm', 'mov', 'mkv']),
-    audio: new Set(['mp3', 'wav', 'flac', 'ogg', 'm4a']),
-  };
-  function mimeFor(ext: string): string {
-    return `${media}/${ext === 'jpg' ? 'jpeg' : ext}`;
+  // Fetch reused-blob previews after the tiles exist. A failed preview stays a placeholder — the
+  // `air` is what trains. `blobUrl` gets the same local object URL the eager path used to set;
+  // note it is browser-local, so an un-captioned reuse item still can't auto-label (pre-existing —
+  // the orchestrator can't fetch a blob: URL).
+  async function hydrateBlobPreviews(targets: { id: number; air: string; workflowId: string }[]) {
+    if (targets.length === 0) return;
+    await pool(targets, 4, async (t) => {
+      const direct = directDatasetUrl(t.air);
+      const url =
+        direct ??
+        (await backend()
+          .datasetBlob(t.air, t.workflowId)
+          .then((blob) => URL.createObjectURL(blob))
+          .catch(() => ''));
+      if (!url) return;
+      // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
+      // this same guard catches a late resolve after teardown and the URL never leaks).
+      if (!images.some((i) => i.id === t.id)) {
+        if (!direct) URL.revokeObjectURL(url);
+        return;
+      }
+      patch(t.id, { previewUrl: url, blobUrl: url });
+    });
+    // Un-captioned reuse items only become labelable once `blobUrl` exists — the add-time drain
+    // saw nothing to do, so run it again now (a failed hydration leaves the manual-label editor
+    // as the fallback, same as before).
+    void ensureLabeling();
   }
+
+  // Video models train on stills too (the on-site trainer has always accepted images for video
+  // training — its absence here was reported as a regression), so a video dataset accepts image
+  // files; each tile carries its OWN mediaType so previews and labeling treat it correctly.
+  // Classification itself (ext↔media↔mime) lives in $lib/media — this is only the acceptance policy.
+  const acceptedMedia = $derived<Media[]>(media === 'video' ? ['video', 'image'] : [media]);
+  const fileMedia = (mime: string): Media | undefined =>
+    acceptedMedia.find((m) => mime.startsWith(`${m}/`));
+  const extMedia = (ext: string): Media | undefined => {
+    const m = mediaOfExt(ext);
+    return m && acceptedMedia.includes(m) ? m : undefined;
+  };
 
   // Import a dataset .zip (round-trips with the detail page's Download): each media file becomes an
   // uploaded + scanned tile; a same-named `.txt` supplies its caption (standard LoRA layout). Captioned
@@ -262,11 +361,13 @@
         const base = dot >= 0 ? name.slice(0, dot) : name;
         const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
         if (ext === 'txt') captions.set(base, (await entry.async('string')).trim());
-        else if (MEDIA_EXT[media]?.has(ext)) mediaFiles.push({ name, base, ext, entry });
+        else if (extMedia(ext)) mediaFiles.push({ name, base, ext, entry });
       }
       const entries = await Promise.all(
         mediaFiles.map(async (m) => ({
-          file: new File([await m.entry.async('blob')], m.name, { type: mimeFor(m.ext) }),
+          file: new File([await m.entry.async('blob')], m.name, {
+            type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
+          }),
           caption: captions.get(m.base) ?? '',
         }))
       );
@@ -280,7 +381,6 @@
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
   async function addImported(entries: { file: File; caption: string }[]) {
     if (entries.length === 0) return;
-    const isTag = labelMode === 'tag';
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -288,11 +388,12 @@
         file: e.file,
         name: e.file.name,
         previewUrl: URL.createObjectURL(e.file),
-        mediaType: media,
+        mediaType: fileMedia(e.file.type) ?? media,
         status: 'uploading' as const,
         progress: 0,
-        tags: isTag && label ? label.split(',').map((t) => t.trim()).filter(Boolean) : [],
-        caption: !isTag ? label : '',
+        ...parseLabel(label, labelMode),
+        // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
+        sourceLabel: e.caption || undefined,
         labelTried: label ? true : undefined,
       };
     });
@@ -333,13 +434,28 @@
         const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
         labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
         for (const t of targets) patch(t.id, { labeling: true });
-        await runAutoLabel(labelMode, media, items, applyLabel, controller.signal);
+        // A result that resolves between abort and delivery must be dropped — post-switch it
+        // would write an OLD-mode label into a freshly reset tile and mark it done.
+        await runAutoLabel(
+          labelMode,
+          media,
+          items,
+          (r) => {
+            if (!controller.signal.aborted) applyLabel(r);
+          },
+          controller.signal
+        );
       }
     } catch (err) {
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
     } finally {
-      labelController = null;
-      labelRun = null;
+      // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
+      // after the aborter has already started a replacement, and clearing that one's state would
+      // let a third drain start concurrently (or blank the live progress counter).
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
     }
   }
 
@@ -370,10 +486,12 @@
   function addFromGenerations(items: GenerationItem[]) {
     addFromBlobs(
       items.map((i) => ({
-        // The AIR (what trains) comes from the FULL blob url; the tile preview + auto-label use the small
-        // preview so importing doesn't pull every full-size image into the browser.
+        // The AIR (what trains) comes from the FULL blob url. Image tiles preview through the small
+        // preview so importing doesn't pull every full-size image into the browser — but a video's
+        // previewUrl is a STILL thumbnail, which a <video> tag can't play; those keep the real url
+        // (preload="metadata" keeps the cost to a first frame until hovered).
         blobId: blobAirFromUrl(i.url),
-        url: i.previewUrl ?? i.url,
+        url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
       }))
     );
@@ -498,7 +616,7 @@
     bind:this={fileInput}
     type="file"
     multiple
-    accept={`${media}/*`}
+    accept={acceptedMedia.map((m) => `${m}/*`).join(',')}
     class="hidden"
     onchange={onPick}
   />
@@ -667,11 +785,32 @@
           {#each shownImages as img (img.id)}
             <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
               <div class="relative aspect-square bg-dark-7">
-                {#if img.mediaType === 'image'}
+                {#if !img.previewUrl}
+                  <!-- Reused-blob preview still hydrating (or unavailable) — the air still trains. -->
+                  <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
+                    {#if img.mediaType === 'audio'}
+                      <IconMusic size={20} stroke={2} class="text-dark-2" />
+                    {:else}
+                      <IconPhoto size={20} stroke={2} class="text-dark-2" />
+                    {/if}
+                    <span class="line-clamp-2 break-all font-mono text-xs leading-tight text-dark-2">
+                      {img.name}
+                    </span>
+                  </div>
+                {:else if img.mediaType === 'image'}
                   <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
                   <!-- svelte-ignore a11y_media_has_caption -->
-                  <video src={img.previewUrl} muted class="h-full w-full object-cover"></video>
+                  <video
+                    src={img.previewUrl}
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    onmouseenter={playOnHover}
+                    onmouseleave={resetOnLeave}
+                    class="h-full w-full object-cover"
+                  ></video>
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
                     <IconMusic size={20} stroke={2} class="text-dark-2" />
@@ -830,3 +969,37 @@
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
+
+<Dialog.Root bind:open={switchDialogOpen}>
+  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
+    <Dialog.Header>
+      <Dialog.Title>Switch to {pendingLabelMode === 'tag' ? 'tags' : 'captions'}?</Dialog.Title>
+      <Dialog.Description>
+        {switchDiscardCount} image{switchDiscardCount === 1 ? '' : 's'} in this dataset already {switchDiscardCount ===
+        1
+          ? 'has'
+          : 'have'}
+        {noun}. <strong>Convert</strong> keeps that text and reformats it — nothing is re-labeled.
+        <strong>Re-label</strong> discards it and auto-labels everything from scratch (labels that came
+        with your files are kept either way).
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Dialog.Close>
+        {#snippet child({ props })}
+          <Button {...props} variant="ghost" size="sm">Cancel</Button>
+        {/snippet}
+      </Dialog.Close>
+      <Button
+        variant="outline"
+        size="sm"
+        onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'relabel')}
+      >
+        Re-label everything
+      </Button>
+      <Button size="sm" onclick={() => applyLabelModeSwitch(pendingLabelMode!, 'convert')}>
+        Convert existing labels
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

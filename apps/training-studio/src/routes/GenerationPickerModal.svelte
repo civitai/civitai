@@ -1,5 +1,6 @@
 <script lang="ts">
   import { backend, browser, portalProps } from '$lib/host';
+  import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { SvelteSet } from 'svelte/reactivity';
   import { IconMusic, IconCheck } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -117,7 +118,16 @@
               >
                 {#if media === 'video'}
                   <!-- svelte-ignore a11y_media_has_caption -->
-                  <video src={item.url} muted playsinline class="h-full w-full object-cover"></video>
+                  <video
+                    src={item.url}
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    onmouseenter={playOnHover}
+                    onmouseleave={resetOnLeave}
+                    class="h-full w-full object-cover"
+                  ></video>
                 {:else if media === 'audio'}
                   <span class="flex h-full w-full items-center justify-center text-dark-2">
                     <IconMusic size={26} stroke={2} />

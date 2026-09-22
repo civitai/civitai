@@ -349,7 +349,18 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
         <Switch
           name={feature.key}
           key={feature.key}
-          label={feature.displayName}
+          label={
+            feature.badge ? (
+              <Group gap={6} component="span" display="inline-flex">
+                {feature.displayName}
+                <Badge size="xs" variant="light" color="yellow">
+                  {feature.badge}
+                </Badge>
+              </Group>
+            ) : (
+              feature.displayName
+            )
+          }
           checked={flags[feature.key]}
           onChange={(e) => toggleFlag(feature.key, e.target.checked)}
           description={feature.description}

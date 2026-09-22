@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { chunkStickerIds, draftedCosmeticIds } from '~/components/Sticker/sticker.util';
+import { draftedCosmeticIds } from '~/components/Sticker/sticker.util';
+import { chunkIds } from '~/utils/array-helpers';
 import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
 
 /**
@@ -14,11 +15,11 @@ import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
  * every lookup that happens to be for an early id works. So the property to hold is
  * total coverage, asserted against an input larger than one chunk.
  */
-describe('chunkStickerIds', () => {
+describe('chunkIds', () => {
   const ids = Array.from({ length: STICKER_OFFER_LIMIT * 2 + 7 }, (_, i) => 1000 - i);
 
   it('puts every id in exactly one chunk, however many there are', () => {
-    const flat = chunkStickerIds(ids, STICKER_OFFER_LIMIT).flat();
+    const flat = chunkIds(ids, STICKER_OFFER_LIMIT).flat();
 
     expect(flat).toHaveLength(ids.length);
     expect(new Set(flat).size).toBe(ids.length);
@@ -26,7 +27,7 @@ describe('chunkStickerIds', () => {
   });
 
   it('never hands the endpoint more ids than it accepts', () => {
-    const chunks = chunkStickerIds(ids, STICKER_OFFER_LIMIT);
+    const chunks = chunkIds(ids, STICKER_OFFER_LIMIT);
 
     // Asserted before the loop: a `for … expect` over an empty array makes no
     // assertions at all and still reports green.
@@ -38,8 +39,8 @@ describe('chunkStickerIds', () => {
     // 🔴 DELIBERATELY NOT MONOTONIC. Every id here is out of numeric order, so a
     // sorted derivation cannot coincide with the expected result — with a
     // descending fixture, `sort((a, b) => b - a)` passes this test unchanged.
-    const first = chunkStickerIds([5, 9, 3, 7, 1], 2);
-    const grown = chunkStickerIds([5, 9, 3, 7, 1, 8, 2], 2);
+    const first = chunkIds([5, 9, 3, 7, 1], 2);
+    const grown = chunkIds([5, 9, 3, 7, 1, 8, 2], 2);
 
     expect(first).toEqual([[5, 9], [3, 7], [1]]);
     // Two COMPLETE chunks compared, not one: the claim is that boundaries
@@ -48,11 +49,11 @@ describe('chunkStickerIds', () => {
   });
 
   it('dedupes, because two drafts of one sticker are one question', () => {
-    expect(chunkStickerIds([7, 7, 8, 7], STICKER_OFFER_LIMIT)).toEqual([[7, 8]]);
+    expect(chunkIds([7, 7, 8, 7], STICKER_OFFER_LIMIT)).toEqual([[7, 8]]);
   });
 
   it('asks nothing when nothing is drafted', () => {
-    expect(chunkStickerIds([], STICKER_OFFER_LIMIT)).toEqual([]);
+    expect(chunkIds([], STICKER_OFFER_LIMIT)).toEqual([]);
   });
 });
 

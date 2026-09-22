@@ -133,6 +133,10 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
+import {
+  clearBlockInstancesForPublisher,
+  revokeBlockInstancesForPublisher,
+} from '~/server/services/blocks/publisher-ban-revocation.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -1137,39 +1141,68 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         type: { not: UserEngagementType.Block },
       },
     }),
+    // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+    // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+    dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+    dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
     dbWrite.user.update({
       where: { id: user.id },
       data: {
         deletedAt: new Date(),
         email: null,
         username: null,
+        name: null,
+        // customerId is deliberately absent: see the webhook test in
+        // __tests__/delete-user-pii-scrub.test.ts before adding it.
         paddleCustomerId: null,
         image: null,
         profilePictureId: null,
         meta,
       },
     }),
+    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
+    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
+    // subscription -> customer -> charges, whose receipt_email and billing_details.name
+    // still identify the person.
+    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
+  // The account is deleted from here on. A failing step must not skip a later one (a skipped
+  // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
+  // an error: the user would read a completed deletion as a failed one and retry.
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      await logToAxiom({
+        name: step,
+        type: 'error',
+        source: 'deleteUser',
+        userId: user.id,
+        message: (error as Error)?.message,
+      }).catch(() => null);
+    }
+  };
+
+  await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('cancel-stripe-subscription', () =>
+    cancelSubscription({ userId: user.id, removeRecord: true })
+  );
 
   // The engagement rows are gone for real now, so the deleted user's own follow set
   // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
   // their own TTL — a popular account has six figures of them, and what each holds
   // is an id whose content this same call has already removed.
-  await userFollowsCache.bust(user.id);
-
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBasicDataForUser(id);
-
-  // Cancel their subscription
-  await cancelSubscription({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  await runStep('bust-follows-cache', () => userFollowsCache.bust(user.id));
+  await runStep('search-index-delete', () =>
+    usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
-  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
-  await invalidateSession(id, 'moderation');
+  await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+
+  // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
+  await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
 
   return result;
 };
@@ -1186,8 +1219,13 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session rows and every
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is not restored, and
+ * do NOT read that as "the subscription is gone": the cancels below run through runStep, which
+ * swallows, the Paddle one never deletes the CustomerSubscription row, and the Stripe one only
+ * deletes it for an active/past_due/trialing row. 6,816 soft-deleted accounts hold a surviving
+ * row today, 96 of them still live (prod, 2026-09-21). Check the billing record independently. It also hard-deletes Account / Session / UserProfile / UserLink
+ * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
@@ -1200,6 +1238,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
  *   so restoring inside the window brings the images back.
  * Posts are hard-deleted on the immediate path only and are not recoverable.
+ *
+ * UserProfile and UserLink rows are unrecoverable too, so a restored account comes back with an
+ * empty profile. Nothing restores name.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
@@ -1266,7 +1307,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+  // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
+  // account would inherit its old attempt count, so its first failure would already be backed off
+  // for hours and it would alert as stuck long before it is.
+  const {
+    imageRemoval: _removalChoice,
+    gdprStripeScrub: _scrubState,
+    ...meta
+  } = (user.meta ?? {}) as UserMeta;
 
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
@@ -2079,6 +2127,34 @@ export const toggleBan = async ({
         })
       ),
 
+      // Revoke every live App Block instance of every block this user PUBLISHES.
+      // `invalidateSession` above ends their own browser sessions; it does not touch
+      // a block token, which is a separate RS256 JWT the runtime guards check against
+      // a per-instance Redis marker. Without this the tokens their blocks already hold
+      // keep authenticating against the REST and tRPC bridges until natural `exp` —
+      // 900s by default, 14400s for a `dev` token. See the writer's own docblock for
+      // what is and is not in that set (owner only, not seated collaborators).
+      //
+      // Isolated like every other leg of this fan-out: the marker write must never be
+      // able to fail the ban. `revokeInstance` already swallows Redis errors; this
+      // catch covers the DB read in front of it.
+      revokeBlockInstancesForPublisher({ userId: id })
+        .then((revoked) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-revoke-block-instances',
+            message: `revoked ${revoked} block instance(s) for banned publisher ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-block-instances',
+            message: (error as Error).message,
+            error,
+          })
+        ),
+
       // Group B: External operations (subscription + search indexes)
       Promise.all([
         // Stop the recurring membership from auto-renewing while banned. Cancel
@@ -2221,6 +2297,38 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
+    // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a
+    // dev token is involved — and re-minting did NOT help: `isRevoked` keys on
+    // `claims.blockInstanceId`, and every namespace's id is stable across a re-mint, so a
+    // fresh token carries the same id the marker names. The only remedy was a moderator
+    // deleting Redis keys by hand. (This card's own AC-3 asserted the opposite; it was
+    // wrong, and `blocks/publisher-ban-revocation.service.ts` carries the measurement.)
+    //
+    // Clears the BAN keyspace only — an INSTALL marker from a genuine uninstall or
+    // toggle-off is a different key and survives, so lifting a ban cannot silently
+    // re-enable an install its own consumer switched off.
+    //
+    // Isolated for the same reason as the search re-index below: the unban has already
+    // committed, and an unguarded throw here would skip the `account-unbanned` email and
+    // hand the moderator a 500 for an action that succeeded.
+    await clearBlockInstancesForPublisher({ userId: id })
+      .then((cleared) =>
+        logToAxiom({
+          type: 'info',
+          name: 'unban-user-clear-block-instances',
+          message: `cleared ${cleared} block-instance ban marker(s) for unbanned publisher ${id}`,
+        })
+      )
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-clear-block-instances',
+          message: (error as Error).message,
+          error,
+        })
+      );
 
     // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
     // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is

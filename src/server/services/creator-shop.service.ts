@@ -17,6 +17,7 @@ import {
   buildCosmeticData,
   creatorGrantRemaining,
   patchCosmeticData,
+  shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -56,6 +57,7 @@ import type {
   CosmeticShopItemMeta,
 } from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -80,13 +82,6 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
   },
 });
 
-// A pack's card art and size live in meta rather than on a cosmetic, so every
-// meta whitelist has to carry them or the card renders empty and "Pack of 0".
-const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
-  ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
-  ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
-  ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
-});
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
@@ -177,8 +172,7 @@ type CreatorShopItemRow = Prisma.CosmeticShopItemGetPayload<{
   select: typeof creatorShopItemSelect;
 }>;
 
-const withRemaining = (item: CreatorShopItemRow) => {
-  const purchases = item._count.purchases;
+const withRemaining = (item: Omit<CreatorShopItemRow, '_count'>, purchases: number) => {
   const remaining = item.availableQuantity != null ? item.availableQuantity - purchases : null;
   return { ...item, purchases, remaining, soldOut: remaining != null && remaining <= 0 };
 };
@@ -1022,17 +1016,13 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
     // count disagrees with the list the creator opens from it.
     select: {
       ...creatorShopItemSelect,
-      _count: {
-        select: {
-          ...creatorShopItemSelect._count.select,
-          resales: { where: { user: { deletedAt: null } } },
-        },
-      },
+      _count: { select: { resales: { where: { user: { deletedAt: null } } } } },
     },
     orderBy: { createdAt: 'desc' },
   });
+  const sold = await getSoldCounts(items.map((i) => i.id));
   return items.map(({ _count, ...item }) => ({
-    ...withRemaining({ ...item, _count }),
+    ...withRemaining(item, sold.get(item.id) ?? 0),
     resellerCount: _count.resales,
   }));
 };
@@ -1148,15 +1138,13 @@ export const getCreatorShop = async ({
     `.then((r) => r[0]?.count ?? 0),
   ]);
 
+  const sold = await getSoldCounts([...items, ...resoldItems].map((i) => i.id));
+
   // Sanitize meta to what the card/checkout needs — never the creator
   // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
-    meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
-    },
+    meta: shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, sold.get(item.id) ?? 0),
   });
   const cosmetics = items.map(sanitize);
   // Resold items keep the seller share so the buyer can see the split at
@@ -1164,11 +1152,9 @@ export const getCreatorShop = async ({
   const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
     ...item,
     meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      ...shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, sold.get(item.id) ?? 0),
       sellerShare:
         resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   });
   const resold = preview
@@ -1357,14 +1343,11 @@ export const getCommunityCosmetics = async ({
     }),
     dbRead.cosmeticShopItem.count({ where }),
   ]);
+  const sold = await getSoldCounts(raw.map((i) => i.id));
   // Same meta sanitation as the storefront.
   const items = raw.map((item) => ({
     ...item,
-    meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
-    },
+    meta: shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, sold.get(item.id) ?? 0),
   }));
   return getPagingData({ items, count }, limit, page);
 };

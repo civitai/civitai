@@ -124,6 +124,7 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
@@ -197,48 +198,53 @@ export function GenerationForm() {
   // no-op (we just don't re-add the id).
   const loadFromModelVersion = trpc.wildcardSet.loadFromModelVersion.useMutation();
   const handleAddWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
+        // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
+        // empty here because we can't infer the active subgraph's target list
+        // from the form layer — if no snippets node was hydrated yet, the
+        // graph's defaultValue will replace this on the next evaluation.
+        const current = snap.snippets ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        graph.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        } as Parameters<typeof graph.set>[0]);
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       // Filter the modal to Wildcards-type models only. `baseModels`
       // omitted intentionally — wildcard packs are model-agnostic.
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
-          // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
-          // empty here because we can't infer the active subgraph's target list
-          // from the form layer — if no snippets node was hydrated yet, the
-          // graph's defaultValue will replace this on the next evaluation.
-          const current = snap.snippets ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          graph.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          } as Parameters<typeof graph.set>[0]);
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [graph, loadFromModelVersion]);
@@ -1018,6 +1024,21 @@ export function GenerationForm() {
               )}
             />
 
+            <Controller
+              graph={graph}
+              name="yue2MusicMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+
             {/* Snippet sources strip. Lives in its own Controller so it
                 auto-hides whenever the active graph doesn't include the
                 snippets node — i.e. the ecosystem subgraph didn't opt the
@@ -1184,7 +1205,7 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="lyrics"
-              render={({ value, onChange }) => (
+              render={({ value, onChange, error }) => (
                 <Textarea
                   label="Lyrics"
                   description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
@@ -1193,8 +1214,40 @@ export function GenerationForm() {
                   }
                   value={value as string}
                   onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
                   autosize
                   minRows={4}
+                />
+              )}
+            />
+
+            <Controller
+              graph={graph}
+              name="yue2Mode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+            <Controller
+              graph={graph}
+              name="yue2Abc"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="ABC score (optional)"
+                  description="Supply a score to skip automatic composition. Leave blank to compose from your style and lyrics."
+                  placeholder={'X:1\nM:4/4\nL:1/4\nQ:1/4=105\nK:C\nC D E G |'}
+                  value={value}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={3}
                 />
               )}
             />
@@ -1785,7 +1838,11 @@ export function GenerationForm() {
                 if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
                   return (
                     <SliderInput
-                      label="Duration (seconds)"
+                      label={
+                        snapshot.ecosystem === 'YuE2'
+                          ? 'Maximum duration (seconds)'
+                          : 'Duration (seconds)'
+                      }
                       value={value as number}
                       onChange={onChange}
                       min={sliderMeta.min}

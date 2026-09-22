@@ -10,33 +10,19 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
  * Differential parity for the ported AUDIO and MODEL3D slices against the live
  * `generationGraph.safeParse`, generated the same way as the image/video
  * suites: ecosystem x supported workflow x input shape x external context.
- *
- * The 3D ecosystems other than PolyGen are feature-flag gated (fail-closed),
- * so the base context enables their flags; the `gated` context withholds them
- * to pin the hidden-fallback path.
  */
-
-const FLAGS_3D = {
-  tripoGenerator: true,
-  hunyuan3dGenerator: true,
-  pixal3dGenerator: true,
-  trellis2Generator: true,
-} as GenerationCtx['flags'];
 
 const BASE: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 4 },
   user: { isMember: true, tier: 'gold' },
-  flags: FLAGS_3D,
+  flags: {} as GenerationCtx['flags'],
   gateRules: [],
 };
 
 const CONTEXTS: [string, GenerationCtx][] = [
   ['base', BASE],
-  ['wildcards', { ...BASE, flags: { ...FLAGS_3D, wildcards: true } as GenerationCtx['flags'] }],
-  [
-    'meshyV7',
-    { ...BASE, flags: { ...FLAGS_3D, meshyV7Generator: true } as GenerationCtx['flags'] },
-  ],
+  ['wildcards', { ...BASE, flags: { wildcards: true } as GenerationCtx['flags'] }],
+  ['meshyV7', { ...BASE, flags: { meshyV7Generator: true } as GenerationCtx['flags'] }],
   [
     'freeTier',
     {
@@ -45,14 +31,60 @@ const CONTEXTS: [string, GenerationCtx][] = [
       limits: { maxQuantity: 1, maxResources: 1, vidQuantity: 1 },
     },
   ],
-  // no 3D flags at all: flag-gated ecosystems are hidden, stale selections
-  // fall back to the default (PolyGen)
-  ['unflagged', { ...BASE, flags: {} as GenerationCtx['flags'] }],
+  // hidden ecosystems drop out and stale selections fall back to the default (PolyGen)
+  [
+    'gated',
+    {
+      ...BASE,
+      gateRules: [
+        {
+          id: 'hide-3d',
+          name: '',
+          availableTo: 'moderators',
+          presentation: 'hidden',
+          ecosystems: ['Tripo', 'Hunyuan3D', 'Pixal3D', 'Trellis2'],
+          workflows: [],
+          modelVersionIds: [],
+        },
+      ],
+    },
+  ],
 ];
 
 const IMAGE = { url: 'https://example.com/a.png', width: 1280, height: 720 };
 
 const AUDIO_SHAPES: AnyRecord[] = [
+  {
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 0,
+  },
+  {
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    yue2Mode: 'melody',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+  },
+  {
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+  },
+  { yue2MusicMode: 'custom', musicDescription: '   ', lyrics: '   ' },
+  {
+    yue2MusicMode: 'simple',
+    prompt: 'an upbeat song',
+    musicDescription: 'stale description',
+    lyrics: 'stale lyrics',
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    steps: 80,
+  },
+
   { prompt: 'an upbeat song' },
   { prompt: '' },
   { prompt: 'an upbeat song', seed: 42, duration: 45 },
@@ -61,6 +93,7 @@ const AUDIO_SHAPES: AnyRecord[] = [
   {
     aceAudioMode: 'custom',
     minimaxMusicMode: 'custom',
+    yue2MusicMode: 'custom',
     musicDescription: 'synthwave with heavy bass',
     lyrics: '[Verse] la la la',
     title: 'Test Track',
@@ -70,8 +103,14 @@ const AUDIO_SHAPES: AnyRecord[] = [
     instrumentalWeight: 0.7,
     vocalWeight: 0.2,
   },
-  { aceAudioMode: 'custom', minimaxMusicMode: 'custom' },
-  { aceAudioMode: 'custom', minimaxMusicMode: 'custom', musicDescription: 'jazz', bpm: 500 },
+  { aceAudioMode: 'custom', minimaxMusicMode: 'custom', yue2MusicMode: 'custom' },
+  {
+    aceAudioMode: 'custom',
+    minimaxMusicMode: 'custom',
+    yue2MusicMode: 'custom',
+    musicDescription: 'jazz',
+    bpm: 500,
+  },
   // cover image vs generateCover (Ace); ignored fields elsewhere
   { prompt: 'an upbeat song', images: [IMAGE] },
   { prompt: 'an upbeat song', generateCover: true, images: [IMAGE] },
@@ -136,7 +175,7 @@ const MODEL3D_SHAPES: AnyRecord[] = [
   { images: [IMAGE], faceLimit: 5 },
 ];
 
-const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3'];
+const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3', 'YuE2'];
 const MODEL3D_ECOSYSTEMS = ['PolyGen', 'Tripo', 'Hunyuan3D', 'Pixal3D', 'Trellis2'];
 
 const SLICES: Array<{ ecosystems: string[]; workflows: string[]; shapes: AnyRecord[] }> = [

@@ -13,7 +13,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
  * FULLY GENERIC — there is NO "generator" concept. Every app block that drives
  * budgeted generation writes exactly one row per submit, keyed on the
  * orchestrator workflow id. No generator/content columns live here (content-
- * author / bounty attribution already lives in `block_spend_attribution`, G5).
+ * author / spend attribution already lives in `block_spend_attribution`, G5 —
+ * "bounty" was the removed platform-funded rail, not this table's purpose).
  *
  * Accessed via raw SQL (no Prisma delegate) so the read-model ships without a
  * Prisma client regen — see the `20260715130000_block_workflows` migration.

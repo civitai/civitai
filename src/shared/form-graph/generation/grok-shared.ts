@@ -1,5 +1,4 @@
 import { defineGraph } from 'form-graph';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { grokVersionIds } from '~/shared/data-graph/generation/version-ids';
 import { checkpointDef } from './checkpoint';
 import { SEED } from './defs';
@@ -13,10 +12,10 @@ import { makeTextBlock, type FamilyExt } from './shared';
  * rather than in either hub's folder.
  */
 
-export const getGrokVersionOptions = (flags?: Partial<FeatureAccess>) => [
+export const grokVersionOptions = [
   { label: 'v1.0', value: grokVersionIds['v1.0'] },
   { label: 'v1.5', value: grokVersionIds['v1.5'] },
-  ...(flags?.grokImagine2 === true ? [{ label: 'v2.0', value: grokVersionIds['v2.0'] }] : []),
+  { label: 'v2.0', value: grokVersionIds['v2.0'] },
 ];
 
 export const isGrokV15 = (modelId?: number) => modelId === grokVersionIds['v1.5'];
@@ -31,7 +30,7 @@ export const grokHead = defineGraph<GrokExt>()
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      versions: { options: getGrokVersionOptions(_ext.flags) },
+      versions: { options: grokVersionOptions },
     })
   )
   .field('seed', SEED);

@@ -494,7 +494,7 @@ Real, working features the head moderator doesn't use or doesn't know about. Mig
   - Services: `huggingface.service.ts` (HF API client), `huggingface-import.service.ts` (queue + resumable multipart transfer), `huggingface-import-config.service.ts` (transfer settings)
   - Schemas: `huggingface-import.schema.ts`
   - Infra: **Postgres (`HuggingFaceImport`) + S3/B2 multipart + Redis (sysRedis transfer config) + the `process-huggingface-imports` cron**
-  - Notes: a port moves the page, not the transfer — the cron and `createFileHandler` (scan + hash submission) stay in the main app, so this is delegate-shaped if it moves at all.
+  - Notes: a port moves the page, not the transfer — the cron and the model-file create path (`createFileHandler` for the tRPC surfaces, `createModelFile` for the cron's auto-attach; both carry the scan + hash submission) stay in the main app, so this is delegate-shaped if it moves at all.
 
 ---
 

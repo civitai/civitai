@@ -6,10 +6,15 @@ import { useRouter } from 'next/router';
 import { env } from '~/env/client';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { baseModels } from '~/shared/constants/basemodel.constants';
+import { getAirEcosystem, stringifyAIR } from '~/shared/utils/air';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { trpc } from '~/utils/trpc';
 
 /**
  * The Training Studio embedded in the main app (docs/training-studio-web-component.md), behind the
@@ -76,6 +81,9 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
+  const utils = trpc.useUtils();
+  const utilsRef = useRef(utils);
+  utilsRef.current = utils;
 
   // Providing generate/generateUrl is the capability signal: without them the element hides its
   // per-epoch Generate affordance. Only the form-graph lane consumes the seeded epoch resource —
@@ -83,6 +91,8 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   // does nothing with the handoff.
   const features = useFeatureFlags();
   const canGenerate = features.generationAirResources && features.formGraphGenerator;
+  // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
+  const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
 
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
@@ -133,7 +143,25 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
         },
-        config: { orchestratorEndpoint, orchestratorMode },
+        // Without this the element has no Blue balance to compare against, and its Review step's
+        // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
+        getBuzzBalances: async () => {
+          try {
+            const accounts = (await utilsRef.current.buzz.getBuzzAccount.fetch()) as Record<
+              string,
+              number
+            >;
+            const { yellow, green, blue } = accounts;
+            // A missing/non-numeric balance must stay UNKNOWN (null → the element's fail-safe
+            // "up to" confirmation), not read as a known zero — blue:0 would assert the whole
+            // price is non-Blue with certainty.
+            if ([yellow, green, blue].some((v) => typeof v !== 'number')) return null;
+            return { yellow, green, blue };
+          } catch {
+            return null;
+          }
+        },
+        config: { orchestratorEndpoint, orchestratorMode, buzzMode },
         hrefFor,
         navigate: async (loc: StudioLocation) => {
           await routerRef.current.push(hrefFor(loc), undefined, { shallow: true });
@@ -160,6 +188,50 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             epoch: String(req.epoch),
           })}`,
         modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        // The studio's Custom base: open this app's resource-select modal and hand back the picked
+        // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>
+        // shape the studio's paste input takes). Resolves null on cancel.
+        pickModel: (req: { ecosystem?: string }) =>
+          new Promise<{ air: string; name?: string } | null>((resolve) => {
+            // Pre-filter to the run's ecosystem where the AIR-ecosystem mapping knows it; an
+            // ecosystem we can't map (empty result) shows all checkpoints instead.
+            const ecosystemBaseModels = req.ecosystem
+              ? baseModels.filter((bm) => getAirEcosystem(bm) === req.ecosystem)
+              : [];
+            let settled = false;
+            openResourceSelectModal({
+              title: 'Select a model to train on',
+              selectSource: 'training',
+              options: {
+                resources: [
+                  {
+                    type: ModelType.Checkpoint,
+                    ...(ecosystemBaseModels.length ? { baseModels: ecosystemBaseModels } : {}),
+                  },
+                ],
+              },
+              onSelect: (resource) => {
+                settled = true;
+                resolve({
+                  air: stringifyAIR({
+                    baseModel: resource.baseModel,
+                    type: resource.model.type,
+                    modelId: resource.model.id,
+                    id: resource.id,
+                  }),
+                  name:
+                    resource.name && resource.name !== resource.model.name
+                      ? `${resource.model.name} · ${resource.name}`
+                      : resource.model.name,
+                });
+              },
+              // Fires on dismissal only — the select path closes through the dialog store without
+              // it, and `settled` guards the ordering either way.
+              onClose: () => {
+                if (!settled) resolve(null);
+              },
+            });
+          }),
       };
       el.location = locationRef.current;
       setElReady(true);
@@ -171,7 +243,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       cancelled = true;
       link.remove();
     };
-  }, [orchestratorEndpoint, orchestratorMode, canGenerate]);
+  }, [orchestratorEndpoint, orchestratorMode, canGenerate, buzzMode]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
   // is the source of truth, pushed into the element as a property whenever it changes.

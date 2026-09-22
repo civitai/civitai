@@ -8,8 +8,10 @@
     IconPlus,
     IconX,
     IconArrowRight,
+    IconSearch,
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
+  import { pickModel } from '$lib/host';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
@@ -34,6 +36,7 @@
     nextRunId,
     recommendedCardFor,
     runCard,
+    runVersion,
     runVersionLabel,
     selectionFromTotal,
     type Run,
@@ -142,10 +145,42 @@
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
   }
   function setCustomAir(runIndex: number, value: string) {
-    runs = runs.map((r, i) => (i === runIndex ? { ...r, customAir: value } : r));
+    // A hand-edited AIR is no longer the picked model — drop its name.
+    runs = runs.map((r, i) =>
+      i === runIndex ? { ...r, customAir: value, customName: undefined } : r
+    );
+    pickErrorRunId = null;
   }
   // A Custom run needs a valid pasted AIR before it can continue.
   const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
+
+  // The host's model picker (the embed's resource-select modal); absent standalone — the paste
+  // input then stands alone. Resolved at use time, like every other capability accessor.
+  let pickingRunId = $state<number | null>(null);
+  let pickErrorRunId = $state<number | null>(null);
+
+  async function browseModel(run: Run) {
+    const pick = pickModel();
+    if (!pick || pickingRunId !== null) return;
+    pickingRunId = run.id;
+    pickErrorRunId = null;
+    const airAtStart = run.customAir;
+    try {
+      const picked = await pick({ ecosystem: runVersion(run).ecosystem });
+      // Keyed by run id (a sweep row can be removed while the picker is open), and only onto an
+      // untouched input — a hand-edit during the pick beats a late resolution.
+      if (picked)
+        runs = runs.map((r) =>
+          r.id === run.id && r.customAir === airAtStart
+            ? { ...r, customAir: picked.air, customName: picked.name }
+            : r
+        );
+    } catch {
+      pickErrorRunId = run.id;
+    } finally {
+      pickingRunId = null;
+    }
+  }
 
   function addRun() {
     if (runs.length >= MAX_RUNS) return;
@@ -202,7 +237,8 @@
   {/if}
 {/snippet}
 
-<!-- The Custom… base: paste a Civitai model AIR to train on (we don't have a model picker yet). -->
+<!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
+     when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
   <div class="mt-2.5">
     <label
@@ -211,16 +247,36 @@
     >
       Civitai model AIR
     </label>
-    <Input
-      id={`custom-air-${run.id}`}
-      value={run.customAir ?? ''}
-      oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
-      placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-      class="mt-1 font-mono text-xs"
-    />
+    <div class="mt-1 flex items-center gap-2">
+      <Input
+        id={`custom-air-${run.id}`}
+        value={run.customAir ?? ''}
+        oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+        placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
+        class="min-w-0 flex-1 font-mono text-xs"
+      />
+      {#if pickModel()}
+        <Button
+          variant="outline"
+          size="sm"
+          class="shrink-0"
+          disabled={pickingRunId !== null}
+          onclick={() => browseModel(run)}
+        >
+          <IconSearch size={13} stroke={2} class="mr-1 inline" />
+          {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
+        </Button>
+      {/if}
+    </div>
     <p class="mt-1 text-xs leading-snug text-dark-2">
       {#if run.customAir && !isValidAir(run.customAir)}
         <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
+      {:else if pickErrorRunId === run.id}
+        <span class="text-buzz">Couldn't open the model browser — paste the AIR instead.</span>
+      {:else if run.customName}
+        Training on <span class="font-semibold text-dark-0">{run.customName}</span>
+      {:else if pickModel()}
+        Browse for a Civitai model to train on, or paste its AIR from the model's page.
       {:else}
         Paste the AIR of a Civitai model to train on (copy it from the model's page).
       {/if}

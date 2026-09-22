@@ -1,6 +1,15 @@
 -- ============================================================
 -- App Blocks → Post attribution: an index on Post.metadata->>'blockPublishedAppId'
 -- ============================================================
+-- 🔴 SUPERSEDED by 20260917230000_post_block_published_app_id_index_predicate.
+-- This migration was applied to production on 2026-09-17 and the index it built is
+-- valid — but its predicate (`metadata ? 'blockPublishedAppId'`) is NOT provable from
+-- the query documented at the bottom of this header, so that query plans a full
+-- sequential scan and the index is never used. DO NOT COPY THE QUERY BELOW.
+-- The successor re-predicates the index on `(metadata->>'...') IS NOT NULL`, which IS
+-- provable, so the plain query works. Measurements and the control are in its header.
+-- Everything else this header says about WHY the marker and the index exist still holds.
+-- ============================================================
 -- `blocks.createPostFromApp` stamps the publishing app's OauthClient id into
 -- `Post.metadata` under the key `blockPublishedAppId` — the SAME key and the SAME
 -- value semantics the `Image` rows already carry, so ONE moderation sweep can read

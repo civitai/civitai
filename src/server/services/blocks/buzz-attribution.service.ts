@@ -16,15 +16,14 @@ import {
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
-  // NOTE: neither computeSpendShare nor computeSubscriptionShare is imported
-  // here. Both the buzz-SPEND (flow A) and membership (flow C) attributions
-  // are TRACK-ONLY — no rate is applied at write time. The share is computed
-  // at payout time (Slice 4) as a backpay against the signed-off rate over
-  // status='tracked' rows. The compute* helpers stay in rate-card.ts for that
-  // payout-time backpay to call.
+  // NOTE: `computeSubscriptionShare` is deliberately not imported here. The
+  // membership attribution (flow C) is TRACK-ONLY — no rate is applied at write
+  // time. Its share is computed at payout time as a backpay against the
+  // signed-off rate over status='tracked' rows.
   ACTIVE_RATE_CARD,
 } from './rate-card';
 
@@ -259,11 +258,16 @@ export class AttributionAppMissingError extends Error {
  * (Slice 4) as a backpay. A row carrying this sentinel + status='tracked' is
  * "share-pending": the payout rail re-stamps the signed-off version when it
  * computes the share.
+ *
+ * ⚠️ TRUE FOR MEMBERSHIP ROWS ONLY. A `block_spend_attribution` row also carries
+ * this sentinel, but it is NOT share-pending — the spend bounty was removed, no
+ * backpay reads that table, and nothing will ever re-stamp those rows.
  */
 export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
 
 // ---------------------------------------------------------------
-// W3 flow A — buzz SPEND attribution (author bounty)
+// W3 flow A — buzz SPEND attribution (TRACK-ONLY audit trail; the author
+// bounty it was built for is removed — see `recordSpendAttribution`)
 // ---------------------------------------------------------------
 
 const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
@@ -311,17 +315,69 @@ export type RecordSpendAttributionInput = {
   /**
    * Optional APP-FACING generation type for this spend, as
    * `<coarse>` or `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
-   * `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare registered
-   * STEP ID (`convert-image`, `chat-completion`). NEVER the orchestrator's
-   * internal `$type`. The COARSE key is everything before the FIRST colon and is
-   * what a per-generation-type fee keys on; `blockGenerationCoarseType` is the
-   * one place that decomposition lives. Resolved by the caller from the
-   * submitted workflow body via `resolveBlockGenerationType`; omit (or pass
-   * null) when it cannot be resolved, which persists NULL. Typed as the union
-   * rather than `string` so a future caller cannot stamp an arbitrary value on a
-   * money/audit row.
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+   * STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+   * on the PASS-THROUGH step arm. The COARSE key is everything before the FIRST
+   * colon and is what a per-generation-type fee keys on;
+   * `blockGenerationCoarseType` is the one place that decomposition lives.
+   * Resolved by the caller from the submitted workflow body via
+   * `resolveBlockGenerationType`; omit (or pass null) when it cannot be
+   * resolved, which persists NULL. Typed as the union rather than `string` so a
+   * future caller cannot stamp an arbitrary value on a money/audit row.
+   *
+   * 🔴 ONE ARM'S SUBTYPE IS CALLER-SUPPLIED, AND A FEE MUST KEY ON THE COARSE KEY
+   * FOR EXACTLY THAT REASON. This doc used to say "NEVER the orchestrator's
+   * internal `$type`", and that is now true of every arm EXCEPT the pass-through
+   * one, which has no app-facing id at all — the `$type` is what the app wrote,
+   * bounded by SHAPE only (see `generation-type.ts`'s THE ONE OPEN AXIS). So for
+   * a `step:` value the segment after the colon is app-chosen, while the coarse
+   * key is always the literal `step`. Keying anything on the FULL value would let
+   * a caller choose its own group; `blockGenerationCoarseType` is the bound.
    */
   generationType?: BlockGenerationType | null;
+  /**
+   * Optional BASE generation cost in Buzz — the orchestrator's
+   * `WorkflowCost.base` for this workflow.
+   *
+   * 🔴 THIS IS NOT `buzzAmount`, AND THE DIFFERENCE IS THE WHOLE POINT OF THE
+   * FIELD. `buzzAmount` above is the realized PAID DEBIT, a gross that already
+   * carries the per-resource model LICENSING fees (`WorkflowCost.fees`), the
+   * lineage fee and the viewer's tips — the orchestrator charges the sum and
+   * settles each component to its own recipient. The per-generation AUTHOR FEE
+   * is additive on top of the BASE and stacks alongside those components, so a
+   * percentage of `buzzAmount` would take a cut of another creator's licensing
+   * fee and of the viewer's tip, and would compound as more fee-charging
+   * resources are stacked onto one generation.
+   *
+   * Nothing downstream can tell the two apart — both are plain positive Buzz
+   * numbers — so the distinction has to be made by the CALLER, which reads
+   * `cost.base` off the raw orchestrator submit response. It is not reachable
+   * from the block-facing snapshot: `BlockWorkflowSnapshot.cost` is
+   * deliberately `{ total }` only, and widening that wire shape would publish
+   * the platform's cost breakdown to every third-party app.
+   *
+   * Used ONLY by the dark author-fee OBSERVATION below. It is never persisted:
+   * omit it, or pass null, and the observation records a `base-unavailable` skip
+   * instead of computing against a number that means something else.
+   */
+  baseGenerationBuzz?: number | null;
+  /**
+   * Optional: the orchestrator's `WorkflowCost.variable` for this workflow —
+   * TRUE when the quoted price is a CAP that may settle lower (at least one step
+   * is post-billed and charged up front at its maximum, with the difference
+   * refunded once the provider reports the actual work delivered).
+   *
+   * 🔴 A CAP-PRICED GENERATION IS OBSERVED AS A SKIP, NOT AS A FEE. A percentage
+   * of a number the viewer will be partly refunded is a fee on money they did
+   * not spend. It gets its OWN skip reason (`price-is-cap`) rather than being
+   * folded into `base-unavailable` — see `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+   *
+   * Like `baseGenerationBuzz` this is read off the RAW orchestrator submit
+   * response, never off `BlockWorkflowSnapshot` (whose `cost` is deliberately
+   * `{ total }` only). Omit it, or pass null/false, and the price is treated as
+   * final. Never persisted.
+   */
+  generationPriceIsCap?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -411,8 +467,10 @@ export async function resolvePublishedContentAuthorUserId(args: {
 }
 
 /**
- * Record an author bounty for a block-initiated generation that SPENT the
- * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * Record a TRACK-ONLY attribution row for a block-initiated generation that
+ * SPENT the viewer's own Buzz. It accrues nothing and pays nobody — the
+ * percentage author bounty it was named for is GONE (see the ⚠️ TRACK-ONLY
+ * paragraph below). Idempotent on `(workflow_id, app_block_id)` — a
  * re-poll / retry / re-submit of the same workflow is a no-op.
  *
  * EVERYTHING is server-derived from the verified block-token claims by
@@ -423,35 +481,27 @@ export async function resolvePublishedContentAuthorUserId(args: {
  * inherently forge-safe (unlike the purchase/Paddle path, which must
  * re-derive client metadata via validateBuzzPurchaseAttribution).
  *
- * ACCOUNTING: the bounty is platform-funded (paid ON TOP of the spend),
- * not a cut of the viewer's Buzz. See rate-card.ts RATE_CARD_V4 and the
- * migration. This function moves NO money and touches NO BuzzTransaction
- * — it writes a derived audit/payout row. A failed write never affects
- * the generation (the caller fires it best-effort / fire-and-forget).
+ * This function moves NO money and touches NO BuzzTransaction — it writes a
+ * derived audit row. A failed write never affects the generation (the caller
+ * fires it best-effort / fire-and-forget).
  *
  * ⚠️ TRACK-ONLY (mirrors #2629's membership rework). This write records the
  * ATTRIBUTION EVENT + the MONEY BASIS (gross_value_cents = USD value of the
- * Buzz burned) only. It does NOT apply the spend rate card and does NOT bake
- * an author bounty. The row is written:
- *   - status                = 'tracked'  (share-pending, not yet computed)
+ * Buzz burned) only. The row is written:
+ *   - status                = 'tracked'
  *   - app_owner_share_cents  = 0
  *   - spend_share_pct        = 0         (no rate applied)
  *   - rate_card_version      = 'unrated' (no version stamped)
- * The author bounty is DEFERRED to PAYOUT time: the future payout rail
- * (Slice 4) reads status='tracked' rows and computes
- * bounty = gross × <signed-off spendSharePct> as a clean retroactive BACKPAY
- * (via the retained `computeSpendShare`), then transitions them to a
- * computed/confirmed state. Because the tracked row carries the gross, that
- * computation is exact.
  *
- * WHY: committing a bounty at the placeholder spend rate before monetization
- * sign-off would lock these immutable rows to the placeholder (each row pays
- * out under its STAMPED snapshot forever). Recording the basis now and
- * applying the signed-off rate later removes the placeholder-rate liability.
+ * The percentage author bounty these columns were the basis for is GONE: it was
+ * superseded by the additive, author-set, viewer-paid per-generation author fee
+ * (observed dark below), and its compute + backpay rails were removed. The
+ * columns stay at 0 / 'unrated' so the row shape and its CHECK constraints are
+ * unchanged, and the event/gross trail keeps its full history.
  *
  * Self-spend (spender == app owner) and internal-owner apps write a
- * voided, zero-share row so the audit trail exists but nothing is ever
- * backpaid (mirrors recordAttribution's self-purchase wash).
+ * voided, zero-share row so the audit trail exists but the row is never
+ * payable (mirrors recordAttribution's self-purchase wash).
  */
 export async function recordSpendAttribution(
   input: RecordSpendAttributionInput
@@ -482,9 +532,17 @@ export async function recordSpendAttribution(
   // enumerate. It no longer is: the value now INTERPOLATES registry ids, so the
   // only complete statement of what is legal is `isBlockGenerationType`'s shape
   // test — coarse key in the closed set, and the segment after the first colon
-  // in the closed set that key allows. A caller assembling a value by hand (a
-  // cast, a future writer, a string built from a registry lookup) type-checks
-  // and is still refused here.
+  // in the closed set that key allows, EXCEPT under the `step` coarse key, whose
+  // subtype axis is open and bounded by shape (a caller-supplied orchestrator
+  // `$type`; see `generation-type.ts`'s THE ONE OPEN AXIS). A caller assembling a
+  // value by hand (a cast, a future writer, a string built from a registry
+  // lookup) type-checks and is still refused here.
+  //
+  // 🔴 AND THE TYPE IS NOW STRICTLY WIDER THAN THE RUNTIME BOUND, which makes
+  // this line load-bearing rather than belt-and-braces: `BlockGenerationType`
+  // includes the template literal `step:${string}`, because no type can express
+  // "matches this regex". So `'step:a b'` and a 200-char subtype both TYPE-CHECK
+  // at every call site and are refused only here and in the producer.
   const generationType = isBlockGenerationType(input.generationType) ? input.generationType : null;
 
   // Resolve + snapshot the app owner (mirrors recordAttribution). The
@@ -530,36 +588,21 @@ export async function recordSpendAttribution(
       })
     : null;
 
-  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned),
-  // defer the bounty. NO rate card is applied here (no computeSpendShare
-  // call). The backpay (Slice 4) computes bounty = gross × <signed-off
-  // spendSharePct> over status='tracked' rows. Today: share 0, no rate
-  // stamped.
+  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned).
+  // NO rate card is applied here, and the percentage author bounty this row was
+  // once the basis for no longer exists — it was superseded by the additive,
+  // author-set, viewer-paid per-generation author fee. The columns are kept at
+  // 0 / 'unrated' so the row shape and its CHECK constraints are unchanged.
   const rateCardVersion = UNRATED_RATE_CARD_VERSION;
   const spendSharePct = 0;
-  // The accrued bounty for THIS row. Track-only today: identically 0 until the
-  // payout rail (#2605) starts stamping a non-zero share here. `let` so the
-  // per-APP daily cap below can CLAMP it (a Sybil ring pointed at one app must
-  // not mint unbounded platform-funded bounty — audit note 🟡-2).
-  let appOwnerShareCents = 0;
+  const appOwnerShareCents = 0;
 
-  // PER-APP daily spend-BOUNTY accrual cap (audit 🟡-2 / Sybil-economics
-  // review). The per-user `BLOCK_BUZZ_CAP_PER_DAY` bounds one viewer's daily
-  // SPEND but is blind to MANY viewers funnelling bounty at ONE app. Reserve
-  // this row's accrued share against the app's cumulative UTC-day BOUNTY
-  // counter and clamp the accrual to whatever headroom remains. Same atomic
-  // INCRBY-with-TTL TOCTOU-safe mechanism as the per-user cap. DORMANT today:
-  // `appOwnerShareCents` is 0, so `reserveAppBountyAccrual` short-circuits
-  // without touching Redis and grants 0 — the cap never clamps and behaviour
-  // is byte-identical to before. When #2605 flips spendSharePct>0 the cap is
-  // already enforcing. Void rows (self/internal) also carry 0 → no-op.
-  const { reserveAppBountyAccrual } = await import('./app-bounty-cap.service');
-  const bountyReservation = await reserveAppBountyAccrual(appBlockId, appOwnerShareCents);
-  appOwnerShareCents = bountyReservation.grantedCents;
-
-  // Void rows that are zero because of WHO spent/owns so they are never
-  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
-  // payout-time backpay at the signed-off rate.
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
+  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
+  // spend row stays. The void/track distinction is kept because it is the
+  // self-spend / internal-owner marker the analytics reader and any future rail
+  // would both need, and voiding costs nothing.
   const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
@@ -608,6 +651,75 @@ export async function recordSpendAttribution(
       },
     });
 
+    // PER-GENERATION AUTHOR FEE — DARK OBSERVATION ONLY (slice 1). Computes
+    // what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. It moves
+    // no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. Settlement onto the licensing-fee
+    // rail is a later slice; this exists so that slice can be sized from real
+    // traffic before anyone is charged.
+    //
+    // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
+    // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
+    // P2002 branch below and must NOT observe a second fee for one generation,
+    // or the sizing number is inflated by exactly the retry rate.
+    //
+    // 🔴 SELF-SPEND IS OBSERVED LIKE ANY OTHER GENERATION — deliberately, and
+    // this is a DIVERGENCE from how attribution behaves two lines up, where
+    // `isSelfSpend` voids the row. The author fee is the VIEWER paying the
+    // author, and an author using their own app is a viewer like any other.
+    // ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
+    // transaction from an account to ITSELF, which is at best a no-op and may be
+    // rejected outright. Slice 1's shape does not make that harder — the
+    // observation carries no recipient, and `isSelfSpend` is already on this
+    // log line beside the fee — but the settlement writer has to decide
+    // explicitly whether a self-transfer is skipped or netted, rather than
+    // discovering it from a rejected transaction.
+    //
+    // 🔴 NO `.catch` HERE, DELIBERATELY. `observeBlockAuthorFee` is TOTAL by
+    // contract — every throwing surface inside it (the flag read, each counter
+    // `inc`) is caught at its own site and degrades to a named skip. A
+    // belt-and-braces `.catch(() => ({ reason: 'flag-disabled' }))` was written
+    // here and REMOVED: it is unreachable given that contract, and were it ever
+    // reachable it would file a THROW into the `flag-disabled` population —
+    // which is one of the two denominators the slice-2 sizing read depends on.
+    // A rejection here is a contract violation and must surface as one rather
+    // than be laundered into a gate-is-off count.
+    //
+    // ⚠️ WHERE IT WOULD SURFACE — stated precisely, because an earlier revision
+    // of this comment called the enclosing `catch` merely "loud" and that
+    // UNDERSTATES IT. A rejection here unwinds past everything between this
+    // line and the `catch` below, for a row that WAS persisted:
+    //   1. the success Axiom line is never written — the row exists with no
+    //      `block-spend-attribution` record of it;
+    //   2. `blockSpendAttributionWriteCounter.inc({ status })` never fires, so
+    //      the written-row counter undercounts;
+    // Then it rethrows (not a P2002) and reaches the caller's fire-and-forget
+    // `.catch`. That is still the correct destination for a broken contract —
+    // `authorFee.reason` is not — but it is not a free "loud" either, so the
+    // unreachability argument above is what carries this, and it holds for
+    // today's one caller.
+    //
+    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a NEW skip reason of its own
+    // (`observe-failed`, say) — never ANY existing member of
+    // `BlockAuthorFeeSkipReason`. Every reason in that union is a live
+    // population the slice-2 sizing read divides by or reasons about, and
+    // folding a contract violation into any of them is how a denominator
+    // acquires a silent bias. Stated against the union rather than a list of
+    // names on purpose: this comment previously said "a THIRD reason … never
+    // `flag-disabled` and never `base-unavailable`", and went stale the moment
+    // `price-is-cap` was added — it would now be the FOURTH, and the "never"
+    // list had a hole in it exactly where the newest reason sat.
+    const authorFee = await observeBlockAuthorFee({
+      // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
+      baseGenerationBuzz: input.baseGenerationBuzz ?? null,
+      // 🔴 A CAP PRICE SUPPRESSES THE FEE, under its own skip reason. Threaded
+      // rather than inferred: nothing downstream of the orchestrator response
+      // can tell a cap apart from a final price.
+      priceIsCap: input.generationPriceIsCap ?? null,
+      generationType,
+    });
+
     logToAxiom(
       {
         name: SPEND_ATTRIBUTION_LOG_NAME,
@@ -626,15 +738,73 @@ export async function recordSpendAttribution(
         // whether it resolved to a creditable author. Both are opaque/ids only.
         sharedContentKeyPresent: sharedContentKey != null,
         contentAuthorUserId,
-        // Bounded (registry-derived or null), so it is safe as a log field.
+        // 🔴 SHAPE-bounded or null — NOT "registry-derived", which is what this
+        // line used to claim and is no longer true of one arm. A `step:` value's
+        // subtype is a caller-supplied orchestrator `$type`, bounded by
+        // `isBlockGenerationType` to ≤64 chars of `[A-Za-z0-9._-]` and nothing
+        // else.
+        //
+        // ⚠️ THE SHAPE BOUND IS NOT WHAT MAKES IT SAFE HERE, and a draft of this
+        // comment said it was. `logToAxiom` builds the line with a single
+        // `JSON.stringify` (`@civitai/axiom`'s client, measured), so this value is
+        // an escaped JSON string VALUE and a newline or a quote in it could not
+        // break the line whatever the class admitted. What the bound actually buys
+        // downstream is bounded WIDTH and no unicode/control junk in a column
+        // future consumers will group and display.
+        //
+        // What does NOT follow, and is the reason this note exists: do not make it
+        // a metric LABEL or an object KEY. The subtype is app-chosen and
+        // open-ended, so it has no cardinality budget, and it admits prototype key
+        // names (`step:__proto__` is an accepted value).
         generationType,
         status,
         voidedReason,
         isSelfSpend,
-        // Per-app bounty cap observability (dormant today: clamped=false,
-        // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
-        appBountyClamped: bountyReservation.clamped,
-        appBountyDailyTotal: bountyReservation.total,
+        // DARK author-fee observability — FOUR fields, and the set is chosen by
+        // ONE rule: a property gets exactly one instrument, and this row is the
+        // instrument only where the counters cannot reach. The counters carry a
+        // single `coarse_type` label (deliberately — `appBlockId` would be
+        // unbounded cardinality), so anything needing a per-APP, per-`isSelfSpend`
+        // or per-full-`generationType` cut has to live here, beside those three
+        // fields, which are already on this line.
+        //
+        //   `authorFeeSkipped`   the ONLY instrument for the flag-disabled
+        //                        population — `observeBlockAuthorFee` emits no
+        //                        counter at all on that path, by design, and it
+        //                        is one of the two denominators the slice-2
+        //                        sizing read divides by. Also encodes "observed":
+        //                        null ⇔ the fee was computed.
+        //   `authorFeeBuzz`      the fee, per row. The counter gives the total
+        //                        by coarse type; only this gives "which apps
+        //                        would earn what, and how much is self-spend".
+        //   `authorFeeBaseBuzz`  its denominator, for the same per-app cut. Not
+        //                        recoverable from `buzzAmount` above — that is
+        //                        the gross, which already carries licensing
+        //                        fees, the lineage fee and tips.
+        //   `authorFeeParamsSource`  which level of the config answered. NO
+        //                        counter carries it, and it is genuinely
+        //                        variable in production now that
+        //                        `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType` is
+        //                        seeded (`chat-completion` → 'type', everything
+        //                        else → 'default').
+        //
+        // DROPPED, and why — a field that cannot vary is not observability:
+        //   `authorFeeObserved`       derivable: `authorFeeSkipped === null`.
+        //   `authorFeeLeg`            exactly the `outcome` label of
+        //                             `block_author_fee_observed_total`, and
+        //                             re-derivable from fee + base + source.
+        //   `authorFeeParamsClamped`  a COMPILE-TIME CONSTANT `false` in slice
+        //                             1 — re-derived after seeding `byType`, and
+        //                             it is still constant: the only production
+        //                             config is a module constant whose every
+        //                             leg is inside the ceiling, and no caller
+        //                             passes `config`. It becomes worth logging
+        //                             in slice 3, when an author can type a
+        //                             number; add it back then.
+        authorFeeSkipped: authorFee.observed ? null : authorFee.reason,
+        authorFeeBuzz: authorFee.observed ? authorFee.computation.feeBuzz : null,
+        authorFeeBaseBuzz: authorFee.observed ? authorFee.computation.baseGenerationBuzz : null,
+        authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
       },
       'webhooks'
     ).catch(() => null);
@@ -647,17 +817,6 @@ export async function recordSpendAttribution(
 
     return { written: true, row: created };
   } catch (err) {
-    // This call's row was NOT persisted (either a duplicate that the ORIGINAL
-    // row already accounts for, or a hard write failure). Release the bounty we
-    // reserved for it so the per-app daily counter reflects only persisted
-    // accrual — otherwise a retry storm would double-count toward the cap.
-    // Best-effort + DORMANT today (granted 0 → no-op). Refund against the
-    // PINNED key from the reservation (never a re-derived one — midnight-UTC
-    // race, same reasoning as the per-user refund).
-    if (bountyReservation.grantedCents > 0) {
-      const { refundAppBountyAccrual } = await import('./app-bounty-cap.service');
-      await refundAppBountyAccrual(bountyReservation.key, bountyReservation.grantedCents);
-    }
     // Idempotency: a re-poll / retry / re-submit that races the original
     // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
     // Return the pre-existing row so callers treat first-write and retry

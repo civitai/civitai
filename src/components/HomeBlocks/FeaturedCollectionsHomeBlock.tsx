@@ -8,6 +8,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
@@ -80,12 +81,22 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
     data: shuffledData as any,
   });
 
-  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
-    order,
-    entity: type,
-    rows,
-    maxPerUser,
-  });
+  // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
+  // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
+  // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
+  // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const items = useDedupedCappedItems(
+    useHydratedImageReactions(filtered, { entity: type }) as {
+      id: number;
+      user?: { id: number } | null;
+    }[],
+    {
+      order,
+      entity: type,
+      rows,
+      maxPerUser,
+    }
+  );
 
   const title = collection?.name ?? 'Collection';
   const link = collection ? `/collections/${collection.id}` : '#';

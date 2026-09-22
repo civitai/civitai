@@ -87,6 +87,15 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
+  // collapses to. OFF renders exactly today's behaviour: the server still marks the
+  // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
+  // metric timeout (hundreds to thousands a day), so this is the kill switch if the
+  // badge proves noisier than the silent zero.
+  // 🔴 `[]`, not `['mod']`: the client's `isEnabledSync` swallows "flag not found" and
+  // falls through to this static list, so `['mod']` would switch it on for every
+  // moderator at deploy, before the flag exists in Flipt. See `appListingsPublicExternal`.
+  reactionCountsUnknown: { availability: [], fliptKey: 'reaction-counts-unknown' },
   // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
   // arrays for the model / model3d / explicit-image sets instead of
   // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
@@ -256,7 +265,8 @@ const featureFlags = createFeatureFlags({
   trainingStudioUi: {
     toggleable: true,
     default: false,
-    displayName: 'Training Studio (new)',
+    displayName: 'Training Studio',
+    badge: 'Beta',
     description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
@@ -308,9 +318,16 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired by default (see 868m4c2dn): the `images_v6` search index is no longer fed or served.
-  // Static availability is empty so image search is off for everyone; re-enable without a deploy
-  // by turning on the `image-search` Flipt flag, which is authoritative when it exists.
+  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served, and the
+  // index itself has now been DELETED from the search backend. Static availability is empty so
+  // image search is off for everyone.
+  // 🔴 This is NO LONGER a no-deploy toggle. Turning on the `image-search` Flipt flag (which is
+  // still authoritative when it exists) would point image search at an index that does not
+  // exist. Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
+  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
+  // several days and badly degrades search for every other index while it runs. Measured on the
+  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
+  // So: treat re-enabling as a planned project, not a flag flip.
   imageSearch: { availability: [], fliptKey: 'image-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
@@ -528,25 +545,11 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
-  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface), so each can ship dark and roll out independently via
-  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
-  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
-  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
+  // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
-  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
-  hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
-  pixal3dGenerator: { availability: ['mod'], fliptKey: 'pixal3d-generator' },
-  trellis2Generator: { availability: ['mod'], fliptKey: 'trellis2-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
-  // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
-  // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
-  // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
-  // flag exists (absent ⇒ this static fallback), which is also the widen and
-  // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
-  // version id falls back to the ecosystem default (see grok-graph.ts).
-  grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
   // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
   // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
   // reads it from the generation ctx). Every parse shadow-compares regardless.
@@ -1103,6 +1106,7 @@ export const toggleableFeatures = Object.entries(featureFlags)
     key: key as FeatureFlagKey,
     displayName: value.displayName,
     description: value.description,
+    badge: value.badge,
     default: value.default ?? true,
   }));
 
@@ -1217,6 +1221,8 @@ type FeatureFlag = {
   availability: FeatureAvailability[];
   toggleable: boolean;
   default?: boolean;
+  /** Chip rendered beside the settings toggle's label (e.g. 'Beta') — presentation only. */
+  badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
 };

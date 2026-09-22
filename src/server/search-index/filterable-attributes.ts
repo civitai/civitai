@@ -64,6 +64,7 @@ export const modelsFilterableAttributes = [
   'user.username',
   'version.baseModel',
   'versions.baseModel',
+  'versions.generatorLoaded',
   'versions.hashes',
   'versions.id',
   'cannotPromote',

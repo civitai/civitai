@@ -88,10 +88,7 @@ const ABORT_VALUE_RES = [
   /\bsignal is aborted without reason\b/i,
 ];
 // UnhandledRejection variants for Next.js route-change aborts.
-const ROUTECHANGE_ABORT_RES = [
-  /\bnextjs route change aborted\b/i,
-  /\brouteChange aborted\b/i,
-];
+const ROUTECHANGE_ABORT_RES = [/\bnextjs route change aborted\b/i, /\brouteChange aborted\b/i];
 
 // Ad-blocker / third-party script load failures. Matched ONLY inside the explicit
 // "Failed to load script" shape OR against known ad-network hosts/globals — never a bare host
@@ -161,6 +158,105 @@ function isInjectedFrame(frame: ClassifiableStackFrame): boolean {
   // injected/extension/eval frame with no project source.
   if (filename === '' || filename.toLowerCase() === 'undefined') return true;
   return false;
+}
+
+// ── What counts as PROJECT SOURCE ────────────────────────────────────────────────────────────
+//
+// 🔴 These three exclusions exist because a `Failed to fetch` stack is NOT built from the
+// awaiting code — the browser captures the SYNCHRONOUS CALL STACK at the moment `fetch()` is
+// invoked. So every layer that sits between the caller and the network appears on EVERY fetch
+// rejection, whoever initiated it. A frame that is present unconditionally carries no
+// attribution signal and must not be read as "our fetch code failed".
+
+// 1) Dependencies. A bundler rewrites a `node_modules` file to a `turbopack://`/`webpack://`
+//    URL just like our own source, so the scheme test alone cannot tell them apart. The fetch
+//    instrumentation that wraps every request (`@opentelemetry/instrumentation-fetch`, pulled in
+//    by the browser tracing package) lands here.
+const DEPENDENCY_PATH_RE = /(?:^|[/\\])node_modules[/\\]/i;
+
+// 2) Our own GLOBAL `window.fetch` wrappers. `UpdateRequiredWatcher` patches `window.fetch` for
+//    the whole document to read update-prompt response headers, so its frame is on the stack of
+//    every fetch — including third-party ad/analytics requests that never touch any other app
+//    code. It is genuine project source, which is exactly why it has to be named here: the
+//    `node_modules` rule above cannot exclude it.
+//    🔴 Keep this in sync with the wrapper itself; the two files reference each other in
+//    comments.
+//    Scope note: this only suppresses the frame's ability to PROVE project involvement — an
+//    actual bug inside the watcher still surfaces under its own message. But be precise about
+//    how much that protects, because the two DROP rules consulting this guard differ:
+//      - rule 6 (network) matches the WHOLE message, anchored, so any watcher error with a
+//        message of its own is kept;
+//      - rule 1 (abort) matches an enumerated set of abort phrases as UNANCHORED substrings, so
+//        a watcher message that happens to contain one ("…the operation was aborted while
+//        reading update headers") IS droppable.
+//    So message anchoring is not a blanket protection. Weigh that before adding a file here.
+const GLOBAL_FETCH_WRAPPER_PATH_RES = [
+  /[/\\]UpdateRequiredWatcher[/\\]UpdateRequiredWatcher\.tsx?(?:[?#:]|$)/i,
+];
+
+// 3) Third-party scripts. A bare `.js` extension test matches every script on the web, so an ad
+//    or analytics bundle (`…/pubads_impl.js`) used to read as project source. An ABSOLUTE
+//    http(s) frame is judged purely on its PATH: Next's `/_next/` bundles, or the hand-built
+//    workers in `public/workers/`. Non-absolute filenames (bundler schemes, bare source paths)
+//    are unaffected and still match on extension below.
+// Protocol-relative (`//host/path`) counts as absolute too: a frame spelled that way is still a
+// fetch from some host, and without it a `//securepubads…/pubads_impl.js` frame falls through to
+// the bare extension test and reads as project source — exactly the traffic this guard excludes.
+// A bundler scheme (`turbopack:///…`) does NOT match: the optional `https?:` cannot consume
+// `turbopack:`, so the `//` is not at position 0.
+//
+// 🔴 THE HOST IS DELIBERATELY NOT CHECKED, and that is a real hole, not an oversight: the app is
+// served from several first-party domains, plus per-PR preview hosts, so a static host list is
+// exactly the thing that would start producing FALSE DROPS the first time a new domain appears.
+// A pure classifier has no trustworthy way to enumerate them. The cost is that ANY site's `/_next/`
+// or `/workers/` path reads as ours — and every Next.js site on the web serves `/_next/`, so a
+// third-party embed frame can block a drop. That fails SAFE (noise kept, never a real bug
+// dropped), which is why it is accepted here; a test records the decision so it is not
+// rediscovered as a bug. Adding a host check means feeding this module a first-party host set.
+const ABSOLUTE_URL_RE = /^(?:https?:)?\/\//i;
+// Both slashes are load-bearing: without the leading one `…/js/webworkers/loader.js` matches,
+// and without the trailing one `…/workersfoo/x.js` does. Both would silently re-admit the noise.
+const FIRST_PARTY_ASSET_PATH_RE = /\/(?:_next|workers)\//i;
+
+// 🔴 EXCEPTION TO (1) — our API client stack. `node_modules` normally proves nothing, but these
+// libraries only ever appear on a stack because OUR code asked them for something, so they DO
+// attribute the request to us. They need naming because our own frames are frequently absent
+// from a tRPC failure: `@trpc/client` batches and dispatches from a `setTimeout`, so by the time
+// `fetch()` runs the synchronous stack is library frames only and every frame above it is gone.
+// Without this, a genuine first-party API failure — an unreachable origin, a CORS or certificate
+// regression, a bad deploy — would be dropped as a transient network blip.
+// Third-party ad/analytics requests never touch these, so this does not reopen the gate.
+//
+// ⚠️ NOT listed, deliberately: the RUM SDK's own beacon transport. A failed telemetry POST is a
+// first-party request, and it is now dropped as `network` noise rather than surfacing as an app
+// error. That is the right call — an undeliverable beacon is not an app bug — but it means
+// "our telemetry ingest is being blocked for real users" has to be read off the ingest RATE, not
+// off this exception stream. Do not read its absence here as health.
+const FIRST_PARTY_CLIENT_LIB_RES = [
+  /[/\\]node_modules[/\\]@trpc[/\\]/i,
+  /[/\\]node_modules[/\\]@tanstack[/\\]react-query/i,
+];
+
+function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
+  // Covers the empty / `undefined` filename cases, so no further blank check is needed below.
+  if (isInjectedFrame(frame)) return false;
+  const filename = (frame.filename ?? '').trim();
+  if (anyMatch(GLOBAL_FETCH_WRAPPER_PATH_RES, filename)) return false;
+  // 🔴 The absolute-URL test runs BEFORE the dependency allowlist, and the order is load-bearing:
+  // a remote URL is decided purely by whether its PATH is one of ours. Otherwise a third-party
+  // script served from a path that merely contains `/node_modules/@trpc/` would be allowlisted
+  // into counting as our code. A real dependency frame carries a bundler scheme, not `http(s)`,
+  // so it reaches the check below.
+  if (ABSOLUTE_URL_RE.test(filename)) return FIRST_PARTY_ASSET_PATH_RE.test(filename);
+  // Every `FIRST_PARTY_CLIENT_LIB_RES` pattern requires `node_modules/`, a strict subset of what
+  // `DEPENDENCY_PATH_RE` matches — so nesting the allowlist inside the dependency check is
+  // equivalent to testing it separately, and skips two scans on every non-dependency frame.
+  if (DEPENDENCY_PATH_RE.test(filename)) return anyMatch(FIRST_PARTY_CLIENT_LIB_RES, filename);
+  return (
+    /^(?:turbopack|webpack):\/\//i.test(filename) ||
+    FIRST_PARTY_ASSET_PATH_RE.test(filename) ||
+    /\.(?:tsx?|jsx?|mjs|cjs)(?:[?#:]|$)/i.test(filename)
+  );
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────────────────────
@@ -243,10 +339,13 @@ export function classifyException(exc: ClassifiableException | null | undefined)
 }
 
 /**
- * True iff the stack has at least one frame that references PROJECT SOURCE (a `turbopack://` /
- * `webpack://` scheme, a `_next/` bundle URL, or a JS/TS source filename). Used to guard the
- * "bare network" DROP: a `Failed to fetch` with a real app frame is a bug in OUR fetch code and
- * must be KEPT. Conservative — anything that looks like real source counts.
+ * True iff the stack has at least one frame that references PROJECT SOURCE — OUR code, as
+ * opposed to a dependency, a third-party script, or the global fetch plumbing every request
+ * passes through (see `isProjectSourceFrame` for why those three are excluded).
+ *
+ * Used to guard the "bare network" DROP: a `Failed to fetch` raised from a call site in our own
+ * code is a bug in OUR fetch code and must be KEPT, while one whose only app-adjacent frames are
+ * instrumentation is a third-party network blip and is dropped.
  */
 function hasProjectSourceFrame(exc: ClassifiableException): boolean {
   const frames = exc.stacktrace?.frames;
@@ -255,14 +354,5 @@ function hasProjectSourceFrame(exc: ClassifiableException): boolean {
   // DROP rules that consult it also require an anchored/known message match, an odd shape can
   // still never manufacture a drop on its own. Fails open at the classifyException level too.
   if (!Array.isArray(frames) || frames.length === 0) return false;
-  return frames.some((f) => {
-    if (isInjectedFrame(f)) return false;
-    const filename = (f.filename ?? '').trim();
-    if (!filename) return false;
-    return (
-      /^(?:turbopack|webpack):\/\//i.test(filename) ||
-      /\/_next\//i.test(filename) ||
-      /\.(?:tsx?|jsx?|mjs|cjs)(?:[?#:]|$)/i.test(filename)
-    );
-  });
+  return frames.some((f) => isProjectSourceFrame(f));
 }

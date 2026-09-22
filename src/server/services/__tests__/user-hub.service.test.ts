@@ -33,8 +33,9 @@ import {
   getUserHubByKey,
   hubRouteIsDark,
   getUserHubForRoute,
-  getHubSourceSuggestions,
+  getHubSourceScope,
   deleteUserHub,
+  groupTagIds,
   hubBrowsingLevel,
   hubViewerWhere,
   hubWriterWhere,
@@ -120,6 +121,24 @@ describe('hubViewerWhere', () => {
     // Strict: `toEqual({})` also passes for `{ OR: undefined }`, which is a
     // different query and would be a moderator seeing nothing.
     expect(hubViewerWhere({ userId: 5, isModerator: true })).toStrictEqual({});
+  });
+});
+
+describe('userHubSourceSchema.groupKey', () => {
+  const parse = (groupKey: number) =>
+    upsertUserHubSchema.safeParse({
+      id: 1,
+      sources: [{ type: UserHubSourceType.Tag, targetId: 77, groupKey }],
+    });
+
+  it('refuses a key past the most rows a hub can hold', () => {
+    // The column is a Postgres INTEGER. Unbounded, an out-of-range key passes zod and
+    // fails inside the replace transaction as a raw DB error with no message the owner
+    // can act on. The ceiling is the row cap, which is the most distinct keys a hub can
+    // ever need — `nextHubGroupKey` hands out the lowest free one so it cannot climb.
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub).success).toBe(true);
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub + 1).success).toBe(false);
+    expect(parse(2_147_483_648).success).toBe(false);
   });
 });
 
@@ -220,9 +239,131 @@ describe('resolveHubSources', () => {
       // Both directions asserted. Half of this — the positive sets — stays green if
       // every source is read as an exclusion, which is a hub that shows nothing.
       expect(result?.userIds).toEqual([10]);
-      expect(result?.tagIds).toEqual([77]);
+      expect(result?.tagGroups).toEqual([[77]]);
       expect(result?.excluded.userIds).toEqual([11]);
-      expect(result?.excluded.tagIds).toEqual([78]);
+      expect(result?.excluded.tagGroups).toEqual([[78]]);
+    });
+
+    it('scopes groupKey to one side of `exclude` — asserted on groupTagIds DIRECTLY', () => {
+      // 🔴 Called with a MIXED list, which `resolveHubSources` never does: it splits
+      // the rows by polarity and calls this once per side, so a test routed through it
+      // passes whether or not `exclude` is part of the map key. Verified — removing
+      // the polarity from the key leaves the whole resolver suite green.
+      //
+      // The key is the guard against a later refactor folding those two calls into
+      // one. Fold them and this is the only thing standing between a kept-out tag and
+      // the hub's own AND-set.
+      const row = (targetId: number, exclude: boolean, groupKey: number | null) => ({
+        type: UserHubSourceType.Tag,
+        targetId,
+        exclude,
+        groupKey,
+      });
+
+      expect(
+        groupTagIds([row(77, false, 0), row(90, true, 0), row(78, false, 0), row(91, true, 0)])
+      ).toEqual([
+        [77, 78],
+        [90, 91],
+      ]);
+    });
+
+    it('groups each side of `exclude` independently', async () => {
+      // What this pins is that grouping HAPPENS on both sides with a shared key — not
+      // the polarity scoping, which it cannot observe: `resolveHubSources` hands
+      // `groupTagIds` a list already split by polarity, so deleting `exclude` from the
+      // key leaves both arms here green. The scoping is asserted directly above, by
+      // calling `groupTagIds` with a mixed list. Do not re-add a 🔴 claim here.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77, 78]]);
+      expect(result?.excluded.tagGroups).toEqual([[90, 91]]);
+    });
+
+    it('lets a NON-TAG row carry a groupKey without pulling anything with it', async () => {
+      // Only tags are ANDed; every other kind is its own OR-arm, so a key on one is
+      // inert. Without the type check a toggled creator would sweep the tag group that
+      // happens to share its number — a widening by the same door the sweep closes.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 10 }],
+      });
+
+      expect(result?.userIds).toEqual([]);
+      expect(result?.tagGroups).toEqual([[77, 78]]);
+    });
+
+    it('drops the WHOLE group when a session toggle hits ONE member', async () => {
+      // 🔴 Do not "simplify" this to dropping the toggled member. This list comes from
+      // the client, and the only reason it is safe to honour is that subtracting can
+      // ONLY narrow the feed. `A AND B` minus B is `A`, which matches a SUPERSET — so
+      // a per-member subtraction would let any viewer widen someone else's hub past
+      // what its owner set, by sending one id on the feed query.
+      //
+      // The ungrouped tag beside it is the control: it proves the toggle removed the
+      // group rather than emptying the tag set outright.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.Tag, targetId: 78 }],
+      });
+
+      expect(result?.tagGroups).toEqual([[79]]);
+    });
+
+    it('resolves a hub that PREDATES groupKey to one group per tag', async () => {
+      // The compatibility claim, asserted over rows rather than over a hand-written
+      // `tagGroups` stub. `hub-feed-filter.test.ts` mocks this function out entirely,
+      // so without this case the "null means a group of one" mapping is pinned at
+      // both ends of the path and nowhere in the middle.
+      //
+      // `groupKey: null` spelled out, not omitted: null is what Prisma returns for a
+      // row written before the column existed, and a fixture that leaves the key off
+      // describes a row that cannot exist.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77], [78], [79]]);
+      expect(result?.excluded.tagGroups).toEqual([[90], [91]]);
     });
 
     it('IGNORES a session toggle aimed at a negative source', async () => {
@@ -513,6 +654,38 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
         type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
+  });
+
+  it('offers the picker the SAME vocabulary the write path enforces', async () => {
+    // 🔴 The two must be ONE rule, and the textual guard in
+    // `hub-moderation-tag-vocabulary.test.ts` cannot prove that: it only proves the
+    // service mentions the constant SOMEWHERE, and the write-path query above keeps
+    // that line alive on its own. Drop `hubTagWhere` from the tag search and the guard
+    // stays green while the picker starts offering unlisted, adminOnly and System tags.
+    // This is the half that watches the search.
+    findTags.mockResolvedValue([]);
+
+    await getHubSourceScope({ scope: 'tags', query: 'drag', userId: 5 });
+
+    expect(findTags.mock.calls[0][0].where).toEqual({
+      name: { contains: 'drag', mode: 'insensitive' },
+      unlisted: false,
+      adminOnly: false,
+      target: { hasEvery: [TagTarget.Image] },
+      type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
+    });
+  });
+
+  it('hands a moderation label back rather than dropping it after the query', async () => {
+    // The post-query half. A narrowing added AFTER the read leaves the `where` above
+    // untouched, so only the rows that come back can catch it.
+    findTags.mockResolvedValue([
+      { ...imageTag({ id: 91, name: 'sexy', type: TagType.Moderation }), metrics: [] },
+    ]);
+
+    const result = await getHubSourceScope({ scope: 'tags', query: 'sex', userId: 5 });
+
+    expect(result.items.map((item) => item.targetId)).toEqual([91]);
   });
 
   it('refuses a tag the query did not return, whatever the reason', async () => {
@@ -1133,15 +1306,15 @@ describe('persisting the feed filters', () => {
   });
 });
 
-// Each arm reads a table that also holds other people's rows. A `userId` dropped
+// Each scope reads a table that also holds other people's rows. A `userId` dropped
 // from any of these where clauses is a leak with no visible symptom — the picker
 // simply offers more, which looks like the feature working.
-describe('source suggestions stay inside the viewer', () => {
-  it('scopes the creators arm to the viewer, over a bounded window', async () => {
+describe('the creators scope stays inside the viewer', () => {
+  it('scopes the relationship read to the viewer, over a bounded window', async () => {
     dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+    await getHubSourceScope({ scope: 'following', query: 'some', userId: 5 });
 
     const follows = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0];
     expect(follows.where.userId).toBe(5);
@@ -1169,10 +1342,10 @@ describe('source suggestions stay inside the viewer', () => {
     dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    await getHubSourceScope({ scope: 'following', userId: 5 });
     const listing = dbMock.dbRead.userEngagement.findMany.mock.calls[0][0].take;
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+    await getHubSourceScope({ scope: 'following', query: 'some', userId: 5 });
     const searching = dbMock.dbRead.userEngagement.findMany.mock.calls[1][0].take;
 
     expect(searching).toBeGreaterThan(listing);
@@ -1181,13 +1354,12 @@ describe('source suggestions stay inside the viewer', () => {
 
   it('treats a one-character term as no term at all', async () => {
     // Measured on the prod replica: a term costs the whole relationship read whatever
-    // its length — up to 1.02 GB of buffer touches on the models arm — and one
-    // character matches most of the window anyway. So the first keystroke lists
-    // instead of searching.
+    // its length, and one character matches most of the window anyway. So the first
+    // keystroke lists instead of searching.
     dbMock.dbRead.userEngagement.findMany.mockResolvedValue([{ targetUserId: 11 }]);
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 11, username: 'someone' }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 's' });
+    await getHubSourceScope({ scope: 'following', query: 's', userId: 5 });
 
     const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
     expect(names.where.username).toBeUndefined();
@@ -1203,7 +1375,7 @@ describe('source suggestions stay inside the viewer', () => {
     // constant is only pinned to (1, 4] — raising it to 3 or 4 silently turns the
     // shortest terms people actually type into a recency list, and every other query
     // in this file is four characters, so nothing else would notice.
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'so' });
+    await getHubSourceScope({ scope: 'following', query: 'so', userId: 5 });
 
     const searched = dbMock.dbRead.user.findMany.mock.calls[1][0];
     expect(searched.where.username).toEqual({ contains: 'so', mode: 'insensitive' });
@@ -1218,70 +1390,11 @@ describe('source suggestions stay inside the viewer', () => {
     dbMock.dbRead.userEngagement.findMany.mockResolvedValue(followed);
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 100, username: 'someone' }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User, query: 'some' });
+    await getHubSourceScope({ scope: 'following', query: 'some', userId: 5 });
 
     const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
     expect(names.where.id.in).toHaveLength(600);
     expect(names.take).toBe(25);
-  });
-
-  // Skipped while collections are dark, following the four `skipIf` cases above: the
-  // arm returns before its query, so an assertion on it would pass with the widened
-  // window reverted. It runs the day the constant flips, which is the day it means
-  // something.
-  it.skipIf(!HUB_COLLECTION_SOURCES_ENABLED)(
-    'widens the collections relationship query for a search too',
-    async () => {
-      dbMock.dbRead.collectionContributor.findMany.mockResolvedValue([{ collectionId: 3 }]);
-      dbMock.dbRead.collection.findMany.mockResolvedValue([{ id: 3, name: 'stuff' }]);
-
-      await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
-      const listing = dbMock.dbRead.collectionContributor.findMany.mock.calls[0][0].take;
-
-      await getHubSourceSuggestions({
-        userId: 5,
-        type: UserHubSourceType.Collection,
-        query: 'stu',
-      });
-      const searchCall = dbMock.dbRead.collectionContributor.findMany.mock.calls[1][0];
-
-      expect(searchCall.take).toBeGreaterThan(listing);
-      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
-      // NULLS FIRST — without it the window fills with rows carrying no date at all,
-      // which is the opposite of the recency cut this claims to be.
-      expect(searchCall.orderBy).toEqual({ createdAt: { sort: 'desc', nulls: 'last' } });
-      // And the whole window must reach the names query here too, the same way it
-      // does on the creators arm.
-      expect(dbMock.dbRead.collection.findMany.mock.calls[1][0].where.id.in).toEqual([3]);
-    }
-  );
-
-  it('widens every models relationship query for a search, not just the creators one', async () => {
-    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
-    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
-
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
-    const listing = [
-      dbMock.dbRead.model.findMany.mock.calls[0][0].take,
-      dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].take,
-      dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].take,
-    ];
-
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
-    // The names query is call 1 on `model.findMany` with no term and call 3 with one,
-    // so the id queries are 0 and 2 — reading the wrong one is how a widened window
-    // gets asserted against a page size.
-    const searching = [
-      dbMock.dbRead.model.findMany.mock.calls[2][0].take,
-      dbMock.dbRead.modelEngagement.findMany.mock.calls[1][0].take,
-      dbMock.dbRead.collectionItem.findMany.mock.calls[1][0].take,
-    ];
-
-    expect(listing).toEqual([listing[0], listing[0], listing[0]]);
-    expect(searching).toEqual([searching[0], searching[0], searching[0]]);
-    expect(searching[0]).toBeGreaterThan(listing[0]);
   });
 
   it('keeps the most recent relationships when there is nothing to search', async () => {
@@ -1295,7 +1408,7 @@ describe('source suggestions stay inside the viewer', () => {
       { id: 100, username: 'aaron' },
     ]);
 
-    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    const result = await getHubSourceScope({ scope: 'following', userId: 5 });
 
     const names = dbMock.dbRead.user.findMany.mock.calls[0][0];
     expect(names.orderBy).toBeUndefined();
@@ -1303,7 +1416,7 @@ describe('source suggestions stay inside the viewer', () => {
     // restriction — asking for exactly 25 returns a short page when one has gone.
     expect(names.where.id.in).toEqual(followed.slice(0, 50).map((f) => f.targetUserId));
     expect(names.where.id.in.length).toBeGreaterThan(25);
-    expect(result.map((r) => r.targetId)).toEqual([100, 101]);
+    expect(result.items.map((r) => r.targetId)).toEqual([100, 101]);
   });
 
   it('trims the deleted-row margin back to one page, keeping the most recent', async () => {
@@ -1314,53 +1427,28 @@ describe('source suggestions stay inside the viewer', () => {
       Array.from({ length: 40 }, (_, i) => ({ id: 139 - i, username: `user${139 - i}` }))
     );
 
-    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.User });
+    const result = await getHubSourceScope({ scope: 'following', userId: 5 });
 
-    expect(result).toHaveLength(25);
+    expect(result.items).toHaveLength(25);
     // The 25 earliest positions in the follow list, not the 25 the query happened to
     // return first — a page short of 25, or ordered by id, both fail here.
-    expect(result.map((r) => r.targetId)).toEqual(Array.from({ length: 25 }, (_, i) => 100 + i));
+    expect(result.items.map((r) => r.targetId)).toEqual(
+      Array.from({ length: 25 }, (_, i) => 100 + i)
+    );
   });
+});
 
-  it('scopes every models arm to the viewer, and filters names once over the union', async () => {
+// A bookmark or a bell outlives the model going private or back to draft, so this is
+// the one browse list that can name something the viewer may no longer see.
+describe('the bookmarked scope', () => {
+  it('offers only the models the paste-a-link path would resolve', async () => {
     dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
     dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
     dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 2, name: 'Nova', metrics: [] }]);
 
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model, query: 'nova' });
-
-    const own = dbMock.dbRead.model.findMany.mock.calls[0][0];
-    const engaged = dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0];
-    expect(own.where.userId).toBe(5);
-    expect(engaged.where.userId).toBe(5);
-    // The bookmark arm is scoped by the collection it reads, which is itself the
-    // viewer's — so assert the lookup that picked it, not the item query.
-    expect(dbMock.dbRead.collection.findFirst.mock.calls[0][0].where.userId).toBe(5);
-    expect(dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].where.collectionId).toBe(77);
-
-    // None of the three id queries may carry the name filter — that is what made
-    // the planner walk every bookmark and every Notify row.
-    expect(own.where.name).toBeUndefined();
-    expect(engaged.where.model).toBeUndefined();
-    // The shape `ModelEngagement_notify_userId_createdAt_idx` was built to serve.
-    // Changing this to any other column silently makes that index unusable and the
-    // arm goes back to reading every row — 250,491 of them on the largest account.
-    expect(engaged.orderBy).toEqual({ createdAt: 'desc' });
-    const names = dbMock.dbRead.model.findMany.mock.calls[1][0];
-    expect(names.where.id).toEqual({ in: [1, 2, 3] });
-    expect(names.where.name).toEqual({ contains: 'nova', mode: 'insensitive' });
-    expect(names.orderBy).toEqual({ name: 'asc' });
-  });
-
-  it('offers only the models the paste-a-link path would resolve', async () => {
-    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
-    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
-
-    await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Model });
-    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+    await getHubSourceScope({ scope: 'bookmarks', userId: 5 });
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[0][0].where;
 
     dbMock.dbRead.model.findFirst.mockResolvedValue(null);
     await resolveHubSourceFromUrl({ url: 'https://civitai.com/models/2', userId: 5 });
@@ -1377,29 +1465,41 @@ describe('source suggestions stay inside the viewer', () => {
   });
 
   it('lifts the visibility filter for a moderator, as the link path does', async () => {
-    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 1 }]);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    // The browse list and the paste-a-link path answer the same question, so they
+    // lift for the same viewer. The write path gates neither, so a moderator who
+    // could resolve a model by URL but not see it in their own bookmarks was reading
+    // one rule from two places.
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
     dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
 
-    await getHubSourceSuggestions({
-      userId: 5,
-      type: UserHubSourceType.Model,
-      isModerator: true,
-    });
+    await getHubSourceScope({ scope: 'bookmarks', userId: 5, isModerator: true });
 
-    const suggested = dbMock.dbRead.model.findMany.mock.calls[1][0].where;
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[0][0].where;
     expect(suggested.OR).toBeUndefined();
     expect(suggested.deletedAt).toBeNull();
+    // Still not their own catalogue: the lift is about visibility, not about which
+    // tab a model belongs in.
+    expect(suggested.userId).toEqual({ not: 5 });
   });
+  it('scopes every relationship read to the viewer', async () => {
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 3 }]);
 
-  it('offers no collections while the write path refuses them', async () => {
-    expect(HUB_COLLECTION_SOURCES_ENABLED).toBe(false);
+    await getHubSourceScope({ scope: 'bookmarks', userId: 5 });
 
-    const result = await getHubSourceSuggestions({ userId: 5, type: UserHubSourceType.Collection });
-
-    expect(result).toEqual([]);
-    expect(dbMock.dbRead.collectionContributor.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].where.userId).toBe(5);
+    // The bookmark arm is scoped by the collection it reads, which is itself the
+    // viewer's — so assert the lookup that picked it, not the item query.
+    expect(dbMock.dbRead.collection.findFirst.mock.calls[0][0].where.userId).toBe(5);
+    expect(dbMock.dbRead.collectionItem.findMany.mock.calls[0][0].where.collectionId).toBe(77);
+    // The shape `ModelEngagement_notify_userId_createdAt_idx` was built to serve.
+    // Changing this to any other column silently makes that index unusable and the
+    // arm goes back to reading every row — 250,491 of them on the largest account.
+    expect(dbMock.dbRead.modelEngagement.findMany.mock.calls[0][0].orderBy).toEqual({
+      createdAt: 'desc',
+    });
   });
 });
 
@@ -1821,6 +1921,71 @@ describe('getUserHubs', () => {
     const [hub] = await getUserHubs({ userId: 5 });
 
     expect(hub.isOwner).toBe(true);
+  });
+
+  it('never asks for the sources themselves', async () => {
+    // The whole point of the summary: 20 hubs of 50 sources is a thousand rows with
+    // their aliases, shipped on every render of every hub page. A `select` that grows
+    // `sources` back reads as a working list everywhere else.
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHub.findMany.mock.calls[0][0].select.sources).toBeUndefined();
+  });
+
+  it('counts only what fills the feed, per kind', async () => {
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([{ id: 1, userId: 5, metadata: {} }]);
+    dbMock.dbRead.userHubSource.groupBy.mockResolvedValue([
+      {
+        hubId: 1,
+        type: UserHubSourceType.User,
+        enabled: true,
+        exclude: false,
+        _count: { _all: 2 },
+      },
+      { hubId: 1, type: UserHubSourceType.Tag, enabled: true, exclude: false, _count: { _all: 1 } },
+      // Switched off: it contributes nothing to the feed, so it is not in the sentence
+      // the card renders — but it still occupies a slot against the source cap.
+      {
+        hubId: 1,
+        type: UserHubSourceType.Model,
+        enabled: false,
+        exclude: false,
+        _count: { _all: 3 },
+      },
+      // The keep-out list is counted on its own, never mixed into what the hub holds.
+      { hubId: 1, type: UserHubSourceType.User, enabled: true, exclude: true, _count: { _all: 4 } },
+    ]);
+
+    const [hub] = await getUserHubs({ userId: 5 });
+
+    expect(hub.sourceCounts).toStrictEqual({ User: 2, Tag: 1 });
+    expect(hub.sourceCount).toBe(6);
+    expect(hub.excludedCount).toBe(4);
+  });
+
+  it('asks for the counts of the hubs it actually returned', async () => {
+    // An unscoped groupBy would count every hub on the site and then be filtered in
+    // memory — a table scan that reads as a correct number.
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([
+      { id: 1, userId: 5, metadata: {} },
+      { id: 2, userId: 5, metadata: {} },
+    ]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHubSource.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { hubId: { in: [1, 2] } } })
+    );
+  });
+
+  it('asks for no counts at all when the caller has no hubs', async () => {
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHubSource.groupBy).not.toHaveBeenCalled();
   });
 });
 

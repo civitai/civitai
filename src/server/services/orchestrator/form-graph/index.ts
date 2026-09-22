@@ -49,6 +49,7 @@ import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
+import { createYuE2Input } from './yue2.handler';
 import {
   createPolyGenInput,
   createTripoInput,
@@ -101,6 +102,7 @@ export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
+export { createYuE2Input } from './yue2.handler';
 export {
   createPolyGenInput,
   createTripoInput,
@@ -297,6 +299,9 @@ function createStep(
 
     case 'MiniMaxMusic3':
       return createMiniMaxMusicInput(data, handlerCtx);
+
+    case 'YuE2':
+      return createYuE2Input(data, handlerCtx);
 
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);

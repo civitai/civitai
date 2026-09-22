@@ -30,3 +30,18 @@ export const buzzBalance = {
     }
   },
 };
+
+/** How much of `price` would come out of the chosen yellow/green account, Blue spending first.
+ *  Null = nothing beyond Blue. `uncertain` = the balance couldn't be read — fail SAFE and assume
+ *  the whole price may be non-Blue rather than reverting to silent spending. One definition for
+ *  every spend site, because two hand-written copies of a money answer is how they diverge. */
+export function nonBlueSpend(
+  price: number | null | undefined,
+  mode: 'yellow' | 'green'
+): { amount: number; currency: 'yellow' | 'green'; uncertain: boolean } | null {
+  if (price == null || price <= 0) return null;
+  const blue = balances?.blue;
+  if (typeof blue !== 'number') return { amount: price, currency: mode, uncertain: true };
+  if (price <= blue) return null;
+  return { amount: price - Math.max(0, blue), currency: mode, uncertain: false };
+}

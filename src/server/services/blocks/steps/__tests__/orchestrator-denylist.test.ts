@@ -184,3 +184,68 @@ describe('orchestrator denylist — the live seam: the step registry', () => {
     expect(() => assertStepInvariants(id, real)).not.toThrow();
   });
 });
+
+/**
+ * CASE NORMALIZATION — the denylist is the ONLY control on the pass-through
+ * `kind:'step'` arm, so a spelling that walks past it is a full bypass of it,
+ * not a cosmetic gap.
+ *
+ * 🔴 WHY THIS IS NOT PARANOIA ABOUT AN IMAGINARY INPUT. The lookup was a plain
+ * `Set.has(stepType)`, i.e. exact and case-sensitive, while the value it guards
+ * is a caller-supplied string forwarded verbatim to an orchestrator this repo
+ * does not own. Whether that orchestrator matches `$type` case-insensitively is
+ * unknown from here and is not ours to assume either way — so the control has
+ * to hold for BOTH answers. Normalizing costs nothing and removes the
+ * dependency on a behaviour we cannot see.
+ *
+ * Safe by measurement, not by hope: all 50 `$type` keys in the live
+ * `WorkflowStepTemplate.discriminator.mapping` are distinct when lowercased
+ * (measured 2026-09-17: 50 keys, 50 distinct-lowercased), so folding case
+ * cannot make an ALLOWED type collide with a denied one. It denies a strict
+ * superset of what it denied before.
+ */
+describe('orchestrator denylist — case normalization', () => {
+  const RECASINGS = [
+    ['xGuardModeration', 'XGuardModeration'],
+    ['xGuardModeration', 'xguardmoderation'],
+    ['xGuardModeration', 'XGUARDMODERATION'],
+    ['modelPickleScan', 'ModelPickleScan'],
+    ['imageScanning', 'IMAGESCANNING'],
+    ['webScrape', 'WebSCRAPE'],
+  ] as const;
+
+  it.each(RECASINGS)('denies %s spelled %s', (canonical, recased) => {
+    // The canonical spelling is the control: if THIS ever stops being denied the
+    // test below proves nothing, because everything would be passing.
+    expect(isPlatformInternalStepType(canonical)).toBe(true);
+    expect(isPlatformInternalStepType(recased)).toBe(true);
+    expect(() => assertStepTypeAllowed(recased)).toThrow(PlatformInternalStepTypeError);
+  });
+
+  /**
+   * The negative control. Folding case must not start denying a legitimate
+   * type — without this, `() => true` would satisfy every assertion above.
+   */
+  it('still allows a non-denylisted type in any casing (negative control)', () => {
+    for (const t of ['textToImage', 'TEXTTOIMAGE', 'imageBackgroundRemoval', 'chatCompletion']) {
+      expect(isPlatformInternalStepType(t)).toBe(false);
+      expect(() => assertStepTypeAllowed(t)).not.toThrow();
+    }
+  });
+
+  /**
+   * The error must still NAME what the caller actually sent, not the canonical
+   * spelling — a refusal that silently rewrites the input is a worse diagnostic
+   * than one that quotes it.
+   */
+  it('names the caller-supplied spelling in the error, not the canonical one', () => {
+    try {
+      assertStepTypeAllowed('XGuardModeration', 'block step');
+      expect.unreachable('a re-cased platform-internal type must be refused');
+    } catch (e) {
+      expect(e).toBeInstanceOf(PlatformInternalStepTypeError);
+      expect((e as PlatformInternalStepTypeError).stepType).toBe('XGuardModeration');
+      expect((e as Error).message).toContain('XGuardModeration');
+    }
+  });
+});

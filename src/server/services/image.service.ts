@@ -19,7 +19,7 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
-import { DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
+import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
 import {
   feedFliptContext,
   feedHydrateQuery,
@@ -148,7 +148,7 @@ import type {
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
-import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
   getCollectionRandomSeed,
@@ -251,6 +251,8 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
+import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
+import type { ImageMetrics } from '../../../event-engine-common/types/metric-types';
 import { CacheService } from '../../../event-engine-common/services/cache';
 import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
 import type {
@@ -1535,7 +1537,12 @@ function noteEmptyIdsPage(
 // observable in Prometheus. No label dimension — the timeout has no natural one.
 const imageMetricsClickhouseTimeoutCounter = registerCounter({
   name: 'image_metrics_clickhouse_timeout_total',
-  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (serves cached counts where warm, omits the id otherwise)',
+});
+
+const imageMetricsStaleCacheTimeoutCounter = registerCounter({
+  name: 'image_metrics_stale_cache_timeout_total',
+  help: 'getImageMetricsObject metric-cache fallback exceeded its own deadline (serves only the ids that landed in time)',
 });
 
 /**
@@ -2414,7 +2421,7 @@ const getAllImagesUncaptured = async (
 
   // Fetch all cache data in parallel
   const [
-    reactionsRaw,
+    userReactions,
     tagIdsVar,
     tagsVar,
     userVotes,
@@ -2428,12 +2435,7 @@ const getAllImagesUncaptured = async (
     imageResources,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
-      userId
-        ? dbRead.imageReaction.findMany({
-            where: { imageId: { in: imageIds }, userId },
-            select: { imageId: true, reaction: true },
-          })
-        : undefined,
+      userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       include?.includes('tags') && userId
@@ -2468,16 +2470,6 @@ const getAllImagesUncaptured = async (
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
-    // Process reactions into lookup
-    let userReactions: Record<number, ReviewReactions[]> | undefined;
-    if (reactionsRaw) {
-      userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-        acc[imageId] ??= [] as ReviewReactions[];
-        acc[imageId].push(reaction);
-        return acc;
-      }, {} as Record<number, ReviewReactions[]>);
-    }
-
     // Merge user votes into tags
     if (tagsVar && userVotes) {
       const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
@@ -2579,19 +2571,7 @@ const getAllImagesUncaptured = async (
           cosmetics: userCosmetics?.[creatorId] ?? [],
           profilePicture: profilePictures?.[creatorId] ?? null,
         },
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsByImageId?.get(i.id),
@@ -2643,6 +2623,34 @@ export const getAllImages = async (input: Parameters<typeof getAllImagesUncaptur
 };
 
 // TODO split this into image-index.service because this file is a giant
+
+/**
+ * The viewer's own reactions for a set of images, grouped by image id.
+ *
+ * Three callers: the two feed paths above and below, which fold the result into their own
+ * payloads, and `reaction.getMyImageReactions`, which exists because a home block's payload is
+ * served from a shared anonymous cache and so cannot carry it.
+ */
+export const getUserReactionsForImages = async ({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) => {
+  if (!imageIds.length) return {} as Record<number, ReviewReactions[]>;
+
+  const rows = await dbRead.imageReaction.findMany({
+    where: { imageId: { in: imageIds }, userId },
+    select: { imageId: true, reaction: true },
+  });
+
+  return rows.reduce((acc, { imageId, reaction }) => {
+    acc[imageId] ??= [] as ReviewReactions[];
+    acc[imageId].push(reaction);
+    return acc;
+  }, {} as Record<number, ReviewReactions[]>);
+};
 
 const getMetaForImages = async (imageIds: number[]) => {
   if (imageIds.length === 0) return {};
@@ -2794,6 +2802,8 @@ export const getAllImagesIndex = async (
       }
       if (served.reason === DEEP_OFFSET)
         throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
+      if (served.reason === CURSOR_UNPARSED)
+        throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
     }
   }
 
@@ -2853,18 +2863,9 @@ export const getAllImagesIndex = async (
   const videoIds = searchResults.filter((sr) => sr.type === MediaType.video).map((sr) => sr.id);
   const userIds = searchResults.map((sr) => sr.userId);
 
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (currentUserId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId: currentUserId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
+  const userReactions = currentUserId
+    ? await getUserReactionsForImages({ imageIds, userId: currentUserId })
+    : undefined;
 
   const [
     userDatas,
@@ -2984,17 +2985,7 @@ export const getAllImagesIndex = async (
           cosmetics: userCosmetics?.[sr.userId] ?? [],
           profilePicture: profilePictures?.[sr.userId] ?? null,
         },
-        stats: {
-          likeCountAllTime: metrics?.reactionLike ?? 0,
-          laughCountAllTime: metrics?.reactionLaugh ?? 0,
-          heartCountAllTime: metrics?.reactionHeart ?? 0,
-          cryCountAllTime: metrics?.reactionCry ?? 0,
-          commentCountAllTime: metrics?.comment ?? 0,
-          collectedCountAllTime: metrics?.collection ?? 0,
-          tippedAmountCountAllTime: metrics?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
@@ -3350,6 +3341,13 @@ export async function getImagesFromFeedSearch(
         availability: img.availability ?? Availability.Public,
         reactions: transformedReactions,
         tags: transformedTags,
+        // Not derived: this path's stats come from `event-engine-common`'s ImageStats,
+        // which has already collapsed an absent metric row to zero and cannot say which
+        // it was. Type satisfaction only -- `runImageSearch`'s shaper in
+        // image-search.service.ts drops the field on both branches, so neither REST
+        // surface it backs receives it. Carrying the flag properly needs the shape
+        // changed in the submodule first.
+        stats: { ...rest.stats, statsUnknown: false },
       };
     });
 
@@ -3398,7 +3396,8 @@ export async function getImagesFromFeedSearch(
     // populatedQuery (the event-engine-common MetricService read). The feed items
     // come from Meili+Postgres; only the display-only engagement metrics are
     // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
-    // (getImageMetricsObject → {}). But this feed path runs the metric read INSIDE
+    // (getImageMetricsObject serves the cached counts, or omits the id). But this
+    // feed path runs the metric read INSIDE
     // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
     // 210) thrown there isn't a Meili error → it would fall through to `throw err`
     // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
@@ -3454,7 +3453,44 @@ async function resolvedHubSources(input: ImageSearchInput) {
   });
 }
 
-type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
+/**
+ * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
+ * GROUP ever uses — every other arm is a single clause.
+ */
+type HubFilterArm = HubFilterClause[];
+
+/**
+ * 🔴 The brackets are load-bearing. Arms are joined with ` OR ` and AND binds tighter,
+ * so a multi-clause arm emitted bare re-associates the whole filter — silently ANDing
+ * one tag onto every other arm. A single clause needs none, and gets none, so a hub
+ * without groups emits exactly the filter it emitted before groups existed.
+ */
+function renderHubArm(arm: HubFilterArm) {
+  const clauses = arm.map((clause) =>
+    makeMeiliImageSearchFilter(clause.field, `IN [${clause.ids.join(',')}]`)
+  );
+  // No producer can emit an empty arm today. If one ever does, `clauses[0]` is
+  // `undefined`, that literal text lands in the filter string, and Meilisearch rejects
+  // the whole query — a 503 on the hub feed, far from the mistake that caused it.
+  if (!clauses.length) throw new Error('hub filter arm has no clauses');
+  return clauses.length > 1 ? `(${clauses.join(' AND ')})` : clauses[0];
+}
+
+/**
+ * Tag groups as arms. Single-tag groups are folded into ONE `IN [...]` clause rather
+ * than an arm each — identical to OR-ing them, and it keeps a hub built before
+ * `groupKey` existed on the same one-clause shape it always had.
+ */
+function tagGroupArms(tagGroups: number[][]): HubFilterArm[] {
+  const arms: HubFilterArm[] = [];
+  const singles = tagGroups.filter((group) => group.length === 1).map(([id]) => id);
+  if (singles.length) arms.push([{ field: 'tagIds', ids: singles }]);
+  for (const group of tagGroups) {
+    if (group.length > 1) arms.push(group.map((id) => ({ field: 'tagIds' as const, ids: [id] })));
+  }
+  return arms;
+}
 
 // The single enumeration of the arms a hub ORs together. One builder consumes it
 // today (`buildHubFilter`); the split survives so a second clause syntax cannot be
@@ -3469,22 +3505,22 @@ function hubFilterArms(
   }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
 ): HubFilterArm[] | null {
   const arms: HubFilterArm[] = [];
-  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.userIds.length) arms.push([{ field: 'userId', ids: sources.userIds }]);
   if (sources.modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
-    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: sources.modelVersionIds }]);
+    if (!hideAutoResources) arms.push([{ field: 'modelVersionIds', ids: sources.modelVersionIds }]);
     if (!hideManualResources)
-      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+      arms.push([{ field: 'modelVersionIdsManual', ids: sources.modelVersionIds }]);
   }
   // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
   // attribute on the metrics index since 2024, and the ids are denormalised onto the
   // documents at index time. Verified against the prod index rather than assumed —
   // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
-  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
+  arms.push(...tagGroupArms(sources.tagGroups));
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
-    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+    arms.push([{ field: 'collectionIds', ids: sources.collectionIds }]);
 
   return arms.length ? arms : null;
 }
@@ -3505,14 +3541,17 @@ function hubFilterArms(
  * attribution.
  */
 function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
-  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const { userIds, modelVersionIds, tagGroups } = sources.excluded;
   const arms: HubFilterArm[] = [];
-  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
-  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (userIds.length) arms.push([{ field: 'userId', ids: userIds }]);
+  // A grouped exclusion removes LESS than an ungrouped one: `NOT (x AND y)` keeps an
+  // image carrying only x. The UI states that where the group is built; it is not
+  // something the filter can compensate for.
+  arms.push(...tagGroupArms(tagGroups));
   if (modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIds', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIdsManual', ids: modelVersionIds }]);
   }
   if (!arms.length) return null;
 
@@ -3520,9 +3559,7 @@ function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
   // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
   // returns the whole set. So a NOT arm removes matches only — it does not also
   // drop documents that lack the field.
-  return `NOT (${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `NOT (${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -3531,9 +3568,7 @@ function buildHubFilter(
 ): string | null {
   const arms = hubFilterArms(sources, input);
   if (!arms) return null;
-  return `(${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `(${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
@@ -4026,17 +4061,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -4149,17 +4174,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -4843,17 +4858,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -4971,17 +4976,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -5029,6 +5024,162 @@ type ImageMetricsObject = Record<
   }
 >;
 
+// Cache-only read of the `metrics:*` hashes, for the stale arm below.
+//
+// Staleness is bounded by the WATCHER, not by the cache TTL: the event-engine
+// watcher hIncrIfExists-es these same keys as reactions arrive, and the failure
+// this arm exists for is app-to-ClickHouse transport, which leaves that writer
+// running. The TTL bounds eviction, and hot entries slide it.
+//
+// Never write back: a cached zero or unknown would outlive the outage by that
+// TTL. An id with nothing cached stays ABSENT, which is what `statsUnknown`
+// below reports to the client.
+//
+// Plain client on purpose - `redis.packed.hGetAll` hDels every field it fails to
+// decode, and a multi-digit counter string does fail, so that read would gut the hash.
+const STALE_METRIC_CACHE_TIMEOUT_MS = 500;
+
+const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsObject> => {
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return {};
+
+  const metricRedis = redis as unknown as IRedisClient;
+
+  // The deadline below serves whatever ARRIVED: racing the aggregate would let one
+  // slow shard discard the N-1 answers already in hand, and this arm only runs when
+  // the tail is already bad.
+  const landed: (Record<string, string> | undefined)[] = new Array(uniqueIds.length);
+  // A metric-redis outage that REJECTS resolves in milliseconds, so the deadline
+  // never fires and the timeout counter never sees it. Without this the loudest
+  // half of an outage is the silent one.
+  let rejected = 0;
+
+  try {
+    // Runs AFTER the outer timeout settled: without its own deadline this await is
+    // bounded only by the redis client's multi-second backstops (cluster per-command
+    // deadline 15s, socket idle 10s), reopening the SSR hazard the outer timeout closes.
+    const reads = Promise.all(
+      uniqueIds.map((id, index) =>
+        metricRedis
+          .hGetAll(cacheKeys.metric('Image', id))
+          .then((hash) => {
+            landed[index] = hash;
+          })
+          // Per id: one rejected key must not discard the other N-1 answers.
+          .catch(() => {
+            rejected += 1;
+          })
+      )
+    );
+
+    await withTimeoutFallback<unknown>(reads, STALE_METRIC_CACHE_TIMEOUT_MS, undefined, () => {
+      imageMetricsStaleCacheTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics timeout',
+          message: `Stale metric cache read exceeded ${STALE_METRIC_CACHE_TIMEOUT_MS}ms`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    });
+
+    if (rejected > 0) {
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics rejected',
+          message: `Metric cache read rejected for ${rejected} of ${uniqueIds.length} ids`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    }
+
+    const result: ImageMetricsObject = {};
+    uniqueIds.forEach((id, index) => {
+      const hash = landed[index];
+      if (!hash || Object.keys(hash).length === 0) return;
+
+      // A `notFound` sentinel is a positive "ClickHouse had no rows", so it
+      // shapes to nulls like any cached value - the same zeros MetricService
+      // itself resolves that id to. Only an absent key is unknown.
+      //
+      // `|| null` here, not only in the shaper: it keeps NaN from ever leaving this
+      // helper, so changing the shaper's `||` to `??` cannot leak one downstream.
+      const count = (value: string | undefined) => Number.parseInt(value ?? '', 10) || null;
+
+      result[id] = shapeImageMetrics(id, {
+        Like: count(hash.Like),
+        Heart: count(hash.Heart),
+        Laugh: count(hash.Laugh),
+        Cry: count(hash.Cry),
+        commentCount: count(hash.commentCount),
+        Collection: count(hash.Collection),
+        tippedAmount: count(hash.tippedAmount),
+      });
+    });
+
+    return result;
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getCachedImageMetrics',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    return {};
+  }
+};
+
+// Both arms shape here: a second copy of this field list is how the stale arm
+// silently serves null for a metric someone adds to the fresh arm only.
+// `ImageMetrics` is generated, so a MIS-KEYED field in the stale arm's
+// hand-written list is a compile error. An added metric is not - `Partial`
+// makes every key optional, so the stale arm would serve null for it.
+const shapeImageMetrics = (
+  id: number,
+  m: Partial<Record<keyof ImageMetrics, number | null>> | undefined
+): ImageMetricsObject[number] => ({
+  imageId: id,
+  reactionLike: m?.Like || null,
+  reactionHeart: m?.Heart || null,
+  reactionLaugh: m?.Laugh || null,
+  reactionCry: m?.Cry || null,
+  comment: m?.commentCount || null,
+  collection: m?.Collection || null,
+  buzz: m?.tippedAmount || null,
+});
+
+/**
+ * The one place an `ImageMetricsObject` entry becomes a feed `stats` block.
+ *
+ * Seven call sites derived this independently, all reading `match?.x ?? 0`, which
+ * is why `statsUnknown` lives here: the absent-vs-zero decision has to be made the
+ * same way at every one of them or a metrics outage reads as silence on some feeds
+ * and as unknown on others.
+ */
+export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): ImageV2Stats {
+  return {
+    likeCountAllTime: match?.reactionLike ?? 0,
+    laughCountAllTime: match?.reactionLaugh ?? 0,
+    heartCountAllTime: match?.reactionHeart ?? 0,
+    cryCountAllTime: match?.reactionCry ?? 0,
+    commentCountAllTime: match?.comment ?? 0,
+    collectedCountAllTime: match?.collection ?? 0,
+    tippedAmountCountAllTime: match?.buzz ?? 0,
+    dislikeCountAllTime: 0,
+    viewCountAllTime: 0,
+    statsUnknown: !match,
+  };
+}
+
 // Image metric counts are read from the watcher-fed `metrics:*` cache via
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
 // The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
@@ -5039,18 +5190,24 @@ export const getImageMetricsObject = async (
   try {
     const ids = data.map((d) => d.id);
 
-    // The ClickHouse read has NO request-level timeout other than the
-    // @clickhouse/client 30s default, and a try/catch CANNOT catch a hang. Bound
+    // The ClickHouse read has NO request-level timeout other than the client's own
+    // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
-    // (callers treat missing ids as null) instead of parking ~30s and blowing the
-    // SSR deadline. Empty `{}` matches the existing catch fallback.
+    // instead of parking for minutes and blowing the SSR deadline.
     const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
     // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
+    // The two failure exits have to produce the SAME shape, because callers now read
+    // the absence of an id as "unresolved". The loop below writes an entry for every
+    // requested id, so without this flag a timeout would hand back all-null entries
+    // that are present -- i.e. indistinguishable from an image nobody reacted to,
+    // which is the exact confusion this function's callers exist to avoid.
+    let resolved = true;
     const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      resolved = false;
       imageMetricsClickhouseTimeoutCounter.inc();
       logToAxiom(
         {
@@ -5063,20 +5220,12 @@ export const getImageMetricsObject = async (
         'clickhouse'
       ).catch();
     });
+    // Both failure exits serve the cache: an id it answers for is KNOWN (stale by
+    // at most the watcher's lag), and one it cannot stays absent, which
+    // `toImageV2Stats` reports as `statsUnknown`.
+    if (!resolved) return await getCachedImageMetricsObject(ids);
     const result: ImageMetricsObject = {};
-    for (const id of ids) {
-      const m = metrics[id];
-      result[id] = {
-        imageId: id,
-        reactionLike: m?.Like || null,
-        reactionHeart: m?.Heart || null,
-        reactionLaugh: m?.Laugh || null,
-        reactionCry: m?.Cry || null,
-        comment: m?.commentCount || null,
-        collection: m?.Collection || null,
-        buzz: m?.tippedAmount || null,
-      };
-    }
+    for (const id of ids) result[id] = shapeImageMetrics(id, metrics[id]);
     return result;
   } catch (e) {
     const error = e as Error;
@@ -5090,7 +5239,7 @@ export const getImageMetricsObject = async (
       },
       'clickhouse'
     ).catch();
-    return {};
+    return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
 
@@ -5298,19 +5447,7 @@ export const getImage = async ({
       cosmetics: userCosmetics?.[creatorId] ?? [],
       profilePicture: profilePictures?.[creatorId] ?? null,
     },
-    stats: {
-      likeCountAllTime: match?.reactionLike ?? 0,
-      laughCountAllTime: match?.reactionLaugh ?? 0,
-      heartCountAllTime: match?.reactionHeart ?? 0,
-      cryCountAllTime: match?.reactionCry ?? 0,
-
-      commentCountAllTime: match?.comment ?? 0,
-      collectedCountAllTime: match?.collection ?? 0,
-      tippedAmountCountAllTime: match?.buzz ?? 0,
-
-      dislikeCountAllTime: 0,
-      viewCountAllTime: 0,
-    },
+    stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
 

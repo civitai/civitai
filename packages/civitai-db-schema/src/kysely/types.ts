@@ -878,6 +878,68 @@ export type BlockAttributionPayout = {
   row_count: number;
   created_at: Generated<Timestamp>;
 };
+export type BlockAuthorFeeAccrual = {
+  id: string;
+  /**
+   * Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+   * workflow must never charge or accrue twice.
+   */
+  workflow_id: string;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+   * must not retroactively move earnings already accrued to the previous owner
+   * (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+   * in the settlement query would do exactly that.
+   */
+  app_owner_user_id: number;
+  /**
+   * The viewer who paid. What the self-dealing exclusion is measured against,
+   * and what slice 2b's refund path will join on to reverse a fee.
+   */
+  viewer_user_id: number;
+  /**
+   * 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+   * blue (non-withdrawable). The settlement job groups by this and never
+   * coerces to yellow; defaulting it would silently convert non-withdrawable
+   * Buzz into withdrawable earnings. No `@default` for that reason.
+   */
+  buzz_type: string;
+  /**
+   * Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+   * negative row: the clawback was retired in round 0 (zero production callers,
+   * and its carry-forward arm unreachable until something had settled). Slice 2b
+   * adds it together with the refund path that drives it.
+   */
+  fee_buzz: number;
+  /**
+   * The pricing inputs, kept so a disputed charge can be explained without
+   * re-deriving it from a workflow that may no longer exist.
+   */
+  base_generation_buzz: number;
+  flat_leg_buzz: number;
+  pct_leg_buzz: number;
+  governing_leg: string;
+  /**
+   * The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+   * NULL when the type could not be resolved — the fee still applies, falling
+   * to the app's default (see `resolveBlockAuthorFeeParams`).
+   */
+  generation_type: string | null;
+  /**
+   * 'accrued' | 'settled'.
+   */
+  status: Generated<string>;
+  /**
+   * The externalTransactionId this row settled under, so a row traces to the
+   * exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+   * with `status`.
+   */
+  settlement_key: string | null;
+  accrued_at: Generated<Timestamp>;
+  settled_at: Timestamp | null;
+};
 export type BlockBuzzAttribution = {
   id: string;
   user_id: number;
@@ -993,9 +1055,19 @@ export type BlockSpendAttribution = {
   app_block_id: string;
   block_instance_id: string;
   model_id: number | null;
+  /**
+   * Always the 'unrated' sentinel — the write path hardcodes it. No rate card
+   * is applied to a spend row, and nothing re-stamps it (the backpay that would
+   * have is removed). Measured in production 2026-09-18: a
+   * `GROUP BY rate_card_version` over the whole table returned a single
+   * 'unrated' group — self-discriminating, since any other stamped version
+   * would have been a second group. Re-measure before relying on it.
+   */
   rate_card_version: string;
   /**
-   * The spend rev-share percentage stamped at write time.
+   * Always 0. This was the spend rev-share percentage stamped at write time,
+   * for the removed platform-funded bounty; the write path now hardcodes 0 and
+   * the column is retained only to keep the row shape + CHECK constraints.
    */
   spend_share_pct: number;
   app_owner_share_cents: number;
@@ -1019,16 +1091,29 @@ export type BlockSpendAttribution = {
   /**
    * The APP-FACING generation type this spend paid for, as `<coarse>` or
    * `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
-   * `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare
-   * registered STEP ID (`convert-image`, `chat-completion`). NEVER the
-   * orchestrator's internal `$type` (`convertImage` / `chatCompletion`), which
-   * is free to change without a wire-contract decision.
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+   * STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+   * on the PASS-THROUGH step arm.
+   *
+   * 🔴 EVERY VALUE IS AN APP-FACING ID AND NEVER THE ORCHESTRATOR'S INTERNAL
+   * `$type` — EXCEPT UNDER THE `step` COARSE KEY, WHICH IS EXACTLY THAT, AND IS
+   * CALLER-SUPPLIED. The pass-through arm (`kind:'step'` with a bare `$type` and
+   * no registry id) has no app-facing id at all: the `$type` IS the contract the
+   * app wrote, it is validated against nothing but the platform-internal
+   * denylist, and it is bounded here only by SHAPE (≤64 chars of
+   * `[A-Za-z0-9._-]`). The `step:` prefix is what keeps that visible and keeps it
+   * out of the other keys' namespaces — `textToImage` and `customComfy` are
+   * themselves real orchestrator `$type`s, so a bare one would be indistinguishable
+   * from a genuine image submit. Every other arm's value is server-owned.
    *
    * 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, and a value carries
    * at most one. A per-generation-type author fee keys on the coarse key, so
    * `split_part(generation_type, ':', 1)` is the stable grouping no matter how
-   * the subtype axis grows. A step id implies `kind: 'step'` and carries no
-   * subtype, so one column covers the whole axis with no companion `kind`.
+   * the subtype axis grows — and on `step:` rows it is also the ONLY safe
+   * grouping, because the subtype is app-chosen. Do not key a fee, a rate or a
+   * payout on the full value. A registry step id implies `kind: 'step'` and
+   * carries no subtype, so one column still covers the whole axis with no
+   * companion `kind`.
    *
    * Deliberately unconstrained TEXT — no CHECK, no enum. Both the step and
    * recipe registries are designed to grow additively (register an entry, not
@@ -2455,6 +2540,12 @@ export type HuggingFaceImport = {
   modelVersionId: number | null;
   modelFileId: number | null;
   /**
+   * Where this file is headed, recorded before the bytes move so the transfer job can attach it
+   * itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+   */
+  attachVersionId: number | null;
+  attachType: string | null;
+  /**
    * Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
    * runs moving the same file and what lets the next run tell "in flight" from "abandoned".
    */
@@ -3028,6 +3119,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
@@ -3828,7 +3920,10 @@ export type Tag = {
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;
@@ -4180,6 +4275,7 @@ export type UserHubSource = {
   enabled: Generated<boolean>;
   exclude: Generated<boolean>;
   index: Generated<number>;
+  groupKey: number | null;
 };
 export type UserLink = {
   id: Generated<number>;
@@ -4458,6 +4554,7 @@ export type DB = {
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
+  block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;

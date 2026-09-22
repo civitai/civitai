@@ -45,6 +45,56 @@ const VIDEO_INPUT = {
 
 /** Every input carries a seed so neither dispatcher reaches its RNG. */
 const CASES: Record<string, unknown>[] = [
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    prompt: 'A hopeful synth-pop song about sunrise',
+    seed: 42,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    yue2MusicMode: 'simple',
+    prompt: 'A hopeful synth-pop song about sunrise',
+    musicDescription: 'Stale custom description',
+    lyrics: 'Stale custom lyrics',
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    steps: 80,
+    duration: 60,
+    seed: 42,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+    yue2Mode: 'melody',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    duration: 90,
+    steps: 50,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+  },
+
   // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
   { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
   { workflow: 'txt2img:draft', ecosystem: 'SD1', prompt: 'a cat', seed: 42, quantity: 4 },
@@ -652,7 +702,6 @@ const CASES: Record<string, unknown>[] = [
     texture: 'HD',
     pbr: true,
     faceLimit: 20000,
-    expectFlags: { tripoGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -662,7 +711,6 @@ const CASES: Record<string, unknown>[] = [
     hunyuanPrompt: 'shiny metal',
     hunyuanModelVersion: 'v2',
     hunyuanSteps: 45,
-    expectFlags: { hunyuan3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -670,7 +718,6 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     enablePbr: true,
-    expectFlags: { pixal3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -678,13 +725,12 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     shouldTexture: false,
-    expectFlags: { trellis2Generator: true },
   },
 ];
 
 async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<string, unknown>) {
-  // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
-  // in ext or the selection is hidden and falls back to the default
+  // meshy v7 needs its flag in ext or the selection is hidden and falls back
+  // to the default
   const ext = expectFlags
     ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
     : BASE;

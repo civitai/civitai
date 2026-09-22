@@ -22,7 +22,7 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { modelVersionToAir } from '~/server/utils/resource-air';
-import { parseAIRSafe } from '~/shared/utils/air';
+import { versionIdFromAir } from '~/shared/utils/air';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 
@@ -171,8 +171,8 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
 
   // Rows whose AIR resolves to no version on this site are loaded outside our catalogue; drop them.
   const parsed = data.items.flatMap((item) => {
-    const air = parseAIRSafe(item.air);
-    return air?.version ? [{ item, versionId: air.version }] : [];
+    const versionId = versionIdFromAir(item.air);
+    return versionId ? [{ item, versionId }] : [];
   });
 
   const versions = await getVersionsForAir(parsed.map((x) => x.versionId));

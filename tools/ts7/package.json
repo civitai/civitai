@@ -1,0 +1,9 @@
+{
+  "name": "@civitai/ts7",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Holds the TypeScript 7 compiler for typecheck:fast. Kept out of the root so its `tsc` bin never reaches the root node_modules/.bin.",
+  "dependencies": {
+    "typescript": "7.0.2"
+  }
+}

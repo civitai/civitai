@@ -1,4 +1,4 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { createCache } from './cache';
 import { dbRead } from './db';
 
@@ -71,7 +71,23 @@ const minorSrcCte = sql`
 /** Offset rather than keyset. The Pending queue's order is a stable default over a set the client
  *  sorts anyway, and its shape (a CTE grouped per model, then a LATERAL) has no single monotonic
  *  column to key on. The cost is dominated by building the seed set, which every page pays anyway. */
-export type Page = { limit: number; offset?: number };
+export type Page = { limit: number; offset?: number; search?: MinorSearch };
+
+export type MinorSearch = { modelOrUserId: number } | { username: string };
+
+const searchPredicate = (
+  search: MinorSearch | undefined,
+  refs: { modelId: string; userId: string; username: string },
+  orSeed?: (id: number) => RawBuilder<unknown>
+) => {
+  if (!search) return sql`TRUE`;
+  if ('username' in search)
+    return sql`lower(${sql.ref(refs.username)}) = lower(${search.username})`;
+  const id = search.modelOrUserId;
+  return sql`(${sql.ref(refs.modelId)} = ${id} OR ${sql.ref(refs.userId)} = ${id}${
+    orSeed ? sql` OR ${orSeed(id)}` : sql``
+  })`;
+};
 
 export type MinorHashReviewRow = {
   modelId: number;
@@ -91,7 +107,7 @@ export type MinorHashReviewRow = {
 /** Tab 1 — Pending review: a model sharing a file hash with something a human flagged as minor, where
  *  the two were uploaded by DIFFERENT accounts (`NOT sameUploader`; the same-uploader case is what the
  *  scan hook auto-flags, which is tab 2). */
-export async function getMinorHashMatchesForReview({ limit, offset = 0 }: Page) {
+export async function getMinorHashMatchesForReview({ limit, offset = 0, search }: Page) {
   const rows = await sql<MinorHashReviewRow>`
     WITH ${minorSrcCte},
     candidates AS (
@@ -137,6 +153,17 @@ export async function getMinorHashMatchesForReview({ limit, offset = 0 }: Page) 
     LEFT JOIN "Model" mm ON mm.id = s."minorModelId"
     LEFT JOIN "User" u ON u.id = c."userId"
     WHERE NOT c."sameUploader"
+      -- Any seed on the hash, not only the one the LATERAL reports (the lowest minorModelId), or
+      -- searching another flagged model on that hash misses the row.
+      AND ${searchPredicate(
+        search,
+        { modelId: 'c.modelId', userId: 'c.userId', username: 'u.username' },
+        (id) => sql`EXISTS (
+          SELECT 1 FROM minor_src s3
+          WHERE s3.hash = c.hash AND s3."userId" <> c."userId"
+            AND (s3."minorModelId" = ${id} OR s3."userId" = ${id})
+        )`
+      )}
     ORDER BY c."modelId"
     LIMIT ${limit + 1} OFFSET ${offset}
   `.execute(dbRead);
@@ -160,7 +187,7 @@ export type AutoFlaggedMinorModel = {
  *  out, and so do accepted ones and anything past the review window — an unreviewed auto-flag is
  *  presumed correct once the owner has had a month to contest it, and without that bound the queue
  *  only grows. */
-export async function getAutoFlaggedMinorModels({ limit, offset = 0 }: Page) {
+export async function getAutoFlaggedMinorModels({ limit, offset = 0, search }: Page) {
   const rows = await sql<AutoFlaggedMinorModel>`
     SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
            m.status::text AS status,
@@ -174,6 +201,11 @@ export async function getAutoFlaggedMinorModels({ limit, offset = 0 }: Page) {
       AND NOT ${humanConfirmedPredicate}
       AND NOT (m.meta ? ${MINOR_HASH_ACCEPTED_KEY})
       AND (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz > ${reviewWindowCutoff}
+      AND ${searchPredicate(search, {
+        modelId: 'm.id',
+        userId: 'm.userId',
+        username: 'u.username',
+      })}
     ORDER BY (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz DESC, m.id DESC
     LIMIT ${limit + 1} OFFSET ${offset}
   `.execute(dbRead);
@@ -206,7 +238,7 @@ export type MinorFlagAppealRow = {
  *  No gate on the model still being minor either: reverting from tab 2 leaves the appeal Pending, and
  *  hiding it here would strand it with nowhere left to close it. `minor` is returned so the row can
  *  show that state instead. */
-export async function getMinorFlagAppealsForReview({ limit, offset = 0 }: Page) {
+export async function getMinorFlagAppealsForReview({ limit, offset = 0, search }: Page) {
   const rows = await sql<MinorFlagAppealRow>`
     SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
            m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
@@ -225,11 +257,51 @@ export async function getMinorFlagAppealsForReview({ limit, offset = 0 }: Page) 
       -- Cast rather than bind the enum: the value goes over as text and Postgres has no
       -- AppealStatus = text operator.
       AND a.status::text = 'Pending'
+      AND ${searchPredicate(search, {
+        modelId: 'm.id',
+        userId: 'm.userId',
+        username: 'u.username',
+      })}
     ORDER BY a."createdAt", a.id
     LIMIT ${limit + 1} OFFSET ${offset}
   `.execute(dbRead);
 
   return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+}
+
+export type ModelMinorState = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  minor: boolean;
+  minorLocked: boolean;
+  flagSource: string | null;
+  flagConfirmedFrom: string | null;
+  flaggedAt: Date | null;
+  clearedAt: Date | null;
+  acceptedAt: Date | null;
+};
+
+/** Reaches a model no tab lists — e.g. a same-uploader auto-flag older than
+ *  `AUTO_FLAG_REVIEW_WINDOW_DAYS` — so its Revert is still reachable. */
+export async function getModelMinorState(modelId: number) {
+  const result = await sql<ModelMinorState>`
+    SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+           m.status::text AS status, m.minor,
+           'minor' = ANY(m."lockedProperties") AS "minorLocked",
+           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
+           m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'confirmedFrom' AS "flagConfirmedFrom",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
+           (m.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz AS "clearedAt",
+           (m.meta->${MINOR_HASH_ACCEPTED_KEY}->>'at')::timestamptz AS "acceptedAt"
+    FROM "Model" m
+    LEFT JOIN "User" u ON u.id = m."userId"
+    WHERE m.id = ${modelId}
+  `.execute(dbRead);
+
+  return result.rows[0] ?? null;
 }
 
 export type MinorHashMatchDetail = {

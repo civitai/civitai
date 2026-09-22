@@ -35,6 +35,18 @@ export function parseAIRSafe(identifier: string | undefined) {
   return { ...value, model: Number(id), version: Number(version) };
 }
 
+/**
+ * The model version an AIR names, or undefined. Only a civitai AIR names one: another source's
+ * version segment can be a bare integer too (a HuggingFace revision, an orchestrator blob key), and
+ * would resolve to an unrelated ModelVersion — the same trap `getCivitaiAirModelLink` guards.
+ */
+export function versionIdFromAir(air: string) {
+  const parsed = parseAIRSafe(air);
+  if (!parsed || parsed.source !== 'civitai') return undefined;
+  const { version } = parsed;
+  return Number.isSafeInteger(version) && version > 0 ? version : undefined;
+}
+
 export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }

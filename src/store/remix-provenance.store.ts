@@ -40,10 +40,36 @@ type Entry = {
   storedAt: number;
 };
 
+type PromptEntry = Entry & {
+  /** The image the token was minted for. Checked on read, never sent. */
+  imageId: number;
+};
+
 interface RemixProvenanceState {
   tokensByUrl: Record<string, Entry>;
+  /**
+   * The token for a source whose PROMPT was reused. One, not a map: reusing a
+   * prompt replaces the whole form, so a second reuse supersedes the first
+   * rather than joining it.
+   */
+  promptToken?: PromptEntry;
   setToken: (url: string, token: string) => void;
   getToken: (url: string) => string | undefined;
+  setPromptToken: (token: string, imageId: number) => void;
+  /**
+   * Returns the token only when it was minted for `imageId`. The caller passes
+   * the image the live remix claim names, so a token cannot be spent against a
+   * form that was later pointed at a different source — gating on "a claim
+   * exists" would have let one reuse click pay for unrelated later submits, and
+   * credited the free submission to the wrong creator's gallery.
+   *
+   * The two ids come from different places: the token is minted against the
+   * clicked `image.id`, while the caller passes the `remixOfId` the panel fetch
+   * reported. They are the same value today. If a future open ever reports a
+   * parent instead, the token silently stops being spendable — no error, no
+   * failing test, the credit just never lands.
+   */
+  getPromptToken: (imageId: number | undefined) => string | undefined;
   /**
    * Move a token from the URL it was minted against to the URL that replaced it.
    * No-op when there is nothing to move, so the upload path can call it
@@ -74,6 +100,14 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 
       getToken: (url) => get().tokensByUrl[url]?.token,
 
+      setPromptToken: (token, imageId) =>
+        set({ promptToken: { token, imageId, storedAt: Date.now() } }),
+
+      getPromptToken: (imageId) => {
+        const entry = get().promptToken;
+        return entry && entry.imageId === imageId ? entry.token : undefined;
+      },
+
       transfer: (fromUrl, toUrl) => {
         set((state) => {
           const existing = state.tokensByUrl[fromUrl];
@@ -90,12 +124,21 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
         });
       },
 
-      clearAll: () => set({ tokensByUrl: {} }),
+      clearAll: () => set({ tokensByUrl: {}, promptToken: undefined }),
     }),
     {
       name: 'remix-provenance',
       storage: createJSONStorage(() => sessionStorage),
-      version: 1,
+      version: 2,
+      // Only `promptToken` changed shape in v2. Without this, zustand discards
+      // the whole slice on the version bump, so a tab that had already picked a
+      // media source loses that token across the deploy and with it the free
+      // placement it had earned. The v1 prompt token is dropped deliberately:
+      // it named no image, so nothing could match it.
+      migrate: (persisted) => ({
+        tokensByUrl:
+          (persisted as { tokensByUrl?: Record<string, Entry> } | undefined)?.tokensByUrl ?? {},
+      }),
     }
   )
 );
@@ -104,6 +147,10 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 export const remixProvenanceStore = {
   setToken: (url: string, token: string) => useRemixProvenanceStore.getState().setToken(url, token),
   getToken: (url: string) => useRemixProvenanceStore.getState().getToken(url),
+  setPromptToken: (token: string, imageId: number) =>
+    useRemixProvenanceStore.getState().setPromptToken(token, imageId),
+  getPromptToken: (imageId: number | undefined) =>
+    useRemixProvenanceStore.getState().getPromptToken(imageId),
   transfer: (fromUrl: string, toUrl: string) =>
     useRemixProvenanceStore.getState().transfer(fromUrl, toUrl),
   removeToken: (url: string) => useRemixProvenanceStore.getState().removeToken(url),

@@ -663,6 +663,8 @@ export interface User {
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
   blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
+  blockAuthorFeeAccrualsAsAppOwner?: BlockAuthorFeeAccrual[];
+  blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
@@ -860,6 +862,8 @@ export interface HuggingFaceImport {
   userId: number | null;
   modelVersionId: number | null;
   modelFileId: number | null;
+  attachVersionId: number | null;
+  attachType: string | null;
   claimedBy: string | null;
   claimedAt: Date | null;
   heartbeatAt: Date | null;
@@ -1024,6 +1028,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -1661,7 +1666,7 @@ export interface Tag {
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
@@ -1905,6 +1910,7 @@ export interface OauthClient {
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   connectListings?: AppListing[];
 }
@@ -1972,6 +1978,7 @@ export interface AppBlock {
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
@@ -2339,6 +2346,30 @@ export interface BlockSpendAttribution {
   voidedAt: Date | null;
   paidOutAt: Date | null;
   payoutId: string | null;
+}
+
+export interface BlockAuthorFeeAccrual {
+  id: string;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  appOwnerUserId: number;
+  appOwner?: User;
+  viewerUserId: number;
+  viewer?: User;
+  buzzType: string;
+  feeBuzz: number;
+  baseGenerationBuzz: number;
+  flatLegBuzz: number;
+  pctLegBuzz: number;
+  governingLeg: string;
+  generationType: string | null;
+  status: string;
+  settlementKey: string | null;
+  accruedAt: Date;
+  settledAt: Date | null;
 }
 
 export interface BlockSubscriptionAttribution {
@@ -5501,6 +5532,7 @@ export interface UserHubSource {
   enabled: boolean;
   exclude: boolean;
   index: number;
+  groupKey: number | null;
 }
 
 export interface Blurb {

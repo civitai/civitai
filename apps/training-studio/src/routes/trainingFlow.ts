@@ -2,6 +2,7 @@ import {
   CUSTOM_MODEL_SURCHARGE,
   LORA_TYPES,
   MODEL_CARDS,
+  TE_TRAINING_UNSUPPORTED,
   cardByType,
   cardsForMedia,
   loraTypeById,
@@ -9,6 +10,7 @@ import {
   type LabelType,
   type Media,
   type ModelCard,
+  type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 
@@ -27,6 +29,9 @@ export interface Run {
   versionKey: string;
   /** For the `Custom…` version: the AIR of a Civitai model to train on, pasted by the user. */
   customAir?: string;
+  /** The picked model's display name when `customAir` came from the host's model picker; cleared
+   *  when the AIR is edited by hand, so it never labels an AIR it doesn't describe. */
+  customName?: string;
 }
 
 /** A pasted custom-model AIR looks usable (urn:air:…). Not exhaustive — the orchestrator is the real check. */
@@ -89,6 +94,15 @@ export function isCustom(run: Run): boolean {
   return run.versionKey === CUSTOM_VERSION_KEY;
 }
 
+/** The run's effective catalog version: the chosen key, or the card's default when the key names
+ *  no catalog entry (the Custom key never does). The single resolution the submit payload, the
+ *  engine lookup and the host model-picker pre-filter all share — divergence here means the
+ *  picker filters against one ecosystem while the submit trains against another. */
+export function runVersion(run: Run): ModelVersionInfo {
+  const card = runCard(run);
+  return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+}
+
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
@@ -140,6 +154,10 @@ export interface Img {
   /** Set once auto-labeling has attempted this image (success, empty, or failure), so the automatic
    *  drain labels each image at most once. A failed attempt falls back to manual editing. */
   labelTried?: boolean;
+  /** The label text this item ARRIVED with (a zip's .txt, a reused dataset's caption), verbatim.
+   *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
+   *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */
+  sourceLabel?: string;
   tags: string[];
   caption: string;
 }
@@ -261,6 +279,14 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
+/** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
+export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
+  const t = text.trim();
+  return mode === 'tag'
+    ? { tags: t ? t.split(',').map((s) => s.trim()).filter(Boolean) : [], caption: '' }
+    : { tags: [], caption: t };
+}
+
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
 // NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
 // (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
@@ -289,8 +315,7 @@ export function buildTrainingRuns(
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
-    const card = runCard(run);
-    const version = card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+    const version = runVersion(run);
     return {
       ecosystem: version.ecosystem,
       modelVariant: version.modelVariant,
@@ -301,7 +326,11 @@ export function buildTrainingRuns(
       steps: params.steps,
       epochs: params.epochs,
       unetLr: num(params.unetLr, 0.0004),
-      textEncoderLr: num(params.textEncoderLr, 0.00005),
+      // Zeroed at submit, not just disabled in the UI — a param edited before switching models
+      // could otherwise carry a TE rate into a run that hangs on it.
+      textEncoderLr: TE_TRAINING_UNSUPPORTED.has(run.versionKey)
+        ? 0
+        : num(params.textEncoderLr, 0.00005),
       networkDim: num(params.networkDim, 32),
       networkAlpha: num(params.networkAlpha, 16),
       resolution: num(params.resolution, 1024),

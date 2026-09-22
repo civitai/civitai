@@ -514,6 +514,15 @@ export const userMeta = z.object({
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),
+  // Retry state for the Stripe scrub of a deleted account, so one account that keeps failing
+  // cannot consume every run. Removed with `customerId` once the scrub finishes.
+  gdprStripeScrub: z
+    .object({
+      attempts: z.number(),
+      lastAttemptAt: z.string(),
+      lastError: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

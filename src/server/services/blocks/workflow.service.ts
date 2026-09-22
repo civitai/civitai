@@ -1,7 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
-import { getStepByOrchestratorType, postureProducesMedia } from './steps';
+import {
+  getStepByOrchestratorType,
+  NATIVELY_EXTRACTED_STEP_TYPES,
+  postureProducesMedia,
+  splitPassThroughStepOutput,
+} from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -92,6 +97,7 @@ export function snapshotFromWorkflow(
 ): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
+  const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
     // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
@@ -139,7 +145,39 @@ export function snapshotFromWorkflow(
       }
       continue;
     }
-    if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+    // 🔴 THE CONSTANT, NOT A RESTATED TRIPLE. The false branch of this test used
+    // to `continue` — dropping the step silently — and now forwards the step's
+    // output to the app, so a fifth native `$type` added to
+    // `NATIVELY_EXTRACTED_STEP_TYPES` without editing a literal in THIS file
+    // would start publishing that type's output through the unmoderated
+    // pass-through channel. Reading the constant removes the second edit.
+    if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+      // A PASS-THROUGH step (`kind:'step'` with a bare `$type`): not native, not
+      // registered, so there is no declared extractor to ask.
+      //
+      // 🔴 GATED ON THE SERVER-STAMPED STEP NAME, NOT ON "the `$type` is
+      // unrecognised". Those are different sets: an unrecognised `$type` is
+      // anything nobody extracts, which includes a step the ORCHESTRATOR put on
+      // the workflow. Forwarding one of those would publish a platform step's
+      // output to an app through a channel with no moderation posture, and it
+      // would do it for `textToImage` and `customComfy` workflows too — neither
+      // of which this arm has anything to do with. `BLOCK_STEP_NAME` is stamped
+      // by the submit and echoed back on a required response field, so it says
+      // "this bridge submitted this step". Anything else keeps the pre-existing
+      // behaviour: dropped.
+      //
+      // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
+      // image this arm produces on the one channel the publish path and the
+      // per-viewer gated read already own; see `stepOutputs` in
+      // `schema/blocks/workflow.schema`.
+      if (step.name !== BLOCK_STEP_NAME) continue;
+      const { media, rest } = splitPassThroughStepOutput(
+        (step as unknown as { output?: unknown }).output
+      );
+      for (const m of media) imageUrls.push(m.url);
+      // A step with no output yet — the submit reply — would otherwise get an
+      // entry saying nothing.
+      if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
       continue;
     }
     const stepOutput = (
@@ -163,18 +201,26 @@ export function snapshotFromWorkflow(
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
   return {
-    // A whatif/estimate workflow has no orchestrator id. The block SDK's
-    // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
-    // workflowId is an empty string, so an `''` here silently strands the
-    // ESTIMATE_RESULT reply until the 120s transport timeout (the block then
-    // falls back to a "≤ budget" cost). Emit a non-empty sentinel so estimate
-    // replies validate; the block treats estimate results as a cost quote only
-    // and never polls on this id (the request is correlated by requestId, not
-    // workflowId). Submit always carries a real id, so it is unaffected.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key before the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today and this fallback is currently
+    // unreachable. It is kept as a defensive floor because the orchestrator's
+    // OpenAPI declares `id` optional-and-nullable with
+    // `DefaultIgnoreCondition=WhenWritingNull`, so a future regression would
+    // silently OMIT the field rather than error. The floor must be non-empty:
+    // the block SDK's inbound validator (isValidWorkflowSnapshot) DROPS any
+    // snapshot whose workflowId is an empty string, so an `''` here would
+    // silently strand the ESTIMATE_RESULT reply until the 120s transport
+    // timeout (the block then falls back to a "≤ budget" cost). The block
+    // treats estimate results as a cost quote only and never polls on this id
+    // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`.
+    ...(stepOutputs.length > 0 ? { stepOutputs } : {}),
     // Surface the realized spent account (money page blocks). Additive +
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
@@ -296,7 +342,30 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       }
       continue;
     }
-    if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+    if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+      // A PASS-THROUGH step. Same split as `snapshotFromWorkflow`, and it MUST be
+      // here too: this projection is what `resolveOwnedWorkflowOutputs` reads, so
+      // a pass-through image absent here is an image the viewer can see in their
+      // own block and can never publish — which would route it AROUND the
+      // per-viewer gated read rather than through it.
+      //
+      // The non-media half is deliberately DROPPED, not forwarded: `AppWorkflow`
+      // is the cross-surface queue contract and exists to hand a block nothing
+      // but images, cost and status.
+      //
+      // Same `BLOCK_STEP_NAME` gate as `snapshotFromWorkflow` — see the note
+      // there for why "unrecognised `$type`" is the wrong set.
+      if (step.name !== BLOCK_STEP_NAME) continue;
+      for (const m of splitPassThroughStepOutput((step as unknown as { output?: unknown }).output)
+        .media) {
+        images.push({
+          url: m.url,
+          width: m.width,
+          height: m.height,
+          nsfwLevel:
+            m.nsfwLevel && m.nsfwLevel !== 'na' ? nsfwLevelFromContentRating(m.nsfwLevel) : null,
+        });
+      }
       continue;
     }
     const stepOutput = (
@@ -1107,6 +1176,19 @@ export function buildCustomComfyWorkflowInput(
 
 /** The step name every block customComfy step carries (queue provenance). */
 export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
+
+/**
+ * Orchestrator step name stamped on BOTH `kind:'step'` arms' submissions.
+ *
+ * 🔴 IT LIVES HERE, NOT IN `blocks.router`, BECAUSE THE EXTRACTORS READ IT. The
+ * pass-through branch in `snapshotFromWorkflow` / `projectAppWorkflow` keys on
+ * it to tell "a step THIS BRIDGE submitted" from "some other step that ended up
+ * on the workflow", and a second copy of that literal is how the stamp and the
+ * read stop agreeing. `WorkflowStep.name` is a REQUIRED field on the
+ * orchestrator's response type, so the value we submit is the value that comes
+ * back.
+ */
+export const BLOCK_STEP_NAME = 'block-step';
 
 // Format a whole-second timeout as the orchestrator's `HH:MM:SS` step-timeout
 // string (WorkflowStep.timeout). 180 → '00:03:00'.

@@ -7,6 +7,7 @@ import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `getStickerPlacementsSchema`. */
@@ -60,15 +61,11 @@ export function StickerPlacementBatchProvider({
 
   const enabled = !!features.stickers && !!features.stickerPlacement;
 
-  const chunks = useMemo(() => {
-    if (!enabled) return [] as number[][];
-    const unique = [...new Set(imageIds)];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += PLACEMENT_FETCH_CHUNK)
-      result.push(unique.slice(i, i + PLACEMENT_FETCH_CHUNK));
-    return result;
+  const chunks = useMemo(
+    () => (enabled ? chunkIds(imageIds, PLACEMENT_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageIds.join(','), enabled]);
+    [imageIds.join(','), enabled]
+  );
 
   const countQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>

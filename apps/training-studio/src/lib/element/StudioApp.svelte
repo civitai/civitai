@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import MyTrainings from '../../routes/MyTrainings.svelte';
   import TrainingFlow from '../../routes/TrainingFlow.svelte';
   import RunView from './RunView.svelte';
   import { backend, navigate, type StudioLocation } from '$lib/host';
+  import { buzzBalance } from '$lib/buzz-balance.svelte';
 
   // The element's internal views — the host owns the URL space and hands us a location; everything
   // below resolves data through the backend seam, so no view ever leaves the embedding page.
@@ -10,6 +12,11 @@
     location,
     reloadTick = 0,
   }: { location: StudioLocation; reloadTick?: number } = $props();
+
+  // The shell seeds the balance from its server load; the element must pull it through the host's
+  // getBuzzBalances (null when the host has none) — without this, the Review step's Yellow/Green
+  // spend confirmation had no Blue balance to compare against in the embed and never fired.
+  onMount(() => void buzzBalance.refresh());
 
   // `reloadTick` is the host-context refresh(): bumping it rebuilds the promises, so "server data is
   // stale" re-reads the current view. Entering a view re-derives too, so home is always fresh after

@@ -62,9 +62,7 @@ export function trainingWorkflowEpochBlobs(workflow: Workflow): TrainingEpochBlo
     stepStatus = step.status ?? stepStatus;
     const input = (step as { input?: { ecosystem?: string; model?: string } }).input;
     ecosystem =
-      input?.ecosystem ??
-      (input?.model ? parseAIRSafe(input.model)?.ecosystem ?? null : null) ??
-      ecosystem;
+      input?.ecosystem ?? (input?.model ? parseAIRSafe(input.model)?.ecosystem : null) ?? ecosystem;
     for (const epoch of epochs) {
       // `available: false` is a checkpoint the run hasn't finished — the studio never offers
       // it, and its blob may not exist yet, so it must not count as owned. Matches the

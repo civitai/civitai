@@ -515,18 +515,19 @@ export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Ecosystems that expose the `enhancedCompatibility` toggle — txt2img only.
-// Off (the default) runs sdcpp; on runs comfyui.
-export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = ['SD1', 'SDXL'];
-
-// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
-// textToImage step they emit belongs on comfyui.
-export const COMFY_ONLY_ECOSYSTEMS: string[] = [
+// Off (the default) runs sdcpp; on runs comfyui. Pony/Illustrious/NoobAI are SDXL derivatives and
+// stay on sdcpp with SDXL.
+export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
+  'SD1',
+  'SDXL',
   'Pony',
   'Illustrious',
   'NoobAI',
-  'Flux1',
-  'FluxKrea',
 ];
+
+// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
+// textToImage step they emit belongs on comfyui.
+export const COMFY_ONLY_ECOSYSTEMS: string[] = ['Flux1', 'FluxKrea'];
 
 // Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert. Historical name: membership
 // is a pricing decision, not "runs on sdcpp" (Flux2Klein submits 'flux2').
@@ -813,3 +814,7 @@ function getUpperLowerLimits(value: number) {
     ),
   ];
 }
+
+/** The generator's prompt cap. Here so the server's prompt comparison can bound
+ * its input without importing the data-graph. */
+export const MAX_PROMPT_LENGTH = 6000;

@@ -30,7 +30,17 @@ const filterSections = [
   { pathname: '/comics', component: <ComicFeedFilters ml="auto" /> },
   // Matched on `router.pathname`, which is the ROUTE and not the URL, so this has
   // to carry the optional slug segment the hub route gained.
-  { pathname: '/hubs/[id]/[[...slug]]', component: <HubFeedFilters ml="auto" /> },
+  // Desktop only: below `sm` these are full width (`FeedFilters.module.scss`) and
+  // would sit under the site tabs as a band belonging to nothing, so the hub row
+  // carries them there instead.
+  {
+    pathname: '/hubs/[id]/[[...slug]]',
+    component: (
+      <div className="ml-auto @max-sm:hidden">
+        <HubFeedFilters />
+      </div>
+    ),
+  },
 ];
 
 export function SubNav2() {

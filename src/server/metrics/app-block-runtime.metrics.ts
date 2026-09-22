@@ -226,15 +226,95 @@ export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS
 
 /**
  * The NON-`ok` verdicts of `withBlockScope`'s approved-status gate. Kept as a code-owned
- * union (not a free string) so the `reason` label stays a bounded 3-series set.
+ * union (not a free string) so the `reason` label stays a bounded 4-series set.
  *
- * 🔴 TWO OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
+ * 🔴 THREE OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
  * `not_found` is counted and then SERVED. See the counter's own comment for the argument.
  */
+/**
+ * Which guard refused: the REST wrapper (`withBlockScope`) or the tRPC bridge
+ * (`authorizeBlockBridgeToken`). Both read the SAME `BlockRevocation.isRevoked`, so a
+ * series that could not tell them apart would leave you unable to say which half of the
+ * surface a refusal came from.
+ */
+export const APP_BLOCK_REVOCATION_SURFACES = ['rest', 'bridge'] as const;
+export type AppBlockRevocationSurface = (typeof APP_BLOCK_REVOCATION_SURFACES)[number];
+
+/**
+ * The blockInstanceId NAMESPACES a revocation refusal can name. Bounded on purpose — the
+ * instance id itself is unbounded and must never become a label.
+ *
+ * 🔴 THE NAMESPACE IS THE LABEL THAT EARNS ITS KEEP. A revocation gap is always
+ * namespace-shaped: clawgate #618 shipped a writer covering one namespace of five while
+ * every comment claimed all of them, and later rounds found `page_` was really FIVE
+ * mint shapes. A refusal counter split this way makes "this surface has never once
+ * refused" a readable, falsifiable statement per namespace instead of one flat number.
+ */
+export const APP_BLOCK_REVOCATION_NAMESPACES = [
+  'bki',
+  'mbi',
+  'bus_pub',
+  'bus_view',
+  'pdb',
+  'page',
+  'page_pubreq',
+  'page_local',
+  'other',
+] as const;
+export type AppBlockRevocationNamespace = (typeof APP_BLOCK_REVOCATION_NAMESPACES)[number];
+
+/**
+ * Bucket a blockInstanceId to its namespace. ORDER MATTERS: the `page_pubreq_` and
+ * `page_local_` shapes are prefixed by `page_`, so they must be tested BEFORE it or they
+ * collapse into it — which is exactly the collapse that hid the two uncovered dev-token
+ * shapes from a prefix-granular guard.
+ */
+export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevocationNamespace {
+  if (typeof blockInstanceId !== 'string') return 'other';
+  if (blockInstanceId.startsWith('page_pubreq_')) return 'page_pubreq';
+  if (blockInstanceId.startsWith('page_local_')) return 'page_local';
+  if (blockInstanceId.startsWith('page_')) return 'page';
+  if (blockInstanceId.startsWith('bus_pub_')) return 'bus_pub';
+  if (blockInstanceId.startsWith('bus_view_')) return 'bus_view';
+  if (blockInstanceId.startsWith('pdb_')) return 'pdb';
+  if (blockInstanceId.startsWith('bki_')) return 'bki';
+  if (blockInstanceId.startsWith('mbi_')) return 'mbi';
+  return 'other';
+}
+
+/**
+ * The two post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write) and
+ * `blocks.previewPostFromApp` (the read-only dry run).
+ *
+ * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
+ * preamble, so a combined number would leave an operator unable to say whether a
+ * spike cost anyone a real post. A refused `create` is a post the viewer intended
+ * to make and did not get; a refused `preview` cost them a dialog. Those warrant
+ * different urgency, and the label is the only thing that can tell them apart —
+ * there is no per-request log to fall back on for this deployment.
+ */
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
+
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   'not_approved',
   'not_found',
   'lookup_failed',
+  /**
+   * The dev-tunnel re-check could not be completed (clawgate #571). Refuses like
+   * `not_approved`, counted separately so a cache incident is not indistinguishable from
+   * the stale-dev-token population that verdict exists to create — which matters more
+   * here than it would elsewhere, because application-container logs are not collected on
+   * this deployment, so this label is the whole signal for that leg.
+   *
+   * ⚠️ THIS LIST IS A THIRD EDIT SITE, NOT DERIVED. It is a hand-maintained union
+   * alongside `AppBlockApprovalVerdict` and the two callers' mappings; a new verdict needs
+   * all four. The compiler does force it — `recordBlockRestApprovalVerdict(approval)` in
+   * `block-scope.middleware` fails to type-check until the label exists — so this cannot
+   * be forgotten silently, but it is easy to be surprised by.
+   */
+  'tunnel_lookup_failed',
 ] as const;
 export type AppBlockRestApprovalVerdictReason =
   (typeof APP_BLOCK_REST_APPROVAL_VERDICT_REASONS)[number];
@@ -407,11 +487,15 @@ type Bundle = {
   requestsTotal: Counter<string>;
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
+  bridgeMessagesTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
+  revocationRefusalsTotal: Counter<string>;
+  bridgeRateLimitRefusalsTotal: Counter<string>;
+  postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
@@ -575,6 +659,52 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['app_block_id', 'slot_id', 'result', 'error_class']
   );
 
+  // ── postMessage BRIDGE message outcomes ──────────────────────────────────────
+  //
+  // 🔴 THE SERIES `renders_total` STRUCTURALLY CANNOT BE. `renders_total` fires
+  // ONCE PER HOST MOUNT and reports the settled MOUNT outcome, so every failure
+  // after BLOCK_READY is invisible to it — and every one of the bridge's five
+  // silent drop paths lives after ready. Measured 2026-09-18: a `custom-generators`
+  // gallery read was dead end-to-end while 100% of render series across all 11
+  // rendering apps read `result=ok, error_class=none`, for the full 15-day
+  // retention. A perfect green dashboard the entire time the defect was live. Do
+  // not treat these two counters as overlapping: one grades the LAUNCH, this one
+  // grades the CONVERSATION.
+  //
+  // 🔴 READ `handled` AS THE DENOMINATOR, NEVER THE ERROR COUNTS ALONE. A falling
+  // `no_handler` rate and a falling traffic rate are the same observation without
+  // it (the bare-count trap the `step_price_check` counter's `quoted`/`absent` pair
+  // above exists to avoid). Alert on a RATIO.
+  //
+  // 🔴 `no_handler` IS NOT UNIFORMLY A BUG — read it WITH `host`. A page-only
+  // message arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`,
+  // `OPEN_IMAGE_UPLOAD`, …) is an EXPECTED refusal that the parity inventory
+  // declares N/A for `IframeHost`; the same type unhandled on `PageBlockHost` is a
+  // real missing bridge. The `host` label values are the parity inventory's own
+  // file names precisely so the series joins to `INVENTORY[type][host]` with no
+  // mapping table in between.
+  //
+  // Cardinality: (A+1) x (47+1) x 2 x 6 ~= 29,376 at A=50 approved apps, where
+  // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
+  // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
+  // which is wrong for the same reason). That is the largest App
+  // Block label set in this module and it is the one number to re-derive before
+  // adding a label here. It is acceptable only because BOTH multiplicands are
+  // hard-bounded by code-owned sets — `type` by `boundBridgeMessageType` against
+  // the protocol INVENTORY, `host`/`outcome` by zod enums on the beacon body — so
+  // a scripted client cannot move it at all, and because in practice the reachable
+  // product is far smaller (an app uses a handful of message types, on one host).
+  // 🔴 DO NOT ADD `slot_id`, `block_instance_id`, OR ANY REQUEST-SCOPED FIELD:
+  // prom-client retains every distinct label set in the Node heap forever across
+  // ~130 scraped pods (the --max-old-space-size exit-139 OOM class). Attribution
+  // beyond these four belongs in a log line.
+  const bridgeMessagesTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_bridge_messages_total',
+    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for the type, so a REQUEST-style message would hang to its SDK timeout (30s default / 120s workflow / 600s human-in-the-loop) — READ IT WITH `host`, because a page-only message refused by IframeHost is the DECLARED design (see hostHandlerParity INVENTORY) while the same type unhandled on PageBlockHost is a missing bridge; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
+    ['app_block_id', 'type', 'host', 'outcome']
+  );
+
   // ── customComfy per-engine runtime/cost (App Blocks `customComfy` bridge) ────
   // Instrument-ahead-of-demand for the pre-GA question "is flux2-klein's real p99
   // approaching its 150-Buzz / 150s ceiling?". EMPTY until real customComfy volume
@@ -587,6 +717,18 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // the series count grows by a handful with each new recipe/engine — always trivially
   // bounded regardless of the wire (labels are free-form + fail-soft, but the values
   // are enum-resolved from the registry, so they can't blow up).
+  //
+  // 🔴 NOT ONLY THE customComfy BRIDGE ANY MORE, AND NOT ONLY REGISTRY-DERIVED
+  // LABELS. Every arm that reserves a post-paid CEILING settles through the same
+  // record, so these also carry the inline arm ({inline, __inline__}) and the
+  // denylist-only PASS-THROUGH `kind:'step'` arm ({passthrough, __passthrough__}).
+  // Both are CONSTANTS chosen precisely because those arms have no registry to
+  // resolve an enum from — the pass-through `$type` set is open by construction —
+  // so the bound holds, but "enum-resolved from the registry" is no longer the
+  // reason it does. A new post-paid arm with constant labels adds one pair;
+  // flipping `postPaidSettle` on a REGISTRY step entry instead adds one pair per
+  // (step id × variant), because that persist site passes the resolved variant
+  // and the step id rather than constants.
   const customComfyActualBuzz = getOrCreateHistogram(
     reg,
     'civitai_app_block_customcomfy_actual_buzz',
@@ -663,7 +805,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // request whose verdict was NOT `ok`, by reason. `ok` and `dev_exempt` are not
   // counted: they are the steady state and would swamp the series.
   //
-  // 🔴 READ THE `refused?` COLUMN BEFORE ALERTING ON THIS. Two of the three reasons
+  // 🔴 READ THE `refused?` COLUMN BEFORE ALERTING ON THIS. Three of the four reasons
   // refuse and one deliberately does not, so `sum(rate(...))` across the label is a
   // number with no meaning — it adds requests that were turned away to requests that
   // were served. Always split by `reason`.
@@ -684,11 +826,31 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   //                   needs fixing, NOT an authorization event and NOT an outage.
   //                   It is a separate series precisely so that it never has to be
   //                   inferred out of a combined "the gate refused something" number.
-  //   lookup_failed — REFUSED, 503. The replica read threw. Infra, not policy;
-  //                   fail-closed, because a read we cannot complete leaves us
-  //                   unable to establish that the app is allowed to run at all.
+  //   lookup_failed — REFUSED, 503 — on the routes that fail closed; the five
+  //                   declaring `onApprovalLookupFailure: 'serve'` are SERVED, so the
+  //                   outcome is ROUTE-DEPENDENT and this row cannot be read flat. The
+  //                   replica read threw. Infra, not policy; fail-closed by default,
+  //                   because a read we cannot complete leaves us unable to establish
+  //                   that the app is allowed to run at all.
+  //   tunnel_lookup_failed
+  //                 — REFUSED, 403, on every route. The dev-tunnel re-check could not
+  //                   be completed (clawgate #571). Infra, not policy, like
+  //                   `lookup_failed` — but a CACHE fault rather than a replica one, and
+  //                   NOT route-tolerable: `onApprovalLookupFailure` is deliberately
+  //                   scoped to `lookup_failed` alone, because a non-approved app must
+  //                   not be served anywhere on the strength of a cache read failing.
+  //                   It exists as its own reason so a sysRedis incident is not
+  //                   indistinguishable from `not_approved`, which is the series the
+  //                   dev-token narrowing is watched on — folded in, an incident reads
+  //                   as that change working.
+  //                   ⚠️ REST-ONLY, like this whole counter. The tRPC bridge resolves
+  //                   the same verdict and records NOTHING, so a tunnel failure reached
+  //                   through the bridge does not appear here at all. That gap is
+  //                   pre-existing and equally true of `not_approved`; it is called out
+  //                   because the bridge is the higher-rate surface (`pollWorkflow` is
+  //                   timer-driven), so a zero here does not mean the leg is healthy.
   //
-  // 🔴 ONE LABEL, `reason`, over a 3-value code-owned union → 3 series, TOTAL.
+  // 🔴 ONE LABEL, `reason`, over a 4-value code-owned union → 4 series, TOTAL.
   // No `app_block_id`: this fires once per non-ok request with nothing caching or
   // rate-limiting it, and prom-client retains every distinct label set in the Node
   // heap forever across ~130 scraped pods. Attribution belongs in the caller's log
@@ -697,8 +859,87 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const restApprovalVerdictsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_rest_approval_verdicts_total',
-    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
+    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure; tunnel_lookup_failed = the dev-tunnel re-check could not be completed (a cache fault, not a replica one), REFUSED 403 on EVERY route because onApprovalLookupFailure does not cover it, kept separate from not_approved so a sysRedis incident is not counted as the dev-token narrowing working. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
     ['reason']
+  );
+
+  // ── REVOCATION REFUSALS ──────────────────────────────────────────────────────
+  // 🔴 THIS MECHANISM WAS ENTIRELY UNOBSERVABLE UNTIL NOW, AND NOT BY DESIGN. The REST
+  // revocation branch 403s and RETURNS before `recordScopeInvocation` registers its
+  // `res.on('finish')` handler, so a revocation refusal could never write a
+  // `block_scope_invocations` row — the audit surface everyone assumed covered it. The
+  // result: no signal anywhere distinguished "revocation has never fired" from
+  // "revocation is broken and silently serving", while three separate writers were added
+  // to it across clawgate #618. A control nobody can tell has ever fired is a control
+  // nobody can defend.
+  const revocationRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_revocation_refusals_total',
+    'Block-token requests refused because BlockRevocation.isRevoked returned true, by guard surface and blockInstanceId namespace. surface: rest = withBlockScope (403), bridge = authorizeBlockBridgeToken (tRPC FORBIDDEN). namespace buckets the instance id (bki/mbi/bus_pub/bus_view/pdb/page/page_pubreq/page_local/other) — the id itself is unbounded and is deliberately NOT a label; attribute individual refusals from the logs. A flat zero on a namespace means either nothing has been revoked there or that namespace is not reached by any revocation writer, and those are different bugs — read it against the writer in blocks/publisher-ban-revocation.service.ts. isRevoked FAILS OPEN on a Redis error, so this counter cannot see a refusal that a Redis incident suppressed',
+    ['surface', 'namespace']
+  );
+
+  // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
+  // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
+  // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
+  // solely by the REST `withBlockScope` wrapper — it never counts a bridge call — so
+  // before this there was no way to answer "has any of these limits ever fired?" for any
+  // bucket, old or new. Three separate comments in `block-catalog-rate-limit.ts` name a
+  // closing condition that depends on this series existing.
+  //
+  // REFUSALS ONLY, NOT A DENOMINATOR, and that asymmetry is deliberate. The question a
+  // ceiling has to answer is "is it biting?", and the blast radius on this surface is
+  // asymmetric: too tight throttles a paid generation and presents as a broken block.
+  // A refusal count answers that directly and costs one in-heap increment on a path that
+  // should be empty; a total-calls counter would add an increment to EVERY bridge call
+  // including the poll loop, for a number nothing currently acts on. Add the denominator
+  // when someone needs a RATE rather than an alarm.
+  //
+  // Cardinality: procedure (≤ ~20 bridge procs) × bucket (5 buckets) ≈ 100 worst case,
+  // and in practice far less — each procedure charges exactly one bucket. Both labels are
+  // SERVER-CHOSEN constants from the call site, never request input, so a hostile block
+  // cannot inflate the label set.
+  const bridgeRateLimitRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_bridge_rate_limit_refusals_total',
+    'App Block tRPC bridge rate-limit refusals by procedure and bucket',
+    ['procedure', 'bucket']
+  );
+
+  // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
+  // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
+  // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
+  // used to pass an unhydratable subject on to the post-creation flag as
+  // `{ user: undefined }` — the no-entity arm — and a segment-scoped rollout
+  // answers `false` to a no-entity eval, so the viewer was told "posting from apps
+  // is not enabled" whenever their session could not be read. Two different facts,
+  // one message; only one of them is about permission.
+  //
+  // 🔴 A LOG LINE WOULD NOT HAVE SATISFIED THIS. Application-container stdout is
+  // not collected into the log store for this deployment, so a `console.error` on
+  // this branch is unreadable to any later investigator — the exact reason the
+  // 2026-09-19 refusal could not be attributed to a mechanism at all. A scraped
+  // counter is the only surface that exists here today.
+  //
+  // 🔴 ONE LABEL, `surface`, over a 2-value code-owned union → 2 series, TOTAL. No
+  // `app_block_id` and no user id: this fires once per refused post/preview attempt
+  // with nothing caching it, and prom-client retains every distinct label set in
+  // the Node heap for the process lifetime across every scraped pod. Same
+  // alert-on-the-metric / attribute-from-the-log split as the two counters above —
+  // except that here the log half does not exist yet, so read this series as a RATE
+  // signal only and do not expect to identify WHICH viewer was refused from it.
+  //
+  // 🔴 WHAT A ZERO DOES AND DOES NOT MEAN. Zero is the healthy steady state — a
+  // subject that hydrates never reaches the emitter — so "nothing has gone wrong"
+  // and "the emitter is inert" are the same observation on this series alone. That
+  // is why the registration itself is pinned by a real-registry scrape in
+  // `app-block-post-subject-refusals.metrics.test.ts` rather than left to the
+  // caller-level test.
+  const postSubjectRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_post_subject_refusals_total',
+    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality); per-viewer attribution is not available on this deployment because application-container logs are not collected, so this counter is the whole signal. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
+    ['surface']
   );
 
   // ── `kind: 'step'` prepaidFixed PRICE CHECK ──────────────────────────────────
@@ -764,15 +1005,19 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // ignore it. `over` is a REPORT that a declared constant does not describe
   // reality; `over_reserved` is the thing that costs money. Read
   // `outcome="exact"` to confirm the check runs at all; investigate a rising
-  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio.
+  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio — and read
+  // `absent` per `step` label, because its meaning inverts on `__passthrough__`
+  // (see the help text).
   //
   // Cardinality: `step` is drawn from the code-owned registry keys (never client
   // input — the wire enum derives from those same keys, so an unregistered id
-  // cannot reach here); `outcome` is a closed 6-value set. Bounded and small.
+  // cannot reach here) PLUS the single constant `__passthrough__`, which the
+  // pass-through `kind:'step'` arm emits under precisely because ITS `$type` set
+  // is open by construction; `outcome` is a closed 7-value set. Bounded and small.
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and the nearest series for that is civitai_app_block_customcomfy_wallclock_seconds{engine=\"passthrough\"} (one sample per pass-through workflow that reached terminal - a lower bound, not joinable to this counter per event). quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -857,11 +1102,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
+    bridgeMessagesTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
+    revocationRefusalsTotal,
+    bridgeRateLimitRefusalsTotal,
+    postSubjectRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -944,13 +1193,14 @@ export function observeAppBlockLaunch(
 /**
  * The closed outcome set for `civitai_app_block_step_price_check_total`. Keeping
  * it a union (rather than a bare string) is what bounds the label cardinality at
- * the type level — a caller cannot invent a fourth value.
+ * the type level — a caller cannot invent an eighth value.
  */
 export type StepPriceCheckOutcome =
   | 'exact'
   | 'over'
   | 'over_reserved'
   | 'absent'
+  | 'quoted'
   | 'estimate_quoted'
   | 'estimate_absent';
 
@@ -980,6 +1230,30 @@ export type StepPriceCheckOutcome =
  *     `correctReservationOverage` block — so the same caveat as the estimate
  *     bullet applies: it is `prepaidFixed`-only today because registry load
  *     rejects every other mode, not because this site checks.
+ *   - 🔴 SUBMIT, PRE-BILLING, ON THE PASS-THROUGH ARM (`quoted` / `absent`,
+ *     always with `step: '__passthrough__'`) — A THIRD SITE, AND ITS `absent`
+ *     HAS THE OPPOSITE POLARITY TO THE FAIL-CLOSED ONE ABOVE. The pass-through
+ *     `kind:'step'` arm does NOT refuse on a missing quote: it reserves the
+ *     app's declared `maxBuzz` and proceeds. So there `absent` means only that
+ *     the submit was not refused FOR LACK OF A QUOTE — a generation MAY have run
+ *     with its ceiling resting on the app's own number. ⚠️ It is NOT a statement
+ *     that one did: the emit sits inside the quote, ahead of the static gate,
+ *     every reservation leg and the real submit, so an orchestrator that
+ *     rejects the `$type` outright lands here too with nothing having run. The
+ *     triage instruction in the bullet above is wrong for this arm, and the
+ *     `step` label is what tells the two sites apart. 🔴 THIS COUNTER CANNOT
+ *     SEPARATE THE TWO CAUSES — only whether a submit produced a workflow does,
+ *     and the nearest series for that is
+ *     `civitai_app_block_customcomfy_wallclock_seconds{engine="passthrough"}`:
+ *     one sample per pass-through workflow that reached terminal, because the
+ *     record it settles from is persisted only after a workflow exists. A LOWER
+ *     BOUND, not a join — it needs a terminal observation, drops a sample above
+ *     `MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS` (600s, well past its 240s top bucket,
+ *     so a slow gen IS still observed), and carries no label tying it to an
+ *     individual `absent`. `quoted` is its success half and
+ *     exists so `absent` has a denominator: without a pair, `absent` falls when
+ *     submit volume falls, which reads as healthy. Not gated on billing mode
+ *     (that arm has none).
  *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
  *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
  *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
@@ -992,7 +1266,8 @@ export type StepPriceCheckOutcome =
  *
  * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. Only the three
  * outcomes in the first bullet are reached with money behind them; the estimate
- * phase and the fail-closed `absent` both run with no spend at all.
+ * phase, the fail-closed `absent` and the pass-through pair all run before any
+ * spend exists.
  *
  * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
  * so a flat divergence line can be told apart from a detector that never ran.
@@ -1059,12 +1334,74 @@ export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): 
 }
 
 /**
+ * Fail-soft emit of one revocation refusal. Called from BOTH guards that read
+ * `BlockRevocation.isRevoked` — `withBlockScope` (`block-scope.middleware.ts`) and
+ * `authorizeBlockBridgeToken` (`blocks/block-bridge-auth.service.ts`).
+ *
+ * 🔴 TOTAL, like every emitter here: the refusal has already been decided by the time
+ * this runs, and a metrics error must not convert a chosen 403 into an uncaught 500.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet with nothing
+ * revoked emits zero.
+ */
+export function recordBlockRevocationRefusal(
+  surface: AppBlockRevocationSurface,
+  blockInstanceId: unknown
+): void {
+  try {
+    const { revocationRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    revocationRefusalsTotal.inc({
+      surface,
+      namespace: revocationNamespaceLabel(blockInstanceId),
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * The buckets a bridge procedure can charge. Mirrors the sub-namespaces in
+ * `~/server/utils/block-catalog-rate-limit` — a label, not a lookup, so adding a bucket
+ * there and forgetting it here yields a type error at the call site rather than a silent
+ * mislabel.
+ */
+export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+
+/**
+ * Fail-soft emit of ONE bridge rate-limit refusal.
+ *
+ * Called from the refusal branch of each limiter site in `blocks.router.ts` — the branch
+ * that either throws `TOO_MANY_REQUESTS` or (for `pollWorkflow` and `cancelWorkflow`)
+ * returns a non-terminal snapshot. Both are refusals; the difference is how the client is
+ * told, and the ceiling is equally worth grading either way.
+ *
+ * 🔴 TOTAL, like every emitter in this module: a metrics error must never convert a
+ * refusal the limiter has already decided into a 500, and on the two returning paths it
+ * must never convert one into a thrown error at all — which is precisely the failure the
+ * returning paths exist to avoid.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet under its
+ * ceilings emits zero, which is also the reading that says the ceilings are not biting.
+ */
+export function recordBlockBridgeRateLimitRefusal(
+  procedure: string,
+  bucket: AppBlockRateLimitBucket
+): void {
+  try {
+    const { bridgeRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
  * Fail-soft emit of one non-`ok` REST approved-status GATE verdict. Called from
  * `withBlockScope` (`block-scope.middleware.ts`).
  *
  * 🔴 TOTAL, like every emitter in this module, and here the reason is sharper than
  * usual: the thing it instruments is an authorization gate on the block REST surface,
- * and two of its three reasons are decided refusals. If a metrics error propagated, a
+ * and three of its four reasons are decided refusals. If a metrics error propagated, a
  * verdict the gate had already settled would leave as an uncaught 500 instead of the
  * 403/503 it chose — or, on `not_found`, would turn a request the gate decided to SERVE
  * into a 500. Either way the observability would change the response it exists to
@@ -1079,6 +1416,34 @@ export function recordBlockRestApprovalVerdict(reason: AppBlockRestApprovalVerdi
     restApprovalVerdictsTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error change the response the gate chose */
+  }
+}
+
+/**
+ * Fail-soft emit of one post-from-app refusal caused by a token subject that did not
+ * hydrate. Called from the shared post preamble in `blocks.router.ts`.
+ *
+ * 🔴 TOTAL, like every emitter here, and for the usual reason: the refusal is already
+ * decided by the time this runs, so a metrics error must not convert a chosen 401 into
+ * an uncaught 500.
+ *
+ * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS. Application-container logs are not
+ * collected for this deployment, so the `console.error` shape used elsewhere in the repo
+ * would be invisible to a later investigator. Deleting this call does not fail a type
+ * check and does not fail any test that only asserts the thrown error — it silently
+ * returns the branch to being unobservable, which is the state that made the 2026-09-19
+ * refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
+ * stops that.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet whose subjects
+ * all hydrate emits zero.
+ */
+export function recordBlockPostSubjectRefusal(surface: AppBlockPostSurface): void {
+  try {
+    const { postSubjectRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    postSubjectRefusalsTotal.inc({ surface });
+  } catch {
+    /* instrument-only — never let a metrics error change the refusal the gate chose */
   }
 }
 

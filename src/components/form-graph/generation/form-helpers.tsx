@@ -17,6 +17,7 @@ import {
 } from '~/shared/form-graph/generation/checkpoint';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { SnippetsValue } from '~/shared/form-graph/generation/defs';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { trpc } from '~/utils/trpc';
 
 import type { GenerationStore } from './store';
@@ -234,41 +235,46 @@ export function useWildcardHandlers(store: GenerationStore) {
   );
 
   const addWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const current = readSnippets() ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        store.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        });
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const current = readSnippets() ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          store.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          });
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [store, loadFromModelVersion]); // eslint-disable-line react-hooks/exhaustive-deps

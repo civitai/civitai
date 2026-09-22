@@ -2383,7 +2383,14 @@ export class BlockRegistry {
         data: { enabled, updatedAt: new Date() },
       });
       if (!row.blockInstanceId) continue;
-      // Disable writes a revocation marker; re-enable MUST clear it.
+      // Disable writes an INSTALL revocation marker; re-enable MUST clear it.
+      //
+      // 🔴 BOTH CALLS ADDRESS THE INSTALL KEYSPACE ONLY, AND THAT IS LOAD-BEARING. A
+      // publisher BAN writes a different key (`revokeInstanceForBan`). When the two
+      // shared one, this line's `revokeInstance` overwrote a ban marker and the
+      // `clearInstance` below then deleted it — so an ordinary, un-banned model owner
+      // toggling a banned publisher's install off and on again put that publisher's
+      // live tokens straight back into service. See `block-revocation.service.ts`.
       // Without the clear, every freshly-minted token for this install
       // would be rejected by withBlockScope until the marker's TTL elapsed —
       // MAX_BLOCK_TOKEN_LIFETIME_SECONDS, not the 15 minutes this line claimed

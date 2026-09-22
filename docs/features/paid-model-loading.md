@@ -156,6 +156,9 @@ moves with `maxBuzz`.
 Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` rather than trusting
 this section once it ages. The app's own orchestrator calls still go through the older
 `@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
+The fleet-wide loaded list (`/v1/manager/resources/loaded`) is in neither client, so
+`getLoadedResourceAirs` (`src/server/http/orchestrator/loaded-resources.ts`) calls it through the
+orchestrator caller.
 
 ### Step preparation — what the card and the alert render
 
@@ -328,7 +331,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
 | 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
-| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. | Justin | a decision |
+| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded`, synced every 5 minutes by `sync-generator-loaded-resources`; what is left is the display decision. | Justin | a decision |
 | — | **The `covered` field in `/api/v1/model-versions/mini/[id]` changed meaning** for third-party consumers, unannounced. | Briant / team | announced, or judged not worth it |
 | C11 | **Retire auctions.** Paid loading replaces the cluster-residency half; the featuring half needs rehoming, and that is 868gtq1kt's answer first. ~89 files. | unscoped | 868gtq1kt answers |
 | — | **Phase A ratifications:** the fifth `unknown` state, `estimate` returning `{ cost, priced }`, and `currencies: getAllowedAccountTypes(...)` deciding which Buzz account pays. All live, all cheap to reverse now. | Briant / team | "fine", or name the one to change |
@@ -370,6 +373,6 @@ is the orchestrator's axis.
 - A residency countdown — nothing reports when a window ends.
 - A C4-style webhook — closed 2026-09-08; reopens only if Phase 2 notifications need a server-side
   moment.
-- Load state in search results, for now.
+- Load state shown in search results, for now. (The index carries `versions.generatorLoaded`.)
 - Any promise about *arrival* time. Bandwidth into the DC was ~10 KB/s at the 2026-08-18 call, and
   `PrepareResourceJob` gives up at 24h.

@@ -14,12 +14,13 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * `getWindowedCollectionRanking` runs; only the ClickHouse CLIENT is doubled, with the
  * exact error production threw:
  *
- *     ClickHouse query failed: Socket hang up after 3 retries
+ *     ClickHouse query failed: socket hang up
  *
- * `@clickhouse/client` 0.2.10 raises that when every pooled keep-alive socket it tries
- * has been idle past `keep_alive.socket_ttl` — measured at ~341 throws per hour against
- * the production deployment on 2026-09-11, and the single live `period=Month` request
- * in that day's ingress access log (21:58:27Z) is one of them.
+ * `@clickhouse/client` raises that when it hands out a pooled keep-alive socket the
+ * server has already closed — measured at ~341 throws per hour against the production
+ * deployment on 2026-09-11 (then running 0.2.10, whose own retry loop added an
+ * `after 3 retries` suffix that 1.x no longer emits), and the single live `period=Month`
+ * request in that day's ingress access log (21:58:27Z) is one of them.
  *
  * 🔴 AND THE REQUEST IS THE LITERAL PRODUCTION QUERY STRING, parsed the way the server
  * parses it, rather than a hand-built object. The whole defect class here is "the state
@@ -30,8 +31,8 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
 
 const PRODUCTION_QUERY_STRING = 'mode=public&sort=Most+Followers&period=Month&limit=24';
 
-/** The verbatim message `@clickhouse/client` 0.2.10 throws on an exhausted socket pool. */
-const SOCKET_HANG_UP = 'ClickHouse query failed: Socket hang up after 3 retries';
+/** The verbatim message `@clickhouse/client` throws on a dead pooled socket. */
+const SOCKET_HANG_UP = 'ClickHouse query failed: socket hang up';
 
 function createMocks(query: Record<string, unknown>) {
   const req = {

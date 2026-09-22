@@ -33,7 +33,7 @@ describe('StepData.mediaType', () => {
     expect(stepOfType('preprocessImage').mediaType).toBe('image');
   });
 
-  it.each(['aceStepAudio', 'miniMaxMusic3'])('%s is audio', ($type) => {
+  it.each(['aceStepAudio', 'miniMaxMusic3', 'yuE2'])('%s is audio', ($type) => {
     expect(stepOfType($type).mediaType).toBe('audio');
   });
 });

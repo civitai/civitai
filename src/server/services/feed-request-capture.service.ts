@@ -62,6 +62,8 @@ const FLAG_FIELDS = [
   'hideChallenges',
   'pending',
   'includeBaseModel',
+  'disablePoi',
+  'disableMinor',
 ] as const;
 
 // Allowlist, not a denylist: a field added to the search input later is not captured

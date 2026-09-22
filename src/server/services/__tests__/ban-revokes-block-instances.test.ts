@@ -1,0 +1,896 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Setup-order import: installs the `~/env/server` mock carrying the real test RSA keypair
+// BEFORE `block-token.service` reads env at module load. Same posture as the sibling
+// real-JWT suites (`block-scope.approved-gate.test.ts`).
+import '~/__tests__/setup';
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+/**
+ * BANNING A PUBLISHER MUST REACH THE BLOCK TOKENS THEIR BLOCKS ALREADY HOLD.
+ *
+ * 🔴 STATE THE RESIDUAL NARROWLY — a ban was never a no-op. It already unpublishes the
+ * user's models, cancels the subscription, blocks their media and invalidates their
+ * sessions. What it did NOT do is write any of the three markers the runtime guards read,
+ * so a block token minted before the ban kept authenticating against the REST wrapper
+ * (`withBlockScope`) and the tRPC bridge (`authorizeBlockBridgeToken`) until its natural
+ * `exp` — 900s by default, 14400s for a `dev` token. That window, and only that window, is
+ * what `revokeBlockInstancesForPublisher` closes (clawgate #618).
+ *
+ * WHAT IS REAL HERE AND WHAT IS NOT. The tokens are real RS256 JWTs from the real signer.
+ * `BlockRevocation`, the REST middleware's revocation branch and the tRPC bridge guard all
+ * run for real. Redis is the canonical mock wired to an in-memory Map, so the marker
+ * `toggleBan` WRITES is the marker the guard READS — the seam this card is about. Only the
+ * DB rows and the runtime feature flag are stubbed.
+ *
+ * 🔴 THE FIXTURE IS BUILT TO DEFEAT TWO DIFFERENT WRONG IMPLEMENTATIONS, and both of them
+ * are wrong implementations this change actually had.
+ *
+ *   (a) FOUR PINNED INSTANCES ACROSS TWO BLOCKS — a single-instance fixture passes with a
+ *       loop that revokes only its first row.
+ *   (b) FOUR SYNTHESISED IDS ACROSS THE OTHER FOUR NAMESPACES — `bus_pub_*`, `bus_view_*`,
+ *       `pdb_*`, `page_*`. A fixture built only from rows whose `blockInstanceId` column is
+ *       populated agrees with the first version of the writer, which selected
+ *       `blockInstanceId: { not: null }` and reached one namespace out of five while every
+ *       comment in the change said "every live instance". `publisher_all_my_models` blanket
+ *       — the shape it missed — is the publisher's own default install.
+ *
+ * The namespace set itself is pinned separately, against the canonical parser, in
+ * `blocks/__tests__/publisher-ban-revocation.namespaces.test.ts`: this file can only ever
+ * check the ids someone thought to write down, and that is the half that decayed.
+ */
+
+const { isFliptMock, listTunnelsMock, mockRemoveContent, mockSendModerationEmail } = vi.hoisted(
+  () => ({
+    isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
+    listTunnelsMock: vi.fn(async () => [] as string[]),
+    mockRemoveContent: vi.fn(async () => undefined),
+    mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+  })
+);
+
+vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
+// The dev-tunnel index read. Mocked at the seam rather than through sysRedis so this
+// suite states WHICH tunnels are live rather than reproducing the index's key shape.
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  listActiveDevTunnelBlockIds: listTunnelsMock,
+}));
+vi.mock('~/server/email/templates', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, moderationActionEmail: { send: mockSendModerationEmail } };
+});
+vi.mock('~/server/meilisearch/util', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, removeUserContentFromSearchIndex: mockRemoveContent };
+});
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { withBlockScope } from '~/server/middleware/block-scope.middleware';
+import { BlockTokenService } from '~/server/services/block-token.service';
+import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+import { BlockRegistry } from '~/server/services/block-registry.service';
+import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { revokeBlockInstancesForPublisher } from '~/server/services/blocks/publisher-ban-revocation.service';
+
+const { toggleBan } = await import('~/server/services/user.service');
+const { BanReasonCode } = await import('~/server/common/enums');
+
+const PUBLISHER_ID = 90618;
+const ACTOR_ID = 90619;
+const ALREADY_BANNED_AT = new Date('2026-02-03T04:05:06.000Z');
+const SCOPE = 'user:read:self';
+
+/**
+ * Two app blocks, two PINNED instances each. `appBlockId` differs across the pair so a
+ * loop that breaks after the first BLOCK is as visible as one that breaks after the
+ * first ROW.
+ */
+const PINNED = [
+  { appBlockId: 'apb_618_one', blockId: 'blk_618_one', blockInstanceId: 'bki_618_one_a' },
+  { appBlockId: 'apb_618_one', blockId: 'blk_618_one', blockInstanceId: 'bki_618_one_b' },
+  { appBlockId: 'apb_618_two', blockId: 'blk_618_two', blockInstanceId: 'bki_618_two_a' },
+  { appBlockId: 'apb_618_two', blockId: 'blk_618_two', blockInstanceId: 'bki_618_two_b' },
+];
+
+/**
+ * 🔴 THE BLANKET ROWS, WHICH THE FIRST VERSION OF THIS WRITER SILENTLY SKIPPED.
+ *
+ * `BlockUserSubscription.blockInstanceId` is NULL for a blanket subscription; the id its
+ * tokens carry is SYNTHESISED on read — `'bus_pub_' || bus.id` and `'bus_view_' || bus.id`
+ * in `BlockRegistry.listForModel`. The guards compare `claims.blockInstanceId` verbatim,
+ * so a marker under the synthesised id works — but a `where` of
+ * `blockInstanceId: { not: null }` never selects the row, and `publisher_all_my_models`
+ * blanket is the publisher's OWN default install shape. A fixture built only from pinned
+ * rows agrees with the bug.
+ */
+const BLANKET = [
+  {
+    id: 'bus_618_blanket',
+    scope: 'publisher_all_my_models',
+    instanceId: 'bus_pub_bus_618_blanket',
+  },
+  { id: 'bus_618_viewer', scope: 'viewer_personal', instanceId: 'bus_view_bus_618_viewer' },
+];
+
+/**
+ * The two surfaces that hang off the APP BLOCK and have no subscription row at all, so no
+ * query over `BlockUserSubscription` can reach them: the platform-default promotion and
+ * the `<slug>.civit.ai` full page.
+ */
+const OWNED_APP_BLOCK_IDS = ['apb_618_one', 'apb_618_two'];
+const APP_BLOCK_SURFACE_IDS = OWNED_APP_BLOCK_IDS.flatMap((id) => [`pdb_${id}`, `page_${id}`]);
+
+/**
+ * 🔴 THE DEV MINT'S PENDING-SUBMISSION SHAPE, WHICH `page_` HID. `dev-token.ts` mints
+ * `page_pubreq_<publishRequestId>` for a caller-owned pending submission, `dev: true`, so
+ * it lives 14400s — four hours, on the surface a banned author is most likely to be
+ * holding. The prefix-granular seam guard cannot see it, because it IS a `page_` id.
+ */
+const PENDING_REQUEST_IDS = ['pubreq_618_one'];
+/**
+ * BOTH spellings, and they are different shapes with different holders. `id` already
+ * starts `pubreq_`, so the dev mint's author-held token is the DOUBLE-prefixed
+ * `page_pubreq_pubreq_<ULID>` while the MOD review preview is the single
+ * `page_pubreq_<ULID>`. Emitting one and not the other leaves a 4h token running, and a
+ * fixture carrying one and not the other cannot tell.
+ */
+const PENDING_SURFACE_IDS = PENDING_REQUEST_IDS.flatMap((id) => [
+  `page_pubreq_${id}`,
+  `page_${id}`,
+]);
+
+/**
+ * 🔴 THE EPHEMERAL SHAPE — an UNSUBMITTED app running over a live dev tunnel,
+ * `page_ephemeral-<blockId>`, `dev: true` so 14400s, and held by the AUTHOR: precisely
+ * the publisher a ban exists to cut off. It has no AppBlock row, no publish request and
+ * no listing, so the dev-tunnel index is the only server record that can find it.
+ */
+const TUNNELLED_BLOCK_IDS = ['blk_618_ephemeral'];
+const EPHEMERAL_SURFACE_IDS = TUNNELLED_BLOCK_IDS.map((id) => `page_ephemeral-${id}`);
+
+/** Every instance id a ban on this publisher must reach, across all five namespaces. */
+const ALL_INSTANCE_IDS = [
+  ...PINNED.map((p) => p.blockInstanceId),
+  ...BLANKET.map((b) => b.instanceId),
+  ...APP_BLOCK_SURFACE_IDS,
+  ...PENDING_SURFACE_IDS,
+  ...EPHEMERAL_SURFACE_IDS,
+];
+
+/**
+ * The canonical-ownership predicate the writer must use, asserted whole. `app.userId` is
+ * NOT the owner of a block whose parent listing is offsite — `resolveCanonicalListingOwner`
+ * returns `AppListing.userId` there — and `claimListing` (the impersonation remedy that
+ * PRECEDES the ban) moves only the listing column. Keying on `app.userId` therefore
+ * over-revoked the victim's blocks in exactly the sequence this control serves.
+ */
+const CANONICAL_OWNER_WHERE = {
+  OR: [
+    { app: { userId: PUBLISHER_ID }, appListing: { is: null } },
+    { app: { userId: PUBLISHER_ID }, appListing: { is: { kind: 'onsite' } } },
+    { appListing: { is: { kind: { not: 'onsite' }, userId: PUBLISHER_ID } } },
+  ],
+};
+
+const APP_ID = 'app_618';
+
+/** The in-memory Redis the marker is written into and read back out of. */
+const store = new Map<string, string>();
+
+const userFindUnique = dbMock.dbRead.user.findUnique;
+const userUpdate = dbMock.dbWrite.user.update;
+const userFindFirst = dbMock.dbWrite.user.findFirst;
+const subscriptionFindMany = dbMock.dbWrite.blockUserSubscription.findMany;
+const appBlockFindMany = dbMock.dbWrite.appBlock.findMany;
+const publishRequestFindMany = dbMock.dbWrite.appBlockPublishRequest.findMany;
+const subscriptionUpdate = dbMock.dbWrite.blockUserSubscription.update;
+const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
+// The ban fan-out chains `.catch` on each of these; an undeclared write verb returns
+// `undefined` from the canonical mock and the fan-out then throws on `.catch`.
+const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
+const imageUpdateMany = dbMock.dbWrite.image.updateMany;
+const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
+const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
+
+async function mint(
+  blockInstanceId: string,
+  blockId: string,
+  appBlockId = OWNED_APP_BLOCK_IDS[0],
+  // 🔴 THE TOKEN'S SUBJECT, AND IT IS LOAD-BEARING FOR ONE SHAPE. `page_ephemeral-<slug>`
+  // is revoked under a SUBJECT-SCOPED key, because the slug is developer-chosen and two
+  // authors can hold live tunnels on the same unclaimed one. A ban therefore refuses the
+  // banned holder's token and NOT another author's identical instance id — so these
+  // fixtures have to say whose token they are.
+  userId = 7
+): Promise<string> {
+  const { token } = await BlockTokenService.sign({
+    userId,
+    blockId,
+    appId: APP_ID,
+    appBlockId,
+    blockInstanceId,
+    scopes: [SCOPE],
+    ctx: {},
+  } as Parameters<typeof BlockTokenService.sign>[0]);
+  return token;
+}
+
+function makeRes() {
+  const res = {
+    statusCode: 0,
+    body: undefined as unknown,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload: unknown) {
+      this.body = payload;
+      return this;
+    },
+    send() {
+      return this;
+    },
+    end() {
+      return this;
+    },
+    setHeader() {
+      return this;
+    },
+    removeHeader() {
+      return undefined;
+    },
+    writeHead() {
+      return this;
+    },
+    getHeader() {
+      return undefined;
+    },
+    on() {
+      return this;
+    },
+  };
+  return res as unknown as NextApiResponse & { statusCode: number; body: unknown };
+}
+
+function makeReq(token: string): NextApiRequest {
+  return {
+    method: 'GET',
+    headers: { authorization: `Bearer ${token}` },
+    query: {},
+    url: '/api/v1/blocks/me',
+    socket: { remoteAddress: '127.0.0.1' },
+  } as unknown as NextApiRequest;
+}
+
+/** One REST bridge request on the real middleware. */
+async function driveRest(token: string) {
+  const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+    res.status(200).json({ via: 'handler' });
+  });
+  const route = withBlockScope(handler as never, { endpoint: 'me', requiredScope: SCOPE });
+  const res = makeRes();
+  await route(makeReq(token) as never, res as never);
+  return { handler, res };
+}
+
+const banPublisher = () =>
+  toggleBan({
+    id: PUBLISHER_ID,
+    reasonCode: BanReasonCode.Other,
+    userId: ACTOR_ID,
+    isModerator: true,
+  } as Parameters<typeof toggleBan>[0]);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  store.clear();
+
+  // `clearAllMocks` does not reach the hybrid-proxy nodes the canonical mocks are built
+  // from, so implementations have to be (re)declared rather than assumed cleared.
+  //
+  // 🔴 EVERY FAKE YIELDS TO THE MACROTASK QUEUE, AND THAT IS THE WHOLE ORDERING GUARD.
+  // AC-1 is a HAPPENS-BEFORE claim — "the ban has completed, therefore the next request is
+  // refused". A fake that resolves in a microtask cannot express it: `await banPublisher()`
+  // then looks identical to never awaiting the writer at all, and BOTH of the mutations
+  // that break the ordering (dropping the `await` inside the writer, and detaching the leg
+  // from `toggleBan`'s awaited fan-out) pass a fully green suite. One tick, standing in for
+  // a network round trip, is what makes them fail.
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  redisMock.redis.set.mockImplementation(async (key: string, value: string) => {
+    await tick();
+    store.set(key, value);
+    return 'OK';
+  });
+  redisMock.redis.get.mockImplementation(async (key: string) => {
+    await tick();
+    return store.get(key) ?? null;
+  });
+  // `isRevoked` reads BOTH keyspaces in ONE round trip. A fake that left `mGet` at its
+  // canonical default (an empty array) would make every revocation check return false and
+  // every assertion in this file pass for the wrong reason — the silent-zero shape.
+  redisMock.redis.mGet.mockImplementation(async (keys: string[]) => {
+    await tick();
+    return keys.map((k) => store.get(k) ?? null);
+  });
+  redisMock.redis.del.mockImplementation(async (key: string) => {
+    await tick();
+    return store.delete(key) ? 1 : 0;
+  });
+
+  isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
+
+  userUpdate.mockResolvedValue({ id: PUBLISHER_ID, paddleCustomerId: null });
+  userFindFirst.mockResolvedValue(null);
+  userLinkDeleteMany.mockResolvedValue({ count: 0 });
+  imageUpdateMany.mockResolvedValue({ count: 0 });
+  commentUpdateMany.mockResolvedValue({ count: 0 });
+  commentV2UpdateMany.mockResolvedValue({ count: 0 });
+
+  subscriptionFindMany.mockResolvedValue([
+    ...PINNED.map(({ blockInstanceId }, i) => ({
+      id: `bus_pinned_${i}`,
+      scope: 'publisher_all_my_models',
+      blockInstanceId,
+    })),
+    ...BLANKET.map(({ id, scope }) => ({ id, scope, blockInstanceId: null })),
+  ]);
+  appBlockFindMany.mockResolvedValue(OWNED_APP_BLOCK_IDS.map((id) => ({ id })));
+  publishRequestFindMany.mockResolvedValue(PENDING_REQUEST_IDS.map((id) => ({ id })));
+  listTunnelsMock.mockResolvedValue([...TUNNELLED_BLOCK_IDS]);
+  subscriptionUpdate.mockResolvedValue({ id: 'bus_pinned_0' });
+  appBlockFindUnique.mockResolvedValue({ status: 'approved' });
+
+  // Not currently banned — so `toggleBan` takes the BAN branch.
+  userFindUnique.mockResolvedValue({
+    bannedAt: null,
+    meta: {},
+    username: 'publisher',
+    email: null,
+  });
+});
+
+/**
+ * AC-1. The headline claim, over a real minted token and a real bridge request.
+ *
+ * 🔴 This is the assertion that must be watched RED at the base commit: before the writer
+ * existed, `toggleBan` wrote no marker and the request below was served 200 by the wrapped
+ * handler.
+ */
+describe('AC-1 — a ban refuses the publisher’s already-minted token on its NEXT bridge request', () => {
+  it('REST (`withBlockScope`): 403 `block instance revoked`, handler never runs', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+
+    // The token works BEFORE the ban. Without this half, a harness that refuses
+    // everything would satisfy the assertion below while measuring nothing.
+    const before = await driveRest(token);
+    expect(before.res.statusCode, 'the token was already refused before the ban').toBe(200);
+    expect(before.handler).toHaveBeenCalledTimes(1);
+
+    await banPublisher();
+
+    const after = await driveRest(token);
+    expect(after.res.statusCode).toBe(403);
+    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+    expect(after.handler).not.toHaveBeenCalled();
+  });
+
+  it('tRPC bridge (`authorizeBlockBridgeToken`): FORBIDDEN `block instance revoked`', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+    await expect(authorizeBlockBridgeToken(token)).resolves.toMatchObject({
+      blockInstanceId: PINNED[0].blockInstanceId,
+    });
+
+    await banPublisher();
+
+    await expect(authorizeBlockBridgeToken(token)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'block instance revoked',
+    });
+  });
+
+  /**
+   * The token itself is untouched — still signature-valid and unexpired. The refusal comes
+   * from the marker, not from expiry, which is the whole point of the mechanism.
+   */
+  it('refuses a token that is still perfectly valid — not an expiry artefact', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+    await banPublisher();
+
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    expect(payload.exp * 1000).toBeGreaterThan(Date.now());
+
+    const { res } = await driveRest(token);
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+/**
+ * AC-2. The loop, not one row. Four live instances across two blocks: a writer that stops
+ * after the first row fails on the second token, and one that stops after the first block
+ * fails on the third.
+ */
+describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () => {
+  it('refuses all four PINNED tokens after one ban', async () => {
+    const tokens = await Promise.all(
+      PINNED.map(({ blockInstanceId, blockId, appBlockId }) =>
+        mint(blockInstanceId, blockId, appBlockId)
+      )
+    );
+
+    await banPublisher();
+
+    const results = await Promise.all(tokens.map((t) => driveRest(t)));
+    expect(
+      results.map((r) => r.res.statusCode),
+      'a partially-applied revocation — some of the publisher’s live instances are still serving'
+    ).toEqual([403, 403, 403, 403]);
+    for (const { handler } of results) expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE REGRESSION FOR THE DEFECT THIS PR SHIPPED AND THEN FIXED. Four of the five
+   * namespaces are SYNTHESISED, not stored: `bus_pub_*` / `bus_view_*` off a blanket
+   * subscription's row id, `pdb_*` / `page_*` off the app block id. The first version of
+   * the writer selected `blockInstanceId: { not: null }` and reached only the first
+   * namespace, while every comment in the change said "every live instance".
+   *
+   * Each case below mints a REAL token carrying the synthesised id — which is exactly what
+   * `listForModel` and the page mint hand a client — and drives a real bridge request.
+   */
+  const describeShape = (id: string) => {
+    if (id.startsWith('bus_pub_')) return 'blanket publisher_all_my_models subscription';
+    if (id.startsWith('bus_view_')) return 'viewer_personal subscription';
+    if (id.startsWith('pdb_')) return 'platform-default promotion';
+    if (id.startsWith('page_ephemeral-')) return 'ephemeral app over a live dev tunnel (4h)';
+    // 🔴 ORDER: the DOUBLE-prefixed id is `page_pubreq_pubreq_<ULID>` and the mod review
+    // preview is `page_pubreq_<ULID>` — so BOTH start `page_pubreq_`, and testing that
+    // first made the mod-review branch unreachable: both printed the dev-token label,
+    // which read as the newly-covered shape being absent. Discriminate on the second
+    // `pubreq_`, not on a prefix one is a prefix of.
+    if (id.startsWith('page_pubreq_pubreq_'))
+      return 'dev-token pending submission, DOUBLE prefix (4h)';
+    if (id.startsWith('page_pubreq_')) return 'mod review preview, single prefix (4h)';
+    if (id.startsWith('page_')) return 'approved full-page surface';
+    return 'stored pinned install';
+  };
+
+  // Driven off ALL_INSTANCE_IDS rather than a hand-listed subset, so a newly covered
+  // shape gets a real bridge request the moment it joins the fixture — the previous
+  // hand-listed form silently skipped the two shapes added this round.
+  it.each(
+    ALL_INSTANCE_IDS.filter((id) => !PINNED.some((p) => p.blockInstanceId === id)).map(
+      (id) => [id, describeShape(id)] as const
+    )
+  )('refuses the SYNTHESISED id %s (%s)', async (instanceId) => {
+    // An ephemeral id is revoked under a SUBJECT-SCOPED key, so its token must be the
+    // BANNED author's — which is also the only way it is ever minted (the dev token is
+    // self-bound to the tunnel owner).
+    const holder = instanceId.startsWith('page_ephemeral-') ? PUBLISHER_ID : undefined;
+    const token = await mint(instanceId, PINNED[0].blockId, OWNED_APP_BLOCK_IDS[0], holder);
+
+    const before = await driveRest(token);
+    expect(before.res.statusCode, 'the token was already refused before the ban').toBe(200);
+
+    await banPublisher();
+
+    const after = await driveRest(token);
+    expect(
+      after.res.statusCode,
+      `${instanceId} still authenticates after its publisher was banned — this namespace ` +
+        `is not reached by revokeBlockInstancesForPublisher`
+    ).toBe(403);
+    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+  });
+
+  /**
+   * 🔴 THE WHOLE KEY SET, NOT A FILTERED SUBSET — and the filter is the trap. Written as
+   * `[...store.keys()].filter(k => k.includes('618'))` this assertion is scoped to the
+   * fixture's OWN ids, so a marker written for an instance the publisher does not own is
+   * invisible to it. OVER-revocation is the hazard the ownership filter exists to prevent
+   * (a ban on one account taking down another account's product), and a subset assertion
+   * leaves the structural `where` check as its only detector. Measured: a mutant that
+   * additionally revokes a foreign id SURVIVED the subset form.
+   */
+  it('wrote a marker for every instance id across all five namespaces, and for NO other', async () => {
+    await banPublisher();
+
+    // The BAN keyspace, not the install one — naming the wrong constant here would make
+    // this assertion pass against a writer that wrote install markers, which is the very
+    // downgrade F1 was about.
+    const expected = ALL_INSTANCE_IDS.map((id) =>
+      // The ephemeral shape is written SUBJECT-SCOPED; everything else is global. Naming
+      // the wrong keyspace here would let a writer that global-marked an ephemeral id —
+      // the shape that 403s an innocent author — pass this assertion.
+      EPHEMERAL_SURFACE_IDS.includes(id)
+        ? `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:user:${PUBLISHER_ID}:${id}`
+        : `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${id}`
+    ).sort();
+    expect(
+      [...store.keys()].sort(),
+      'the revoked set does not equal the selected set — a missing key is an instance still ' +
+        'serving, an extra key is a revocation against an app this ban was not about'
+    ).toEqual(expected);
+    // Pins the count independently of the key format, so a change to `revokedKey` fails as
+    // a format mismatch rather than silently re-scoping what is being compared.
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(ALL_INSTANCE_IDS.length);
+  });
+
+  /**
+   * 🔴 THE OWNERSHIP FILTER, ASSERTED AS A WHOLE `where` RATHER THAN A PARTIAL MATCH.
+   * `app: { userId }` is the OWNER. Widening it to any app the banned user can reach would
+   * let a ban on a seated collaborator revoke every live token of an app owned by somebody
+   * who was not banned.
+   *
+   * 🔴 AND THERE IS NO `blockInstanceId` FILTER, WHICH IS THE POINT OF THE FIX. A
+   * `{ not: null }` clause here is the defect: it drops every blanket subscription, whose
+   * id is synthesised rather than stored.
+   */
+  it('selects by app OWNERSHIP, on the primary, over ALL subscription rows', async () => {
+    await banPublisher();
+
+    expect(subscriptionFindMany).toHaveBeenCalledTimes(1);
+    expect(subscriptionFindMany.mock.calls[0][0]).toEqual({
+      where: { appBlock: CANONICAL_OWNER_WHERE },
+      select: { id: true, scope: true, blockInstanceId: true },
+    });
+  });
+
+  it('also enumerates the OWNED APP BLOCKS, which carry the two subscription-less surfaces', async () => {
+    await banPublisher();
+
+    expect(appBlockFindMany).toHaveBeenCalledTimes(1);
+    expect(appBlockFindMany.mock.calls[0][0]).toEqual({
+      where: CANONICAL_OWNER_WHERE,
+      select: { id: true },
+    });
+  });
+
+  /**
+   * NEGATIVE CONTROL on the whole harness: a publisher with nothing live writes no marker
+   * and its token is still served. Without this, every 403 above could be coming from
+   * something other than the ban. BOTH reads must be emptied — emptying only the
+   * subscription read would leave the app-block surfaces marked and the control would
+   * silently stop being one.
+   */
+  it('a ban with nothing live writes nothing and refuses nothing', async () => {
+    subscriptionFindMany.mockResolvedValue([]);
+    appBlockFindMany.mockResolvedValue([]);
+    publishRequestFindMany.mockResolvedValue([]);
+    listTunnelsMock.mockResolvedValue([]);
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+
+    await banPublisher();
+
+    expect([...store.keys()].filter((k) => k.includes('618'))).toEqual([]);
+    const { res, handler } = await driveRest(token);
+    expect(res.statusCode).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A scope the synthesiser does not recognise must produce NO marker rather than a guessed
+   * prefix. A marker under an id no token carries refuses nothing and reads as coverage.
+   */
+  it('skips a subscription whose scope has no known synthesised id', async () => {
+    subscriptionFindMany.mockResolvedValue([
+      { id: 'bus_618_weird', scope: 'some_future_scope', blockInstanceId: null },
+    ]);
+    appBlockFindMany.mockResolvedValue([]);
+    publishRequestFindMany.mockResolvedValue([]);
+    listTunnelsMock.mockResolvedValue([]);
+
+    await banPublisher();
+
+    expect([...store.keys()].filter((k) => k.includes('bus_618_weird'))).toEqual([]);
+  });
+});
+
+/**
+ * AC-3, AS ORIGINALLY WRITTEN, WAS WRONG — and the card's author retracted it.
+ *
+ * It said: "unbanning does not resurrect the revoked tokens; the markers are TTL-bound to
+ * one token lifetime and RE-MINTING is the recovery path." The second clause is false.
+ * `isRevoked` keys on `claims.blockInstanceId`, and every namespace's id is STABLE across
+ * a re-mint — `bki_*` is a stored column, and `bus_pub_*`, `bus_view_*`, `pdb_*`, `page_*`
+ * and `page_pubreq_*` are derived from row ids a re-mint does not change. A freshly minted
+ * token therefore carries exactly the id the marker names and is refused identically. So a
+ * mis-ban that was immediately lifted killed the publisher's whole block surface for up to
+ * MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a dev token is involved — with no
+ * product-level remedy at all.
+ *
+ * The corrected contract, which these tests now pin:
+ *   - unban CLEARS the ban markers for that publisher's instances, and
+ *   - unban does NOT touch an INSTALL marker, so lifting a ban cannot silently re-enable
+ *     an install its own consumer switched off.
+ */
+describe('AC-3 (corrected) — unbanning gives the publisher their blocks back', () => {
+  beforeEach(() => {
+    // This call is the LIFT: the account is currently banned.
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'publisher',
+      email: null,
+    });
+  });
+
+  /**
+   * 🔴 THE MEASUREMENT THAT REFUTED THE ORIGINAL AC-3, AS A TEST. A token minted AFTER the
+   * unban — a genuinely fresh one — must be served. Before the clear existed it was 403,
+   * because the id it carries is the id the marker names.
+   */
+  it('a token minted AFTER the unban is served — re-minting alone never was the remedy', async () => {
+    await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
+    expect([...store.keys()].filter((k) => k.includes('618')).length).toBe(ALL_INSTANCE_IDS.length);
+
+    await banPublisher(); // `bannedAt` set ⇒ the UNBAN branch
+
+    const freshToken = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+    const { res, handler } = await driveRest(freshToken);
+    expect(
+      res.statusCode,
+      'a freshly minted token is still refused after the ban was lifted — the instance id ' +
+        'is stable across a re-mint, so re-minting is not a recovery path'
+    ).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the ban marker for every instance it enumerated', async () => {
+    await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
+
+    await banPublisher();
+
+    expect([...store.keys()].filter((k) => k.includes('618'))).toEqual([]);
+  });
+
+  it('enumerates the SAME set the ban wrote — a clear that addressed fewer ids is no remedy', async () => {
+    await banPublisher();
+    // Both reads run on the unban branch too, through the shared resolver.
+    expect(subscriptionFindMany).toHaveBeenCalledTimes(1);
+    expect(appBlockFindMany).toHaveBeenCalledTimes(1);
+    expect(publishRequestFindMany).toHaveBeenCalledTimes(1);
+    expect(subscriptionFindMany.mock.calls[0][0]).toEqual({
+      where: { appBlock: CANONICAL_OWNER_WHERE },
+      select: { id: true, scope: true, blockInstanceId: true },
+    });
+  });
+
+  /**
+   * 🔴 THE HALF THE ORIGINAL AC-3 GOT RIGHT, KEPT. An INSTALL marker is a different
+   * keyspace and a different decision — the install's own consumer switched it off, and
+   * lifting the publisher's ban is not consent to turn it back on.
+   */
+  it('leaves an INSTALL marker alone', async () => {
+    const uninstalled = PINNED[1].blockInstanceId;
+    await BlockRevocation.revokeInstance(uninstalled);
+    await revokeBlockInstancesForPublisher({ userId: PUBLISHER_ID });
+
+    await banPublisher();
+
+    expect(
+      await BlockRevocation.isRevoked(uninstalled),
+      'the unban cleared a marker written by an uninstall / toggle-off'
+    ).toBe(true);
+  });
+});
+
+/**
+ * 🔴 F1 — THE REAL CONSUMER RE-ENABLE, NOT A HAND-ROLLED HALF OF IT.
+ *
+ * The previous version of this guard modelled a consumer re-enable as `clearInstance`
+ * ALONE. That is not what the product does: `BlockRegistry.toggleEnabled` runs
+ * `revokeInstance` on disable and `clearInstance` on enable, and the WRITE is the half
+ * that did the damage. With both markers sharing one key, `toggleEnabled(false)` — called
+ * with no cause — rewrote the ban marker's value to `install`, and `toggleEnabled(true)`
+ * then deleted it. The guard was green in both arms because it never executed the write.
+ *
+ * So this drives the REAL pair. The actor is an ordinary un-banned model owner, and the
+ * subject is a banned publisher's install: the exact privilege boundary the whole
+ * cause/keyspace distinction exists to hold.
+ */
+describe('F1 — a consumer toggling an install off and on cannot undo a ban', () => {
+  const MODEL_ID = 618001;
+  const SLOT_ID = 'model.sidebar_top';
+  const APP_BLOCK_ID = OWNED_APP_BLOCK_IDS[0];
+
+  /** One real `toggleEnabled` call against the banned publisher's pinned install. */
+  const toggle = (enabled: boolean) =>
+    BlockRegistry.toggleEnabled({
+      modelId: MODEL_ID,
+      appBlockId: APP_BLOCK_ID,
+      slotId: SLOT_ID,
+      enabled,
+    } as Parameters<typeof BlockRegistry.toggleEnabled>[0]);
+
+  beforeEach(() => {
+    // `toggleEnabled` re-reads the subscription rows it is about to flip.
+    subscriptionFindMany.mockResolvedValue([
+      {
+        id: 'bus_pinned_0',
+        scope: 'publisher_all_my_models',
+        blockInstanceId: PINNED[0].blockInstanceId,
+      },
+    ]);
+  });
+
+  it('the pre-ban token STAYS refused across a full off→on cycle', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+    expect((await driveRest(token)).res.statusCode).toBe(200);
+
+    await banPublisher();
+    expect((await driveRest(token)).res.statusCode).toBe(403);
+
+    // The consumer's own actions, in the order the product performs them.
+    await toggle(false);
+    await toggle(true);
+
+    const after = await driveRest(token);
+    expect(
+      after.res.statusCode,
+      'an ordinary model owner toggling the install off and on again put a BANNED ' +
+        "publisher's live token back into service — the ban marker was overwritten by " +
+        'the install write and then cleared by the install clear'
+    ).toBe(403);
+    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+    expect(after.handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * POSITIVE CONTROL on the same pair: with NO ban in play, the cycle must still work
+   * exactly as it always did — disable refuses, re-enable restores. Without this, "the
+   * token is still 403" above would also pass on a `clearInstance` that simply stopped
+   * working, which would be a different and worse bug.
+   */
+  it('still restores an UNBANNED publisher’s install on re-enable', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+
+    await toggle(false);
+    expect((await driveRest(token)).res.statusCode).toBe(403);
+
+    await toggle(true);
+    const after = await driveRest(token);
+    expect(after.res.statusCode, '`clearInstance` no longer restores a re-enabled install').toBe(
+      200
+    );
+    expect(after.handler).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The mechanism, asserted directly: the two causes occupy DIFFERENT Redis keys, so the
+   * install path has no way to name the ban key. A value-on-one-key design cannot satisfy
+   * this, which is why it was replaced rather than patched.
+   */
+  it('writes the two causes to different keys', async () => {
+    await banPublisher();
+    await toggle(false);
+
+    const keys = [...store.keys()].filter((k) => k.endsWith(PINNED[0].blockInstanceId));
+    expect(
+      keys.length,
+      'the ban and install markers share a key — one can overwrite the other'
+    ).toBe(2);
+  });
+});
+
+/**
+ * 🔴 R3-2 — BANNING ONE AUTHOR MUST NOT 403 ANOTHER AUTHOR'S IDENTICAL TUNNEL.
+ *
+ * `page_ephemeral-<slug>` is the one instance id that is NOT globally unique. The slug is
+ * developer-chosen; `resolveEphemeralDevPageBlock` refuses only a slug already claimed by
+ * an AppBlock row or a pending request and never consults tunnels, while `startDevTunnel`
+ * enforces uniqueness per `(user, blockId)` ONLY. So two authors can hold live tunnels on
+ * the same unclaimed slug and BOTH mint `page_ephemeral-demo`.
+ *
+ * With a GLOBAL ban marker, banning X refused Y's own dev tunnel for up to 4h — Y having
+ * done nothing. The marker is subject-scoped for this shape, so the ban lands on the
+ * holder it names and nobody else. The reaper widens the window that made this reachable:
+ * its orphan branch has no session record to read a userId/blockId from, so it cannot
+ * `sRem`, and a stale member can outlive its session — which is now harmless precisely
+ * because the marker it produces is scoped to its own owner.
+ */
+describe('R3-2 — a ban does not reach another author’s identical ephemeral id', () => {
+  const SHARED_SLUG = TUNNELLED_BLOCK_IDS[0];
+  const SHARED_ID = `page_ephemeral-${SHARED_SLUG}`;
+  const INNOCENT_USER_ID = PUBLISHER_ID + 1;
+
+  it('refuses the BANNED author’s token and SERVES the innocent author’s', async () => {
+    const bannedToken = await mint(
+      SHARED_ID,
+      PINNED[0].blockId,
+      OWNED_APP_BLOCK_IDS[0],
+      PUBLISHER_ID
+    );
+    const innocentToken = await mint(
+      SHARED_ID,
+      PINNED[0].blockId,
+      OWNED_APP_BLOCK_IDS[0],
+      INNOCENT_USER_ID
+    );
+
+    // Both work before the ban — otherwise the innocent 200 below proves nothing.
+    expect((await driveRest(bannedToken)).res.statusCode).toBe(200);
+    expect((await driveRest(innocentToken)).res.statusCode).toBe(200);
+
+    await banPublisher();
+
+    expect(
+      (await driveRest(bannedToken)).res.statusCode,
+      'the banned author’s own ephemeral token was NOT refused'
+    ).toBe(403);
+    const innocent = await driveRest(innocentToken);
+    expect(
+      innocent.res.statusCode,
+      'banning one author 403d a DIFFERENT, un-banned author holding the same ' +
+        'developer-chosen slug — the ban marker for this shape is not subject-scoped'
+    ).toBe(200);
+    expect(innocent.handler).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The mechanism, asserted directly: no GLOBAL key is written for this shape. Without
+   * this, a writer that wrote BOTH keys would satisfy the behavioural test above while
+   * still refusing every other holder.
+   */
+  it('writes no GLOBAL marker for an ephemeral id', async () => {
+    await banPublisher();
+
+    const globalKey = `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${SHARED_ID}`;
+    expect(
+      [...store.keys()].filter((k) => k === globalKey),
+      'a global ban marker for a developer-chosen slug refuses every author holding it'
+    ).toEqual([]);
+  });
+
+  /** And the unban clears the scoped key it wrote, not a global one it did not. */
+  it('unbanning restores the banned author’s ephemeral token', async () => {
+    const token = await mint(SHARED_ID, PINNED[0].blockId, OWNED_APP_BLOCK_IDS[0], PUBLISHER_ID);
+    await banPublisher();
+    expect((await driveRest(token)).res.statusCode).toBe(403);
+
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'publisher',
+      email: null,
+    });
+    await banPublisher(); // the UNBAN branch
+
+    expect((await driveRest(token)).res.statusCode).toBe(200);
+  });
+});
+
+/**
+ * AC-5 is a NON-change (`isRevoked` still fails open on a Redis error), so it needs a live
+ * assertion rather than a diff review: a Redis outage must not start 403ing every block.
+ */
+describe('AC-5 — `isRevoked` still FAILS OPEN on a Redis error', () => {
+  it('serves the request when the marker read throws', async () => {
+    const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
+    await banPublisher();
+    expect((await driveRest(token)).res.statusCode).toBe(403);
+
+    // `isRevoked` reads through `mGet`; rejecting `get` alone would leave it working and
+    // this test would assert nothing about the fail-open branch.
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis is down'));
+    const { res, handler } = await driveRest(token);
+    expect(res.statusCode).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The ban must not be failable by this leg. `revokeInstance` swallows its own Redis errors;
+ * this covers the DB read in front of it, which does not.
+ */
+describe('the writer can never fail a ban', () => {
+  it('a failing instance lookup still completes the ban', async () => {
+    subscriptionFindMany.mockRejectedValue(new Error('primary unreachable'));
+    await expect(banPublisher()).resolves.toMatchObject({ id: PUBLISHER_ID });
+  });
+
+  it('a failing Redis write still completes the ban', async () => {
+    redisMock.redis.set.mockRejectedValue(new Error('redis is down'));
+    await expect(banPublisher()).resolves.toMatchObject({ id: PUBLISHER_ID });
+  });
+});

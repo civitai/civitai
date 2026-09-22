@@ -101,6 +101,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       ...snapshot,
       prompt: (snapshot.prompt as string) || 'cost estimation',
       musicDescription: (snapshot.musicDescription as string) || 'cost estimation',
+      lyrics: (snapshot.lyrics as string) || 'cost estimation',
     });
   }, [snapshot, graph]);
 
@@ -126,6 +127,12 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       'styleReferences', // Krea 2
     ]);
 
+    if ('yue2Abc' in outputSnapshot) {
+      outputSnapshot.yue2Abc =
+        typeof outputSnapshot.yue2Abc === 'string' && outputSnapshot.yue2Abc.trim()
+          ? 'provided score'
+          : '';
+    }
     return filterSnapshotForSubmit(outputSnapshot, {
       computedKeys: graph.getComputedKeys(),
     });

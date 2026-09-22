@@ -32,6 +32,11 @@ import type {
 import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import {
+  getSoldCounts,
+  withSoldCount,
+  withSoldCounts,
+} from '~/server/services/cosmetic-shop-sold-count';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   createBuzzTransaction,
@@ -48,6 +53,7 @@ import {
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
+import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -88,10 +94,13 @@ export const getShopItemById = async ({ id }: GetByIdInput) => {
     },
     select: cosmeticShopItemSelect,
   } as const;
-  return dbRead.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
-    return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
-  });
+  return dbRead.cosmeticShopItem
+    .findUniqueOrThrow(shopItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
+      return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
+    })
+    .then(async (item) => (await withSoldCounts([item]))[0]);
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -141,9 +150,12 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     orderBy: { createdAt: 'desc' },
   });
 
-  const count = await dbRead.cosmeticShopItem.count({ where });
+  const [withSold, count] = await Promise.all([
+    withSoldCounts(items),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
 
-  return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+  return getPagingData({ items: withSold, count: (count as number) ?? 0 }, limit, page);
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
@@ -229,6 +241,7 @@ export const upsertCosmeticShopItem = async ({
           id: true,
           cosmeticId: true,
           addedById: true,
+          meta: true,
           _count: {
             select: {
               purchases: true,
@@ -288,6 +301,17 @@ export const upsertCosmeticShopItem = async ({
     // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
     // clears it — neither should be overwritten with the empty string expansion returns.
     ...(cosmeticShopItem.description != null && { description: expansion.html }),
+    // The editor seeds its form from a read, and reads now serve the row count in
+    // `meta.purchases`, so saving any unrelated field would write that derived
+    // value into the stored counter. Keep whatever is stored: only a purchase
+    // moves it. (Create has no stored value and sets its own `meta` below.)
+    ...(id &&
+      cosmeticShopItem.meta != null && {
+        meta: {
+          ...cosmeticShopItem.meta,
+          purchases: (existingItem?.meta as CosmeticShopItemMeta | null)?.purchases ?? 0,
+        },
+      }),
     availableQuantity,
     availableTo,
     availableFrom,
@@ -463,9 +487,14 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
     dbReadFallbackCounter.inc({ entity: 'cosmeticShopSection', caller: 'getSectionById' });
     return dbWrite.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs);
   });
+  const sold = await getSoldCounts(section.items.map((i) => i.shopItem.id));
 
   return {
     ...section,
+    items: section.items.map((i) => ({
+      ...i,
+      shopItem: withSoldCount(i.shopItem, sold.get(i.shopItem.id) ?? 0),
+    })),
     image: !!section.image
       ? {
           ...section.image,
@@ -771,6 +800,7 @@ export const getShopSectionsWithItems = async ({
       placement: 'asc',
     },
   });
+  const sold = await getSoldCounts(sections.flatMap((s) => s.items.map((i) => i.shopItem.id)));
 
   return (
     sections
@@ -778,6 +808,18 @@ export const getShopSectionsWithItems = async ({
       .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
+        // Cards and checkout read the shared display list, the same one the
+        // creator storefront and the community feed publish.
+        items: section.items.map((item) => ({
+          ...item,
+          shopItem: {
+            ...item.shopItem,
+            meta: shopItemDisplayMeta(
+              item.shopItem.meta as CosmeticShopItemMeta | null,
+              sold.get(item.shopItem.id) ?? 0
+            ),
+          },
+        })),
         image: !!section.image
           ? {
               ...section.image,

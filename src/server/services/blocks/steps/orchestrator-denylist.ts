@@ -136,7 +136,9 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
  * genuinely unmutatable from outside, where the retracted `Object.freeze(Set)`
  * only looked as though it did.
  */
-const PLATFORM_INTERNAL_LOOKUP = new Set<string>(PLATFORM_INTERNAL_STEP_TYPES);
+const PLATFORM_INTERNAL_LOOKUP = new Set<string>(
+  PLATFORM_INTERNAL_STEP_TYPES.map((t) => t.toLowerCase())
+);
 
 /**
  * Thrown when a block reaches for a platform-internal `$type`.
@@ -161,26 +163,47 @@ export class PlatformInternalStepTypeError extends Error {
   }
 }
 
-/** True when `stepType` is platform-internal and must never be app-submittable. */
+/**
+ * True when `stepType` is platform-internal and must never be app-submittable.
+ *
+ * 🔴 CASE-FOLDED, and that is load-bearing rather than tidy. On the pass-through
+ * `kind:'step'` arm this denylist is the ONLY control, and the value it sees is
+ * a caller-supplied string forwarded verbatim to an orchestrator this repo does
+ * not own. An exact `Set.has()` therefore let `'XGuardModeration'` through — a
+ * complete bypass of the control if that orchestrator happens to match `$type`
+ * case-insensitively, which is not knowable from here and not ours to assume in
+ * either direction. Folding case makes the guard hold for BOTH answers.
+ *
+ * It denies a strict SUPERSET of what it denied before, and that widening is
+ * safe by measurement rather than by hope: all 50 `$type` keys in the live
+ * `WorkflowStepTemplate.discriminator.mapping` are distinct when lowercased
+ * (measured 2026-09-17 — 50 keys, 50 distinct-lowercased), so folding cannot
+ * make an ALLOWED type collide with a denied one. Re-measure that before adding
+ * an entry whose lowercasing could collide with a legitimate type.
+ */
 export function isPlatformInternalStepType(stepType: string): boolean {
-  return PLATFORM_INTERNAL_LOOKUP.has(stepType);
+  return PLATFORM_INTERNAL_LOOKUP.has(stepType.toLowerCase());
 }
 
 /**
  * Fail-closed assertion for a single orchestrator `$type`.
  *
- * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. Today the only way a block
- * reaches the orchestrator is through a REGISTERED step (`REGISTERED_STEP_IDS`,
- * two entries) or the `textToImage` / `customComfy` kinds — none of which lets a
- * block name an arbitrary `$type`. So the live enforcement of this set is the
- * registry invariant in `assertStepInvariants` (no registered entry may declare
- * a denylisted `orchestratorType`), and this function is the reusable predicate
- * behind it.
+ * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has TWO
+ * enforcement sites, and they are different in kind:
  *
- * When the wide `kind:'steps'` arm lands — the one that lets a block name a
- * `$type` directly — **it must call this**, and it must call it BEFORE any
- * spend reservation or orchestrator call. A denylist that the wire does not
- * consult is decoration.
+ *   - the registry invariant in `assertStepInvariants` — no registered entry may
+ *     declare a denylisted `orchestratorType`, checked at LOAD;
+ *   - `assertPassThroughStepTypeAllowed` in `blocks.router` — the PASS-THROUGH
+ *     arm (`kind:'step'` with a bare `$type`, note the SINGULAR `step`; an
+ *     earlier draft of this paragraph called it `kind:'steps'` and the plural
+ *     greps to nothing), which lets a block name a `$type` directly and is
+ *     therefore the site where this set is the only bound. It runs on both the
+ *     estimate and the submit, BEFORE any orchestrator call and before any spend
+ *     reservation. A denylist that the wire does not consult is decoration.
+ *
+ * 🔴 THE MATCH IS EXACT AND CASE-SENSITIVE. Whether the orchestrator's own
+ * `$type` discriminator matches case-insensitively has NOT been measured; if it
+ * does, a re-cased variant walks past this set on the pass-through arm.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {

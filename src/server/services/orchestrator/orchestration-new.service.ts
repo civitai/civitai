@@ -1802,26 +1802,31 @@ export async function generateFromGraph({
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+  // One read for both consumers below, so the provenance check and the prompt
+  // audit cannot disagree about what was submitted.
+  const prompt = 'prompt' in data && typeof data.prompt === 'string' ? data.prompt : undefined;
+
   // Both routes, because neither covers the other — see `unionSourceImageIds`.
   // The short version: the form re-uploads a remix's on-site source as an
   // orchestrator blob before submit, so the URL route alone reports nothing for
   // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
   // 2,526 on the engine that button picks).
-  const sourceImageIds = unionSourceImageIds({
+  const sourceImageIds = await unionSourceImageIds({
     urlSourceImageIds: await resolveSourceImageIds(inputImages),
     tokens: sourceProvenance,
     userId,
+    prompt,
   });
 
   // Audit prompt before generation
-  if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
+  if (prompt?.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
     try {
       await auditPromptServer({
-        prompt: data.prompt,
+        prompt,
         negativePrompt,
         userId,
         isGreen: !!isGreen,
@@ -1849,7 +1854,7 @@ export async function generateFromGraph({
       createXGuardModerationRequest({
         mode: 'prompt',
         entityType: 'prompt',
-        positivePrompt: data.prompt,
+        positivePrompt: prompt,
         negativePrompt,
         userId,
         recordForReview: true,
@@ -2077,7 +2082,7 @@ export async function whatIfFromGraph({
     prompt: 'cost-estimation',
     negativePrompt: '',
     musicDescription: 'cost-estimation',
-    lyrics: '',
+    lyrics: 'cost-estimation',
     ...input,
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
@@ -2624,7 +2629,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     case 'miniMaxMusic3':
-      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+    case 'yuE2':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step

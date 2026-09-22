@@ -1,36 +1,12 @@
-import { useRouter } from 'next/router';
 import { useState } from 'react';
-import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
-import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
-  const router = useRouter();
   const [processing, setProcessing] = useState<boolean>(false);
   const queryUtils = trpc.useUtils();
 
   const { data: packages = [], isLoading } = trpc.stripe.getBuzzPackages.useQuery();
-
-  const createBuzzSessionMutation = trpc.stripe.createBuzzSession.useMutation({
-    onSuccess: async ({ url, sessionId }) => {
-      if (url) await router.push(url);
-      else {
-        const stripe = await getClientStripe();
-        if (!stripe) {
-          return;
-        }
-
-        await stripe.redirectToCheckout({ sessionId });
-      }
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Could not process purchase',
-        error: new Error(error.message),
-      });
-    },
-  });
 
   const { mutateAsync: completeStripeBuzzPurchaseMutation } =
     trpc.buzz.completeStripeBuzzPurchase.useMutation({
@@ -53,17 +29,9 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
       },
     });
 
-  // DEAD CODE: no callers. Left in place for backwards compat. Buzz purchases
-  // use the PaymentIntent flow instead (see BuzzPurchaseImproved), which charges
-  // `unitAmount` from our DB directly — Stripe Price objects are not consulted.
-  const createCheckoutSession = (data: CreateBuzzSessionInput) => {
-    return createBuzzSessionMutation.mutateAsync(data);
-  };
-
   return {
     packages,
     isLoading,
-    createCheckoutSession,
     completeStripeBuzzPurchaseMutation,
     processing,
     setProcessing,

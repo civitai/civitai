@@ -129,6 +129,22 @@ describe('both generation footers submit the same payload shape', () => {
     }
   );
 
+  /**
+   * The keys above say nothing about the VALUE, and this one is a money gate: the
+   * prompt token is spendable only against the image the remix claim names, and
+   * the store enforces that by taking the id. A footer reverting to the no-argument
+   * call would still submit a `sourceProvenance` key, so the comparison above stays
+   * green while that lane spends a token minted from an unrelated click.
+   */
+  it.each(Object.keys(FOOTERS) as (keyof typeof FOOTERS)[])(
+    'the %s footer reads the prompt token against the claim it is submitting under',
+    (lane) => {
+      const src = readFileSync(path.join(repoRoot, FOOTERS[lane]), 'utf8');
+      expect(src).toMatch(/getPromptToken\(remixOfId\)/);
+      expect(src).not.toMatch(/getPromptToken\(\s*\)/);
+    }
+  );
+
   it('neither footer carries a key the other does not', () => {
     const [a, b] = Object.keys(FOOTERS) as (keyof typeof FOOTERS)[];
     expect(

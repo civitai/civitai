@@ -186,7 +186,7 @@ describe.each([
   }
 
   // Comfy-only ecosystems: no toggle, and falling through to sdcpp would silently re-route them.
-  it.each(['Pony', 'Illustrious', 'NoobAI', 'Flux1', 'FluxKrea'])(
+  it.each(['Flux1', 'FluxKrea'])(
     '%s runs comfyui with no enhancedCompatibility flag at all',
     async (ecosystem) => {
       const steps = await dispatch({ ...base, ecosystem, model: { id: 123 } } as never, mockCtx);
@@ -215,15 +215,17 @@ describe.each([
     }
   );
 
-  it.each([
-    [undefined, undefined],
-    [false, undefined],
-    [true, 'comfyui'],
-  ])('SDXL with enhancedCompatibility=%s runs %s', async (flag, expected) => {
-    const steps = await dispatch(
-      { ...base, ecosystem: 'SDXL', model: { id: 123 }, enhancedCompatibility: flag } as never,
-      mockCtx
-    );
-    expect(engineOf(steps)).toBe(expected);
+  describe.each(['SDXL', 'Pony', 'Illustrious', 'NoobAI'])('%s', (ecosystem) => {
+    it.each([
+      [undefined, undefined],
+      [false, undefined],
+      [true, 'comfyui'],
+    ])('with enhancedCompatibility=%s runs %s', async (flag, expected) => {
+      const steps = await dispatch(
+        { ...base, ecosystem, model: { id: 123 }, enhancedCompatibility: flag } as never,
+        mockCtx
+      );
+      expect(engineOf(steps)).toBe(expected);
+    });
   });
 });

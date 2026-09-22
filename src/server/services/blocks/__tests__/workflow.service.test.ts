@@ -25,6 +25,7 @@ import {
   buildImageWorkflowInput,
   buildTextToImageInput,
   BLOCK_CUSTOM_COMFY_STEP_NAME,
+  BLOCK_STEP_NAME,
   BLOCK_IMAGE_WORKFLOW_TYPES,
   createBlockCustomComfyStep,
   isPageLoraResource,
@@ -126,10 +127,21 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
-  it('emits a non-empty sentinel workflowId for whatif/estimate (no orchestrator id)', () => {
+  it('emits a non-empty sentinel workflowId when an orchestrator id is absent', () => {
     // The block SDK validator drops snapshots with an empty workflowId, which
-    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55). A whatif
-    // workflow has no id, so the snapshot must carry a non-empty sentinel.
+    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55), so the
+    // fallback must be non-empty.
+    //
+    // 🔴 THE FIXTURE IS SYNTHETIC AND THE FALLBACK IS CURRENTLY UNREACHABLE.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key BEFORE the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today. An earlier version of this test's name
+    // and comment asserted the opposite — that a whatif workflow has no id —
+    // and that was false. This pins the defensive floor, not an observed case:
+    // the orchestrator's OpenAPI declares `id` optional-and-nullable and its
+    // serializer omits nulls, so a regression would silently drop the field
+    // rather than error.
     const snap = snapshotFromWorkflow(fakeWorkflow({ id: undefined }) as never);
     expect(snap.workflowId).toBe('whatif');
     expect(snap.workflowId.length).toBeGreaterThan(0);
@@ -2426,6 +2438,12 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
   // additive for registered steps only, not a wildcard that starts reading
   // arbitrary step outputs.
+  //
+  // 🔴 STILL TRUE AFTER THE PASS-THROUGH ARM LANDED, and that is not an accident:
+  // the pass-through branch is gated on the SERVER-STAMPED `BLOCK_STEP_NAME`,
+  // not on "the `$type` is unrecognised". A step this bridge did not submit —
+  // note `name: 'x'` below — is still dropped exactly as before. The sibling
+  // case beneath pins the other side of that gate.
   it('still skips an unregistered, non-native $type', () => {
     const wf = fakeWorkflow({
       id: 'wf_other',
@@ -2442,7 +2460,37 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
       ],
     });
     expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toBeUndefined();
     expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // The other side of that gate: the SAME `$type` and the SAME output, submitted
+  // by this bridge's pass-through arm, IS extracted. Without this pair the name
+  // gate would read as "unregistered types are dropped", which is now only half
+  // the rule.
+  it('extracts the same $type when the step carries BLOCK_STEP_NAME', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_pt',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageBackgroundRemoval',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/nope.png']);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: null },
+    ]);
+    // The blob is lifted OUT of the forwarded output, never duplicated into it.
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toEqual([
+      { $type: 'imageBackgroundRemoval', output: {} },
+    ]);
   });
 });
 

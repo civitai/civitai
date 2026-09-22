@@ -1,6 +1,32 @@
+import type { SaleDiscountKind } from '@civitai/buzz';
 import type { ReactNode } from 'react';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, useContext, useMemo, useRef } from 'react';
+import { MODEL_SALE_IDS_PER_REQUEST } from '~/server/schema/model-sale.schema';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * `discountType` is `SaleDiscountKind` from the package the server declares this procedure's output
+ * with, not a local `'Fixed' | 'Percent'` restatement — the merge below is only type-checked by the
+ * `as` on it, so a restatement would silently narrow away a third member the server had added.
+ */
+type ModelSale = { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number };
+type SalesByModelId = Record<number, ModelSale>;
+
+/**
+ * 🔴 RE-APPLY THE END EDGE ON THE CLIENT. The server evaluates both edges of the window against
+ * `now` per request, but the client holds the answer: an arrival-order chunk key is stable once its
+ * block is full, so a feed that stays mounted can keep serving a resolved map. `endsAt` was on the
+ * wire already and NOTHING branched on it — the badge only ever formatted it — so a sale that ended
+ * kept advertising a discount that the model page and the charge path both refuse.
+ *
+ * Re-wrapped rather than compared directly: `endsAt` arrives as a `Date` or an ISO string depending
+ * on the response serializer, which is why `ModelVersionSaleBadge` types it `Date | string` too.
+ */
+const stillRunning = (sale: ModelSale, now: number) => new Date(sale.endsAt).getTime() > now;
+
+const runningSalesOnly = (sales: SalesByModelId, now: number): SalesByModelId =>
+  Object.fromEntries(Object.entries(sales).filter(([, sale]) => stillRunning(sale, now)));
 
 type Context = {
   useModelVersionRedirect?: boolean;
@@ -8,10 +34,7 @@ type Context = {
   /** Set by a container that supplies the map, so cards do not each fetch their own. */
   hasSaleProvider?: boolean;
   /** modelId -> its running sale. Absent means no sale. */
-  salesByModelId?: Record<
-    number,
-    { endsAt: Date; discountType: 'Fixed' | 'Percent'; discountAmount: number }
-  >;
+  salesByModelId?: SalesByModelId;
 };
 
 const ModelCardContext = createContext<Context | null>(null);
@@ -40,16 +63,98 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
     { ids: [modelId] },
     { enabled: !skip, staleTime: 60_000 }
   );
-  return data?.[modelId];
+  const sale = data?.[modelId];
+  // Same end-edge re-check as the batched hook — a card outside a provider caches its answer for
+  // `staleTime` too, so the badge must not outlive the window it is advertising.
+  return sale && stillRunning(sale, Date.now()) ? sale : undefined;
 };
 
+/**
+ * The sales for a whole surface of cards.
+ *
+ * 🔴 CHUNKED, because the procedure caps `ids` at `MODEL_SALE_IDS_PER_QUERY` and an infinite feed
+ * does not stop growing. Asking for the accumulated list in one call worked until the fifth page
+ * of ~100 cards, and from there EVERY call 400d — so the badge silently vanished from the whole
+ * grid for anyone who scrolled, on a money surface, invisibly to anything watching 5xx.
+ *
+ * Chunking is the fix rather than a bigger cap: the resolver's work is per-id — one Redis GET each
+ * — so the cap is what keeps a single request's fan-out proportional to a page of cards rather than
+ * to the whole accumulated feed. The chunk is deliberately SMALLER than the cap and matched to the
+ * feed's page size; `~/server/schema/model-sale.schema` has the arithmetic for why, and it is not
+ * "as big as allowed".
+ *
+ * The shared chunker, not a copy of it — its own tests pin the property this depends on and
+ * does not spell out in code: chunking in ARRIVAL order keeps an earlier chunk's key stable as the
+ * feed appends, where sorting would reshuffle every boundary and refetch the whole surface on each
+ * page. Growing by a page therefore costs ONE new request, not one per chunk.
+ */
 export const useModelSaleBadges = (modelIds: number[]) => {
-  const ids = useMemo(() => [...new Set(modelIds)].sort((a, b) => a - b), [modelIds]);
-  const { data } = trpc.model.getActiveSales.useQuery(
-    { ids },
-    { enabled: ids.length > 0, staleTime: 60_000, placeholderData: (prev) => prev }
+  const chunks = useMemo(
+    () => chunkIds(modelIds, MODEL_SALE_IDS_PER_REQUEST),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modelIds.join(',')]
   );
-  return data;
+
+  const queries = trpc.useQueries((t) =>
+    chunks.map((chunk) => t.model.getActiveSales({ ids: chunk }, { staleTime: 60_000 }))
+  );
+
+  const merged = useMemo(() => {
+    // A partly-loaded surface merges what it has, so badges appear per chunk instead of the whole
+    // grid waiting on the slowest one. `undefined` — not `{}` — while nothing has arrived, so a
+    // consumer reads "no sale yet" rather than "no sale". Unfiltered on purpose: the end edge is
+    // applied on the way OUT, below.
+    const loaded = queries.map((query) => query.data).filter((data) => !!data);
+    if (!loaded.length) return undefined;
+    return Object.assign({}, ...loaded) as SalesByModelId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((query) => query.dataUpdatedAt).join(',')]);
+
+  // 🔴 KEEP-PREVIOUS BY HAND, because `placeholderData` DOES NOT WORK UNDER `useQueries`. Measured
+  // against the installed @tanstack/query-core: `QueriesObserver` matches previous observers by
+  // `queryHash` only, so a key change builds a FRESH `QueryObserver` whose
+  // `#lastQueryWithDefinedData` is empty and `placeholderData: (prev) => prev` resolves to
+  // `undefined`. `useQuery` keeps one observer for the component's life and does carry it across —
+  // which is why the option worked before this hook fanned out, and silently stopped when it did.
+  // Without this the whole grid's badges blank for the round trip on every page of scroll.
+  const lastLoaded = useRef<SalesByModelId | undefined>(undefined);
+  if (merged) lastLoaded.current = merged;
+  const known = merged ?? lastLoaded.current;
+
+  // 🔴 ONE GATE, ON THE MAP BEING HANDED OUT — not on the merge. Filtering inside the merge stamped
+  // the answer at the moment the DATA arrived, so the kept-previous map escaped unchecked and could
+  // resurrect a window that had closed since it was stored.
+  //
+  // The clock is re-read on every event that changes WHICH map is being served: a chunk arriving
+  // (`known` identity moves) and falling back or recovering (`heldOver` flips) — the latter is the
+  // load-bearing one, because the fallback hands out the SAME object and an identity-keyed memo
+  // therefore would not re-check it. In between, the returned object stays referentially stable; a
+  // fresh object every render would churn the context and re-render every memoised card.
+  //
+  // ⚠️ RESIDUAL, and it is the STEADY STATE on any surface that has stopped growing — not an edge
+  // case, which is how an earlier wording of this comment ("left mounted and IDLE") read.
+  // `refetchOnWindowFocus` is false APP-WIDE (`~/utils/trpc`'s queryClientConfig), the only
+  // per-query override here is `staleTime`, and a stale query does not refetch by itself. So the
+  // memo below re-reads the clock ONLY when a chunk resolves, the connection recovers, or the hook
+  // remounts. On a surface that has stopped growing — `OnSaleSection`'s single chunk, a search page
+  // the user stopped paging, a feed scrolled to the end — none of those fire, and returning to the
+  // tab does not force one: the gate freezes for the life of the mount. Concretely, a profile page
+  // opened at T keeps advertising at T+2h a sale that ended at T+20m.
+  //
+  // This is not a regression — before this hook chunked, the map was never end-checked at all — and
+  // closing it needs the gate at the per-card read in `ModelCard`, where it costs one comparison
+  // per card, not a re-filter of the whole map. Deliberately NOT closed with a timer here: a
+  // `refetchInterval` would re-issue the per-id Redis fan-out this endpoint is capped to bound, for
+  // every mounted feed of every user, to fix a display edge.
+  const heldOver = !merged;
+  return useMemo(
+    () => (known ? runningSalesOnly(known, Date.now()) : undefined),
+    // `heldOver` is not read inside, so eslint calls it unnecessary — it is the point. The clock is
+    // an implicit input this memo has no other way to depend on, and this flag is the event that
+    // means "the same object is now being served for a different reason, re-read it".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [known, heldOver]
+  );
 };
 
 export const ModelCardContextProvider = ({

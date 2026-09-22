@@ -96,6 +96,14 @@ export default ModEndpoint(async function updateIndexSync(
 
     // A batch that exhausted its retries indexed nothing. Returning 200 here is what made a
     // failed backfill indistinguishable from a successful one for the caller.
+    // One spelling of the accounting triple for both bodies: they differ in what else they carry,
+    // and a fourth field on the result would otherwise land in one of them only.
+    const accounting = syncResult && {
+      idsWithoutDocument: syncResult.idsWithoutDocument,
+      idsWithoutDocumentSample: syncResult.idsWithoutDocumentSample,
+      handledWithoutDocument: syncResult.handledWithoutDocument,
+    };
+
     if (syncResult && syncResult.failedTasks > 0) {
       res.status(500).send({
         status: 'error',
@@ -103,12 +111,27 @@ export default ModEndpoint(async function updateIndexSync(
         failedTasks: syncResult.failedTasks,
         totalTasks: syncResult.totalTasks,
         failedIds: syncResult.failedIds,
+        ...accounting,
         error: `${syncResult.failedIds} ids in ${syncResult.failedTasks} of ${syncResult.totalTasks} batches failed to index`,
       });
       return;
     }
 
-    res.status(200).send({ status: 'ok' });
+    // Not a 500: an id with no document is a row the index legitimately does not want as often as it is a
+    // repair that did not land, and this endpoint cannot tell those apart. But a bare `ok` over a
+    // run that wrote nothing for the ids it was handed is the exact signal that let two documents
+    // survive a 280k-id repair, so the number goes in the success body where the operator reads
+    // it.
+    res.status(200).send(
+      syncResult
+        ? {
+            status: 'ok',
+            index: syncResult.indexName,
+            totalTasks: syncResult.totalTasks,
+            ...accounting,
+          }
+        : { status: 'ok' }
+    );
   } catch (error: unknown) {
     res.status(500).send(error);
   }

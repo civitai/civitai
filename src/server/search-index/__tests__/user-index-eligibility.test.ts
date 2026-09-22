@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Pure string helpers, no module graph — safe to import statically above the vi.mock below.
+import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
+
 /**
  * WHO BELONGS IN THE USER SEARCH INDEX.
  *
@@ -51,32 +54,7 @@ const { buildUsersIndexWhere, prepareUsersBatches, pullUsersData } = await impor
 const { CLEANUP_INDEXES } = await import('~/server/meilisearch/cleanup');
 const { Prisma } = await import('@prisma/client');
 
-/** Collapse whitespace so an assertion is about the PREDICATE, not about indentation. */
-const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
-
 const ELIGIBILITY = 'u.id != -1 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
-
-/**
- * Re-compose a Prisma tagged-template call into readable SQL. Nested `Prisma.Sql` values expose
- * their own text; scalar bind params become `?`, exactly as the driver would render them.
- */
-const renderTag = (strings: TemplateStringsArray, values: unknown[]) => {
-  let out = '';
-  strings.forEach((str, i) => {
-    out += str;
-    if (i < values.length) {
-      const v = values[i] as { sql?: string };
-      out += v && typeof v === 'object' && 'sql' in v ? v.sql : '?';
-    }
-  });
-  return out;
-};
-
-/** Every WHERE clause in a statement, normalised — the part an eligibility bug lives in. */
-const whereClausesOf = (statement: string) =>
-  [...norm(statement).matchAll(/\bWHERE\b\s+(.*?)(?=\s+ORDER BY\b|\s*\)\s*as\b|$)/g)].map(
-    (m) => m[1]
-  );
 
 /** Drives the real query builders and hands back EVERY statement they issued, in order. */
 async function captureQueries(

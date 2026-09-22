@@ -16,8 +16,10 @@ import { booleanString } from '~/utils/zod-helpers';
  * list is INERT on the live index until either a reset rebuilds all ~705K documents, or this runs.
  *
  * 🔴 Meilisearch reindexes the filterable fields across every document in the index when this list
- * changes. The cost on this index has never been measured, and one `images_v6` batch on this
- * instance has taken 51 minutes. Treat it as a maintenance operation with an owner watching.
+ * changes. Measured once here: the 2026-09-08 settings update (adding `hasActivePaidAccess`) took
+ * 6.5 min to process, after ~2h50m queued behind other tasks — so plan on hours to APPLIED, not
+ * minutes. One `images_v6` batch on this instance has taken 51 minutes. Treat it as a maintenance
+ * operation with an owner watching.
  *
  * Two refusals, because `updateFilterableAttributes` REPLACES the list rather than merging into it:
  *

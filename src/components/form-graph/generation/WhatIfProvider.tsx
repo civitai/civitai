@@ -42,7 +42,11 @@ export function getMissingFieldMessage(
 }
 
 /** Fields whose content never affects cost — placeholdered for estimation. */
-const CONTENT_PLACEHOLDERS = { prompt: 'cost estimation', musicDescription: 'cost estimation' };
+const CONTENT_PLACEHOLDERS = {
+  prompt: 'cost estimation',
+  musicDescription: 'cost estimation',
+  lyrics: 'cost estimation',
+};
 const CONTENT_KEYS = ['prompt', 'negativePrompt', 'musicDescription', 'lyrics', 'styleReferences'];
 
 export function useWhatIfFromStore({
@@ -97,6 +101,12 @@ export function useWhatIfFromStore({
   const queryPayload = useMemo(() => {
     if (!parseResult.success) return null;
     const outputSnapshot = omit(parseResult.data as Record<string, unknown>, CONTENT_KEYS);
+    if ('yue2Abc' in outputSnapshot) {
+      outputSnapshot.yue2Abc =
+        typeof outputSnapshot.yue2Abc === 'string' && outputSnapshot.yue2Abc.trim()
+          ? 'provided score'
+          : '';
+    }
     return filterSnapshotForSubmit(outputSnapshot, { computedKeys: store.getComputedKeys() });
   }, [parseResult, store]);
 

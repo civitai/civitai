@@ -39,9 +39,10 @@
   // Reference for the iconWrapper
 }
 
-// The 300px hub sidebar. The default label reserves 20px each side plus room for a
-// check mark, which is most of the width of a chip reading "R" — five of them do not
-// fit, and wrapping leaves XXX alone on a line looking singled out.
+// Five chips on one row in a modal or a narrow column. The default label reserves
+// 20px each side plus room for a check mark, which is most of the width of a chip
+// reading "R" — five of those do not fit, and wrapping leaves XXX alone on a line
+// looking singled out.
 .compact {
   padding-left: 5px;
   padding-right: 5px;

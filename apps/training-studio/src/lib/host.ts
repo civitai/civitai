@@ -37,6 +37,19 @@ export interface ModelPageRequest {
   modelId: number;
 }
 
+/** What the Custom-base "Browse models" affordance hands the host: the run's orchestrator
+ *  ecosystem, so a host that knows how can pre-filter its picker to compatible checkpoints. */
+export interface PickModelRequest {
+  ecosystem?: string;
+}
+
+/** What the host's model picker resolves: the model's checkpoint AIR (the same shape the paste
+ *  input takes) and, when the host has one, a display name for it. */
+export interface PickedModel {
+  air: string;
+  name?: string;
+}
+
 export interface HostContext {
   /** Every read/write the flow performs — the shell's /api fetches or the element's direct SDK calls. */
   backend: StudioBackend;
@@ -69,6 +82,9 @@ export interface HostContext {
    *  modelId from the moment a draft exists; see TrainingStudioMeta). Absent => the "view model"
    *  affordance hides. Same URL semantics as `generateUrl`. */
   modelPageUrl?: (req: ModelPageRequest) => string;
+  /** Open the host's own model picker for the Custom base; resolves null when the user cancels.
+   *  Absent => the studio keeps its paste-an-AIR input alone. */
+  pickModel?: (req: PickModelRequest) => Promise<PickedModel | null>;
   /** Where portalled UI (dialogs, select/tooltip content) should land. The element supplies its
    *  body-level portal root (an ancestor `container-type` on the embedding page makes it the
    *  containing block for `position: fixed`, so un-portalled overlays center against the wrong box,
@@ -119,6 +135,7 @@ export const generate = () => host().generate;
 export const generateUrl = () => host().generateUrl;
 export const publishUrl = () => host().publishUrl;
 export const modelPageUrl = () => host().modelPageUrl;
+export const pickModel = () => host().pickModel;
 export function portalProps(): { to?: Element; disabled?: boolean } {
   const target = host().portalTarget?.();
   return target ? { to: target } : {};

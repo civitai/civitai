@@ -54,7 +54,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { type Comment } from '~/server/services/commentsv2.service';
+import { type Comment as CommentModel } from '~/server/services/commentsv2.service';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -77,7 +77,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: Comment;
+  comment: CommentModel;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;

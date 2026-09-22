@@ -80,8 +80,8 @@ importers:
         specifier: ^0.2.3
         version: 0.2.3
       '@clickhouse/client':
-        specifier: ^0.2.2
-        version: 0.2.10
+        specifier: ^1.23.1
+        version: 1.23.1
       '@coinbase/cdp-sdk':
         specifier: ^1.13.0
         version: 1.33.0(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2)(utf-8-validate@5.0.10)
@@ -1545,8 +1545,8 @@ importers:
   packages/civitai-clickhouse:
     dependencies:
       '@clickhouse/client':
-        specifier: ^0.2.2
-        version: 0.2.10
+        specifier: ^1.23.1
+        version: 1.23.1
       dayjs:
         specifier: ^1.11.12
         version: 1.11.13
@@ -2232,13 +2232,6 @@ packages:
   '@clavata/sdk@0.2.3':
     resolution: {integrity: sha512-2XTnBkF1MVwicO2sIb9J1mPh34UxZpGka7vtVnnWD1hOMXWIh/eNYZ7XM2k7xix9VKZ9sW4RajeVqPtZaSXx3A==}
     engines: {node: 22.13.0, npm: 10.9.2}
-
-  '@clickhouse/client-common@0.2.10':
-    resolution: {integrity: sha512-BvTY0IXS96y9RUeNCpKL4HUzHmY80L0lDcGN0lmUD6zjOqYMn78+xyHYJ/AIAX7JQsc+/KwFt2soZutQTKxoGQ==}
-
-  '@clickhouse/client@0.2.10':
-    resolution: {integrity: sha512-ZwBgzjEAFN/ogS0ym5KHVbR7Hx/oYCX01qGp2baEyfN2HM73kf/7Vp3GvMHWRy+zUXISONEtFv7UTViOXnmFrg==}
-    engines: {node: '>=16'}
 
   '@clickhouse/client@1.23.1':
     resolution: {integrity: sha512-vs3/Zc1dHvT171btW5nMoPsPCJ6QVJ5pp7obxzO5sjqwFx/jjz9wwCAqcFOdc2DhprugDBaVn+4dVY8hG3A9nw==}
@@ -13460,12 +13453,6 @@ snapshots:
     dependencies:
       '@grpc/grpc-js': 1.13.4
       module-alias: 2.2.3
-
-  '@clickhouse/client-common@0.2.10': {}
-
-  '@clickhouse/client@0.2.10':
-    dependencies:
-      '@clickhouse/client-common': 0.2.10
 
   '@clickhouse/client@1.23.1': {}
 

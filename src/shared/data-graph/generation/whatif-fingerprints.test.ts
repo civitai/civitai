@@ -53,3 +53,16 @@ describe('controlVideo whatIf fingerprint', () => {
     );
   });
 });
+
+describe('YuE2 score pricing', () => {
+  it('refetches when a supplied score replaces paid planning, not on every note edit', () => {
+    const absent = applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: '' });
+    const supplied = applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: 'X:1\nK:C\nC D E G |' });
+    expect(supplied).not.toEqual(absent);
+    expect(applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: 'X:1\nK:G\nG A B d |' })).toEqual(
+      supplied
+    );
+    expect(applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: '   ' })).toEqual(absent);
+    expect(applyWhatIfFingerprints({ yue2Mode: 'off', yue2Abc: '' })).not.toEqual(absent);
+  });
+});

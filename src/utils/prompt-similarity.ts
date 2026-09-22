@@ -1,3 +1,5 @@
+import { MAX_PROMPT_LENGTH } from '~/shared/constants/generation.constants';
+
 function cleanText(text: string): string[] {
   return text
     .toLowerCase()
@@ -15,9 +17,12 @@ function buildTFIDF(tokensA: string[], tokensB: string[]): [TFIDFMap, TFIDFMap, 
   const docs = [tokensA, tokensB];
   const vocab = Array.from(new Set([...tokensA, ...tokensB]));
 
+  // Sets, not `Array.includes`: that made this O(vocab × tokens), and one side of
+  // the server's comparison is a stored prompt whose length nothing bounds.
+  const docSets = docs.map((doc) => new Set(doc));
   const docFreq: Record<string, number> = {};
   vocab.forEach((word) => {
-    docFreq[word] = docs.reduce((count, doc) => (doc.includes(word) ? count + 1 : count), 0);
+    docFreq[word] = docSets.reduce((count, set) => (set.has(word) ? count + 1 : count), 0);
   });
 
   function tfidfVector(tokens: string[]): TFIDFMap {
@@ -55,13 +60,22 @@ function harmonicMean(a: number, b: number): number {
   return a + b > 0 ? (2 * a * b) / (a + b) : 0;
 }
 
-interface SimilarityOptions {
-  /** `adjustedCosine` at or above this counts as similar. */
-  upper?: number;
-}
+/**
+ * 🔴 A money gate, not a similarity preference: a submission that clears it
+ * enters a creator's review queue without paying. Read only through
+ * `promptDerivationHolds`; `no-divergent-prompt-derivation` fails on a second copy
+ * or a second route to a threshold.
+ */
+export const PROMPT_DERIVATION_THRESHOLD = 0.75;
 
-export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions = {}) {
-  const { upper = 0.75 } = opt;
+/**
+ * The generator's own prompt cap, so nothing a user can submit is cut — but the
+ * server also compares against a stored prompt the upload path does not bound,
+ * and this is the CPU ceiling for one check.
+ */
+const MAX_COMPARED_PROMPT_CHARS = MAX_PROMPT_LENGTH;
+
+function promptSimilarity(p1: string, p2: string) {
   const tokensA = cleanText(p1);
   const tokensB = cleanText(p2);
 
@@ -83,6 +97,29 @@ export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions 
     cosine,
     containment,
     adjustedCosine,
-    similar: adjustedCosine >= upper,
+    similar: adjustedCosine >= PROMPT_DERIVATION_THRESHOLD,
   };
+}
+
+/**
+ * Whether `current` is still derived from `source`.
+ *
+ * No options parameter, on purpose: this is the derivation the free-submission
+ * gate spends, and a caller that could pass its own cutoff would be a second
+ * threshold that nothing pins. Both readers — the client's `remixClaimState` and
+ * the server's submit-time check — come through here, so they cannot disagree.
+ *
+ * An empty side is not a drift verdict. `promptSimilarity` scores it 0, which
+ * would read as "they changed everything" when the truth is that there is nothing
+ * to compare; callers decide what an absent prompt means.
+ */
+export function promptDerivationHolds(
+  source: string,
+  current: string
+): { holds: boolean; score: number } {
+  const { similar, adjustedCosine } = promptSimilarity(
+    source.slice(0, MAX_COMPARED_PROMPT_CHARS),
+    current.slice(0, MAX_COMPARED_PROMPT_CHARS)
+  );
+  return { holds: similar, score: adjustedCosine };
 }

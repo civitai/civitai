@@ -1132,6 +1132,14 @@ export interface ParamBound {
   step: number;
 }
 
+/**
+ * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with
+ * `ValueError: Cannot unload text encoder if training text encoder` after ~20-30 min of looping,
+ * with no way to abort (tester-confirmed). The Review step locks the TE learning-rate at 0 for
+ * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
+ */
+export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
+
 /** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
  *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
 export function paramBounds(card: ModelCard): Record<string, ParamBound> {
