@@ -27,6 +27,8 @@ export interface SessionUser {
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
   permissions?: string[];
+  /** App-namespaced role grants from the auth hub (`app:role`, e.g. `moderator:admin`). */
+  roles?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only
   referral?: { id: number }; // client only
