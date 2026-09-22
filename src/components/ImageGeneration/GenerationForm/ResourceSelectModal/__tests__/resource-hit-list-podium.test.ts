@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   disablePoi: false,
   systemHiddenTags: new Map<number, boolean>(),
   hiddenUsers: new Map<number, boolean>(),
-  blockedUsers: new Map<number, boolean>(),
+  blockRelations: new Map<number, boolean>(),
   hiddenTags: new Map<number, boolean>(),
   hiddenModels: new Map<number, boolean>(),
   hiddenImages: new Map<number, boolean>(),
@@ -35,7 +35,7 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (impor
 vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
   useHiddenPreferencesContext: () => ({
     hiddenUsers: state.hiddenUsers,
-    blockedUsers: state.blockedUsers,
+    blockRelations: state.blockRelations,
     hiddenTags: state.hiddenTags,
     hiddenModels: state.hiddenModels,
     hiddenModel3Ds: new Map(),
@@ -136,7 +136,7 @@ beforeEach(() => {
   state.disablePoi = false;
   state.systemHiddenTags = new Map();
   state.hiddenUsers = new Map();
-  state.blockedUsers = new Map();
+  state.blockRelations = new Map();
   state.hiddenTags = new Map();
   state.hiddenModels = new Map();
   state.hiddenImages = new Map();
@@ -202,7 +202,7 @@ describe('ResourceHitList featured podium', () => {
 
   it('drops a winner whose creator has a block with the viewer', () => {
     state.hiddenUsers = new Map([[900 + WINNER, true]]);
-    state.blockedUsers = new Map([[900 + WINNER, true]]);
+    state.blockRelations = new Map([[900 + WINNER, true]]);
     expect(renderPodium([{ id: 12, nsfwLevel: PG }])).toBeNull();
   });
 });

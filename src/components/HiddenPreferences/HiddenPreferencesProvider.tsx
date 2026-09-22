@@ -8,8 +8,8 @@ import type { HiddenTag } from '~/server/services/user-preferences.service';
 
 export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
-  /** Blocks in either direction; also merged into `hiddenUsers` for non-moderators. */
-  blockedUsers: Map<number, boolean>;
+  /** Blocks in either direction; also merged into `hiddenUsers`. Empty for moderators. */
+  blockRelations: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenModels: Map<number, boolean>;
   hiddenModel3Ds: Map<number, boolean>;
@@ -18,6 +18,20 @@ export type HiddenPreferencesState = {
   moderatedTags: HiddenTag[];
   systemHiddenTags: Map<number, boolean>;
 };
+
+type UserRef = { id: number };
+
+export function deriveHiddenUsers(
+  data: { hiddenUsers: UserRef[]; blockedUsers: UserRef[]; blockedByUsers: UserRef[] },
+  isModerator: boolean
+) {
+  const blocked = isModerator ? [] : [...data.blockedUsers, ...data.blockedByUsers];
+  const toMap = (users: UserRef[]) => new Map(users.map((x): [number, boolean] => [x.id, true]));
+  return {
+    hiddenUsers: toMap([...data.hiddenUsers, ...blocked]),
+    blockRelations: toMap(blocked),
+  };
+}
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
 export const useHiddenPreferencesContext = () => {
@@ -43,21 +57,11 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
 
-    const dedupedHiddenUsers = !currentUser?.isModerator
-      ? [
-          ...new Set(
-            [...data.hiddenUsers, ...data.blockedUsers, ...data.blockedByUsers].map((x) => x.id)
-          ),
-        ]
-      : data.hiddenUsers.map((x) => x.id);
-
-    const blockedUsers = !currentUser?.isModerator
-      ? [...data.blockedUsers, ...data.blockedByUsers].map((x): [number, boolean] => [x.id, true])
-      : [];
+    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, !!currentUser?.isModerator);
 
     return {
-      hiddenUsers: new Map(dedupedHiddenUsers.map((id) => [id, true])),
-      blockedUsers: new Map(blockedUsers),
+      hiddenUsers,
+      blockRelations,
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
       hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
       hiddenTags: tags,

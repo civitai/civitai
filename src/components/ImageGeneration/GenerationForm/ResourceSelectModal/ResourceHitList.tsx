@@ -175,7 +175,7 @@ export function ResourceHitList({ query }: { query: string }) {
       data: candidates,
       hiddenPreferences: {
         ...hiddenPreferences,
-        hiddenUsers: hiddenPreferences.blockedUsers,
+        hiddenUsers: hiddenPreferences.blockRelations,
         hiddenTags: new Map(),
         hiddenModels: new Map(),
         hiddenImages: new Map(),
