@@ -69,7 +69,7 @@ export function useWorkflowDownloads({
     }
   );
 
-  useInvalidateResidencyOnLanding(data);
+  useInvalidateOnLanding(data);
 
   const rows = buildDownloadRows({
     resources: request.resources,
@@ -83,10 +83,11 @@ export function useWorkflowDownloads({
 
 /**
  * `getDownloadStatus` is uncached, so it sees a model land before the 30s-cached indicator query
- * would. Every batch is invalidated: they are keyed by the ids each caller asked for, so the one
- * holding this version cannot be named.
+ * would. Both the indicators and the whatIf behind the generator's download alert are told: the
+ * alert quotes a wait this model is no longer part of. Every residency batch is invalidated, since
+ * they are keyed by the ids each caller asked for and the one holding this version cannot be named.
  */
-function useInvalidateResidencyOnLanding(
+function useInvalidateOnLanding(
   live: { modelVersionId: number; availability: { status: string } }[] | undefined
 ) {
   const utils = trpc.useUtils();
@@ -101,6 +102,7 @@ function useInvalidateResidencyOnLanding(
 
     for (const id of fresh) landed.current.add(id);
     void utils.resourceLoad.getResidency.invalidate();
+    void utils.orchestrator.whatIfFromGraph.invalidate();
   }, [live, utils]);
 }
 

@@ -235,8 +235,9 @@ export const AuctionTopSection = ({
         )}
         <HoverCard withArrow width={380}>
           <HoverCard.Target>
-            <Text c="dimmed">
+            <Text c="dimmed" size="sm" className="flex cursor-default items-center gap-1">
               <IconMoodSmile />
+              <span className="hide-mobile">Perks of winning</span>
             </Text>
           </HoverCard.Target>
           <HoverCard.Dropdown maw="100%">

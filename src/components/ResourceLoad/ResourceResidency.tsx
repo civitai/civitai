@@ -8,7 +8,6 @@ import { isQueuedAvailability, RESIDENCY_MAX_IDS } from '~/server/schema/resourc
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
-import cardClasses from '~/components/Cards/Cards.module.css';
 
 /** The answer is server-cached for 30s (`RESIDENCY_CACHE_SECONDS`), so a faster poll re-reads it. */
 const RESIDENCY_POLL_MS = 60_000;
@@ -160,29 +159,15 @@ function StatusDot({ color, filled }: { color: string; filled: boolean }) {
   );
 }
 
-type LoadedMarkVariant = 'dot' | 'overlay';
-
 const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
 
 /** For callers that already know the version is loaded, e.g. from the search index. */
-export function LoadedMark({ variant = 'dot' }: { variant?: LoadedMarkVariant }) {
-  const dot = <StatusDot color={LOADED.color} filled />;
+export function LoadedMark() {
   return (
     <Tooltip label={LOADED.description} withArrow multiline w={240}>
-      {variant === 'dot' ? (
-        <span role="img" aria-label={LOADED.label} className="inline-flex shrink-0">
-          {dot}
-        </span>
-      ) : (
-        <Badge
-          className={clsx(cardClasses.infoChip, cardClasses.chip, 'cursor-default')}
-          variant="light"
-          radius="xl"
-          leftSection={dot}
-        >
-          {LOADED.label}
-        </Badge>
-      )}
+      <span role="img" aria-label={LOADED.label} className="inline-flex shrink-0">
+        <StatusDot color={LOADED.color} filled />
+      </span>
     </Tooltip>
   );
 }
@@ -217,12 +202,19 @@ export function ResourceResidencyStatus({
   modelVersionId,
   className,
   tooltipWidth = 260,
+  loaded,
 }: {
   modelVersionId: number;
   className?: string;
   tooltipWidth?: number;
+  /**
+   * `ModelVersion.generatorLoaded`, where the caller has it. The live read answers a request later,
+   * so without this the row renders empty and then pops in — and for a signed-out viewer, never.
+   */
+  loaded?: boolean;
 }) {
-  const residency = useResidency(modelVersionId);
+  const live = useResidency(modelVersionId);
+  const residency = live ?? (loaded === undefined ? null : loaded ? LOADED : NOT_LOADED);
   if (!residency) return null;
 
   return (

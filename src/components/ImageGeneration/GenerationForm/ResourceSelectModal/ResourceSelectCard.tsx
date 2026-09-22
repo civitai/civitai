@@ -237,9 +237,6 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
-                        {selectSource === 'generation' && selectedVersion?.generatorLoaded && (
-                          <LoadedMark variant="overlay" />
-                        )}
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
@@ -336,6 +333,13 @@ export function ResourceSelectCard({
             <div className="flex items-center justify-between gap-2">
               <Select
                 className="flex-1"
+                leftSection={
+                  selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
+                    <LoadedMark />
+                  ) : undefined
+                }
+                leftSectionWidth={26}
+                leftSectionPointerEvents="none"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -346,6 +350,15 @@ export function ResourceSelectCard({
                   label: version.name,
                   value: index.toString(),
                 }))}
+                renderOption={({ option }) => {
+                  const version = versions[Number(option.value)];
+                  return (
+                    <Group gap={6} wrap="nowrap" className="min-w-0">
+                      {selectSource === 'generation' && version?.generatorLoaded && <LoadedMark />}
+                      <span className="truncate">{option.label}</span>
+                    </Group>
+                  );
+                }}
                 onChange={(index) => setSelectedIndex(Number(index ?? 0))}
                 styles={{
                   input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
@@ -458,7 +471,12 @@ function ModelDetailsPanel({
     },
     {
       label: 'Generation',
-      value: <ResourceResidencyStatus modelVersionId={selectedVersion.id} />,
+      value: (
+        <ResourceResidencyStatus
+          modelVersionId={selectedVersion.id}
+          loaded={selectedVersion.generatorLoaded}
+        />
+      ),
       visible: selectSource === 'generation' && !!residency,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },

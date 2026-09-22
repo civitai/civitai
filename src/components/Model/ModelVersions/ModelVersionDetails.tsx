@@ -91,7 +91,6 @@ import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTenso
 import {
   LoadedCornerBadge,
   ResourceResidencyStatus,
-  useResidency,
 } from '~/components/ResourceLoad/ResourceResidency';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
@@ -326,7 +325,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     // !shouldOmit &&
     (!isEarlyAccess || !!paidAccessTerms?.generation || hasGeneratePermissions);
   const canGenerate = couldGenerate && version.canGenerate;
-  const residency = useResidency(canGenerate ? version.id : undefined);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -1452,11 +1450,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                     </Group>
                   </div>
-                  {/* Hidden until residency is known: a signed-out viewer never gets it. */}
-                  {residency && (
+                  {canGenerate && features.imageGeneration && (
                     <div className={classes.detailRow}>
                       <span className={classes.detailLabel}>Generation</span>
-                      <ResourceResidencyStatus modelVersionId={version.id} />
+                      <ResourceResidencyStatus
+                        modelVersionId={version.id}
+                        loaded={version.generatorLoaded}
+                      />
                     </div>
                   )}
                   {/* Generation License Fee */}

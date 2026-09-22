@@ -328,3 +328,47 @@ describe('downloadPollIds', () => {
     expect(downloadPollIds(ids, preparation)).toHaveLength(DOWNLOAD_STATUS_MAX_IDS);
   });
 });
+
+describe('the lane cap on the card', () => {
+  // The orchestrator reports the cap on both the workflow's preparation and the model's live status.
+  // Preferring preparation is right; showing nothing when only live status has it is not.
+  it('falls back to live status when the preparation never reported one', () => {
+    const row = mergeDownloadRow(
+      { lane: 'low', queuePosition: 2 },
+      {
+        availability: {
+          status: 'loading',
+          progress: 0.3,
+          workers: 1,
+          lane: 'low',
+          rateLimitBytesPerSecond: 5_625_000,
+        },
+      }
+    );
+    expect(row?.rateLimitBytesPerSecond).toBe(5_625_000);
+  });
+
+  it('keeps an uncapped lane uncapped rather than reading it as unknown', () => {
+    const row = mergeDownloadRow(
+      { lane: 'high', rateLimitBytesPerSecond: null },
+      {
+        availability: {
+          status: 'loading',
+          progress: 0.3,
+          workers: 1,
+          lane: 'low',
+          rateLimitBytesPerSecond: 5_625_000,
+        },
+      }
+    );
+    expect(row?.rateLimitBytesPerSecond).toBeNull();
+  });
+
+  it('takes the cap from another row in the lane when the gating one has none', () => {
+    const summary = summarizeDownloads([
+      { lane: 'low', etaSeconds: 900 },
+      { lane: 'low', etaSeconds: 60, rateLimitBytesPerSecond: 5_625_000 },
+    ]);
+    expect(summary?.rateLimitBytesPerSecond).toBe(5_625_000);
+  });
+});

@@ -89,6 +89,12 @@ export function mergeDownloadRow(
     progress: row.progress,
     etaSeconds: row.etaSeconds ?? prepared.etaSeconds,
     sizeBytes: prepared.sizeBytes ?? row.sizeBytes,
+    // A null cap is a lane without one, so only `undefined` means this workflow's preparation never
+    // reported it — and live status is then the same lane's answer, not another waiter's.
+    rateLimitBytesPerSecond:
+      prepared.rateLimitBytesPerSecond !== undefined
+        ? prepared.rateLimitBytesPerSecond
+        : row.rateLimitBytesPerSecond,
   };
 }
 
@@ -169,7 +175,10 @@ export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undef
     queuePosition: transferring ? 0 : gating.queuePosition ?? null,
     etaSeconds,
     boostedEtaSeconds: maxKnown(rows.map(settledBoostedEtaSeconds)),
-    rateLimitBytesPerSecond: gating.rateLimitBytesPerSecond,
+    rateLimitBytesPerSecond:
+      gating.rateLimitBytesPerSecond !== undefined
+        ? gating.rateLimitBytesPerSecond
+        : rows.find((r) => r.rateLimitBytesPerSecond !== undefined)?.rateLimitBytesPerSecond,
     totalBytes: rows.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0),
     count: rows.length,
   };
