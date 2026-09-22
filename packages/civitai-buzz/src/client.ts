@@ -115,6 +115,17 @@ export type BuzzWriteOptions = {
   shouldRetry?: (error: unknown) => boolean;
 };
 
+/**
+ * Per-call overrides for a read. Separate from `BuzzWriteOptions` rather than a widening
+ * of it: a GET is idempotent, so "retry everything" is the right default and `shouldRetry`
+ * has nothing to decide.
+ */
+export type BuzzReadOptions = {
+  timeoutMs?: number;
+  /** Per-call retry override. `0` sends the request once and rethrows. */
+  retries?: number;
+};
+
 /** Body for `refundTransaction`. */
 export type BuzzRefundTransactionInput = {
   description?: string;
@@ -335,10 +346,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
 
   /** `opts` is additive and optional: callers that pass nothing keep the client's
    *  default retry budget and the absence of a deadline they have today. */
-  const getTransactionByExternalId = (
-    externalId: string,
-    opts?: { timeoutMs?: number; retries?: number }
-  ) =>
+  const getTransactionByExternalId = (externalId: string, opts?: BuzzReadOptions) =>
     request<BuzzTransactionResponse | null>(`/transactions/${externalId}`, undefined, {
       allow404: true,
       ...opts,

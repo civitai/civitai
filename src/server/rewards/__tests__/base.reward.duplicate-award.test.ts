@@ -64,9 +64,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const AWARD_AMOUNT = 2;
-/** Deliberately different from AWARD_AMOUNT: a fix that subtracts the current award rather
- *  than writing a zero reads as correct while the two are equal. */
+/** A second entry in the same field, so the zero below is asserted in a populated window. */
 const SIBLING_AWARD = 3;
+/** Applied to the refused repeat so ITS entry is worth more than the award in force. A fix
+ *  that subtracted the current award instead of writing a zero would leave a remainder. */
+const REPEAT_MULTIPLIER = 2;
+/** A key this code never touches, so the rollover assertion has something to be true OF. */
+const SURVIVING_KEY = 'some-other-hash';
 const CAP = 100;
 const DAY_ONE = '2026-09-21T12:00:00Z';
 const DAY_TWO = '2026-09-22T12:00:00Z';
@@ -250,14 +254,17 @@ describe('a repeat award the ledger refuses', () => {
     expect(capConsumed()).toBe(SIBLING_AWARD);
 
     ledgerRefuses(DAY_ONE);
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: REPEAT_MULTIPLIER });
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
     // The repeat pays nothing, so it must take nothing from the 100/day the user can earn.
-    // Asserted against a POPULATED day: the sibling award above is what separates "zeroed this
-    // entry" from "cleared the field", which would hand back a cap the user really spent.
-    // Stated as an amount rather than as `a:2` so an operator changing the award cannot make
-    // this assertion wrong about a fix that still works.
+    // Three things ride on this one number. It is a POPULATED window, so it separates "zeroed
+    // this entry" from "cleared the field" - the latter would hand back a cap the user really
+    // spent. The repeat's entry was worth SIBLING_AWARD * REPEAT_MULTIPLIER, so a fix that
+    // subtracted the award in force rather than writing a zero would leave a remainder here.
+    // And it is an amount rather than a literal `a:<n>`, so changing the configured award
+    // cannot make it wrong about a fix that still works.
     expect(capConsumed()).toBe(SIBLING_AWARD);
 
     // Asked about the transaction the submit actually sent, not one re-derived here - a
@@ -269,6 +276,11 @@ describe('a repeat award the ledger refuses', () => {
       timeoutMs: expect.any(Number),
       retries: 0,
     });
+    // Once, not "at least once": a second lookup, or a wrong id followed by the right one,
+    // would otherwise pass. And a POSITIVE timeout, because the client gates the abort signal
+    // on truthiness - `timeoutMs: 0` means no deadline at all, which `expect.any(Number)` admits.
+    expect(h.getTransactionByExternalId).toHaveBeenCalledTimes(1);
+    expect(h.getTransactionByExternalId.mock.calls[0][1].timeoutMs).toBeGreaterThan(0);
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
     // Day one's award and day two's sibling. The refused repeat must not be counted.
     expect(rewardGivenCounter?.inc).toHaveBeenCalledTimes(2);
@@ -319,13 +331,15 @@ describe('a repeat award the ledger refuses', () => {
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
   });
 
-  it('leaves the cap alone for a payment at the day boundary itself', async () => {
+  // The decision boundary is not midnight, it is midnight MINUS the grace - 23:55:00.000 of
+  // the previous day. These two sit either side of that instant, one millisecond apart, so
+  // together they pin both the comparison and the size of the constant. A case at midnight
+  // itself would only be testing a point five minutes inside the kept region.
+  it('leaves the cap alone for a payment on the boundary instant', async () => {
     const reward = encouragementLike();
 
     vi.setSystemTime(new Date(DAY_TWO));
-    // Exactly 00:00:00.000 of the current UTC day. The ledger's clock and this process's are
-    // not the same clock, so the boundary itself belongs to the side that keeps the cap.
-    ledgerRefuses('2026-09-22T00:00:00.000Z');
+    ledgerRefuses('2026-09-21T23:55:00.000Z');
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
@@ -333,18 +347,16 @@ describe('a repeat award the ledger refuses', () => {
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
   });
 
-  it('leaves the cap alone for a payment minutes before the boundary', async () => {
+  it('releases the cap one millisecond the other side of it', async () => {
     const reward = encouragementLike();
 
     vi.setSystemTime(new Date(DAY_TWO));
-    // Yesterday by the calendar, but within the skew grace: close enough to the boundary that
-    // a clock disagreement could have put it on either side of it.
-    ledgerRefuses('2026-09-21T23:58:00.000Z');
+    ledgerRefuses('2026-09-21T23:54:59.999Z');
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
-    expect(capConsumed()).toBe(AWARD_AMOUNT);
-    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
+    expect(capConsumed()).toBe(0);
+    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
   });
 
   it('leaves the cap alone when the ledger has no record to date', async () => {
@@ -367,6 +379,7 @@ describe('a repeat award the ledger refuses', () => {
     await reward.apply({ reactorId: 7, entityId: 99 });
 
     vi.setSystemTime(new Date(DAY_TWO));
+    store[SURVIVING_KEY] = { fields: { untouched: '{}' }, expireAt: seconds() + 86_400 };
     h.createBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: ['x'] });
     h.getTransactionByExternalId.mockImplementation(async () => {
       // The day rolls over while the ledger is answering, so the hash the award just wrote is
@@ -378,9 +391,11 @@ describe('a repeat award the ledger refuses', () => {
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
-    // The claim is "no hash exists without an expiry", which is what `HSET` on a missing key
-    // would create and what nothing else reclaims. Asserting that directly rather than
-    // asserting the key is absent, which is only the fake's lazy expiry showing.
+    // A zero needs a nonzero beside it: the unrelated key seeded above survives the rollover,
+    // so the filter ranges over a populated store rather than an empty one. What must not
+    // exist is a hash with no expiry, which is what `HSET` on a missing key would create and
+    // what nothing else reclaims.
+    expect(Object.keys(store)).toContain(SURVIVING_KEY);
     expect(Object.values(store).filter((hash) => hash.expireAt === undefined)).toEqual([]);
     // And the release really was attempted - otherwise this passes by doing nothing.
     expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
