@@ -219,17 +219,18 @@ function withApiMetrics(
 }
 
 /**
- * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, so a
- * caller presenting `?token=` with no value cannot match it. Without this, blanking the secret turns
- * every endpoint on this wrapper into an open one — and a bare key added to a ConfigMap arrives as an
- * empty string, which is a config typo rather than a decision (see MODERATOR_APP_INTERNAL_URL in
- * env/server-schema.ts, where the same arrival shape is documented).
+ * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
+ * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
+ * reachable without a working credential — and a bare key added to a ConfigMap arrives as an empty
+ * string, so that is a configuration typo rather than a decision.
  *
- * 503 rather than 401 so an operator reading logs sees a deployment problem instead of a caller with
- * a bad token, and fail-closed rather than a `.min(1)` on the schema so the same typo does not stop
- * the process booting. Same rule, same reason and same status code as
- * apps/moderator/src/lib/server/webhook-endpoint.ts — the two apps must not disagree about what a
- * blank secret means.
+ * The value is only TESTED for emptiness, never trimmed for the comparison. Trimming it there would
+ * collapse two distinct configured secrets into one.
+ *
+ * 503 rather than 401 so an operator reading logs sees a deployment problem rather than a caller with
+ * a bad token, and so `withApiMetrics` records it as a 5xx. Same rule and same status code as
+ * apps/moderator/src/lib/server/webhook-endpoint.ts, so the two apps agree about what a blank secret
+ * means.
  */
 export function TokenSecuredEndpoint(
   token: string,

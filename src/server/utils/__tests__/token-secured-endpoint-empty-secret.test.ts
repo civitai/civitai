@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
- * Whoever is about to delete the not-configured branch: a blank secret used to be COMPARED, so
- * `?token=` with no value matched it and every endpoint on this wrapper answered as authenticated.
- * A bare key in a ConfigMap arrives blank, so that is a config typo away, not a hypothetical.
+ * Whoever is about to delete the not-configured branch: without it a blank secret is compared rather
+ * than refused, which leaves every endpoint on this wrapper reachable without a working credential.
+ * A bare key in a ConfigMap arrives blank, so that is a configuration typo away, not a hypothetical.
  */
 
 function call(secret: string, query: Record<string, unknown>) {
