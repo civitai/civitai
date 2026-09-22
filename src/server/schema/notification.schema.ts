@@ -16,6 +16,26 @@ export const toggleNotificationSettingInput = z.object({
 });
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
+export const upsertPushSubscriptionInput = z.object({
+  endpoint: z.url(),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth: z.string().min(1),
+  }),
+});
+export type UpsertPushSubscriptionInput = z.infer<typeof upsertPushSubscriptionInput>;
+
+export const deletePushSubscriptionInput = z.object({
+  endpoint: z.string().min(1),
+});
+export type DeletePushSubscriptionInput = z.infer<typeof deletePushSubscriptionInput>;
+
+export const togglePushSettingInput = z.object({
+  type: z.string().array().min(1),
+  enabled: z.boolean(),
+});
+export type TogglePushSettingInput = z.infer<typeof togglePushSettingInput>;
+
 export const markReadNotificationInput = z.object({
   id: z.coerce.bigint().optional(),
   all: z.boolean().optional(),

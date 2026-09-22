@@ -1,9 +1,15 @@
-import { Card, Divider, Stack, Title, Group, Text, Checkbox } from '@mantine/core';
+import { Card, Divider, Stack, Title, Group, Text } from '@mantine/core';
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
+import { NotificationTypeControl } from '~/components/Notifications/NotificationTypeControl';
+import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
+import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
+import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
+  usePushNotificationSettings,
   useToggleNotificationSetting,
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
@@ -16,6 +22,8 @@ import {
 export default function NotificationsCard() {
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();
+  const { active: pushAvailable } = usePushSubscription();
+  const { pushTypes } = usePushNotificationSettings(pushAvailable);
 
   const updateNotificationSettingMutation = useToggleNotificationSetting();
 
@@ -38,16 +46,15 @@ export default function NotificationsCard() {
       type: categoryTypes,
     });
   };
-  const toggleType = (type: string, toggle: boolean) => {
-    updateNotificationSettingMutation.mutate({ toggle, type: [type] });
-  };
-
   return (
     <Card withBorder>
       <Stack>
         <Title id="notification-settings" order={2}>
           Notifications Settings
         </Title>
+        <PushSoftAsk />
+        <PushDeviceToggle />
+        <PushDeviceList />
         <Card withBorder pb={0}>
           <Card.Section withBorder inheritPadding py="xs">
             <Group justify="space-between">
@@ -84,12 +91,14 @@ export default function NotificationsCard() {
                     <Card.Section inheritPadding py="md">
                       <Stack>
                         {settings.map(({ type, displayName }) => (
-                          <Checkbox
+                          <NotificationTypeControl
                             key={type}
-                            label={displayName}
+                            type={type}
+                            displayName={displayName}
                             checked={notificationSettings[type]}
+                            pushOn={pushTypes.includes(type)}
+                            pushAvailable={pushAvailable}
                             disabled={isLoading}
-                            onChange={(e) => toggleType(type, e.target.checked)}
                           />
                         ))}
                       </Stack>

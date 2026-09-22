@@ -458,6 +458,8 @@ model User {
   comments             Comment[]
   commentReactions     CommentReaction[]
   notificationSettings UserNotificationSettings[]
+  pushSubscriptions    PushSubscription[]
+  pushSettings         UserPushSetting[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -4119,6 +4121,37 @@ model UserNotificationSettings {
   disabledAt DateTime @default(now())
 
   @@unique([userId, type])
+}
+
+// One row per live browser push subscription (a user can hold several — one per browser/device).
+// Deleted from three places: the apps/notifications dispatcher (410/404 from the push service, or
+// 10 consecutive delivery failures), the push-subscription-cleanup job (no delivery in 180 days),
+// and user unsubscribe.
+model PushSubscription {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  lastSuccessAt DateTime?
+  failureCount  Int       @default(0)
+
+  @@index([userId])
+}
+
+// Row = push ON for this notification type; absence = no push. Single polarity for every type —
+// never add an `enabled` column (see the UserNotificationSettings polarity history).
+model UserPushSetting {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
 }
 
 model Webhook {

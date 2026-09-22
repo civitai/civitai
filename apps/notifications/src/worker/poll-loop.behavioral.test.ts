@@ -57,7 +57,12 @@ vi.mock('../lib/server/metrics', () => ({
   writePoolActive: { set: vi.fn() },
 }));
 
-vi.mock('../env', () => ({ signalsEndpoint: 'http://signals.test' }));
+vi.mock('../env', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../env')>()),
+  signalsEndpoint: 'http://signals.test',
+  // Push stays off in this suite — dispatchPush is covered by push.test.ts.
+  pushEnabled: false,
+}));
 
 import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
