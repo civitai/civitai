@@ -42,6 +42,7 @@ let failed = 0;
 let skipped = 0;
 const failures = [];
 const cleanupTasks = [];
+const cleanupPages = [];
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -178,7 +179,6 @@ async function writeTests() {
   let testSubtaskId = null;
   let testCommentId = null;
   let testListId = null;
-  const testPageIds = [];  // Track pages to archive in cleanup
 
   // ── Task CRUD ──
 
@@ -465,9 +465,11 @@ async function writeTests() {
   });
 
   // Get the first page to test page read
-  const { stdout: docJson } = await runJson(['doc', testDocId]);
-  const docData = JSON.parse(docJson);
-  const firstPageId = docData.pages?.[0]?.id;
+  let firstPageId = null;
+  await test('doc --json: first page id', async () => {
+    const { stdout } = await runJson(['doc', testDocId]);
+    firstPageId = assertJson(stdout).pages?.[0]?.id ?? null;
+  });
 
   if (firstPageId) {
     await test('page: reads page content', async () => {
@@ -480,13 +482,13 @@ async function writeTests() {
     const { stdout } = await runJson(['create-page', testDocId, 'SMOKE TEST Page', '--content', '## Test\\nCreated by smoke test']);
     const data = assertJson(stdout);
     assert(data.id, 'Expected page ID');
-    testPageIds.push(data.id);
+    cleanupPages.push(data.id);
     if (VERBOSE) console.log(`    Created page: ${data.id}`);
   });
 
-  if (testPageIds.length > 0) {
+  if (cleanupPages.length > 0) {
     await test('edit-page: updates page content', async () => {
-      const { output } = await run(['edit-page', testDocId, testPageIds[0], '--content', '# Updated\\nEdited by smoke test', '--name', 'SMOKE TEST Page (edited)']);
+      const { output } = await run(['edit-page', testDocId, cleanupPages[0], '--content', '# Updated\\nEdited by smoke test', '--name', 'SMOKE TEST Page (edited)']);
       assertContains(output, 'updated');
     });
   }
@@ -504,37 +506,35 @@ async function writeTests() {
     assertContains(output, 'restored');
   });
 
-  return { testPageIds };
 }
 
 // ─── Cleanup ───────────────────────────────────────────────────────────
 
-async function cleanup(testPageIds = []) {
+// Drains both trackers, so a second call (the SIGINT path racing the finally) does nothing.
+// run() resolves on a nonzero exit, so the exit code is what says the object is gone.
+async function cleanup() {
+  if (cleanupPages.length === 0 && cleanupTasks.length === 0) return [];
   console.log('\n\x1b[1mCleanup\x1b[0m');
+  const leaked = [];
 
-  // Archive test pages created during doc CRUD tests
-  for (const pageId of testPageIds) {
-    try {
-      await run(['edit-page', PERSISTENT_DOC_ID, pageId, '--archive']);
-      console.log(`  Archived page ${pageId}`);
-    } catch (err) {
-      console.log(`  ⚠ Failed to archive page ${pageId}: ${err.message}`);
-    }
+  for (const pageId of cleanupPages.splice(0)) {
+    const { code, output } = await run(['edit-page', PERSISTENT_DOC_ID, pageId, '--archive']).catch((err) => ({ code: 1, output: err.message }));
+    if (code === 0) console.log(`  Archived page ${pageId}`);
+    else leaked.push({ type: 'page', id: pageId, why: output.slice(0, 200) });
   }
 
-  for (const item of cleanupTasks.reverse()) {
-    try {
-      if (item.type === 'task') {
-        await run(['archive', item.id]);
-        console.log(`  Archived task ${item.id}`);
-      } else if (item.type === 'list') {
-        await run(['delete-list', item.id]);
-        console.log(`  Deleted list ${item.id}`);
-      }
-    } catch (err) {
-      console.log(`  ⚠ Failed to clean up ${item.type} ${item.id}: ${err.message}`);
-    }
+  for (const item of cleanupTasks.splice(0).reverse()) {
+    const args = item.type === 'list' ? ['delete-list', item.id] : ['archive', item.id];
+    const { code, output } = await run(args).catch((err) => ({ code: 1, output: err.message }));
+    if (code === 0) console.log(`  ${item.type === 'list' ? 'Deleted list' : 'Archived task'} ${item.id}`);
+    else leaked.push({ ...item, why: output.slice(0, 200) });
   }
+
+  if (leaked.length > 0) {
+    console.log(`\n\x1b[31m\x1b[1mLEAKED ${leaked.length} live ClickUp object(s). Remove them by hand:\x1b[0m`);
+    for (const l of leaked) console.log(`  ${l.type} ${l.id}: ${l.why}`);
+  }
+  return leaked;
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────
@@ -544,11 +544,21 @@ async function main() {
   console.log('========================');
   console.log(`Mode: ${READONLY ? 'read-only' : 'full (read + write)'}`);
 
+  process.once('SIGINT', async () => {
+    console.log('\nInterrupted.');
+    const leaked = await cleanup();
+    process.exit(leaked.length > 0 ? 3 : 130);
+  });
+
   await readOnlyTests();
 
+  let leaked = [];
   if (!READONLY) {
-    const { testPageIds } = await writeTests();
-    await cleanup(testPageIds);
+    try {
+      await writeTests();
+    } finally {
+      leaked = await cleanup();
+    }
   }
 
   // Summary
@@ -556,6 +566,7 @@ async function main() {
   console.log(`  Passed:  ${passed}`);
   if (failed > 0) console.log(`  \x1b[31mFailed:  ${failed}\x1b[0m`);
   if (skipped > 0) console.log(`  Skipped: ${skipped}`);
+  if (leaked.length > 0) console.log(`  \x1b[31mLeaked:  ${leaked.length}\x1b[0m`);
 
   if (failures.length > 0) {
     console.log('\n\x1b[31mFailures:\x1b[0m');
@@ -565,7 +576,7 @@ async function main() {
   }
 
   console.log('');
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit(leaked.length > 0 ? 3 : failed > 0 ? 1 : 0);
 }
 
 main().catch(err => {

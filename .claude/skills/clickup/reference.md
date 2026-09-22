@@ -163,7 +163,9 @@ node test/smoke-test.mjs --readonly
 node test/smoke-test.mjs --verbose
 ```
 
-When adding new features, add corresponding tests to `test/smoke-test.mjs`.
+Cleanup runs even when the suite dies partway or is interrupted. Exit code 3 means cleanup could not remove something: the run lists each leaked object's id under `LEAKED`, and those are live objects to delete by hand. The cleanup check trusts the exit codes of `archive` and `delete-list`; it does not re-query the list afterwards.
+
+When adding new features, add corresponding tests to `test/smoke-test.mjs`. Anything a test creates goes into `cleanupTasks` or `cleanupPages` in the same step, before any assertion that could fail. Then run `node test/leak-check.mjs`: it runs the suite against a fake `query.mjs` with no ClickUp calls, and fails naming any object the suite created and never removed.
 
 ## Webhook Watchers (Event Monitoring)
 
