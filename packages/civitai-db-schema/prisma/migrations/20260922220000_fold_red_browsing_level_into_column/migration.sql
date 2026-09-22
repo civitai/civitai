@@ -23,23 +23,17 @@
 --       AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
 --       AND (settings->>'redBrowsingLevel') ~ '^[0-9]{1,9}$'
 --   ) t;
-UPDATE "User" u
+-- Single-table on purpose: every value is read from the row being updated, so a user who changes
+-- their level while this runs (which removes the key) is re-checked against that new row and
+-- skipped, instead of being overwritten from a stale snapshot.
+UPDATE "User"
 SET
   "browsingLevel" = CASE
-    WHEN (u."browsingLevel" & r.level) <> 0 THEN u."browsingLevel" & r.level
-    ELSE r.level
+    WHEN ("browsingLevel" & GREATEST((settings->>'redBrowsingLevel')::int, 1)) <> 0
+      THEN "browsingLevel" & GREATEST((settings->>'redBrowsingLevel')::int, 1)
+    ELSE GREATEST((settings->>'redBrowsingLevel')::int, 1)
   END,
-  settings = u.settings - 'redBrowsingLevel'
-FROM (
-  SELECT
-    id,
-    CASE
-      WHEN (settings->>'redBrowsingLevel')::int > 0 THEN (settings->>'redBrowsingLevel')::int
-      ELSE 1
-    END AS level
-  FROM "User"
-  WHERE settings ? 'redBrowsingLevel'
-    AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
-    AND (settings->>'redBrowsingLevel') ~ '^[0-9]{1,9}$'
-) r
-WHERE u.id = r.id;
+  settings = settings - 'redBrowsingLevel'
+WHERE settings ? 'redBrowsingLevel'
+  AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
+  AND (settings->>'redBrowsingLevel') ~ '^[0-9]{1,9}$';

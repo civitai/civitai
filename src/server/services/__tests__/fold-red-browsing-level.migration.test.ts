@@ -105,6 +105,18 @@ describe('fold_red_browsing_level_into_column', () => {
     after = new Map(rows.rows.map((r) => [r.id, r]));
   });
 
+  // Concurrency is covered by the statement's SHAPE, not by a concurrent test: a single-table
+  // UPDATE is re-checked against the latest row version, so a user whose level (and key removal)
+  // lands mid-fold is skipped. Reading from a joined snapshot instead would overwrite them.
+  it('the fold reads only the row it updates (no joined snapshot)', () => {
+    const statement = readFileSync(MIGRATION, 'utf8')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('--'))
+      .join('\n');
+    expect(statement).toMatch(/^UPDATE "User"\s*$/m);
+    expect(statement).not.toMatch(/\bFROM\b/);
+  });
+
   it('the header dry run counts exactly the rows the fold would widen', () => {
     // Rows 1-6 carry a foldable red level; only row 6 shares no bit with its column.
     expect(dryRun).toEqual({ rows: 6, disjoint: 1, widened: 1 });
