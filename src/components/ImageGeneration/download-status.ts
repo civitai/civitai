@@ -1,4 +1,5 @@
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
+import { DOWNLOAD_STATUS_MAX_IDS } from '~/server/schema/resource-load.schema';
 import {
   boostBuysVisibleTime,
   formatDownloadEtaShort,
@@ -7,7 +8,7 @@ import {
   settledBoostedEtaSeconds,
   settledEtaSeconds,
 } from '~/shared/orchestrator/download-preparation';
-import { parseAIRSafe } from '~/shared/utils/air';
+import { versionIdFromAir } from '~/shared/utils/air';
 
 /** One model's download, as the queue card shows it. */
 export type DownloadRow = {
@@ -67,12 +68,6 @@ export function toDownloadRow(
   }
 }
 
-/** The model version an AIR names, or undefined — a non-Civitai AIR's version need not be a number. */
-export function versionIdFromAir(air: string) {
-  const version = parseAIRSafe(air)?.version;
-  return version && Number.isSafeInteger(version) && version > 0 ? version : undefined;
-}
-
 /**
  * One model's row from the workflow's own `preparation` and the model's shared live status.
  *
@@ -96,6 +91,56 @@ export function mergeDownloadRow(
     etaSeconds: row.etaSeconds ?? prepared.etaSeconds,
     sizeBytes: prepared.sizeBytes ?? row.sizeBytes,
   };
+}
+
+type LiveStatus = {
+  modelVersionId: number;
+  availability: ResourceLoadAvailability;
+  size?: number | null;
+};
+
+export function downloadPollIds(
+  resourceIds: number[],
+  preparation: { resources: { resource: string }[] } | undefined
+) {
+  const waitingOn =
+    preparation?.resources
+      .map((r) => versionIdFromAir(r.resource))
+      .filter((id): id is number => id != null) ?? [];
+  return (waitingOn.length ? waitingOn : resourceIds).slice(0, DOWNLOAD_STATUS_MAX_IDS);
+}
+
+/**
+ * Gates the status poll and the rows together: a disabled query keeps its last response, so rows
+ * built after the wait ends would freeze on that snapshot's progress.
+ */
+export function isAwaitingDownload(preparation: unknown, preparing: boolean) {
+  return !!preparation || preparing;
+}
+
+export function buildDownloadRows<R extends { id: number }>({
+  resources,
+  preparation,
+  preparing,
+  live,
+}: {
+  resources: R[];
+  preparation: { resources: (DownloadRow & { resource: string })[] } | undefined;
+  preparing: boolean;
+  live: LiveStatus[] | undefined;
+}) {
+  if (!isAwaitingDownload(preparation, preparing)) return [];
+
+  return resources.flatMap((resource) => {
+    const prepared = preparation?.resources.find(
+      (r) => versionIdFromAir(r.resource) === resource.id
+    );
+    const row = mergeDownloadRow(
+      prepared,
+      live?.find((x) => x.modelVersionId === resource.id)
+    );
+    return row ? [{ resource, row }] : [];
+  });
 }
 
 const maxKnown = (values: (number | null | undefined)[]) => {

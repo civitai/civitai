@@ -1,14 +1,15 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { Air } from '@civitai/client';
+import { describe, expect, it } from 'vitest';
 import {
+  buildDownloadRows,
   describeDownload,
+  downloadPollIds,
   isWorthBoosting,
   mergeDownloadRow,
   summarizeDownloads,
   toDownloadRow,
-  versionIdFromAir,
 } from '~/components/ImageGeneration/download-status';
 import { ETA_FLOOR_SECONDS } from '~/components/ResourceLoad/download-eta';
+import { DOWNLOAD_STATUS_MAX_IDS } from '~/server/schema/resource-load.schema';
 
 describe('toDownloadRow', () => {
   it.each([
@@ -129,34 +130,6 @@ describe('describeDownload', () => {
     [{ progress: 0.005, etaSeconds: 7_200 }, 'Downloading 1%'],
   ])('%o reads as "%s"', (row, expected) => {
     expect(describeDownload(row)).toBe(expected);
-  });
-});
-
-describe('versionIdFromAir', () => {
-  /** The global `@civitai/client` stub has no `Air.parseSafe`, so without a real one every AIR here
-   * would read as "no version" and every assertion below would pass for the wrong reason. */
-  beforeEach(() => {
-    (Air as unknown as Record<string, unknown>).parseSafe = (identifier: string) => {
-      const match =
-        /^urn:air:([^:]+):([^:]+):([^:]+):([^@]+)(?:@([^+.]+))?(?:\+(\d+))?(?:\.([\w-]+))?$/.exec(
-          identifier
-        );
-      if (!match) return null;
-      const [, ecosystem, type, source, id, version, modelFileId, format] = match;
-      return { ecosystem, type, source, id, version, modelFileId, format };
-    };
-  });
-
-  it.each([
-    ['urn:air:sdxl:checkpoint:civitai:1@2', 2],
-    ['urn:air:flux1:checkpoint:civitai:2938492@3326598+3212388', 3326598],
-    // The format suffix `stringifyAIR` can emit — a hand-rolled `@(\d+)$` regex drops this model
-    // out of the card's list entirely.
-    ['urn:air:sdxl:checkpoint:civitai:1@2.safetensor', 2],
-    ['urn:air:other:other:civitai-b2:civitai-media-uploads@25ef105a-22f4', undefined],
-    ['urn:air:sdxl:checkpoint:civitai:1', undefined],
-  ])('%s → %s', (air, expected) => {
-    expect(versionIdFromAir(air)).toBe(expected);
   });
 });
 
@@ -291,5 +264,72 @@ describe('isWorthBoosting', () => {
 
   it('withholds one with no boosted ETA', () => {
     expect(isWorthBoosting(summarizeDownloads([{ etaSeconds: 600 }]))).toBe(false);
+  });
+});
+
+describe('buildDownloadRows', () => {
+  const resources = [{ id: 7 }];
+  const cachedMidDownload = [
+    {
+      modelVersionId: 7,
+      availability: { status: 'loading' as const, progress: 0.93, workers: 1, lane: 'low' },
+      size: 6_620_000_000,
+    },
+  ];
+
+  it('reports a download while the workflow is still waiting on it', () => {
+    const rows = buildDownloadRows({
+      resources,
+      preparation: undefined,
+      preparing: true,
+      live: cachedMidDownload,
+    });
+    expect(rows.map((r) => r.row.progress)).toEqual([0.93]);
+  });
+
+  it('keeps reporting while a preparation is still on the step', () => {
+    const rows = buildDownloadRows({
+      resources,
+      preparation: {
+        resources: [{ resource: 'urn:air:sdxl:checkpoint:civitai:1@7', lane: 'low' }],
+      },
+      preparing: false,
+      live: cachedMidDownload,
+    });
+    expect(rows.map((r) => r.row.progress)).toEqual([0.93]);
+  });
+
+  // The poll keeps its last "93%" after it is disabled; building rows from it froze the row there.
+  it('reports nothing once the workflow has stopped waiting, whatever the poll last said', () => {
+    const rows = buildDownloadRows({
+      resources,
+      preparation: undefined,
+      preparing: false,
+      live: cachedMidDownload,
+    });
+    expect(rows).toEqual([]);
+  });
+});
+
+describe('downloadPollIds', () => {
+  const air = (version: number) => `urn:air:sdxl:checkpoint:civitai:1@${version}`;
+  const many = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+
+  it('polls only what the preparation says the workflow is waiting on', () => {
+    expect(
+      downloadPollIds([1, 2, 3, 4], { resources: [{ resource: air(3) }, { resource: air(4) }] })
+    ).toEqual([3, 4]);
+  });
+
+  it('polls every resource before the orchestrator has said which', () => {
+    expect(downloadPollIds([1, 2, 3], undefined)).toEqual([1, 2, 3]);
+  });
+
+  // Over the cap the request 400s, so the card loses every row rather than the extras.
+  it.each([
+    ['every resource', many(14), undefined],
+    ['the preparation', [], { resources: many(14).map((v) => ({ resource: air(v) })) }],
+  ])('never asks for more than the status endpoint accepts, from %s', (_, ids, preparation) => {
+    expect(downloadPollIds(ids, preparation)).toHaveLength(DOWNLOAD_STATUS_MAX_IDS);
   });
 });

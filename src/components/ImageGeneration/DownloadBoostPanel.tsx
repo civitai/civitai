@@ -13,12 +13,13 @@ import {
 } from '~/components/ResourceLoad/download-lanes';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
 import {
+  buildDownloadRows,
   describeDownload,
+  downloadPollIds,
+  isAwaitingDownload,
   isWorthBoosting,
-  mergeDownloadRow,
   toDownloadRow,
   summarizeDownloads,
-  versionIdFromAir,
   type DownloadSummary,
 } from '~/components/ImageGeneration/download-status';
 import type { WorkflowData } from '~/server/services/orchestrator';
@@ -50,11 +51,14 @@ export function useWorkflowDownloads({
 }) {
   const preparation = request.steps.find((s) => s.preparation)?.preparation;
   const preparing = request.steps.some((s) => s.status === 'preparing');
-  const modelVersionIds = request.resources.map((r) => r.id).slice(0, 10);
+  const modelVersionIds = downloadPollIds(
+    request.resources.map((r) => r.id),
+    preparation
+  );
   const { data } = trpc.resourceLoad.getDownloadStatus.useQuery(
     { modelVersionIds },
     {
-      enabled: enabled && (!!preparation || preparing) && modelVersionIds.length > 0,
+      enabled: enabled && isAwaitingDownload(preparation, preparing) && modelVersionIds.length > 0,
       // Stops on its own once every model has landed, rather than waiting for the workflow refetch
       // that clears `preparation`.
       refetchInterval: (query) =>
@@ -64,13 +68,11 @@ export function useWorkflowDownloads({
     }
   );
 
-  const rows = request.resources.flatMap((resource) => {
-    const prepared = preparation?.resources.find(
-      (r) => versionIdFromAir(r.resource) === resource.id
-    );
-    const live = data?.find((x) => x.modelVersionId === resource.id);
-    const row = mergeDownloadRow(prepared, live);
-    return row ? [{ resource, row }] : [];
+  const rows = buildDownloadRows({
+    resources: request.resources,
+    preparation,
+    preparing,
+    live: data,
   });
 
   return { rows, summary: summarizeDownloads(rows.map((x) => x.row)) };

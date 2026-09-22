@@ -76,14 +76,15 @@ export const getResourceLoadStateSchema = z.object({
   modelVersionIds: z.array(z.number()).min(1).max(100),
 });
 
-/** One page of resource-picker results. */
+export const RESIDENCY_MAX_IDS = 50;
 export const getResourceResidencySchema = z.object({
-  modelVersionIds: z.array(z.number()).min(1).max(50),
+  modelVersionIds: z.array(z.number()).min(1).max(RESIDENCY_MAX_IDS),
 });
 
 /** One queue card's models. Uncached, so the cap is small. */
+export const DOWNLOAD_STATUS_MAX_IDS = 10;
 export const getDownloadStatusSchema = z.object({
-  modelVersionIds: z.array(z.number()).min(1).max(10),
+  modelVersionIds: z.array(z.number()).min(1).max(DOWNLOAD_STATUS_MAX_IDS),
 });
 
 /** Capped well under the orchestrator's own max: each item costs it two grain calls. */

@@ -266,7 +266,9 @@ export function QueueItem({
   const queuePosition = request.steps.find((s) => s.queuePosition)?.queuePosition;
   const downloads = useWorkflowDownloads({ request, enabled: pending && inView });
   const waitingOnDownloads = pending && downloads.rows.length > 0;
-  const downloadsByVersion = new Map(downloads.rows.map((x) => [x.resource.id, x.row]));
+  const downloadsByVersion = new Map(
+    waitingOnDownloads ? downloads.rows.map((x) => [x.resource.id, x.row]) : []
+  );
   const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
