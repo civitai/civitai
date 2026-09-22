@@ -43,6 +43,10 @@ let skipped = 0;
 const failures = [];
 const cleanupTasks = [];
 const cleanupPages = [];
+let leaked = [];
+// Set by Ctrl+C. No test starts after it, so nothing new is created while the single
+// cleanup in main's finally runs.
+let aborting = false;
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -53,8 +57,10 @@ function run(args, { timeout = 30000 } = {}) {
       if (err && err.killed) {
         reject(new Error(`Timed out after ${timeout}ms`));
       } else {
-        // Some commands exit(1) for usage errors - that's expected for validation tests
-        resolve({ code: err?.code || 0, output: output.trim(), stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
+        // Some commands exit(1) for usage errors - that's expected for validation tests.
+        // A child killed by a signal has a null code; that is a failure, not exit 0.
+        const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+        resolve({ code, output: output.trim(), stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
       }
     });
   });
@@ -65,6 +71,10 @@ function runJson(args, options) {
 }
 
 async function test(name, fn) {
+  if (aborting) {
+    skip(name, 'interrupted');
+    return;
+  }
   try {
     await fn();
     passed++;
@@ -510,12 +520,12 @@ async function writeTests() {
 
 // ─── Cleanup ───────────────────────────────────────────────────────────
 
-// Drains both trackers, so a second call (the SIGINT path racing the finally) does nothing.
+// Called from exactly one place, main's finally. A second caller racing it would find the
+// trackers drained and exit while this one's archives are still in flight.
 // run() resolves on a nonzero exit, so the exit code is what says the object is gone.
 async function cleanup() {
-  if (cleanupPages.length === 0 && cleanupTasks.length === 0) return [];
+  if (cleanupPages.length === 0 && cleanupTasks.length === 0) return;
   console.log('\n\x1b[1mCleanup\x1b[0m');
-  const leaked = [];
 
   for (const pageId of cleanupPages.splice(0)) {
     const { code, output } = await run(['edit-page', PERSISTENT_DOC_ID, pageId, '--archive']).catch((err) => ({ code: 1, output: err.message }));
@@ -534,7 +544,6 @@ async function cleanup() {
     console.log(`\n\x1b[31m\x1b[1mLEAKED ${leaked.length} live ClickUp object(s). Remove them by hand:\x1b[0m`);
     for (const l of leaked) console.log(`  ${l.type} ${l.id}: ${l.why}`);
   }
-  return leaked;
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────
@@ -544,20 +553,20 @@ async function main() {
   console.log('========================');
   console.log(`Mode: ${READONLY ? 'read-only' : 'full (read + write)'}`);
 
-  process.once('SIGINT', async () => {
-    console.log('\nInterrupted.');
-    const leaked = await cleanup();
-    process.exit(leaked.length > 0 ? 3 : 130);
+  // Only a console Ctrl+C reaches this. A second Ctrl+C, taskkill or a harness timeout
+  // kills the process with no cleanup at all.
+  process.once('SIGINT', () => {
+    aborting = true;
+    console.log('\nInterrupted: finishing the current test, then cleaning up. Ctrl+C again skips cleanup.');
   });
 
   await readOnlyTests();
 
-  let leaked = [];
   if (!READONLY) {
     try {
       await writeTests();
     } finally {
-      leaked = await cleanup();
+      await cleanup();
     }
   }
 
@@ -576,10 +585,10 @@ async function main() {
   }
 
   console.log('');
-  process.exit(leaked.length > 0 ? 3 : failed > 0 ? 1 : 0);
+  process.exit(leaked.length > 0 ? 3 : aborting ? 130 : failed > 0 ? 1 : 0);
 }
 
 main().catch(err => {
   console.error('Fatal error:', err);
-  process.exit(2);
+  process.exit(leaked.length > 0 ? 3 : 2);
 });

@@ -76,6 +76,7 @@ try {
   output = execFileSync('node', [join(dir, 'test', 'smoke-test.mjs')], {
     env: { ...process.env, LEAK_CHECK_STATE: statePath },
     encoding: 'utf8',
+    timeout: 180_000,
   });
 } catch (err) {
   // The fake answers every read with junk, so most assertions fail; that is expected.
