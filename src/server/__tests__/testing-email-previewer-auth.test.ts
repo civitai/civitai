@@ -8,8 +8,11 @@ import '~/__tests__/mocks/db.mock';
  * SENDS. Pass `?token=$WEBHOOK_TOKEN` instead.
  *
  * The guard is exercised through the REAL `WebhookEndpoint` rather than a stub, so an edit
- * INSIDE `TokenSecuredEndpoint` reddens here too. Stubbing the wrapper would only pin that
- * a function of that name was applied.
+ * inside the wrapper reddens here too. Stubbing it would only pin that a function of that
+ * name was applied.
+ *
+ * Unknown-template handling is not covered: reading an absent export off a `vi.mock`
+ * factory throws rather than returning undefined, so the case would test the mock.
  */
 
 const { env, getTestData, getHtml, send } = vi.hoisted(() => ({
