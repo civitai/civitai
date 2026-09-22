@@ -140,8 +140,10 @@ export function mapSearchInputToFeedQuery(
   if (present(input.modelVersionId))
     for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
       if (input[flag] === true) return skip(`flag:${flag}`);
-  const followed = input.followed === true ? input.followedUserIds : undefined;
-  if (input.followed === true) {
+  // Signed out, the search path drops the flag and serves the global feed.
+  const followedOn = input.followed === true && present(input.currentUserId);
+  const followed = followedOn ? input.followedUserIds : undefined;
+  if (followedOn) {
     if (!Array.isArray(followed)) return skip('flag:followed');
     if (followed.length > MAX_FOLLOWED) return skip(`followed>${MAX_FOLLOWED}`);
     if (present(input.userId)) return skip('flag:followed:userId');
