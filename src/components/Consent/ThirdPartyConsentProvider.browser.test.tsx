@@ -164,9 +164,11 @@ function AppShell({
   /** Bumped on the simulated navigation; see the controls above. */
   nav: number;
   /**
-   * Forces a remount at the CONSENT PROVIDER's own position when it changes — the exact
-   * position the pre-fix remount happened at, which is why the instrument check keys here
-   * rather than on `AppShell`.
+   * Forces a remount of the consent provider and everything under it when it changes. Pre-fix the
+   * teardown started one level LOWER — the gate flipped its CHILD's element type, not its own —
+   * but the observable is identical: `MountLedger` unmounts and a fresh instance publishes
+   * ordinal 2. Keying here rather than on `AppShell` keeps `AppProvider` mounted, so the
+   * instrument check stays as close to the real mechanism as this harness can get.
    */
   remountKey?: string;
 }) {
@@ -281,8 +283,9 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
    * 🔴 INSTRUMENT CHECK for the ledger. The test above asserts a 1, and so does every other arm
    * in this file — none of them can show that a 2 is reachable through this harness at all, so
    * without this the remount test could be green because the ledger is incapable of counting
-   * past one. A `key` change on the CONSENT PROVIDER element — the exact position the pre-fix
-   * remount happened at — forces a remount there; the ledger must see it.
+   * past one. A `key` change on the CONSENT PROVIDER element forces a remount of it and
+   * everything below — a strict superset of the pre-fix teardown, which started one level lower
+   * — and the ledger must see it.
    */
   test('🔴 INSTRUMENT CHECK: the mount ledger DOES report a remount when one happens', async () => {
     const { rerender } = await renderWithProviders(

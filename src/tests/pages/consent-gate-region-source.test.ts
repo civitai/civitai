@@ -26,13 +26,18 @@ import { describe, expect, it } from 'vitest';
  * `useAppContext().region` is the durable source: `AppProvider` freezes its context value in a
  * `useState` initializer at mount, seeded from the same SSR region.
  *
- * ⚠️ SECOND COPY. `REPO_ROOT`, `APP_FILE`, `parse`, `collect` and the component/`_app` subject
- * locators below are duplicated in the directory sibling
+ * ⚠️ SECOND COPY. `REPO_ROOT`, `APP_FILE`, `parse`, `collect`, the component/`_app` subject
+ * locators and the type-literal member walk below are duplicated in the directory sibling
  * `src/tests/pages/app-region-optional-chain.test.ts`, which pins the FaroProvider white-screen
  * over the same `_app.tsx` and the same `region` variable. Copy-per-guard is this directory's
- * convention (26 files under `src/` call `ts.createSourceFile`; none share a scanning module),
+ * convention (measured at this commit: 25 files under `src/` call `ts.createSourceFile`, across 34
+ * call sites; none share a scanning module),
  * and the duplication was left in place deliberately — but it is recorded here so the next
- * person sees it rather than rediscovering it. What does NOT transfer, and is the reason the
+ * person sees it rather than rediscovering it. The ASYMMETRIC pair is `jsxOpeners` /
+ * `soleJsxOpener` / `jsxAttr`: the sibling open-codes the same find-by-tag → assert-exactly-one →
+ * find-named-attribute logic inline around its `<FaroProvider>` check, so a fix to either side
+ * will not reach the other and — unlike the byte-identical copies — nobody will notice they were
+ * the same thing. What does NOT transfer, and is the reason the
  * two files needed different hardening: every type-literal ledger in the sibling is asserted
  * with `.toContain(...)`, which fails LOUD on a member it cannot see, while this file's is
  * `.not.toContain(...)` — the one polarity that can go VACUOUSLY GREEN, which is why the
@@ -135,7 +140,11 @@ function consentComponentDecl(sourceFile: ts.SourceFile): ts.FunctionDeclaration
 function consentComponentBody(sourceFile: ts.SourceFile): ts.Block {
   const decl = consentComponentDecl(sourceFile);
   if (!decl.body) {
-    throw new Error(`${CONSENT_FILE}: \`function ThirdPartyConsentProvider\` has no body.`);
+    throw new Error(
+      `${CONSENT_FILE}: \`function ThirdPartyConsentProvider\` has no body — an overload ` +
+        `signature was picked. Re-point this locator at the implementation rather than ` +
+        `deleting the guards that use it.`
+    );
   }
   return decl.body;
 }
@@ -296,30 +305,49 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
         'compiles again with no member for this ledger to find'
     ).toEqual([]);
 
-    const signatures = (collect(propsAlias, ts.isTypeLiteralNode) as ts.TypeLiteralNode[]).flatMap(
-      (lit) => lit.members.filter((m): m is ts.PropertySignature => ts.isPropertySignature(m))
-    );
-
-    // 🔴 A MEMBER NAME THE LEDGER CANNOT READ IS A MEMBER THE LEDGER DOES NOT HAVE. An earlier
-    // version mapped a non-`Identifier` name to `''`, so `'region'?: RegionInfo` (a quoted key —
-    // one character) vanished from the ledger while TypeScript treated it as the same property:
-    // measured, that mutant left all seven tests green AND made
+    // 🔴 A MEMBER THE LEDGER CANNOT READ IS A MEMBER THE LEDGER DOES NOT HAVE — AND THERE ARE
+    // TWO AXES TO THAT, NOT ONE.
+    //
+    // NAME: an earlier version mapped a non-`Identifier` name to `''`, so `'region'?: RegionInfo`
+    // — a quoted key, one character — vanished from the ledger while TypeScript treated it as the
+    // same property. Measured: that mutant left all seven tests green AND made
     // `<ThirdPartyConsentProvider region={region}>` compile clean under a real `ts.createProgram`.
-    // A computed key (`[REGION_KEY]?: …`) does the same. Reading string literals closes the
-    // first; the second cannot be read at all, so it is REFUSED rather than widened past.
-    // Found by the `civitai-test-review` lane, with both mutants run.
+    //
+    // KIND: the fix for that started from `members.filter(isPropertySignature)`, which closed the
+    // name axis and left the kind axis wide open. `get region(): RegionInfo | undefined;` is not a
+    // PropertySignature, so it was invisible to the very refusal meant to catch this — and a
+    // getter-only member is still satisfied by a JSX attribute, so it compiled clean too, with all
+    // six guards green. Both axes found by the `civitai-test-review` lane, one round apart, with
+    // the mutants and the `ts.createProgram` run each time.
+    //
+    // So START FROM EVERY MEMBER and refuse anything this ledger cannot read — accessors, methods,
+    // call/construct signatures, computed and numeric keys alike. Refusing is deliberate: widening
+    // the read would need a policy for each shape, and a shape nobody thought about is exactly how
+    // both of these arrived.
+    const allMembers = (collect(propsAlias, ts.isTypeLiteralNode) as ts.TypeLiteralNode[]).flatMap(
+      (lit) => [...lit.members]
+    );
+    // The narrowing carries the NAME too, so `m.name.text` below is safe without a cast —
+    // `ts.PropertySignature` alone still types `name` as `PropertyName`, which includes
+    // `ComputedPropertyName` and has no `.text`. (`pnpm typecheck` covers this file: it lives in
+    // `src/tests/pages/`, not a `__tests__/` dir, so the root tsconfig does not exclude it.)
+    type ReadableProp = ts.PropertySignature & { name: ts.Identifier | ts.StringLiteral };
+    const readable = (m: ts.TypeElement): m is ReadableProp =>
+      ts.isPropertySignature(m) && (ts.isIdentifier(m.name) || ts.isStringLiteral(m.name));
+
     expect(
-      signatures
-        .filter((m) => !ts.isIdentifier(m.name) && !ts.isStringLiteral(m.name))
-        .map((m) => m.getText()),
-      'every member of `Props` must be named by a plain identifier or a string literal — a ' +
-        'computed or numeric key is a prop this ledger cannot see, which is the same thing as ' +
-        'not guarding it'
+      allMembers.filter((m) => !readable(m)).map((m) => m.getText()),
+      '`Props` must be plain property signatures named by an identifier or a string literal — an ' +
+        'accessor, a method, a call signature, or a computed or numeric key is a prop this ledger ' +
+        'cannot see, which is the same thing as not guarding it'
     ).toEqual([]);
 
-    const members = signatures.map((m) =>
-      ts.isIdentifier(m.name) || ts.isStringLiteral(m.name) ? m.name.text : m.name.getText()
-    );
+    // Every survivor is `readable`, so the name read below cannot silently produce `''`.
+    // (`src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts` has the same
+    // identifier-or-string-literal read with a different unreadable-name policy — `null` rather
+    // than refuse — which is safe there because its caller asserts a positive count. The policy
+    // has to follow the assertion's polarity; see this file's header.)
+    const members = allMembers.filter(readable).map((m) => m.name.text);
 
     expect(
       members,

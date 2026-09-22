@@ -191,6 +191,12 @@ const HYDRATION_RE =
 
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
+/**
+ * Strictly under the `component` project's effective 15 s test timeout, so THIS wait is what
+ * fails and what gets to say why. See `hydrateInto`.
+ */
+const BEACON_TIMEOUT_MS = 10_000;
+
 let restoreConsole: (() => void) | null = null;
 const containers: HTMLElement[] = [];
 /**
@@ -225,6 +231,14 @@ afterEach(() => {
   for (const c of containers.splice(0)) c.remove();
 });
 
+/**
+ * `'true'` ONLY after React hydrated the planted markup and ran passive effects — the control
+ * that stops `recoverable: []` being an unproven zero. `'false'` means the markup is still the
+ * server's and nothing hydrated.
+ */
+const hydratedFlag = (container: HTMLElement) =>
+  container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated') ?? '(absent)';
+
 /** console.error lines that name a hydration problem (the SECOND signal). */
 function hydrationConsoleErrors() {
   return consoleErrors.filter(
@@ -247,10 +261,18 @@ function hydrationConsoleErrors() {
  * is NON-empty, so an under-run fails red. Raised by the `civitai-test-review` lane.
  *
  * ⚠️ `vi.waitFor` is still a wall-clock budget, not an unbounded wait — it is simply a far
- * better one: it fails RED rather than green, and it is pinned to the project's own
- * `testTimeout` rather than to a tick count nobody can reason about. The default 1 s is
- * deliberately overridden: widening a budget for an ABSORBING arrival state is the case
- * `CLAUDE.md` exempts from its never-widen rule.
+ * better one: it fails RED rather than green, and it names the beacon when it does. The 1 s
+ * default is deliberately raised; `CLAUDE.md`'s never-widen-a-budget rule is scoped to states
+ * that DELETE themselves, and does not reach an absorbing arrival state like this one.
+ *
+ * 🔴 AND IT IS SET BELOW THE ENCLOSING TEST TIMEOUT ON PURPOSE. The `component` project sets no
+ * `testTimeout`, so it runs at browser mode's effective 15 s — measured here with a deliberately
+ * hanging test, not read off the config, because the config sets it for the `unit` projects only.
+ * At `{ timeout: 15_000 }` the two clocks tie and the TEST's deadline always wins (each content
+ * test does a full `renderToString` of a Mantine tree first), so a beacon that never flips
+ * printed a bare `Test timed out in 15000ms` — the one failure shape that carries no diagnosis.
+ * At 10 s this `waitFor` fails first and prints what it was waiting for. Measured both ways by
+ * the `civitai-test-review` lane. Keep this strictly under whatever the project timeout is.
  *
  * Ordering assumption that makes the early return safe: React reports recoverable errors during
  * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
@@ -281,14 +303,11 @@ async function hydrateInto(
     })
   );
   if (awaitBeacon) {
-    await vi.waitFor(
-      () =>
-        expect(
-          container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated')
-        ).toBe('true'),
-      // The project's own testTimeout, not `vi.waitFor`'s 1 s default — see the note above.
-      { timeout: 15_000 }
-    );
+    // `hydratedFlag` rather than an inline query so a failure prints `'(absent)'` rather than
+    // `undefined` when the beacon element is not there at all.
+    await vi.waitFor(() => expect(hydratedFlag(container)).toBe('true'), {
+      timeout: BEACON_TIMEOUT_MS,
+    });
     return container;
   }
   for (let i = 0; i < 20; i++) {
@@ -296,14 +315,6 @@ async function hydrateInto(
   }
   return container;
 }
-
-/**
- * `'true'` ONLY after React hydrated the planted markup and ran passive effects — the control
- * that stops `recoverable: []` being an unproven zero. `'false'` means the markup is still the
- * server's and nothing hydrated.
- */
-const hydratedFlag = (container: HTMLElement) =>
-  container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated') ?? '(absent)';
 
 const probeAttrs = (container: HTMLElement) => {
   const el = container.querySelector('[data-testid="consent-probe"]');
