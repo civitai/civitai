@@ -25,7 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { RUN_KINDS, TestQueue } from './test-queue.mjs';
+import { RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -2645,6 +2645,11 @@ async function main() {
                   testQueue.setConcurrency(parsed[spec.configKey], kind);
                 }
               }
+              for (const [group, spec] of Object.entries(RUN_GROUPS)) {
+                if (parsed[spec.configKey] !== undefined) {
+                  testQueue.setGroupConcurrency(parsed[spec.configKey], group);
+                }
+              }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
               if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
             } catch (err) {
@@ -2657,12 +2662,28 @@ async function main() {
           const lanes = {};
           for (const [kind, spec] of Object.entries(RUN_KINDS)) {
             laneLimits[spec.configKey] = testQueue.concurrencyFor(kind);
+            const group = RUN_KINDS[kind].group;
             lanes[kind] = {
               queued: testQueue.queuedFor(kind),
               running: testQueue.runningFor(kind),
               // Top-level `paused` is the unit lane alone, so `--typecheck 0` was a pause nothing
               // reported: a queued typecheck sat at position 1 and read as merely waiting.
               paused: testQueue.pausedFor(kind),
+              group,
+              // What the lane's limit is WORTH, which is not what it is set to. A saturating lane
+              // raised past its group budget admits nothing extra, and a caller who read only its
+              // own number would be told a width the queue will never give them.
+              // The queue's own method, not a second copy of the rule: `pausedFor` is derived
+              // from it, so a hand-computed duplicate here would drift from what the queue does.
+              effectiveLimit: testQueue.effectiveLimitFor(kind),
+            };
+          }
+          const groups = {};
+          for (const [group, spec] of Object.entries(RUN_GROUPS)) {
+            laneLimits[spec.configKey] = testQueue.groupConcurrencyFor(group);
+            groups[group] = {
+              limit: testQueue.groupConcurrencyFor(group),
+              running: testQueue.runningForGroup(group),
             };
           }
           res.writeHead(200);
@@ -2674,6 +2695,7 @@ async function main() {
             queued: testQueue.order.length,
             running: testQueue.running.size,
             lanes,
+            groups,
           }));
           return;
         }

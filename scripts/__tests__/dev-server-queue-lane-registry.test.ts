@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import * as QueueModule from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
 type LaneSpec = {
+  group: string;
   script: string;
   capWorkers: boolean;
   defaultConcurrency: number;
@@ -14,9 +15,21 @@ type LaneSpec = {
   flag: string | null;
 };
 
-const { RUN_KINDS, laneConcurrencyArgs } = QueueModule as unknown as {
+const { RUN_KINDS, RUN_GROUPS, laneConcurrencyArgs } = QueueModule as unknown as {
   RUN_KINDS: Record<string, LaneSpec>;
+  RUN_GROUPS: Record<string, { defaultConcurrency: number; configKey: string; flag: string }>;
   laneConcurrencyArgs: (rest: string[]) => Record<string, number>;
+};
+
+/**
+ * Lanes and groups are addressed through ONE namespace: `laneConcurrencyArgs` parses both tables
+ * and the daemon writes both into one reply object. A group whose configKey or flag collided with
+ * a lane's would silently move the wrong limit and report back the one you asked for, so every
+ * guard below reads the union rather than the lanes alone.
+ */
+const ADDRESSABLE: Record<string, { configKey: string; flag: string | null }> = {
+  ...RUN_KINDS,
+  ...RUN_GROUPS,
 };
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -44,10 +57,10 @@ const RESERVED_REPLY_KEYS = ['maxWorkers', 'cacheMode', 'paused', 'queued', 'run
  */
 describe('the lane registry is addressable', () => {
   it('gives every lane a distinct, non-empty configKey', () => {
-    const keys = Object.values(RUN_KINDS).map((spec) => spec.configKey);
+    const keys = Object.values(ADDRESSABLE).map((spec) => spec.configKey);
     // Per lane, not `arrayContaining`: that form passes as long as ONE entry is a string, so a
     // lane with no configKey at all would satisfy it and then publish its limit under "undefined".
-    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+    for (const [kind, spec] of Object.entries(ADDRESSABLE)) {
       expect(typeof spec.configKey, `${kind} has no configKey`).toBe('string');
       expect(spec.configKey.length, `${kind}'s configKey is empty`).toBeGreaterThan(0);
     }
@@ -55,7 +68,7 @@ describe('the lane registry is addressable', () => {
   });
 
   it('never gives a lane a configKey the config reply already uses', () => {
-    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+    for (const [kind, spec] of Object.entries(ADDRESSABLE)) {
       expect(RESERVED_REPLY_KEYS, `${kind}'s configKey collides with a reply field`).not.toContain(
         spec.configKey
       );
@@ -77,14 +90,14 @@ describe('the lane registry is addressable', () => {
   });
 
   it('gives every flagged lane a distinct flag', () => {
-    const flags = Object.values(RUN_KINDS)
+    const flags = Object.values(ADDRESSABLE)
       .map((spec) => spec.flag)
       .filter((flag): flag is string => Boolean(flag));
     expect(new Set(flags).size).toBe(flags.length);
   });
 
   it('documents every flagged lane in the CLI help', () => {
-    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+    for (const [kind, spec] of Object.entries(ADDRESSABLE)) {
       if (!spec.flag) continue;
       expect(
         cliUsage,
@@ -121,6 +134,22 @@ describe('laneConcurrencyArgs picks exactly the lane that was named', () => {
 
   it('sets nothing from the bare positional operand, which is the unit lane', () => {
     expect(laneConcurrencyArgs(['2'])).toEqual({});
+  });
+});
+
+/**
+ * 🔴 Every lane must name a group that exists. A lane with an unknown or missing group reads
+ * `groupLimits[undefined]` in the admission loop, which is `undefined`, and `running >= undefined`
+ * is false forever - so that lane would be admitted without any budget check at all, silently, and
+ * only under load.
+ */
+describe('every lane belongs to a real group', () => {
+  it('names a declared group', () => {
+    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+      expect(Object.keys(RUN_GROUPS), `${kind} has group ${String(spec.group)}`).toContain(
+        spec.group
+      );
+    }
   });
 });
 
