@@ -3919,7 +3919,10 @@ export type Tag = {
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;

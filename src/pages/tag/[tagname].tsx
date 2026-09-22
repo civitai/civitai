@@ -30,24 +30,42 @@ export const getServerSideProps = createServerSideProps({
 
     if (tagname) await ssg?.tag.getTagWithModelCount.prefetch({ name: tagname });
 
+    const isGreen = !!features?.isGreen;
     let seoData: TagPageSeoData = { count: 0, models: [] };
-    let deIndexMatureOnly = false;
+    let deIndexForDomain = false;
+    let greenCanonical: string | null = null;
     if (tagname) {
-      const { getTagPageSeoData, shouldDeIndexMatureOnlyTag } = await import(
-        '~/server/services/tag.service'
-      );
-      seoData = await getTagPageSeoData({ name: tagname, safeOnly: !!features?.isGreen });
-      deIndexMatureOnly = shouldDeIndexMatureOnlyTag(seoData);
+      const {
+        getTagPageSeoData,
+        shouldDeIndexAdultTermOnGreen,
+        shouldDeIndexMatureOnlyTag,
+        shouldDeIndexSafeOnlyTag,
+        shouldPointTagCanonicalAtGreen,
+      } = await import('~/server/services/tag.service');
+      seoData = await getTagPageSeoData({ name: tagname, safeOnly: isGreen });
+      deIndexForDomain = isGreen
+        ? shouldDeIndexAdultTermOnGreen(seoData) || shouldDeIndexMatureOnlyTag(seoData)
+        : shouldDeIndexSafeOnlyTag(seoData);
+
+      if (!isGreen && !deIndexForDomain && shouldPointTagCanonicalAtGreen(seoData)) {
+        // Read the green host directly: `getBaseUrl('green')` falls back to this deployment's own
+        // URL when SERVER_DOMAIN_GREEN is unset, which would hand red a self-canonical that looks
+        // right in the HTML and quietly cancels the rule.
+        const { serverDomainPrimaryMap } = await import('~/server/utils/server-domain');
+        const greenHost = serverDomainPrimaryMap.green;
+        if (greenHost) greenCanonical = `https://${greenHost}/tag/${encodeURIComponent(tagname)}`;
+      }
     }
 
-    return { props: { tagname, seoData, deIndexMatureOnly } };
+    return { props: { tagname, seoData, deIndexForDomain, greenCanonical } };
   },
 });
 
 export default function TagPage({
   tagname,
   seoData,
-  deIndexMatureOnly,
+  deIndexForDomain,
+  greenCanonical,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { set, ...queryFilters } = useModelQueryParams();
 
@@ -103,8 +121,8 @@ export default function TagPage({
       <Meta
         title={title}
         description={description}
-        canonical={`/tag/${tagname}`}
-        deIndex={(tag?.unfeatured ?? false) || deIndexMatureOnly}
+        canonical={greenCanonical ?? `/tag/${tagname}`}
+        deIndex={(tag?.unfeatured ?? false) || deIndexForDomain}
         schema={schema}
       />
       {tag && (

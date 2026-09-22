@@ -155,6 +155,10 @@ export type TagPageSeoData = {
   count: number;
   /** Set only for `safeOnly` reads: whether the tag has any published model at all. */
   hasModels?: boolean;
+  /** Set only for red reads: how many of `count` green cannot show. */
+  matureCount?: number;
+  /** `Tag.nsfwTerm`: the term itself is adult, whatever its models are rated. */
+  nsfwTerm?: boolean;
   models: {
     id: number;
     name: string;
@@ -169,6 +173,23 @@ export type TagPageSeoData = {
 export const shouldDeIndexMatureOnlyTag = (seoData: TagPageSeoData) =>
   seoData.hasModels === true && seoData.count === 0;
 
+// Green does not publish a page for an adult TERM, however its models happen to be rated — the
+// content rules cannot see this, because a term like `blowjob` can carry a handful of PG models.
+export const shouldDeIndexAdultTermOnGreen = (seoData: TagPageSeoData) => seoData.nsfwTerm === true;
+
+// Red de-indexes a tag green fully covers, so the two domains don't compete for it. `=== 0` is
+// load-bearing: `matureCount` is absent on green reads, where `!matureCount` would fire.
+export const shouldDeIndexSafeOnlyTag = (seoData: TagPageSeoData) =>
+  seoData.matureCount === 0 && seoData.count > 0;
+
+// A mixed tag is publishable on both domains, so the majority side takes the canonical; a tie stays
+// red. An adult term never hands over: green does not want to rank for the word at all.
+export const shouldPointTagCanonicalAtGreen = (seoData: TagPageSeoData) =>
+  !seoData.nsfwTerm &&
+  seoData.matureCount !== undefined &&
+  seoData.count > 0 &&
+  seoData.count - seoData.matureCount > seoData.count / 2;
+
 /**
  * `safeOnly` restricts the count and the listed models to what green can show, so the meta
  * description and CollectionPage schema never advertise mature models there. The two variants
@@ -181,9 +202,12 @@ export async function getTagPageSeoData({
   name: string;
   safeOnly?: boolean;
 }): Promise<TagPageSeoData> {
-  const cacheKey = `${REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${name.toLowerCase()}${
-    safeOnly ? ':safe' : ''
-  }` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
+  // Bump on every cached-shape change: entries live an hour, and a v1 red entry has no `matureCount`.
+  // The variant segment precedes the name because the name is raw user text: with the name first,
+  // a tag literally called "anime:safe" would answer from — and poison — green's entry for "anime".
+  const cacheKey = `${REDIS_KEYS.CACHES.TAG_PAGE_SEO}:v3:${
+    safeOnly ? 'safe' : 'all'
+  }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
 
   // Keep in step with the green rule in sitemap-models.xml, or the two disagree about indexing.
   const safeFilter = safeOnly
@@ -195,13 +219,15 @@ export async function getTagPageSeoData({
     async () => {
       const tag = await dbRead.tag.findFirst({
         where: { name },
-        select: { id: true },
+        select: { id: true, nsfwTerm: true },
       });
 
       if (!tag)
-        return safeOnly ? { count: 0, hasModels: false, models: [] } : { count: 0, models: [] };
+        return safeOnly
+          ? { count: 0, hasModels: false, models: [] }
+          : { count: 0, matureCount: 0, models: [] };
 
-      const [countResult, models, anyResult] = await Promise.all([
+      const [countResult, models, anyResult, matureResult] = await Promise.all([
         dbRead.$queryRaw<[{ count: bigint }]>`
           SELECT COUNT(*) as count
           FROM "TagsOnModels" tom
@@ -252,11 +278,24 @@ export async function getTagPageSeoData({
               ) AS "exists"
             `
           : undefined,
+        safeOnly
+          ? undefined
+          : dbRead.$queryRaw<[{ count: bigint }]>`
+              SELECT COUNT(*) as count
+              FROM "TagsOnModels" tom
+              JOIN "Model" m ON m."id" = tom."modelId"
+              WHERE tom."tagId" = ${tag.id}
+                AND m."status" = 'Published'::"ModelStatus"
+                AND m."availability" != 'Unsearchable'::"Availability"
+                AND (m."nsfw" = true OR (m."nsfwLevel" & ${publicBrowsingLevelsFlag}) = 0)
+            `,
       ]);
 
       return {
         count: Number(countResult[0]?.count ?? 0),
+        nsfwTerm: tag.nsfwTerm,
         ...(anyResult ? { hasModels: anyResult[0]?.exists ?? false } : {}),
+        ...(matureResult ? { matureCount: Number(matureResult[0]?.count ?? 0) } : {}),
         models: models.map((m) => ({
           id: m.id,
           name: m.name,

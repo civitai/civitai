@@ -2150,7 +2150,8 @@ model Tag {
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
-  nsfw       NsfwLevel   @default(None)
+  /// Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+  nsfwTerm   Boolean     @default(false)
   nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)

@@ -18,43 +18,40 @@ beforeEach(() => {
 });
 
 describe('tag.db', () => {
-  it('createTag inserts name + target (enum array) + nsfw (scalar enum) + updatedAt', async () => {
+  it('createTag inserts name + target (enum array) + updatedAt', async () => {
     // executeTakeFirstOrThrow rejects on the empty DummyDriver result, but the query is logged first.
-    await createTag(harness.db, { name: 'test', target: ['Model', 'Image'], nsfw: 'None' }).catch(
-      () => {}
-    );
+    await createTag(harness.db, { name: 'test', target: ['Model', 'Image'] }).catch(() => {});
     const { sql, parameters } = harness.lastQuery();
     expect(sql).toContain('insert into "Tag"');
     expect(sql).toContain('"name"');
     expect(sql).toContain('"target"');
-    expect(sql).toContain('"nsfw"');
     expect(sql).toContain('"updatedAt"');
     expect(sql).toContain('returning *');
     expect(parameters).toContainEqual(['Model', 'Image']); // the enum array binds as one param
     expect(parameters[parameters.length - 1]).toBeInstanceOf(Date); // explicit updatedAt on insert
   });
 
-  it('createTag omits nsfw when not provided (DB default applies)', async () => {
+  it('never writes the retired nsfw enum, which is about to be dropped', async () => {
     await createTag(harness.db, { name: 'test', target: ['Model'] }).catch(() => {});
     const { sql } = harness.lastQuery();
-    expect(sql).not.toContain('"nsfw"');
+    expect(sql).not.toMatch(/"nsfw"[^L]/);
   });
 
-  it('getTagById selects the enum + enum-array fields', async () => {
+  it('getTagById selects the level + enum-array fields', async () => {
     await getTagById(harness.db, 7);
     const { sql, parameters } = harness.lastQuery();
     expect(sql).toBe(
-      'select "id", "name", "target", "nsfw", "nsfwLevel", "createdAt", "updatedAt" ' +
+      'select "id", "name", "target", "nsfwLevel", "createdAt", "updatedAt" ' +
         'from "Tag" where "id" = $1'
     );
     expect(parameters).toEqual([7]);
   });
 
   it('updateTag sets the given columns and the plugin auto-stamps updatedAt (Tag is @updatedAt)', async () => {
-    await updateTag(harness.db, { id: 7, target: ['Article', 'Post'], nsfw: 'Soft' });
+    await updateTag(harness.db, { id: 7, target: ['Article', 'Post'], nsfwTerm: true });
     const { sql } = harness.lastQuery();
     expect(sql).toBe(
-      'update "Tag" set "target" = $1, "nsfw" = $2, "updatedAt" = $3 where "id" = $4 returning *'
+      'update "Tag" set "target" = $1, "nsfwTerm" = $2, "updatedAt" = $3 where "id" = $4 returning *'
     );
   });
 
