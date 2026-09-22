@@ -275,6 +275,22 @@ export const computePackOwnershipDiscount = ({
 };
 
 /**
+ * A member the buyer created, listed by someone else.
+ *
+ * The buyer is neither charged for it, paid for it, nor granted it — charging
+ * and then paying them back through the bank would cost them the platform's cut
+ * to buy their own work, and a creator cannot buy their own cosmetic at all (see
+ * purchaseCosmeticShopItem). All three derive from here so they cannot drift:
+ * while the grant read its own rule, a subtracted member was still granted, and
+ * a pack of the buyer's own uncapped stickers minted free top-ups indefinitely.
+ */
+export const isSelfAuthoredPackMember = (
+  member: { createdById: number | null },
+  buyerId: number | undefined,
+  packCreatorId: number | null
+) => !!buyerId && member.createdById === buyerId && member.createdById !== packCreatorId;
+
+/**
  * What a specific viewer owes for a pack.
  *
  * Shared deliberately: the detail view quotes this and the purchase charges it.
@@ -300,12 +316,9 @@ export const computePackAmountDue = ({
     members,
     ownedCosmeticIds,
   });
-  // A member the buyer created is theirs already; charging for it and paying
-  // them back through the bank would cost them the platform's cut to buy their
-  // own work. They are excluded from the payout for the same reason.
   const selfAuthored = buyerId
     ? members
-        .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
+        .filter((m) => isSelfAuthoredPackMember(m, buyerId, packCreatorId))
         .reduce((sum, m) => sum + m.listPrice, 0)
     : 0;
 

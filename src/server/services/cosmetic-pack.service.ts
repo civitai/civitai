@@ -12,6 +12,7 @@ import {
   computeCreatorShopSplit,
   computePackAmountDue,
   isConsumableCosmeticType,
+  isSelfAuthoredPackMember,
 } from '~/server/schema/creator-shop.schema';
 import {
   createBuzzTransaction,
@@ -472,13 +473,16 @@ export const purchaseCosmeticPack = async ({
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
+  // What the buyer is charged for, and therefore all they receive. A member they
+  // authored was subtracted from the price, so granting it would hand over a
+  // consumable balance nobody paid for — repeatable forever, since an uncapped
+  // listing never sells out.
+  const grantable = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
+
   // A pack can price to zero, and not only through the discount: `selfAuthored`
   // is computed over the members the buyer created, so a pack made entirely of
   // someone else's listings of the buyer's own work reaches zero with no
-  // discount involved at all. What such a purchase delivers is free repeat
-  // top-ups of the buyer's own consumables, and every repeat also consumes a
-  // member's remaining quantity — which is what makes third-party packs
-  // containing that member refuse. Nothing to pay means nothing left to buy.
+  // discount involved at all. Nothing to pay means nothing left to buy.
   if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
 
   // Random rather than a timestamp: a pack is repeatable (a consumable member
@@ -541,7 +545,7 @@ export const purchaseCosmeticPack = async ({
         })),
       });
 
-      await grantPackMembers({ tx, userId, members, claimKey: transactionId });
+      await grantPackMembers({ tx, userId, members: grantable, claimKey: transactionId });
 
       await tx.cosmeticShopItem.update({
         where: { id: shopItem.id },

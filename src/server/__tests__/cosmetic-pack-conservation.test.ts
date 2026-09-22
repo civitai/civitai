@@ -466,6 +466,36 @@ describe.each(SHAPES)(
       for (const id of owned ?? []) expect(granted).not.toContain(id);
     });
 
+    // A member the buyer authored is subtracted from the price, so granting it
+    // hands over a balance nobody paid for — and an uncapped consumable never
+    // sells out, so the same pack mints another one every time it is bought.
+    // Set equality rather than containment: the defect is an EXTRA member in the
+    // grant, which `toContain` cannot see.
+    it('grants only the members the buyer was charged for', async () => {
+      await setup();
+      const consumableGrants = executeRaw.mock.calls.map((call) => {
+        // INSERT ... VALUES (${userId}, ${cosmeticId}, ${claimKey}, ${uses}).
+        // The neighbours are asserted so a reordered template cannot slide this
+        // onto another field and still read as a plausible cosmetic id.
+        const [, grantedTo, cosmeticId, claimKey] = call as [unknown, number, number, string];
+        expect(grantedTo).toBe(buyerId);
+        expect(claimKey).toMatch(/^cosmetic-pack-/);
+        return cosmeticId;
+      });
+      const durableGrants: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
+        (row: { cosmeticId: number }) => row.cosmeticId
+      );
+      // Derived from the shape rather than from the code under test, like
+      // expectedCharge above.
+      const ownedSet = new Set(owned ?? []);
+      const expected = members
+        .filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId))
+        .filter((m) => isConsumableCosmeticType(m.type) || !ownedSet.has(m.cosmeticId))
+        .map((m) => m.cosmeticId);
+      const byValue = (a: number, b: number) => a - b;
+      expect([...consumableGrants, ...durableGrants].sort(byValue)).toEqual(expected.sort(byValue));
+    });
+
     it('never pays out more than the creator share of what it collected', async () => {
       const { charged, payouts } = await setup();
       const paid = payouts.reduce((sum, p) => sum + p.amount, 0);
@@ -505,15 +535,22 @@ describe.each(SHAPES)(
       expect(new Set(ids).size).toBe(ids.length);
     });
 
-    it('accounts for every member — granted, topped up, or already held', async () => {
+    it('accounts for every member the buyer paid for — granted, topped up, or already held', async () => {
       await setup();
       const granted: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
         (row: { cosmeticId: number }) => row.cosmeticId
       );
+      // A member the buyer authored is subtracted from the price and not
+      // delivered, so it is outside what this accounts for. Narrowing the
+      // population rather than tolerating a miss: an unaccounted member the
+      // buyer DID pay for still fails.
+      const paidFor = members.filter(
+        (m) => !(m.createdById === buyerId && m.createdById !== packCreatorId)
+      );
       const toppedUp = executeRaw.mock.calls.length;
-      const consumables = members.filter((m) => m.type === CosmeticType.Sticker);
+      const consumables = paidFor.filter((m) => m.type === CosmeticType.Sticker);
       expect(toppedUp).toBe(consumables.length);
-      const durable = members
+      const durable = paidFor
         .filter((m) => m.type !== CosmeticType.Sticker)
         .map((m) => m.cosmeticId);
       const accountedFor = new Set([...granted, ...(owned ?? [])]);
@@ -777,7 +814,13 @@ describe('purchaseCosmeticPack — generated member combinations', () => {
     const granted: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
       (row: { cosmeticId: number }) => row.cosmeticId
     );
-    const consumables = members.filter((m) => isConsumableCosmeticType(m.type));
+    const consumables = members.filter(
+      (m) =>
+        isConsumableCosmeticType(m.type) &&
+        // Subtracted from the price, so not delivered — see the grant property
+        // in the shape-driven block above.
+        !(m.createdById === BUYER && m.createdById !== PACK_CREATOR)
+    );
     expect(executeRaw.mock.calls).toHaveLength(consumables.length);
     for (const id of owned) expect(granted).not.toContain(id);
     expect(new Set(granted).size).toBe(granted.length);
