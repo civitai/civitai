@@ -66,22 +66,37 @@
 
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
-          {@const edit = transcript.edits?.[m.id]}
+          {@const edits = transcript.edits?.[m.id]}
           <li class={m.deletedAt ? 'rounded-md border-l-2 border-red-500/50 pl-2' : ''}>
             <MessageMeta {...m} />
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
 
             {#if m.editedAt}
-              {#if edit}
+              {#if edits?.length}
+                <!-- Every superseded version, each labelled with the edit that REPLACED it — so a
+                     timestamp always belongs to the text beside it. The final version is the message
+                     body above, so it is not repeated here. -->
                 <details class="mt-1 text-xs">
                   <summary class="cursor-pointer text-dark-2">
-                    Before this edit ({dateTime(edit.at)}{edit.actorRole === 'moderator'
-                      ? ', by a moderator'
-                      : ''})
+                    {edits.length === 1
+                      ? `Before this edit (${dateTime(edits[0].at)})`
+                      : `${edits.length} edits — every earlier version`}
                   </summary>
-                  <p class="mt-1 wrap-break-word whitespace-pre-wrap text-amber-200/80">
-                    {edit.oldValue}{edit.truncated ? '…' : ''}
-                  </p>
+                  <ol class="mt-1 space-y-1">
+                    {#each edits as e, i (e.at + i)}
+                      <li>
+                        <span class="text-dark-2">
+                          {i === 0 ? 'As written' : `Version ${i + 1}`} — replaced {dateTime(e.at)}{e.actorRole ===
+                          'moderator'
+                            ? ' by a moderator'
+                            : ''}
+                        </span>
+                        <p class="wrap-break-word whitespace-pre-wrap text-amber-200/80">
+                          {e.oldValue}{e.truncated ? '…' : ''}
+                        </p>
+                      </li>
+                    {/each}
+                  </ol>
                 </details>
               {:else if transcript.edits === null}
                 <p class="mt-1 text-xs text-amber-300">
