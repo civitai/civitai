@@ -49,6 +49,7 @@ import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphStore, generationGraphPanel } from '~/store/generation-graph.store';
 import { ResourceItemContent } from './ResourceItemContent';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
 
 /** Try to extract an image URL from a drop event (e.g. dragging an on-site image). */
 function getDroppedImageUrl(event: React.DragEvent): string | undefined {
@@ -443,44 +444,48 @@ export function MetadataExtractionPanel() {
               </Card.Section>
               <Card.Section>
                 <div className="p-3">
-                  <Stack gap="xs">
-                    {store.resolvedResources.map((resource) => (
-                      <Group key={resource.id} gap="xs" wrap="nowrap" align="start">
-                        {store.resolvedResources.length > 1 && (
-                          <Checkbox
-                            size="xs"
-                            className="mt-1.5"
-                            checked={selectedResourceIds.has(resource.id)}
-                            onChange={(e) => {
-                              const checked = e.currentTarget.checked;
-                              setSelectedResourceIds((prev) => {
-                                const next = new Set(prev);
-                                if (checked) next.add(resource.id);
-                                else next.delete(resource.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <ResourceItemContent
-                            resource={resource}
-                            actions={
-                              <Tooltip label="Add to generation">
-                                <ActionIcon
-                                  size="md"
-                                  variant="subtle"
-                                  onClick={() => handleAddResources([resource])}
-                                >
-                                  <IconPlus size={14} />
-                                </ActionIcon>
-                              </Tooltip>
-                            }
-                          />
-                        </div>
-                      </Group>
-                    ))}
-                  </Stack>
+                  <ResidencyBatchProvider
+                    modelVersionIds={store.resolvedResources.map((r) => r.id)}
+                  >
+                    <Stack gap="xs">
+                      {store.resolvedResources.map((resource) => (
+                        <Group key={resource.id} gap="xs" wrap="nowrap" align="start">
+                          {store.resolvedResources.length > 1 && (
+                            <Checkbox
+                              size="xs"
+                              className="mt-1.5"
+                              checked={selectedResourceIds.has(resource.id)}
+                              onChange={(e) => {
+                                const checked = e.currentTarget.checked;
+                                setSelectedResourceIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(resource.id);
+                                  else next.delete(resource.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <ResourceItemContent
+                              resource={resource}
+                              actions={
+                                <Tooltip label="Add to generation">
+                                  <ActionIcon
+                                    size="md"
+                                    variant="subtle"
+                                    onClick={() => handleAddResources([resource])}
+                                  >
+                                    <IconPlus size={14} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              }
+                            />
+                          </div>
+                        </Group>
+                      ))}
+                    </Stack>
+                  </ResidencyBatchProvider>
                 </div>
               </Card.Section>
             </Card>

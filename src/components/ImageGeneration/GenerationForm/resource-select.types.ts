@@ -41,6 +41,46 @@ export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: st
   return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
 }
 
+/** The fields the picker filters a hit's versions on. */
+export type SelectableVersion = {
+  id: number;
+  baseModel: string;
+  canGenerateNext?: boolean;
+  generatorLoaded?: boolean;
+};
+
+/**
+ * The versions of one hit a user may pick, re-checked client-side: the index filters MODELS, and
+ * Meilisearch matching a nested array only proves some version qualified — so a card could otherwise
+ * land on one that does not.
+ */
+export function selectableVersions<V extends SelectableVersion>(
+  versions: V[],
+  {
+    canGenerate,
+    loadedOnly,
+    skipBaseModel,
+    modelBaseModels,
+    excludedIds,
+  }: {
+    canGenerate?: boolean;
+    loadedOnly?: boolean;
+    skipBaseModel: boolean;
+    modelBaseModels: string[];
+    excludedIds: number[];
+  }
+) {
+  return versions.filter(
+    (version) =>
+      (canGenerate ? canGenerate === version.canGenerateNext : true) &&
+      (!loadedOnly || !!version.generatorLoaded) &&
+      (skipBaseModel ||
+        modelBaseModels.length === 0 ||
+        modelBaseModels.includes(version.baseModel)) &&
+      !excludedIds.includes(version.id)
+  );
+}
+
 export const resourceSort = {
   relevance: 'Relevance',
   popularity: 'Popularity',

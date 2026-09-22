@@ -734,7 +734,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               <Card withBorder p="md">
                 <Stack gap="xs">
                   {canGenerate ? (
-                    <div className="relative flex w-full items-stretch">
+                    <div className="relative flex w-full">
                       <GenerateButton
                         versionId={version.id}
                         modelId={model.id}
@@ -754,9 +754,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         }
                         onPurchase={() => onPurchase('generation')}
                         fullWidth
-                        // `GenerateButton` hardcodes 12px padding, which overflows Mantine's fixed
-                        // button height.
-                        h="auto"
                       />
                       {features.imageGeneration && (
                         <LoadedCornerBadge loaded={version.generatorLoaded} />

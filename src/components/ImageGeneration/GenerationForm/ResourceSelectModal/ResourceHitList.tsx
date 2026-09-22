@@ -14,7 +14,10 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { TransformedModel } from '~/shared/search/models-transform';
 import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  selectableVersions,
+  skipBaseModelForOwnTabs,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
@@ -114,16 +117,12 @@ export function ResourceHitList({ query }: { query: string }) {
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
 
-      return model.versions.filter((version) => {
-        return (
-          (canGenerate ? canGenerate === version.canGenerateNext : true) &&
-          // The index filter only proves SOME version is resident — Meili matches the nested array.
-          (!loadedOnly || version.generatorLoaded) &&
-          (skipBaseModel ||
-            modelBaseModels.length === 0 ||
-            modelBaseModels.includes(version.baseModel)) &&
-          !excludedIds.includes(version.id)
-        );
+      return selectableVersions(model.versions, {
+        canGenerate,
+        loadedOnly,
+        skipBaseModel,
+        modelBaseModels,
+        excludedIds,
       });
     },
     [canGenerate, loadedOnly, resources, excludedIds, tab, selectSource]

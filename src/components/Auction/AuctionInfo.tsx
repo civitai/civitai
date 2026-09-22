@@ -256,7 +256,9 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Checkpoints will be enabled for use in generation.
+                  Every eligible checkpoint can be generated with, so winning no longer unlocks
+                  that. A winning checkpoint is marked for priority when the generator has to
+                  download it.
                 </Text>
               </Stack>
             </Stack>

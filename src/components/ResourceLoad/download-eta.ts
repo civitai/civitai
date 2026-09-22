@@ -14,13 +14,12 @@ type EtaBucket = {
   /** One value per rendered bucket, so a claim about a boost can never contradict the numbers beside it. */
   seconds: number;
   value: number;
-  unit: 'minute' | 'hour' | 'day' | null;
+  unit: 'minute' | 'hour' | 'day';
 };
 
 /** The one rounding ladder: everything displayed or compared derives from it. */
 function etaBucket(seconds: number): EtaBucket {
   const s = Math.max(seconds, ETA_FLOOR_SECONDS);
-  if (s < MINUTE) return { seconds: MINUTE / 2, value: 0, unit: null };
   if (s < 10 * MINUTE) {
     const value = Math.round(s / MINUTE);
     return { seconds: value * MINUTE, value, unit: 'minute' };
@@ -39,13 +38,12 @@ function etaBucket(seconds: number): EtaBucket {
 
 export function formatDownloadEta(seconds: number) {
   const { value, unit } = etaBucket(seconds);
-  return unit ? `about ${plural(value, unit)}` : 'less than a minute';
+  return `about ${plural(value, unit)}`;
 }
 
 /** Same ladder as `formatDownloadEta`, without the "about". */
 export function formatDownloadEtaShort(seconds: number) {
   const { value, unit } = etaBucket(seconds);
-  if (!unit) return '<1 min';
   if (unit === 'minute') {
     if (value < 60) return `${value} min`;
     return value === 60 ? '1 hr' : `1 hr ${value - 60} min`;
