@@ -72,7 +72,7 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
 // The feed service's own ceiling on userIds.
-const MAX_USER_IDS = 1000;
+const MAX_USER_IDS = 10_000;
 const MAX_FOLLOWED = MAX_USER_IDS;
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (hidden) inside the search functions, out of this hook's reach.
