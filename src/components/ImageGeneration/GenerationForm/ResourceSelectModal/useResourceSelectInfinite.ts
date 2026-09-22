@@ -47,6 +47,7 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       resources: resources.map((r) => ({ type: r.type as ModelType, baseModels: r.baseModels })),
       filterTypes: filters.types,
       filterBaseModels: filters.baseModels,
+      filterLoaded: filters.loadedOnly,
       tagName: categoryTag,
       canGenerate,
       excludedVersionIds: excludedIds,

@@ -18,6 +18,7 @@ import React, { useState } from 'react';
 import { isSortAvailable } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ResourceFilter,
   ResourceSort,
@@ -40,9 +41,13 @@ const baseModelLimit = 4;
 export function ResourceSelectFiltersDropdown() {
   const {
     resources,
+    selectSource,
     filters: selectFilters,
     setFilters: setSelectFilters,
   } = useResourceSelectContext();
+  const features = useFeatureFlags();
+  // Load state is a generator fact; the auction and training pickers have no use for it.
+  const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -74,12 +79,15 @@ export function ResourceSelectFiltersDropdown() {
     : baseModelsList;
 
   const filterLength =
-    (selectFilters.types.length > 0 ? 1 : 0) + (selectFilters.baseModels.length > 0 ? 1 : 0);
+    (selectFilters.types.length > 0 ? 1 : 0) +
+    (selectFilters.baseModels.length > 0 ? 1 : 0) +
+    (selectFilters.loadedOnly ? 1 : 0);
 
   const clearFilters = () => {
     const reset: Required<ResourceFilter> = {
       types: [],
       baseModels: [],
+      loadedOnly: false,
     };
     setSelectFilters(reset);
   };
@@ -166,6 +174,19 @@ export function ResourceSelectFiltersDropdown() {
           </Group>
         </Chip.Group>
       </Stack>
+
+      {canFilterLoaded && (
+        <Stack gap="md">
+          <Divider label="Generator" className="text-sm font-bold" />
+          <Chip
+            {...chipProps}
+            checked={selectFilters.loadedOnly}
+            onChange={(checked) => setSelectFilters((f) => ({ ...f, loadedOnly: checked }))}
+          >
+            <span>Loaded only</span>
+          </Chip>
+        </Stack>
+      )}
 
       {filterLength > 0 && (
         <Button

@@ -21,6 +21,7 @@ export type ResourceSelectSource = (typeof selectSources)[number];
 export type ResourceFilter = {
   types: ModelType[];
   baseModels: BaseModel[];
+  loadedOnly: boolean;
 };
 
 export const resourceSelectTabs = [

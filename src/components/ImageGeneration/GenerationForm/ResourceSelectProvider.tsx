@@ -133,13 +133,15 @@ export function ResourceSelectProvider({
   );
   const setFilterTypes = persist ? setStoredTypes : setLocalTypes;
   const [filterBaseModels, setFilterBaseModels] = useState<BaseModel[]>([]);
+  const [loadedOnly, setLoadedOnly] = useState(false);
   const setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>> = (action) => {
     const next =
       typeof action === 'function'
-        ? action({ types: filterTypes, baseModels: filterBaseModels })
+        ? action({ types: filterTypes, baseModels: filterBaseModels, loadedOnly })
         : action;
     setFilterTypes(next.types);
     setFilterBaseModels(next.baseModels);
+    setLoadedOnly(next.loadedOnly);
   };
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const activeOptions = props.options;
@@ -218,6 +220,7 @@ export function ResourceSelectProvider({
         filters: {
           types,
           baseModels,
+          loadedOnly,
         },
         setFilters,
         sort,

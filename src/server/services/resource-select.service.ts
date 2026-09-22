@@ -107,7 +107,7 @@ async function resolveTabIds(
   }
 }
 
-function buildFilter({
+export function buildFilter({
   input,
   user,
   featuredModels,
@@ -122,8 +122,16 @@ function buildFilter({
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
 }): string | null {
-  const { tab, selectSource, canGenerate, resources, filterTypes, filterBaseModels, tagName } =
-    input;
+  const {
+    tab,
+    selectSource,
+    canGenerate,
+    resources,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    tagName,
+  } = input;
 
   // On the featured tab, determine which types have featured models so we can
   // skip the baseModel filter for those types and instead AND an explicit id set.
@@ -175,6 +183,8 @@ function buildFilter({
     featuredIds.length > 0 && inArray('id', featuredIds),
     filterTypes.length > 0 && inArray('type', filterTypes),
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
+    // Any version resident, not the one the card happens to show — Meili matches a nested array.
+    filterLoaded && eq('versions.generatorLoaded', true),
     tagName ? eq('tags.name', tagName) : null,
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
@@ -250,7 +260,17 @@ export async function getResourceSelectModels(
   input: GetResourceSelectInput,
   { user, signal }: { user: ServiceUser; signal?: AbortSignal }
 ) {
-  const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
+  const {
+    tab,
+    query = '',
+    sort,
+    cursor,
+    limit,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    tagName,
+  } = input;
 
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
@@ -265,6 +285,7 @@ export async function getResourceSelectModels(
     !query &&
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
+    !filterLoaded &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the

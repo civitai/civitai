@@ -60,9 +60,12 @@ it carries only what a whatIf can honestly know — the lane and the sizes. Posi
 (`asEstimate`): they are measured against a queue the job has not joined, and the card's own poll has
 the orchestrator's within seconds. So a fresh card reads "Waiting on downloads — Standard lane" with
 `—` for position and time, and offers no Boost until the real figures arrive. Later reads and step
-events replace it. While a step has `preparation` or is `preparing`, the card also polls its models'
-live status (`resourceLoad.getDownloadStatus` — uncached, ≤10 versions, 60/min per user) every 10s, for
-transfer progress, ETA and when a model lands; never for lane (`mergeDownloadRow`).
+events replace it. While a step has `preparation` or is `preparing`, the card also polls the models
+`preparation` names — every resource until it does — for their live status (`downloadPollIds`;
+`resourceLoad.getDownloadStatus` — uncached, ≤10 versions, 60/min per user) every 10s, for
+transfer progress, ETA and when a model lands; never for lane (`mergeDownloadRow`). Once neither
+holds, the card drops its download rows (`buildDownloadRows`): the stopped poll keeps its last
+response, which would otherwise hold a row at its final percentage.
 
 While a model is not loaded, the pending image tile gives way to a panel: the lane, position (from 1),
 lane speed and ETA of the slowest download, then each unloaded model with its position and ETA,
@@ -94,10 +97,27 @@ the wait, the "Normally → Boosted" comparison, then **Boost · N Buzz** or **C
 Dismissing it cancels the submit rather than sending it unboosted, since the user chose neither. That
 confirm only opens when there is a boost to sell, so mobile keeps a one-line notice of the wait itself.
 
-**Load indicators**, checkpoints only: inside the model page's **Create** button, on the selected
-checkpoint in both forms, and on checkpoint results in the resource picker. Backed by
-`resourceLoad.getResidency` — signed-in, ≤50 ids, rate-limited, cached 30s per version, and batched
-one request per picker page.
+**Load indicators**, every resource type. Loaded versions are marked and the rest are not, since most
+of the catalogue is not loaded: a green dot on the model page's version strip, a dot and **Loaded**
+under each selected resource in the generator and on results in the generation resource picker. The **Create**
+button carries a corner badge that states either outcome — the one place a bare mark is not enough,
+since the question there is whether pressing it starts now.
+
+The model page and the picker read `ModelVersion.generatorLoaded` — the page from its own SSR'd data,
+the picker from the index's `versions.generatorLoaded`. So they render with the page rather than
+flickering in after it, they cover whichever version is selected, and they trail the orchestrator by
+the 5-minute sync (plus the index queue, for the picker).
+
+The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
+rate-limited, cached 30s per version. That is the generator's marks, whose resources do not come from
+page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
+checkpoint input and the two **Generation** rows (version details, picker card's back) each ask for
+their one id. Naming *downloading* or *queued* is the one thing the boolean column cannot do.
+
+**A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips.
+It filters the index on `versions.generatorLoaded`, so it keeps a model any of whose versions is
+resident — Meilisearch matches the nested array, and the card shows whichever version it was going to
+show. A model can therefore survive the filter with the version on the card unmarked.
 
 **Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
 `resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
@@ -272,12 +292,39 @@ Everything here is the deploying engineer's, before this branch merges.
 - [ ] **Manual pass in a browser**, none of which has been exercised: the queue card's download panel
       with its per-model rows and Boost button (including in the narrow sidebar layout), the lanes
       explainer, the pre-submit alert and Boost switch in **both** generator forms, compared against
-      the mockup, the Create-button and picker indicators, and — **on a narrow viewport** — that the
-      alert is hidden, that `DownloadBoostConfirm` appears on Generate, and that dismissing it sends
-      nothing rather than submitting unboosted.
+      the mockup, the load indicators on the model page, in the generator and in the picker, and —
+      **on a narrow viewport** — that the alert is hidden, that `DownloadBoostConfirm` appears on
+      Generate, and that dismissing it sends nothing rather than submitting unboosted.
 - [ ] **Boost a real queued workflow end to end.**
       *Closes when:* the workflow reports `downloadPriority: "high"` and `cost.fixed.downloadPriority`
       was charged.
+- [ ] **Tell checkpoint bidders on the auctions page what winning buys now.** Coverage no longer
+      gates on `CoveredCheckpoint`, so a win stops unlocking generation; the page should say that a
+      winning checkpoint gets the orchestrator's highest download priority instead. The mini endpoint
+      (`/api/v1/model-versions/mini/[id]`) reports a winner as `isPromoted`; the orchestrator has to
+      act on it before the copy ships.
+      *Closes when:* the auctions page states it for checkpoint auctions **and** a winning
+      checkpoint's download is observed in the high lane.
+- [ ] **Decide whether any of this ships behind a flag.** `resourceLoad` gates the moderator tool
+      only: the queue-card panel, both generators' boost offers, the mobile confirm and every load
+      indicator go live to everyone on deploy, so the only rollback is a revert.
+      *Closes when:* a flag gates them, or Justin rules that it ships unflagged and that ruling is
+      recorded here.
+- [ ] **Apply the models index's filterable attributes.** `versions.generatorLoaded` is in
+      `modelsFilterableAttributes`, but that list is inert on a live index until
+      `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it — and
+      Meilisearch rejects a search filtering on an attribute it has not been told about, so the
+      picker's **Loaded only** returns nothing rather than fewer results. Reindexing alone does not
+      do it. Budget hours, not minutes: the last settings update took 6.5 min to process after ~2h50m
+      queued.
+      *Closes when:* the models index reports `versions.generatorLoaded` among its filterable
+      attributes, and the picker's **Loaded only** returns results.
+- [ ] **Check the preview environment before reading anything into it.** The indicators need main's
+      `generatorLoaded` migration applied to the database preview points at, and
+      `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Needs
+      download" on every version while the version strip and the picker mark nothing at all.
+      *Closes when:* a version known to be resident shows the loaded mark on its model page in
+      preview.
 - [x] **Apply `20260909180000_generation_coverage_next_safetensor_checkpoints`.** Amended in place
       2026-09-11 with a top-level `AND m.mode IS NULL` after it had already been applied, so it needed
       applying again. **Done 2026-09-11**; verified: covered rows 931,496, covered checkpoints 31,486,
@@ -306,15 +353,25 @@ Everything here is the deploying engineer's, before this branch merges.
 - [ ] **Watch the eviction metric** (C13 surfaced it; nothing looks at it). It is the only instrument
       for the starvation concern — a pile of queued small checkpoints starving popular ones.
       *Closes when:* it is on a dashboard someone named is watching.
-- [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio, now that the model
-      page and the picker call it on ordinary page views.
+- [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio. The model page and
+      the picker read the column instead, so what is left on it is the generator's marks and the two
+      **Generation** rows.
+- [ ] **Keep `sync-generator-loaded-resources` on.** Every column-backed indicator is only as fresh
+      as that job: with the flag off the column freezes at its last value, so the marks keep stating
+      a residency nobody is maintaining.
+      *Closes when:* the flag is on in production and the job's `flippedIn`/`flippedOut` counts are
+      non-zero across a day.
 - [ ] **Set `usageControl = 'ExternalGeneration'` on the 36 mislabelled API versions.** All published,
       none POI, coverage preserved 36/36; a direct DB write, since the app refuses the value from
       non-moderators.
 - [ ] **Look at the widened pool consumers** — daily-challenge model selection, App Blocks' workflow
       service, and the model-list filters in `model.service.ts` and `caches.ts`.
 - [ ] **Delete `getCheckpointGenerationCoverage`** (zero callers) and decide whether
-      `handle-auctions.ts` keeps writing `CoveredCheckpoint` rows nothing reads.
+      `handle-auctions.ts` keeps writing `CoveredCheckpoint` rows. Coverage no longer reads them, but
+      `/api/v1/model-versions/mini/[id]` derives `isPromoted` from them, so retiring the writes
+      retires that field too.
+      *Closes when:* the function is deleted and the auction's writes are kept or retired together
+      with `isPromoted`.
 
 ---
 
@@ -354,9 +411,11 @@ is the orchestrator's axis.
 
 ### Surfaces and delivery
 
-- Load state is a **signed-in read** (`getResidency`). The queue listing and the uncapped `getState`
-  are behind the `resourceLoad` flag and serve the moderator tool alone — the public
-  `/generate/downloads` page was built and removed on this branch (2026-09-16).
+- Load state from `ModelVersion.generatorLoaded` — the version strip, the Create badge, the picker's
+  results — renders for signed-out visitors, since it is page and index data. The live `getResidency`
+  reads behind it are signed-in. The queue listing and the uncapped `getState` are behind the
+  `resourceLoad` flag and serve the moderator tool alone — the public `/generate/downloads` page was
+  built and removed on this branch (2026-09-16).
 - Progress signals go to the buyer's own channel, never a model-version group.
 - A browser keeps what it is *watching* in `localStorage`, drained on every page load, with a 48h
   ceiling so every item can leave. The durable record of a purchase is the orchestrator's — workflows
@@ -373,6 +432,7 @@ is the orchestrator's axis.
 - A residency countdown — nothing reports when a window ends.
 - A C4-style webhook — closed 2026-09-08; reopens only if Phase 2 notifications need a server-side
   moment.
-- Load state shown in search results, for now. (The index carries `versions.generatorLoaded`.)
+- Load state on the site's search pages, for now — the index carries `versions.generatorLoaded`, and
+  the generation resource picker is its only reader (see **Load indicators**).
 - Any promise about *arrival* time. Bandwidth into the DC was ~10 KB/s at the 2026-08-18 call, and
   `PrepareResourceJob` gives up at 24h.
