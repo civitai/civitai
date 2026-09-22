@@ -225,7 +225,9 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
 | `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
 | `test cancel <id>` | Cancel a queued or running run |
-| `test config [n]` | Show or set the concurrency limit (`0` pauses the queue) |
+| `test config [n]` | Show or set the unit lane's concurrency limit (`0` pauses that lane) |
+| `test config --typecheck <n>` | Same, for the root typecheck lane |
+| `test config --typecheck-apps <n>` | Same, for the app typecheck lane |
 | `shutdown` | Shutdown the daemon |
 
 ## Env modes — which services a session talks to
@@ -338,6 +340,13 @@ wherever that was being checked. Extra args after `--` are passed to vitest, so
 runtime with `test config <n>`. `0` is legal and means *paused* — nothing starts until it is raised.
 A caller that queues behind a paused queue is told so explicitly rather than being handed a position
 and left waiting.
+
+**Each kind of check is its own lane with its own limit**, because they are not the same load: a
+unit run saturates every core, while `tsc` is single-threaded and spends its budget on heap. The
+lanes are `unit` (`test:unit:run`), `typecheck` (`typecheck`) and `typecheckApps`
+(`typecheck:apps`), and the bare `test config <n>` sets the unit one. A lane's limit reaches the
+daemon under the `configKey` declared for it in `RUN_KINDS`; the daemon and the CLI both read that
+table rather than naming each lane, so declaring a lane there is the whole registration.
 
 Things worth knowing before you rely on it:
 
