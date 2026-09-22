@@ -1028,6 +1028,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;

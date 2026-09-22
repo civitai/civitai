@@ -3119,6 +3119,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
