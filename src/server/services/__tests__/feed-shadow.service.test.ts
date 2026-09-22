@@ -172,8 +172,8 @@ describe('mapSearchInputToFeedQuery', () => {
       return r.ok ? 'ok' : r.reason;
     };
     expect(reason({})).toBe('flag:followed');
-    expect(reason({ followedUserIds: Array.from({ length: 1001 }, (_, i) => i + 1) })).toBe(
-      'followed>1000'
+    expect(reason({ followedUserIds: Array.from({ length: 10_001 }, (_, i) => i + 1) })).toBe(
+      'followed>10000'
     );
     expect(reason({ followedUserIds: [7], userId: 7 })).toBe('flag:followed:userId');
   });
