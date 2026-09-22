@@ -15,20 +15,16 @@ import '~/__tests__/mocks/db.mock';
  * factory throws rather than returning undefined, so the case would test the mock.
  */
 
-const { env, getTestData, getHtml, send } = vi.hoisted(() => ({
-  env: {
-    WEBHOOK_TOKEN: 'test-token',
-    LOGGING: '',
-    NEXTAUTH_URL: 'https://example.test',
-    TRPC_ORIGINS: [] as string[],
-  },
+// The canonical env mock in src/__tests__/setup.ts already supplies this; replacing the
+// whole module would drop every schema default with it.
+const TOKEN = 'test-webhook-token';
+
+const { getTestData, getHtml, send } = vi.hoisted(() => ({
   getTestData: vi.fn(async () => ({ username: 'tester' })),
   getHtml: vi.fn(() => '<p>rendered</p>'),
   send: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/env/server', () => ({ env }));
-vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/email/templates', () => ({ knownEmail: { getTestData, getHtml, send } }));
 
 const handler = (await import('~/pages/api/testing/email/[template]')).default;
@@ -77,7 +73,7 @@ describe('email previewer route auth', () => {
   });
 
   it('POSITIVE CONTROL: renders for the right token, and does not send unprompted', async () => {
-    const { statusCode, body } = await call({ template: 'known', token: 'test-token' });
+    const { statusCode, body } = await call({ template: 'known', token: TOKEN });
 
     expect(statusCode).toBe(200);
     expect(body).toBe('<p>rendered</p>');
@@ -85,7 +81,7 @@ describe('email previewer route auth', () => {
   });
 
   it('POSITIVE CONTROL: sends for the right token when asked to', async () => {
-    const { statusCode } = await call({ template: 'known', token: 'test-token', send: '1' });
+    const { statusCode } = await call({ template: 'known', token: TOKEN, send: '1' });
 
     expect(statusCode).toBe(200);
     expect(send).toHaveBeenCalledTimes(1);
