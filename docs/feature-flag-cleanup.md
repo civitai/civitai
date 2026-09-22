@@ -80,10 +80,10 @@ drifted repeatedly, always toward looking safer than it is:
    So a non-dark flag's `fliptKey` can be set `enabled: false` and have no effect, which makes it
    look decorative when it is merely pinned. Do not invert this on a dark flag: a variable naming
    one is discarded, and the flag stays dark, off and Flipt-owned.
-3. Not `toggleable`. A toggleable flag is user-settable — `combineFeatureOverlays` merges each
-   user's stored choice over the defaults — so inlining one removes an existing opt-out even when
-   its `default` is `true`. With `default: false` it is additionally off for everyone who has not
-   opted in.
+3. Not `toggleable`. A toggleable flag is user-settable — `computeUserFeatureFlagsOverlay` in
+   `src/server/services/feature-flags.service.ts` merges each user's stored choice over the
+   defaults — so inlining one removes an existing opt-out even when its `default` is `true`. With
+   `default: false` it is additionally off for everyone who has not opted in.
 
 Derive it, don't trust the prose: the current split is 20 safe and 6 not.
 
@@ -96,7 +96,7 @@ Derive it, don't trust the prose: the current split is 20 safe and 6 not.
 
 | Flag | Why inlining it changes behaviour |
 | --- | --- |
-| `disablePayments` | `['blue', 'red', 'public']`. Inlining to `true` disables the purchase buttons (`BuzzPurchase.tsx`, `membership.tsx`, the pricing redirect). |
+| `disablePayments` | `['blue', 'red', 'public']`. Inlining to `true` disables the purchase buttons (`src/components/Buzz/BuzzPurchase.tsx`, `src/pages/user/membership.tsx`, the pricing redirect). |
 | `bounties` | `['blue', 'red', 'public']` — domain-gated, on for some colors only. |
 | `auctions` | `['blue', 'red', 'green', 'public']` — same. |
 | `air` | `['user']`, not `['public']` — false for anonymous visitors. |
@@ -108,9 +108,9 @@ Three more were removed from this list entirely rather than annotated: `imageSea
 it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
 kill-switch key), and `vault` (`['user']`).
 
-The `toggleable` half of condition 3 matches no registry entry today — all six toggleable flags
-are already excluded by condition 1 or by `default: false` — so the 20/6 split above is unchanged
-by it. It is stated because the rule is meant to be applied to the registry, where the next such
+The `toggleable` half of condition 3 excludes no entry that condition 1 does not already exclude —
+`air`, `assistant` and `chat` are toggleable with `default: true`, but all three fail condition 1
+on their availability — so the 20/6 split above is unchanged by it. It is stated because the rule is meant to be applied to the registry, where the next such
 flag would otherwise be classified safe.
 
 ## Open question — only ship truthy flags to the client?
