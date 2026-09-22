@@ -387,6 +387,13 @@ describe.each(SHAPES)(
       return { charged, payouts, result };
     };
 
+    // One derivation for the two assertions below that need it. Still hand-written
+    // rather than imported from src — that is what lets them disagree with
+    // isSelfAuthoredPackMember — but two character-identical copies over the same
+    // array caught nothing and could drift apart silently.
+    const membersPaidFor = () =>
+      members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
+
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
     // would satisfy all of them while giving the shop away.
@@ -526,8 +533,8 @@ describe.each(SHAPES)(
       );
       // Derived from the shape rather than from the code under test, like
       // expectedCharge above. The withholding rule is spelled out here and in
-      // three other assertions on purpose: importing isSelfAuthoredPackMember
-      // would make all four agree with whatever it becomes, which is the one
+      // four other assertions on purpose: importing isSelfAuthoredPackMember
+      // would make all five agree with whatever it becomes, which is the one
       // change they exist to catch. Do not consolidate them.
       const ownedSet = new Set(owned ?? []);
       const expected = members
@@ -603,9 +610,7 @@ describe.each(SHAPES)(
       // delivered, so it is outside what this accounts for. Narrowing the
       // population rather than tolerating a miss: an unaccounted member the
       // buyer DID pay for still fails.
-      const paidFor = members.filter(
-        (m) => !(m.createdById === buyerId && m.createdById !== packCreatorId)
-      );
+      const paidFor = membersPaidFor();
       const toppedUp = executeRaw.mock.calls.length;
       const consumables = paidFor.filter((m) => m.type === CosmeticType.Sticker);
       expect(toppedUp).toBe(consumables.length);
@@ -616,10 +621,39 @@ describe.each(SHAPES)(
       for (const id of durable) expect(accountedFor.has(id)).toBe(true);
     });
 
-    it('writes one purchase component per member', async () => {
+    it('writes one purchase component per member the buyer paid for', async () => {
       await setup();
+      // Every call, not `calls[0]`: a second createMany beside the first writes
+      // the withheld member's row and spends its edition, and reading only the
+      // first call prints nothing. The grant write next to it is guarded the
+      // same way, for the same merge-shaped reason.
+      expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
       const rows = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
-      expect(rows).toHaveLength(members.length);
+      expect(rows).toHaveLength(membersPaidFor().length);
+    });
+
+    // Identity, where the assertion above is only a count: a write that keeps the
+    // row count and records the wrong cosmetic passes the count on every shape
+    // and fails this on 13.
+    //
+    // It does NOT see a member recorded without being granted — it is one
+    // directional, and that direction is the count's. Do not read this as cover
+    // for narrowing the count above.
+    it('records a purchase component for everything it granted', async () => {
+      await setup();
+      const componentIds: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
+        (row: { cosmeticId: number }) => row.cosmeticId
+      );
+      const grantedIds: number[] = [
+        ...executeRaw.mock.calls.map((call) => (call as [unknown, number, number])[2]),
+        ...createManyUserCosmetic.mock.calls.flatMap(
+          (call) =>
+            (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
+        ),
+      ];
+      // Named difference rather than a containment loop, so a failure prints the
+      // id that was granted without being recorded.
+      expect(grantedIds.filter((id) => !componentIds.includes(id))).toEqual([]);
     });
 
     it('does not refund a purchase that succeeded', async () => {
@@ -628,6 +662,56 @@ describe.each(SHAPES)(
     });
   }
 );
+
+/**
+ * The edition cap, which is the consequence the component row actually has.
+ *
+ * getPackMembers counts these rows into a member's `soldCount`, and
+ * assertPackPurchasable refuses every pack containing that member once the count
+ * reaches its listing's `availableQuantity`. A member the buyer authored is
+ * neither charged for nor delivered, so recording one spends an edition of their
+ * own work on a sale that did not happen — and once spent, the refusal lands on
+ * everyone else's packs too.
+ *
+ * Asserted by cosmetic id rather than by row count: a count says how many were
+ * recorded, never which, and the defect is a specific member being recorded.
+ */
+describe('purchaseCosmeticPack — what a purchase records as sold', () => {
+  const SELF_AUTHORED = 1002;
+  const members = [
+    mkMember(),
+    mkMember({
+      cosmeticId: SELF_AUTHORED,
+      createdById: BUYER,
+      addedById: PACK_CREATOR,
+      floorAmount: 2900,
+    }),
+  ];
+
+  it('records no sale of a member it withheld, leaving that edition cap untouched', async () => {
+    await purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(6300, members.length),
+      members,
+      stickersEnabled: true,
+    });
+    expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
+    const rows: { cosmeticId: number; unitAmount: number; buzzTransactionId: string }[] =
+      createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+    const recorded = rows.map((row) => row.cosmeticId);
+    // The row is only counted as stock while its `purchase` relation resolves,
+    // so a transaction id pointing anywhere else silently stops every sale
+    // counting — and the attribution is what a takedown reconciles against.
+    for (const row of rows) {
+      expect(row.buzzTransactionId).toMatch(/^cosmetic-pack-/);
+      expect(row.unitAmount).toBeGreaterThan(0);
+    }
+    // Both halves: the withheld member absent, and the paid one still present —
+    // recording nothing at all would satisfy the first on its own.
+    expect(recorded).not.toContain(SELF_AUTHORED);
+    expect(recorded).toEqual([1001]);
+  });
+});
 
 // The failure path, which every property above assumes never runs. Round one's
 // review found this shape unguarded: a refund that throws used to discard the
