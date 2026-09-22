@@ -192,6 +192,7 @@ const HYDRATION_RE =
 
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
+
 /**
  * THE FOUR TIMING CONSTANTS, AND WHAT EACH IS WORTH.
  *
@@ -200,17 +201,29 @@ let recoverable: string[] = [];
  *
  *     BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS + MIN_MARGIN_MS  <=  PROJECT_TIMEOUT_MS
  *
- * 🔴 WHAT IS ACTUALLY PINNED, stated narrowly because five earlier versions of this comment each
- * claimed more coverage than the mechanisms had — found by the `civitai-test-review` and
- * `civitai-reuse-review` lanes, five rounds running:
- *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout` by the guard test, so
- *     it is the one operand a machine checks.
- *   - `PRE_WAIT_BUDGET_MS` — asserted against the largest pre-wait `afterAll` actually observed.
+ * 🔴 NO NUMBER IN THIS FILE'S COMMENTS IS LOAD-BEARING, AND THAT IS DELIBERATE. Every derived
+ * figure and every hand-maintained count that has appeared in these docblocks has been wrong at
+ * least once — the arithmetic moved, or the tally was not incremented. The constants above and
+ * the three assertions below are the only statements here a machine checks; everything else is
+ * why, not how much. Do not reintroduce a computed value or a tally into this prose.
+ *
+ * 🔴 WHAT IS ACTUALLY PINNED:
+ *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout`. The only operand
+ *     checked against an EXTERNAL ground truth; the rest are checked against each other or
+ *     against this run.
+ *   - `PRE_WAIT_BUDGET_MS` — asserted, in `afterAll`, against the largest pre-wait this run
+ *     actually observed.
  *   - `BEACON_TIMEOUT_MS` and `MIN_MARGIN_MS` — pinned by nothing. The invariant constrains their
- *     SUM, not either one, so they can be traded against each other freely. Worked example: drop
- *     `PRE_WAIT_BUDGET_MS` to 1 s, then raise `BEACON_TIMEOUT_MS` to 12 s, and the suite stays
- *     green with zero real margin. Any per-mutant claim below is therefore a measurement AT
- *     TODAY'S VALUES, never a property.
+ *     SUM, not either one, so they trade against each other: shrink the pre-wait budget and you
+ *     can grow the beacon wait by the same amount with every assertion still green. Doing that
+ *     revives `BEACON_TIMEOUT_MS = 12_000` — a mutant this file's history records as dying — by
+ *     spending the pre-wait budget's protection on it. So any per-mutant claim below is a
+ *     measurement AT TODAY'S VALUES, never a property.
+ *
+ * 🔴 AND THE BLIND SPOT `MIN_MARGIN_MS` CANNOT COVER: it is the margin assertion's own threshold,
+ * and nothing can bound a threshold from inside the comparison that uses it. Lowering it, or
+ * inlining its value at the assertion instead of referencing it, is the one edit no guard here
+ * catches. That is why it is a named constant rather than a number in an `expect`.
  *
  * So this guard is a RATCHET — "nobody moved a constant without meaning to" — and not a proof
  * that the margin is adequate. That is the honest ceiling on it.
@@ -232,10 +245,13 @@ const BEACON_TIMEOUT_MS = 10_000;
  * forwards `--test-timeout`. All three can move it DOWN, which is the dangerous direction —
  * below `BEACON_TIMEOUT_MS` the beacon wait loses the race and the bare `Test timed out` returns.
  *
- * ⚠️ Other files reason about this same number in prose, in several spellings, and an unrelated
- * PRODUCT timeout happens to share the value. No sweep pattern is given here: two were tried and
- * both returned nothing in the files they named. If you need the population, start from
- * `CLAUDE.md` and read each hit rather than counting it.
+ * ⚠️ `src/components/AppBlocks/PageBlockHost.browser.test.tsx` SIZES a poll budget against this
+ * deadline ("THE ITERATION COUNT IS SIZED AGAINST TWO CEILINGS, NOT PICKED"), so it is the one
+ * other site a downward move actually breaks rather than merely making stale — update it in the
+ * same change. Other files reason about the same number in prose, in several spellings, and an
+ * unrelated PRODUCT timeout shares the value; no sweep pattern is given here, because two were
+ * tried and both returned nothing in the files they named. Start from `CLAUDE.md` and read each
+ * hit rather than counting it.
  */
 const PROJECT_TIMEOUT_MS = 15_000;
 
@@ -380,11 +396,9 @@ function hydrationConsoleErrors() {
  *
  * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT. Everything before the wait —
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
- * this one, so the invariant is
- *
- *     BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS + MIN_MARGIN_MS  <=  PROJECT_TIMEOUT_MS
- *
- * See `PRE_WAIT_BUDGET_MS` for how that term is sized and measured — deliberately not restated
+ * this one. The constants' header states the resulting invariant; it is not restated here, so
+ * there is one copy to keep true. See `PRE_WAIT_BUDGET_MS` for how that term is sized and
+ * measured — deliberately not restated
  * here, because the figure it used to carry was retracted and this was the copy that survived
  * the correction. `14_000` is the trap: it is strictly under 15 s, it satisfies any formula that
  * ignores pre-wait, and it leaves under a second of margin — so the first load spike in that
@@ -393,7 +407,7 @@ function hydrationConsoleErrors() {
  * 🔴 `MIN_MARGIN_MS` IS WHY THIS IS NOT WRITTEN `<=` ALONE — at equality the worst case lands
  * exactly ON the deadline and the deadline wins. See that constant's docblock for the measured
  * mutant; deliberately not restated here, because a copy of a measurement in a non-owning
- * docblock is the defect this file has now had three times.
+ * docblock is a defect this file has had repeatedly.
  *
  * Ordering assumption that makes the early return safe: React reports recoverable errors during
  * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
@@ -549,7 +563,7 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
     ).toBe(PROJECT_TIMEOUT_MS);
 
     // 🔴 A MARGIN, NOT A `<=` — and referencing `MIN_MARGIN_MS` rather than inlining its value,
-    // because the inline form bypasses that constant's warning. See its docblock.
+    // because the inline form bypasses the blind-spot note in the constants' header.
     expect(
       PROJECT_TIMEOUT_MS - (BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS),
       'BEACON_TIMEOUT_MS must leave room for everything charged to the TEST clock before the ' +
