@@ -108,10 +108,14 @@ Three more were removed from this list entirely rather than annotated: `imageSea
 it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
 kill-switch key), and `vault` (`['user']`).
 
-The `toggleable` half of condition 3 excludes no entry that condition 1 does not already exclude —
-`air`, `assistant` and `chat` are toggleable with `default: true`, but all three fail condition 1
-on their availability — so the 20/6 split above is unchanged by it. It is stated because the rule is meant to be applied to the registry, where the next such
-flag would otherwise be classified safe.
+Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
+toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
+condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+`largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
+condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
+above: drop condition 3 and the split is 21/5, not 20/6. `nativeVideoControls` was never on the
+Tier 4 list so it does not move the split, but it is the same shape and is already in the registry —
+the flag this condition exists to catch is not hypothetical.
 
 ## Open question — only ship truthy flags to the client?
 
