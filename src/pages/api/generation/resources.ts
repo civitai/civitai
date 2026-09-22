@@ -1,7 +1,8 @@
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import z from 'zod';
 
 const schema = z.object({
@@ -24,11 +25,14 @@ export default PublicEndpoint(
       const parsed = schema.safeParse(req.query);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
 
-      const sfwOnly = getRequestDomainColor(req) === 'green';
+      const user = session?.user;
       const queryResult = await getResourceData(parsed.data.ids, {
-        user: session?.user,
+        user,
         withPreview: true,
-        sfwOnly,
+        browsingLevel: getServerBrowsingLevel({
+          canViewNsfw: getFeatureFlags({ user, req }).canViewNsfw,
+          user,
+        }),
       });
       return res.status(200).json(queryResult);
     } catch (e) {

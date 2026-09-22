@@ -39,6 +39,11 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { Context } from '~/server/createContext';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+
+const viewerPreviewLevel = (ctx: Context) =>
+  getServerBrowsingLevel({ canViewNsfw: ctx.features.canViewNsfw, user: ctx.user });
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -61,7 +66,7 @@ export const generationRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
     .query(({ input, ctx }) =>
-      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      getGenerationData({ query: input, user: ctx.user, browsingLevel: viewerPreviewLevel(ctx) })
     ),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -144,14 +149,14 @@ export const generationRouter = router({
       getResourceData(input.ids, {
         user: ctx.user,
         withPreview: true,
-        sfwOnly: ctx.features.isGreen,
+        browsingLevel: viewerPreviewLevel(ctx),
       })
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>
-      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      resolveImageMeta({ input, user: ctx.user, browsingLevel: viewerPreviewLevel(ctx) })
     ),
   // App Blocks wildcard-pack import (W13) — the SESSION-authed resolve step for
   // the page-host message bridge. A page block posts GET_WILDCARD_PACK to the

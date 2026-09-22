@@ -2,6 +2,7 @@ import { Button, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useMemo, useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -16,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
+import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { isDefined } from '~/utils/type-guards';
 
 const GRID_GAP = 16;
@@ -125,8 +127,11 @@ export function ResourceHitList({ query }: { query: string }) {
     [canGenerate, resources, excludedIds, tab, selectSource]
   );
 
+  const browsingLevel = useBrowsingLevelDebounced();
+
   // Build podium items from raw items (bypassing hidden preferences) so
   // auction winners at positions 1-3 always show regardless of user preferences.
+  // Browsing level is not a preference: their images are still filtered by it.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
   const resourceBaseModels = useMemo(
@@ -152,7 +157,11 @@ export function ResourceHitList({ query }: { query: string }) {
       .map((model) => {
         const versions = filterVersions(model);
         if (!versions.length) return null;
-        return { ...model, versions };
+        const images = model.images.filter((image) =>
+          isPreviewVisible(image.nsfwLevel, browsingLevel)
+        ) as typeof model.images;
+        if (!images.length) return null;
+        return { ...model, versions, images };
       })
       .filter(isDefined)
       .sort((a, b) => {
@@ -160,7 +169,7 @@ export function ResourceHitList({ query }: { query: string }) {
         const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
         return aPos - bPos;
       });
-  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels]);
+  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels, browsingLevel]);
 
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
