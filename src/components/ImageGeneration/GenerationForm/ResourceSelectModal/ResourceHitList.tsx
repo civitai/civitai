@@ -4,7 +4,14 @@ import clsx from 'clsx';
 import { useCallback, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import cardClasses from '~/components/Cards/Cards.module.css';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import {
+  filterPreferences,
+  useApplyHiddenPreferences,
+} from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useDebouncer } from '~/utils/debouncer';
@@ -17,7 +24,6 @@ import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
-import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { isDefined } from '~/utils/type-guards';
 
 const GRID_GAP = 16;
@@ -128,10 +134,14 @@ export function ResourceHitList({ query }: { query: string }) {
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
+  const currentUser = useCurrentUser();
+  const { canViewNsfw } = useFeatureFlags();
+  const { settings: browsingAddons } = useBrowsingSettingsAddons();
+  const hiddenPreferences = useHiddenPreferencesContext();
 
-  // Build podium items from raw items (bypassing hidden preferences) so
-  // auction winners at positions 1-3 always show regardless of user preferences.
-  // Browsing level is not a preference: their images are still filtered by it.
+  // Auction winners at positions 1-3 bypass the viewer's own hidden users/tags/models/images,
+  // and nothing else: browsing level, system-hidden tags and the POI/minor rules still apply,
+  // through the same filter as the grid below.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
   const resourceBaseModels = useMemo(
@@ -152,24 +162,49 @@ export function ResourceHitList({ query }: { query: string }) {
     const podiumEntries = relevantFeatured.filter((fm) => fm.position >= 1 && fm.position <= 3);
     const podiumIds = new Set(podiumEntries.map((fm) => fm.modelId));
 
-    return items
+    const candidates = items
       .filter((model) => podiumIds.has(model.id))
       .map((model) => {
         const versions = filterVersions(model);
-        if (!versions.length) return null;
-        const images = model.images.filter((image) =>
-          isPreviewVisible(image.nsfwLevel, browsingLevel)
-        ) as typeof model.images;
-        if (!images.length) return null;
-        return { ...model, versions, images };
+        return versions.length ? { ...model, versions } : null;
       })
-      .filter(isDefined)
-      .sort((a, b) => {
-        const aPos = relevantFeatured.find((fm) => fm.modelId === a.id)!.position;
-        const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
-        return aPos - bPos;
-      });
-  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels, browsingLevel]);
+      .filter(isDefined);
+
+    const { items: visible } = filterPreferences({
+      type: 'models',
+      data: candidates,
+      hiddenPreferences: {
+        ...hiddenPreferences,
+        hiddenUsers: new Map(),
+        hiddenTags: new Map(),
+        hiddenModels: new Map(),
+        hiddenImages: new Map(),
+      },
+      browsingLevel,
+      currentUser,
+      canViewNsfw,
+      poiDisabled: browsingAddons.disablePoi,
+      minorDisabled: browsingAddons.disableMinor,
+    });
+
+    return (visible as typeof candidates).sort((a, b) => {
+      const aPos = relevantFeatured.find((fm) => fm.modelId === a.id)!.position;
+      const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
+      return aPos - bPos;
+    });
+  }, [
+    tab,
+    featured,
+    items,
+    filterVersions,
+    resourceTypes,
+    resourceBaseModels,
+    browsingLevel,
+    currentUser,
+    canViewNsfw,
+    browsingAddons,
+    hiddenPreferences,
+  ]);
 
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 

@@ -3,22 +3,50 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
+import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const state = vi.hoisted(() => ({
   browsingLevel: 1,
   items: [] as unknown[],
   gridItems: [] as unknown[],
   featured: [] as unknown[],
+  canViewNsfw: true,
+  disablePoi: false,
+  systemHiddenTags: new Map<number, boolean>(),
+  hiddenUsers: new Map<number, boolean>(),
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   useBrowsingLevelDebounced: () => state.browsingLevel,
 }));
-vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
+// The grid's own filter is stubbed; the podium must reach the REAL `filterPreferences`.
+vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (importOriginal) => ({
+  ...(await importOriginal<typeof HiddenPreferences>()),
   useApplyHiddenPreferences: () => ({
     items: state.gridItems,
     loadingPreferences: false,
     hiddenCount: 0,
+  }),
+}));
+vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
+  useHiddenPreferencesContext: () => ({
+    hiddenUsers: state.hiddenUsers,
+    hiddenTags: new Map(),
+    hiddenModels: new Map(),
+    hiddenModel3Ds: new Map(),
+    hiddenImages: new Map(),
+    hiddenLoading: false,
+    moderatedTags: [],
+    systemHiddenTags: state.systemHiddenTags,
+  }),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ canViewNsfw: state.canViewNsfw }),
+}));
+vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
+  useBrowsingSettingsAddons: () => ({
+    settings: { disablePoi: state.disablePoi, disableMinor: false },
   }),
 }));
 vi.mock(
@@ -69,17 +97,24 @@ import { ResourceHitList } from '~/components/ImageGeneration/GenerationForm/Res
 
 const X = 8;
 const PG = 1;
-const model = (id: number, images: { id: number; nsfwLevel: number }[]) => ({
+type Img = { id: number; nsfwLevel: number; tags?: number[]; poi?: boolean };
+const model = (id: number, images: Img[], over: Record<string, unknown> = {}) => ({
   id,
   type: 'Checkpoint',
+  name: 'Model',
+  nsfw: false,
+  nsfwLevel: images.reduce((acc, i) => acc | i.nsfwLevel, 0),
+  user: { id: 900 + id },
+  tags: [],
   images,
+  ...over,
   versions: [{ id: id * 10, baseModel: 'SDXL 1.0', canGenerate: true }],
 });
 const WINNER = 1;
 const GRID_MODEL = model(2, [{ id: 20, nsfwLevel: PG }]);
 
-function renderPodium(winnerImages: { id: number; nsfwLevel: number }[]) {
-  state.items = [model(WINNER, winnerImages), GRID_MODEL];
+function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
+  state.items = [model(WINNER, winnerImages, over), GRID_MODEL];
   state.gridItems = [GRID_MODEL];
   state.featured = [{ modelId: WINNER, type: 'Checkpoint', baseModel: 'SDXL 1.0', position: 1 }];
   const container = document.createElement('div');
@@ -92,6 +127,10 @@ function renderPodium(winnerImages: { id: number; nsfwLevel: number }[]) {
 
 beforeEach(() => {
   state.browsingLevel = PG;
+  state.canViewNsfw = true;
+  state.disablePoi = false;
+  state.systemHiddenTags = new Map();
+  state.hiddenUsers = new Map();
 });
 
 describe('ResourceHitList featured podium', () => {
@@ -114,5 +153,33 @@ describe('ResourceHitList featured podium', () => {
       { id: 12, nsfwLevel: PG },
     ]);
     expect(card?.getAttribute('data-image')).toBe('11');
+  });
+
+  it('skips a winner image carrying a system-hidden tag', () => {
+    state.systemHiddenTags = new Map([[77, true]]);
+    const card = renderPodium([
+      { id: 11, nsfwLevel: PG, tags: [77] },
+      { id: 12, nsfwLevel: PG },
+    ]);
+    expect(card?.getAttribute('data-image')).toBe('12');
+  });
+
+  it('skips a winner POI image when the viewer disabled POI', () => {
+    state.disablePoi = true;
+    const card = renderPodium([
+      { id: 11, nsfwLevel: PG, poi: true },
+      { id: 12, nsfwLevel: PG },
+    ]);
+    expect(card?.getAttribute('data-image')).toBe('12');
+  });
+
+  it('drops a winner flagged nsfw where the domain cannot view nsfw', () => {
+    state.canViewNsfw = false;
+    expect(renderPodium([{ id: 12, nsfwLevel: PG }], { nsfw: true })).toBeNull();
+  });
+
+  it('still shows a winner whose creator the viewer has hidden', () => {
+    state.hiddenUsers = new Map([[900 + WINNER, true]]);
+    expect(renderPodium([{ id: 12, nsfwLevel: PG }])?.getAttribute('data-image')).toBe('12');
   });
 });

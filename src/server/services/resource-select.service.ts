@@ -303,6 +303,9 @@ export async function getResourceSelectModels(
     signal
   );
 
+  // Images are returned at every browsing level on purpose: the picker filters them by the
+  // viewer's level before rendering (ResourceHitList). Product decision, 2026-09-22: do not
+  // add server-side level filtering here without revisiting it.
   let items = transformModelHits(results.hits);
 
   // Prepend the official models on the first page only. Sourced straight from
