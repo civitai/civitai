@@ -545,8 +545,12 @@ export const purchaseCosmeticPack = async ({
       for (const member of members) attributedByCosmetic.set(member.cosmeticId, member.floorAmount);
       for (const c of components) attributedByCosmetic.set(c.cosmeticId, c.unitAmount);
 
+      // A row is what getPackMembers counts into a member's `soldCount`, which
+      // its own listing's `availableQuantity` then refuses against. A withheld
+      // member was neither charged for nor delivered, so recording one spent an
+      // edition of the buyer's own work on a sale that did not happen.
       await tx.userCosmeticShopPurchaseCosmetic.createMany({
-        data: members.map((m) => ({
+        data: grantable.map((m) => ({
           buzzTransactionId: transactionId,
           cosmeticId: m.cosmeticId,
           unitAmount: attributedByCosmetic.get(m.cosmeticId) ?? m.floorAmount,

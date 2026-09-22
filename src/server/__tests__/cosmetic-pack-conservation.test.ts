@@ -616,10 +616,36 @@ describe.each(SHAPES)(
       for (const id of durable) expect(accountedFor.has(id)).toBe(true);
     });
 
-    it('writes one purchase component per member', async () => {
+    it('writes one purchase component per member the buyer paid for', async () => {
       await setup();
       const rows = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
-      expect(rows).toHaveLength(members.length);
+      const paidFor = members.filter(
+        (m) => !(m.createdById === buyerId && m.createdById !== packCreatorId)
+      );
+      expect(rows).toHaveLength(paidFor.length);
+    });
+
+    // Identity, where the assertion above is only a count. A component write
+    // that keeps the row count and records the wrong cosmetic passes the length
+    // check on every shape and fails this one on 13 — the two are not redundant,
+    // and the count is the weaker half.
+    it('records a purchase component for everything it granted', async () => {
+      await setup();
+      const componentIds: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
+        (row: { cosmeticId: number }) => row.cosmeticId
+      );
+      const grantedIds: number[] = [
+        ...executeRaw.mock.calls.map((call) => (call as [unknown, number, number])[2]),
+        ...createManyUserCosmetic.mock.calls.flatMap(
+          (call) =>
+            (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
+        ),
+      ];
+      // Without this the subset below is satisfied by granting nothing at all.
+      expect(grantedIds.length).toBeGreaterThan(0);
+      // Named difference rather than a containment loop, so a failure prints the
+      // id that was granted without being recorded.
+      expect(grantedIds.filter((id) => !componentIds.includes(id))).toEqual([]);
     });
 
     it('does not refund a purchase that succeeded', async () => {
@@ -632,6 +658,49 @@ describe.each(SHAPES)(
 // The failure path, which every property above assumes never runs. Round one's
 // review found this shape unguarded: a refund that throws used to discard the
 // grant error, surface its own, and record nothing.
+/**
+ * The edition cap, which is the consequence the component row actually has.
+ *
+ * getPackMembers counts these rows into a member's `soldCount`, and
+ * assertPackPurchasable refuses every pack containing that member once the count
+ * reaches its listing's `availableQuantity`. A member the buyer authored is
+ * neither charged for nor delivered, so recording one spends an edition of their
+ * own work on a sale that did not happen — and once spent, the refusal lands on
+ * everyone else's packs too.
+ *
+ * Asserted by cosmetic id rather than by row count: a count says how many were
+ * recorded, never which, and the defect is a specific member being recorded.
+ */
+describe('purchaseCosmeticPack — what a purchase records as sold', () => {
+  const SELF_AUTHORED = 1002;
+  const members = [
+    mkMember(),
+    mkMember({
+      cosmeticId: SELF_AUTHORED,
+      createdById: BUYER,
+      addedById: PACK_CREATOR,
+      floorAmount: 2900,
+    }),
+  ];
+
+  it('records no sale of a member it withheld, leaving that edition cap untouched', async () => {
+    ownedFindMany.mockResolvedValue([]);
+    await purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(6300, members.length),
+      members,
+      stickersEnabled: true,
+    });
+    const recorded: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
+      (row: { cosmeticId: number }) => row.cosmeticId
+    );
+    // Both halves: the withheld member absent, and the paid one still present —
+    // recording nothing at all would satisfy the first on its own.
+    expect(recorded).not.toContain(SELF_AUTHORED);
+    expect(recorded).toEqual([1001]);
+  });
+});
+
 describe('purchaseCosmeticPack — when the grant fails', () => {
   const members = [
     mkMember(),
