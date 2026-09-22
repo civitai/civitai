@@ -83,12 +83,14 @@ const routes = [
     '/api/generation/resources',
     generationResourcesHandler as unknown as Handler,
     { ids: '1' },
+    mockGetResourceData,
     () => mockGetResourceData.mock.calls[0]?.[1]?.browsingLevel,
   ],
   [
     '/api/generation/data',
     generationDataHandler as unknown as Handler,
     { type: 'modelVersion', id: '1', withPreview: 'true' },
+    mockGetGenerationData,
     () => mockGetGenerationData.mock.calls[0]?.[0]?.browsingLevel,
   ],
 ] as const;
@@ -102,7 +104,7 @@ beforeEach(() => {
 
 describe.each(routes)(
   '%s resolves the preview level per request',
-  (_route, handler, query, level) => {
+  (_route, handler, query, service, level) => {
     it.each(viewers)('%s', async (_label, user, canViewNsfw, expected) => {
       mockSession.mockResolvedValue(user ? { user } : null);
       mockFeatureFlagsLazy.mockReturnValue({ canViewNsfw });
@@ -111,7 +113,9 @@ describe.each(routes)(
       await handler(req, makeRes());
 
       // The domain half of the level is only correct if the flags were read for THIS request.
+      expect(mockFeatureFlagsLazy).toHaveBeenCalledTimes(1);
       expect(mockFeatureFlagsLazy).toHaveBeenCalledWith({ user: user ?? undefined, req });
+      expect(service).toHaveBeenCalledTimes(1);
       expect(level()).toBe(expected);
     });
   }
