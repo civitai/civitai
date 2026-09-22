@@ -1,0 +1,13 @@
+-- 🔴 APPLY ONLY AFTER the build that stops selecting this column is deployed everywhere.
+--
+-- Prisma selects an explicit column list, so a pod running an older build still asks for
+-- "nsfw" — `collection.service.ts` and `post.service.ts` both read the whole Tag row via
+-- `include: { tag: true }`. Dropping it under them errors on a hot path.
+--
+-- Order: 20260921120000_tag_nsfw_term (adds nsfwTerm, seeds from this column) → deploy →
+-- this. A rollback past the deploy needs the column back:
+--   ALTER TABLE "Tag" ADD COLUMN "nsfw" "NsfwLevel" NOT NULL DEFAULT 'None';
+-- which restores the shape but not the 32 hand-set values, hence the seed running first.
+--
+-- The NsfwLevel enum type itself stays: Image.nsfw still uses it.
+ALTER TABLE "Tag" DROP COLUMN "nsfw";

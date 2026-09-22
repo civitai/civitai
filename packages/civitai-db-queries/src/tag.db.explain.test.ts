@@ -21,7 +21,7 @@ describe.skipIf(!h.hasDb)('tag.db queries EXPLAIN against the real schema', () =
   });
 
   it('createTag plans (write, not executed)', async () => {
-    await createTag(h.db, { name: 'x', target: ['Model'], nsfw: 'None' }).catch(() => {});
+    await createTag(h.db, { name: 'x', target: ['Model'] }).catch(() => {});
     expect(await h.explainLast()).toBeTruthy();
   });
 

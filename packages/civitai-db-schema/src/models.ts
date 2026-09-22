@@ -1666,7 +1666,7 @@ export interface Tag {
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
