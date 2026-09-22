@@ -5,7 +5,7 @@ import {
   TE_TRAINING_UNSUPPORTED,
   cardByType,
   cardsForMedia,
-  loraTypeById,
+  seenFor,
   versionSuffix,
   type LabelType,
   type Media,
@@ -16,6 +16,11 @@ import type { TrainingRunPayload } from '$lib/backend';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
+
+/** Floor under every default step budget. A small dataset multiplied by its per-image target lands
+ *  well under what any base model needs to converge — 20 images of a character is 700 steps — so the
+ *  floor, not the multiplier, is what sets the budget for small sets. Per Atif, 2026-09-21. */
+export const MIN_STEPS = 1500;
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -249,9 +254,9 @@ export function selectionFromTotal(prices: Record<string, number>, runs: Run[]):
 }
 
 /** The default step budget for a lora type given the dataset size — each image "seen" ~N times, floored at
- *  200. Dataset size drives the price through this. Shared with the Review step's default. */
-export function defaultStepsFor(loraTypeId: string, imageCount: number): number {
-  return Math.max(200, imageCount * loraTypeById(loraTypeId).seen);
+ *  MIN_STEPS. Dataset size drives the price through this. Shared with the Review step's default. */
+export function defaultStepsFor(loraTypeId: string, media: Media, imageCount: number): number {
+  return Math.max(MIN_STEPS, imageCount * seenFor(loraTypeId, media));
 }
 
 /** The dataset-aware price estimate for a selection — the same figure the Review step shows at its defaults:
@@ -263,7 +268,7 @@ export function estimatedTotal(
   imageCount: number,
   samplePrompts: number = DEFAULT_SAMPLE_PROMPTS
 ): number | null {
-  const steps = defaultStepsFor(selection.loraType, imageCount);
+  const steps = defaultStepsFor(selection.loraType, selection.media, imageCount);
   let sum = 0;
   for (const run of selection.runs) {
     const cost = runCost(cardBaseQuote(prices, run.cardType), run, steps);

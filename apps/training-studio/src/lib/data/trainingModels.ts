@@ -602,8 +602,12 @@ export interface LoraType {
   medias: Media[];
   /** Recommended base-model card `type` per media. */
   recommended: Partial<Record<Media, string>>;
-  /** Default per-item "seen" target used to compute a starting step count. */
-  seen: number;
+  /** Default per-item "seen" target used to compute a starting step count, per media. Image follows
+   *  Atif's 2026-09-21 guidance — 35 for characters, 50 for broader styles and concepts — which was
+   *  about image LoRAs only. Video and audio deliberately keep their own figures: he led with "the base
+   *  model matters a lot here", and those base models were not what he was reasoning about. Splitting
+   *  the target per media is what keeps one from being retuned by the other. */
+  seen: Partial<Record<Media, number>>;
   /** Warn below this item count for this type. */
   minImg: number;
 }
@@ -615,7 +619,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '🧍',
     medias: ['image', 'video'],
     recommended: { image: 'zimage', video: 'minimaxh3' },
-    seen: 100,
+    seen: { image: 35, video: 100 },
     minImg: 10,
   },
   {
@@ -624,7 +628,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '🎨',
     medias: ['image', 'video', 'audio'],
     recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
-    seen: 150,
+    seen: { image: 50, video: 150, audio: 150 },
     minImg: 15,
   },
   {
@@ -633,7 +637,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '💡',
     medias: ['image', 'video', 'audio'],
     recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
-    seen: 150,
+    seen: { image: 50, video: 150, audio: 150 },
     minImg: 15,
   },
   {
@@ -642,7 +646,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '✨',
     medias: ['video'],
     recommended: { video: 'minimaxh3' },
-    seen: 150,
+    seen: { video: 150 },
     minImg: 20,
   },
 ];
@@ -653,6 +657,14 @@ export const typesForMedia = (media: Media): LoraType[] =>
 /** LoRA type by id, falling back to the first type so callers never read `undefined`. */
 export const loraTypeById = (id: string): LoraType =>
   LORA_TYPES.find((t) => t.id === id) ?? LORA_TYPES[0]!;
+
+/** The per-item "seen" target for a type in a given media. A type only carries figures for the medias
+ *  it covers; an unlisted pair is reachable only through `loraTypeById`'s unknown-id fallback, so it
+ *  takes the type's smallest figure rather than inventing one. */
+export const seenFor = (loraTypeId: string, media: Media): number => {
+  const { seen } = loraTypeById(loraTypeId);
+  return seen[media] ?? Math.min(...Object.values(seen));
+};
 
 export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);
