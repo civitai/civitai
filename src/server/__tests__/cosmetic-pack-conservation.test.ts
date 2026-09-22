@@ -795,14 +795,22 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     expect(spend).not.toHaveBeenCalled();
   });
 
+  // Wording no other refusal on this path produces, asserted as such: every one
+  // of them throws the same error type, so a substring shared with a neighbour
+  // lets this pass on the wrong branch. `no longer available` was shared with
+  // three.
   // A pack with no members left refuses through the same branch as a pack of
   // only the buyer's own work, and is told it IS their own work. The refusal is
   // right and the reason is fiction. Reachable: purchaseCosmeticShopItem falls
   // back to `_count.members` when meta.packMemberCount is absent, so a pack
   // whose member cosmetics were all deleted arrives here with both at zero.
   it('refuses an empty pack for being empty, not for being the buyers own work', async () => {
-    await expect(buy({ price: 1500, members: [] })).rejects.toThrow(/no longer available/i);
+    await expect(buy({ price: 1500, members: [] })).rejects.toThrow(
+      /^This pack has nothing left in it$/
+    );
     expect(spend).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(createManyUserCosmetic).not.toHaveBeenCalled();
   });
 
   // The ordering case, and the only one that can see it: priced AT the floor
