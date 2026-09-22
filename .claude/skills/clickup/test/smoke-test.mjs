@@ -202,7 +202,7 @@ async function writeTests() {
   });
 
   if (!testTaskId) {
-    skip('Remaining write tests', 'task creation failed');
+    skip('Remaining write tests', aborting ? 'interrupted' : 'task creation failed');
     return;
   }
 
@@ -315,6 +315,8 @@ async function writeTests() {
       testCommentId = null;
     });
   }
+  // Still set if the delete test failed or was skipped by a Ctrl+C.
+  if (testCommentId) cleanupTasks.push({ type: 'comment', id: testCommentId });
 
   // ── @Mentions ──
 
@@ -534,9 +536,9 @@ async function cleanup() {
   }
 
   for (const item of cleanupTasks.splice(0).reverse()) {
-    const args = item.type === 'list' ? ['delete-list', item.id] : ['archive', item.id];
-    const { code, output } = await run(args).catch((err) => ({ code: 1, output: err.message }));
-    if (code === 0) console.log(`  ${item.type === 'list' ? 'Deleted list' : 'Archived task'} ${item.id}`);
+    const verb = { list: 'delete-list', comment: 'delete-comment', task: 'archive' }[item.type];
+    const { code, output } = await run([verb, item.id]).catch((err) => ({ code: 1, output: err.message }));
+    if (code === 0) console.log(`  ${{ list: 'Deleted list', comment: 'Deleted comment', task: 'Archived task' }[item.type]} ${item.id}`);
     else leaked.push({ ...item, why: output.slice(0, 200) });
   }
 
