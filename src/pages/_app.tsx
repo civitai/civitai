@@ -133,7 +133,7 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
@@ -275,8 +275,17 @@ function MyApp(props: CustomAppProps) {
                         receives above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded
                         in as a prop so RUM beacons carry a geography dimension (→ Loki
                         session_attr_region / session_attr_timezone). See
-                        src/utils/faro/geoAttributes.ts. */}
-                    <FaroProvider region={region.countryCode} />
+                        src/utils/faro/geoAttributes.ts.
+                        🔴 OPTIONAL-CHAIN IT. `region` is an SSR-ONLY prop: `getInitialProps`
+                        early-returns before `getRegion(request)` on a CLIENT-SIDE navigation
+                        (no `req`), so `region` is `undefined` on every route transition even
+                        though `CustomAppProps` types it non-optional. A bare `region.countryCode`
+                        throws inside the ROOT error boundary and white-screens the app — that is
+                        exactly what shipped in v5.1.117 (#5001), surfacing in v5.1.118.
+                        `FaroProvider` accepts `undefined | null`
+                        by design; pinned by
+                        src/tests/pages/app-region-optional-chain.test.ts. */}
+                    <FaroProvider region={region?.countryCode} />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>

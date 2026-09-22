@@ -44,7 +44,7 @@ type AppProviderProps = {
   chatSettings?: UserSettingsChat;
   seed: number;
   canIndex: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
@@ -61,7 +61,7 @@ type AppProviderProps = {
 type AppContext = {
   seed: number;
   canIndex: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   allowMatureContent: boolean;
   domain: Record<ColorDomain, boolean>;
   host: string;
