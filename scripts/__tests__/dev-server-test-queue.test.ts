@@ -133,6 +133,58 @@ describe('dev-server test queue', () => {
     expect(check.status).toBe('running');
   });
 
+  /**
+   * 🔴 Arrival order WITHIN a group, not lane-declaration order. `pump` used to walk the lanes and
+   * take each one's own head, which made the first-declared lane in a group a permanent priority:
+   * with `saturating` at 1 and this box running the unit suite constantly, a queued `component`
+   * run was measured still waiting after six later-arriving unit runs had started and finished.
+   *
+   * Overtaking ACROSS groups stays deliberate and is pinned separately below.
+   */
+  it('gives a freed saturating slot to the run that asked first, not to the first lane declared', () => {
+    const queue = build({ groupConcurrency: { saturating: 1 } });
+
+    const first = queue.request({ worktree: '/wt/a' });
+    const component = queue.request({ worktree: '/wt/b', kind: 'component' });
+    const laterUnit = queue.request({ worktree: '/wt/c' });
+
+    expect([component.status, laterUnit.status]).toEqual(['queued', 'queued']);
+
+    runner.started[0].finish(0);
+
+    expect(queue.get(component.id).status).toBe('running');
+    expect(queue.get(laterUnit.id).status).toBe('queued');
+  });
+
+  /**
+   * 🔴 A lane its GROUP has stopped is paused, whatever its own limit says. Reporting only the
+   * lane meant `--saturating 0` wedged five lanes while every surface said `paused: false` — the
+   * waiter printed a position and polled forever, and polling touches the run, so the abandon
+   * sweep never reclaimed it either.
+   */
+  it('reports a lane as paused when its group is what stopped it', () => {
+    const queue = build({ concurrency: 1, groupConcurrency: { saturating: 0 } });
+    const run = queue.request({ worktree: '/wt/a' });
+
+    expect(run.status).toBe('queued');
+    expect(run.paused).toBe(true);
+    expect(run.effectiveLimit).toBe(0);
+  });
+
+  /**
+   * 🔴 The saturating group holds the lanes that each want most of the machine. If you are here
+   * because you moved one of these into `light`: that is the 31-vitest-workers-plus-12-Chromium
+   * pair CLAUDE.md names, and arbitrating it is what this queue exists for.
+   */
+  it.each(['component', 'packages', 'apps', 'geometry'])(
+    'does not start a %s run beside a running unit suite',
+    (kind) => {
+      const queue = build({ groupConcurrency: { saturating: 1 } });
+      queue.request({ worktree: '/wt/a' });
+      expect(queue.request({ worktree: '/wt/b', kind }).status).toBe('queued');
+    }
+  );
+
   it('treats concurrency 0 as paused, and says so rather than leaving the caller guessing', () => {
     const queue = build({ concurrency: 0 });
 

@@ -66,10 +66,12 @@ describe('every wrapped lane is wired end to end', () => {
     for (const kind of claimed) {
       const script = RUN_KINDS[kind]?.script;
       expect(script, `${kind} has no script`).toBeTruthy();
+      // The WHOLE normalised string, not a substring: `eslint src/ && node
+      // scripts/queued-check.mjs lint` contains the wrapper and bypasses it at the same time.
       expect(
-        packageScripts[script],
-        `${script} must run the wrapper as \`queued-check.mjs ${kind}\``
-      ).toContain(`queued-check.mjs ${kind}`);
+        packageScripts[script].trim(),
+        `${script} must run the wrapper as \`queued-check.mjs ${kind}\` and nothing else`
+      ).toBe(`node scripts/queued-check.mjs ${kind}`);
     }
   });
 });
@@ -124,5 +126,44 @@ describe('a named target replaces the default one rather than joining it', () =>
 
   it('returns null for a kind it does not know', () => {
     expect(directCommandFor('bogus', [])).toBeNull();
+  });
+});
+
+/**
+ * 🔴 `pnpm run lint --fix` handed eslint nothing but flags, which lints ZERO files and exits 0
+ * with no output. A flag is not a target. Measured before the fix: `eslint --cache
+ * --cache-strategy metadata --fix` exits 0 having checked nothing, so the whole verify chain went
+ * green on a check that never ran.
+ */
+describe('a flag is not a target', () => {
+  it.each(['--fix', '--quiet', '--max-warnings=0', '-f'])(
+    'keeps the default target when only %s was passed',
+    (flag) => {
+      expect(directCommandFor('lint', [flag])!.argv).toContain('src/');
+      expect(directCommandFor('lintPackages', [flag])!.argv).toContain('packages');
+    }
+  );
+
+  it('still drops the default target when a real path is named beside a flag', () => {
+    const { argv } = directCommandFor('lint', ['--fix', 'src/utils/date-helpers.ts'])!;
+    expect(argv).not.toContain('src/');
+    expect(argv).toContain('src/utils/date-helpers.ts');
+  });
+});
+
+/**
+ * 🔴 The vitest lanes are pinned WHOLE, not by substring. Dropping `run` from any of them turns
+ * a CI step into a watch-mode process that never exits (`.github/workflows/lint.yml` invokes
+ * `test:packages:run` and `test:apps:run` directly), and dropping `--project` widens the run
+ * instead of narrowing it. Neither shows up as a failure — one hangs, the other passes too much.
+ */
+describe('the vitest lanes run what they say', () => {
+  it.each([
+    ['packages', ['exec', 'vitest', 'run', '--project', '@civitai/*']],
+    ['apps', ['exec', 'vitest', 'run', '--project', 'app:*']],
+    ['geometry', ['exec', 'vitest', 'run', '--project', 'geometry']],
+    ['component', ['scripts/test-component-run.mjs']],
+  ])('%s', (kind, expected) => {
+    expect(DIRECT_COMMANDS[kind].args).toEqual(expected);
   });
 });

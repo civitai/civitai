@@ -63,6 +63,10 @@ export const DIRECT_COMMANDS = {
 export function directCommandFor(kind, args = []) {
   const direct = DIRECT_COMMANDS[kind];
   if (!direct) return null;
-  const base = args.length && direct.narrowedArgs ? direct.narrowedArgs : direct.args;
+  // 🔴 A POSITIONAL, not merely an argument. Swapping on `args.length` meant `pnpm run lint --fix`
+  // dropped `src/` and handed eslint nothing but flags - which lints ZERO files and exits 0, with
+  // no output. A flag is not a target, and a green run that checked nothing is worse than a red.
+  const named = args.some((a) => !String(a).startsWith('-'));
+  const base = named && direct.narrowedArgs ? direct.narrowedArgs : direct.args;
   return { cmd: direct.cmd, argv: [...base, ...args] };
 }

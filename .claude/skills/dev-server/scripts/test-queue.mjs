@@ -353,10 +353,13 @@ export function createOutputCapture(onLine) {
  * second copy of the flag would decide the run by argument order rather than by intent.
  */
 export function workerCapArgv(maxWorkers, args, ceiling = null) {
-  // A lane's ceiling applies even when the queue is uncapped, because it is a property of that
-  // runner rather than of how busy the box is.
-  const width = maxWorkers && ceiling ? Math.min(maxWorkers, ceiling) : maxWorkers || ceiling;
-  if (!width) return [];
+  // 🔴 A ceiling CLAMPS a width the caller asked for; it never invents one. Originating from the
+  // ceiling meant an uncapped daemon - the default - spawned a browser lane with
+  // `--max-workers=12`, where vitest would have chosen `min(12, cpus - 1)` for itself. On a box
+  // with 12 cores or fewer that is MORE Chromium instances than before, which is the opposite of
+  // what this ceiling is for.
+  if (!maxWorkers) return [];
+  const width = ceiling ? Math.min(maxWorkers, ceiling) : maxWorkers;
   // Both spellings: vitest reads kebab and camel as one flag (see canonicalFlag in
   // scripts/test-component-run.mjs), so matching only `--max-workers` would miss a caller's
   // `--maxWorkers=3` and append a second, conflicting width after it.
@@ -615,7 +618,19 @@ export class TestQueue {
   }
 
   pausedFor(kind) {
-    return this.limits[normalizeKind(kind)] === 0;
+    const lane = normalizeKind(kind);
+    // 🔴 The GROUP can stop a lane whose own limit is non-zero. Reporting only the lane meant
+    // `--saturating 0` wedged five lanes while every surface said `paused: false`: the waiter
+    // printed "Queued at position 1 of 1 (0/1 running)" and polled forever, and because polling
+    // touches the run the abandon sweep never reclaimed it either. Same bug `--typecheck 0` had
+    // one level down, which is why this asks both questions rather than one.
+    return this.effectiveLimitFor(lane) === 0;
+  }
+
+  /** What a lane's limit is WORTH once its group's budget is applied. */
+  effectiveLimitFor(kind) {
+    const lane = normalizeKind(kind);
+    return Math.min(this.limits[lane], this.groupLimits[RUN_KINDS[lane].group]);
   }
 
   /** The UNIT lane, for the callers that predate lanes. Ask `pausedFor` for any other. */
@@ -852,17 +867,26 @@ export class TestQueue {
     // limit is the shared budget that stops four lanes that each want the whole box from starting
     // together. Per-lane alone was orderly oversubscription, not arbitration.
     //
-    // Each lane still takes only ITS OWN head of the queue, so a light run is not stuck behind a
-    // saturating one it shares no budget with — the property the lanes were added for.
-    for (const kind of Object.keys(RUN_KINDS)) {
-      const group = RUN_KINDS[kind].group;
-      for (;;) {
-        if (this.runningFor(kind) >= this.limits[kind]) break;
-        if (this.runningForGroup(group) >= this.groupLimits[group]) break;
-        const at = this.order.findIndex((id) => this.runs.get(id)?.kind === kind);
-        if (at === -1) break;
-        this.start(this.order.splice(at, 1)[0]);
-      }
+    // 🔴 Scanned in ARRIVAL order, not lane-declaration order. Walking the lanes and taking each
+    // one's own head made the first-declared lane in a group a strict priority over the rest:
+    // with `saturating` at 1 and every agent on the box running the unit suite, a queued
+    // `component` run was measured still waiting after six later-arriving unit runs had started
+    // and finished. Unfairness ACROSS groups is deliberate — a one-core typecheck should not wait
+    // behind a 500-second suite — but nothing decided that `unit` outranks `component` forever.
+    //
+    // A light run still overtakes a queued saturating one, because its group has room and the
+    // saturating group does not. That is the property the lanes were added for, and it survives
+    // arrival order.
+    for (;;) {
+      const next = this.order.find((id) => {
+        const kind = this.runs.get(id)?.kind;
+        if (!kind) return false;
+        if (this.runningFor(kind) >= this.limits[kind]) return false;
+        return this.runningForGroup(RUN_KINDS[kind].group) < this.groupLimits[RUN_KINDS[kind].group];
+      });
+      if (next === undefined) break;
+      this.order.splice(this.order.indexOf(next), 1);
+      this.start(next);
     }
   }
 
@@ -986,11 +1010,18 @@ export class TestQueue {
       args: run.args,
       kind: run.kind,
       // Exact, not estimated, and LANE-SCOPED: the index among queued runs of this kind. 0 means
-      // "not waiting behind anyone" in its own lane, which is the only lane that can delay it.
+      // "not waiting behind anyone IN ITS OWN LANE" — which is no longer the only thing that can
+      // delay it. A sibling lane sharing this one's group can hold it at position 0, so read
+      // `effectiveLimit` beside this rather than `concurrency` alone.
       position: this.positionOf(id),
       queueLength: this.queuedFor(run.kind),
       running: this.runningFor(run.kind),
       concurrency: this.limits[run.kind],
+      // What the lane's limit is worth once the group budget applies. `concurrency` is what was
+      // configured; this is what the queue will actually give. They differ whenever a group is
+      // the binding constraint, and only this one predicts whether the run can start.
+      effectiveLimit: this.effectiveLimitFor(run.kind),
+      group: RUN_KINDS[run.kind].group,
       maxWorkers: this.maxWorkers,
       cacheMode: this.cacheMode,
       paused: this.pausedFor(run.kind),

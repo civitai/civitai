@@ -11,9 +11,8 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath } = await import(
-  '../../.claude/skills/dev-server/scripts/test-queue.mjs'
-);
+const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath, RUN_KINDS } =
+  await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
 
 const fakeChild = () => {
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
@@ -249,6 +248,28 @@ describe('result cache on queued runs', () => {
   it('leaves a width under the ceiling alone rather than raising it', () => {
     start({ kind: 'component', maxWorkers: 3 });
     expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=3']);
+  });
+
+  /**
+   * 🔴 A ceiling CLAMPS a width the caller asked for; it never invents one. When the daemon is
+   * uncapped — which is the default — the browser lanes must pass nothing and let vitest choose
+   * `min(12, cpus - 1)` for itself. Originating from the ceiling put `--max-workers=12` on every
+   * uncapped run, which on a box with 12 cores or fewer is MORE Chromium instances than before.
+   */
+  it.each(['component', 'geometry'])('adds no width to an uncapped %s run', (kind) => {
+    start({ kind, maxWorkers: null });
+    expect(argvOf(0)).toEqual(['run', RUN_KINDS[kind].script]);
+  });
+
+  /**
+   * 🔴 Only the `unit` projects can be skipped by the cache sequencer, so every other vitest lane
+   * must be told the cache is off. A lane marked cacheable attaches the reporter to a run it can
+   * skip nothing in and writes ledger entries for it.
+   */
+  it.each(['packages', 'apps', 'geometry'])('never caches a %s run', (kind) => {
+    start({ cacheMode: 'on', kind });
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+    expect(argvOf(0).some((a) => String(a).startsWith('--reporter'))).toBe(false);
   });
 
   // A tree without the cache files runs uncached rather than as a vitest that cannot load its
