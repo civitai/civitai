@@ -387,6 +387,13 @@ describe.each(SHAPES)(
       return { charged, payouts, result };
     };
 
+    // One derivation for the two assertions below that need it. Still hand-written
+    // rather than imported from src — that is what lets them disagree with
+    // isSelfAuthoredPackMember — but two character-identical copies over the same
+    // array caught nothing and could drift apart silently.
+    const membersPaidFor = () =>
+      members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
+
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
     // would satisfy all of them while giving the shop away.
@@ -526,8 +533,8 @@ describe.each(SHAPES)(
       );
       // Derived from the shape rather than from the code under test, like
       // expectedCharge above. The withholding rule is spelled out here and in
-      // three other assertions on purpose: importing isSelfAuthoredPackMember
-      // would make all four agree with whatever it becomes, which is the one
+      // four other assertions on purpose: importing isSelfAuthoredPackMember
+      // would make all five agree with whatever it becomes, which is the one
       // change they exist to catch. Do not consolidate them.
       const ownedSet = new Set(owned ?? []);
       const expected = members
@@ -603,9 +610,7 @@ describe.each(SHAPES)(
       // delivered, so it is outside what this accounts for. Narrowing the
       // population rather than tolerating a miss: an unaccounted member the
       // buyer DID pay for still fails.
-      const paidFor = members.filter(
-        (m) => !(m.createdById === buyerId && m.createdById !== packCreatorId)
-      );
+      const paidFor = membersPaidFor();
       const toppedUp = executeRaw.mock.calls.length;
       const consumables = paidFor.filter((m) => m.type === CosmeticType.Sticker);
       expect(toppedUp).toBe(consumables.length);
@@ -618,17 +623,22 @@ describe.each(SHAPES)(
 
     it('writes one purchase component per member the buyer paid for', async () => {
       await setup();
+      // Every call, not `calls[0]`: a second createMany beside the first writes
+      // the withheld member's row and spends its edition, and reading only the
+      // first call prints nothing. The grant write next to it is guarded the
+      // same way, for the same merge-shaped reason.
+      expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
       const rows = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
-      const paidFor = members.filter(
-        (m) => !(m.createdById === buyerId && m.createdById !== packCreatorId)
-      );
-      expect(rows).toHaveLength(paidFor.length);
+      expect(rows).toHaveLength(membersPaidFor().length);
     });
 
-    // Identity, where the assertion above is only a count. A component write
-    // that keeps the row count and records the wrong cosmetic passes the length
-    // check on every shape and fails this one on 13 — the two are not redundant,
-    // and the count is the weaker half.
+    // Identity, where the assertion above is only a count: a write that keeps the
+    // row count and records the wrong cosmetic passes the count on every shape
+    // and fails this on 13.
+    //
+    // It does NOT see a member recorded without being granted — it is one
+    // directional, and that direction is the count's. Do not read this as cover
+    // for narrowing the count above.
     it('records a purchase component for everything it granted', async () => {
       await setup();
       const componentIds: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
@@ -641,8 +651,6 @@ describe.each(SHAPES)(
             (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
         ),
       ];
-      // Without this the subset below is satisfied by granting nothing at all.
-      expect(grantedIds.length).toBeGreaterThan(0);
       // Named difference rather than a containment loop, so a failure prints the
       // id that was granted without being recorded.
       expect(grantedIds.filter((id) => !componentIds.includes(id))).toEqual([]);
@@ -655,9 +663,6 @@ describe.each(SHAPES)(
   }
 );
 
-// The failure path, which every property above assumes never runs. Round one's
-// review found this shape unguarded: a refund that throws used to discard the
-// grant error, surface its own, and record nothing.
 /**
  * The edition cap, which is the consequence the component row actually has.
  *
@@ -684,16 +689,23 @@ describe('purchaseCosmeticPack — what a purchase records as sold', () => {
   ];
 
   it('records no sale of a member it withheld, leaving that edition cap untouched', async () => {
-    ownedFindMany.mockResolvedValue([]);
     await purchaseCosmeticPack({
       userId: BUYER,
       shopItem: shopItem(6300, members.length),
       members,
       stickersEnabled: true,
     });
-    const recorded: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
-      (row: { cosmeticId: number }) => row.cosmeticId
-    );
+    expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
+    const rows: { cosmeticId: number; unitAmount: number; buzzTransactionId: string }[] =
+      createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+    const recorded = rows.map((row) => row.cosmeticId);
+    // The row is only counted as stock while its `purchase` relation resolves,
+    // so a transaction id pointing anywhere else silently stops every sale
+    // counting — and the attribution is what a takedown reconciles against.
+    for (const row of rows) {
+      expect(row.buzzTransactionId).toMatch(/^cosmetic-pack-/);
+      expect(row.unitAmount).toBeGreaterThan(0);
+    }
     // Both halves: the withheld member absent, and the paid one still present —
     // recording nothing at all would satisfy the first on its own.
     expect(recorded).not.toContain(SELF_AUTHORED);
@@ -701,6 +713,9 @@ describe('purchaseCosmeticPack — what a purchase records as sold', () => {
   });
 });
 
+// The failure path, which every property above assumes never runs. Round one's
+// review found this shape unguarded: a refund that throws used to discard the
+// grant error, surface its own, and record nothing.
 describe('purchaseCosmeticPack — when the grant fails', () => {
   const members = [
     mkMember(),
