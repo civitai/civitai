@@ -187,6 +187,14 @@ every measured number are in [paid-model-loading-coverage.md](paid-model-loading
       first" — `versions.generatorLoaded`, synced every 5 minutes by
       `sync-generator-loaded-resources` — so what is left is the display decision, not the data. Load
       state in search was deferred; this is the surface that deferral now collides with.
+  - [x] **Searchable before the cutover, without moving `canGenerate`.** The models index also
+        carries `canGenerateNext` (model level) and `versions.canGenerateNext`, the same
+        `isGenerationEligible` rule over `GenerationCoverageNext`. Query
+        `canGenerate = true OR canGenerateNext = true`: everything generatable today still matches
+        on `canGenerate`, so only the ~12,900 models that GAIN coverage need re-queueing, instead of
+        rebuilding all ~705K documents. Transitional — delete both fields at the cutover, when
+        `canGenerate` answers this on its own. Preview environments point at production, so this is
+        also what makes a preview accurate.
 - [x] **Check the public API field.** `/api/v1/model-versions/mini/[id]` now selects `covered` from
       `GenerationCoverageNext` — done 2026-09-08, because the orchestrator reads it for `CanGenerate`
       and on the live view refused every load worth making (verified on version 3040959).

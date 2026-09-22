@@ -178,10 +178,23 @@ type Model = Prisma.ModelGetPayload<{
 }>;
 type PullDataResult = {
   models: Model[];
+  /** Version ids `GenerationCoverageNext` covers — see `canGenerateNext` in transformData. */
+  coveredNext: Set<number>;
   tags: Awaited<ReturnType<typeof modelTagCache.fetch>>;
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+// Raw SQL because `GenerationCoverageNext` is deliberately absent from schema.full.prisma — the
+// cutover replaces `GenerationCoverage`'s body with it rather than adding a second Prisma model.
+async function getCoveredNextVersionIds(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return new Set<number>();
+  const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
+    SELECT "modelVersionId" FROM "GenerationCoverageNext"
+    WHERE "modelVersionId" = ANY(${modelVersionIds}::int[])
+  `;
+  return new Set(rows.map((r) => r.modelVersionId));
+}
+
 type VersionMetricRow = {
   generationCount: number;
   downloadCount: number;
@@ -205,7 +218,7 @@ function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
   };
 }
 
-const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
+const transformData = async ({ models, tags, cosmetics, coveredNext, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -257,14 +270,19 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const canGenerate = modelVersions.some((x) =>
+      const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
         isGenerationEligible({
-          covered: x.generationCoverage?.covered,
+          covered,
           baseModel: x.baseModel,
           modelType: model.type,
           flags: x.flags,
-        })
-      );
+        });
+
+      const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+      // What `canGenerate` becomes when GenerationCoverageNext replaces the live view — the same
+      // rule over the staged coverage. Transitional: delete it, and its filterable entries, at the
+      // cutover, when `canGenerate` answers this on its own.
+      const canGenerateNext = modelVersions.some((x) => eligible(x, coveredNext.has(x.id)));
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
@@ -313,6 +331,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate: isGenerationEligible({
               covered: generationCoverage?.covered,
+              baseModel: x.baseModel,
+              modelType: model.type,
+              flags: x.flags,
+            }),
+            canGenerateNext: isGenerationEligible({
+              covered: coveredNext.has(x.id),
               baseModel: x.baseModel,
               modelType: model.type,
               flags: x.flags,
@@ -366,6 +390,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         hiddenMetrics: hidden,
         canGenerate,
+        canGenerateNext,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
       };
@@ -437,13 +462,17 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
     modelTagCache.fetch(batchIds),
   ]);
   const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
-  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const [imagesCache, coveredNext] = await Promise.all([
+    imagesForModelVersionsCache.fetch(modelVersionIds),
+    getCoveredNextVersionIds(modelVersionIds),
+  ]);
   const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
   const { indexReadyRecords, indexRecordsWithImages } = await transformData({
     models,
     tags,
     cosmetics,
+    coveredNext,
     images,
   });
 
@@ -562,6 +591,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
 
     const results: PullDataResult = {
       models,
+      coveredNext: new Set(),
       tags: {},
       cosmetics: {},
       images: [],
@@ -593,6 +623,12 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
       const versionBatches = chunk(modelVersionIds, 500);
       for (const versionBatch of versionBatches) {
+        tasks.push(async () => {
+          logger(`PullData :: Pull staged coverage`, batchLogKey);
+          const covered = await getCoveredNextVersionIds(versionBatch);
+          for (const id of covered) results.coveredNext.add(id);
+        });
+
         tasks.push(async () => {
           logger(`PullData :: Pull images`, batchLogKey);
           const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
