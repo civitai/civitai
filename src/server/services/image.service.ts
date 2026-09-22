@@ -19,7 +19,7 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
-import { CURSOR_SOURCE, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
+import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
 import {
   feedFliptContext,
   feedHydrateQuery,
@@ -2802,7 +2802,7 @@ export const getAllImagesIndex = async (
       }
       if (served.reason === DEEP_OFFSET)
         throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
-      if (served.reason === CURSOR_SOURCE)
+      if (served.reason === CURSOR_UNPARSED)
         throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
     }
   }

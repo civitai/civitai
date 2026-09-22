@@ -127,9 +127,13 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q('Oldest').get('before')).toBeNull();
   });
 
-  it('refuses a response source word sent back as the cursor', () => {
-    for (const cursor of ['feed', 'meili', 'db'])
-      expect(mapSearchInputToFeedQuery({ ...base, cursor })).toEqual({ ok: false, reason: 'cursor:source' });
+  it('names any cursor it cannot read, after every other reason', () => {
+    for (const cursor of ['feed', 'meili', -1, new Date(0), 'abc|1'])
+      expect(mapSearchInputToFeedQuery({ ...base, cursor })).toEqual({ ok: false, reason: 'cursor:unparsed' });
+    expect(mapSearchInputToFeedQuery({ ...base, cursor: 'feed', sort: 'Random' })).toEqual({
+      ok: false,
+      reason: 'sort:Random',
+    });
   });
 
   it('pages a bare offset cursor like an offset|entry one, without freezing the set', () => {

@@ -127,11 +127,13 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     expect(query.get('excludedTags')?.split(',')).toContain('676575');
   });
 
-  it('refuses a source word as the cursor instead of restarting the page from the search index', async () => {
+  it('refuses a cursor it cannot read instead of restarting the page from the search index', async () => {
     primaryOn.mockReturnValue(true);
-    await expect(getAllImagesIndex({ ...request(), cursor: 'feed' })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
+    for (const cursor of ['feed', -1]) {
+      await expect(getAllImagesIndex({ ...request(), cursor })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    }
     expect(fetchFeedPrimary).not.toHaveBeenCalled();
   });
 

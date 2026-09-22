@@ -15,7 +15,7 @@ import {
 
 export const MAX_OFFSET = 20_000;
 export const DEEP_OFFSET = `offset>${MAX_OFFSET}`;
-export const CURSOR_SOURCE = 'cursor:source';
+export const CURSOR_UNPARSED = 'cursor:unparsed';
 const CONFIG_TTL_MS = 15_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
@@ -156,23 +156,6 @@ export function mapSearchInputToFeedQuery(
     if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
   }
 
-  let offset = 0;
-  let before: number | undefined;
-  const cursor = input.cursor;
-  const feedCursor = parseFeedCursor(cursor);
-  if (feedCursor) {
-    if (mode !== 'primary') return skip('cursor:feed');
-  } else if (typeof cursor === 'string' && cursor) {
-    // One client sends the response's `source` back as the cursor; the search path reads
-    // it as a restart, so it refetched page 1 on every request.
-    if (/^(feed|meili|db)$/.test(cursor)) return skip(CURSOR_SOURCE);
-    const m = /^(\d{1,12})(?:\|(\d{1,15}))?$/.exec(cursor);
-    if (!m) return skip('cursor:unparsed');
-    offset = Number(m[1]);
-    if (m[2]) before = Math.floor(Number(m[2]) / 60_000) * 60_000;
-  } else if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) offset = cursor;
-  else if (cursor) return skip('cursor:unparsed');
-  if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
 
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
@@ -202,6 +185,22 @@ export function mapSearchInputToFeedQuery(
       ? 'scheduled'
       : undefined;
   if (visibility && !userId) return skip(`flag:${visibility}:no-user`);
+  // Parsed last: a cursor the feed cannot read is refused, so every reason the request
+  // could not be served anyway must come first.
+  let offset = 0;
+  let before: number | undefined;
+  const cursor = input.cursor;
+  const feedCursor = parseFeedCursor(cursor);
+  if (feedCursor) {
+    if (mode !== 'primary') return skip('cursor:feed');
+  } else if (typeof cursor === 'string' && cursor) {
+    const m = /^(\d{1,12})(?:\|(\d{1,15}))?$/.exec(cursor);
+    if (!m) return skip(CURSOR_UNPARSED);
+    offset = Number(m[1]);
+    if (m[2]) before = Math.floor(Number(m[2]) / 60_000) * 60_000;
+  } else if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) offset = cursor;
+  else if (cursor) return skip(CURSOR_UNPARSED);
+  if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
   if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
 
   const params = new URLSearchParams();

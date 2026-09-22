@@ -3,7 +3,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
-  CURSOR_SOURCE,
+  CURSOR_UNPARSED,
   DEEP_OFFSET,
   encodeFeedCursor,
   fetchFeedAnswer,
@@ -141,9 +141,9 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
-    const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_SOURCE;
+    const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
-    if (!rejected) logUnmapped(reasonLabel(mapping.reason), input);
+    if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;
