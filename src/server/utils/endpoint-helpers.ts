@@ -218,11 +218,32 @@ function withApiMetrics(
   });
 }
 
+/**
+ * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
+ * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
+ * reachable without a working credential — and a bare key added to a ConfigMap arrives as an empty
+ * string, so that is a configuration typo rather than a decision.
+ *
+ * Emptiness is tested on a trimmed copy; the comparison below trims neither side, or two distinct
+ * configured secrets would collapse into one.
+ *
+ * 503 rather than 401 so an operator reading logs sees a deployment problem rather than a caller with
+ * a bad token, and so `withApiMetrics` records it as a 5xx.
+ *
+ * apps/moderator/src/lib/server/webhook-endpoint.ts applies the same blank-secret rule and status
+ * code, but trims both the secret and the presented token — so a secret carrying a trailing newline
+ * authenticates there and not here. Not a template for this file beyond the blank case.
+ */
 export function TokenSecuredEndpoint(
   token: string,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!token || token.trim() === '') {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
     if (req.query.token !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
