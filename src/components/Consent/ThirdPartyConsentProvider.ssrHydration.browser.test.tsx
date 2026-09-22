@@ -400,10 +400,10 @@ function hydrationConsoleErrors() {
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
  * this one. The constants' header states the resulting invariant; it is not restated here, so
  * there is one copy to keep true, and `PRE_WAIT_BUDGET_MS`'s own docblock has how that term is
- * sized and measured. `14_000` is the trap: it is strictly under the project timeout, it
- * satisfies any formula that ignores pre-wait, and it leaves too little margin — so the first
- * load spike in that `renderToString` restores exactly the bare `Test timed out` this budget
- * exists to remove.
+ * sized and measured. `14_000` is the trap: it satisfies the naive check
+ * `BEACON_TIMEOUT_MS < PROJECT_TIMEOUT_MS` and leaves too little margin — so the first load
+ * spike in that `renderToString` restores exactly the bare `Test timed out` this budget exists
+ * to remove. (The margin term alone rejects it; that is what the term is for.)
  *
  * 🔴 `MIN_MARGIN_MS` IS WHY THIS IS NOT WRITTEN `<=` ALONE — at equality the worst case lands
  * exactly ON the deadline and the deadline wins. See that constant's docblock for the measured
