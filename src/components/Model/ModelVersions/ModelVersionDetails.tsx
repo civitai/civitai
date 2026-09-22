@@ -734,7 +734,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               <Card withBorder p="md">
                 <Stack gap="xs">
                   {canGenerate ? (
-                    <div className="relative flex w-full">
+                    <div className="relative flex w-full items-stretch">
                       <GenerateButton
                         versionId={version.id}
                         modelId={model.id}
@@ -754,6 +754,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         }
                         onPurchase={() => onPurchase('generation')}
                         fullWidth
+                        h="auto"
                       />
                       {features.imageGeneration && (
                         <LoadedCornerBadge loaded={version.generatorLoaded} />
