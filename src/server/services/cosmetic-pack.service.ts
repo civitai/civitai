@@ -12,6 +12,7 @@ import {
   computeCreatorShopSplit,
   computePackAmountDue,
   isConsumableCosmeticType,
+  isSelfAuthoredPackMember,
 } from '~/server/schema/creator-shop.schema';
 import {
   createBuzzTransaction,
@@ -87,7 +88,8 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
   });
   // A pack sale never writes a purchase row against the member's own listing, so
   // counting only those would let limited members be oversold through bundles.
-  // Refunded components released their grant, so they release their stock too.
+  // Refunded components release their stock. A row is a sale, not a delivery —
+  // a member the buyer authored is recorded and withheld, and still counts.
   const packSales = await dbRead.userCosmeticShopPurchaseCosmetic.groupBy({
     by: ['cosmeticId'],
     where: { cosmeticId: { in: cosmeticIds }, purchase: { refunded: false } },
@@ -212,7 +214,8 @@ export const assertPackPurchasable = async ({
 };
 
 /**
- * Grants every member to the buyer.
+ * Grants the members it is given — which is not every member of the pack. The
+ * caller decides what the buyer was charged for; see `grantable`.
  *
  * Two behaviours, per D16 and D23. A consumable the buyer already holds is not a
  * duplicate — the purchase adds uses, so it lands as `remaining + n` on the
@@ -472,13 +475,22 @@ export const purchaseCosmeticPack = async ({
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
-  // A pack can price to zero, and not only through the discount: `selfAuthored`
-  // is computed over the members the buyer created, so a pack made entirely of
-  // someone else's listings of the buyer's own work reaches zero with no
-  // discount involved at all. What such a purchase delivers is free repeat
-  // top-ups of the buyer's own consumables, and every repeat also consumes a
-  // member's remaining quantity — which is what makes third-party packs
-  // containing that member refuse. Nothing to pay means nothing left to buy.
+  // What the buyer is charged for, which bounds what they receive without
+  // equalling it — an already-owned durable is in here and is still skipped. A
+  // member they authored was subtracted from the price, so granting it would
+  // hand over a consumable balance nobody paid for, repeatable forever since an
+  // uncapped listing never sells out.
+  const grantable = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
+
+  // Both fire on an all-own pack priced at the floor, so this one goes first: an
+  // empty `grantable` names the input, while a zero price is an outcome several
+  // different inputs reach. The buyer may hold none of these members — telling
+  // them they already own it all is false in the case it is most likely to hit.
+  if (!grantable.length)
+    throw throwBadRequestError(
+      "Everything in this pack is your own work, so there's nothing here for you to buy"
+    );
+
   if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
 
   // Random rather than a timestamp: a pack is repeatable (a consumable member
@@ -541,7 +553,7 @@ export const purchaseCosmeticPack = async ({
         })),
       });
 
-      await grantPackMembers({ tx, userId, members, claimKey: transactionId });
+      await grantPackMembers({ tx, userId, members: grantable, claimKey: transactionId });
 
       await tx.cosmeticShopItem.update({
         where: { id: shopItem.id },
@@ -677,6 +689,8 @@ export const purchaseCosmeticPack = async ({
   return {
     transactionId,
     // Names, not ids: the completion modal tells the buyer what they just got.
-    granted: members.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
+    // The paid-for set, not the delivered one — a durable they already owned is
+    // still listed here, as it was before packs withheld anything.
+    granted: grantable.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
   };
 };
