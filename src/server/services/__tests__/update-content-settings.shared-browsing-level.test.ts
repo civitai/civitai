@@ -15,8 +15,9 @@ vi.mock('~/server/auth/session-invalidation', () => ({
   invalidateSession: vi.fn(async () => undefined),
 }));
 
+import { refreshSession } from '~/server/auth/session-invalidation';
+import { updateContentSettingsSchema } from '~/server/schema/user.schema';
 import { updateContentSettings } from '~/server/services/user.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 
 const USER_ID = 4242;
 const NARROWED = 1 | 2;
@@ -30,6 +31,11 @@ function rawStatements() {
     ...dbMock.dbWrite.$queryRawUnsafe.mock.calls,
   ];
   return calls.map((args) => JSON.stringify(args));
+}
+
+/** The mutation as the router runs it: the client's payload, parsed, then the service. */
+function mutate(payload: Record<string, unknown>) {
+  return updateContentSettings({ userId: USER_ID, ...updateContentSettingsSchema.parse(payload) });
 }
 
 beforeEach(() => {
@@ -46,42 +52,35 @@ beforeEach(() => {
 // without a reader on the client AND on the server.
 describe('updateContentSettings: one browsing level on every domain', () => {
   it.each(['red', 'blue', 'green', undefined] as const)(
-    'a level set on %s is written to the User column',
+    'a level set on %s is written to the User column and the session is refreshed',
     async (domain) => {
-      await updateContentSettings({ userId: USER_ID, browsingLevel: NARROWED, domain });
+      await mutate({ browsingLevel: NARROWED, domain });
 
       expect(dbMock.dbWrite.user.update).toHaveBeenCalledTimes(1);
       expect(dbMock.dbWrite.user.update.mock.calls[0][0]).toMatchObject({
         where: { id: USER_ID },
         data: { browsingLevel: NARROWED },
       });
+      // The session is built from that column; without the refresh the cached session keeps the
+      // old level until it expires, which is the same "did not stick" from another cause.
+      expect(refreshSession).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(refreshSession).mock.calls[0][0]).toBe(USER_ID);
     }
   );
 
-  it('the level a server-rendered path resolves after a change on red is the new one', async () => {
-    await updateContentSettings({ userId: USER_ID, browsingLevel: NARROWED, domain: 'red' });
+  it('a level-only change on red writes nothing into settings', async () => {
+    await mutate({ browsingLevel: NARROWED, domain: 'red' });
 
-    // What the session carries after a reload is the column this write targeted.
-    const written = dbMock.dbWrite.user.update.mock.calls[0]?.[0]?.data?.browsingLevel;
-    expect(
-      getServerBrowsingLevel({
-        canViewNsfw: true,
-        user: { showNsfw: true, browsingLevel: written as number | undefined },
-      })
-    ).toBe(NARROWED);
+    expect(rawStatements()).toEqual([]);
   });
 
-  it('writes no red-only copy of the level into settings', async () => {
-    await updateContentSettings({
-      userId: USER_ID,
-      browsingLevel: NARROWED,
-      allowAds: false,
-      domain: 'red',
-    });
+  it('CONTROL: a settings key in the same call IS observed in settings', async () => {
+    await mutate({ browsingLevel: NARROWED, allowAds: false, domain: 'red' });
 
     const statements = rawStatements();
-    // The settings blob IS written for allowAds, so the absence below is observable.
     expect(statements.some((s) => s.includes('allowAds'))).toBe(true);
-    expect(statements.filter((s) => s.includes('redBrowsingLevel'))).toEqual([]);
+    expect(
+      statements.filter((s) => s.includes('redBrowsingLevel') || s.includes('domain'))
+    ).toEqual([]);
   });
 });

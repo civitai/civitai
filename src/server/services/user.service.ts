@@ -3026,9 +3026,6 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
-  // One browsing level on every domain. Red used to keep its own copy in
-  // settings.redBrowsingLevel, which nothing read, so a change made on red never stuck.
-  domain: _domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
   if (

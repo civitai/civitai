@@ -1,15 +1,26 @@
 -- The browsing level is one column on every domain. Fold any level still held in
--- settings.redBrowsingLevel into it without widening either stored choice, then drop the key.
--- Where the two share no bit, the red choice is kept; an empty red level is just dropped. Data only; apply by hand.
-UPDATE "User"
+-- settings.redBrowsingLevel into the column, then drop the key.
+--   - The new level is the intersection of the column and the red level, so a narrowing made on
+--     red is kept and nothing the column excluded is switched on.
+--   - A red level of 0 (every level deselected) counts as PG, which is what the client showed.
+--   - If the two share no bit, the red level wins.
+-- Data only; apply by hand AFTER the code that stops writing the key has deployed.
+UPDATE "User" u
 SET
   "browsingLevel" = CASE
-    WHEN ("browsingLevel" & (settings->>'redBrowsingLevel')::int) <> 0
-      THEN "browsingLevel" & (settings->>'redBrowsingLevel')::int
-    WHEN (settings->>'redBrowsingLevel')::int > 0
-      THEN (settings->>'redBrowsingLevel')::int
-    ELSE "browsingLevel"
+    WHEN (u."browsingLevel" & r.level) <> 0 THEN u."browsingLevel" & r.level
+    ELSE r.level
   END,
-  settings = settings - 'redBrowsingLevel'
-WHERE settings ? 'redBrowsingLevel'
-  AND jsonb_typeof(settings->'redBrowsingLevel') = 'number';
+  settings = u.settings - 'redBrowsingLevel'
+FROM (
+  SELECT
+    id,
+    CASE
+      WHEN (settings->>'redBrowsingLevel')::int > 0 THEN (settings->>'redBrowsingLevel')::int
+      ELSE 1
+    END AS level
+  FROM "User"
+  WHERE settings ? 'redBrowsingLevel'
+    AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
+) r
+WHERE u.id = r.id;

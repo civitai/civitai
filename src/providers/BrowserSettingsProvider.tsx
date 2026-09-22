@@ -103,10 +103,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
           // Cancel any in-flight getSettings refetch so a stale response
           // (e.g. triggered by window focus) can't overwrite the mutation's cache update.
           queryUtils.user.getSettings.cancel();
-          mutate({
-            ...changed,
-            domain,
-          });
+          mutate(changed);
           snapshotRef.current = curr;
         }
       });
