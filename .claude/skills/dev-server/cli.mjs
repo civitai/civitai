@@ -536,8 +536,8 @@ function describeRun(run) {
     lines.push(`Run ${run.id} started (nothing ahead of it).`);
   } else if (run.paused) {
     lines.push(
-      `Run ${run.id} queued at position ${run.position}, but the queue is PAUSED (concurrency 0).`,
-      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs test config 1`
+      `Run ${run.id} queued at position ${run.position}, but its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0).`,
+      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs ${run.resumeCommand ?? 'test config 1'}`
     );
   } else {
     lines.push(
@@ -605,7 +605,9 @@ async function cmdTestWait(id) {
       lastStatus = run.status;
     }
     if (run.paused && !announcedPause && !isTerminalStatus(run.status)) {
-      console.log('queue is PAUSED (concurrency 0) — nothing will start until it is raised');
+      console.log(
+        'queue is PAUSED (the unit lane is at 0) — nothing will start until it is raised'
+      );
       announcedPause = true;
     }
 

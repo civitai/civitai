@@ -2673,10 +2673,9 @@ async function main() {
               // What the lane's limit is WORTH, which is not what it is set to. A saturating lane
               // raised past its group budget admits nothing extra, and a caller who read only its
               // own number would be told a width the queue will never give them.
-              effectiveLimit: Math.min(
-                testQueue.concurrencyFor(kind),
-                testQueue.groupConcurrencyFor(group)
-              ),
+              // The queue's own method, not a second copy of the rule: `pausedFor` is derived
+              // from it, so a hand-computed duplicate here would drift from what the queue does.
+              effectiveLimit: testQueue.effectiveLimitFor(kind),
             };
           }
           const groups = {};

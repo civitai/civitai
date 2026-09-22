@@ -144,10 +144,27 @@ describe('a flag is not a target', () => {
     }
   );
 
-  it('still drops the default target when a real path is named beside a flag', () => {
-    const { argv } = directCommandFor('lint', ['--fix', 'src/utils/date-helpers.ts'])!;
+  /**
+   * 🔴 A flag's VALUE is a bare word and looks exactly like a path. `--max-warnings 0` cost a
+   * whole round: the first fix asked whether ANY argument was a non-flag, `0` qualified, the
+   * default target was dropped and eslint again linted nothing and exited 0. So the default is
+   * dropped only when EVERY argument is a bare word, which cannot be a flag's value because there
+   * is no flag. If you are here to make `--fix path/to/file` narrow: that needs a real argv
+   * parser, and getting it wrong is silent.
+   */
+  it.each([
+    [['--max-warnings', '0']],
+    [['-f', 'json']],
+    [['--ext', '.ts']],
+    [['--fix', 'src/utils/date-helpers.ts']],
+  ])('keeps the default target when %j contains a flag', (argv) => {
+    expect(directCommandFor('lint', argv)!.argv).toContain('src/');
+  });
+
+  it('drops the default target only when every argument is a target', () => {
+    const { argv } = directCommandFor('lint', ['src/a.ts', 'src/b.ts'])!;
     expect(argv).not.toContain('src/');
-    expect(argv).toContain('src/utils/date-helpers.ts');
+    expect(argv).toEqual(expect.arrayContaining(['src/a.ts', 'src/b.ts']));
   });
 });
 
@@ -165,5 +182,8 @@ describe('the vitest lanes run what they say', () => {
     ['component', ['scripts/test-component-run.mjs']],
   ])('%s', (kind, expected) => {
     expect(DIRECT_COMMANDS[kind].args).toEqual(expected);
+    // The binary too: pinning only the arguments leaves `pnpm` -> `npx`, or component's `node`
+    // -> a bare vitest call, entirely invisible.
+    expect(DIRECT_COMMANDS[kind].cmd).toBe(kind === 'component' ? 'node' : 'pnpm');
   });
 });

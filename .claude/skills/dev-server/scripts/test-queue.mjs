@@ -633,6 +633,30 @@ export class TestQueue {
     return Math.min(this.limits[lane], this.groupLimits[RUN_KINDS[lane].group]);
   }
 
+  /**
+   * WHICH knob stopped this lane, or null when nothing did. A pause message that names the wrong
+   * one is worse than none: `test config 1` raises the LANE, so telling someone that while their
+   * group sits at 0 leaves the run wedged and reprints the same advice.
+   */
+  pausedByFor(kind) {
+    const lane = normalizeKind(kind);
+    if (this.limits[lane] === 0) return 'lane';
+    if (this.groupLimits[RUN_KINDS[lane].group] === 0) return 'group';
+    return null;
+  }
+
+  /** The exact command that unpauses this lane, or null when it is not paused. */
+  resumeCommandFor(kind) {
+    const lane = normalizeKind(kind);
+    const by = this.pausedByFor(lane);
+    if (by === null) return null;
+    if (by === 'lane') {
+      const flag = RUN_KINDS[lane].flag;
+      return flag ? `test config ${flag} 1` : 'test config 1';
+    }
+    return `test config ${RUN_GROUPS[RUN_KINDS[lane].group].flag} 1`;
+  }
+
   /** The UNIT lane, for the callers that predate lanes. Ask `pausedFor` for any other. */
   get paused() {
     return this.pausedFor(DEFAULT_KIND);
@@ -1010,9 +1034,11 @@ export class TestQueue {
       args: run.args,
       kind: run.kind,
       // Exact, not estimated, and LANE-SCOPED: the index among queued runs of this kind. 0 means
-      // "not waiting behind anyone IN ITS OWN LANE" — which is no longer the only thing that can
-      // delay it. A sibling lane sharing this one's group can hold it at position 0, so read
-      // `effectiveLimit` beside this rather than `concurrency` alone.
+      // "not waiting behind anyone IN ITS OWN LANE", which is no longer the only thing that can
+      // delay it — a sibling lane sharing this one's group can hold it at position 0 while its own
+      // lane is empty. Nothing in this view reports that: `effectiveLimit` compares CONFIGURED
+      // limits and says nothing about a group that is merely occupied. Read `groupRunning` beside
+      // it, which is the occupancy.
       position: this.positionOf(id),
       queueLength: this.queuedFor(run.kind),
       running: this.runningFor(run.kind),
@@ -1022,6 +1048,14 @@ export class TestQueue {
       // the binding constraint, and only this one predicts whether the run can start.
       effectiveLimit: this.effectiveLimitFor(run.kind),
       group: RUN_KINDS[run.kind].group,
+      // Which limit is at 0, and the command that raises THAT one. A run held by a merely busy
+      // group is not paused and reports null for both.
+      pausedBy: this.pausedByFor(run.kind),
+      resumeCommand: this.resumeCommandFor(run.kind),
+      // How many of this run's GROUP budget is in use. A queued run whose own lane is empty is
+      // waiting on this number, and on nothing else this view reports.
+      groupRunning: this.runningForGroup(RUN_KINDS[run.kind].group),
+      groupLimit: this.groupConcurrencyFor(RUN_KINDS[run.kind].group),
       maxWorkers: this.maxWorkers,
       cacheMode: this.cacheMode,
       paused: this.pausedFor(run.kind),

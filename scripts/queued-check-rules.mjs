@@ -63,10 +63,18 @@ export const DIRECT_COMMANDS = {
 export function directCommandFor(kind, args = []) {
   const direct = DIRECT_COMMANDS[kind];
   if (!direct) return null;
-  // 🔴 A POSITIONAL, not merely an argument. Swapping on `args.length` meant `pnpm run lint --fix`
-  // dropped `src/` and handed eslint nothing but flags - which lints ZERO files and exits 0, with
-  // no output. A flag is not a target, and a green run that checked nothing is worse than a red.
-  const named = args.some((a) => !String(a).startsWith('-'));
+  // 🔴 EVERY argument must be a target, not merely one of them. Two rounds of this:
+  //
+  //   `args.length`                  -> `pnpm run lint --fix` dropped `src/` and handed eslint
+  //                                     only flags, which lints ZERO files and exits 0.
+  //   `args.some(a => !flag(a))`     -> `pnpm run lint --max-warnings 0` did the same, because
+  //                                     `0` is a flag's VALUE and looks exactly like a path.
+  //
+  // Classifying argv is how both of those happened, so this does not try: the default target is
+  // dropped only when the caller passed nothing but bare words, which cannot be a flag's value
+  // because there is no flag. Anything with a flag in it keeps the default target and lints more
+  // than asked, which is slow and correct - the failure this replaces was fast and wrong.
+  const named = args.length > 0 && args.every((a) => !String(a).startsWith('-'));
   const base = named && direct.narrowedArgs ? direct.narrowedArgs : direct.args;
   return { cmd: direct.cmd, argv: [...base, ...args] };
 }

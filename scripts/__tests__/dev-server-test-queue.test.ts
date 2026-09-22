@@ -172,6 +172,59 @@ describe('dev-server test queue', () => {
   });
 
   /**
+   * 🔴 The light lane overtakes a run that is ALREADY QUEUED, not merely one that never arrived.
+   * Nothing pinned this: the other overtake test requests its typecheck against an empty queue, so
+   * a `pump` that only ever considers `this.order[0]` passed every test in this file while
+   * destroying the property the lanes exist for — an edit/verify loop waiting behind someone
+   * else's 500-second suite.
+   */
+  it('starts a light run that arrived AFTER a saturating run was already queued', () => {
+    const queue = build({ groupConcurrency: { saturating: 1, light: 2 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const blocked = queue.request({ worktree: '/wt/b' });
+    const check = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+
+    expect(blocked.status).toBe('queued');
+    expect(check.status).toBe('running');
+  });
+
+  /**
+   * 🔴 Busy is not paused. A `pausedFor` that also counted a FULL group would make the waiter
+   * announce "nothing will start until it is raised" on every ordinary wait, which is the kind of
+   * false alarm people learn to ignore — and then miss the real one.
+   */
+  it('does not call a run paused just because its group is occupied', () => {
+    const queue = build({ groupConcurrency: { saturating: 1 } });
+    queue.request({ worktree: '/wt/a' });
+    const waiting = queue.request({ worktree: '/wt/b', kind: 'component' });
+
+    expect(waiting.status).toBe('queued');
+    expect(waiting.paused).toBe(false);
+    expect(waiting.pausedBy).toBeNull();
+    expect(waiting.groupRunning).toBe(1);
+  });
+
+  /**
+   * 🔴 A pause message must name the knob that actually unpauses it. `test config 1` raises the
+   * unit LANE; printing that while the GROUP sits at 0 leaves the run wedged and reprints the same
+   * advice. These assert the command, not merely that some command was produced.
+   */
+  it('names the group when the group is what stopped it', () => {
+    const queue = build({ groupConcurrency: { saturating: 0 } });
+    const run = queue.request({ worktree: '/wt/a' });
+    expect(run.pausedBy).toBe('group');
+    expect(run.resumeCommand).toBe('test config --saturating 1');
+  });
+
+  it('names the lane, with its own flag, when the lane is what stopped it', () => {
+    const queue = build({ concurrency: { component: 0 } });
+    const run = queue.request({ worktree: '/wt/a', kind: 'component' });
+    expect(run.pausedBy).toBe('lane');
+    expect(run.resumeCommand).toBe('test config --component 1');
+  });
+
+  /**
    * 🔴 The saturating group holds the lanes that each want most of the machine. If you are here
    * because you moved one of these into `light`: that is the 31-vitest-workers-plus-12-Chromium
    * pair CLAUDE.md names, and arbitrating it is what this queue exists for.
