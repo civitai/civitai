@@ -193,10 +193,17 @@ const HYDRATION_RE =
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 /**
- * 🔴 SEVERAL SECONDS under the `component` project's effective test timeout — not merely
- * "strictly under", which is necessary and NOT sufficient. See `hydrateInto` for the invariant
- * and for what goes wrong at, say, `14_000`. Both sides of that inequality are pinned by the
- * guard test below, against the live config rather than against this comment.
+ * The beacon wait's own budget. It must clear the project's per-test deadline by
+ * `MIN_MARGIN_MS` once `PRE_WAIT_BUDGET_MS` is accounted for; `hydrateInto` has the invariant
+ * and what goes wrong at, say, `14_000`.
+ *
+ * 🔴 WHO PINS WHAT — three operands, two mechanisms, and this one is the FREE VARIABLE.
+ *   - `PROJECT_TIMEOUT_MS` — pinned by the guard test, against the live resolved config.
+ *   - `PRE_WAIT_BUDGET_MS` — pinned by `afterAll`, against what this run actually measured.
+ *   - `BEACON_TIMEOUT_MS` (this one) — pinned by NOTHING directly. It is the quantity the other
+ *     two exist to constrain, and the margin assertion is the only thing bounding it.
+ * Stated here once, because three earlier versions of this comment each claimed a coverage the
+ * mechanisms did not have. Found by the `civitai-test-review` lane, three rounds running.
  */
 const BEACON_TIMEOUT_MS = 10_000;
 
@@ -209,8 +216,14 @@ const BEACON_TIMEOUT_MS = 10_000;
  * browser-mode default. The root `CLAUDE.md` states the same fact in prose ("browser-mode
  * `testTimeout` defaults to 15 s, and the `component` project does not override it"), and
  * `src/components/AppBlocks/PageBlockHost.browser.test.tsx` reached it independently and sizes
- * its own poll budget against it — so this is the fifth site holding the number and the first
- * one a machine can check.
+ * its own poll budget against it, as does
+ * `src/components/Account/PlacementSpaceSection.freeSlots.browser.test.tsx` (its argument for
+ * reading an attribute instead of locating by string is sized against this budget, so a downward
+ * move breaks its reasoning too). There are more — the value is also in the RCA those were
+ * distilled from — so treat this list as a starting point, not a census: the point is that a
+ * population exists and that THIS is the only copy a machine checks. ⚠️ When sweeping for it,
+ * `src/components/AppBlocks/pageBlockHostLogic.ts`'s `TOKEN_WAIT_TIMEOUT_MS` is a PRODUCT
+ * timeout that merely shares the value; a `15_000` regex mixes the two.
  *
  * It is checkable because the guard test asserts this constant EQUALS
  * `server.config.testTimeout`, which is the component project's own resolved value. That closes
@@ -227,8 +240,9 @@ const PROJECT_TIMEOUT_MS = 15_000;
 /**
  * Budget for everything that runs on the TEST's clock before the beacon wait starts —
  * `renderToString` of the full Mantine tree, the `toContain`s, an `innerHTML` parse and the
- * `hydrateRoot` call. `beforeEach`/`afterEach` are excluded correctly: vitest charges those to a
- * separate `hookTimeout`.
+ * `hydrateRoot` call. `beforeEach`/`afterEach` do not count against the DEADLINE — vitest charges
+ * those to a separate `hookTimeout` — but the ledger's clock starts inside `beforeEach`, so its
+ * tail is deliberately included by a hair. Over-counting is the safe direction for a budget.
  *
  * 🔴 A BUDGET, AND MEASURED AGAINST — not an assertion about the world. The ledger below reads
  * **~5 ms** on a quiet box; the budget is 3 s, i.e. ~600x headroom, which is deliberate because
@@ -240,6 +254,13 @@ const PROJECT_TIMEOUT_MS = 15_000;
  * the largest pre-wait this run actually observed.
  */
 const PRE_WAIT_BUDGET_MS = 3_000;
+
+/**
+ * "Several seconds", as a NUMBER. The margin assertion was an adjective in prose for two rounds
+ * and a `<=` in code, which admitted the exact tie `hydrateInto` calls fatal. Any edit that eats
+ * this margin has to change this line deliberately.
+ */
+const MIN_MARGIN_MS = 2_000;
 
 /** Largest pre-wait observed this run, recorded in `hydrateInto` and checked in `afterAll`. */
 let maxPreWaitMs = 0;
@@ -283,6 +304,12 @@ beforeEach(() => {
  * ⚠️ IT SURFACES AS A FAILED SUITE, NOT A FAILED TEST. Verified by starving the budget to 1 ms:
  * exit code 1 and `Test Files 1 failed`, while the summary still reads `Tests 5 passed (5)`.
  * Read the file line, not the test line.
+ *
+ * ⚠️ AND IT IS VACUOUS UNDER A `-t` FILTER that excludes every hydrating test: `maxPreWaitMs`
+ * stays 0 and `0 <= 3000` passes, indistinguishable from a run that measured something. Not
+ * closed with an `expect(maxPreWaitMs).toBeGreaterThan(0)`, which would break legitimate
+ * filtered runs; CI runs the file whole, so the exposure is local-only. Stated rather than
+ * guarded, on purpose.
  */
 afterAll(() => {
   expect(
@@ -337,12 +364,13 @@ function hydrationConsoleErrors() {
  * default is deliberately raised; `CLAUDE.md`'s never-widen-a-budget rule is scoped to states
  * that DELETE themselves, and does not reach an absorbing arrival state like this one.
  *
- * 🔴 AND IT IS SET BELOW THE ENCLOSING TEST TIMEOUT ON PURPOSE. The `component` project sets no
- * `testTimeout`, so it runs at browser mode's effective 15 s — measured here with a deliberately
- * hanging test, not read off the config, because the config sets it for the `unit` projects only.
- * At `{ timeout: 15_000 }` the two clocks tie and the TEST's deadline always wins (each content
- * test does a full `renderToString` of a Mantine tree first), so a beacon that never flips
- * printed a bare `Test timed out in 15000ms` — the one failure shape that carries no diagnosis.
+ * 🔴 AND IT IS SET BELOW THE ENCLOSING TEST TIMEOUT ON PURPOSE. That deadline is
+ * `PROJECT_TIMEOUT_MS` — read its docblock rather than re-deriving it here; it is asserted
+ * against the live resolved config by the guard test, so it is no longer a figure anyone has to
+ * measure by hand. At `{ timeout: 15_000 }` the two clocks tie and the TEST's deadline wins
+ * (each content test does a full `renderToString` of a Mantine tree first), so a beacon that
+ * never flips printed a bare `Test timed out in 15000ms` — the one failure shape that carries
+ * no diagnosis.
  * At 10 s this `waitFor` fails first and prints what it was waiting for. Measured both ways by
  * the `civitai-test-review` lane.
  *
@@ -350,13 +378,19 @@ function hydrationConsoleErrors() {
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
  * this one, so the invariant is
  *
- *     BEACON_TIMEOUT_MS + worst-case pre-wait  <=  PROJECT_TIMEOUT_MS
+ *     BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS + MIN_MARGIN_MS  <=  PROJECT_TIMEOUT_MS
  *
- * Pre-wait measures ~75 ms on a quiet box and load-scales, which is why `PRE_WAIT_BUDGET_MS` is
- * 3 s rather than 0.1 s. `14_000` is the trap: it is strictly under 15 s, it satisfies any
- * formula that ignores pre-wait, and it leaves under a second of margin — so the first load spike
- * in that `renderToString` restores exactly the bare `Test timed out` this budget exists to
- * remove. The margin is pinned by a test rather than by this paragraph; prose is not a guard.
+ * See `PRE_WAIT_BUDGET_MS` for how that term is sized and measured — deliberately not restated
+ * here, because the figure it used to carry was retracted and this was the copy that survived
+ * the correction. `14_000` is the trap: it is strictly under 15 s, it satisfies any formula that
+ * ignores pre-wait, and it leaves under a second of margin — so the first load spike in that
+ * `renderToString` restores exactly the bare `Test timed out` this budget exists to remove.
+ *
+ * 🔴 `MIN_MARGIN_MS` IS WHY THIS IS NOT WRITTEN `<=` ALONE. At equality the worst case lands
+ * exactly ON the deadline and the deadline wins, which is the failure this whole apparatus
+ * removes — so the guard once admitted it. Measured: with `<=` and no margin term, raising
+ * `PRE_WAIT_BUDGET_MS` to `5_000` left the file fully green (5 passed) while making the tie
+ * reachable. Both guards green, hazard restored. Found by the `civitai-test-review` lane.
  *
  * Ordering assumption that makes the early return safe: React reports recoverable errors during
  * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
@@ -388,6 +422,10 @@ async function hydrateInto(
   );
   // Everything above ran on the TEST's clock; the wait below runs on its own. This is the
   // boundary `PRE_WAIT_BUDGET_MS` budgets for.
+  //
+  // ⚠️ ONE `hydrateInto` PER TEST. A second call would fold the FIRST beacon wait into this
+  // measurement and blow the budget with a message telling you to trim the pre-wait work — a
+  // misdiagnosis. Two waits in one test is a real invariant violation anyway; no test does it.
   maxPreWaitMs = Math.max(maxPreWaitMs, performance.now() - preWaitStart);
 
   if (awaitBeacon) {
@@ -485,12 +523,19 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
    * `BEACON_TIMEOUT_MS` must leave room for the pre-wait work on the test's own clock; nothing
    * mechanical enforced that, and the value it warns against (`14_000`) is one edit away.
    *
-   * TWO assertions, because the arithmetic one has two operands it does not own. The first pins
-   * the CEILING to the live config — without it the inequality is computed against a literal
-   * that three separate mechanisms can move without touching this file, all of them capable of
-   * moving it DOWN, which is the direction that silently restores the bare `Test timed out`.
-   * `server.config` is the component project's own resolved config; verified to read `15000`
-   * here rather than `undefined` before this was relied on.
+   * TWO assertions here, and a THIRD in `afterAll` — see `BEACON_TIMEOUT_MS` for the full
+   * three-operand ledger. The first pins the CEILING to the live config, without which the
+   * inequality is computed against a literal that three separate mechanisms can move without
+   * touching this file, all of them capable of moving it DOWN — the direction that silently
+   * restores the bare `Test timed out`. `server.config` is the component project's own resolved
+   * config; verified to read `15000` here rather than `undefined` before this was relied on, and
+   * it THROWS outside browser mode rather than collecting zero tests.
+   *
+   * ⚠️ The ceiling assertion's remedy assumes the value moved permanently (a vitest bump, a
+   * `browserTestShell()` edit). For a deliberate one-off `--test-timeout` on the command line the
+   * right answer is to leave the constant alone; such a run is already flagged as narrowed by
+   * `scripts/test-component-run.mjs`. It also cannot see a PER-TEST `{ timeout }` override —
+   * none exists in this file, and one would make the guard green against the wrong deadline.
    */
   test('the beacon budget leaves real margin under the project timeout', () => {
     expect(
@@ -500,12 +545,16 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
         'no longer the deadline. Update the constant, and check `BEACON_TIMEOUT_MS` still fits'
     ).toBe(PROJECT_TIMEOUT_MS);
 
+    // 🔴 A MARGIN, NOT A `<=`. At equality the worst case lands exactly ON the deadline and the
+    // deadline wins — the failure this apparatus removes. Measured: `<=` alone let
+    // `PRE_WAIT_BUDGET_MS = 5_000` through with the file fully green.
     expect(
-      BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS,
+      PROJECT_TIMEOUT_MS - (BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS),
       'BEACON_TIMEOUT_MS must leave room for everything charged to the TEST clock before the ' +
-        'wait starts — otherwise the enclosing test deadline wins and the failure is a bare ' +
-        '"Test timed out", with no mention of the beacon. See `hydrateInto`'
-    ).toBeLessThanOrEqual(PROJECT_TIMEOUT_MS);
+        'wait starts, AND still clear the deadline by MIN_MARGIN_MS — otherwise the enclosing ' +
+        'test deadline wins and the failure is a bare "Test timed out", with no mention of the ' +
+        'beacon. See `hydrateInto`'
+    ).toBeGreaterThanOrEqual(MIN_MARGIN_MS);
   });
 
   test('a non-consent region renders NO gate and NO banner, and hydrates clean', async () => {
