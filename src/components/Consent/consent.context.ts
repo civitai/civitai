@@ -13,8 +13,9 @@ export type ThirdPartyConsentContext = {
 // Default value applies in two situations:
 //  1) Non-CA users: ThirdPartyConsentProvider intentionally renders no Provider,
 //     so consumers fall through to this default — scripts allowed, no banner.
-//  2) A consumer mounted outside ThirdPartyConsentProvider entirely (component
-//     tests, standalone pages): same fall-through.
+//  2) A consumer mounted outside ThirdPartyConsentProvider entirely — component
+//     tests, which mount no provider: same fall-through. (NOT standalone pages:
+//     those render via `getLayout` INSIDE _app's provider tree.)
 // 🔴 This default is ALLOW, so anything that unmounts CAConsentManager silently
 // re-enables third-party analytics/ads for a CA visitor who rejected them — it
 // does not merely lose state. That is why ThirdPartyConsentProvider's

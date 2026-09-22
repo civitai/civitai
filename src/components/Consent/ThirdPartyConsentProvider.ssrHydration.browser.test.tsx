@@ -44,10 +44,9 @@ import type { ConsentDecision } from '~/components/Consent/consent.utils';
 
 // 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.browser.test.tsx` stubs
 // the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
-// be added to BOTH — and the reason this is a comment rather than a shared module is that the
-// failure is LOUD: an unstubbed query is a `TypeError` naming the missing property during
-// render, not a silent zero. A shared factory would have to be pulled in inside the hoisted
-// `vi.mock` callback, which trades a loud failure for a hoisting trap.
+// be added to BOTH. This is a comment rather than a shared module because the failure is LOUD:
+// an unstubbed query is a `TypeError` naming the missing property during render, not a silent
+// zero, and the duplicate is eight lines of fixture with no logic in it.
 // Only the ambient queries `AppProvider` fires. Spread of the real module, not a wholesale
 // replacement (`local-rules/no-wholesale-module-mock`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -191,8 +190,8 @@ const containers: HTMLElement[] = [];
  * leaves the root MOUNTED against detached nodes, still able to write into a later test's
  * freshly-armed `recoverable`/`consoleErrors` arrays. That direction fails red rather than
  * green, so it is a flake vector rather than a false-confidence one — but it is free to close.
- * (The pre-existing `AppsRailNav.ssrHydration.browser.test.tsx` this pattern came from does not
- * do this; it is bounded at 4 roots there and harmless, so it is not a defect being carried.)
+ * The pre-existing `AppsRailNav.ssrHydration.browser.test.tsx` this pattern came from does not
+ * do it; that copy has NOT been re-measured here, so nothing is claimed about it either way.
  */
 const roots: Root[] = [];
 
@@ -228,11 +227,21 @@ function hydrationConsoleErrors() {
 /**
  * Plant `html` in a fresh container and hydrate it with `tree`, capturing every recoverable
  * error React reports. No `act()` — React 18.3's lives in `react-dom/test-utils`, which this
- * repo's `@types/react-dom` cannot resolve through its `exports` map. The yield budget is not
- * taken on trust: every caller asserts `hydrated()` flipped to `'true'`, which only the client
- * can produce, so "no mismatch" can never come from "nothing happened" — see `HydrationBeacon`.
+ * repo's `@types/react-dom` cannot resolve through its `exports` map.
+ *
+ * 🔴 `awaitBeacon` IS THE BARRIER, NOT THE TICK COUNT. React 18 time-slices hydration across
+ * macrotasks, so how many turns a tree needs scales with its SIZE and with how loaded the box
+ * is — a fixed budget is green on a quiet machine and red on a busy one, with no change to
+ * blame. `HydrationBeacon` is an absorbing arrival state, which is exactly the shape `CLAUDE.md`
+ * says to await, so the three content tests poll for it instead of guessing. The INSTRUMENT
+ * CHECK carries no beacon (its tree is two elements and it is deliberately mismatching), so it
+ * keeps a small fixed budget. Raised by the `civitai-test-review` lane.
  */
-async function hydrateInto(html: string, tree: React.ReactElement) {
+async function hydrateInto(
+  html: string,
+  tree: React.ReactElement,
+  { awaitBeacon = true }: { awaitBeacon?: boolean } = {}
+) {
   const container = document.createElement('div');
   container.innerHTML = html;
   document.body.appendChild(container);
@@ -244,6 +253,14 @@ async function hydrateInto(html: string, tree: React.ReactElement) {
       },
     })
   );
+  if (awaitBeacon) {
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated')
+      ).toBe('true')
+    );
+    return container;
+  }
   for (let i = 0; i < 20; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
@@ -275,7 +292,7 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
     }
     const html = renderToString(<Diverges />);
     onServer = false;
-    await hydrateInto(html, <Diverges />);
+    await hydrateInto(html, <Diverges />, { awaitBeacon: false });
 
     expect(recoverable.length).toBeGreaterThan(0);
     expect(recoverable.join('\n')).toMatch(HYDRATION_RE);

@@ -281,11 +281,14 @@ function MyApp(props: CustomAppProps) {
                         session_attr_region / session_attr_timezone). See
                         src/utils/faro/geoAttributes.ts.
                         🔴 THE CONSENT GATE MAY NOT READ IT THIS WAY AND FaroProvider MAY — the
-                        difference is re-evaluation, not correctness of the value. FaroProvider
-                        initialises ONCE behind a module-scope guard and its effect depends only
-                        on `enabled`, so the `undefined` that arrives on a later navigation is
-                        never read. ThirdPartyConsentProvider re-evaluates on every render, which
-                        is why it reads the frozen `useAppContext().region` instead.
+                        difference is re-evaluation, not correctness of the value. ONCE
+                        INITIALISED, FaroProvider never re-reads `region`: its `faroInitStarted`
+                        module guard makes `initFaro` a no-op and its effect depends only on
+                        `enabled` (see FaroProvider.tsx). The residual case is `enabled` flipping
+                        false→true mid-session, which that file documents as rare and which is
+                        its own pre-existing concern, not this one. ThirdPartyConsentProvider
+                        re-evaluates on EVERY render, so it reads the frozen
+                        `useAppContext().region` instead.
                         🔴 OPTIONAL-CHAIN IT. `region` is an SSR-ONLY prop: `getInitialProps`
                         early-returns before `getRegion(request)` on a CLIENT-SIDE navigation
                         (no `req`), so `region` is `undefined` on every route transition even

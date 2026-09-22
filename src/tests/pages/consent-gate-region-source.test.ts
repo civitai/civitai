@@ -184,8 +184,23 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     const appProvider = soleJsxOpener(app, 'AppProvider', APP_FILE);
     const consentProvider = soleJsxOpener(app, 'ThirdPartyConsentProvider', APP_FILE);
 
-    // `<AppProvider>`'s opener is the child of the JsxElement whose subtree is everything it
-    // wraps, so containment is a position test on that element's span — not on the opener's.
+    // 🔴 SPAN CONTAINMENT IS ONLY A SUBTREE TEST FOR A PAIRED OPENER. A `JsxSelfClosingElement`
+    // has no children, so its `.parent` is the ENCLOSING element and the window below would
+    // widen to cover that element's SIBLINGS — certifying a nesting that does not exist. The
+    // same trap, measured, is documented on `isDescendant` in
+    // `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts`. `soleJsxOpener` does
+    // not catch it: a self-closing `<AppProvider … />` is still exactly one opener. Refuse it.
+    if (!ts.isJsxOpeningElement(appProvider)) {
+      throw new Error(
+        `${APP_FILE}: <AppProvider> is self-closing, so it has no subtree and the containment ` +
+          `test below would be meaningless — it would pass for a SIBLING. Re-point this guard.`
+      );
+    }
+    // The opener is the child of the JsxElement whose span is everything it wraps, so
+    // containment is a position test on that ELEMENT's span — not on the opener's.
+    // Deliberately over-strict in the safe direction: extracting the inner tree into a `const`
+    // above the `return` makes this go red on a nesting that is in fact correct. That is a
+    // spelling rule, not a real misnesting — update the guard if you do it on purpose.
     const appProviderElement = appProvider.parent;
     const enclosed =
       appProviderElement.getStart() < consentProvider.getStart() &&
@@ -235,6 +250,25 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     )[0] as ts.TypeAliasDeclaration | undefined;
     if (!propsAlias) throw new Error(`${CONSENT_FILE}: type Props not found`);
 
+    // 🔴 THE LEDGER BELOW WALKS TYPE LITERALS, SO THE ALIAS'S OWN SHAPE IS PART OF THE CLAIM.
+    // `type Props = { children; initialConsent; loggedIn } & RegionProps` contributes no member
+    // here (the second operand is a type REFERENCE, so there is nothing to flatten), keeps the
+    // parameter annotation at the bare `Props`, and re-opens
+    // `<ThirdPartyConsentProvider region={…}>` — green on every other assertion in this file.
+    // An index signature does the same by disabling JSX excess-property checking. Both spellings
+    // found by the `civitai-test-review` lane; neither was caught before these two lines.
+    expect(
+      propsAlias.type !== undefined && ts.isTypeLiteralNode(propsAlias.type),
+      '`Props` must be a bare object literal — an intersection or an alias to an imported type ' +
+        'adds accepted props WITHOUT adding a member this ledger can see, which re-opens the ' +
+        'call site while every assertion here stays green'
+    ).toBe(true);
+    expect(
+      collect(propsAlias, ts.isIndexSignatureDeclaration).map((n) => n.getText()),
+      'an index signature on `Props` disables JSX excess-property checking, so `region={…}` ' +
+        'compiles again with no member for this ledger to find'
+    ).toEqual([]);
+
     const members = (collect(propsAlias, ts.isTypeLiteralNode) as ts.TypeLiteralNode[]).flatMap(
       (lit) =>
         lit.members
@@ -256,14 +290,21 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     // every other assertion in this file, and makes `<ThirdPartyConsentProvider region={…}>`
     // compile again. Assert the parameter is annotated with the bare `Props` identifier, so the
     // body is as wide as the sentence. Found by the `civitai-test-review` lane.
-    const params = (
-      collect(
-        parse(CONSENT_FILE),
-        (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
-      )[0] as ts.FunctionDeclaration
-    ).parameters;
+    const decl = collect(
+      consent,
+      (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
+    )[0] as ts.FunctionDeclaration | undefined;
+    // Same "subject moved" discipline as `consentComponentBody`/`soleJsxOpener` above: converting
+    // the component to a `const … = (props: Props) => …` makes this a VariableDeclaration, and a
+    // bare index would crash on `.parameters` with an opaque TypeError instead of saying so.
+    if (!decl) {
+      throw new Error(
+        `${CONSENT_FILE}: no \`function ThirdPartyConsentProvider\` declaration found — if it ` +
+          `became an arrow-function const, re-point this parameter check rather than deleting it.`
+      );
+    }
     expect(
-      params.map((p) => p.type?.getText() ?? '(untyped)'),
+      decl.parameters.map((p) => p.type?.getText() ?? '(untyped)'),
       "the component's parameter must be annotated with the bare `Props` identifier — widening " +
         'it in place (`Props & { region?: RegionInfo }`) re-opens the call site without touching ' +
         'the `Props` alias this test just checked'

@@ -49,10 +49,9 @@ import type { ServerDomains } from '~/shared/constants/domain.constants';
 
 // 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.ssrHydration.browser.test.tsx` stubs
 // the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
-// be added to BOTH — and the reason this is a comment rather than a shared module is that the
-// failure is LOUD: an unstubbed query is a `TypeError` naming the missing property during
-// render, not a silent zero. A shared factory would have to be pulled in inside the hoisted
-// `vi.mock` callback, which trades a loud failure for a hoisting trap.
+// be added to BOTH. This is a comment rather than a shared module because the failure is LOUD:
+// an unstubbed query is a `TypeError` naming the missing property during render, not a silent
+// zero, and the duplicate is eight lines of fixture with no logic in it.
 // Only the AMBIENT queries `AppProvider` fires on mount. Spread of the original module, not a
 // wholesale replacement — `local-rules/no-wholesale-module-mock` bans the latter, and an
 // omitted export fails the whole file at COLLECTION, reported as "no tests" rather than red.
@@ -103,21 +102,29 @@ const SERVER_DOMAINS: ServerDomains = {
  *   - `data-nav` is an arrival assertion that the re-render REACHED this subtree. It is
  *     gate-independent — children render on both branches of `isConsentRequired` — so it stays
  *     valid pre- and post-fix, and it fails fast and legibly if propagation stops.
- *   - `data-mounts` counts how many times this subtree MOUNTED. Pre-fix, flipping the gate
- *     predicate changed the child element's type at that position (`CAConsentManager` →
- *     Fragment), so React unmounted and remounted EVERYTHING below the consent provider — which
- *     in `_app` is the whole app. Post-fix it must stay at 1. That makes the remount a measured
- *     quantity rather than a claim.
+ *   - `data-mounts` on `<MountLedger>` reports how many times this subtree has MOUNTED. Pre-fix,
+ *     flipping the gate predicate changed the child element's type at that position
+ *     (`CAConsentManager` → Fragment), so React unmounted and remounted EVERYTHING below the
+ *     consent provider — which in `_app` is the whole app. Post-fix it must stay at 1.
  *
  * Both flagged by the `civitai-test-review` lane, which named the exact inert-harness mutant.
+ *
+ * 🔴 THE LEDGER PUBLISHES THROUGH THE DOM ON PURPOSE. Reading the module counter directly would
+ * be a synchronous negative ("it did not increment"), which can only ever read LOW — i.e. fail
+ * toward "no remount" — because React flushes passive effects on a later task. A remounted
+ * instance starts at 0 and publishes its own ordinal once its effect runs, so
+ * `toHaveAttribute('data-mounts', '1')` is an ARRIVAL assertion: on a remount it polls against
+ * `'2'` and goes red rather than racing.
  */
 let subtreeMounts = 0;
 
 function MountLedger() {
+  const [ordinal, setOrdinal] = React.useState(0);
   React.useEffect(() => {
     subtreeMounts += 1;
+    setOrdinal(subtreeMounts);
   }, []);
-  return null;
+  return <i data-testid="mount-ledger" data-mounts={String(ordinal)} />;
 }
 
 /** Mirrors what a `useThirdPartyConsent()` consumer (GoogleAnalytics, AdsProvider, the embeds) reads. */
@@ -182,6 +189,7 @@ function AppShell({
 }
 
 const probe = () => page.getByTestId('consent-probe');
+const mountLedger = () => page.getByTestId('mount-ledger');
 
 beforeEach(() => {
   subtreeMounts = 0;
@@ -197,7 +205,6 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
     await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
-    await vi.waitFor(() => expect(subtreeMounts).toBe(1));
 
     // The client-side navigation. `_app` re-renders with `region` absent from pageProps;
     // AppProvider stays MOUNTED (same element type, same position) so its frozen context
@@ -218,16 +225,6 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     );
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
     await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
-
-    // 🔴 And the gate did not merely survive — nothing below it remounted. Pre-fix the
-    // predicate flipped, which changed the child element's TYPE at this position, so React
-    // tore down and rebuilt the whole subtree (in `_app`, the entire app). This is 2 on the
-    // pre-fix tree and 1 here.
-    expect(
-      subtreeMounts,
-      'the subtree under the consent provider remounted on a client-side navigation — pre-fix ' +
-        'behaviour, caused by the gate predicate flipping and changing the child element type'
-    ).toBe(1);
   });
 
   test('🔴 a CA visitor who has NOT decided is still ASKED after a client-side navigation', async () => {
@@ -250,6 +247,44 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(page.getByText('Your privacy choices', { exact: true })).toBeVisible();
   });
 
+  /**
+   * The remount half, in its own test so it is REACHABLE on the pre-fix tree. Folded into the
+   * first test it sat behind the consent assertions, which abort there — so on the one mutation
+   * it exists for it never executed. Found by the `civitai-test-review` lane.
+   */
+  test('🔴 nothing below the gate REMOUNTS across a client-side navigation', async () => {
+    const { rerender } = await renderWithProviders(
+      <AppShell region={CALIFORNIA} initialConsent="rejected" nav={0} />
+    );
+
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+
+    await rerender(<AppShell region={undefined} initialConsent="rejected" nav={1} />);
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+
+    // Pre-fix the predicate flipped, which changed the child element's TYPE at this position,
+    // so React tore down and rebuilt the whole subtree — in `_app`, the entire app, once per
+    // session mid-navigation, for acceptors as well as rejecters. This reads '2' there.
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+  });
+
+  /**
+   * 🔴 INSTRUMENT CHECK for the ledger. The test above asserts a 1, and so does every other arm
+   * in this file — none of them can show that a 2 is reachable through this harness at all, so
+   * without this the remount test could be green because the ledger is incapable of counting
+   * past one. A `key` change forces a remount at the same position; the ledger must see it.
+   */
+  test('🔴 INSTRUMENT CHECK: the mount ledger DOES report a remount when one happens', async () => {
+    const { rerender } = await renderWithProviders(
+      <AppShell key="first" region={CALIFORNIA} initialConsent="rejected" nav={0} />
+    );
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+
+    await rerender(<AppShell key="second" region={CALIFORNIA} initialConsent="rejected" nav={1} />);
+
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '2');
+  });
+
   test('a non-consent region is NOT gated — the control for the two tests above', async () => {
     const { rerender } = await renderWithProviders(
       <AppShell region={TEXAS} initialConsent={null} nav={0} />
@@ -267,9 +302,5 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-required', 'false');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
-    // Never gated, so the predicate never flipped and nothing remounted — on the pre-fix tree
-    // too. This arm is what says `subtreeMounts === 1` above is about the GATE and not about
-    // `rerender` being incapable of remounting anything.
-    expect(subtreeMounts).toBe(1);
   });
 });
