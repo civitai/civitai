@@ -4,7 +4,7 @@ import { getUserBanDetails, type BanDetailsMeta } from './ban';
 
 // Focused parse of the content-preference fields the session exposes off `User.settings`. The main app
 // runs the FULL userSettingsSchema.safeParse (which fails wholesale if any unrelated field is mistyped, then
-// falls back to defaults); we read just these two leniently so an explicit user choice is honored regardless
+// falls back to defaults); we read just these leniently so an explicit user choice is honored regardless
 // of the rest of the blob. PARITY NOTE: this is intentionally more robust than getSessionUser — for the (rare)
 // user whose settings blob has an unrelated malformed field AND an explicit allowAds, the hub
 // honors it while getSessionUser currently defaults. To make them bit-identical, getSessionUser should adopt

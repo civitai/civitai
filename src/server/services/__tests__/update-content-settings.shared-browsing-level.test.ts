@@ -61,6 +61,7 @@ describe('updateContentSettings: one browsing level on every domain', () => {
         where: { id: USER_ID },
         data: { browsingLevel: NARROWED },
       });
+      expect(dbMock.dbWrite.user.update.mock.calls[0][0].data).not.toHaveProperty('settings');
       // The session is built from that column; without the refresh the cached session keeps the
       // old level until it expires, which is the same "did not stick" from another cause.
       expect(refreshSession).toHaveBeenCalledTimes(1);
