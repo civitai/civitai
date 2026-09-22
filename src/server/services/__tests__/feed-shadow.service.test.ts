@@ -275,7 +275,7 @@ describe('createFeedShadow', () => {
       calls++;
       return { status: 200, ms: 1, ids: [] };
     });
-    await shadow.compare({ ...base, followed: true }, outcome);
+    await shadow.compare({ ...base, currentUserId: 9, followed: true }, outcome);
     expect(calls).toBe(0);
     expect(rows[0].skipReason).toBe('flag:followed');
   });
