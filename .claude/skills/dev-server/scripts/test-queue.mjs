@@ -437,6 +437,12 @@ export function defaultStartRun({
   let capture;
   try {
     capture = createOutputCapture((line) => onLog('output', line));
+    // Every line goes here, uncapped, and nothing unlinks it. The in-memory window is capped at
+    // MAX_LOG_LINES and drops the OLDEST lines, which is right for a suite whose verdict is its
+    // tail and wrong for a lint whose verdict is its body: a queued lint dropped 4047 of 6047
+    // lines, so the caller saw a count of 352 errors and not one of the errors. Publishing the
+    // path costs nothing and turns "your log is incomplete" into something actionable.
+    emitter.logPath = capture.path;
   } catch (err) {
     queueMicrotask(() => onExit(-1, `could not open a capture file: ${err.message}`));
     emitter.kill = () => {};
@@ -689,6 +695,7 @@ export class TestQueue {
       // Counted, not just done. A reader cannot tell a clipped log from a whole one, so the
       // number of lines the window threw away has to travel with the run.
       logsDropped: 0,
+      logPath: null,
     };
     this.runs.set(run.id, run);
     this.order.push(run.id);
@@ -951,6 +958,9 @@ export class TestQueue {
         kind: run.kind,
         cacheMode: this.cacheMode,
       });
+      // Optional: a runner that captures nothing leaves this null rather than absent, so a reader
+      // can tell "no full log exists" from "this queue predates the field".
+      run.logPath = handle?.logPath ?? null;
     } catch (err) {
       // A runner that reported an exit and then threw has already produced a verdict; overwriting
       // it here would replace a real result with the noise that followed it.
@@ -1068,6 +1078,9 @@ export class TestQueue {
       // How many lines this run emitted that the window no longer holds. Non-zero means every
       // reader of these logs — waiter, `test logs`, a pasted excerpt — is looking at a fragment.
       logsDropped: run.logsDropped,
+      // Where the COMPLETE output is, when the window above is a fragment. The record initialises
+      // it to null, so a run that never started reports null rather than an absent field.
+      logPath: run.logPath,
       waitCommand: `${this.waitCommand} ${run.id}`,
     };
   }

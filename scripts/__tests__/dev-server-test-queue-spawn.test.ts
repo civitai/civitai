@@ -166,6 +166,67 @@ describe("the queue caps each run's vitest pool", () => {
  * them. Naming any `--reporter` replaces vitest's default — so a caller who named none has to get
  * `default` back, or turning the cache on silently strips every queued run's normal output.
  */
+/**
+ * 🔴 The in-memory log window keeps the NEWEST lines, which is right for a suite whose verdict is
+ * its tail and wrong for a lint whose verdict is its body. Measured on a real queued lint: the
+ * queue dropped the oldest 4047 of 6047 lines, so the caller was told there were 352 errors and
+ * shown none of them. The complete output is on disk the whole time — this is what makes it
+ * reachable, and without it the truncation warning is a dead end.
+ */
+describe('the complete output is reachable when the window is not', () => {
+  it('publishes the capture file the runner is already writing', () => {
+    const handle = defaultStartRun({
+      worktree: process.cwd(),
+      args: [],
+      onLog: () => undefined,
+      onExit: () => undefined,
+    }) as EventEmitter & { logPath?: string; dispose: () => void };
+    try {
+      expect(typeof handle.logPath).toBe('string');
+      expect(handle.logPath).toContain('civitai-test-run');
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it('carries it onto the run a waiter reads', () => {
+    const queue = new TestQueue({
+      concurrency: 1,
+      startRun: () => Object.assign(new EventEmitter(), { logPath: '/tmp/some-run.log' }),
+    }) as unknown as { request: (r: { worktree: string }) => { logPath: string | null } };
+    expect(queue.request({ worktree: '/wt/a' }).logPath).toBe('/tmp/some-run.log');
+  });
+
+  it('reports null rather than undefined for a runner that captures nothing', () => {
+    const queue = new TestQueue({
+      concurrency: 1,
+      startRun: () => new EventEmitter(),
+    }) as unknown as { request: (r: { worktree: string }) => { logPath: string | null } };
+    expect(queue.request({ worktree: '/wt/a' }).logPath).toBeNull();
+  });
+
+  /**
+   * 🔴 A QUEUED run has no runner yet, so its `logPath` comes from the record's initialiser and
+   * from nowhere else. Asserting it only on a started run left that initialiser unpinned -
+   * measured: deleting it kept every other case green, because `handle?.logPath ?? null` was
+   * covering for it. A waiter reads this view while it waits, which is exactly when there is no
+   * runner to ask.
+   */
+  it('reports null for a run that has not started yet', () => {
+    const queue = new TestQueue({
+      concurrency: 1,
+      startRun: () => Object.assign(new EventEmitter(), { logPath: '/tmp/started.log' }),
+    }) as unknown as {
+      request: (r: { worktree: string }) => { status: string; logPath: string | null };
+    };
+    queue.request({ worktree: '/wt/a' });
+    const waiting = queue.request({ worktree: '/wt/b' });
+
+    expect(waiting.status).toBe('queued');
+    expect(waiting.logPath).toBeNull();
+  });
+});
+
 describe('result cache on queued runs', () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
   const envOf = (call: number) =>

@@ -116,7 +116,11 @@ function warnIfLogsDropped(state) {
   if (!state.logsDropped) return;
   console.error(
     `WARNING: this log is INCOMPLETE — the queue dropped the oldest ${state.logsDropped} of ` +
-      `${state.logIndex} output lines. Do not read the text above as the whole run.`
+      `${state.logIndex} output lines. Do not read the text above as the whole run.` +
+      // The dropped lines are not lost, they are just not here. A lint keeps its findings in the
+      // body and its count in the tail, so the window can leave a caller with the number 352 and
+      // none of the 352.
+      (state.logPath ? `\nThe complete output is at: ${state.logPath}` : '')
   );
 }
 
