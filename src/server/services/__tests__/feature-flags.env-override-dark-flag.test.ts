@@ -14,7 +14,9 @@ import {
  * turns exactly it red.
  */
 
-vi.hoisted(() => {
+// The warning under test is emitted at MODULE LOAD, so the spy has to be installed before the
+// first `await import(...)` — `vi.hoisted` is the only hook that runs early enough.
+const { warnings, realWarn } = vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
   process.env.SERVER_DOMAIN_BLUE = 'civitai.blue';
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
@@ -25,6 +27,13 @@ vi.hoisted(() => {
   process.env.FEATURE_FLAG_COINBASE_PAYMENTS = 'public';
   // Parses to an empty availability — `getEnvOverrides` keeps no unrecognised token.
   process.env.FEATURE_FLAG_USER_HUBS = 'nonsense';
+
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+  return { warnings, realWarn };
 });
 
 let server: FliptFixtureServer;
@@ -47,6 +56,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
+  console.warn = realWarn;
   // Inert under the `unit` project's per-file process isolation, but `getEnvOverrides` reads
   // `process.env` at module load: under a shared-worker pool these would silently re-scope every
   // later file's registry.
@@ -77,6 +87,19 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
 
     // `imageSearch` is `{ availability: [], fliptKey: 'image-search' }`.
     expect(features.imageSearch).toBeFalsy();
+  });
+
+  it('says so when it discards one, naming the flag and the way to change it', async () => {
+    await import('~/server/services/feature-flags.service');
+
+    const discarded = warnings.filter((w) => w.includes('[feature-flags]'));
+    // Named, so an operator who set the variable can find out why nothing happened.
+    expect(discarded.some((w) => w.includes('"imageSearch"'))).toBe(true);
+    expect(discarded.some((w) => w.includes('FLIPT_LOCAL_OVERRIDES=image-search=on'))).toBe(true);
+    // The other four overrides in this file were applied, so they must NOT be reported.
+    for (const applied of ['civitaiLink', 'apiKeyBuzzLimit', 'coinbasePayments']) {
+      expect(discarded.some((w) => w.includes(`"${applied}"`))).toBe(false);
+    }
   });
 
   it('CONTROL: still applies to a flag with static availability and no fliptKey', async () => {

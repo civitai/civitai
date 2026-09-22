@@ -35,8 +35,18 @@ writes for that reason.
 ## What a key does to the app
 
 The monolith's flag registry (`src/server/services/feature-flags.service.ts`) declares a
-static `availability` per flag, and **Flipt overrides it in both directions wherever the key
-exists**. Two consequences before you add or toggle a key:
+static `availability` per flag, and Flipt overrides it in both directions — **unless a
+`FEATURE_FLAG_<KEY>` environment variable names that flag**, which removes it from Flipt's
+control entirely. `createFeatureFlags` records such a flag in `envOverriddenFlags`, and
+`hasFeature` then skips Flipt for it.
+
+🔴 **So a flag can carry a `fliptKey`, have that key set `enabled: false`, and still be on for
+everyone.** Toggling it in flag state changes nothing and looks like Flipt is broken. Before you
+read a flag's Flipt value as its effective state — or set one expecting an effect — check whether
+a `FEATURE_FLAG_<KEY>` variable names it in the environment you care about. This is not
+hypothetical: several serving flags are pinned out of Flipt this way today.
+
+Consequences before you add or toggle a key:
 
 - A flag declared `availability: []` **that has a `fliptKey`** is **dark**: static evaluation is
   false for everyone and that key is its only on-switch. A `FEATURE_FLAG_<KEY>` environment
@@ -47,8 +57,9 @@ exists**. Two consequences before you add or toggle a key:
   (`coinbasePayments: []`), which a search for `availability: []` does not find. Adding a
   `fliptKey` to one of these moves ownership to Flipt and makes its variable inert.
 - A flag declared `['public']` (or any role) is **live**: creating its key with
-  `enabled: false` and no rollout turns the feature off for everyone. That is the intended
-  kill switch — and the intended accident.
+  `enabled: false` and no rollout turns the feature off for everyone — the intended kill switch,
+  and the intended accident. **Only if no `FEATURE_FLAG_<KEY>` variable names it.** If one does,
+  that kill switch is inert and nothing reports it.
 
 To switch on a dark flag **that has a `fliptKey`** locally, set
 `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` rather than touching shared flag state; it is ignored when

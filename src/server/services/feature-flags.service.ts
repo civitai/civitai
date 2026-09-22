@@ -1265,6 +1265,15 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
     if (override && !fliptOwnsFlag) {
       features[key as keyof T].availability = override;
       envOverriddenFlags.add(key);
+    } else if (override && typeof window === 'undefined') {
+      // Discarding silently is the same defect one level up: an operator sets the variable, sees
+      // no effect, and has nothing to read. Module-scope, so this is once per process.
+      console.warn(
+        `[feature-flags] "${key}" is declared dark (availability: []) with fliptKey ` +
+          `"${flagData.fliptKey}", so Flipt owns it and its FEATURE_FLAG_* override is ignored. ` +
+          `Change the flag in Flipt, or set FLIPT_LOCAL_OVERRIDES=${flagData.fliptKey}=on ` +
+          `for local development.`
+      );
     }
   }
 

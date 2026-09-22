@@ -60,13 +60,43 @@ Each has exactly one real consumer; the question is whether the feature itself i
 
 ## Tier 4 — Long-public flags worth promoting (decorative-only)
 
-These have been `['public']` forever with no Flipt key, so the gate always evaluates `true`. Each `features.X` consumer can be inlined to `true` (or just the gate removed). This is mostly a code-tidying pass — there's no risk of behavior change.
+A flag here is safe to inline to `true` (or have its gate removed) only if **all three** hold. Check
+them against the registry entry rather than against this list — the list is a snapshot and has
+drifted repeatedly, always toward looking safer than it is:
 
-⚠️ **Re-read the registry entry before inlining any of these — this list has drifted, three times in the unsafe direction.** `imageSearch` is `availability: []` with a live `image-search` Flipt key: image search is retired, so inlining it to `true` re-ships it against a deleted index with no flag left to switch it back off. `challengePlatform` has a `challenge-platform-enabled` Flipt key that is a live kill switch. `vault` is `['user']`, not `['public']`. A flag carrying a `fliptKey` is never decorative — Flipt overrides static availability in both directions, so inlining it deletes a no-deploy off-switch.
+1. `availability: ['public']` exactly. A domain list (`['blue', 'red', 'public']`) or a role
+   (`['user']`) means the flag is already false for somebody.
+2. **No `fliptKey`.** A flag carrying one is never decorative: Flipt overrides static availability
+   in both directions, so inlining deletes a no-deploy off-switch.
+3. Not `toggleable` with `default: false`, which resolves false for everyone who has not opted in.
 
-`canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`, `imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`, `appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`, `newsroom`, `bounties` (mostly public), `creatorComp`, `alternateHome`, `auctions` (public), `disablePayments`, `largerGenerationImages` (toggleable but defaulted), `air` (toggleable but defaulted), `assistant` (toggleable but defaulted).
+Derive it, don't trust the prose: the current split is 20 safe and 6 not.
 
-⚠️ Before promoting any of these, double-check that `ENV` overrides via `FEATURE_FLAG_X` are not expected to flip them off in some deployment.
+**Safe:** `canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`,
+`imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`,
+`appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`,
+`newsroom`, `creatorComp`, `alternateHome`.
+
+**Not safe, and previously listed as if they were:**
+
+| Flag | Why inlining it changes behaviour |
+| --- | --- |
+| `disablePayments` | `['blue', 'red', 'public']`. Inlining to `true` disables the purchase buttons (`BuzzPurchase.tsx`, `membership.tsx`, the pricing redirect). |
+| `bounties` | `['blue', 'red', 'public']` — domain-gated, on for some colors only. |
+| `auctions` | `['blue', 'red', 'green', 'public']` — same. |
+| `air` | `['user']`, not `['public']` — false for anonymous visitors. |
+| `assistant` | `['user']` — same. |
+| `largerGenerationImages` | `toggleable` with `default: false`, so it is **off** unless a user opts in. The old "toggleable but defaulted" annotation reads the wrong way round. |
+
+Three more were removed from this list entirely rather than annotated: `imageSearch`
+(`availability: []` plus a live `image-search` key — image search is retired, so inlining re-ships
+it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
+kill-switch key), and `vault` (`['user']`).
+
+⚠️ **A `FEATURE_FLAG_<KEY>` variable removes its flag from Flipt's control entirely** — the key is
+recorded in `envOverriddenFlags` and `hasFeature` then skips Flipt for it. So a flag can carry a
+`fliptKey`, have that key set to `enabled: false` in Flipt, and still be on for everyone. Check for
+an env override before reading a Flipt value as the flag's effective state, in either direction.
 
 ## Open question — only ship truthy flags to the client?
 
