@@ -14,9 +14,7 @@ import {
  * turns exactly it red.
  */
 
-// The warning under test is emitted at MODULE LOAD, so the spy has to be installed before the
-// first `await import(...)` — `vi.hoisted` is the only hook that runs early enough.
-const { warnings, realWarn } = vi.hoisted(() => {
+vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
   process.env.SERVER_DOMAIN_BLUE = 'civitai.blue';
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
@@ -27,14 +25,10 @@ const { warnings, realWarn } = vi.hoisted(() => {
   process.env.FEATURE_FLAG_COINBASE_PAYMENTS = 'public';
   // Parses to an empty availability — `getEnvOverrides` keeps no unrecognised token.
   process.env.FEATURE_FLAG_USER_HUBS = 'nonsense';
-
-  const warnings: string[] = [];
-  const realWarn = console.warn;
-  console.warn = (...args: unknown[]) => {
-    warnings.push(args.map(String).join(' '));
-  };
-  return { warnings, realWarn };
 });
+
+const warnings: string[] = [];
+let realWarn: typeof console.warn;
 
 let server: FliptFixtureServer;
 
@@ -44,8 +38,14 @@ vi.mock('~/server/flipt/client', async () => {
 });
 
 beforeAll(async () => {
-  // `user-hubs` is served ON so that "pinned out of Flipt" is observable: a flag that reached
-  // Flipt would come back true, and every assertion below expects false.
+  realWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(' '));
+  };
+
+  // `user-hubs` is served ON so the discarded override is distinguishable from an applied one: an
+  // applied override would keep the flag out of Flipt and resolve it false, so `true` is only
+  // reachable by Flipt being consulted.
   const snapshot = deriveSnapshotFromFlagShape(sourceSnapshot, 'app-blocks-enabled', [
     { key: 'app-blocks-enabled', enabled: false },
     { key: 'user-hubs', enabled: true },
@@ -93,10 +93,17 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
     await import('~/server/services/feature-flags.service');
 
     const discarded = warnings.filter((w) => w.includes('[feature-flags]'));
-    // Named, so an operator who set the variable can find out why nothing happened.
-    expect(discarded.some((w) => w.includes('"imageSearch"'))).toBe(true);
-    expect(discarded.some((w) => w.includes('FLIPT_LOCAL_OVERRIDES=image-search=on'))).toBe(true);
-    // The other four overrides in this file were applied, so they must NOT be reported.
+    // This file sets five variables. BOTH discarded flags must be named — `userHubs` is the
+    // second instance of the dark-with-key class and its override grants nothing, so it is the
+    // one a narrower guard would drop.
+    for (const [flag, fliptKey] of [
+      ['imageSearch', 'image-search'],
+      ['userHubs', 'user-hubs'],
+    ]) {
+      expect(discarded.some((w) => w.includes(`"${flag}"`))).toBe(true);
+      expect(discarded.some((w) => w.includes(`FLIPT_LOCAL_OVERRIDES=${fliptKey}=on`))).toBe(true);
+    }
+    // The other three were applied, so they must NOT be reported.
     for (const applied of ['civitaiLink', 'apiKeyBuzzLimit', 'coinbasePayments']) {
       expect(discarded.some((w) => w.includes(`"${applied}"`))).toBe(false);
     }

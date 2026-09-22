@@ -68,7 +68,22 @@ drifted repeatedly, always toward looking safer than it is:
    (`['user']`) means the flag is already false for somebody.
 2. **No `fliptKey`.** A flag carrying one is never decorative: Flipt overrides static availability
    in both directions, so inlining deletes a no-deploy off-switch.
-3. Not `toggleable` with `default: false`, which resolves false for everyone who has not opted in.
+
+   ⚠️ …but only where Flipt still has control, and a `FEATURE_FLAG_<KEY>` variable can take it
+   away. The rule is not "is the variable set" — it depends on the registry entry:
+
+   | Registry entry | Its variable | Flipt |
+   | --- | --- | --- |
+   | `availability: []` **with** a `fliptKey` | **ignored** | **keeps control** |
+   | anything else | **applied** | **skipped entirely** |
+
+   So a non-dark flag's `fliptKey` can be set `enabled: false` and have no effect, which makes it
+   look decorative when it is merely pinned. Do not invert this on a dark flag: a variable naming
+   one is discarded, and the flag stays dark, off and Flipt-owned.
+3. Not `toggleable`. A toggleable flag is user-settable — `combineFeatureOverlays` merges each
+   user's stored choice over the defaults — so inlining one removes an existing opt-out even when
+   its `default` is `true`. With `default: false` it is additionally off for everyone who has not
+   opted in.
 
 Derive it, don't trust the prose: the current split is 20 safe and 6 not.
 
@@ -93,10 +108,10 @@ Three more were removed from this list entirely rather than annotated: `imageSea
 it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
 kill-switch key), and `vault` (`['user']`).
 
-⚠️ **A `FEATURE_FLAG_<KEY>` variable removes its flag from Flipt's control entirely** — the key is
-recorded in `envOverriddenFlags` and `hasFeature` then skips Flipt for it. So a flag can carry a
-`fliptKey`, have that key set to `enabled: false` in Flipt, and still be on for everyone. Check for
-an env override before reading a Flipt value as the flag's effective state, in either direction.
+The `toggleable` half of condition 3 matches no registry entry today — all six toggleable flags
+are already excluded by condition 1 or by `default: false` — so the 20/6 split above is unchanged
+by it. It is stated because the rule is meant to be applied to the registry, where the next such
+flag would otherwise be classified safe.
 
 ## Open question — only ship truthy flags to the client?
 

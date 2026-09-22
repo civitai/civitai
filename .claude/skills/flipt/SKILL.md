@@ -35,16 +35,26 @@ writes for that reason.
 ## What a key does to the app
 
 The monolith's flag registry (`src/server/services/feature-flags.service.ts`) declares a
-static `availability` per flag, and Flipt overrides it in both directions — **unless a
-`FEATURE_FLAG_<KEY>` environment variable names that flag**, which removes it from Flipt's
-control entirely. `createFeatureFlags` records such a flag in `envOverriddenFlags`, and
-`hasFeature` then skips Flipt for it.
+static `availability` per flag, and Flipt overrides it in both directions — **except on a flag
+whose `FEATURE_FLAG_<KEY>` environment variable was APPLIED**, which is removed from Flipt's
+control entirely (`createFeatureFlags` records it in `envOverriddenFlags`; `hasFeature` then
+skips Flipt for it).
 
-🔴 **So a flag can carry a `fliptKey`, have that key set `enabled: false`, and still be on for
-everyone.** Toggling it in flag state changes nothing and looks like Flipt is broken. Before you
-read a flag's Flipt value as its effective state — or set one expecting an effect — check whether
-a `FEATURE_FLAG_<KEY>` variable names it in the environment you care about. This is not
-hypothetical: several serving flags are pinned out of Flipt this way today.
+Whether a variable is applied has exactly one rule, and it is not "is the variable set":
+
+| Registry entry | Its `FEATURE_FLAG_<KEY>` variable | Flipt |
+| --- | --- | --- |
+| `availability: []` **with** a `fliptKey` | **ignored** — cannot switch it on | **keeps control** |
+| anything else | **applied** | **skipped entirely** |
+
+🔴 **So a NON-dark flag can carry a `fliptKey`, have that key set `enabled: false`, and still be
+on for everyone.** Toggling it in flag state changes nothing and looks like Flipt is broken.
+Before you read such a flag's Flipt value as its effective state — or set one expecting an effect
+— check whether a variable names it in the environment you care about.
+
+🔴 **Do not invert that check on a dark flag.** A variable naming an `availability: []` flag that
+has a key is discarded, so the flag is dark, off, and still Flipt-owned — the opposite of pinned
+out. The server logs a `[feature-flags]` warning naming each one it discards at startup.
 
 Consequences before you add or toggle a key:
 
