@@ -218,11 +218,29 @@ function withApiMetrics(
   });
 }
 
+/**
+ * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, so a
+ * caller presenting `?token=` with no value cannot match it. Without this, blanking the secret turns
+ * every endpoint on this wrapper into an open one — and a bare key added to a ConfigMap arrives as an
+ * empty string, which is a config typo rather than a decision (see MODERATOR_APP_INTERNAL_URL in
+ * env/server-schema.ts, where the same arrival shape is documented).
+ *
+ * 503 rather than 401 so an operator reading logs sees a deployment problem instead of a caller with
+ * a bad token, and fail-closed rather than a `.min(1)` on the schema so the same typo does not stop
+ * the process booting. Same rule, same reason and same status code as
+ * apps/moderator/src/lib/server/webhook-endpoint.ts — the two apps must not disagree about what a
+ * blank secret means.
+ */
 export function TokenSecuredEndpoint(
   token: string,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!token || token.trim() === '') {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
     if (req.query.token !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
