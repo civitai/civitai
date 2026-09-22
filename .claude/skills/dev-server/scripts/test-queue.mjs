@@ -39,11 +39,45 @@ export const READ_WINDOW_BYTES = 64 * 1024;
  *
  * `capWorkers` says whether `--max-workers` means anything to that script. tsc has no worker pool,
  * so handing it the flag would be an unknown argument rather than a smaller run.
+ *
+ * `resultCache` is a SEPARATE question and must stay one. It says whether the run is one the test
+ * result cache can skip files in - which is the `unit` projects and nothing else, because the
+ * sequencer only ever skips there (see the note above `sequence.sequencer` in vitest.config.mts).
+ * The two were one flag while every lane answered them the same way; the browser and workspace
+ * suites are the case that separates them. They take `--max-workers` and must NOT take the cache
+ * reporter, which would otherwise attach to a run it can skip nothing in and write its ledger
+ * entries anyway.
  */
+/**
+ * What a lane COSTS, as against how many of it may run.
+ *
+ * Per-lane limits alone are not resource management. Before this table the only admission
+ * condition was `runningFor(kind) >= limits[kind]`, so six lanes at 1 each let six runs start
+ * together: about 62 vitest workers on a 32-core box, two 8 GB tsc heaps, and a browser suite,
+ * all at once. Separate limits made the oversubscription orderly rather than smaller.
+ *
+ * A group is the shared budget. `saturating` holds the runs that each want most of the machine on
+ * their own, so only one of them runs at a time whichever lane it came from. `light` holds the
+ * ones that want a core and a large heap, which can sit beside a saturating run without competing
+ * for CPU in any way that matters.
+ *
+ * 🔴 This deliberately does NOT make the queue first-come. A cheap typecheck can still overtake a
+ * queued suite, and that is the property the lanes were added for: an edit/verify loop that waits
+ * behind someone else's 500-second suite is the condition this whole queue exists to end. If you
+ * are here to make it strictly fair, that is a product decision, not a cleanup - it was taken
+ * deliberately on 2026-09-22.
+ */
+export const RUN_GROUPS = {
+  saturating: { defaultConcurrency: 1, configKey: 'saturatingConcurrency', flag: '--saturating' },
+  light: { defaultConcurrency: 2, configKey: 'lightConcurrency', flag: '--light' },
+};
+
 export const RUN_KINDS = {
   unit: {
     script: 'test:unit:run',
     capWorkers: true,
+    resultCache: true,
+    group: 'saturating',
     defaultConcurrency: 1,
     // The wire name this lane's limit takes in /test-runs/config, and the CLI operand that sets
     // it. The unit lane is the bare `concurrency` and the bare positional operand because it was
@@ -54,6 +88,8 @@ export const RUN_KINDS = {
   typecheck: {
     script: 'typecheck',
     capWorkers: false,
+    resultCache: false,
+    group: 'light',
     defaultConcurrency: 1,
     configKey: 'typecheckConcurrency',
     flag: '--typecheck',
@@ -61,9 +97,76 @@ export const RUN_KINDS = {
   typecheckApps: {
     script: 'typecheck:apps',
     capWorkers: false,
+    resultCache: false,
+    group: 'light',
     defaultConcurrency: 1,
     configKey: 'typecheckAppsConcurrency',
     flag: '--typecheck-apps',
+  },
+  // Its own lane rather than a share of the unit one: this is the pair CLAUDE.md names, where a
+  // 31-worker unit run and 12 Chromium instances ran beside each other because only one of them
+  // was arbitrated.
+  component: {
+    script: 'test:component',
+    capWorkers: true,
+    resultCache: false,
+    group: 'saturating',
+    // Vitest's browser pool is min(12, cpus - 1), but `getThreadsCount` returns a caller's
+    // `--max-workers` UNCLAMPED - so the queue's own cap, set for vitest workers, would launch
+    // that many Chromium instances instead. 15 is past what upstream calls safe.
+    maxWorkersCeiling: 12,
+    defaultConcurrency: 1,
+    configKey: 'componentConcurrency',
+    flag: '--component',
+  },
+  packages: {
+    script: 'test:packages:run',
+    capWorkers: true,
+    resultCache: false,
+    group: 'saturating',
+    defaultConcurrency: 1,
+    configKey: 'packagesConcurrency',
+    flag: '--packages',
+  },
+  apps: {
+    script: 'test:apps:run',
+    capWorkers: true,
+    resultCache: false,
+    group: 'saturating',
+    defaultConcurrency: 1,
+    configKey: 'appsConcurrency',
+    flag: '--apps',
+  },
+  // A second browser project, so the same ceiling applies for the same reason.
+  geometry: {
+    script: 'test:geometry',
+    capWorkers: true,
+    resultCache: false,
+    group: 'saturating',
+    maxWorkersCeiling: 12,
+    defaultConcurrency: 1,
+    configKey: 'geometryConcurrency',
+    flag: '--geometry',
+  },
+  // eslint is one process with no worker pool, so `--max-workers` means nothing to it and it sits
+  // in `light` beside the typechecks rather than taking a saturating slot it would not fill.
+  lint: {
+    script: 'lint',
+    capWorkers: false,
+    resultCache: false,
+    group: 'light',
+    defaultConcurrency: 1,
+    configKey: 'lintConcurrency',
+    flag: '--lint',
+  },
+  lintPackages: {
+    script: 'lint:packages',
+    capWorkers: false,
+    resultCache: false,
+    group: 'light',
+    defaultConcurrency: 1,
+    configKey: 'lintPackagesConcurrency',
+    flag: '--lint-packages',
   },
 };
 
@@ -78,7 +181,9 @@ export const DEFAULT_KIND = 'unit';
  */
 export function laneConcurrencyArgs(rest) {
   const body = {};
-  for (const spec of Object.values(RUN_KINDS)) {
+  // Lanes AND groups, one parser: their configKeys share a namespace on the wire, so parsing them
+  // apart would be two places to forget a new one.
+  for (const spec of [...Object.values(RUN_KINDS), ...Object.values(RUN_GROUPS)]) {
     if (!spec.flag) continue;
     // Anchored on the whole flag or on `flag=`, never a bare prefix: `--typecheck` matching
     // `--typecheck-apps` as a prefix would set the WRONG lane's limit and then report back the
@@ -247,13 +352,16 @@ export function createOutputCapture(onLine) {
  * A caller who passed their own `--max-workers` keeps it: they asked for a specific width, and a
  * second copy of the flag would decide the run by argument order rather than by intent.
  */
-export function workerCapArgv(maxWorkers, args) {
-  if (!maxWorkers) return [];
+export function workerCapArgv(maxWorkers, args, ceiling = null) {
+  // A lane's ceiling applies even when the queue is uncapped, because it is a property of that
+  // runner rather than of how busy the box is.
+  const width = maxWorkers && ceiling ? Math.min(maxWorkers, ceiling) : maxWorkers || ceiling;
+  if (!width) return [];
   // Both spellings: vitest reads kebab and camel as one flag (see canonicalFlag in
   // scripts/test-component-run.mjs), so matching only `--max-workers` would miss a caller's
   // `--maxWorkers=3` and append a second, conflicting width after it.
   if (args.some((a) => /^--max(?:-w|W)orkers(?:=|$)/.test(String(a)))) return [];
-  return [`--max-workers=${maxWorkers}`];
+  return [`--max-workers=${width}`];
 }
 
 /**
@@ -308,14 +416,17 @@ export function defaultStartRun({
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
-  const { script, capWorkers } = RUN_KINDS[normalizeKind(kind)];
+  const { script, capWorkers, resultCache, maxWorkersCeiling = null } =
+    RUN_KINDS[normalizeKind(kind)];
   const argv = [
     'run',
     script,
     ...args,
-    ...(capWorkers ? workerCapArgv(maxWorkers, args) : []),
-    // Unit runs only: the reporter is a vitest reporter, and tsc would reject the flag.
-    ...(capWorkers ? cacheReporterArgv(cacheMode, args, cacheReporterPath(worktree)) : []),
+    ...(capWorkers ? workerCapArgv(maxWorkers, args, maxWorkersCeiling) : []),
+    // Cached lanes only. The reporter is a vitest reporter, so a non-vitest lane would reject the
+    // flag outright - and a vitest lane the cache can skip nothing in would accept it and report
+    // on a run it never influenced.
+    ...(resultCache ? cacheReporterArgv(cacheMode, args, cacheReporterPath(worktree)) : []),
   ];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
@@ -342,7 +453,7 @@ export function defaultStartRun({
         ...process.env,
         CIVITAI_TEST_QUEUE: '0',
         // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
-        CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].capWorkers ? cacheMode : 'off',
+        CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].resultCache ? cacheMode : 'off',
       },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
@@ -451,6 +562,7 @@ export class TestQueue {
   constructor(options = {}) {
     const {
       concurrency = DEFAULT_CONCURRENCY,
+      groupConcurrency = undefined,
       maxWorkers = DEFAULT_MAX_WORKERS,
       cacheMode = 'off',
       startRun = defaultStartRun,
@@ -462,6 +574,7 @@ export class TestQueue {
     } = options;
 
     this.limits = normalizeLimits(concurrency);
+    this.groupLimits = normalizeGroupLimits(groupConcurrency);
     this.maxWorkers = normalizeMaxWorkers(maxWorkers);
     this.cacheMode = normalizeCacheMode(cacheMode);
     this.startRun = startRun;
@@ -581,6 +694,13 @@ export class TestQueue {
     this.dequeue(id);
     this.settle(run, 'cancelled', null, reason === 'cancelled' ? null : reason);
     return this.view(id);
+  }
+
+  setGroupConcurrency(value, group) {
+    const name = normalizeGroupName(group);
+    this.groupLimits[name] = normalizeConcurrency(value);
+    this.pump();
+    return this.groupLimits[name];
   }
 
   setConcurrency(value, kind = DEFAULT_KIND) {
@@ -714,12 +834,31 @@ export class TestQueue {
 
   // --- internals ---
 
+  runningForGroup(group) {
+    let n = 0;
+    for (const id of this.running) {
+      const kind = this.runs.get(id)?.kind;
+      if (kind && RUN_KINDS[kind]?.group === group) n += 1;
+    }
+    return n;
+  }
+
+  groupConcurrencyFor(group) {
+    return this.groupLimits[group];
+  }
+
   pump() {
-    // Per lane, and each lane takes only ITS OWN head of the queue — a typecheck must not wait
-    // behind a suite it shares no budget with, which is the whole reason the limits are separate.
+    // Two conditions, not one. The LANE limit keeps a kind from stacking on itself; the GROUP
+    // limit is the shared budget that stops four lanes that each want the whole box from starting
+    // together. Per-lane alone was orderly oversubscription, not arbitration.
+    //
+    // Each lane still takes only ITS OWN head of the queue, so a light run is not stuck behind a
+    // saturating one it shares no budget with — the property the lanes were added for.
     for (const kind of Object.keys(RUN_KINDS)) {
+      const group = RUN_KINDS[kind].group;
       for (;;) {
         if (this.runningFor(kind) >= this.limits[kind]) break;
+        if (this.runningForGroup(group) >= this.groupLimits[group]) break;
         const at = this.order.findIndex((id) => this.runs.get(id)?.kind === kind);
         if (at === -1) break;
         this.start(this.order.splice(at, 1)[0]);
@@ -897,6 +1036,23 @@ function normalizeMaxWorkers(value) {
  * leaves the others at their defaults — reinterpreting it as "every lane" would silently raise the
  * typecheck limit on every machine that had ever set TEST_CONCURRENCY for the suite.
  */
+function normalizeGroupName(group) {
+  if (!Object.prototype.hasOwnProperty.call(RUN_GROUPS, group)) {
+    throw new Error(`unknown run group: ${group} (want one of ${Object.keys(RUN_GROUPS).join(', ')})`);
+  }
+  return group;
+}
+
+function normalizeGroupLimits(value) {
+  const limits = {};
+  for (const [group, spec] of Object.entries(RUN_GROUPS)) limits[group] = spec.defaultConcurrency;
+  if (value === undefined || value === null) return limits;
+  for (const [group, n] of Object.entries(value)) {
+    limits[normalizeGroupName(group)] = normalizeConcurrency(n);
+  }
+  return limits;
+}
+
 function normalizeLimits(value) {
   const limits = {};
   for (const [kind, spec] of Object.entries(RUN_KINDS)) limits[kind] = spec.defaultConcurrency;

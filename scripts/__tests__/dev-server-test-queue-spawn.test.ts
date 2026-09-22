@@ -219,6 +219,38 @@ describe('result cache on queued runs', () => {
     expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
   });
 
+  /**
+   * 🔴 The case the `capWorkers` / `resultCache` split exists for, and the only lane where the two
+   * disagree. A browser suite IS vitest, so `--max-workers` means something to it - but the cache
+   * sequencer only ever skips files in the `unit` projects, so the reporter would attach to a run
+   * it can skip nothing in and write ledger entries for it anyway. While one flag answered both
+   * questions this lane could not have had the cap without the cache. If you are here because you
+   * merged them back: this assertion is the reason not to.
+   */
+  it('caps a component run without caching it', () => {
+    start({ cacheMode: 'on', kind: 'component', maxWorkers: 4 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=4']);
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+  });
+
+  /**
+   * 🔴 A width ABOVE the ceiling, which is the only place a ceiling is observable. The case above
+   * asks for 4 and would pass identically with the ceiling deleted - measured, not assumed.
+   *
+   * The ceiling exists because `getThreadsCount` returns a caller's `--max-workers` UNCLAMPED for
+   * the browser pool, so the queue's own cap, set for vitest workers, would launch that many
+   * CHROMIUM instances instead. The daemon runs at 15 today; 12 is what upstream calls safe.
+   */
+  it('never hands the browser pool more instances than its ceiling', () => {
+    start({ kind: 'component', maxWorkers: 15 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=12']);
+  });
+
+  it('leaves a width under the ceiling alone rather than raising it', () => {
+    start({ kind: 'component', maxWorkers: 3 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=3']);
+  });
+
   // A tree without the cache files runs uncached rather than as a vitest that cannot load its
   // reporter and fails every queued suite.
   it('adds nothing when the reporter file is absent', () => {

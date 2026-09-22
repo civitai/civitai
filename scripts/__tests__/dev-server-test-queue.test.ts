@@ -90,7 +90,9 @@ describe('dev-server test queue', () => {
   });
 
   it('honours a configured concurrency above one', () => {
-    const queue = build({ concurrency: 2 });
+    // The group limit is raised WITH the lane limit because they are different constraints: this
+    // test is about the lane one. The case where they disagree is pinned on its own below.
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 2 } });
 
     queue.request({ worktree: '/wt/a' });
     queue.request({ worktree: '/wt/b' });
@@ -99,6 +101,36 @@ describe('dev-server test queue', () => {
     expect(runner.started).toHaveLength(2);
     expect(third.status).toBe('queued');
     expect(third.position).toBe(1);
+  });
+
+  /**
+   * 🔴 The group budget is a CEILING over the lane limits, not a suggestion. Raising a saturating
+   * lane past its group's limit does not admit a second run - `unit`, `packages`, `apps` and
+   * `component` each want most of the machine, so only one of them runs at a time whichever lane
+   * it came from.
+   *
+   * If you are here because `test config 2` no longer starts two suites: that is this rule, and
+   * the fix is `test config 2 --saturating 2`, not deleting the condition. Six lanes at 1 each
+   * admitting together was ~62 vitest workers on 32 cores, two 8 GB tsc heaps and a browser suite,
+   * which is what this exists to stop. Decision taken 2026-09-22.
+   */
+  it('does not admit a second saturating run just because the lane limit allows one', () => {
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 1 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const second = queue.request({ worktree: '/wt/b' });
+
+    expect(runner.started).toHaveLength(1);
+    expect(second.status).toBe('queued');
+  });
+
+  it('admits a light run beside a saturating one, which is what the groups are for', () => {
+    const queue = build({ concurrency: 1, groupConcurrency: { saturating: 1, light: 2 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const check = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+
+    expect(check.status).toBe('running');
   });
 
   it('treats concurrency 0 as paused, and says so rather than leaving the caller guessing', () => {
@@ -142,7 +174,9 @@ describe('dev-server test queue', () => {
   });
 
   it('never abandons a run that is already executing — the daemon owns it, not the caller', () => {
-    const queue = build({ concurrency: 2 });
+    // Two running and one queued is the shape this test needs; the group limit is raised only to
+    // reach it, and has nothing to do with what is being asserted.
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 2 } });
     const executing = queue.request({ worktree: '/wt/a' });
     queue.request({ worktree: '/wt/b' });
     const waiting = queue.request({ worktree: '/wt/c' });

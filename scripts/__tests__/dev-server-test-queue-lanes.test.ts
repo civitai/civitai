@@ -29,8 +29,9 @@ type Queue = {
 type Runner = EventEmitter & { finish: (code: number) => void; kind: Kind; worktree: string };
 type RunnerArgs = { worktree: string; kind: Kind };
 
-const { TestQueue, parseMaxWorkersFlag } = QueueModule as unknown as {
+const { TestQueue, parseMaxWorkersFlag, RUN_KINDS } = QueueModule as unknown as {
   parseMaxWorkersFlag: (raw: string | undefined) => number | null;
+  RUN_KINDS: Record<string, unknown>;
   TestQueue: new (options: Record<string, unknown>) => Queue;
 };
 
@@ -153,8 +154,14 @@ describe('configuring the lanes', () => {
 
   it('refuses an unknown kind without recording a run no lane would ever start', () => {
     const queue = build({ unit: 1, typecheck: 1 });
+    // 🔴 The premise, asserted rather than assumed. This test used to name `lint`, which was an
+    // unknown kind until the day someone added a `lint` LANE - at which point the request stopped
+    // throwing and the test failed for a reason that had nothing to do with what it checks. A name
+    // no lane will ever take needs to be checked, not chosen and trusted.
+    const notALane = '__not-a-lane__';
+    expect(Object.keys(RUN_KINDS)).not.toContain(notALane);
 
-    expect(() => queue.request({ worktree: '/wt/x', kind: 'lint' })).toThrow(/unknown run kind/);
+    expect(() => queue.request({ worktree: '/wt/x', kind: notALane })).toThrow(/unknown run kind/);
     expect(queue.list()).toEqual([]);
   });
 
