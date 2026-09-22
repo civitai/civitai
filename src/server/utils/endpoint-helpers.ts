@@ -252,23 +252,44 @@ const allowedOrigins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS, ...getAllServerHo
     if (!origin.startsWith('http')) return `https://${origin}`;
     return origin;
   });
+// Exact, so `https://civitai.com.example` is not taken for `https://civitai.com`.
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// A `*` in Allow-Headers covers every header except Authorization, which has to be named.
+const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, *';
+// Chrome caps a cached preflight at two hours; Firefox allows a day.
+const CORS_MAX_AGE_SECONDS = 7200;
+
+/**
+ * `allowCredentials` grants cookies to civitai's own origins only. Any other
+ * origin gets `*` without credentials: browsers never send it civitai cookies,
+ * so it can only authenticate with a token it already holds.
+ */
 export const addCorsHeaders = (
   req: NextApiRequest,
   res: NextApiResponse,
   allowedMethods: string[] = ['GET'],
   { allowCredentials = false }: { allowCredentials?: boolean } = {}
 ) => {
-  if (allowCredentials) {
-    const origin = req.headers.origin;
-    const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  const origin = req.headers.origin;
+  if (allowCredentials && origin && allowedOrigins.some((o) => sameOrigin(o, origin))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    const vary = res.getHeader('Vary');
+    res.setHeader('Vary', vary ? `${vary}, Origin` : 'Origin');
   } else {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
   res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
   if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Max-Age', String(CORS_MAX_AGE_SECONDS));
     res.status(200).end();
     return true;
   }
@@ -484,9 +505,6 @@ export function MixedAuthEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!req.method || !allowedMethods.includes(req.method))
-      return res.status(405).json({ error: 'Method not allowed' });
-
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
     // comments there. Two differences worth naming, because this wrapper used to
     // decide on a different axis:
@@ -512,6 +530,10 @@ export function MixedAuthEndpoint(
     // also stops a preflight doing a pointless session resolve after the 200 has
     // already gone out.
     if (addCorsHeaders(req, res, allowedMethods)) return;
+
+    // Below the preflight: an OPTIONS is never in `allowedMethods`, and a 405 fails it.
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
 
     if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
