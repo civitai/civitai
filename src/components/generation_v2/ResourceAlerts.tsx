@@ -251,7 +251,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     return (
       <Alert color="blue" radius="md" p="xs">
         <Text size="xs">
-          {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to download
+          {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to be loaded
           first{size > 0 ? ` — ${formatBytes(size)}` : ''}
           {preparation.etaSeconds != null
             ? `. Ready in ${formatDownloadEta(preparation.etaSeconds)}.`
@@ -295,7 +295,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
         ) : (
           <Text size="sm">
             <Text span fw={600}>
-              {count === 1 ? 'A resource needs' : `${count} resources need`} to download first
+              {count === 1 ? 'A resource needs' : `${count} resources need`} to be loaded first
             </Text>{' '}
             — {formatBytes(totalBytes)}.
             {boostable && boostedEtaSeconds != null

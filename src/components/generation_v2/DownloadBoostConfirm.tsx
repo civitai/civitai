@@ -39,7 +39,7 @@ function DownloadBoostConfirmModal({
     >
       <Stack gap="md">
         <Text size="sm">
-          {count === 1 ? 'A resource needs' : `${count} resources need`} to download before this
+          {count === 1 ? 'A resource needs' : `${count} resources need`} to be loaded before this
           generation can start — {formatBytes(totalBytes)}.
           {etaSeconds != null && ` Ready in ${formatDownloadEta(etaSeconds)}.`}
         </Text>

@@ -10,11 +10,27 @@ import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 import cardClasses from '~/components/Cards/Cards.module.css';
 
+/**
+ * Loaded is the state that arrives while someone is looking at it, and nothing pushes it — the
+ * queue card invalidates this query for a model it watches land, and this is the backstop for
+ * every other way one becomes resident. Never faster than the server's own 30s cache.
+ */
+const RESIDENCY_POLL_MS = 60_000;
+
+const pollWhileAnyIsCold = (query: {
+  state: { data?: { availability: ResourceLoadAvailability }[] };
+}) =>
+  query.state.data?.every((x) => x.availability.status === 'available') ? false : RESIDENCY_POLL_MS;
+
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
   const { data } = trpc.resourceLoad.getResidency.useQuery(
     { modelVersionIds: [modelVersionId ?? 0] },
-    { enabled: !!currentUser && modelVersionId != null && modelVersionId > 0, staleTime: 30_000 }
+    {
+      enabled: !!currentUser && modelVersionId != null && modelVersionId > 0,
+      staleTime: 30_000,
+      refetchInterval: pollWhileAnyIsCold,
+    }
   );
   return data?.find((x) => x.modelVersionId === modelVersionId)?.availability;
 }
@@ -36,7 +52,7 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
         loaded: true,
         label: 'Loaded',
         color: 'green',
-        description: 'Loaded on the generator — generations start right away.',
+        description: 'Loaded in the generator — generations start right away.',
       };
     case 'loading': {
       const pct = Math.round(availability.progress * 100);
@@ -44,7 +60,7 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
         loaded: false,
         label: `Downloading ${pct}%`,
         color: 'blue',
-        description: `Downloading to the generator.${eta(availability)} ${WAIT_NOTE}`,
+        description: `Downloading into the generator.${eta(availability)} ${WAIT_NOTE}`,
       };
     }
     case 'queued':
@@ -52,7 +68,7 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
         loaded: false,
         label: 'Queued to download',
         color: 'yellow',
-        description: `Waiting to download to the generator.${eta(availability)} ${WAIT_NOTE}`,
+        description: `Waiting to download into the generator.${eta(availability)} ${WAIT_NOTE}`,
       };
     case 'unavailable':
       return isQueuedAvailability(availability)
@@ -60,13 +76,13 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
             loaded: false,
             label: 'Queued to download',
             color: 'yellow',
-            description: `Waiting to download to the generator. ${WAIT_NOTE}`,
+            description: `Waiting to download into the generator. ${WAIT_NOTE}`,
           }
         : {
             loaded: false,
             label: 'Not loaded',
             color: 'yellow',
-            description: `Not on the generator yet, so generating with it downloads it first, which can take a while. ${WAIT_NOTE}`,
+            description: `Not loaded in the generator yet, so generating with it downloads it first, which can take a while. ${WAIT_NOTE}`,
           };
     default:
       return null;
@@ -97,7 +113,11 @@ export function ResidencyBatchProvider({
     batches.map((modelVersionIds) =>
       t.resourceLoad.getResidency(
         { modelVersionIds },
-        { enabled: !!currentUser && modelVersionIds.length > 0, staleTime: 30_000 }
+        {
+          enabled: !!currentUser && modelVersionIds.length > 0,
+          staleTime: 30_000,
+          refetchInterval: pollWhileAnyIsCold,
+        }
       )
     )
   );
@@ -144,7 +164,7 @@ function StatusDot({ color, filled }: { color: string; filled: boolean }) {
   );
 }
 
-type LoadedMarkVariant = 'dot' | 'label' | 'overlay';
+type LoadedMarkVariant = 'dot' | 'overlay';
 
 const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
 
@@ -169,13 +189,6 @@ export function LoadedMark({ variant = 'dot' }: { variant?: LoadedMarkVariant })
         <span role="img" aria-label={LOADED.label} className="inline-flex shrink-0">
           {dot}
         </span>
-      ) : variant === 'label' ? (
-        <Group gap={6} wrap="nowrap" className="w-fit shrink-0 cursor-default">
-          {dot}
-          <Text size="xs" c={`${LOADED.color}.5`}>
-            {LOADED.label}
-          </Text>
-        </Group>
       ) : (
         <Badge
           className={clsx(cardClasses.infoChip, cardClasses.chip, 'cursor-default')}
@@ -202,15 +215,35 @@ export function LoadedCornerBadge({ loaded }: { loaded: boolean }) {
   return (
     <Tooltip label={residency.description} withArrow multiline w={240}>
       <Badge
-        className="absolute -left-2 -top-2 z-10 cursor-default border border-solid border-gray-3 bg-white pl-1.5 pr-2 dark:border-dark-4 dark:bg-dark-6"
+        className="absolute -left-2 -top-2 z-10 cursor-default border border-solid border-gray-3 bg-gray-1 pl-1.5 pr-2 dark:border-dark-4 dark:bg-dark-5"
         size="sm"
         radius="xl"
         leftSection={<StatusDot color={residency.color} filled={loaded} />}
       >
-        <Text size="10px" fw={600} tt="none">
-          {loaded ? 'Loaded' : 'Needs download'}
+        <Text size="10px" fw={600} c={`${residency.color}.5`} tt="none">
+          {residency.label}
         </Text>
       </Badge>
+    </Tooltip>
+  );
+}
+
+/**
+ * The generator's rows, where a cold resource has to say so: the wait is the thing the user is about
+ * to pay for in queue time. Live, so it also names a download already running or queued.
+ */
+export function ResourceLoadState({ modelVersionId }: { modelVersionId: number }) {
+  const residency = useResidency(modelVersionId);
+  if (!residency) return null;
+
+  return (
+    <Tooltip label={residency.description} withArrow multiline w={240}>
+      <Group gap={6} wrap="nowrap" className="w-fit shrink-0 cursor-default">
+        <StatusDot color={residency.color} filled={residency.loaded} />
+        <Text size="xs" c={`${residency.color}.5`}>
+          {residency.label}
+        </Text>
+      </Group>
     </Tooltip>
   );
 }
@@ -224,7 +257,9 @@ export function ResourceResidencyStatus({ modelVersionId }: { modelVersionId: nu
     <Tooltip multiline w={260} withArrow label={residency.description}>
       <Group gap={6} wrap="nowrap" className="cursor-default">
         <StatusDot color={residency.color} filled={residency.loaded} />
-        <Text size="xs">{residency.label}</Text>
+        <Text size="xs" c={`${residency.color}.5`}>
+          {residency.label}
+        </Text>
       </Group>
     </Tooltip>
   );

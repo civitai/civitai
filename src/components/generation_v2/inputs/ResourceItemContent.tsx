@@ -21,7 +21,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
-import { ResourceLoadedDot } from '~/components/ResourceLoad/ResourceResidency';
+import { ResourceLoadState } from '~/components/ResourceLoad/ResourceResidency';
 
 // =============================================================================
 // Types
@@ -296,7 +296,7 @@ export function ResourceItemContent({
               </HoverCard>
             )}
           </Group>
-          {!isDisabled && <ResourceLoadedDot modelVersionId={resource.id} variant="label" />}
+          {!isDisabled && <ResourceLoadState modelVersionId={resource.id} />}
         </div>
         {actions && (
           <Group gap={4} className="shrink-0">
