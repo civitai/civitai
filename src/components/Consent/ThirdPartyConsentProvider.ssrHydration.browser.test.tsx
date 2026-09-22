@@ -272,7 +272,13 @@ function hydrationConsoleErrors() {
  * test does a full `renderToString` of a Mantine tree first), so a beacon that never flips
  * printed a bare `Test timed out in 15000ms` — the one failure shape that carries no diagnosis.
  * At 10 s this `waitFor` fails first and prints what it was waiting for. Measured both ways by
- * the `civitai-test-review` lane. Keep this strictly under whatever the project timeout is.
+ * the `civitai-test-review` lane.
+ *
+ * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT — keep it several seconds under.
+ * The real invariant is `BEACON_TIMEOUT_MS < projectTimeout − (everything before the wait
+ * starts)`: the `renderToString` of the full Mantine tree is charged to the TEST's clock and not
+ * to this one (~75 ms measured, but load-dependent). `14_000` would satisfy the sentence and
+ * restore exactly the bare `Test timed out` this budget exists to remove.
  *
  * Ordering assumption that makes the early return safe: React reports recoverable errors during
  * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
@@ -283,8 +289,8 @@ function hydrationConsoleErrors() {
  * rather than fixed (changing a passing, unrelated suite is outside this PR), and recorded
  * with its DIRECTION because that is the part that matters: its post-hydrate assertions are
  * absence-shaped (`expect(recoverable).toEqual([])`), so a starved budget there reads GREEN,
- * while its own instrument check — a two-element tree — completes inside any budget and cannot
- * report the shortfall.
+ * while its own instrument check — the same single-element `Diverges` this file uses —
+ * completes inside any budget and cannot report the shortfall.
  */
 async function hydrateInto(
   html: string,
@@ -305,9 +311,16 @@ async function hydrateInto(
   if (awaitBeacon) {
     // `hydratedFlag` rather than an inline query so a failure prints `'(absent)'` rather than
     // `undefined` when the beacon element is not there at all.
-    await vi.waitFor(() => expect(hydratedFlag(container)).toBe('true'), {
-      timeout: BEACON_TIMEOUT_MS,
-    });
+    await vi.waitFor(
+      () =>
+        expect(
+          hydratedFlag(container),
+          '`HydrationBeacon` never reached `true`: React did not hydrate the planted server ' +
+            `markup within ${BEACON_TIMEOUT_MS}ms, so every assertion after this point would be ` +
+            'reading the planted HTML rather than a hydrated tree'
+        ).toBe('true'),
+      { timeout: BEACON_TIMEOUT_MS }
+    );
     return container;
   }
   for (let i = 0; i < 20; i++) {

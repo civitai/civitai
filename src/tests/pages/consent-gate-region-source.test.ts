@@ -30,8 +30,10 @@ import { describe, expect, it } from 'vitest';
  * locators and the type-literal member walk below are duplicated in the directory sibling
  * `src/tests/pages/app-region-optional-chain.test.ts`, which pins the FaroProvider white-screen
  * over the same `_app.tsx` and the same `region` variable. Copy-per-guard is this directory's
- * convention (measured at this commit: 25 files under `src/` call `ts.createSourceFile`, across 34
- * call sites; none share a scanning module),
+ * convention (measured at this commit: 25 files under `src/` call `ts.createSourceFile`,
+ * across 34 call sites, and none imports an AST-scanning helper from another module — though
+ * shared test helpers do exist, so the convention rests on habit and on divergent policies, not
+ * on there being nowhere to put one),
  * and the duplication was left in place deliberately — but it is recorded here so the next
  * person sees it rather than rediscovering it. The ASYMMETRIC pair is `jsxOpeners` /
  * `soleJsxOpener` / `jsxAttr`: the sibling open-codes the same find-by-tag → assert-exactly-one →
@@ -142,8 +144,8 @@ function consentComponentBody(sourceFile: ts.SourceFile): ts.Block {
   if (!decl.body) {
     throw new Error(
       `${CONSENT_FILE}: \`function ThirdPartyConsentProvider\` has no body — an overload ` +
-        `signature was picked. Re-point this locator at the implementation rather than ` +
-        `deleting the guards that use it.`
+        `signature or an ambient declaration was picked. Re-point this locator at the ` +
+        `implementation rather than deleting the guards that use it.`
     );
   }
   return decl.body;
@@ -280,11 +282,21 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
   it('the component declares no `region` prop, so re-adding the call site fails tsc', () => {
     const consent = parse(CONSENT_FILE);
 
-    const propsAlias = collect(
+    // Same subject discipline as `soleJsxOpener` / `consentComponentDecl`: refuse an absent OR a
+    // non-unique subject rather than silently taking `[0]`. Two module-scope `type Props` is a TS
+    // error, so this is about a block-scoped decoy — implausible, but the rest of this file
+    // refuses on principle and an inconsistent locator is the one nobody checks.
+    const propsAliases = collect(
       consent,
       (n) => ts.isTypeAliasDeclaration(n) && n.name.text === 'Props'
-    )[0] as ts.TypeAliasDeclaration | undefined;
-    if (!propsAlias) throw new Error(`${CONSENT_FILE}: type Props not found`);
+    ) as ts.TypeAliasDeclaration[];
+    if (propsAliases.length !== 1) {
+      throw new Error(
+        `${CONSENT_FILE}: expected exactly one \`type Props\`, found ${propsAliases.length}. ` +
+          `If it became an interface or moved, re-point this ledger rather than deleting it.`
+      );
+    }
+    const propsAlias = propsAliases[0];
 
     // 🔴 THE LEDGER BELOW WALKS TYPE LITERALS, SO THE ALIAS'S OWN SHAPE IS PART OF THE CLAIM.
     // `type Props = { children; initialConsent; loggedIn } & RegionProps` contributes no member
@@ -310,14 +322,14 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     //
     // NAME: an earlier version mapped a non-`Identifier` name to `''`, so `'region'?: RegionInfo`
     // — a quoted key, one character — vanished from the ledger while TypeScript treated it as the
-    // same property. Measured: that mutant left all seven tests green AND made
+    // same property. Measured: that mutant left all seven of this file's tests green AND made
     // `<ThirdPartyConsentProvider region={region}>` compile clean under a real `ts.createProgram`.
     //
     // KIND: the fix for that started from `members.filter(isPropertySignature)`, which closed the
     // name axis and left the kind axis wide open. `get region(): RegionInfo | undefined;` is not a
     // PropertySignature, so it was invisible to the very refusal meant to catch this — and a
     // getter-only member is still satisfied by a JSX attribute, so it compiled clean too, with all
-    // six guards green. Both axes found by the `civitai-test-review` lane, one round apart, with
+    // six assertions in THIS test green. Both axes found by the `civitai-test-review` lane, one round apart, with
     // the mutants and the `ts.createProgram` run each time.
     //
     // So START FROM EVERY MEMBER and refuse anything this ledger cannot read — accessors, methods,
@@ -338,15 +350,23 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     expect(
       allMembers.filter((m) => !readable(m)).map((m) => m.getText()),
       '`Props` must be plain property signatures named by an identifier or a string literal — an ' +
-        'accessor, a method, a call signature, or a computed or numeric key is a prop this ledger ' +
-        'cannot see, which is the same thing as not guarding it'
+        'accessor, a method, a call or construct signature, or a computed or numeric key is a ' +
+        'prop this ledger cannot see, which is the same thing as not guarding it. Rewrite it as ' +
+        'a plain property signature, or re-point this ledger — do not delete it'
     ).toEqual([]);
 
     // Every survivor is `readable`, so the name read below cannot silently produce `''`.
-    // (`src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts` has the same
-    // identifier-or-string-literal read with a different unreadable-name policy — `null` rather
-    // than refuse — which is safe there because its caller asserts a positive count. The policy
-    // has to follow the assertion's polarity; see this file's header.)
+    //
+    // ⚠️ THE REFUSE-TO-GUESS POLICY IS NOT NEW HERE — `clampStateOf` in
+    // `src/server/services/__tests__/collection-item-count-clamp-wiring.test.ts` reached the same
+    // conclusion first, for the same reason, and refuses a spread as well as a computed key. Read
+    // it before revisiting this policy. It is one of at least FIVE member-name readers under
+    // `src/` with five different unreadable-name policies (refuse / `'unreadable'` sentinel /
+    // `null` / implicit skip / `''`), plus one that reads `isStringLiteralLike` and is therefore
+    // strictly wider than the rest. They do not have to agree, and deliberately are not
+    // consolidated: each is safe only under its OWN assertion's polarity — a `''` or a `null` is
+    // loud under `.toContain(…)`/`.toBe(1)` and silent under the `.not.toContain(…)` this file
+    // uses, which is exactly why this one has to refuse. See this file's header.
     const members = allMembers.filter(readable).map((m) => m.name.text);
 
     expect(
