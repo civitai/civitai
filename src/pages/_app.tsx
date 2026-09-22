@@ -240,8 +240,12 @@ function MyApp(props: CustomAppProps) {
         )}
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
+        {/* 🔴 DO NOT pass `region` here. It is an SSR-ONLY prop (see the FaroProvider note
+            below) and this provider re-evaluates on every render, so threading it made the
+            consent gate DISAPPEAR on the first client-side navigation — fail-open, silently
+            re-enabling third-party analytics/ads for a CA visitor who had rejected them.
+            It reads the frozen `useAppContext().region` instead; see the file's own header. */}
         <ThirdPartyConsentProvider
-          region={region}
           initialConsent={cookies.consent}
           loggedIn={!!session || hasAuthCookie}
         >

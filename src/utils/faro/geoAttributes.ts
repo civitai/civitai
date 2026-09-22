@@ -9,8 +9,14 @@
  * FaroProvider sets as Faro session metadata at init:
  *   - `region` — the user's country code, SSR-DERIVED (`getRegion` in
  *     src/server/utils/region-blocking.ts reads `cf-ipcountry`/`cf-region-code`/`x-isuk`).
- *     _app already computes it (it feeds ThirdPartyConsentProvider); FaroProvider threads
- *     the SAME value in as a prop — nothing is re-parsed and nothing is fetched client-side.
+ *     _app already computes it (it seeds AppProvider, from which ThirdPartyConsentProvider
+ *     reads it); FaroProvider threads the SAME value in as a prop — nothing is re-parsed and
+ *     nothing is fetched client-side. 🔴 Being SSR-only, the PROP is `undefined` on every
+ *     client-side navigation. FaroProvider is unaffected because it initialises ONCE behind a
+ *     module-scope `faroInitStarted` guard and its effect depends only on `enabled` — so the
+ *     later `undefined` is never read. A consumer that RE-EVALUATES on every render cannot
+ *     read this prop; that is why ThirdPartyConsentProvider reads the frozen
+ *     `useAppContext().region` instead.
  *   - `timezone` — the browser's IANA timezone from
  *     `Intl.DateTimeFormat().resolvedOptions().timeZone`, computed here at build time of the
  *     attributes (which happens in the client-side init path only).
