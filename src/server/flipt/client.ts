@@ -143,6 +143,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
   IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
+
+  // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
+  // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
+  SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

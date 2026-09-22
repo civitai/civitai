@@ -45,20 +45,11 @@ const checkpointVersion = { ...version, model: { ...version.model, type: 'Checkp
 
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
 
-/**
- * The global `@civitai/client` stub returns `''` from `Air.stringify` and has no `parseSafe` at all,
- * so the queue's AIR -> version mapping needs a real round-trip here.
- */
+/** The global `@civitai/client` stub returns `''` from `Air.stringify`; the lookup needs a real one. */
 function installAirCodec() {
   const air = Air as unknown as Record<string, unknown>;
   air.stringify = ({ ecosystem, type, source, id, version }: Record<string, string>) =>
     `urn:air:${ecosystem}:${type}:${source}:${id}@${version}`;
-  air.parseSafe = (identifier: string) => {
-    const match = /^urn:air:([^:]+):([^:]+):([^:]+):(\d+)@(\d+)$/.exec(identifier);
-    if (!match) return null;
-    const [, ecosystem, type, source, id, version] = match;
-    return { ecosystem, type, source, id, version };
-  };
 }
 
 function orchestratorReturns(availability: unknown, size = 1024) {
@@ -126,6 +117,12 @@ describe('getResourceLoadQueue', () => {
             availability: { status: 'unavailable', queuePosition: 2 },
           },
           { air: 'not-an-air', size: 1, availability: { status: 'unavailable' } },
+          // Integer version, but not civitai's: it must not resolve to version 501.
+          {
+            air: 'urn:air:sdxl:lora:orchestrator:blob@501',
+            size: 1,
+            availability: { status: 'unavailable' },
+          },
         ],
       },
     });

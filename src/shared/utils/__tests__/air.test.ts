@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { getAirModelLink, getCivitaiAirModelLink, rawAirResourceId } from '~/shared/utils/air';
+import {
+  getAirModelLink,
+  getCivitaiAirModelLink,
+  rawAirResourceId,
+  versionIdFromAir,
+} from '~/shared/utils/air';
 
 describe('rawAirResourceId', () => {
   it('is negative, nonzero, and deterministic', () => {
@@ -58,5 +63,36 @@ describe('getAirModelLink', () => {
     expect(getAirModelLink('urn:air:flux1:checkpoint:civitai:618692@691639')).toBe(
       '/models/618692?modelVersionId=691639'
     );
+  });
+});
+
+describe('versionIdFromAir', () => {
+  it('resolves a civitai AIR to its version id', () => {
+    expect(versionIdFromAir('urn:air:flux1:checkpoint:civitai:618692@691639')).toBe(691639);
+  });
+
+  // The same version appears both with and without a file id; both must land on one row.
+  it('resolves a civitai AIR carrying a file id to the same version', () => {
+    expect(versionIdFromAir('urn:air:sdxl:checkpoint:civitai:1224788@2467972+2356618')).toBe(
+      2467972
+    );
+  });
+
+  // The source guard on its own: another source's version segment can be a bare integer, and would
+  // otherwise resolve to an unrelated ModelVersion.
+  it.each([
+    ['a HuggingFace AIR', 'urn:air:sd1:checkpoint:huggingface:12345@678'],
+    ['an orchestrator blob', 'urn:air:sdxl:lora:orchestrator:blob@12345'],
+    ['an OCI image', 'urn:air:oci:image:dockerhub:vllm/vllm-openai@26'],
+  ])('rejects %s whose version segment is numeric', (_, air) => {
+    expect(versionIdFromAir(air)).toBeUndefined();
+  });
+
+  it('rejects a civitai AIR naming no version', () => {
+    expect(versionIdFromAir('urn:air:flux1:checkpoint:civitai:618692')).toBeUndefined();
+  });
+
+  it('rejects something that is not an AIR', () => {
+    expect(versionIdFromAir('not-an-air')).toBeUndefined();
   });
 });
