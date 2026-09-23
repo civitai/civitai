@@ -138,8 +138,13 @@ describe('postRateLimits new-account clamp', () => {
     await expectCap(user({ tier, createdAt: new Date() }), 2, 10 * 60 * 1000, NEW_ACCOUNT_MESSAGE);
   });
 
+  // The last millisecond of yesterday is under 24h old, so a clamp window wider than
+  // the signup calendar day (24h, 7 days) still catches this account and fails here.
   it('does not apply once the signup day has passed', async () => {
-    const next = await attemptWith(user({ tier: 'free' }), 3, 10 * 60 * 1000);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const createdAt = new Date(startOfToday.getTime() - 1);
+    const next = await attemptWith(user({ tier: 'free', createdAt }), 3, 10 * 60 * 1000);
     expect(next).toHaveBeenCalledTimes(1);
   });
 });
