@@ -102,25 +102,15 @@ async function getReplyThreads({
   if (!selected.length) return empty;
 
   const threadIds = selected.map((x) => x.id);
-  const [comments, hiddenGroups, countGroups] = await Promise.all([
+  const [comments, countGroups] = await Promise.all([
     dbRead.commentV2.findMany({
       where: {
         threadId: { in: threadIds },
-        hidden: hidden ?? false,
+        hidden: hidden ? true : undefined,
         tosViolation: isModerator ? undefined : false,
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       },
       select: commentV2Select,
-    }),
-    dbRead.commentV2.groupBy({
-      by: ['threadId'],
-      where: {
-        threadId: { in: threadIds },
-        hidden: true,
-        tosViolation: isModerator ? undefined : false,
-        userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      },
-      _count: { _all: true },
     }),
     // The CTE carries `Thread.commentCount`, which a ToS flag never decrements. This seeds the
     // client's reply count, so it must agree with `getCommentCount`: same predicate, and no
@@ -135,9 +125,6 @@ async function getReplyThreads({
     }),
   ]);
 
-  const hiddenCounts = Object.fromEntries(
-    hiddenGroups.map((group) => [group.threadId, group._count._all])
-  );
   const commentCounts = Object.fromEntries(
     countGroups.map((group) => [group.threadId, group._count._all])
   );
@@ -145,7 +132,6 @@ async function getReplyThreads({
   const threads = groupReplyThreads({
     threads: selected,
     comments: comments as CommentV2Model[],
-    hiddenCounts,
     commentCounts,
     sort,
     limit,
@@ -676,8 +662,8 @@ export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
 /**
  * Mirror of the legacy `setTosViolationHandler` flow for CommentV2:
  * 1) Set `tosViolation = true` — the reads here filter it for non-moderators, which is what takes the
- *    comment off the page. `hidden` does not: that is only a fold behind a "See N hidden comments"
- *    modal any viewer can open.
+ *    comment off the page. `hidden` does not: it only swaps the comment for a placeholder any
+ *    viewer can reveal.
  * 2) Mark CommentV2Report rows with reason=TOSViolation as Actioned
  * 3) Reward reporters via reportAcceptedReward
  * 4) Send 'tos-violation' notification to comment owner
@@ -765,36 +751,14 @@ export const getCommentCount = async ({
     },
   });
 
-// Get thread metadata including hidden comment count - optimized for separate thread meta queries
 export async function getCommentsThreadDetails2({
   entityId,
   entityType,
-  excludedUserIds = [],
-  isModerator = false,
-}: CommentConnectorInput & {
-  excludedUserIds?: number[];
-  isModerator?: boolean;
-}): Promise<{ id: number; locked: boolean; hiddenCount: number } | null> {
-  const mainThread = await dbRead.thread.findUnique({
+}: CommentConnectorInput): Promise<{ id: number; locked: boolean } | null> {
+  return dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true, locked: true },
   });
-  if (!mainThread) return null;
-
-  // Get hidden comment count for this thread
-  const hiddenCount = await dbRead.commentV2.count({
-    where: {
-      threadId: mainThread.id,
-      userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      hidden: true,
-      tosViolation: isModerator ? undefined : false,
-    },
-  });
-
-  return {
-    ...mainThread,
-    hiddenCount,
-  };
 }
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
@@ -1041,7 +1005,7 @@ async function fetchCommentsPaginated({
           ? Prisma.sql`AND c."userId" != ALL(${excludedUserIds}::int[])`
           : Prisma.empty
       }
-      AND c.hidden = ${hidden}
+      ${hidden ? Prisma.sql`AND c.hidden = true` : Prisma.empty}
       ${isModerator ? Prisma.empty : Prisma.sql`AND c."tosViolation" = false`}
       ${cursorCondition}
     ORDER BY ${Prisma.raw(orderBy)}
@@ -1085,7 +1049,7 @@ export async function getCommentsInfinite({
             threadId: mainThread.id,
             pinnedAt: { not: null },
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-            hidden,
+            hidden: hidden ? true : undefined,
             tosViolation: isModerator ? undefined : false,
           },
           orderBy: { pinnedAt: 'desc' },
@@ -1117,7 +1081,7 @@ export async function getCommentsInfinite({
           where: {
             id: targetCommentId,
             threadId: mainThread.id,
-            hidden,
+            hidden: hidden ? true : undefined,
             tosViolation: isModerator ? undefined : false,
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
           },

@@ -49,7 +49,6 @@ type ChildProps = {
   showMore: boolean;
   toggleShowMore: () => void;
   highlighted?: number;
-  hiddenCount: number;
   forceLocked?: boolean;
   sort: ThreadSort;
   setSort: (sort: ThreadSort) => void;
@@ -220,9 +219,7 @@ export function CommentsProvider({
 
   const { data: threadDetails } = trpc.commentv2.getThreadDetails.useQuery(
     { entityId, entityType },
-    seeded
-      ? { initialData: { id: seeded.id, locked: seeded.locked, hiddenCount: seeded.hiddenCount } }
-      : undefined
+    seeded ? { initialData: { id: seeded.id, locked: seeded.locked } } : undefined
   );
 
   // Notification deep-links pass ?highlight=<commentId>. Forward it to the server so the
@@ -321,8 +318,6 @@ export function CommentsProvider({
     el.scrollIntoView({ block: 'start' });
   }, [level, isInitialThread, activeCommentId, threadSettled]);
 
-  const hiddenCount = threadDetails?.hiddenCount ?? 0;
-
   const createdComments = useMemo(
     () => created.filter((x) => !comments?.some((comment) => comment.id === x.id)),
     [created, comments]
@@ -360,7 +355,6 @@ export function CommentsProvider({
     showMore: shouldHideComments ? false : hasNextPage ?? false,
     toggleShowMore: loadMore,
     highlighted,
-    hiddenCount,
     forceLocked,
     sort,
     setSort,
@@ -385,7 +379,6 @@ export function CommentsProvider({
       showMore: shouldHideComments ? false : hasNextPage ?? false,
       toggleShowMore: loadMore,
       highlighted,
-      hiddenCount,
       forceLocked,
       sort,
       setSort,
@@ -409,7 +402,6 @@ export function CommentsProvider({
       hasNextPage,
       loadMore,
       highlighted,
-      hiddenCount,
       forceLocked,
       sort,
       setSort,

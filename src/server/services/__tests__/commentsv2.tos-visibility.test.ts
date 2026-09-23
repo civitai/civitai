@@ -5,9 +5,8 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 
 /**
  * A CommentV2 flagged as a ToS violation must not be readable by anyone but a moderator. Until this,
- * no v2 read filtered the flag — the thread query filters `hidden`, which is the author's own fold and
- * still one click away behind the "See N hidden comments" modal. A phishing comment a moderator had
- * removed stayed on the image, article or post.
+ * no v2 read filtered the flag — `hidden` is the content owner's placeholder, which any viewer can
+ * reveal. A phishing comment a moderator had removed stayed on the image, article or post.
  */
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
@@ -23,8 +22,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
-const { getComment, getCommentCount, getCommentsInfinite, getCommentsThreadDetails2 } =
-  await import('../commentsv2.service');
+const { getComment, getCommentCount, getCommentsInfinite } = await import('../commentsv2.service');
 
 const threadFindUnique = dbMock.dbRead.thread.findUnique;
 const pinnedFindMany = dbMock.dbRead.commentV2.findMany;
@@ -91,22 +89,14 @@ describe('CommentV2 reads and the ToS flag', () => {
     // The column is in the SELECT list either way — it is the PREDICATE that must be absent.
     // Positive control: proves `emittedSql` is reading the query at all, so the negative below
     // cannot pass on a helper that silently returns nothing.
-    expect(emittedSql()).toContain('c.hidden =');
+    expect(emittedSql()).toContain('c."threadId" =');
     expect(emittedSql()).not.toContain('"tosViolation" = false');
     expect(pinnedFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ tosViolation: undefined }) })
     );
   });
 
-  it('leaves them out of the "N hidden comments" count an ordinary viewer is offered', async () => {
-    await getCommentsThreadDetails2({ entityId: 1, entityType: 'image' });
-
-    expect(commentCount).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ tosViolation: false }) })
-    );
-  });
-
-  it('filters replies and their hidden-count too — a spam comment is usually a reply', async () => {
+  it('filters replies too — a spam comment is usually a reply', async () => {
     // Two raw reads in order: the page of comments, then the reply-thread rows hanging off them.
     // getReplyThreads only runs when a depth is asked for.
     dbMock.dbRead.$queryRaw
@@ -197,3 +187,49 @@ describe('CommentV2 counts and the ToS flag', () => {
     expect(result?.replyThreads[0].commentCount).toBe(0);
   });
 });
+
+/**
+ * A comment the content owner hid stays in the thread as a placeholder, so its replies stay with it.
+ * Filtering it out of the read is what used to take the whole conversation under it off the page.
+ */
+describe('CommentV2 reads and the hidden flag', () => {
+  it('returns hidden comments inline in the page, the pinned block, the target and the replies', async () => {
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 1, threadId: 10, reactionCount: 0 }])
+      .mockResolvedValueOnce([{ id: 11, commentId: 1, locked: false, commentCount: 1, depth: 1 }]);
+    await list(false, { hidden: false, targetCommentId: 77, repliesDepth: 1 });
+
+    const pageSql = String(
+      (queryRaw.mock.calls[0] as unknown as [TemplateStringsArray])[0].join(' ')
+    );
+    expect(pageSql).toContain('c."threadId" =');
+    const wheres = whereClauses().filter(Boolean) as Record<string, unknown>[];
+    expect(wheres.length).toBeGreaterThanOrEqual(3);
+    for (const where of wheres) expect(where.hidden).toBeUndefined();
+    expect(pageFragments(0)).not.toContain('hidden');
+  });
+
+  it('still narrows to hidden comments alone when that view is asked for', async () => {
+    await list(false, { hidden: true });
+
+    expect(pageFragments(0)).toContain('c.hidden = true');
+    expect(pinnedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ hidden: true }) })
+    );
+  });
+});
+
+/** The conditional clauses of the Nth raw query, which arrive as nested `Prisma.sql` values. */
+function pageFragments(call: number) {
+  const [, ...values] = queryRaw.mock.calls[call] as unknown as [
+    TemplateStringsArray,
+    ...unknown[]
+  ];
+  return values
+    .map((v) =>
+      v && typeof v === 'object' && 'strings' in v
+        ? Array.from((v as { strings: string[] }).strings).join(' ')
+        : ''
+    )
+    .join(' ');
+}

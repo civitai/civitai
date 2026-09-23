@@ -152,6 +152,20 @@ async function rootOwnerOfThread(thread: ThreadContent): Promise<number | undefi
   return ownerOfThreadContent(rootContent);
 }
 
+/**
+ * The owner of the content a stored comment ultimately belongs to — never the author of the
+ * comment a reply answers, who is not the content owner and must not moderate replies to them.
+ */
+export async function getContentOwnerIdForComment(commentId: number) {
+  const comment = await dbRead.commentV2.findUnique({
+    where: { id: commentId },
+    select: { hidden: true, thread: { select: threadContentSelect } },
+  });
+  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
+  const ownerId = comment.thread ? await rootOwnerOfThread(comment.thread) : undefined;
+  return { hidden: comment.hidden ?? false, ownerId };
+}
+
 // For a CommentV2 reply target, block if blocked by the parent comment's author
 // OR by the owner of the root content the thread hangs off of.
 async function ownersForCommentV2(commentId: number): Promise<number[]> {

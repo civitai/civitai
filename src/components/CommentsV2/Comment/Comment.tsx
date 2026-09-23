@@ -104,6 +104,8 @@ export function CommentContent({
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
+  const [revealed, setRevealed] = useState(false);
+  const concealed = !!comment.hidden && !revealed;
 
   const seededThreads = useSeededReplyThreads();
   const seededThread = seededThreads.byCommentId.get(comment.id);
@@ -394,20 +396,48 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
-              <Box my={5}>
-                <LineClamp className="text-sm" lineClamp={3} variant="block">
-                  <RenderHtml
-                    html={comment.content}
-                    allowCustomStyles={false}
-                    withMentions
-                    withProfanityFilter
-                    allowStickers
-                  />
-                </LineClamp>
-              </Box>
+              {concealed ? (
+                <Group gap={6} my={5} wrap="nowrap">
+                  <IconEyeOff size={14} className="text-dimmed shrink-0" />
+                  <Text size="sm" c="dimmed" fs="italic">
+                    Hidden comment
+                  </Text>
+                  <Button
+                    variant="subtle"
+                    size="compact-xs"
+                    color="gray"
+                    onClick={() => setRevealed(true)}
+                  >
+                    Show
+                  </Button>
+                </Group>
+              ) : (
+                <Box my={5}>
+                  <LineClamp className="text-sm" lineClamp={3} variant="block">
+                    <RenderHtml
+                      html={comment.content}
+                      allowCustomStyles={false}
+                      withMentions
+                      withProfanityFilter
+                      allowStickers
+                    />
+                  </LineClamp>
+                </Box>
+              )}
               {/* COMMENT INTERACTION */}
               <Group gap={4}>
-                <CommentReactions comment={comment} />
+                {!concealed && <CommentReactions comment={comment} />}
+                {comment.hidden && revealed && (
+                  <Button
+                    variant="subtle"
+                    radius="xl"
+                    size="compact-xs"
+                    color="gray"
+                    onClick={() => setRevealed(false)}
+                  >
+                    Hide again
+                  </Button>
+                )}
                 {canReply && !viewOnly && (
                   <Button
                     variant="subtle"
@@ -469,6 +499,7 @@ export function CommentContent({
 function CommentReplies({ commentId, replyCount }: { commentId: number; replyCount: number }) {
   const { level, badges } = useCommentsContext();
   const { setRootThread } = useRootThreadContext();
+  const { resourceOwnerId } = useCommentV2Context();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -487,7 +518,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
           ) : (
             <Stack>
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
               {/* A thread too long to sit inline opens on its own rather than paging in place —
                   paging here grows an already-indented block with no end in sight, behind a
@@ -507,7 +538,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
                 </Group>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
             </Stack>
           )
