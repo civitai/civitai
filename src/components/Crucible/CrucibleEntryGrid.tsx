@@ -1,10 +1,22 @@
-import { Box, Button, Paper, Text, Title, SimpleGrid, Skeleton, Badge } from '@mantine/core';
+import {
+  Badge,
+  Box,
+  Button,
+  Center,
+  Loader,
+  Paper,
+  SimpleGrid,
+  Skeleton,
+  Text,
+  Title,
+} from '@mantine/core';
 import { IconPhoto, IconTrophy, IconChartLine, IconUsers, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import Link from 'next/link';
@@ -37,6 +49,13 @@ export type CrucibleEntryData = {
 
 export type CrucibleEntryGridProps = {
   entries: CrucibleEntryData[];
+  /** The viewer's own entries, which may not be on any page loaded so far. */
+  viewerEntries?: CrucibleEntryData[];
+  /** Every entry in the crucible, loaded or not. */
+  totalCount?: number;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
   title?: string;
   showRanks?: boolean;
   showUserEntries?: boolean;
@@ -61,6 +80,11 @@ const scoreOf = (entry: CrucibleEntryData) => entry.score ?? Number.NEGATIVE_INF
  */
 export function CrucibleEntryGrid({
   entries,
+  viewerEntries = [],
+  totalCount,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
   title,
   showRanks = false,
   showUserEntries = false,
@@ -73,19 +97,26 @@ export function CrucibleEntryGrid({
   const currentUser = useCurrentUser();
   const userId = currentUserId ?? currentUser?.id;
 
+  // Pages arrive in score order once ranks are visible, so a loaded entry's index is its rank;
+  // the viewer's own entries may sit on a page not loaded yet and carry their final position.
   const rankedEntries = showRanks
     ? [...entries]
         .sort((a, b) => scoreOf(b) - scoreOf(a))
-        .map((entry, index) => ({ ...entry, rank: index + 1 }))
+        .map((entry, index) => ({ ...entry, rank: entry.position ?? index + 1 }))
     : entries.map((entry) => ({ ...entry, rank: null }));
 
-  // Filter user's entries if requested
-  const userEntries =
-    showUserEntries && userId ? rankedEntries.filter((e) => e.userId === userId) : [];
+  const separateViewer = showUserEntries && !!userId;
+  const userEntries = separateViewer
+    ? viewerEntries.map((entry) => ({ ...entry, rank: showRanks ? entry.position : null }))
+    : [];
 
-  // All entries (or non-user entries if showing user entries separately)
-  const displayEntries =
-    showUserEntries && userId ? rankedEntries.filter((e) => e.userId !== userId) : rankedEntries;
+  const displayEntries = separateViewer
+    ? rankedEntries.filter((e) => e.userId !== userId)
+    : rankedEntries;
+  const displayCount =
+    totalCount !== undefined
+      ? totalCount - (separateViewer ? userEntries.length : 0)
+      : displayEntries.length;
 
   return (
     <div className={clsx(className)}>
@@ -124,7 +155,7 @@ export function CrucibleEntryGrid({
             <IconUsers size={20} className="text-gray-500" />
             {title}
             <Text component="span" size="sm" c="dimmed" fw="normal">
-              ({displayEntries.length})
+              ({displayCount})
             </Text>
           </Title>
         )}
@@ -143,10 +174,18 @@ export function CrucibleEntryGrid({
               />
             ))}
           </SimpleGrid>
-        ) : userEntries.length > 0 ? (
+        ) : hasMore || isLoadingMore ? null : userEntries.length > 0 ? (
           <CrucibleEntryGridEmpty message="No one else has entered yet" subtext={null} />
         ) : (
           <CrucibleEntryGridEmpty message={emptyMessage} />
+        )}
+
+        {hasMore && onLoadMore && (
+          <InViewLoader loadFn={onLoadMore} loadCondition={!isLoadingMore}>
+            <Center py="md">
+              <Loader size="sm" />
+            </Center>
+          </InViewLoader>
         )}
       </div>
     </div>

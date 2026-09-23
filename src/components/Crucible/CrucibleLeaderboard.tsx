@@ -41,6 +41,10 @@ export type CrucibleLeaderboardProps = {
   awarded: boolean;
   className?: string;
   pageSize?: number;
+  /** Every ranked entry, loaded or not; defaults to the loaded count. */
+  totalCount?: number;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
 };
 
 /**
@@ -60,6 +64,9 @@ export function CrucibleLeaderboard({
   awarded,
   className,
   pageSize = 10,
+  totalCount,
+  hasMore = false,
+  onLoadMore,
 }: CrucibleLeaderboardProps) {
   // A cancelled crucible paid nobody, so it has no prize rows, no placings and no pool to show —
   // only the scores the entries finished on.
@@ -77,8 +84,14 @@ export function CrucibleLeaderboard({
   }));
 
   // Calculate pagination
-  const totalPages = Math.ceil(rankedEntries.length / pageSize);
+  const totalPages = Math.ceil((totalCount ?? rankedEntries.length) / pageSize);
   const paginatedEntries = rankedEntries.slice(page * pageSize, (page + 1) * pageSize);
+  const isLoadingPage = paginatedEntries.length === 0 && hasMore;
+
+  const goToNextPage = () => {
+    if ((page + 2) * pageSize > rankedEntries.length && hasMore) onLoadMore?.();
+    setPage((p) => p + 1);
+  };
   const showPagination = totalPages > 1;
 
   // Map prize positions for quick lookup
@@ -133,7 +146,9 @@ export function CrucibleLeaderboard({
 
       {/* Leaderboard entries - only show top 3 with full details */}
       <Stack gap="sm">
-        {paginatedEntries.length === 0 ? (
+        {isLoadingPage ? (
+          <Skeleton height={56} radius="md" />
+        ) : paginatedEntries.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="md">
             No entries yet
           </Text>
@@ -185,7 +200,7 @@ export function CrucibleLeaderboard({
             size="xs"
             rightSection={<IconChevronRight size={14} />}
             disabled={page >= totalPages - 1}
-            onClick={() => setPage((p) => p + 1)}
+            onClick={goToNextPage}
           >
             Next
           </Button>

@@ -3,6 +3,7 @@ import {
   createCrucibleHandler,
   createEntryPostHandler,
   getCrucibleByIdHandler,
+  getCrucibleEntriesHandler,
   getFeaturedCrucibleHandler,
   getInfiniteCruciblesHandler,
   getJudgesCountHandler,
@@ -16,6 +17,7 @@ import {
 import { isModerator } from '~/server/routers/base.router';
 import {
   createEntryPostSchema,
+  getCrucibleEntriesSchema,
   cancelCrucibleSchema,
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
@@ -41,6 +43,11 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(getCrucibleByIdSchema)
     .query(getCrucibleByIdHandler),
+
+  getEntries: publicProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCrucibleEntriesSchema)
+    .query(getCrucibleEntriesHandler),
 
   create: guardedProcedure
     .use(isFlagProtected('crucible'))

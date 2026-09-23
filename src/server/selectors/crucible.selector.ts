@@ -84,38 +84,6 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       height: true,
     },
   },
-  entries: {
-    select: {
-      id: true,
-      userId: true,
-      imageId: true,
-      score: true,
-      position: true,
-      createdAt: true,
-      user: {
-        select: {
-          id: true,
-          username: true,
-          image: true,
-        },
-      },
-      image: {
-        select: {
-          id: true,
-          name: true,
-          url: true,
-          type: true,
-          metadata: true,
-          nsfwLevel: true,
-          width: true,
-          height: true,
-        },
-      },
-    },
-    // Entry time, never score: a rank-ordered list leaks the live ranking even when the
-    // scores themselves are redacted. getCrucibleDetail re-sorts by score once rankings are final.
-    orderBy: { createdAt: 'asc' },
-  },
   _count: {
     select: {
       entries: true,
@@ -124,4 +92,35 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
 });
 
 export type CrucibleDetailRow = Prisma.CrucibleGetPayload<{ select: typeof crucibleDetailSelect }>;
-export type CrucibleDetailRowEntry = CrucibleDetailRow['entries'][number];
+
+export const crucibleEntrySelect = Prisma.validator<Prisma.CrucibleEntrySelect>()({
+  id: true,
+  userId: true,
+  imageId: true,
+  score: true,
+  position: true,
+  createdAt: true,
+  user: {
+    select: {
+      id: true,
+      username: true,
+      image: true,
+    },
+  },
+  image: {
+    select: {
+      id: true,
+      name: true,
+      url: true,
+      type: true,
+      metadata: true,
+      nsfwLevel: true,
+      width: true,
+      height: true,
+    },
+  },
+});
+
+export type CrucibleEntryRow = Prisma.CrucibleEntryGetPayload<{
+  select: typeof crucibleEntrySelect;
+}>;

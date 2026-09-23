@@ -20,6 +20,7 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
   CreateEntryPostSchema,
+  GetCrucibleEntriesSchema,
   GetCruciblesInfiniteSchema,
   GetCrucibleByIdSchema,
   CreateCrucibleInputSchema,
@@ -39,7 +40,8 @@ import { formatDuration } from '~/utils/number-helpers';
 import {
   crucibleDetailSelect,
   type CrucibleDetailRow,
-  type CrucibleDetailRowEntry,
+  crucibleEntrySelect,
+  type CrucibleEntryRow,
 } from '~/server/selectors/crucible.selector';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
@@ -264,17 +266,15 @@ export const createCrucible = async ({
   }
 };
 
-export type CrucibleDetailEntry = Omit<CrucibleDetailRowEntry, 'score' | 'position'> & {
+export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
   score: number | null;
   position: number | null;
 };
 
-export type CrucibleDetail = Omit<CrucibleDetailRow, 'entries'> & {
-  entries: CrucibleDetailEntry[];
+export type CrucibleDetail = CrucibleDetailRow & {
+  /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
+  viewerEntries: CrucibleEntryRow[];
 };
-
-const byEntryTime = (a: CrucibleDetailRowEntry, b: CrucibleDetailRowEntry) =>
-  a.createdAt.getTime() - b.createdAt.getTime() || a.id - b.id;
 
 export const getCrucibleDetail = async ({
   id,
@@ -287,16 +287,50 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  if (crucibleRankingsAreFinal(crucible.status)) {
-    const entries = [...crucible.entries].sort((a, b) => b.score - a.score || byEntryTime(a, b));
-    return { ...crucible, entries };
-  }
+  const viewerEntries = userId
+    ? await dbRead.crucibleEntry.findMany({
+        where: { crucibleId: id, userId },
+        select: crucibleEntrySelect,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      })
+    : [];
 
-  const entries = [...crucible.entries]
-    .sort(byEntryTime)
-    .map((entry) => (entry.userId === userId ? entry : { ...entry, score: null, position: null }));
+  return { ...crucible, viewerEntries };
+};
 
-  return { ...crucible, entries };
+export const getCrucibleEntries = async ({
+  crucibleId,
+  limit,
+  cursor,
+  userId,
+}: GetCrucibleEntriesSchema & { userId?: number }) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { status: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+
+  const rankingsFinal = crucibleRankingsAreFinal(crucible.status);
+  const rows = await dbRead.crucibleEntry.findMany({
+    where: { crucibleId },
+    select: crucibleEntrySelect,
+    // Entry time, never score, while running: a rank-ordered page leaks the live ranking even
+    // with the scores redacted.
+    orderBy: rankingsFinal
+      ? [{ score: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }]
+      : [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit + 1,
+    cursor: cursor ? { id: cursor } : undefined,
+  });
+
+  const nextCursor = rows.length > limit ? rows.pop()?.id : undefined;
+  const items: CrucibleDetailEntry[] = rankingsFinal
+    ? rows
+    : rows.map((entry) =>
+        entry.userId === userId ? entry : { ...entry, score: null, position: null }
+      );
+
+  return { items, nextCursor };
 };
 
 /**
@@ -361,27 +395,6 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 };
 
 /**
- * Get entries for a crucible sorted by score (ELO)
- */
-export const getCrucibleEntries = async <TSelect extends Prisma.CrucibleEntrySelect>({
-  crucibleId,
-  select,
-}: {
-  crucibleId: number;
-  select: TSelect;
-}) => {
-  return dbRead.crucibleEntry.findMany({
-    where: { crucibleId },
-    orderBy: { score: 'desc' },
-    select,
-  });
-};
-
-/**
- * Generate a unique transaction prefix for crucible entry fees
- * This prefix is used to identify and refund transactions if needed
- */
-/**
  * Entries must be published images, so media added from inside the submit modal goes into a
  * published post first and becomes enterable once its scan settles.
  */
@@ -401,6 +414,10 @@ export const createCrucibleEntryPost = async ({
   return { id: post.id };
 };
 
+/**
+ * Generate a unique transaction prefix for crucible entry fees
+ * This prefix is used to identify and refund transactions if needed
+ */
 export const getCrucibleEntryTransactionPrefix = (crucibleId: number, userId: number): string => {
   return `crucible-entry-${crucibleId}-${userId}-${Date.now()}`;
 };

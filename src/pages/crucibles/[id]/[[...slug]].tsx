@@ -35,6 +35,7 @@ import { formatDate } from '~/utils/date-helpers';
 import type { Prisma } from '@prisma/client';
 import type { RouterOutput } from '~/types/router';
 import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 
 const querySchema = z.object({
@@ -64,6 +65,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const queryUtils = trpc.useUtils();
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
+  const {
+    data: entriesData,
+    hasNextPage: hasMoreEntries,
+    isFetchingNextPage: isLoadingMoreEntries,
+    fetchNextPage: loadMoreEntries,
+  } = trpc.crucible.getEntries.useInfiniteQuery(
+    { crucibleId: id },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
   const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
     { crucibleId: id },
     { enabled: !!id }
@@ -99,6 +109,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         });
       }
       queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
     },
     onError: (error) => {
       showErrorNotification({
@@ -127,10 +138,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const canJudge = isActive;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
-  const userEntries =
-    currentUser && crucible.entries
-      ? crucible.entries.filter((e) => e.userId === currentUser.id)
-      : [];
+  const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
+  const userEntries = crucible.viewerEntries;
   const userEntryCount = userEntries.length;
   const maxUserEntries = crucible.entryLimit ?? 5;
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
@@ -256,14 +265,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid
-                entries={crucible.entries.map((e) => ({
-                  ...e,
-                  image: { ...e.image, metadata: (e.image.metadata as MixedObject) ?? null },
-                  user: {
-                    ...e.user,
-                    deletedAt: null,
-                  },
-                }))}
+                entries={loadedEntries.map(toGridEntry)}
+                viewerEntries={userEntries.map(toGridEntry)}
+                totalCount={entryCount}
+                hasMore={!!hasMoreEntries}
+                isLoadingMore={isLoadingMoreEntries}
+                onLoadMore={loadMoreEntries}
+                onEntryClick={(entry) =>
+                  triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } })
+                }
                 title="All Entries"
                 showRanks={rankingsVisible}
                 showUserEntries={!!currentUser}
@@ -348,7 +358,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               {/* Prize Pool & Standings */}
               {rankingsVisible ? (
                 <CrucibleLeaderboard
-                  entries={crucible.entries.filter(hasScore)}
+                  entries={loadedEntries.filter(hasScore)}
+                  totalCount={entryCount}
+                  hasMore={!!hasMoreEntries}
+                  onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
                   awarded={crucible.status === CrucibleStatus.Completed}
@@ -452,7 +465,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   );
 }
 
-type CrucibleEntry = NonNullable<RouterOutput['crucible']['getById']>['entries'][number];
+type CrucibleEntry = RouterOutput['crucible']['getEntries']['items'][number];
+
+const toGridEntry = (entry: CrucibleEntry) => ({
+  ...entry,
+  image: { ...entry.image, metadata: (entry.image.metadata as MixedObject) ?? null },
+  user: { ...entry.user, deletedAt: null },
+});
 
 const hasScore = (entry: CrucibleEntry): entry is CrucibleEntry & { score: number } =>
   entry.score !== null;

@@ -103,36 +103,29 @@ const earliestAndLast = entry({ id: 1, userId: 101, score: 1200, position: 3, mi
 const ownedAndFirst = entry({ id: 2, userId: OWNER_ID, score: 1800, position: 1, minutes: 5 });
 const latestAndSecond = entry({ id: 3, userId: 103, score: 1500, position: 2, minutes: 10 });
 
-const crucibleRow = (
-  status: CrucibleStatus,
-  entries = [latestAndSecond, earliestAndLast, ownedAndFirst]
-) => ({
-  id: CRUCIBLE_ID,
-  userId: 1,
-  name: 'Test Crucible',
-  status,
-  entryFee: 100,
-  entries,
-  _count: { entries: entries.length },
-});
+const findEntries = dbMock.dbRead.crucibleEntry.findMany;
+const rows = [latestAndSecond, earliestAndLast, ownedAndFirst];
 
 const ids = (entries: { id: number }[]) => entries.map((e) => e.id);
+const lastFindManyArgs = () =>
+  findEntries.mock.calls.at(-1)![0] as { orderBy: unknown; take: number; cursor?: unknown };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  findUnique.mockResolvedValue(crucibleRow(CrucibleStatus.Active));
+  findUnique.mockResolvedValue({ status: CrucibleStatus.Active });
+  findEntries.mockResolvedValue(rows);
 });
 
-describe('crucible.getById — while the crucible is still running', () => {
+describe('crucible.getEntries — while the crucible is still running', () => {
   it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
     'gives a caller who owns no entries no score and no position (%s)',
     async (status) => {
-      findUnique.mockResolvedValue(crucibleRow(status));
+      findUnique.mockResolvedValue({ status });
 
-      const crucible = await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID });
+      const { items } = await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
-      expect(crucible!.entries).toHaveLength(3);
-      for (const e of crucible!.entries) {
+      expect(items).toHaveLength(3);
+      for (const e of items) {
         expect(e.score).toBeNull();
         expect(e.position).toBeNull();
       }
@@ -140,75 +133,121 @@ describe('crucible.getById — while the crucible is still running', () => {
   );
 
   it('gives an anonymous caller no score and no position', async () => {
-    const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
+    const { items } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(crucible!.entries.map((e) => e.score)).toEqual([null, null, null]);
-    expect(crucible!.entries.map((e) => e.position)).toEqual([null, null, null]);
+    expect(items.map((e) => e.score)).toEqual([null, null, null]);
+    expect(items.map((e) => e.position)).toEqual([null, null, null]);
   });
 
   it('gives the caller their own score and position, and nobody else any', async () => {
-    const crucible = await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID });
+    const { items } = await caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    const own = crucible!.entries.find((e) => e.id === ownedAndFirst.id);
-    expect(own).toMatchObject({ score: 1800, position: 1 });
-
-    const others = crucible!.entries.filter((e) => e.id !== ownedAndFirst.id);
+    expect(items.find((e) => e.id === ownedAndFirst.id)).toMatchObject({
+      score: 1800,
+      position: 1,
+    });
+    const others = items.filter((e) => e.id !== ownedAndFirst.id);
     expect(others.map((e) => e.score)).toEqual([null, null]);
     expect(others.map((e) => e.position)).toEqual([null, null]);
   });
 
-  it('returns entries in entry-time order, which is not their score order', async () => {
-    const crucible = await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID });
+  it('asks postgres for entry-time order, never a score ordering', async () => {
+    await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(ids(crucible!.entries)).toEqual([1, 2, 3]);
-    expect(ids(crucible!.entries)).not.toEqual([2, 3, 1]);
+    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+    expect(JSON.stringify(lastFindManyArgs().orderBy)).not.toContain('score');
   });
 
-  it('does not ask postgres for a score ordering either', async () => {
-    await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID });
+  it('rejects a crucible that does not exist', async () => {
+    findUnique.mockResolvedValue(null);
 
-    const { select } = findUnique.mock.calls[0][0] as {
-      select: { entries: { orderBy: unknown } };
-    };
-    expect(select.entries.orderBy).toEqual({ createdAt: 'asc' });
+    await expect(
+      caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toBeInstanceOf(TRPCError);
+  });
+});
+
+describe('crucible.getEntries — once the crucible is over', () => {
+  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
+    'reveals every score and position (%s)',
+    async (status) => {
+      findUnique.mockResolvedValue({ status });
+      findEntries.mockResolvedValue([ownedAndFirst, latestAndSecond, earliestAndLast]);
+
+      const { items } = await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
+
+      expect(items.map((e) => e.score)).toEqual([1800, 1500, 1200]);
+      expect(items.map((e) => e.position)).toEqual([1, 2, 3]);
+    }
+  );
+
+  it('orders by score, the earlier entry first on a tie', async () => {
+    findUnique.mockResolvedValue({ status: CrucibleStatus.Completed });
+
+    await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(lastFindManyArgs().orderBy).toEqual([
+      { score: 'desc' },
+      { createdAt: 'asc' },
+      { id: 'asc' },
+    ]);
+  });
+});
+
+describe('crucible.getEntries — paging', () => {
+  it('fetches one row past the page and hands back its id as the next cursor', async () => {
+    const { items, nextCursor } = await caller(undefined).getEntries({
+      crucibleId: CRUCIBLE_ID,
+      limit: 2,
+    });
+
+    expect(lastFindManyArgs().take).toBe(3);
+    expect(ids(items)).toEqual([3, 1]);
+    expect(nextCursor).toBe(2);
+  });
+
+  it('continues from the cursor it is given, and reports no more on a short page', async () => {
+    findEntries.mockResolvedValue([ownedAndFirst]);
+
+    const { items, nextCursor } = await caller(undefined).getEntries({
+      crucibleId: CRUCIBLE_ID,
+      limit: 2,
+      cursor: 2,
+    });
+
+    expect(lastFindManyArgs().cursor).toEqual({ id: 2 });
+    expect(ids(items)).toEqual([2]);
+    expect(nextCursor).toBeUndefined();
+  });
+});
+
+describe('crucible.getById', () => {
+  beforeEach(() => {
+    findUnique.mockResolvedValue({ id: CRUCIBLE_ID, status: CrucibleStatus.Active });
+    findEntries.mockResolvedValue([ownedAndFirst]);
+  });
+
+  it("returns only the caller's own entries, with their score", async () => {
+    const crucible = await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID });
+
+    expect(crucible).not.toHaveProperty('entries');
+    expect(crucible!.viewerEntries).toEqual([ownedAndFirst]);
+    expect(findEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { crucibleId: CRUCIBLE_ID, userId: OWNER_ID } })
+    );
+  });
+
+  it('gives an anonymous caller no entries without querying for any', async () => {
+    const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
+
+    expect(crucible!.viewerEntries).toEqual([]);
+    expect(findEntries).not.toHaveBeenCalled();
   });
 
   it('returns null for a crucible that does not exist', async () => {
     findUnique.mockResolvedValue(null);
 
     expect(await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
-  });
-});
-
-describe('crucible.getById — once the crucible is over', () => {
-  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
-    'reveals every score and position (%s)',
-    async (status) => {
-      findUnique.mockResolvedValue(crucibleRow(status));
-
-      const crucible = await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID });
-
-      expect(crucible!.entries.map((e) => e.score)).toEqual([1800, 1500, 1200]);
-      expect(crucible!.entries.map((e) => e.position)).toEqual([1, 2, 3]);
-    }
-  );
-
-  it('orders entries by score, highest first', async () => {
-    findUnique.mockResolvedValue(crucibleRow(CrucibleStatus.Completed));
-
-    const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
-
-    expect(ids(crucible!.entries)).toEqual([2, 3, 1]);
-  });
-
-  it('ranks the earlier entry first on a tied score', async () => {
-    const later = entry({ id: 20, userId: 201, score: 1500, position: 2, minutes: 30 });
-    const earlier = entry({ id: 21, userId: 202, score: 1500, position: 1, minutes: 10 });
-    findUnique.mockResolvedValue(crucibleRow(CrucibleStatus.Completed, [later, earlier]));
-
-    const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
-
-    expect(ids(crucible!.entries)).toEqual([21, 20]);
   });
 });
 

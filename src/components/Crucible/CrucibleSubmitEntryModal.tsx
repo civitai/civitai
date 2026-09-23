@@ -476,10 +476,7 @@ export default function CrucibleSubmitEntryModal({
   );
 
   const submittedImageIds = useMemo(() => {
-    if (!crucibleData?.entries || !currentUser) return new Set<number>();
-    return new Set(
-      crucibleData.entries.filter((e) => e.userId === currentUser.id).map((e) => e.imageId)
-    );
+    return new Set(crucibleData?.viewerEntries.map((e) => e.imageId) ?? []);
   }, [crucibleData, currentUser]);
 
   // Flatten images from pages
@@ -638,6 +635,7 @@ export default function CrucibleSubmitEntryModal({
   const submitEntryMutation = trpc.crucible.submitEntry.useMutation({
     onSuccess: () => {
       queryUtils.crucible.getById.invalidate({ id: crucibleId });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId });
     },
   });
 
