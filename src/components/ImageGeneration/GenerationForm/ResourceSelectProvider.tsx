@@ -133,13 +133,21 @@ export function ResourceSelectProvider({
   );
   const setFilterTypes = persist ? setStoredTypes : setLocalTypes;
   const [filterBaseModels, setFilterBaseModels] = useState<BaseModel[]>([]);
+  // Not persisted: the chip renders only where `showsPricingFilter` allows, but `hidePaid` is sent
+  // on every select source — a remembered `true` would filter a picker with no chip to clear it.
+  const [hidePaid, setHidePaid] = useState(false);
   const setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>> = (action) => {
     const next =
       typeof action === 'function'
-        ? action({ types: filterTypes, baseModels: filterBaseModels })
+        ? action({
+            types: filterTypes,
+            baseModels: filterBaseModels,
+            hidePaid,
+          })
         : action;
     setFilterTypes(next.types);
     setFilterBaseModels(next.baseModels);
+    setHidePaid(!!next.hidePaid);
   };
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const activeOptions = props.options;
@@ -179,6 +187,13 @@ export function ResourceSelectProvider({
   // list's version filter over every loaded model.
   const excludedIds = useMemo(() => activeOptions?.excludeIds ?? [], [activeOptions]);
 
+  // `types`/`baseModels` are fresh arrays each render; inlining this object re-runs every memo keyed
+  // on `filters`.
+  const filters = useMemo(
+    () => ({ types, baseModels, hidePaid }),
+    [types.join(), baseModels.join(), hidePaid] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   function handleSelect(value: GenerationResource) {
     props.onSelect(value);
     dialog.onClose();
@@ -215,10 +230,7 @@ export function ResourceSelectProvider({
         resources,
         tab,
         setTab,
-        filters: {
-          types,
-          baseModels,
-        },
+        filters,
         setFilters,
         sort,
         setSort,

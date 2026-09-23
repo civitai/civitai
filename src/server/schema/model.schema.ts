@@ -512,6 +512,7 @@ export const getResourceSelectSchema = z.object({
   filterBaseModels: z.string().array().default([]),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),
