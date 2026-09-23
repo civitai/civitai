@@ -121,8 +121,11 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
         input: {
           engine: 'ai-toolkit',
           ecosystem: run.ecosystem,
-          // A pasted custom model is the base checkpoint to train on (the ecosystem otherwise resolves it).
-          ...(run.customModel ? { model: run.customModel } : {}),
+          // Pin the picked version's checkpoint air (a pasted custom base wins). Without the pin,
+          // shared-ecosystem cards silently trained on the ecosystem's DEFAULT base — Illustrious
+          // and Pony both ran on plain SDXL 1.0. Price-neutral: whatif quotes identically with
+          // and without it.
+          ...(run.customModel || run.model ? { model: run.customModel || run.model } : {}),
           ...(run.modelVariant ? { modelVariant: run.modelVariant } : {}),
           ...(run.version ? { version: run.version } : {}),
           steps: run.steps,

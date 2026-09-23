@@ -27,6 +27,8 @@ export interface SessionUser {
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
   permissions?: string[];
+  /** App-namespaced role grants from the auth hub (`app:role`, e.g. `moderator:admin`). */
+  roles?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only
   referral?: { id: number }; // client only
@@ -41,7 +43,6 @@ export interface SessionUser {
    */
   isEarlyAdopter?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
-  redBrowsingLevel?: number;
   deletedAt?: Date;
   subscriptions?: UserSubscriptionsByBuzzType; // multi-subscription support per buzzType
   name?: string | null; // from next-auth's DefaultSession['user']

@@ -2471,7 +2471,14 @@ export type GenerationBaseModel = {
 export type GenerationCoverage = {
   modelId: number;
   modelVersionId: number;
+  /**
+   * The live rule. A row exists when EITHER column is true, so test the column, not existence.
+   */
   covered: boolean;
+  /**
+   * The staged rule: community checkpoints qualify on their own and load on demand.
+   */
+  coveredNext: boolean;
 };
 export type GenerationPreset = {
   id: Generated<number>;

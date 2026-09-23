@@ -103,7 +103,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['HiDream-O1'], hiDreamO1],
       [['OpenAI'], openai],
       [['Lens'], lens],
-      [['Qwen', 'Qwen2', 'Qwen3'], qwen],
+      [['Qwen', 'Qwen2', 'Qwen21', 'Qwen3'], qwen],
       [['NanoBanana'], nanoBanana],
       [['WanImage27'], wanImage],
       [['Grok'], grokImage],

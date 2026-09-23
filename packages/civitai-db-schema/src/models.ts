@@ -4726,6 +4726,7 @@ export interface GenerationCoverage {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   covered: boolean;
+  coveredNext: boolean;
 }
 
 export interface UserProfile {

@@ -115,7 +115,7 @@ describe('a named target replaces the default one rather than joining it', () =>
 
   // vitest filters its project by positional rather than adding to it, so these lanes must NOT
   // have a narrowed variant - dropping `--project` would widen the run instead of narrowing it.
-  it.each(['component', 'packages', 'apps', 'geometry'])(
+  it.each(['component', 'packages', 'apps', 'geometry'] as const)(
     'leaves the %s lane its project selector',
     (kind) => {
       const { argv } = directCommandFor(kind, ['some.test.ts'])!;
@@ -180,7 +180,7 @@ describe('the vitest lanes run what they say', () => {
     ['apps', ['exec', 'vitest', 'run', '--project', 'app:*']],
     ['geometry', ['exec', 'vitest', 'run', '--project', 'geometry']],
     ['component', ['scripts/test-component-run.mjs']],
-  ])('%s', (kind, expected) => {
+  ] as const)('%s', (kind, expected) => {
     expect(DIRECT_COMMANDS[kind].args).toEqual(expected);
     // The binary too: pinning only the arguments leaves `pnpm` -> `npx`, or component's `node`
     // -> a bare vitest call, entirely invisible.

@@ -439,9 +439,7 @@ export function defaultStartRun({
     capture = createOutputCapture((line) => onLog('output', line));
   } catch (err) {
     queueMicrotask(() => onExit(-1, `could not open a capture file: ${err.message}`));
-    emitter.kill = () => {};
-    emitter.dispose = () => {};
-    return emitter;
+    return Object.assign(emitter, { pid: undefined, kill: () => {}, dispose: () => {} });
   }
 
   let child;
@@ -471,9 +469,7 @@ export function defaultStartRun({
   } catch (err) {
     capture.close();
     queueMicrotask(() => onExit(-1, err.message));
-    emitter.kill = () => {};
-    emitter.dispose = () => {};
-    return emitter;
+    return Object.assign(emitter, { pid: undefined, kill: () => {}, dispose: () => {} });
   }
 
   // Polled rather than watched: fs.watch's semantics differ per platform and it can miss an
@@ -519,7 +515,7 @@ export function defaultStartRun({
    *
    * Idempotent, and it deliberately does NOT call onExit: the caller has already settled the run.
    */
-  emitter.dispose = () => {
+  const dispose = () => {
     if (finished) return;
     finished = true;
     clearInterval(tail);
@@ -532,10 +528,9 @@ export function defaultStartRun({
     }
   };
 
-  emitter.pid = child.pid;
   // `sync` is for daemon shutdown, where an asynchronously spawned taskkill would never get to
   // run before the daemon exits, leaving vitest orphaned and still holding every core.
-  emitter.kill = (sync = false) => {
+  const kill = (sync = false) => {
     try {
       if (isWindows) {
         const argv = ['/pid', String(child.pid), '/f', '/t'];
@@ -552,7 +547,7 @@ export function defaultStartRun({
       /* already gone, or refused — the sweep releases the slot either way */
     }
   };
-  return emitter;
+  return Object.assign(emitter, { pid: child.pid, kill, dispose });
 }
 
 let counter = 0;
@@ -561,7 +556,43 @@ function nextId() {
   return `t${counter.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/**
+ * @typedef {object} StartRunOptions
+ * @property {string} worktree
+ * @property {string[]} args
+ * @property {(level: string, message: string) => void} onLog
+ * @property {(code: number, error?: string) => void} onExit
+ * @property {number | null} maxWorkers
+ * @property {string} kind
+ * @property {string} cacheMode
+ */
+
+/**
+ * What a runner hands back. `dispose` and `on` are optional because the queue calls them
+ * optionally: a runner that predates either must not crash the sweep.
+ *
+ * @typedef {object} RunHandle
+ * @property {(sync?: boolean) => void} kill
+ * @property {() => void} [dispose]
+ * @property {(event: 'exit', listener: (code: number, error?: string) => void) => unknown} [on]
+ */
+
+/**
+ * @typedef {object} TestQueueOptions
+ * @property {number | string | Record<string, number | string>} [concurrency]
+ * @property {Record<string, number | string>} [groupConcurrency]
+ * @property {number | string | null} [maxWorkers]
+ * @property {string | null} [cacheMode]
+ * @property {(options: StartRunOptions) => RunHandle} [startRun]
+ * @property {() => number} [now]
+ * @property {number} [abandonAfterMs]
+ * @property {number} [runTimeoutMs]
+ * @property {number} [killGraceMs]
+ * @property {string} [waitCommand]
+ */
+
 export class TestQueue {
+  /** @param {TestQueueOptions} [options] */
   constructor(options = {}) {
     const {
       concurrency = DEFAULT_CONCURRENCY,
@@ -662,6 +693,7 @@ export class TestQueue {
     return this.pausedFor(DEFAULT_KIND);
   }
 
+  /** @param {{ worktree: string, args?: string[], kind?: string }} [request] */
   request({ worktree, args = [], kind = DEFAULT_KIND } = {}) {
     if (!worktree) throw new Error('worktree is required');
     // Rejected BEFORE anything is recorded: an unknown kind must not leave a run in the map that
@@ -693,7 +725,7 @@ export class TestQueue {
     this.runs.set(run.id, run);
     this.order.push(run.id);
     this.pump();
-    return this.view(run.id);
+    return this.viewOf(run);
   }
 
   /** Reading a run is also the liveness signal that keeps a queued entry from being swept. */
@@ -1026,7 +1058,11 @@ export class TestQueue {
 
   view(id) {
     const run = this.runs.get(id);
-    if (!run) return null;
+    return run ? this.viewOf(run) : null;
+  }
+
+  viewOf(run) {
+    const id = run.id;
     return {
       id: run.id,
       status: run.status,

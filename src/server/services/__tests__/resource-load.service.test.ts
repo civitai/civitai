@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   installAirCodec();
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version]);
-  // The GenerationCoverageNext lookup — covered by default.
+  // The staged-coverage lookup — covered by default.
   dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501 }]);
   // A cache miss that wins the stampede lock; losing it makes fetchThroughCache sleep and retry.
   redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
@@ -211,7 +211,7 @@ describe('the purchase path refuses before it submits', () => {
 
   it('refuses a resource the site cannot generate with, whatever the cluster says', async () => {
     orchestratorReturns({ status: 'unavailable', queuePosition: null });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]); // not in GenerationCoverageNext
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]); // not covered by the staged rule
 
     await expect(
       submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })

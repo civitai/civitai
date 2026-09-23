@@ -35,6 +35,28 @@ describe('AddFromImportsButton', () => {
     });
   });
 
+  test('forwards the section scope, so the components button cannot mint weights', async () => {
+    user.current = { isModerator: true };
+    renderWithProviders(
+      <AddFromImportsButton
+        modelVersionId={42}
+        types={['VAE', 'Text Encoder']}
+        label="Add components from imports"
+        title="Add components from Hugging Face imports"
+      />
+    );
+
+    await page.getByRole('button', { name: 'Add components from imports' }).click();
+
+    expect(mockOpen).toHaveBeenCalledWith({
+      modelVersionId: 42,
+      modelType: 'Checkpoint',
+      adoptFiles: mockAdoptFiles,
+      types: ['VAE', 'Text Encoder'],
+      title: 'Add components from Hugging Face imports',
+    });
+  });
+
   test('renders nothing for a non-moderator', async () => {
     user.current = { isModerator: false };
     renderWithProviders(

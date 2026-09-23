@@ -52,6 +52,7 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  * client-controlled input.
  */
 export type AppBlockEndpoint =
+  | 'buzz'
   | 'tip'
   | 'tip_allowance'
   | 'images'
@@ -63,6 +64,35 @@ export type AppBlockEndpoint =
   | 'collection_follow'
   | 'shared_storage_top'
   | 'shared_storage_increment'
+  // The shared READ surface (`/api/v1/blocks/shared-storage/{list,item,counts}`) —
+  // the v1 replacement for the postMessage SHARED_* bridge reads. THREE labels for
+  // three genuinely different workloads over one datastore: `list` is the paged
+  // feed scan (the only one of the three that can be slow, and the only one that
+  // paginates), `item` is a primary-key point read, `counts` is a bounded
+  // `ANY($1)` batch. Merging them would drop a constant-time point read into the
+  // same series as the scan and leave the p95 unreadable — the same argument that
+  // split 'tools' from 'tools_call' below.
+  | 'shared_storage_list'
+  | 'shared_storage_item'
+  | 'shared_storage_counts'
+  // The shared WRITE surface (`/api/v1/blocks/shared-storage/{append,update,vote,
+  // unvote,withdraw,report}`) — the v1 replacement for the postMessage SHARED_*
+  // bridge writes, completing the pair the three read labels above started. SIX
+  // labels, for the same reason there were three: these are not one workload.
+  // `append`/`update` run a BLOCKING EXTERNAL content-moderation call before
+  // touching the DB, so their latency is dominated by a third party;
+  // `vote`/`unvote` are a single round-trip CTE; `withdraw` is a transaction plus
+  // an FK cascade; `report` is a dedup insert. Merging them would put the only
+  // calls here that can be slow for an external reason into the same series as
+  // the ones that structurally cannot, and the p95 would answer no question at
+  // all. They also carry different rate-limit budgets (daily / per-minute /
+  // daily), which is the other dimension an operator reads these series for.
+  | 'shared_storage_append'
+  | 'shared_storage_update'
+  | 'shared_storage_vote'
+  | 'shared_storage_unvote'
+  | 'shared_storage_withdraw'
+  | 'shared_storage_report'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
@@ -79,12 +109,23 @@ export type AppBlockEndpoint =
   // outnumbers the other, and the declarations GET outnumbers the calls.
   | 'tools'
   | 'tools_call';
-// NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
-// NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
-// withBlockScope REST routes, so they are not metered via this per-endpoint
-// label (mutations carry their own tRPC metrics). The former 'buzz' /
-// 'buzz_transactions' / 'buzz_daily_compensation' / 'buzz_accounts' REST
-// entries were retired with those endpoints (superseded by the bridges).
+// NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
+//
+// 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists
+// again: the balance readout was RESTORED as a `withBlockScope` REST route so a
+// block can read its viewer's balance by direct fetch, without a page host in
+// the middle (the bridge requires one, which leaves model-slot and
+// non-page-hosted blocks with no balance read at all). It is metered here like
+// every other REST endpoint. Its tRPC twin `blocks.getMyBuzzBalance` is
+// unchanged and still serves the page-host bridge; the two return the identical
+// `{ blue, green, yellow }` projection on purpose.
+//
+// The other three self-reads — transactions / daily-compensation / accounts —
+// remain RETIRED as REST routes and are host-mediated tRPC MUTATIONS only
+// (`blocks.getMyBuzz{Transactions,Accounts}`, `blocks.getMyDailyCompensation`),
+// so they are not metered via this per-endpoint label (mutations carry their own
+// tRPC metrics). The former 'buzz_transactions' / 'buzz_daily_compensation' /
+// 'buzz_accounts' entries were dropped with those endpoints and stay dropped.
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 

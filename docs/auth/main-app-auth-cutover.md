@@ -66,6 +66,9 @@ The hub produces the `@civitai/auth` `SessionUser` to **full parity** with the h
 (`session-shape.ts`). The package `SessionUser` still widens `tier`/`meta`/`banDetails`/`subscriptions` (loose
 types), hence the `as unknown as Session` cast in `getHubSession`.
 
+> `redBrowsingLevel` was retired in 2026-09: the browsing level is one `User` column on every domain, and
+> the hub no longer projects it. The mentions below are the cutover record.
+
 `allowAds`/`redBrowsingLevel` are now computed from the user's stored `User.settings` in the hub producer
 (honor the explicit value, else the tier-based default) and cached — not hardcoded. See section D for the one
 parity nuance vs `getSessionUser`.

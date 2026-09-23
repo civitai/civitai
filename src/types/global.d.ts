@@ -5,6 +5,7 @@ import type { FileWithPath } from '@mantine/dropzone';
 import type { ImageAnalysisInput } from '~/server/schema/image.schema';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type { LabelTypes } from '~/store/training.store';
 
 export {};
@@ -190,6 +191,7 @@ declare global {
     shareDataset?: boolean;
     numImages?: number;
     numCaptions?: number;
+    uploadDomain?: ColorDomain;
     selectedEpochUrl?: string;
     trainingResults?: TrainingResults;
   };

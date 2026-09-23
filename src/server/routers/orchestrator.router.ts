@@ -711,6 +711,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
+        domain: ctx.domain,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);

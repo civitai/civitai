@@ -215,17 +215,23 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  *     - `src/server/routers/apps.router.ts` — `get`, `set`, `delete`, `list`, `getQuota`. The file
  *       contains no limiter call at all. `set` and `delete` are block-JWT WRITES; `set` has a
  *       per-write BYTE cap, which bounds size, not rate.
- *     - `src/server/routers/apps-shared.router.ts` — `list`, `get`, `getCount`, `getCounts`,
- *       `withdraw` are unlimited (`withdraw` is a write); its `append`, `update`, `vote`, `unvote`
- *       and `report` do carry their own bucket family.
+ *     - `src/server/routers/apps-shared.router.ts` — `list`, `get`, `getCount` and `getCounts` are
+ *       unlimited READS; its `append`, `update`, `vote`, `unvote`, `report` and — as of the shared
+ *       REST read surface — `withdraw` all carry their own bucket family.
  *
- * Stated the honest way: across every block-JWT tRPC procedure the figure is **13 unlimited** — the
- * 10 above, plus this file's own three (`submitWorkflow`, `listMyWorkflows`, `updateUserSettings`)
- * — not the 1 that the `blocks.router.ts`-only view suggests. The 10 are named, not fixed;
- * extending this guard across routers is a larger change than #569 asked for. ⚠️ Three of the 10
- * are WRITES, and `shared.withdraw` is an unbounded `DELETE FROM shared_kv` with FK cascade, which
- * is a materially different shape from anything this ledger covers. **Closing condition: a PR that either limits them or adds them to a ledger like
- * this one; until then this paragraph is the record that they were seen.**
+ * Stated the honest way: across every block-JWT tRPC procedure the figure is **12 unlimited** — the
+ * 9 above, plus this file's own three (`submitWorkflow`, `listMyWorkflows`, `updateUserSettings`)
+ * — not the 1 that the `blocks.router.ts`-only view suggests. The 9 are named, not fixed;
+ * extending this guard across routers is a larger change than #569 asked for.
+ *
+ * ✅ `shared.withdraw` LEFT this list. It was called out here as the worst of the set — an
+ * unbounded `DELETE FROM shared_kv` with an FK cascade, a materially different shape from anything
+ * this ledger covers — and it now takes its own per-(user, app) per-minute bucket
+ * (`checkSharedWithdrawRateLimit`), pinned in `apps-shared.router.test.ts`. TWO of the remaining
+ * writes are still unlimited (`apps.set`, `apps.delete`); `collections/[id]/follow.ts` and
+ * `tools.ts` remain the unlimited REST pair. **Closing condition, unchanged for those: a PR that
+ * either limits them or adds them to a ledger like this one; until then this paragraph is the
+ * record that they were seen.**
  */
 
 /** Every procedure name declared on the `blocksRouter` object literal, with its initializer node. */

@@ -6813,10 +6813,18 @@ export const blocksRouter = router({
   /**
    * HOST-MEDIATED viewer self-read for the token-bound viewer (a page block
    * reading "who am I"). Backs the SDK `useViewer()` hook via the GET_VIEWER
-   * page-host bridge, and is the host-mediated successor to the
-   * `GET /api/v1/blocks/me` REST endpoint (which STAYS LIVE for now — this
-   * bridge supersedes it once the SDK hook publishes + consumers migrate; a
-   * later follow-up retires /me).
+   * page-host bridge, and is the host-mediated TWIN of the
+   * `GET /api/v1/blocks/me` REST endpoint — NOT its successor. Both are
+   * supported and both stay: a viewer read is plain DATA MOVEMENT, and the
+   * current direction (decided 2026-09-21, confirmed 2026-09-23) is "default
+   * API; the bridge only for what only the HOST can do", so /me is the default
+   * surface and this bridge is the page-host affordance beside it. See
+   * `docs/features/app-blocks.md` → Routes → "Direction", and
+   * `civitai/civitai-app-starters#437`.
+   *
+   * ⚠️ RETRACTED: an earlier copy of this comment said this bridge would
+   * supersede /me "once the SDK hook publishes + consumers migrate" and that a
+   * later follow-up would retire /me. That plan is OFF — do not re-derive it.
    *
    * MUTATION (not query) DELIBERATELY, for the SAME reason as getMyBuzzBalance:
    * the block JWT is a bearer credential a `.query` would leak into the
@@ -6871,10 +6879,20 @@ export const blocksRouter = router({
    *   - THE PRE-BELTS ARE NOT THE SAME SET. Token validity, revocation and
    *     approved-status are common (this proc via `authorizeBlockBridgeToken`; the REST
    *     door inside `withBlockScope`, before its handler is entered). But `withBlockScope`
-   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of: it is
-   *     deny-by-default over every scope on the token, so a token carrying an unknown
-   *     scope, or `models:read:self` bound to a modelId the request does not name, is
-   *     refused on REST and admitted here. The REST door is the stricter one.
+   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of, so the
+   *     REST door is still the stricter one — on a NARROWER margin than this paragraph
+   *     claimed before #5063. That binding is TWO things, and only one is token-wide:
+   *       (a) deny-by-default over EVERY scope on the token, for UNKNOWN scopes. Still
+   *           token-wide and still asymmetric — an unknown scope string is refused on
+   *           REST and admitted here.
+   *       (b) the request-shape binding for the route's OWN `requiredScope` ONLY. Since
+   *           #5063 it is NOT run for the other scopes the token carries, so
+   *           `models:read:self` bound to a modelId the request does not name is refused
+   *           only on a route that REQUIRES `models:read:self`. It no longer 403s this
+   *           proc's REST twin (`/blocks/me`, `requiredScope: 'user:read:self'`) or any
+   *           other unrelated route. Before #5063 it did, and that was the defect.
+   *     So for `/blocks/me` specifically, what REST still adds over this proc is the
+   *     unknown-scope sweep plus `user:read:self`'s own non-anon binding.
    *   - THE CONSENT SCOPE REFUSAL differs in text: REST answers 403
    *     `missing required scope: user:read:self` (from the wrapper), this proc 403
    *     `block lacks user:read:self scope`. Same code, same decision.

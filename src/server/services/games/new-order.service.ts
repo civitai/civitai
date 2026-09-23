@@ -55,6 +55,7 @@ import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   handleLogError,
+  runClickHouseRead,
   throwBadRequestError,
   throwInternalServerError,
   throwNotFoundError,
@@ -843,22 +844,33 @@ export async function updatePendingImageRatings({
   rating?: NsfwLevel | null;
 }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
+  // Capture the narrowed (non-undefined) client so the read closure below keeps the
+  // type guard — TS doesn't propagate the `!clickhouse` narrowing into a callback.
+  const ch = clickhouse;
 
   // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
-  const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
-    SELECT userId, lastCreatedAt as createdAt, latestRating as rating
-    FROM (
-      SELECT
-        userId,
-        max(createdAt) as lastCreatedAt,
-        argMax(rating, createdAt) as latestRating,
-        argMax(status, createdAt) as latestStatus
-      FROM knights_new_order_image_rating
-      WHERE imageId = ${imageId}
-      GROUP BY imageId, userId
-    )
-    WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
-  `;
+  //
+  // A transient ClickHouse blip here is a retryable dependency outage, not a query
+  // fault — 503 rather than 500. The explicit message drops the default's "Please
+  // try again": whether a retry is safe INVERTS between this function's callers,
+  // and it cannot tell them apart.
+  const votes = await runClickHouseRead(
+    () => ch.$query<{ userId: number; createdAt: Date; rating: number }>`
+      SELECT userId, lastCreatedAt as createdAt, latestRating as rating
+      FROM (
+        SELECT
+          userId,
+          max(createdAt) as lastCreatedAt,
+          argMax(rating, createdAt) as latestRating,
+          argMax(status, createdAt) as latestStatus
+        FROM knights_new_order_image_rating
+        WHERE imageId = ${imageId}
+        GROUP BY imageId, userId
+      )
+      WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
+    `,
+    'This service is temporarily unavailable.'
+  );
 
   await clickhouse.$exec`
     INSERT INTO knights_rating_updates_buffer (imageId, rating)

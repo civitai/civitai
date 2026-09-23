@@ -14,11 +14,13 @@
 import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
@@ -161,6 +163,11 @@ export function ResourceItemContent({
   showLink: showLinkProp,
 }: ResourceItemContentProps) {
   const { domain } = useAppContext();
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const image =
+    resource.image && isPreviewVisible(resource.image.nsfwLevel, browsingLevel)
+      ? resource.image
+      : undefined;
   const status = getResourceStatus(resource, options);
   const isPartiallyCompatible = status === 'partial';
   const isIncompatible = status === 'incompatible';
@@ -188,11 +195,11 @@ export function ResourceItemContent({
   return (
     <>
       <Group gap="xs" justify="space-between" wrap="nowrap">
-        {resource.image && (
+        {image && (
           <div className="size-14 shrink-0 overflow-hidden rounded">
             <EdgeMedia2
-              src={resource.image!.url}
-              type={resource.image!.type}
+              src={image.url}
+              type={image.type}
               metadata={null}
               width={450}
               className="size-full object-cover"

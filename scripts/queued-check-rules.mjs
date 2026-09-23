@@ -26,6 +26,8 @@ export function queuedCheckDecision(args, env) {
   return { queue: true };
 }
 
+/** @typedef {{ cmd: string, args: string[], narrowedArgs?: string[] }} DirectCommand */
+
 /**
  * What each wrapped lane runs when it is NOT going through the queue.
  *
@@ -33,6 +35,8 @@ export function queuedCheckDecision(args, env) {
  * `assert-component-suite-ran.mjs`, which is what stops a browser project that collected nothing
  * from reporting as a pass. Losing that would be a silent hole exactly where the suite is least
  * able to complain.
+ *
+ * @type {Record<'component' | 'packages' | 'apps' | 'geometry' | 'lint' | 'lintPackages', DirectCommand>}
  */
 export const DIRECT_COMMANDS = {
   component: { cmd: 'node', args: ['scripts/test-component-run.mjs'] },
