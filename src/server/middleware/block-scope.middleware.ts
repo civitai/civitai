@@ -1381,8 +1381,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'append',
   'blocks',
   'buzz',
+  'cancel',
   'collections',
   'counts',
+  'estimate',
   'follow',
   'generation-resources',
   'images',
@@ -1391,8 +1393,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'list',
   'me',
   'models',
+  'poll',
   'report',
   'shared-storage',
+  'submit',
   'tip',
   'tip-allowance',
   'tools',
@@ -1401,6 +1405,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'update',
   'vote',
   'withdraw',
+  'workflows',
 ]);
 
 /**

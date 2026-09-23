@@ -93,6 +93,32 @@ export type AppBlockEndpoint =
   | 'shared_storage_unvote'
   | 'shared_storage_withdraw'
   | 'shared_storage_report'
+  // The WORKFLOW surface (`/api/v1/blocks/workflows/{submit,estimate,poll,cancel}`)
+  // — the v1 replacement for the postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW
+  // bridge messages. FOUR labels, and the split is not stylistic: these are the
+  // most different four workloads on this surface.
+  //
+  // `submit` is the only one that MOVES MONEY, and the only one whose latency
+  // includes a whatIf quote, several Redis reservations and an orchestrator
+  // submit. `estimate` is the whatIf alone — no spend, no queue, and the call a
+  // person makes repeatedly while adjusting parameters, so it outnumbers the
+  // others by an order of magnitude. `poll` is a block's watch loop: the
+  // highest-RATE label here by far AND the only one that can deliberately be held
+  // open for seconds (the `waitSeconds` long poll), so its duration histogram
+  // means something entirely different from the others'. `cancel` is GET + PATCH
+  // + GET against the orchestrator — the rarest and the heaviest per call.
+  //
+  // Merging any pair makes the RED series unreadable in the direction an operator
+  // actually reads it: a long-poll `poll` sharing a series with `submit` puts a
+  // deliberate multi-second hold into the p95 of the SPEND path, and a spend
+  // failure disappears into the volume of estimates. They also charge DIFFERENT
+  // rate-limit buckets — `poll` its own `:poll:` bucket, `estimate`/`cancel` the
+  // catalog bucket, `submit` none at all (bounded by the per-app velocity cap
+  // instead) — which is the other dimension these series get read for.
+  | 'workflows_submit'
+  | 'workflows_estimate'
+  | 'workflows_poll'
+  | 'workflows_cancel'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that

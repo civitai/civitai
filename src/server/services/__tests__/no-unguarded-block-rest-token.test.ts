@@ -218,6 +218,22 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'SPEND',
     why: 'createBuzzTipTransactionHandler, a real irreversible Buzz transfer. The highest-value entry in this table and the reason the gate was added.',
   },
+  'src/pages/api/v1/blocks/workflows/cancel.ts': {
+    exposure: 'WRITE',
+    why: 'Stops a RUNNING generation on the orchestrator — a real server-side kill, not a client-side "stop watching". A suspended app left reachable here could terminate generations a signed-in viewer is paying for and waiting on, one call at a time, and the work destroyed cannot be recovered from anything left behind: the orchestrator prorates the refund by undelivered output, so a cancel late in a run returns only part of the Buzz. It also triggers the post-paid settle and the author-fee reversal, so it moves the money ledger as well as the queue.',
+  },
+  'src/pages/api/v1/blocks/workflows/estimate.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'A whatIf price quote for a generation, computed against the VIEWER’s own orchestrator token and their entitlement to the requested resources — so the answer discloses what this viewer in particular would be charged, including early-access and Private-subscription resolution an anonymous caller receives nothing of. It queues nothing and spends nothing, which is why it is not SPEND, but a suspended app left reachable here would keep running priced, entitlement-resolving origin work on a signed-in user’s behalf, once per parameter change, with no money counter bounding it.',
+  },
+  'src/pages/api/v1/blocks/workflows/poll.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Reads one of the VIEWER’s own workflows — its live status, its cost and its output image urls and generated text, scoped by assertBlockWorkflowMintedForViewer (the id must name this viewer) and assertBlockWorkflowTaggedForApp (the record must carry this app’s provenance tag). A suspended app left reachable here would keep harvesting the outputs of generations it had already started on a signed-in user’s behalf, which is precisely the retained per-user data a takedown exists to stop; with the optional waitSeconds hold it also keeps an origin request slot open per call.',
+  },
+  'src/pages/api/v1/blocks/workflows/submit.ts': {
+    exposure: 'SPEND',
+    why: 'Runs a generation that debits the VIEWER’s Buzz — irreversible once the orchestrator accepts it. The highest-value entry in this table alongside tip.ts, and the one with the largest per-call ceiling: a tip is bounded by BLOCK_TIP_MAX_PER_TIP, a generation by whatever per-call buzzBudget the viewer consented to. A suspended app left reachable here could keep spending a signed-in user’s balance, keep accruing an author fee payable to the suspended app’s own publisher, and keep consuming the per-app velocity allowance every other viewer of that app shares.',
+  },
   'src/pages/api/v1/blocks/tools.ts': {
     exposure: 'READ_PUBLIC',
     why: 'GET returns a static in-process tool registry; POST runs a catalog search on the same clamped path models.ts serves.',
@@ -1271,6 +1287,15 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
+    // The four workflow routes. `submit.ts` is the second SPEND route this table
+    // has ever carried; the other three are WRITE / READ_VIEWER_SCOPED. None may
+    // opt out: a suspended app reaching any of them keeps spending, stopping or
+    // harvesting a signed-in viewer's generations, which is the whole exposure
+    // the gate removes.
+    'src/pages/api/v1/blocks/workflows/cancel.ts',
+    'src/pages/api/v1/blocks/workflows/estimate.ts',
+    'src/pages/api/v1/blocks/workflows/poll.ts',
+    'src/pages/api/v1/blocks/workflows/submit.ts',
   ];
 
   it('the money, write and viewer-scoped routes fail CLOSED — the option is absent from all of them', () => {
