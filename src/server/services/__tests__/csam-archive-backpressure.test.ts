@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Archiver } from 'archiver';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as ArchiverModule from 'archiver';
 
 /**
@@ -55,6 +56,15 @@ const csamBaseDir = await vi.hoisted(async () => {
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
+}));
+
+// The archive sink is chosen by CSAM_ARCHIVE_STREAM_UPLOAD: off writes through
+// `fs.createWriteStream`, on pipes to storage and never creates one. The tests below assert that
+// sink's lifecycle, so the branch is pinned here — inherited from a reachable Flipt it disappears,
+// and the spy then observes nothing.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn().mockResolvedValue(false),
 }));
 
 /** Instrumentation over the real archiver: counts appended vs. processed entries per archive. */
