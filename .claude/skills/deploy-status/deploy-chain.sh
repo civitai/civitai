@@ -82,12 +82,20 @@ resolve_run() {
 
 short() { echo "${1:0:7}"; }
 
+run_commit() {
+  k -n "$NS_BUILD" get pipelinerun "$1" \
+    -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}'
+}
+
+# True when Flux's latest image ($2) was built from the run's commit ($1). An empty
+# commit must not pass: short "" is a substring of every image, the previous release's too.
+image_ready() { [ -n "$1" ] && [[ "$2" == *"$(short "$1")"* ]]; }
+
 # ---- phase 1: build -------------------------------------------------------------
 print_build() {
   local run="$1"
   local commit cond reason msg
-  commit=$(k -n "$NS_BUILD" get pipelinerun "$run" \
-    -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}')
+  commit=$(run_commit "$run")
   reason=$(k -n "$NS_BUILD" get pipelinerun "$run" -o jsonpath='{.status.conditions[0].reason}')
   msg=$(k -n "$NS_BUILD" get pipelinerun "$run" -o jsonpath='{.status.conditions[0].message}')
 
@@ -186,7 +194,7 @@ summarize() {
   # The target (this run's) image being in the policy means build-image + push +
   # Flux scan all completed — even if trailing notify/github taskruns are still Running.
   local img_ready=0
-  if [ -n "$target" ] && [[ "$latest" == *"$(short "$target")"* ]]; then img_ready=1; fi
+  if image_ready "$target" "$latest"; then img_ready=1; fi
 
   if [ "$img_ready" = 0 ]; then
     if [ "$breason" = "Succeeded" ] || [ "$breason" = "Completed" ]; then
@@ -255,7 +263,9 @@ cmd_status() {
 cmd_watch() {
   local run; run=$(resolve_run "${1:-}")
   [ -z "$run" ] && die "could not resolve a prod PipelineRun for '${1:-latest}'"
-  echo "Watching prod deploy chain for run: $run  (Ctrl-C to stop)"
+  local commit; commit=$(run_commit "$run")
+  [ -z "$commit" ] && die "run $run has no commit label, so its image cannot be told from the previous release's"
+  echo "Watching prod deploy chain for run: $run commit $(short "$commit")  (Ctrl-C to stop)"
   local last=""
   while true; do
     local breason cphase capi latest ssr api
@@ -285,18 +295,15 @@ cmd_watch() {
     if [[ "$cphase" =~ Failed ]] || [[ "$capi" =~ Failed ]]; then
       echo ">>> CANARY FAILED/ROLLED BACK (SSR=$cphase API=$capi). Exiting."; exit 1
     fi
-    # Fully done = new image promoted AND both primaries fully rolled
-    # (updated == desired == ready), so every serving pod runs the new code.
-    local rollout_done=""
-    if [ -n "$sd" ] && [ "$su" = "$sd" ] && [ "$sr2" = "$sd" ] \
-       && [ -n "$ad" ] && [ "$au" = "$ad" ] && [ "$ar" = "$ad" ]; then
-      rollout_done=1
-    fi
-    if [ -n "$latest" ] && [ "$ssr" = "$latest" ] && [ "$api" = "$latest" ] \
+    # Before Flux picks up this run's image, every deployment is still fully rolled
+    # onto the PREVIOUS release, which is indistinguishable from done without the sha.
+    if image_ready "$commit" "$latest" \
        && { [ "$cphase" = "Succeeded" ] || [ "$cphase" = "Initialized" ]; } \
-       && { [ "$capi" = "Succeeded" ] || [ "$capi" = "Initialized" ]; } \
-       && [ -n "$rollout_done" ]; then
-      echo ">>> PROD FULLY ON $latest — both primaries promoted AND rolled out (SSR ${su}/${sd}, API ${au}/${ad}). Done."; exit 0
+       && { [ "$capi" = "Succeeded" ] || [ "$capi" = "Initialized" ]; }; then
+      app_rollout "$(short "$commit")"
+      if [ "$ROLLOUT_DONE" = 1 ]; then
+        echo ">>> PROD FULLY ON $latest — every app deployment rolled onto $(short "$commit"). Done."; exit 0
+      fi
     fi
     sleep 30
   done
