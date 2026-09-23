@@ -126,6 +126,7 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  runClickHouseRead,
   sleep,
   throwAuthorizationError,
   throwBadRequestError,
@@ -2167,20 +2168,27 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   `;
 
   if (!clickhouse || modelVersions.length === 0) return [];
+  // Capture the narrowed (non-undefined) client so the read closure below keeps the
+  // type guard — TS doesn't propagate the `!clickhouse` narrowing into a callback.
+  const ch = clickhouse;
 
   const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
-  const generationData = await clickhouse.$query<Row>`
-    SELECT
-      modelVersionId,
-      createdDate AS createdAt,
-      SUM(count) AS generations
-    FROM orchestration.daily_resource_generation_counts
-    WHERE createdDate >= ${date}
-      AND modelVersionId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY modelVersionId, createdDate
-    ORDER BY createdAt DESC, generations DESC;
-  `;
+  // A transient ClickHouse blip here is a retryable dependency outage, not a query
+  // fault — 503 rather than 500.
+  const generationData = await runClickHouseRead(
+    () => ch.$query<Row>`
+      SELECT
+        modelVersionId,
+        createdDate AS createdAt,
+        SUM(count) AS generations
+      FROM orchestration.daily_resource_generation_counts
+      WHERE createdDate >= ${date}
+        AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+      GROUP BY modelVersionId, createdDate
+      ORDER BY createdAt DESC, generations DESC;
+    `
+  );
 
   const versions = modelVersions
     .map((version) => {
