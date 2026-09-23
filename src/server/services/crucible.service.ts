@@ -40,6 +40,7 @@ import {
   type CrucibleDetailRow,
   type CrucibleDetailRowEntry,
 } from '~/server/selectors/crucible.selector';
+import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -537,6 +538,13 @@ export const submitEntry = async ({
     // Validate user owns the image
     if (image.userId !== userId) {
       return throwBadRequestError('You can only submit your own images');
+    }
+
+    const isPublished = await dbRead.image.count({
+      where: { id: imageId, ...publishedImageWhere() },
+    });
+    if (!isPublished) {
+      return throwBadRequestError('Only published images can be entered');
     }
 
     if (image.type !== crucible.contentType) {

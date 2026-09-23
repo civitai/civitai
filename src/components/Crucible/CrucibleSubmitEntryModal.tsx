@@ -2,7 +2,6 @@ import {
   Button,
   Center,
   CloseButton,
-  Group,
   HoverCard,
   Loader,
   Modal,
@@ -12,7 +11,6 @@ import {
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconAlertCircle,
-  IconBolt,
   IconCheck,
   IconCircleCheck,
   IconCircleX,
@@ -27,6 +25,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import React, { useMemo, useState } from 'react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -149,6 +148,8 @@ function ImageCard({
         arrowSize={8}
         openDelay={100}
         closeDelay={50}
+        withinPortal
+        zIndex={1000}
       >
         <HoverCard.Target>
           <div
@@ -337,7 +338,7 @@ export default function CrucibleSubmitEntryModal({
     fetchNextPage,
     isFetchingNextPage,
   } = trpc.image.getMyImages.useInfiniteQuery(
-    { mediaTypes: [contentType], limit: 40 },
+    { mediaTypes: [contentType], limit: 40, publishedOnly: true },
     {
       enabled: !!currentUser,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -448,6 +449,7 @@ export default function CrucibleSubmitEntryModal({
 
   // Total cost for selected images
   const totalCost = validSelectedCount * entryFee;
+  const submitLabel = `Submit ${validSelectedCount} ${validSelectedCount === 1 ? 'Entry' : 'Entries'}`;
 
   // Can't select more than remaining entries
   const canSelectMore = selectedImages.length < remainingEntries;
@@ -806,45 +808,27 @@ export default function CrucibleSubmitEntryModal({
               Cancel
             </Button>
 
-            {/* Submit Button with Buzz Cost */}
-            <Button
-              className="flex-1"
-              disabled={validSelectedCount === 0 || isSubmitting || !canSubmitMore}
-              onClick={handleSubmit}
-              loading={isSubmitting}
-              styles={{
-                root: {
-                  padding: 0,
-                  display: 'flex',
-                  overflow: 'hidden',
-                },
-                inner: {
-                  display: 'flex',
-                  width: '100%',
-                },
-              }}
-            >
-              <Group gap={0} className="w-full">
-                <div
-                  className="flex flex-1 items-center justify-center gap-2 py-2"
-                  style={{ backgroundColor: '#fab005' }}
-                >
-                  <IconSend size={16} className="text-[#1a1b1e]" />
-                  <Text fw={700} c="#1a1b1e">
-                    Submit {validSelectedCount} {validSelectedCount === 1 ? 'Entry' : 'Entries'}
-                  </Text>
-                </div>
-                <div
-                  className="flex items-center gap-1 border-l border-[#373a40] px-3 py-2"
-                  style={{ backgroundColor: '#1a1b1e' }}
-                >
-                  <IconBolt size={16} fill="#fab005" className="text-[#fab005]" />
-                  <Text fw={700} c="#fab005">
-                    {totalCost}
-                  </Text>
-                </div>
-              </Group>
-            </Button>
+            {totalCost > 0 ? (
+              <BuzzTransactionButton
+                className="flex-1"
+                buzzAmount={totalCost}
+                onPerformTransaction={handleSubmit}
+                loading={isSubmitting}
+                disabled={validSelectedCount === 0 || !canSubmitMore}
+                label={submitLabel}
+                showPurchaseModal
+              />
+            ) : (
+              <Button
+                className="flex-1"
+                onClick={handleSubmit}
+                loading={isSubmitting}
+                disabled={validSelectedCount === 0 || !canSubmitMore}
+                leftSection={<IconSend size={16} />}
+              >
+                {submitLabel}
+              </Button>
+            )}
           </div>
 
           {/* Per Entry Cost */}

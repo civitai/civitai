@@ -85,3 +85,9 @@ const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultAr
 export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
   typeof imageResourceHelper
 >;
+
+export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
+  needsReview: null,
+  tosViolation: false,
+  post: { publishedAt: { lte: new Date() } },
+});

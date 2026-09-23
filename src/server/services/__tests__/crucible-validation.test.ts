@@ -341,6 +341,7 @@ describe('submitEntry — content type', () => {
     dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
     dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
     dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({
       id: 5,
       user: { username: 'tester' },
@@ -350,6 +351,16 @@ describe('submitEntry — content type', () => {
   it('accepts an image in an image crucible — the pre-video behaviour', async () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
     expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an image that is not published', async () => {
+    dbMock.dbRead.image.count.mockResolvedValue(0);
+
+    await expect(submit()).rejects.toThrow(/Only published images can be entered/);
+    expect(dbMock.dbRead.image.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: 7, post: { publishedAt: { lte: expect.any(Date) } } }),
+    });
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
   it('rejects a video in an image crucible', async () => {
@@ -474,6 +485,7 @@ describe('submitEntry — maximum clip length', () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue(
       imageRow(MediaType.video, { duration: 6.592 })
     );
+    dbMock.dbRead.image.count.mockResolvedValue(1);
     dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
   });
 
