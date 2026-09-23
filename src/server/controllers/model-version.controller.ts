@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { coveredBy, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 
 import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
@@ -207,7 +208,7 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true } },
+        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
 
@@ -288,7 +289,7 @@ const loadModelVersion = async ({
           availability: version.availability,
           usageControl: version.usageControl,
           baseModel: version.baseModel,
-          covered: version.generationCoverage?.covered ?? false,
+          covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
           flags: version.flags,

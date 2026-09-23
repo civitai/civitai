@@ -15,8 +15,13 @@ const input = (overrides: Partial<GetResourceSelectInput> = {}): GetResourceSele
   ...overrides,
 });
 
-const filterFor = (overrides?: Partial<GetResourceSelectInput>) =>
-  buildFilter({ input: input(overrides), user: { id: 1, isModerator: false }, tabIds: null }) ?? '';
+const filterFor = (overrides?: Partial<GetResourceSelectInput>, coverageNext = true) =>
+  buildFilter({
+    input: input(overrides),
+    user: { id: 1, isModerator: false },
+    tabIds: null,
+    coverageNext,
+  }) ?? '';
 
 describe('the picker’s loaded-only filter', () => {
   it('asks Meilisearch for resident versions only when it is on', () => {
@@ -27,10 +32,17 @@ describe('the picker’s loaded-only filter', () => {
     expect(filterFor()).not.toContain('generatorLoaded');
   });
 
-  it('gates coverage on the staged rule, not the live one', () => {
-    const filter = filterFor({ canGenerate: true });
+  // The picker must gate on the same rule the generation path does, or it offers what the submit refuses.
+  it('gates on the staged rule when that is the live one', () => {
+    const filter = filterFor({ canGenerate: true }, true);
     expect(filter).toContain('canGenerateNext = true');
     expect(filter).not.toContain('canGenerate = true');
+  });
+
+  it('gates on the live rule when the flag is off', () => {
+    const filter = filterFor({ canGenerate: true }, false);
+    expect(filter).toContain('canGenerate = true');
+    expect(filter).not.toContain('canGenerateNext = true');
   });
 
   // `versions.generatorLoaded` has to be in `modelsFilterableAttributes` AND applied to the live

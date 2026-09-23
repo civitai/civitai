@@ -94,6 +94,7 @@ export function ResourceHitList({ query }: { query: string }) {
 
   const {
     items,
+    coverageNext,
     isLoading,
     isFetching,
     isFetchingNextPage,
@@ -127,13 +128,14 @@ export function ResourceHitList({ query }: { query: string }) {
 
       return selectableVersions(model.versions, {
         canGenerate,
+        coverageNext,
         loadedOnly,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
       });
     },
-    [canGenerate, loadedOnly, resources, excludedIds, tab, selectSource]
+    [canGenerate, coverageNext, loadedOnly, resources, excludedIds, tab, selectSource]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -238,9 +240,14 @@ export function ResourceHitList({ query }: { query: string }) {
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
-      <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
+      <ResourceSelectCard
+        data={data}
+        height={height}
+        selectSource={selectSource}
+        coverageNext={coverageNext}
+      />
     ),
-    [selectSource]
+    [selectSource, coverageNext]
   );
 
   if (loading && !filtered.length)

@@ -96,17 +96,17 @@ if (isMain(import.meta.url)) {
   const status = async () => {
     const id = requiredInt('version');
     const { rows } = runSql(
-      `SELECT ec.name AS "ecosystemCheckpointsName", gc.covered
+      `SELECT ec.name AS "ecosystemCheckpointsName", gc.covered, gc."coveredNext"
        FROM "ModelVersion" mv
        LEFT JOIN "EcosystemCheckpoints" ec ON ec.id = mv.id
-       LEFT JOIN "GenerationCoverageNext" gc ON gc."modelVersionId" = mv.id
+       LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
        WHERE mv.id = ${id}`,
       { db }
     );
     if (!rows.length) return console.log(`No model version ${id}.`);
     const [row] = rows;
     console.log(`EcosystemCheckpoints: ${row.ecosystemCheckpointsName ? `yes ("${row.ecosystemCheckpointsName}")` : 'no'}`);
-    console.log(`GenerationCoverageNext: ${row.covered ? 'covered' : 'not covered'}`);
+    console.log(`GenerationCoverage: covered=${row.covered ? 'yes' : 'no'} coveredNext=${row.coveredNext ? 'yes' : 'no'}`);
   };
 
   const bust = async () => {

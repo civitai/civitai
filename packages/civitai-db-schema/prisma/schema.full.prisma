@@ -7211,7 +7211,6 @@ model GenerationCoverage {
   coveredNext    Boolean
 
   @@id([modelId, modelVersionId])
-  @@map("GenerationCoverageNext")
 }
 
 model UserProfile {

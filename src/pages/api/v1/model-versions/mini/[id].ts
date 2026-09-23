@@ -12,6 +12,7 @@ import {
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
@@ -104,6 +105,8 @@ export default MixedAuthEndpoint(async function handler(
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
+  const coverage = Prisma.raw(`"${coverageColumn(await nextCoverageEnabled())}"`);
+
   const [modelVersion] = await dbWrite.$queryRaw<VersionRow[]>`
     SELECT
       mv.id,
@@ -146,17 +149,15 @@ export default MixedAuthEndpoint(async function handler(
         (m."availability" = 'Private')
 
       ) AS "checkPermission",
-      -- 🔴 coveredNext, not covered. This endpoint is what the ORCHESTRATOR reads to decide
-      -- whether a resource can generate, and prepareResource refuses anything it believes cannot --
-      -- so on the live rule paid model loading cannot load the very checkpoints it exists for.
-      -- Verified 2026-09-08 on version 3040959: covered by the staged rule, not the live one, and
-      -- the estimate failed with the orchestrator's "not enabled for generation".
-      --
-      -- No site code calls this endpoint, and the site's own generator gates on
-      -- GenerationCoverage through resource-data/generation.service -- so this widens what the
-      -- orchestrator will accept without changing what a user sees on the site.
+      -- 🔴 The column is chosen by the flag, because this is what the ORCHESTRATOR reads to decide
+      -- whether a resource can generate, and prepareResource refuses anything it believes cannot.
+      -- On the live rule paid model loading cannot load the very checkpoints it exists for --
+      -- verified 2026-09-08 on version 3040959: covered by the staged rule, not the live one, and
+      -- the estimate failed with the orchestrator's "not enabled for generation". Turning the flag
+      -- off must therefore close this surface too, or the orchestrator keeps loading community
+      -- checkpoints the site has stopped offering.
       -- See docs/features/paid-model-loading-coverage.md.
-      (SELECT "coveredNext" FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      (SELECT ${coverage} FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       -- Auction winners, for the orchestrator to prioritise their downloads. It does not read this yet.
       EXISTS (
         SELECT 1 FROM "CoveredCheckpoint" cc

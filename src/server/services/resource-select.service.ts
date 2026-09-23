@@ -10,6 +10,8 @@ import {
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { nextCoverageEnabled } from '~/server/services/generation/coverage-source';
+import { coverageIndexField } from '~/shared/generation/coverage-fields';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GetResourceSelectInput } from '~/server/schema/model.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -113,11 +115,14 @@ export function buildFilter({
   featuredModels,
   tabIds,
   excludeIds,
+  coverageNext,
 }: {
   input: GetResourceSelectInput;
   user: ServiceUser;
   featuredModels?: GetFeaturedModels;
   tabIds: number[] | null;
+  /** Which indexed coverage field is live — the index carries both. */
+  coverageNext?: boolean;
   // Ids pinned to the front from Postgres — excluded from the Meili stream so a
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
@@ -177,10 +182,7 @@ export function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    // `canGenerateNext`, not `canGenerate`: documents already in the index derived `canGenerate`
-    // from the old view, which required a checkpoint be in the auction's `CoveredCheckpoint` list —
-    // exactly what paid loading exists to load. Both fields go at the cutover.
-    canGenerate !== undefined && eq('canGenerateNext', canGenerate),
+    canGenerate !== undefined && eq(coverageIndexField(coverageNext), canGenerate),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),
     featuredIds.length > 0 && inArray('id', featuredIds),
@@ -275,6 +277,7 @@ export async function getResourceSelectModels(
     tagName,
   } = input;
 
+  const coverageNext = await nextCoverageEnabled();
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 
@@ -314,6 +317,7 @@ export async function getResourceSelectModels(
     featuredModels,
     tabIds,
     excludeIds: officialIdsForType,
+    coverageNext,
   });
 
   const results = await searchModels(
@@ -351,5 +355,5 @@ export async function getResourceSelectModels(
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
 
-  return { items, nextCursor };
+  return { items, nextCursor, coverageNext };
 }

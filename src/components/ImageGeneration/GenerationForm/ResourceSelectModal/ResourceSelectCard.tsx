@@ -47,6 +47,7 @@ import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
+import { versionCanGenerate } from '~/shared/generation/coverage-fields';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import { TopRightIcons } from './TopRightIcons';
 import {
@@ -61,10 +62,12 @@ export function ResourceSelectCard({
   data,
   height,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   height?: number;
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
   const {
     onSelect,
@@ -304,6 +307,7 @@ export function ResourceSelectCard({
                   data={data}
                   selectedVersion={selectedVersion}
                   selectSource={selectSource}
+                  coverageNext={coverageNext}
                 />
                 <TopRightIcons data={data} setFlipped={setFlipped} />
               </div>
@@ -426,10 +430,12 @@ function ModelDetailsPanel({
   data,
   selectedVersion,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   selectedVersion: TransformedModel['versions'][number];
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
   const features = useFeatureFlags();
   const residency = useResidency(selectedVersion.id);
@@ -450,7 +456,7 @@ function ModelDetailsPanel({
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
-          {selectedVersion.canGenerateNext && (
+          {versionCanGenerate(selectedVersion, coverageNext) && (
             <IconBadge radius="xs" icon={<IconBrush size={14} />}>
               <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
             </IconBadge>

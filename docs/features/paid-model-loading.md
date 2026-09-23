@@ -133,13 +133,14 @@ loaded versions while the filter is on.
 `resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
 per-tier caps, the `resource-load:update` signal and the load-complete toast. Kept deliberately (2026-09-11) for pricing and observing a single download.
 
-**Coverage** — every reader of `GenerationCoverage` reads `GenerationCoverageNext` (Prisma `@@map`
-plus the raw-SQL queries), which is what lets a normal user pick a checkpoint that is not loaded.
-The models index computes both `canGenerate` (through the `@@map`) and `canGenerateNext` (raw SQL),
-and on this branch they resolve to the same rule — what differs is the **documents**: live ones were
-written when `canGenerate` meant the old view, which required the weekly auction's residency list and
-so hides exactly the checkpoints this feature loads. The picker gates on `canGenerateNext`. Both
-fields go at the cutover.
+**Coverage** — `GenerationCoverage` is one view carrying both rules as columns, `covered` (live) and
+`coveredNext` (staged), and the Flipt boolean `generation-coverage-next` decides which one answers.
+It is **default off**, so the staged rule — the thing that lets a normal user pick a checkpoint that
+is not loaded — ships dark and is turned on deliberately. Server-side the choice is made once per
+request in `coverage-source.ts`; the models index writes both `canGenerate` and `canGenerateNext`
+from the two columns, and the picker filters on whichever `coverageIndexField()` names, passing the
+answer to the client so the hit list re-checks the same field. `no-divergent-coverage-read` keeps
+both halves single-sourced. Both fields, and the flag, go at the cutover.
 
 **Money-path properties worth keeping true:**
 
@@ -277,7 +278,12 @@ a resource's window ends, so there is no countdown to build.
 
 ## Coverage, in one paragraph
 
-`CoveredCheckpoint` — the weekly auction's residency proxy — stops gating. `EcosystemCheckpoints`
+Two rules live side by side in one view and a flag picks between them; everything below describes the
+**staged** rule (`coveredNext`), which is what goes live when `generation-coverage-next` is turned on.
+The live rule (`covered`) differs in exactly two places, both noted inline.
+
+`CoveredCheckpoint` — the weekly auction's residency proxy — stops gating (it still gates the live
+rule). `EcosystemCheckpoints`
 stays (62 of 63 checkpoint defaults ride on it) and `GenerationBaseModel` stays as the base-model
 gate. A checkpoint must carry a **SafeTensor** weight file; Diffusers remains fine for every other
 type. File-less API models are covered and never loadable — "file-less" means *no loadable file*, not
@@ -327,16 +333,18 @@ Everything here is the deploying engineer's, before this branch merges.
       indicator go live to everyone on deploy, so the only rollback is a revert.
       *Closes when:* a flag gates them, or Justin rules that it ships unflagged and that ruling is
       recorded here.
-- [ ] **Apply the models index's filterable attributes.** `versions.generatorLoaded` and
-      `canGenerateNext` are in `modelsFilterableAttributes`, but that list is inert on a live index
-      until `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it —
-      and Meilisearch rejects a search filtering on an attribute it has not been told about.
-      `canGenerateNext` is the one that matters: the picker gates **every** query on it, so until
-      this runs the modal is empty rather than merely narrower. Reindexing alone does not do it.
-      Budget hours, not minutes: the last settings update took 6.5 min to process after ~2h50m
-      queued.
-      *Closes when:* the models index reports both among its filterable attributes, and the picker
-      returns results with and without **Loaded only**.
+- [ ] **Apply the models index's filterable attributes — before the FLAG, not before the deploy.**
+      `versions.generatorLoaded`, `canGenerateNext` and `versions.canGenerateNext` are in
+      `modelsFilterableAttributes` but that list is inert on a live index until
+      `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it, and
+      Meilisearch rejects a search filtering on an attribute it has not been told about. With
+      `generation-coverage-next` off the picker filters on `canGenerate`, which is already applied, so
+      the deploy is safe without this. **Turning the flag on without it empties the modal entirely**,
+      because every picker query then filters on `canGenerateNext`. `versions.generatorLoaded` gates
+      the **Loaded only** filter the same way. Reindexing alone does not do it. Budget hours, not
+      minutes: the last settings update took 6.5 min to process after ~2h50m queued.
+      *Closes when:* the models index reports all three among its filterable attributes, and with the
+      flag on the picker returns results both with and without **Loaded only**.
 - [ ] **Check the preview environment before reading anything into it.** The indicators need main's
       `generatorLoaded` migration applied to the database preview points at, and
       `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Not
@@ -356,27 +364,50 @@ Everything here is the deploying engineer's, before this branch merges.
       file, never that one** (why, and the measured delta:
       [paid-model-loading-coverage.md](paid-model-loading-coverage.md), the migration-history block at
       the top). **Done 2026-09-22**, on production.
-- [x] **`pnpm run db:check-generated`** after the Prisma `@@map` — passes; the only generated change
-      is the Kysely table key.
+- [ ] **Apply `20260923140000_generation_coverage_two_rules_one_view`, with its three follow-up
+      steps.** It replaces `GenerationCoverage` with one view carrying `covered` + `coveredNext`, and
+      it **narrows `covered` the moment it runs**: `m.mode IS NULL` now guards the live rule, so 1,801
+      versions of `Archived`/`TakenDown` models (measured on the replica 2026-09-23) lose coverage.
+      Coverage is cached, so follow the steps in the migration header — capture the affected ids
+      first, purge `packed:generation:resource-data-*` and `packed:caches:data-for-model*` **by key**,
+      then re-queue those models into the models index. The two cache key versions were bumped in this
+      change (`…resource-data-4`, `…data-for-model-2`), so entries written by the previous build are
+      not read either way.
+      *Closes when:* `SELECT count(*) FROM "GenerationCoverage" gc JOIN "Model" m ON m.id = gc."modelId"
+      WHERE m.mode IS NOT NULL AND gc.covered` returns 0, and the affected models are back in the index.
+- [ ] **Confirm `generation-coverage-next` exists in Flipt and is OFF.** It is boolean-only and
+      global. An unknown key evaluates false, which is the same answer as "off" — so verify the key is
+      present rather than inferring it from the site behaving as expected.
+      *Closes when:* the flag is listed in Flipt with its default off.
+- [x] **`pnpm run db:check-generated`** after `GenerationCoverage` gained `coveredNext` — passes; the
+      generated change is the new column on the Kysely type and the model list.
 
 ⚠️ Migrations here are **applied by hand** (psql/retool). This repo never runs `prisma migrate deploy`.
 
 ## Post-deploy checklist
 
-- [ ] **Re-queue EVERY model, not only the ~12,900 that gain coverage.** `canGenerateNext` exists
-      only on documents written since `db635a3a45`, and a Meilisearch filter matches nothing on a
-      document missing the attribute — so while the picker gates every query on it, a document that
-      has not been rebuilt is invisible there. The ~12,900 figure is how many models *change answer*,
-      not how many need re-queueing. Both fields go at the cutover, when `canGenerate` answers this
-      on its own.
-      *Closes when:* the picker returns a full first page of results, and a newly covered checkpoint
-      (e.g. version 1413133) reports `canGenerateNext: true` in the models index.
-- [ ] **Bring `event-engine-common` onto the new coverage.** Its model feed
-      (`feeds/models.feed.ts`) and model-data cache (`caches/modelData.cache.ts`) still query
-      `GenerationCoverage` in raw SQL, in a separate repo. Either point both at
-      `GenerationCoverageNext`, or redefine `GenerationCoverage` with its body so no reader changes.
-      *Closes when:* both files name the new view, or the two views return the same row count in
-      production.
+- [ ] **Re-queue EVERY model before turning `generation-coverage-next` on** — not only the ~12,900
+      that change answer. `canGenerateNext` exists only on documents written since `db635a3a45`, and a
+      Meilisearch filter matches nothing on a document missing the attribute, so once the picker gates
+      on it every un-rebuilt document is invisible. The ~12,900 figure is how many models *change
+      answer*, not how many need re-queueing. Both fields go at the cutover, when `canGenerate`
+      answers this on its own.
+      *Closes when:* with the flag on, the picker returns a full first page, and a newly covered
+      checkpoint (e.g. version 1413133) reports `canGenerateNext: true` in the models index.
+- [ ] **Drop `GenerationCoverageNext`.** It is left in place only so pods on the previous build keep
+      working, and no code in this repo references it after this change. It is frozen at its
+      `20260922190000` definition, so every day it survives it drifts further from the live view —
+      anyone querying it gets an answer the site does not give.
+      *Closes when:* `DROP VIEW "GenerationCoverageNext"` has run in production and
+      `grep -rn GenerationCoverageNext` over the repo returns nothing but history.
+- [ ] **Bring `event-engine-common` onto the staged rule.** Its model feed (`feeds/models.feed.ts`)
+      and model-data cache (`caches/modelData.cache.ts`) select `gc.covered` from `GenerationCoverage`
+      in raw SQL, in a separate repo. That keeps working unchanged — the column still exists and still
+      answers the live rule — so nothing breaks on deploy; but when `generation-coverage-next` goes
+      on, its two surfaces keep answering under the old rule. Point both at `coveredNext`, or give
+      that repo the same flag read.
+      *Closes when:* both files select `coveredNext`, or the flag is retired and `covered` is the only
+      column left.
 - [ ] **Watch the first real boosts.** The orchestrator's price is unconfirmed at volume: check that
       `cost.fixed.downloadPriority` matches what users were quoted, and that refusals ("price
       changed", "nothing left to boost") are rare rather than routine.

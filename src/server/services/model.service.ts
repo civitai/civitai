@@ -1,4 +1,9 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  coverageColumn,
+  pickCovered,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -824,7 +829,9 @@ export const getModelsRaw = async ({
 
   if (supportsGeneration) {
     AND.push(
-      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverageNext" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc.${Prisma.raw(
+        `"${coverageColumn(await nextCoverageEnabled())}"`
+      )})`
     );
   }
 
@@ -1376,7 +1383,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   if (supportsGeneration) {
-    AND.push({ generationCoverage: { some: { covered: true } } });
+    AND.push({
+      generationCoverage: { some: { [coverageColumn(await nextCoverageEnabled())]: true } },
+    });
   }
 
   // Filter only followed users
@@ -1613,6 +1622,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     hideGenerations: h.generations,
   });
 
+  const next = await nextCoverageEnabled();
   const result = {
     nextCursor,
     isPrivate,
@@ -1635,7 +1645,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate = isGenerationEligible({
-          covered: version?.covered,
+          covered: pickCovered(version, next),
           baseModel: version?.baseModel ?? '',
           modelType: model.type,
           flags: version?.flags ?? 0,
@@ -2589,8 +2599,9 @@ export async function setModelSfwOnly({
   return result;
 }
 
-// Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
-// here because applyModelFlagSideEffects already busts the version caches when it moves.
+// Model columns the GenerationCoverage view reads that THIS path can change. `poi` and `mode` are
+// read by the view too, but move through applyModelFlagSideEffects and updateModelById, which bust
+// the version caches themselves.
 const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
 
 export const upsertModel = async (
@@ -4395,6 +4406,7 @@ export async function getModelsWithVersions({
   //   currentUserId: user?.id,
   // });
 
+  const next = await nextCoverageEnabled();
   // Get VAE version IDs from linked components
   const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
   const vaeLinkedRows = allMvIds.length
@@ -4505,7 +4517,7 @@ export async function getModelsWithVersions({
         return {
           ...model,
           user: user.username === 'civitai' ? undefined : user,
-          supportsGeneration: modelVersions.some((x) => x.covered),
+          supportsGeneration: modelVersions.some((x) => !!pickCovered(x, next)),
           modelVersions: modelVersions.map(
             ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
               const versionHidden = resolveVersionHiddenMetrics({

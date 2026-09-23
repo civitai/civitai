@@ -65,10 +65,12 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
     }
   );
 
+  const coverageNext = queryResult.data?.pages[0]?.coverageNext ?? false;
+
   const items = useMemo(
     () => queryResult.data?.pages.flatMap((p) => p.items) ?? [],
     [queryResult.data]
   );
 
-  return { ...queryResult, items };
+  return { ...queryResult, items, coverageNext };
 }

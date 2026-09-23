@@ -4667,7 +4667,7 @@ export type DB = {
   Feedback: Feedback;
   File: File;
   GenerationBaseModel: GenerationBaseModel;
-  GenerationCoverageNext: GenerationCoverage;
+  GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   HomeBlock: HomeBlock;

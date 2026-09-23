@@ -7,6 +7,7 @@ const version = (
 ) => ({
   id,
   baseModel: 'SDXL 1.0',
+  canGenerate: true,
   canGenerateNext: true,
   generatorLoaded: false,
   ...overrides,
@@ -45,10 +46,18 @@ describe('selectableVersions', () => {
     expect(first).toBe(8);
   });
 
-  it('drops versions the staged coverage rule excludes', () => {
-    expect(
-      pick([version(1), version(2, { canGenerateNext: false })], { canGenerate: true })
-    ).toEqual([1]);
+  // Crossed on purpose: a card reading the field the server did not filter on keeps the wrong version.
+  const crossed = [
+    version(1, { canGenerate: false, canGenerateNext: true }),
+    version(2, { canGenerate: true, canGenerateNext: false }),
+  ];
+
+  it('gates on the staged rule when that is the live one', () => {
+    expect(pick(crossed, { canGenerate: true, coverageNext: true })).toEqual([1]);
+  });
+
+  it('gates on the live rule when the flag is off', () => {
+    expect(pick(crossed, { canGenerate: true, coverageNext: false })).toEqual([2]);
   });
 
   it('drops excluded ids and off-ecosystem base models', () => {

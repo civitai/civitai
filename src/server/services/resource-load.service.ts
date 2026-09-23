@@ -14,6 +14,7 @@ import {
 } from '~/server/schema/resource-load.schema';
 import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
+import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { logToAxiom } from '~/server/logging/client';
@@ -96,9 +97,10 @@ async function getVersionsForAir(modelVersionIds: number[]) {
 
 async function getCoveredVersionIds(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return new Set<number>();
+  const column = Prisma.raw(`"${coverageColumn(await nextCoverageEnabled())}"`);
   const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
     SELECT "modelVersionId" FROM "GenerationCoverage"
-    WHERE "coveredNext" AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
+    WHERE ${column} AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
   `;
   return new Set(rows.map((r) => r.modelVersionId));
 }

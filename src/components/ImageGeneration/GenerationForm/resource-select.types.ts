@@ -1,3 +1,4 @@
+import { versionCanGenerate } from '~/shared/generation/coverage-fields';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
@@ -45,6 +46,7 @@ export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: st
 export type SelectableVersion = {
   id: number;
   baseModel: string;
+  canGenerate?: boolean;
   canGenerateNext?: boolean;
   generatorLoaded?: boolean;
 };
@@ -58,12 +60,15 @@ export function selectableVersions<V extends SelectableVersion>(
   versions: V[],
   {
     canGenerate,
+    coverageNext,
     loadedOnly,
     skipBaseModel,
     modelBaseModels,
     excludedIds,
   }: {
     canGenerate?: boolean;
+    /** Which indexed coverage field the server gated this page on. */
+    coverageNext?: boolean;
     loadedOnly?: boolean;
     skipBaseModel: boolean;
     modelBaseModels: string[];
@@ -72,7 +77,7 @@ export function selectableVersions<V extends SelectableVersion>(
 ) {
   return versions.filter(
     (version) =>
-      (canGenerate ? canGenerate === version.canGenerateNext : true) &&
+      (canGenerate ? canGenerate === versionCanGenerate(version, coverageNext) : true) &&
       (!loadedOnly || !!version.generatorLoaded) &&
       (skipBaseModel ||
         modelBaseModels.length === 0 ||

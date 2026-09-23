@@ -11,22 +11,31 @@ This audit matters more under the boost model, not less: the swap to the new vie
 normal user pick a checkpoint that is not loaded, and so reach the download queue and the boost at
 all.
 
-**The swap is in code, not in the database.** Every reader of `GenerationCoverage` — the Prisma model
-through `@@map`, and the raw-SQL queries — reads `GenerationCoverageNext`, which production already
-has. The swap itself needs no migration, and `GenerationCoverage` is left as it was.
+**One view, two columns, one flag.** `GenerationCoverage` carries both rules as booleans — `covered`
+(live: a checkpoint needs a `CoveredCheckpoint` row) and `coveredNext` (staged: community checkpoints
+qualify on a scanned SafeTensor weight file and load on demand) — and the Flipt boolean
+`generation-coverage-next` decides which column answers, per request, globally, default **off**
+(`20260923140000_generation_coverage_two_rules_one_view`). Choosing a rule is now choosing a column,
+not a table name. `src/server/services/generation/coverage-source.ts` is the only place that choice is
+made server-side (`nextCoverageEnabled` / `coverageColumn` / `pickCovered` / `coveredBy`), and
+`src/shared/generation/coverage-fields.ts` is its indexed half; `no-divergent-coverage-read` keeps the
+ternary out of the rest of `src/`.
 
-🔴 **`GenerationCoverageNext`'s body has been redefined twice since it was first applied, and the one
-in force is the LAST.** `20260909180000_generation_coverage_next_safetensor_checkpoints` was amended in
-place on 2026-09-11 to add a top-level `AND m.mode IS NULL` — a taken-down or archived model is not
-covered for any type, so moderation blocks generation on the server rather than only greying out the
-Create button. Re-applied by hand that day: 1,955 versions lost coverage, 1,807 of them covered by the
-live view. `20260922190000_generation_coverage_next_drop_covered_checkpoint` then replaced the body
-again to remove `CoveredCheckpoint`, and was applied to production on 2026-09-22; it reproduces
-`m.mode IS NULL`.
+🔴 **A row exists when EITHER rule covers, so row existence is no longer a coverage test.** Both old
+views emitted rows only for covered versions, so `EXISTS (SELECT 1 FROM "GenerationCoverage" …)`
+answered the question. Every reader must now test a column.
 
-🔴 **Never re-apply `20260909180000`.** Its body still carries the `CoveredCheckpoint` disjunct, so
-running it restores the auction's excuse from the SafeTensor rule and silently undoes the narrowing
-production already has.
+🔴 **Both rules exclude moderated models.** `m.mode IS NULL` had guarded the staged rule since
+2026-09-11 and never guarded the live one, so a flag choosing between them could un-block generation
+for `Archived` and `TakenDown` models. Measured on the replica 2026-09-23: 1,801 versions of mode-set
+models were covered by the live rule (1,724 LORA, 39 LoCon, 21 LORA under `TakenDown`,
+12 TextualInversion, 5 DoRA); they lose coverage when the migration runs.
+
+⚠️ **`GenerationCoverageNext` still exists and nothing reads it.** It is left in place so pods on the
+previous build keep working, and drops after this deploys. It is frozen at its `20260922190000`
+definition, so it does *not* carry the moderated-model exclusion — never use it to check what the site
+will answer. `20260909180000` and `20260922190000` are history only: they define that view, not this
+one.
 
 ---
 
@@ -74,22 +83,21 @@ This is the thing an earlier reading of these docs got wrong, and it inverted a 
 | `CoveredCheckpoint` | 514 rows | Auction-won community checkpoints — a **residency proxy**. Written and pruned weekly by `handle-auctions.ts`. **This is what paid loading replaces.** (638 versions are covered *as checkpoints* — the rest come from `EcosystemCheckpoints`.) |
 | `EcosystemCheckpoints` | 125 | The generator's **default model per ecosystem**. **62 of the 63 checkpoint defaults are covered through it — and zero through `CoveredCheckpoint`.** Not a loophole; the registry that keeps the generator working. |
 
-⚠️ **`CoveredCheckpoint` is out of the view entirely** as of
-`20260922190000_generation_coverage_next_drop_covered_checkpoint` — it gates nothing and excuses
-nothing. `20260909180000` had kept it as a disjunct excusing auction checkpoints from the SafeTensor
-requirement; Justin's call, 2026-09-22, is that a checkpoint meeting none of the other qualifications
-is not covered whether or not the auction made it resident. Measured against the replica that day:
-5 versions lose coverage (940,125 → 940,120 rows).
+⚠️ **`CoveredCheckpoint` gates the LIVE rule and nothing else.** It is a conjunct of `covered` only;
+`coveredNext` ignores it (Justin's call, 2026-09-22: a checkpoint meeting none of the other
+qualifications is not covered whether or not the auction made it resident). Measured against the
+replica that day, dropping it from the staged rule cost 5 versions (940,125 → 940,120 rows). It stops
+gating anything the moment `generation-coverage-next` goes on.
 
 Dropping `EcosystemCheckpoints` instead would remove the default model from half the ecosystems the
 generator supports — see [the defaults audit](#the-defaults-audit).
 
 `CoveredCheckpoint` has five uses:
 
-- the legacy `GenerationCoverage` view — dead **in this repo**: no app code has read it since the
-  Prisma `@@map` swap, and `GenerationCoverageNext` has not referenced the table since
-  `20260922190000`. `event-engine-common` still queries the old view from its own repo — see the
-  post-deploy item in [paid-model-loading.md](paid-model-loading.md#post-deploy-checklist)
+- the `covered` column of `GenerationCoverage` — live today, inert once the flag flips.
+  `event-engine-common` selects that column from its own repo and keeps working unchanged; the
+  post-deploy item in [paid-model-loading.md](paid-model-loading.md#post-deploy-checklist) is about
+  moving it onto `coveredNext`, not about the view name
 - `handle-auctions.ts` — inserts winners, deletes everything outside the weekly set
 - `toggleCheckpointCoverage` — a moderator tRPC tool
 - `getCheckpointGenerationCoverage` — **zero callers; dead code**
@@ -104,7 +112,7 @@ So dropping it from coverage costs nothing, but deleting the table now also reti
 
 Both views counted in the same query, 2026-09-08, so these reconcile:
 
-| | `GenerationCoverage` | `GenerationCoverageNext` |
+| | `covered` (live rule) | `coveredNext` (staged rule) |
 | --- | --- | --- |
 | Covered **checkpoints** | 638 | **33,796** |
 | Covered rows, all types | 899,553 | 933,386 |
@@ -122,13 +130,12 @@ fail to add up.
 format under `GenerationCoverage`: 132 Diffusers, 21 Core ML, 2 ONNX.
 
 ⚠️ **Diffusers was ruled loadable (Justin, 2026-09-08) and then narrowed back out for CHECKPOINTS on
-2026-09-09.** The loader serves SafeTensor only, so the checkpoint branch of `GenerationCoverageNext`
-now requires a SafeTensor weight file unconditionally
-(`20260909180000_generation_coverage_next_safetensor_checkpoints`, narrowed further by
-`20260922190000` — see the migration history at the top), and `checkLoadable` in
+2026-09-09.** The loader serves SafeTensor only, so the checkpoint half of the **staged** rule
+(`coveredNext`) requires a SafeTensor weight file unconditionally, and `checkLoadable` in
 `resource-load.service.ts` refuses everything else with `unsupported-format`. Diffusers remains
-accepted for **every other model type** — the shared `EXISTS` is unchanged, so the Core ML / ONNX
-deny-list still governs LoRA/TI/VAE/LoCon/DoRA/Upscaler.
+accepted for **every other model type** under the staged rule; the live rule (`covered`) still
+excludes Diffusers for every type, which is the 155-version gap above. The Core ML / ONNX deny-list
+governs LoRA/TI/VAE/LoCon/DoRA/Upscaler under both.
 
 🔴 **The SafeTensor narrowing took 2,242 checkpoints back out.** Measured 2026-09-09 against the
 production replica: covered checkpoints **33,811 -> 31,569**, total view rows **933,851 -> 931,609**
@@ -287,7 +294,7 @@ feature needs; worth filing.
 
 ## The `covered` readers audit
 
-23 files read `GenerationCoverage` / `generationCoverage.covered`. Classified below by what changes
+Readers of `GenerationCoverage` / `generationCoverage.covered`, classified by what changes
 when `covered` stops implying *resident*. The generation gate was read closely; the rest are
 identified and grouped, not yet read line by line.
 
@@ -321,9 +328,13 @@ from `covered`. After the swap, search advertises every one of them as generatab
 indication that many need a paid load first. Load state in search was deliberately deferred, so
 this widens exactly the surface that has no way to express the difference.
 
-Since `db635a3a45` the index also carries a staged `canGenerateNext` / `versions.canGenerateNext`,
-derived from `GenerationCoverageNext` by raw SQL. The picker gates every query on it; why, and when
-both fields go, is in [paid-model-loading.md](paid-model-loading.md).
+The index carries both fields: `canGenerate` / `versions.canGenerate` from
+`generationCoverage.covered` and `canGenerateNext` / `versions.canGenerateNext` from
+`generationCoverage.coveredNext`, each composed with the type check by `isGenerationEligible`. There
+is no raw SQL leg any more — the relation carries both columns. Which field the picker filters on is
+`coverageIndexField()` (`src/shared/generation/coverage-fields.ts`), driven by the same Flipt flag and
+passed to the client so the hit list re-checks the same field it was filtered by. Both fields collapse
+to one at the cutover.
 
 ### C — display
 
@@ -331,10 +342,11 @@ both fields go, is in [paid-model-loading.md](paid-model-loading.md).
 `generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
 button — mostly correct after the change, since that is where the load CTA belongs.
 
-**`/api/v1/model-versions/mini/[id]` read `GenerationCoverageNext` ahead of the swap** (2026-09-08).
-It is what the orchestrator reads for `CanGenerate`, and on the live view it made `prepareResource`
-refuse the very checkpoints paid loading exists for — verified on version 3040959. Every other
-reader now reads `GenerationCoverageNext` too.
+**`/api/v1/model-versions/mini/[id]`'s `covered` is flag-gated like everything else**
+(`coverageColumn(await nextCoverageEnabled())`). It is what the orchestrator reads for `CanGenerate`,
+and on the live rule `prepareResource` refuses the very checkpoints paid loading exists for — verified
+2026-09-08 on version 3040959. Turning the flag off therefore closes this surface too, which it must:
+otherwise the orchestrator keeps loading community checkpoints the site has stopped offering.
 
 ### D — pools and adjacent consumers
 

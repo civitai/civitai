@@ -37,8 +37,8 @@
 --      packed:caches:data-for-model*       (dataForModelsCache, TTL 1d)
 --   3. Re-queue those models into the models search index.
 --
--- SHAPE. The rules share everything except three things — the file-format exclusions, how a
--- checkpoint qualifies, and nothing else — so the shared work is computed ONCE per version in two
+-- SHAPE. The rules differ in exactly two things — the file-format exclusions and how a checkpoint
+-- qualifies — so the shared work is computed ONCE per version in two
 -- lateral subqueries and the two output columns are one line each. Written as two independent
 -- boolean expressions instead, each version pays three `ModelFile` lookups (live file, staged file,
 -- SafeTensor) rather than one pass. Measured on the replica over a 33,646-version sample,

@@ -1,4 +1,9 @@
 import { Prisma } from '@prisma/client';
+import {
+  coveredBy,
+  pickCovered,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
@@ -252,6 +257,7 @@ export const getModelHandler = async ({
     const modelCategories = await getCategoryTags('model');
 
     const sfwOnly = !!features.isGreen;
+    const useNext = await nextCoverageEnabled();
     const versionGenStates = await resolveCanGenerateForVersions(
       filteredVersions.map((v) => ({
         id: v.id,
@@ -259,7 +265,7 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered: v.generationCoverage?.covered ?? false,
+        covered: coveredBy(v, useNext) ?? false,
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,
@@ -1756,6 +1762,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   try {
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
+    const useNext = await nextCoverageEnabled();
     const associatedResources = await dbRead.modelAssociations.findMany({
       where: { fromModelId: fromId, type },
       select: { toModelId: true, toArticleId: true },
@@ -1830,7 +1837,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 status: v.status,
                 availability: v.availability,
                 baseModel: v.baseModel,
-                covered: v.covered,
+                covered: pickCovered(v, useNext),
                 modelUserId: m.user.id,
                 modelType: m.type,
                 flags: v.flags,
