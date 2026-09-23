@@ -522,10 +522,14 @@ export default function UserTrainingModels() {
                       <Text size="sm">
                         Training success can vary based on system conditions and configuration.
                         Check for service updates at the top of the page or on the{' '}
-                        <Anchor href="/changelog" target="_blank">
-                          Updates page
+                        <Anchor href="/issues" target="_blank">
+                          Known Issues
                         </Anchor>{' '}
-                        for any relevant LoRA training notices before retrying.
+                        or{' '}
+                        <Anchor href="/changelog" target="_blank">
+                          Updates
+                        </Anchor>{' '}
+                        pages for any relevant LoRA training notices before retrying.
                       </Text>
                     </HoverCard.Dropdown>
                   </HoverCard>
