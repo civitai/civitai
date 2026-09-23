@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -23,12 +24,13 @@ vi.mock('~/server/db/pgDb', () => ({
   },
 }));
 
+import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
 import {
   getContentOwnerIdForComment,
   threadContentSelect,
 } from '~/server/services/block-check.service';
 import {
-  blockHideCandidatesSql,
+  BLOCK_HIDE_MAX_COMMENTS,
   hideBlockedUserCommentsOnOwnContent,
   THREAD_CONTENT_OWNERS,
 } from '~/server/services/block-hide-comments.service';
@@ -73,7 +75,7 @@ beforeEach(async () => {
     INSERT INTO "CommentV2" VALUES (1002, ${BYSTANDER}, 100, false);
     INSERT INTO "Thread" (id, "commentId", "rootThreadId") VALUES (200, 1002, 100);
     INSERT INTO "CommentV2" VALUES (1003, ${BLOCKED}, 200, null);
-    -- Already hidden: left as it is.
+    -- Already hidden: left as it is, and not counted.
     INSERT INTO "CommentV2" VALUES (1004, ${BLOCKED}, 100, true);
 
     -- On someone else's image, including a reply whose client-written root points at the
@@ -91,12 +93,23 @@ beforeEach(async () => {
     -- A reply thread whose parent comment is gone: the chain ends on no content.
     INSERT INTO "Thread" (id, "commentId", "rootThreadId") VALUES (800, 9999, 100);
     INSERT INTO "CommentV2" VALUES (8001, ${BLOCKED}, 800, false);
+
+    -- Two owner columns on one thread: the image comes first, so it is OTHER_OWNER's.
+    INSERT INTO "Thread" (id, "imageId", "articleId") VALUES (900, 20, 30);
+    INSERT INTO "CommentV2" VALUES (9001, ${BLOCKED}, 900, false);
   `);
 
-  dbMock.dbWrite.commentV2.updateMany.mockImplementation((async ({ where }: any) => {
+  // Translates exactly the call the service makes and refuses anything else, so a change to the
+  // WHERE or the data cannot be absorbed by the fake.
+  dbMock.dbWrite.commentV2.updateMany.mockClear();
+  dbMock.dbWrite.commentV2.updateMany.mockImplementation((async ({ where, data, ...rest }: any) => {
+    if (Object.keys(rest).length || Object.keys(where).sort().join() !== 'id,userId')
+      throw new Error(`untranslated updateMany args: ${JSON.stringify({ where, rest })}`);
+    if (Object.keys(data).join() !== 'hidden')
+      throw new Error(`untranslated updateMany data: ${JSON.stringify(data)}`);
     const { affectedRows } = await holder.db.query(
-      `UPDATE "CommentV2" SET hidden = true WHERE id = ANY($1) AND "userId" = $2 AND hidden IS NOT TRUE`,
-      [where.id.in, where.userId]
+      `UPDATE "CommentV2" SET hidden = $3 WHERE id = ANY($1) AND "userId" = $2`,
+      [where.id.in, where.userId, data.hidden]
     );
     return { count: affectedRows ?? 0 };
   }) as any);
@@ -117,25 +130,62 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     });
 
     expect(result).toEqual({ status: 'hidden', count: 5, capped: false });
-    // 1004 was already hidden. Everything on OTHER_OWNER's image (3001, and 3003 despite its forged
-    // root), the bystander's comment 1002 and the orphaned 8001 stay visible.
+    // 1004 was already hidden. Everything on OTHER_OWNER's image (3001, 3003 despite its forged
+    // root, and 9001), the bystander's comment 1002 and the orphaned 8001 stay visible.
     expect(await hiddenIds()).toEqual([1001, 1003, 1004, 5001, 6001, 7001]);
   });
 
   it("leaves other people's content alone when they are not the blocker", async () => {
     await hideBlockedUserCommentsOnOwnContent({ ownerId: OTHER_OWNER, blockedUserId: BLOCKED });
 
-    expect(await hiddenIds()).toEqual([1004, 3001, 3003]);
+    expect(await hiddenIds()).toEqual([1004, 3001, 3003, 9001]);
   });
 
-  it('stops at the row ceiling', async () => {
-    const { rows } = await holder.db.query<{ id: number }>(blockHideCandidatesSql, [
-      BLOCKED,
-      BLOCKER,
-      2,
-    ]);
+  it('stops at the row ceiling, in batches, and says so', async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV2"
+      SELECT g, ${BLOCKED}, 100, false FROM generate_series(20000, 20000 + ${BLOCK_HIDE_MAX_COMMENTS}) g;
+    `);
 
-    expect(rows.map((r) => r.id)).toEqual([1001, 1003]);
+    const result = await hideBlockedUserCommentsOnOwnContent({
+      ownerId: BLOCKER,
+      blockedUserId: BLOCKED,
+    });
+
+    expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS, capped: true });
+    expect(dbMock.dbWrite.commentV2.updateMany).toHaveBeenCalledTimes(10);
+    // The ceiling's worth plus the one already hidden.
+    const { rows } = await holder.db.query<{ n: number }>(
+      `SELECT count(*)::int n FROM "CommentV2" WHERE "userId" = ${BLOCKED} AND hidden IS TRUE`
+    );
+    expect(rows[0].n).toBe(BLOCK_HIDE_MAX_COMMENTS + 1);
+  });
+
+  it('resolves a chain up to the depth cap and no further', async () => {
+    // Thread 10000+d hangs off a bystander comment in the thread below it, down to image 10.
+    const inserts: string[] = [];
+    for (let depth = 1; depth <= MAX_THREAD_CHAIN_DEPTH + 1; depth++) {
+      const below = depth === 1 ? 100 : 10000 + depth - 1;
+      inserts.push(
+        `INSERT INTO "CommentV2" VALUES (${40000 + depth}, ${BYSTANDER}, ${below}, false);`
+      );
+      inserts.push(
+        `INSERT INTO "Thread" (id, "commentId") VALUES (${10000 + depth}, ${40000 + depth});`
+      );
+    }
+    await holder.db.exec(`
+      ${inserts.join('\n')}
+      INSERT INTO "CommentV2" VALUES (50100, ${BLOCKED}, ${10000 + MAX_THREAD_CHAIN_DEPTH}, false);
+      INSERT INTO "CommentV2" VALUES (50101, ${BLOCKED}, ${
+      10000 + MAX_THREAD_CHAIN_DEPTH + 1
+    }, false);
+    `);
+
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+
+    const hidden = await hiddenIds();
+    expect(hidden).toContain(50100);
+    expect(hidden).not.toContain(50101);
   });
 
   it('reports failure instead of throwing when a write fails', async () => {
@@ -148,17 +198,30 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 });
 
 describe('THREAD_CONTENT_OWNERS', () => {
-  it("names every owner-bearing Thread column, in threadContentSelect's order", () => {
+  it('names every owner-bearing column threadContentSelect lists', () => {
     const ownerColumns = Object.keys(threadContentSelect).filter(
-      (key) => key !== 'rootThreadId' && key !== 'comicChapterPosition'
+      (key) => key !== 'comicChapterPosition'
     );
 
     expect(THREAD_CONTENT_OWNERS.map((o) => o.column)).toEqual(ownerColumns);
   });
+
+  it.each(THREAD_CONTENT_OWNERS.map((o) => [o.column, o] as const))(
+    '%s names a real table, owner column and key',
+    (_, { table, owner, key }) => {
+      const dbName = (x: { name: string; dbName?: string | null }) => x.dbName ?? x.name;
+      const model = Prisma.dmmf.datamodel.models.find((m) => dbName(m) === table.replace(/"/g, ''));
+      const columns = model?.fields.map(dbName);
+
+      expect(columns).toContain(owner.replace(/"/g, ''));
+      expect(columns).toContain(key.replace(/"/g, ''));
+    }
+  );
 });
 
-// The SQL map restates ownerOfThreadContent, so each entry is checked against what the TS resolver
-// actually reads for a thread carrying only that column: the same model, key and owner field.
+// The SQL map restates ownerOfThreadContent. Each entry is checked against what the TS resolver
+// reads for a thread carrying that column AND every later one, which pins the model, key, owner
+// field and first-match precedence together.
 describe('THREAD_CONTENT_OWNERS agrees with getContentOwnerIdForComment', () => {
   const unquote = (sql: string) => sql.replace(/"/g, '');
   const camel = (sql: string) => unquote(sql).replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
@@ -167,25 +230,27 @@ describe('THREAD_CONTENT_OWNERS agrees with getContentOwnerIdForComment', () => 
       ? 'appListing'
       : unquote(table)[0].toLowerCase() + unquote(table).slice(1);
 
-  it.each(THREAD_CONTENT_OWNERS.map((o) => [o.column, o] as const))('%s', async (column, entry) => {
+  it.each(THREAD_CONTENT_OWNERS.map((o, i) => [o.column, i] as const))('%s', async (_, i) => {
     const read = dbMock.dbRead as any;
-    const delegate = delegateOf(entry.table);
-    const ownerField = camel(entry.owner);
-    const keyField = camel(entry.key);
+    const entry = THREAD_CONTENT_OWNERS[i];
 
     read.commentV2.findUnique.mockResolvedValue({ hidden: false, threadId: 1 });
-    read.$queryRaw.mockResolvedValue([{ id: 2 }]);
+    read.$queryRaw.mockResolvedValue([{ id: 2, rooted: true }]);
     read.thread.findUnique.mockResolvedValue({
       ...Object.fromEntries(Object.keys(threadContentSelect).map((key) => [key, null])),
-      [column]: 555,
+      ...Object.fromEntries(THREAD_CONTENT_OWNERS.slice(i).map((o) => [o.column, 555])),
     });
-    read[delegate].findUnique.mockResolvedValue({ [ownerField]: 777 });
+    for (const other of THREAD_CONTENT_OWNERS) {
+      const finder = read[delegateOf(other.table)].findUnique;
+      finder.mockClear();
+      finder.mockResolvedValue({ [camel(other.owner)]: other === entry ? 777 : 888 });
+    }
 
     const { ownerId } = await getContentOwnerIdForComment(1);
 
-    expect(read[delegate].findUnique).toHaveBeenCalledWith({
-      where: { [keyField]: 555 },
-      select: { [ownerField]: true },
+    expect(read[delegateOf(entry.table)].findUnique).toHaveBeenCalledWith({
+      where: { [camel(entry.key)]: 555 },
+      select: { [camel(entry.owner)]: true },
     });
     expect(ownerId).toBe(777);
   });

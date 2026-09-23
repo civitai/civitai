@@ -941,8 +941,9 @@ async function toggleBlockUser({
 
   // After the block has committed and outside any transaction: this can take seconds for a
   // prolific commenter, and it reports failure instead of throwing, so it cannot undo the block.
+  // Only on a NEW block, so re-sending the same block cannot re-run seconds of replica work.
   const commentsHidden =
-    blocking && hideComments
+    blocking && !alreadyBlocked && hideComments
       ? await import('~/server/services/block-hide-comments.service')
           .then(({ hideBlockedUserCommentsOnOwnContent }) =>
             hideBlockedUserCommentsOnOwnContent({ ownerId: userId, blockedUserId: targetUserId })

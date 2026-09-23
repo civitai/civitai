@@ -29,6 +29,11 @@ import {
   BlockedUsers,
   BlockedByUsers,
 } from '~/server/services/user-preferences.service';
+import {
+  BLOCK_HIDE_MAX_COMMENTS,
+  BLOCK_HIDE_READ_TIMEOUT_MS,
+  blockHideCandidatesSql,
+} from '~/server/services/block-hide-comments.service';
 
 const userId = 42;
 const targetUserId = 99;
@@ -344,6 +349,17 @@ describe('toggleHiddenSchema', () => {
 
     expect(parsed).toMatchObject({ kind: 'blockedUser', hidden: false });
   });
+
+  it('carries hideComments through the blockedUser member', () => {
+    const parsed = toggleHiddenSchema.parse({
+      kind: 'blockedUser',
+      data: [{ id: targetUserId }],
+      hidden: true,
+      hideComments: true,
+    });
+
+    expect(parsed).toMatchObject({ kind: 'blockedUser', hideComments: true });
+  });
 });
 
 // The bulk comment hide runs after the block commits. However it fails, the block must stand and
@@ -388,6 +404,29 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     expect(order).toEqual(['block', 'hide']);
     expect(result.commentsHidden).toEqual({ status: 'hidden', count: 0, capped: false });
+  });
+
+  it("hides the BLOCKED user's comments on the BLOCKER's content, never the reverse", async () => {
+    queryWithTimeout.mockResolvedValue({ rows: [] });
+
+    await blockHiding();
+
+    expect(queryWithTimeout).toHaveBeenCalledTimes(1);
+    expect(queryWithTimeout).toHaveBeenCalledWith(
+      expect.anything(),
+      BLOCK_HIDE_READ_TIMEOUT_MS,
+      blockHideCandidatesSql,
+      [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
+    );
+  });
+
+  it('does not re-run on a block that was already in place', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+
+    const result = await blockHiding();
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
   });
 
   it('does not hide anything when the switch is off', async () => {

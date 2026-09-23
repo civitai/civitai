@@ -25,8 +25,9 @@ export const THREAD_CONTENT_OWNERS = [
   { column: 'appListingId', table: 'app_listings', owner: 'user_id', key: 'serial_id' },
 ] as const;
 
-// Measured on the prod replica 2026-09-23: 2.9s for a 30k-comment author, and p99.9 of authors
-// have under 1,700 comments. The ceiling and timeout bound a pathological target, not a real one.
+// The read resolves an owner for EVERY visible comment the author has before the LIMIT applies, so
+// the timeout is what bounds it; the ceiling bounds only the writes. Measured on the prod replica
+// 2026-09-23: 3.6s cold for a 21k-comment author, 0.3s cold at p99.9 (about 1,700 comments).
 export const BLOCK_HIDE_READ_TIMEOUT_MS = 5_000;
 export const BLOCK_HIDE_MAX_COMMENTS = 10_000;
 export const BLOCK_HIDE_BATCH_SIZE = 1_000;
