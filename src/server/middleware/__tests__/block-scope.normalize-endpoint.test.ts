@@ -116,6 +116,17 @@ describe('normalizeEndpoint — leaves genuinely static segments intact', () => 
     ['/api/v1/blocks/collections/77/follow', '/api/v1/blocks/collections/:id/follow'],
     ['/api/v1/blocks/shared-storage/top', '/api/v1/blocks/shared-storage/top'],
     ['/api/v1/blocks/shared-storage/increment', '/api/v1/blocks/shared-storage/increment'],
+    // The six shared-storage WRITE routes. Each is listed by hand rather than
+    // generated from the allowlist, so the expectation is an independent
+    // statement of what the audit column should read — deriving it from
+    // KNOWN_STATIC_ENDPOINT_SEGMENTS would make the assertion true by
+    // construction and blind to the thing it is checking.
+    ['/api/v1/blocks/shared-storage/append', '/api/v1/blocks/shared-storage/append'],
+    ['/api/v1/blocks/shared-storage/update', '/api/v1/blocks/shared-storage/update'],
+    ['/api/v1/blocks/shared-storage/vote', '/api/v1/blocks/shared-storage/vote'],
+    ['/api/v1/blocks/shared-storage/unvote', '/api/v1/blocks/shared-storage/unvote'],
+    ['/api/v1/blocks/shared-storage/withdraw', '/api/v1/blocks/shared-storage/withdraw'],
+    ['/api/v1/blocks/shared-storage/report', '/api/v1/blocks/shared-storage/report'],
     ['/api/v1/models/4201', '/api/v1/models/:id'],
   ])('%s survives as %s', (url, expected) => {
     expect(normalizeEndpoint(url)).toBe(expected);
@@ -241,6 +252,20 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
   it('pins the current set, so adding a route is a deliberate act', () => {
     expect(staticSegmentsFromRoutes()).toEqual([
       'api',
+      // `append` / `report` / `unvote` / `update` / `vote` / `withdraw` — the
+      // shared-storage WRITE surface (`v1/blocks/shared-storage/*.ts`), the v1
+      // replacement for the postMessage SHARED_* bridge writes. Six new STATIC
+      // segments, pinned for the same reason the read surface's three below are:
+      // without the entries `normalizeEndpoint` collapses them to a placeholder
+      // and the audit log stops distinguishing a submission from a vote from a
+      // deletion — on the one surface where that distinction is the point.
+      //
+      // ⚠️ `withdraw` is the one entry that is NOT new vocabulary:
+      // `v1/blocks/withdraw.ts` has always existed. It is API-KEY authed, never
+      // reaches this middleware and was never in the allowlist, so the entry is
+      // earned by `shared-storage/withdraw.ts` alone — see the note on
+      // KNOWN_STATIC_ENDPOINT_SEGMENTS itself.
+      'append',
       'blocks',
       // `v1/blocks/buzz.ts` — the per-pool balance self-read, restored as a
       // withBlockScope REST route (it had been retired in favour of the
@@ -262,6 +287,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'list',
       'me',
       'models',
+      'report',
       'shared-storage',
       'tip',
       'tip-allowance',
@@ -270,7 +296,11 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // than something that silently widens the audit-log segment allowlist.
       'tools',
       'top',
+      'unvote',
+      'update',
       'v1',
+      'vote',
+      'withdraw',
     ]);
   });
 });

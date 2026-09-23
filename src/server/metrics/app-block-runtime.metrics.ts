@@ -75,6 +75,24 @@ export type AppBlockEndpoint =
   | 'shared_storage_list'
   | 'shared_storage_item'
   | 'shared_storage_counts'
+  // The shared WRITE surface (`/api/v1/blocks/shared-storage/{append,update,vote,
+  // unvote,withdraw,report}`) — the v1 replacement for the postMessage SHARED_*
+  // bridge writes, completing the pair the three read labels above started. SIX
+  // labels, for the same reason there were three: these are not one workload.
+  // `append`/`update` run a BLOCKING EXTERNAL content-moderation call before
+  // touching the DB, so their latency is dominated by a third party;
+  // `vote`/`unvote` are a single round-trip CTE; `withdraw` is a transaction plus
+  // an FK cascade; `report` is a dedup insert. Merging them would put the only
+  // calls here that can be slow for an external reason into the same series as
+  // the ones that structurally cannot, and the p95 would answer no question at
+  // all. They also carry different rate-limit budgets (daily / per-minute /
+  // daily), which is the other dimension an operator reads these series for.
+  | 'shared_storage_append'
+  | 'shared_storage_update'
+  | 'shared_storage_vote'
+  | 'shared_storage_unvote'
+  | 'shared_storage_withdraw'
+  | 'shared_storage_report'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
