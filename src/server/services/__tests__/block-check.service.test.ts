@@ -342,7 +342,7 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
     comments[DEEP_TOP + i] = { userId: PARENT_AUTHOR, threadId: 10_000 + i };
     threads[10_000 + i + 1] = { commentId: DEEP_TOP + i, rootThreadId: 50 };
   }
-  const imageOwners: Record<number, number> = { 1: OWNER, 2: OTHER_OWNER, 7: OWNER };
+  const imageOwners: Record<number, number> = { 1: OWNER, 2: OTHER_OWNER };
 
   // Every owner-bearing `Thread` column, with the lookup `ownerOfThreadContent` makes for it. Each
   // gets a rooted thread of its own below, so a column missing from `threadIsRooted` refuses its
@@ -367,11 +367,17 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
   const OWNERLESS_ROOT_COLUMN = 'clubPostId';
   const CONTENT_ID = 7;
   const rootCommentFor: Record<string, number> = {};
+  // A distinct owner per table, so a column whose lookup reads the wrong table resolves the wrong
+  // user rather than the same one.
+  const tableOwner: Record<string, number> = {};
   [...Object.keys(ownerLookups), OWNERLESS_ROOT_COLUMN].forEach((column, i) => {
     threads[30_000 + i] = { [column]: CONTENT_ID };
     comments[31_000 + i] = { userId: PARENT_AUTHOR, threadId: 30_000 + i };
     rootCommentFor[column] = 31_000 + i;
+    const lookup = ownerLookups[column as keyof typeof ownerLookups];
+    if (lookup) tableOwner[lookup.table] = 1_000 + i;
   });
+  imageOwners[CONTENT_ID] = tableOwner.image;
 
   let lastRootedColumns: string[] = [];
 
@@ -404,11 +410,16 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
       rootedColumns = refs.map(([, , column]) => column);
       lastRootedColumns = rootedColumns;
     }
-    return (/LIMIT 1\b/.test(sql) ? rows.slice(0, 1) : rows).map((row) =>
-      rootedColumns
-        ? { ...row, rooted: rootedColumns.some((c) => threads[row.id]?.[c] != null) }
-        : row
-    );
+    // The outer query has no ORDER BY of its own, so without the LIMIT the row order is unspecified.
+    if (!/LIMIT 1\b/.test(sql))
+      throw new Error(`owner walk does not take a single top row: ${sql}`);
+    return rows
+      .slice(0, 1)
+      .map((row) =>
+        rootedColumns
+          ? { ...row, rooted: rootedColumns.some((c) => threads[row.id]?.[c] != null) }
+          : row
+      );
   }
 
   const project = (row: FakeThread | undefined, select?: Record<string, unknown>) =>
@@ -424,7 +435,7 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
       const findUnique = mockDb[table].findUnique;
       findUnique.mockReset();
       findUnique.mockImplementation((async ({ where }: { where: Record<string, number> }) =>
-        where[whereKey] === CONTENT_ID ? { [ownerKey]: OWNER } : null) as never);
+        where[whereKey] === CONTENT_ID ? { [ownerKey]: tableOwner[table] } : null) as never);
     }
     mockDb.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
@@ -487,9 +498,10 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
   });
 
   it.each(Object.keys(ownerLookups))('resolves the owner of a %s root', async (column) => {
+    const { table } = ownerLookups[column as keyof typeof ownerLookups];
     expect(await getBlockCheckOwnerIdsForReply(rootCommentFor[column])).toEqual([
       PARENT_AUTHOR,
-      OWNER,
+      tableOwner[table],
     ]);
   });
 
