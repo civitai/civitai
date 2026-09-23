@@ -391,6 +391,9 @@ export async function reuseStoredFile({
     userId,
     isModerator: true,
     track: new Tracker(),
+    // Internal tooling, reached over a webhook-authed admin route — there is no user request whose
+    // domain we could stamp, so nothing is stamped. See `createModelFile`.
+    uploadDomain: null,
   });
   await linkImportToFile({ id: row.id, modelFileId: file.id, modelVersionId });
 
@@ -465,6 +468,9 @@ export async function attachIfRequested(id: number) {
       userId,
       isModerator: true,
       track: new Tracker(),
+      // Runs on the transfer cron: no request, so no server-side domain to stamp. See
+      // `createModelFile`.
+      uploadDomain: null,
     });
     const linked = await linkImportToFile({
       id: importId,

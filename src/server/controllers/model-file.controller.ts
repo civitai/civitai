@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { Tracker } from '~/server/clickhouse/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
   ModelFileCreateInput,
@@ -140,6 +141,9 @@ export const createFileHandler = async ({
     userId: ctx.user.id,
     isModerator: !!ctx.user.isModerator,
     track: ctx.track,
+    // The server's own read of the host this request arrived on. This is the ONLY source the
+    // stamp may come from — see the `uploadDomain` note on `createModelFile`.
+    uploadDomain: ctx.domain,
   });
 
 /**
@@ -151,20 +155,38 @@ export const createModelFile = async ({
   userId,
   isModerator,
   track,
+  uploadDomain,
 }: {
   input: ModelFileCreateInput;
   userId: number;
   isModerator: boolean;
   track: Tracker;
+  /**
+   * The domain colour to stamp onto a 'Training Data' file, which a paid training submit reads to
+   * refuse an NSFW dataset prepared on red being paid for and run on green (`createTrainingWorkflow`
+   * in training.orch.ts). It is a payment/safety provenance stamp, so it must be the SERVER's view
+   * of the request — `ctx.domain` — and never a value off `input.metadata`.
+   *
+   * `null` is for callers with no request behind them (the Hugging Face transfer job): they have no
+   * server-side answer, so the file is left unstamped and falls into the legacy bucket the submit
+   * check lets through to post-run moderation. It does NOT mean "keep whatever the client sent" —
+   * a client-supplied stamp is dropped either way.
+   */
+  uploadDomain: ColorDomain | null;
 }) => {
   try {
     // Extract B2-specific fields before passing to createFile (they aren't DB columns)
     const { backend, s3Path, ...createInput } = input;
 
     // Stamp the domain the training data is uploaded under, server-side, so a paid submit can
-    // refuse an NSFW dataset prepared on red being paid for on green. Never trusted from the client.
+    // refuse an NSFW dataset prepared on red being paid for on green. Never trusted from the client:
+    // whatever `uploadDomain` the client put in `metadata` is dropped first, and only the caller's
+    // server-derived value is written back. Mirrors the same rule in `updateFileHandler` below.
     if (createInput.type === 'Training Data') {
-      createInput.metadata = { ...createInput.metadata, uploadDomain: ctx.domain };
+      const metadata = { ...createInput.metadata };
+      delete metadata.uploadDomain;
+      if (uploadDomain) metadata.uploadDomain = uploadDomain;
+      createInput.metadata = metadata;
     }
 
     const file = await createFile({
