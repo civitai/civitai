@@ -4,6 +4,7 @@ import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { getLogger } from '$lib/server/logger';
+import { mapWithConcurrency } from '$lib/server/concurrency';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 import { viewTrackingSql, ownerViewsDailySql } from '$lib/server/analytics-sql';
@@ -573,10 +574,11 @@ async function fetchReactionAudienceSplit(
 export const TOP_MEDIA_PER_TYPE = 100;
 // Bounds the payload for an extreme creator; the heaviest month as of 2026-09 was ~53k reacted ids.
 export const TOP_MEDIA_READ_CEILING = 200_000;
-// `ANY` already avoids the parameter cap; batching keeps each statement short (~0.7s per batch measured).
+// `ANY` already avoids the parameter cap. Batches bound how long one statement holds a connection from the read
+// pool every other request shares (~0.7s per batch, measured 2026-09), and CONCURRENCY bounds how many it holds:
+// keep it a small fraction of that pool (`max` in @civitai/db's kysely clients).
 export const TOP_MEDIA_PG_BATCH_SIZE = 10_000;
-// Batches in flight at once, well under the read pool's 20 connections that every other request shares.
-export const TOP_MEDIA_PG_PARALLEL = 4;
+export const TOP_MEDIA_PG_CONCURRENCY = 4;
 
 // The content tabs filter this by `type`, so the limit is per type, and only Postgres can apply it: `reactions` has
 // no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
@@ -667,20 +669,14 @@ async function enrichTopImages(
   for (let i = 0; i < ids.length; i += TOP_MEDIA_PG_BATCH_SIZE) {
     batches.push(ids.slice(i, i + TOP_MEDIA_PG_BATCH_SIZE));
   }
-  const byId = new Map<number, { url: string | null; nsfwLevel: number | null; type: string }>();
-  for (let i = 0; i < batches.length; i += TOP_MEDIA_PG_PARALLEL) {
-    const results = await Promise.all(
-      batches.slice(i, i + TOP_MEDIA_PG_PARALLEL).map((batch) =>
-        sql<{
-          id: number;
-          url: string | null;
-          nsfwLevel: number | null;
-          type: string;
-        }>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(dbRead)
-      )
-    );
-    for (const { rows } of results) for (const row of rows) byId.set(Number(row.id), row);
-  }
+  type ImageRow = { id: number; url: string | null; nsfwLevel: number | null; type: string };
+  const results = await mapWithConcurrency(batches, TOP_MEDIA_PG_CONCURRENCY, (batch) =>
+    sql<ImageRow>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(
+      dbRead
+    )
+  );
+  const byId = new Map<number, ImageRow>();
+  for (const { rows } of results) for (const row of rows) byId.set(Number(row.id), row);
   // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
   const live = capPerType(
     raw.flatMap((r) => {

@@ -92,7 +92,7 @@ const {
   TOP_MEDIA_PER_TYPE,
   TOP_MEDIA_READ_CEILING,
   TOP_MEDIA_PG_BATCH_SIZE,
-  TOP_MEDIA_PG_PARALLEL,
+  TOP_MEDIA_PG_CONCURRENCY,
 } = await import('../analytics');
 
 const entities = (
@@ -186,12 +186,12 @@ describe('top media is ranked per type', () => {
 
   // The read pool is shared with every other request, so a heavy creator's lookup must not take all of it.
   it('keeps a bounded number of Postgres batches in flight', async () => {
-    const batches = TOP_MEDIA_PG_PARALLEL * 2 + 1;
+    const batches = TOP_MEDIA_PG_CONCURRENCY * 2 + 1;
     state.entities = entities('image', TOP_MEDIA_PG_BATCH_SIZE * batches, 1_000_000, 10_000_000);
     await tabs();
 
     expect(state.pgBatches).toHaveLength(batches);
-    expect(state.pgMaxInFlight).toBe(TOP_MEDIA_PG_PARALLEL);
+    expect(state.pgMaxInFlight).toBe(TOP_MEDIA_PG_CONCURRENCY);
   });
 
   // At the ceiling the lowest-ranked ids are not read at all, so it must be visible in the logs when it happens.
