@@ -8,6 +8,7 @@ import { isQueuedAvailability, RESIDENCY_MAX_IDS } from '~/server/schema/resourc
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
+import type { GeneratorReadiness } from '~/shared/generation/generator-readiness';
 
 /** The answer is server-cached for 30s (`RESIDENCY_CACHE_SECONDS`), so a faster poll re-reads it. */
 const RESIDENCY_POLL_MS = 60_000;
@@ -15,7 +16,11 @@ const RESIDENCY_POLL_MS = 60_000;
 const pollWhileAnyIsCold = (query: {
   state: { data?: { availability: ResourceLoadAvailability }[] };
 }) =>
-  query.state.data?.every((x) => x.availability.status === 'available') ? false : RESIDENCY_POLL_MS;
+  query.state.data?.every(
+    (x) => x.availability.status === 'available' || x.availability.status === 'external'
+  )
+    ? false
+    : RESIDENCY_POLL_MS;
 
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
@@ -42,6 +47,14 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
   };
 
   switch (availability.status) {
+    case 'external':
+      return {
+        loaded: true,
+        label: 'No download needed',
+        color: 'green',
+        description:
+          'Runs through an external provider, so there is nothing to load — generations start right away.',
+      };
     case 'available':
       return {
         loaded: true,
@@ -161,33 +174,53 @@ function StatusDot({ color, filled }: { color: string; filled: boolean }) {
 
 const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
 
-/** For callers that already know the version is loaded, e.g. from the search index. */
-export function LoadedMark() {
+/** No live read — the caller supplies what it knows. */
+export function LoadedMark({ readiness }: { readiness: ResidencyReadiness }) {
+  const residency = RESIDENCY_BY_READINESS[readiness];
   return (
-    <Tooltip label={LOADED.description} withArrow multiline w={240}>
-      <span role="img" aria-label={LOADED.label} className="inline-flex shrink-0">
-        <StatusDot color={LOADED.color} filled />
+    <Tooltip label={residency.description} withArrow multiline w={240}>
+      <span role="img" aria-label={residency.label} className="inline-flex shrink-0">
+        <StatusDot color={residency.color} filled={residency.loaded} />
       </span>
     </Tooltip>
   );
 }
 
 const NOT_LOADED = describeResidency({ status: 'unavailable' }) as Residency;
+const EXTERNAL = describeResidency({ status: 'external' }) as Residency;
+
+/** Ready, without saying which kind — all the indexed field knows, since it carries readiness. */
+const READY: Residency = {
+  loaded: true,
+  label: 'Ready',
+  color: 'green',
+  description: 'Ready in the generator — generations start right away.',
+};
+
+/** The indexed field cannot tell a resident model from an external one; the DB fields can. */
+export type ResidencyReadiness = GeneratorReadiness | 'ready';
+
+const RESIDENCY_BY_READINESS: Record<ResidencyReadiness, Residency> = {
+  loaded: LOADED,
+  external: EXTERNAL,
+  cold: NOT_LOADED,
+  ready: READY,
+};
 
 /**
- * Top-left because `GenerateButton` owns the right corner for its price badge. Binary on purpose: a
- * download already running still means Create will not start now — the version details row names
- * that state.
+ * Top-left because `GenerateButton` owns the right corner for its price badge. Shows no download
+ * progress: a download already running still means Create will not start now, and the version
+ * details row names that state.
  */
-export function LoadedCornerBadge({ loaded }: { loaded: boolean }) {
-  const residency = loaded ? LOADED : NOT_LOADED;
+export function LoadedCornerBadge({ readiness }: { readiness: GeneratorReadiness }) {
+  const residency = RESIDENCY_BY_READINESS[readiness];
   return (
     <Tooltip label={residency.description} withArrow multiline w={240}>
       <Badge
         className="absolute -left-2 -top-2 z-10 cursor-default border border-solid border-gray-3 bg-gray-1 pl-1.5 pr-2 dark:border-dark-4 dark:bg-dark-5"
         size="sm"
         radius="xl"
-        leftSection={<StatusDot color={residency.color} filled={loaded} />}
+        leftSection={<StatusDot color={residency.color} filled={residency.loaded} />}
       >
         <Text size="10px" fw={600} c={`${residency.color}.5`} tt="none">
           {residency.label}
@@ -202,19 +235,20 @@ export function ResourceResidencyStatus({
   modelVersionId,
   className,
   tooltipWidth = 260,
-  loaded,
+  readiness,
 }: {
   modelVersionId: number;
   className?: string;
   tooltipWidth?: number;
   /**
-   * `ModelVersion.generatorLoaded`, where the caller has it. The live read answers a request later,
-   * so without this the row renders empty and then pops in — and for a signed-out viewer, never.
+   * What the page's own data already says (`generatorReadiness`). The live read answers a request
+   * later, so without this the row renders empty and then pops in — and for a signed-out viewer,
+   * never.
    */
-  loaded?: boolean;
+  readiness?: ResidencyReadiness;
 }) {
   const live = useResidency(modelVersionId);
-  const residency = live ?? (loaded === undefined ? null : loaded ? LOADED : NOT_LOADED);
+  const residency = live ?? (readiness === undefined ? null : RESIDENCY_BY_READINESS[readiness]);
   if (!residency) return null;
 
   return (

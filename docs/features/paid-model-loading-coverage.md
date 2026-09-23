@@ -246,7 +246,25 @@ generator today**.
 **Decided (Justin, 2026-09-08): set their `usageControl` to `ExternalGeneration`,** which is what
 they are. The codebase already treats that value as "intentionally file-less, routed via external
 engines" — `ModelVersionList` stops reporting them as missing files, the upload step is skipped in
-the wizard, and `reset-to-draft-without-requirements` excludes them. Today those 36 lie to all three.
+the wizard, and `reset-to-draft-without-requirements` excludes them. A fourth consumer joined them
+later, and users see this one: `generatorReadiness` (`src/shared/generation/generator-readiness.ts`)
+keys on `usageControl`, so the label decides whether a version reads **No download needed** or
+**Not loaded** and whether the picker's **Loaded only** filter keeps it.
+
+✅ **Applied.** Verified by query against the prod replica 2026-09-23: **51** file-less
+`EcosystemCheckpoints` versions carry `ExternalGeneration` — the 15 already flagged plus these 36 —
+and **no** file-less `EcosystemCheckpoints` version is still labelled `Generation`. Every model named
+above is relabelled.
+
+**Five file-less versions of those same models are NOT in the set**, because they are not
+`EcosystemCheckpoints` rows: `FLUX / Pro (Legacy)`, `Veo 3 / Veo 3`, `Veo 3 / Veo 3 Fast`,
+`Veo 3 / Veo 3 Image to Video` and `Grok Imagine / v2.0`. None is covered — no row, no weights, so no
+branch reaches them — so nothing offers them and nothing mislabels them either. **They stay
+`Generation`** (Briant, 2026-09-23): those models are not supported in the generator, and relabelling
+would have *added* coverage rather than corrected a display bug.
+
+The relabel is also **not self-maintaining**: a new version of an already-relabelled API model gets the
+default `Generation`, which is how `Grok Imagine / v2.0` came to sit outside the set.
 
 Verified safe: the `ExternalGeneration` branch of the view requires published and not-POI, and all 36
 satisfy both, so **coverage is preserved for 36 of 36**.
@@ -257,9 +275,16 @@ Notes for whoever runs it:
   DB write or a moderator action — not creator-serviceable.
 - The `Training Data` files stay attached. Harmless for coverage, and the new rule ignores them
   because they are not loadable files. Whether an API model should carry one is a separate question.
+- Four of the file-less versions report `generatorLoaded = true` (`FLUX / Pro (Legacy)` and the three
+  `Veo 3`s, measured 2026-09-23), so the orchestrator does hold something resident under their AIRs
+  even though their only file rows are `Training Data`. Our file rows are not a reliable picture of
+  what the cluster has.
 - After this, "no loadable file" and `ExternalGeneration` nearly coincide (51 file-less ecosystem
   checkpoints: 15 already flagged, 36 newly). **Keep the loader gated on "no loadable file" anyway** —
-  it fails safe, so a future mislabelled model gets no CTA rather than an undeliverable load.
+  it fails safe, so a future mislabelled model gets no CTA rather than an undeliverable load. The load
+  *indicators* key on `usageControl` instead (`generatorReadiness`), which fails safe in the other
+  direction: a mislabelled model reads cold, promising a download rather than hiding one. Two keys for
+  nearly the same population, deliberately.
 
 ---
 

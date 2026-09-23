@@ -15,6 +15,7 @@ import {
 import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { logToAxiom } from '~/server/logging/client';
@@ -75,6 +76,7 @@ export type ResourceLoadState = {
 type VersionForAir = {
   id: number;
   name: string;
+  usageControl?: string | null;
   baseModel: string;
   flags: number;
   model: { id: number; name: string; type: ModelType };
@@ -89,6 +91,7 @@ async function getVersionsForAir(modelVersionIds: number[]) {
       name: true,
       baseModel: true,
       flags: true,
+      usageControl: true,
       model: { select: { id: true, name: true, type: true } },
       files: { select: { type: true, scannedAt: true, metadata: true } },
     },
@@ -141,6 +144,11 @@ export async function getResourceLoadState(
       }),
       ...checkLoadable(version.files, version.model.type),
     };
+
+    if (generatorReadiness(version) === 'external') {
+      results.push({ ...base, availability: { status: 'external' } });
+      return;
+    }
 
     const response = await getModelClient({ token: env.ORCHESTRATOR_ACCESS_TOKEN, air });
     if (!response?.data) {
@@ -218,6 +226,7 @@ async function fetchResourceResidency(modelVersionIds: number[]) {
       name: true,
       baseModel: true,
       flags: true,
+      usageControl: true,
       model: { select: { id: true, name: true, type: true } },
       files: { select: { type: true, metadata: true } },
     },
@@ -225,6 +234,10 @@ async function fetchResourceResidency(modelVersionIds: number[]) {
 
   const entries: Record<number, ResourceResidency> = {};
   const tasks = versions.map((version) => async () => {
+    if (generatorReadiness(version) === 'external') {
+      entries[version.id] = { modelVersionId: version.id, availability: { status: 'external' } };
+      return;
+    }
     const response = await getModelClient({
       token: env.ORCHESTRATOR_ACCESS_TOKEN,
       air: modelVersionToAir(version),

@@ -45,6 +45,8 @@ const version = {
 /** The SafeTensor rule is checkpoint-scoped, so format cases need a checkpoint, not the LoRA above. */
 const checkpointVersion = { ...version, model: { ...version.model, type: 'Checkpoint' } };
 
+const externalVersion = { ...version, usageControl: 'ExternalGeneration' };
+
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
 
 /** The global `@civitai/client` stub returns `''` from `Air.stringify`; the lookup needs a real one. */
@@ -77,6 +79,17 @@ describe('getResourceLoadState', () => {
     expect(getModelClient).toHaveBeenCalledWith(expect.objectContaining({ air: versionAir }));
     expect(state).toMatchObject({ modelVersionId: 501, modelId: 42, air: versionAir, size: 1024 });
     expect(state.availability).toEqual({ status: 'available', workers: 2 });
+  });
+
+  it('answers `external` for an API model without asking the orchestrator at all', async () => {
+    // Asked, the orchestrator would say `unavailable` — a download the user is told to wait for.
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([externalVersion]);
+    orchestratorReturns({ status: 'unavailable' });
+
+    const [state] = await getResourceLoadState([501]);
+
+    expect(state.availability).toEqual({ status: 'external' });
+    expect(getModelClient).not.toHaveBeenCalled();
   });
 
   it('keeps queuePosition, which lives on `unavailable` and not on `loading`', async () => {
@@ -128,6 +141,16 @@ describe('getResourceResidency', () => {
     const result = await getResourceResidency([501, 501]);
 
     expect(result).toEqual([{ modelVersionId: 501, availability: queued, size: 1024 }]);
+  });
+
+  it('answers `external` for an API model, so the mark never says "Not loaded"', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([externalVersion]);
+    orchestratorReturns({ status: 'unavailable' });
+
+    const [residency] = await getResourceResidency([501]);
+
+    expect(residency.availability).toEqual({ status: 'external' });
+    expect(getModelClient).not.toHaveBeenCalled();
   });
 
   // The router leaves this open to every signed-in viewer on the strength of the cache, so the

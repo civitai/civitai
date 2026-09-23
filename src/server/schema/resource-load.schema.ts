@@ -39,12 +39,16 @@ export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
 
 export type ResourceAvailability = z.infer<typeof resourceAvailabilitySchema>;
 
-/**
- * What the site reports when the orchestrator answered with a shape this build does not know — a
- * new status, or no `availability` at all. Deliberately not folded into `unsupported`: the purchase
- * path refuses both, but only one of them is the cluster saying it can never host the resource.
- */
-export type ResourceLoadAvailability = ResourceAvailability | { status: 'unknown' };
+export type ResourceLoadAvailability =
+  | ResourceAvailability
+  /**
+   * The orchestrator answered with a shape this build does not know — a new status, or no
+   * `availability` at all. Deliberately not folded into `unsupported`: the purchase path refuses
+   * both, but only one of them is the cluster saying it can never host the resource.
+   */
+  | { status: 'unknown' }
+  /** Substituted from `usageControl`, never parsed — the orchestrator's union has no such state. */
+  | { status: 'external' };
 
 /**
  * Waiting in the download queue, in either orchestrator shape — the pre-beta.105 shape is told apart

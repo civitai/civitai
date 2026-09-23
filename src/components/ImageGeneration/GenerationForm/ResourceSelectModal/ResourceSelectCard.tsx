@@ -368,7 +368,7 @@ export function ResourceSelectCard({
                 className="flex-1"
                 leftSection={
                   selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
-                    <LoadedMark />
+                    <LoadedMark readiness="ready" />
                   ) : undefined
                 }
                 leftSectionWidth={26}
@@ -387,7 +387,9 @@ export function ResourceSelectCard({
                   const version = versions[Number(option.value)];
                   return (
                     <Group gap={6} wrap="nowrap" className="min-w-0">
-                      {selectSource === 'generation' && version?.generatorLoaded && <LoadedMark />}
+                      {selectSource === 'generation' && version?.generatorLoaded && (
+                        <LoadedMark readiness="ready" />
+                      )}
                       <span className="truncate">{option.label}</span>
                     </Group>
                   );
@@ -509,7 +511,9 @@ function ModelDetailsPanel({
       value: (
         <ResourceResidencyStatus
           modelVersionId={selectedVersion.id}
-          loaded={selectedVersion.generatorLoaded}
+          // The indexed field is readiness, so it can't tell resident from external; the component's
+          // own live read replaces this as soon as it answers.
+          readiness={selectedVersion.generatorLoaded ? 'ready' : 'cold'}
         />
       ),
       visible: selectSource === 'generation' && !!residency,

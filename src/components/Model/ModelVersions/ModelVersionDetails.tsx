@@ -1,4 +1,5 @@
 import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
@@ -754,7 +755,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         fullWidth
                       />
                       {features.imageGeneration && (
-                        <LoadedCornerBadge loaded={version.generatorLoaded} />
+                        <LoadedCornerBadge readiness={generatorReadiness(version)} />
                       )}
                     </div>
                   ) : null}
@@ -1455,7 +1456,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <span className={classes.detailLabel}>Generation</span>
                       <ResourceResidencyStatus
                         modelVersionId={version.id}
-                        loaded={version.generatorLoaded}
+                        readiness={generatorReadiness(version)}
                       />
                     </div>
                   )}

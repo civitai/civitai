@@ -1,5 +1,6 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -81,12 +82,19 @@ const updateGenerationCoverage = (idOffset: number) =>
             ...version,
             hashes: version.hashes.map((hash) => hash.hash),
           },
-          versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
-            ...x,
-            hashes: hashes.map((hash) => hash.hash),
-            canGenerate: eligible(x, generationCoverage?.covered),
-            canGenerateNext: eligible(x, generationCoverage?.coveredNext),
-          })),
+          versions: modelVersions.map(
+            ({ generationCoverage, files, hashes, usageControl, ...x }) => ({
+              ...x,
+              // Keeps the column's name but holds readiness — see models.search-index.
+              generatorLoaded: isGeneratorReady({
+                generatorLoaded: x.generatorLoaded,
+                usageControl,
+              }),
+              hashes: hashes.map((hash) => hash.hash),
+              canGenerate: eligible(x, generationCoverage?.covered),
+              canGenerateNext: eligible(x, generationCoverage?.coveredNext),
+            })
+          ),
           canGenerate,
           canGenerateNext,
         };

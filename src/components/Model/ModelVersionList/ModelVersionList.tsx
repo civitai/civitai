@@ -26,6 +26,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { LoadedMark } from '~/components/ResourceLoad/ResourceResidency';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -210,7 +211,9 @@ export function ModelVersionList({
               }
             >
               <Group gap={8} wrap="nowrap">
-                {features.imageGeneration && version.generatorLoaded && <LoadedMark />}
+                {features.imageGeneration && generatorReadiness(version) !== 'cold' && (
+                  <LoadedMark readiness={generatorReadiness(version)} />
+                )}
                 {version.name}
               </Group>
             </Button>

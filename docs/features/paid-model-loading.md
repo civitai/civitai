@@ -97,18 +97,26 @@ the wait, the "Normally → Boosted" comparison, then **Boost · N Buzz** or **C
 Dismissing it cancels the submit rather than sending it unboosted, since the user chose neither. That
 confirm only opens when there is a boost to sell, so mobile keeps a one-line notice of the wait itself.
 
-**Load indicators**, every resource type. Where the answer is the boolean column, only loaded versions
-are marked and the rest are silent, since most of the catalogue is not loaded: a green dot on the model
-page's version strip, and a dot and **Loaded** on results in the generation resource picker. The
-**Create** button carries a top-left corner badge stating either outcome — the one place a bare mark
-is not enough, since the question there is whether pressing it starts now. The generator's own
-resource rows state either outcome too. Every label takes its dot's colour. Nothing says "needs download": a resource needs **to be loaded**, and it loads **in** the
-generator, not on it (Justin, 2026-09-22).
+**Load indicators**, every resource type. The answer is `generatorReadiness(version)`
+(`src/shared/generation/generator-readiness.ts`) — `loaded`, `external` or `cold` — never
+`ModelVersion.generatorLoaded` alone: an `ExternalGeneration` version has no weights to become
+resident, so the column is false for it forever and reading it raw promised a download that never
+comes. `external` reads **No download needed**. Only `loaded` and `external` versions are marked and
+`cold` ones are silent, since most of the catalogue is not loaded: a green dot on the model page's
+version strip, and a dot on results in the generation resource picker. The **Create** button carries a
+top-left corner badge stating whichever of the three it is — the one place a bare mark is not enough,
+since the question there is whether pressing it starts now. The generator's own resource rows state
+their outcome too. Every label takes its dot's colour. Nothing says "needs download": a resource needs
+**to be loaded**, and it loads **in** the generator, not on it (Justin, 2026-09-22).
 
-The model page and the picker read `ModelVersion.generatorLoaded` — the page from its own SSR'd data,
-the picker from the index's `versions.generatorLoaded`. So they render with the page rather than
-flickering in after it, they cover whichever version is selected, and they trail the orchestrator by
-the 5-minute sync (plus the index queue, for the picker).
+The model page composes readiness from its own SSR'd data (`generatorLoaded` + `usageControl`); the
+picker reads the index's `versions.generatorLoaded`, which **carries readiness, not the column** — both
+writers compose it through `isGeneratorReady`, and the field was deliberately not renamed because
+renaming means re-applying filterable attributes on a live index. So they render with the page rather
+than flickering in after it, they cover whichever version is selected, and they trail the orchestrator
+by the 5-minute sync (plus the index queue, for the picker). An indexed yes/no cannot tell `loaded`
+from `external`, so the picker marks both **Ready** and only the live read says **No download needed**.
+`no-divergent-generator-readiness` keeps the derivation single-sourced.
 
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
 rate-limited, cached 30s per version. That is the generator's marks, whose resources do not come from
@@ -116,18 +124,23 @@ page data — the added-resource list batches into one request (`ResidencyBatchP
 checkpoint input, the two **Generation** rows (version details, picker card's back) and every
 `ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
 the metadata-extraction panel — each ask for their one id, so a modal listing ten resources is ten
-calls. Naming *downloading* or *queued* is the one thing the boolean column cannot do.
+calls. Naming *downloading* or *queued* is the one thing the page's own data cannot do. The reverse
+also holds: an `ExternalGeneration` version is answered `{ status: 'external' }` from `usageControl`
+and the orchestrator is never called — its availability union has no state for "a third party serves
+this", so asking would return `unavailable`, which the UI reads as a download the user must wait for.
 
 Nothing pushes residency, so those live marks refresh two ways: they poll every 60s while anything on
-screen is cold and stop once it is all loaded, and the queue card's uncached download-status poll
+screen is cold and stop once everything is loaded or external, and the queue card's uncached download-status poll
 invalidates every residency query the moment a model reports `available`, so an open generator flips
 to **Loaded** as the download lands rather than waiting out the backstop.
 
-**A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips.
-The index filter keeps a model any of whose versions is resident, because Meilisearch matches the
-nested array; the hit list then drops the versions that are not, so a card cannot show one. Versions
-are newest-first, so what the card lands on is the latest loaded one, and its dropdown offers only
-loaded versions while the filter is on.
+**A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips. It
+filters on `versions.generatorLoaded`, which carries **readiness** (see **Load indicators**) — so a
+model an external provider serves, which needs no download at all, is kept rather than dropped. The
+index filter keeps a model any of whose versions is ready, because Meilisearch matches the nested
+array; the hit list then drops the versions that are not, so a card cannot show one. Versions are
+newest-first, so what the card lands on is the latest ready one, and its dropdown offers only ready
+versions while the filter is on.
 
 **Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
 `resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
@@ -238,6 +251,10 @@ otherwise every progress webhook would cost one orchestrator read per waiting wo
 the one place that rule lives; four screens previously each decided it for themselves. A status this
 build does not know becomes `unknown` — deliberately not folded into `unsupported`, because "the
 cluster will never host this" and "we could not read the answer" need different support answers.
+`ResourceLoadAvailability` carries one more state the orchestrator never sends: **`external`**, which
+the site substitutes from `usageControl = 'ExternalGeneration'` before calling at all. It is not part
+of `resourceAvailabilitySchema` — nothing parses it off the wire — and it renders as **No download
+needed**.
 
 ### Queue listing — `GET /v2/resources?view=queue`
 
@@ -287,7 +304,9 @@ rule). `EcosystemCheckpoints`
 stays (62 of 63 checkpoint defaults ride on it) and `GenerationBaseModel` stays as the base-model
 gate. A checkpoint must carry a **SafeTensor** weight file; Diffusers remains fine for every other
 type. File-less API models are covered and never loadable — "file-less" means *no loadable file*, not
-*no file row*. A model a moderator has taken down or archived (`Model.mode`) is **not covered for any
+*no file row* — and because there is nothing to load, they are **ready**: the load indicators derive
+that from `usageControl = 'ExternalGeneration'`, not from files, so an API model's label is what makes
+it read as ready — which is why the 51 relabelled versions were worth relabelling. A model a moderator has taken down or archived (`Model.mode`) is **not covered for any
 type**, which is how moderation blocks generation server-side rather than only greying out a button.
 Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits the licence
 rule instead of restating it. The numbers, the audit and the readers list are in
@@ -333,22 +352,24 @@ Everything here is the deploying engineer's, before this branch merges.
       indicator go live to everyone on deploy, so the only rollback is a revert.
       *Closes when:* a flag gates them, or Justin rules that it ships unflagged and that ruling is
       recorded here.
-- [ ] **Apply the models index's filterable attributes — before the FLAG, not before the deploy.**
-      `versions.generatorLoaded`, `canGenerateNext` and `versions.canGenerateNext` are in
-      `modelsFilterableAttributes` but that list is inert on a live index until
-      `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it, and
+- [ ] **Confirm the models index's filterable attributes — the settings write already ran.**
+      `versions.generatorLoaded`, `canGenerateNext` and `versions.canGenerateNext` went to production
+      on 2026-09-23 alongside `versions.pricing`
+      (`/api/admin/temp/apply-models-index-filterable-attributes`;
+      [generator-pricing-filters.md](generator-pricing-filters.md), "Deploy 1"), so do not budget the
+      queue again unless the index has since been reset or rolled back — `modelsFilterableAttributes`
+      is inert on a live index until that endpoint runs, reindexing alone does not do it, and
       Meilisearch rejects a search filtering on an attribute it has not been told about. With
-      `generation-coverage-next` off the picker filters on `canGenerate`, which is already applied, so
-      the deploy is safe without this. **Turning the flag on without it empties the modal entirely**,
-      because every picker query then filters on `canGenerateNext`. `versions.generatorLoaded` gates
-      the **Loaded only** filter the same way. Reindexing alone does not do it. Budget hours, not
-      minutes: the last settings update took 6.5 min to process after ~2h50m queued.
+      `generation-coverage-next` off the picker filters on `canGenerate`, so the deploy is safe either
+      way; **turning the flag on without the attributes empties the modal entirely**, and
+      `versions.generatorLoaded` gates the **Loaded only** filter the same way.
       *Closes when:* the models index reports all three among its filterable attributes, and with the
       flag on the picker returns results both with and without **Loaded only**.
 - [ ] **Check the preview environment before reading anything into it.** The indicators need main's
       `generatorLoaded` migration applied to the database preview points at, and
       `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Not
-      loaded" on every version while the version strip and the picker mark nothing at all.
+      loaded" and the version strip and the picker mark nothing — on every version **except**
+      `ExternalGeneration` ones, whose readiness comes from `usageControl` and needs neither.
       *Closes when:* a version known to be resident shows the loaded mark on its model page in
       preview.
 - [x] **`20260909180000_generation_coverage_next_safetensor_checkpoints` — superseded, do NOT apply
@@ -394,6 +415,14 @@ Everything here is the deploying engineer's, before this branch merges.
       answers this on its own.
       *Closes when:* with the flag on, the picker returns a full first page, and a newly covered
       checkpoint (e.g. version 1413133) reports `canGenerateNext: true` in the models index.
+- [ ] **Re-queue the `ExternalGeneration` models so the indexed field carries readiness.**
+      `versions.generatorLoaded` now means *ready* (the column **or** `ExternalGeneration`), but
+      documents written by the previous build still hold the raw column, so **Loaded only** keeps
+      dropping API models — the ones that need no download at all — until each is rewritten. The
+      attribute is already filterable, so this is a re-queue only, no settings write. The full
+      pre-flag re-queue above covers it if that runs first.
+      *Closes when:* a known `ExternalGeneration` version reports `versions.generatorLoaded: true` in
+      the models index, and survives the picker's **Loaded only** filter.
 - [ ] **Drop `GenerationCoverageNext`.** It is left in place only so pods on the previous build keep
       working, and no code in this repo references it after this change. It is frozen at its
       `20260922190000` definition, so every day it survives it drifts further from the live view —
@@ -415,16 +444,25 @@ Everything here is the deploying engineer's, before this branch merges.
       for the starvation concern — a pile of queued small checkpoints starving popular ones.
       *Closes when:* it is on a dashboard someone named is watching.
 - [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio. The model page and
-      the picker read the column instead, so what is left on it is the generator's marks and the two
-      **Generation** rows.
+      the picker read page/index readiness instead, so what is left on it is the generator's marks and
+      the two **Generation** rows — minus `ExternalGeneration` versions, which short-circuit before the
+      orchestrator call.
 - [ ] **Keep `sync-generator-loaded-resources` on.** Every column-backed indicator is only as fresh
       as that job: with the flag off the column freezes at its last value, so the marks keep stating
       a residency nobody is maintaining.
       *Closes when:* the flag is on in production and the job's `flippedIn`/`flippedOut` counts are
       non-zero across a day.
-- [ ] **Set `usageControl = 'ExternalGeneration'` on the 36 mislabelled API versions.** All published,
-      none POI, coverage preserved 36/36; a direct DB write, since the app refuses the value from
-      non-moderators.
+- [x] **Set `usageControl = 'ExternalGeneration'` on the mislabelled API versions. Done.** Verified by
+      query against the prod replica 2026-09-23: **51** file-less `EcosystemCheckpoints` versions now
+      carry `ExternalGeneration` — the 15 already flagged plus the 36 — and every model named in
+      [the 36](paid-model-loading-coverage.md#the-36-mislabelled-api-models) is relabelled, Nano Banana
+      included. That is what makes readiness answer **No download needed** for them, since it keys on
+      `usageControl`.
+- [x] **The five API versions still labelled `Generation` stay that way** (Briant, 2026-09-23):
+      `FLUX / Pro (Legacy)`, the three `Veo 3`s and `Grok Imagine / v2.0` are not supported in the
+      generator. That is consistent with coverage — none has an `EcosystemCheckpoints` row or weights,
+      so no branch of the view reaches them and nothing offers them. Relabelling would have *added*
+      coverage (the external branch needs only Published and not-POI), which is the opposite of a fix.
 - [ ] **Look at the widened pool consumers** — daily-challenge model selection, App Blocks' workflow
       service, and the model-list filters in `model.service.ts` and `caches.ts`.
 - [ ] **Delete `getCheckpointGenerationCoverage`** (zero callers) and decide whether
@@ -449,7 +487,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
 | 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
-| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded`, synced every 5 minutes by `sync-generator-loaded-resources`; what is left is the display decision. | Justin | a decision |
+| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded` (readiness: the column, synced every 5 minutes by `sync-generator-loaded-resources`, **or** an `ExternalGeneration` version); what is left is the display decision. | Justin | a decision |
 | — | **The `covered` field in `/api/v1/model-versions/mini/[id]` changed meaning** for third-party consumers, unannounced. | Briant / team | announced, or judged not worth it |
 | C11 | **Retire auctions.** Paid loading replaces the cluster-residency half; the featuring half needs rehoming, and that is 868gtq1kt's answer first. ~89 files. | unscoped | 868gtq1kt answers |
 | — | **Phase A ratifications:** the fifth `unknown` state, `estimate` returning `{ cost, priced }`, and `currencies: getAllowedAccountTypes(...)` deciding which Buzz account pays. All live, all cheap to reverse now. | Briant / team | "fine", or name the one to change |
@@ -472,8 +510,9 @@ is the orchestrator's axis.
 
 ### Surfaces and delivery
 
-- Load state from `ModelVersion.generatorLoaded` — the version strip, the Create badge, the picker's
-  results — renders for signed-out visitors, since it is page and index data. The live `getResidency`
+- Load state from page and index data (readiness: `ModelVersion.generatorLoaded`, or `usageControl` for
+  an external one) — the version strip, the Create badge, the picker's results — renders for signed-out
+  visitors. The live `getResidency`
   reads behind it are signed-in. The queue listing and the uncapped `getState` are behind the
   `resourceLoad` flag and serve the moderator tool alone — the public `/generate/downloads` page was
   built and removed on this branch (2026-09-16).
@@ -493,7 +532,8 @@ is the orchestrator's axis.
 - A residency countdown — nothing reports when a window ends.
 - A C4-style webhook — closed 2026-09-08; reopens only if Phase 2 notifications need a server-side
   moment.
-- Load state on the site's search pages, for now — the index carries `versions.generatorLoaded`, and
-  the generation resource picker is its only reader (see **Load indicators**).
+- Load state on the site's search pages, for now — the index carries `versions.generatorLoaded`
+  (readiness, not residency — see **Load indicators**), and the generation resource picker is its only
+  reader.
 - Any promise about *arrival* time. Bandwidth into the DC was ~10 KB/s at the 2026-08-18 call, and
   `PrepareResourceJob` gives up at 24h.
