@@ -332,4 +332,29 @@ describe('the default report stays a survey, and --verbose still means something
       ).toBe(true);
     }
   });
+
+  it('lists a relation refused only for a missing table by key, with its detail behind --verbose', () => {
+    // Every model added after the catalog snapshot lands here; a detail block per relation
+    // is what grew the default report back toward --verbose.
+    const missing = plan.relations.filter(
+      (r) =>
+        r.refusals.some((x) => x.code === 'table-not-in-catalog') &&
+        r.refusals.every((x) =>
+          [
+            'table-not-in-catalog',
+            'referenced-table-not-in-catalog',
+            'column-not-in-catalog',
+          ].includes(x.code)
+        )
+    );
+    expect(missing.length).toBeGreaterThan(0); // positive control on the population
+
+    const detailHeader = (r: (typeof missing)[number]) =>
+      `${r.key}  ->  ${r.refTable}(${r.refColumns.join(', ')})`;
+    for (const r of missing) {
+      expect(dflt.join('\n'), `${r.key} must still be named by default`).toContain(r.key);
+      expect(dflt, `${r.key} detail belongs behind --verbose`).not.toContain(detailHeader(r));
+      expect(verbose).toContain(detailHeader(r));
+    }
+  });
 });
