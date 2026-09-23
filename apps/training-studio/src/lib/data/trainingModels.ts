@@ -751,9 +751,6 @@ export const findByAir = (
 export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
 
-/** Extra Buzz for training on top of a user-supplied custom model. */
-export const CUSTOM_MODEL_SURCHARGE = 500;
-
 // ---- Advanced training parameters (AI-Toolkit) ----
 // VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
 // resolved for engine `ai-toolkit` the way the trainer does in getDefaultTrainingParams
