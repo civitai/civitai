@@ -161,7 +161,7 @@ export const getContentTotals = createCache({
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
-// Top reacted media over the range: up to TOP_MEDIA_PER_TYPE of each type, split by `type` on each page.
+// Top reacted media over the range (images + videos, split by `type` on each page).
 export const getTopMedia = createCache({
   name: 'analytics:top-media:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
@@ -571,17 +571,29 @@ async function fetchReactionAudienceSplit(
 
 export const TOP_MEDIA_PER_TYPE = 100;
 
-// The content tabs filter this by `type`, so the limit is per type: one shared LIMIT let a video-heavy creator's
-// videos take every slot. `reactions` has no media type; `images_created` (sorted by id) does.
+// The content tabs filter this by `type`, so the limit is per type. `reactions` has no media type, so ClickHouse
+// buckets by `images_created.mediaType`. That table misses some live images, so the join is LEFT: those rank in
+// their own '' bucket, and Postgres, which the tabs filter on, decides their type in `capPerType`.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
+    mediaType: string;
   }>(
-    `WITH ranked AS (SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0) SELECT ranked.imageId AS imageId, ranked.reactions AS reactions, media.mediaType AS mediaType FROM ranked INNER JOIN (SELECT id, any(mediaType) AS mediaType FROM images_created WHERE id IN (SELECT imageId FROM ranked) GROUP BY id) AS media ON media.id = ranked.imageId ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_PER_TYPE} BY mediaType`
+    `WITH ranked AS (SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0) SELECT ranked.imageId AS imageId, ranked.reactions AS reactions, media.mediaType AS mediaType FROM ranked LEFT JOIN (SELECT id, any(mediaType) AS mediaType FROM images_created WHERE id IN (SELECT imageId FROM ranked) GROUP BY id) AS media ON media.id = ranked.imageId ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_PER_TYPE} BY mediaType`
   );
-  return enrichTopImages(raw, from, to);
+  return capPerType(await enrichTopImages(raw, from, to));
+}
+
+// Input is in ranking order, so the first N of each type are its top N.
+function capPerType(media: TopImage[]): TopImage[] {
+  const taken = new Map<TopImage['type'], number>();
+  return media.filter((m) => {
+    const count = taken.get(m.type) ?? 0;
+    taken.set(m.type, count + 1);
+    return count < TOP_MEDIA_PER_TYPE;
+  });
 }
 
 // Per-image view counts for an already-ranked, bounded id list. Reads `daily_views` rather than the owner rollup,

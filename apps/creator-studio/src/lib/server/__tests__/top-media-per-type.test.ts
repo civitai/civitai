@@ -1,26 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type MediaType = 'image' | 'video';
-type Entity = { imageId: number; reactions: number; mediaType: MediaType };
+// `type` is Postgres `Image.type`, which the tabs filter on. `ch` is what ClickHouse's `images_created` holds for
+// the same id, or null when that table has no row for it.
+type Entity = { imageId: number; reactions: number; type: MediaType; ch: MediaType | null };
 
 const state = vi.hoisted(() => ({ entities: [] as Entity[], rankingSql: [] as string[] }));
 
-// ClickHouse ranks and limits; this fake does only that, and honours the query's own trailing `LIMIT n` /
-// `LIMIT n BY col`. It cannot see anything else in the SQL, so the per-type behaviour asserted below comes from
-// the limit clause the query actually sends.
-function applyLimit(sql: string, rows: Entity[]): Entity[] {
-  const ranked = [...rows].sort((a, b) => b.reactions - a.reactions || b.imageId - a.imageId);
-  const limit = sql.match(/LIMIT (\d+)(?: BY (\w+))?\s*$/);
+// Models the three parts of the ranking query this file depends on, and throws on anything it cannot model: the
+// kind of join to `images_created`, the ORDER BY, and the trailing `LIMIT n` / `LIMIT n BY mediaType`.
+function runRanking(sql: string): { imageId: string; reactions: string; mediaType?: string }[] {
+  if (!/ORDER BY reactions DESC\b[^)]*LIMIT \d+/.test(sql))
+    throw new Error(`fake ClickHouse needs ORDER BY reactions DESC: ${sql.slice(-120)}`);
+  const joinsMediaType = /\bimages_created\b/.test(sql);
+  const leftJoin = /\bLEFT JOIN \(SELECT id, any\(mediaType\)/.test(sql);
+  const rows = state.entities
+    .filter((e) => !joinsMediaType || leftJoin || e.ch !== null)
+    .map((e) => ({ ...e, mediaType: e.ch ?? '' }))
+    .sort((a, b) => b.reactions - a.reactions || b.imageId - a.imageId);
+
+  const limit = sql.match(/LIMIT (\d+)(?: BY (mediaType))?\s*$/);
   if (!limit) throw new Error(`fake ClickHouse cannot model this query's limit: ${sql.slice(-80)}`);
   const n = Number(limit[1]);
-  if (!limit[2]) return ranked.slice(0, n);
-  const taken = new Map<unknown, number>();
-  return ranked.filter((r) => {
-    const key = r[limit[2] as keyof Entity];
-    const count = taken.get(key) ?? 0;
-    taken.set(key, count + 1);
-    return count < n;
-  });
+  const taken = new Map<string, number>();
+  const kept = limit[2]
+    ? rows.filter((r) => {
+        const count = taken.get(r.mediaType) ?? 0;
+        taken.set(r.mediaType, count + 1);
+        return count < n;
+      })
+    : rows.slice(0, n);
+  return kept.map((r) => ({
+    imageId: String(r.imageId),
+    reactions: String(r.reactions),
+    ...(joinsMediaType && { mediaType: r.mediaType }),
+  }));
 }
 
 vi.mock('$lib/server/clickhouse', () => ({
@@ -28,22 +42,18 @@ vi.mock('$lib/server/clickhouse', () => ({
     $query: async (sql: string) => {
       if (!/\bFROM reactions\b/.test(sql)) return [];
       state.rankingSql.push(sql);
-      return applyLimit(sql, state.entities).map(({ imageId, reactions }) => ({
-        imageId: String(imageId),
-        reactions: String(reactions),
-      }));
+      return runRanking(sql);
     },
   }),
 }));
 
-// Postgres is where the page reads each item's type from, so the fake answers it from the same fixture.
 vi.mock('$lib/server/db', () => {
   const chain = (ids: number[]) => ({
     select: () => ({
       execute: async () =>
         state.entities
           .filter((e) => ids.includes(e.imageId))
-          .map((e) => ({ id: e.imageId, url: `u-${e.imageId}`, nsfwLevel: 1, type: e.mediaType })),
+          .map((e) => ({ id: e.imageId, url: `u-${e.imageId}`, nsfwLevel: 1, type: e.type })),
     }),
   });
   return {
@@ -61,11 +71,18 @@ vi.mock('$lib/server/cache', () => ({
 
 const { getTopMedia, TOP_MEDIA_PER_TYPE } = await import('../analytics');
 
-const entities = (mediaType: MediaType, count: number, firstId: number, topReactions: number) =>
+const entities = (
+  type: MediaType,
+  count: number,
+  firstId: number,
+  topReactions: number,
+  ch: MediaType | null = type
+): Entity[] =>
   Array.from({ length: count }, (_, i) => ({
     imageId: firstId + i,
     reactions: topReactions - i,
-    mediaType,
+    type,
+    ch,
   }));
 
 async function tabs() {
@@ -89,9 +106,6 @@ describe('top media is ranked per type', () => {
     expect(state.rankingSql).toHaveLength(1);
     expect(images.length).toBe(50);
     expect(videos.length).toBe(TOP_MEDIA_PER_TYPE);
-    expect(images.map((i) => i.reactions)).toEqual(
-      [...images.map((i) => i.reactions)].sort((a, b) => b - a)
-    );
     expect(images[0]).toMatchObject({ imageId: 5_000, reactions: 50 });
   });
 
@@ -105,5 +119,31 @@ describe('top media is ranked per type', () => {
     expect(images.length).toBe(TOP_MEDIA_PER_TYPE);
     expect(videos.length).toBe(TOP_MEDIA_PER_TYPE);
     expect(images.at(-1)?.reactions).toBe(900 - (TOP_MEDIA_PER_TYPE - 1));
+  });
+
+  // `images_created` has ingestion gaps: live images with no row there. An inner join erased them from both tabs.
+  it('keeps a live image that images_created has no row for', async () => {
+    state.entities = [
+      ...entities('image', 1, 9_000, 5_000, null),
+      ...entities('image', 20, 5_000, 900),
+    ];
+    const { images } = await tabs();
+
+    expect(images[0]).toMatchObject({ imageId: 9_000, reactions: 5_000 });
+    expect(images.length).toBe(21);
+  });
+
+  // Images missing from images_created rank in their own bucket, so ClickHouse can return more than the cap of
+  // one Postgres type; the tab must still hold only its top N.
+  it('caps a tab that draws from more than one ClickHouse bucket', async () => {
+    state.entities = [
+      ...entities('image', 60, 9_000, 1_000, null),
+      ...entities('image', 100, 5_000, 500),
+    ];
+    const { images } = await tabs();
+
+    expect(images.length).toBe(TOP_MEDIA_PER_TYPE);
+    expect(images[0]?.imageId).toBe(9_000);
+    expect(images.at(-1)?.reactions).toBe(500 - (TOP_MEDIA_PER_TYPE - 60 - 1));
   });
 });
