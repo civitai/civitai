@@ -52,6 +52,7 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  * client-controlled input.
  */
 export type AppBlockEndpoint =
+  | 'buzz'
   | 'tip'
   | 'tip_allowance'
   | 'images'
@@ -79,12 +80,23 @@ export type AppBlockEndpoint =
   // outnumbers the other, and the declarations GET outnumbers the calls.
   | 'tools'
   | 'tools_call';
-// NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
-// NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
-// withBlockScope REST routes, so they are not metered via this per-endpoint
-// label (mutations carry their own tRPC metrics). The former 'buzz' /
-// 'buzz_transactions' / 'buzz_daily_compensation' / 'buzz_accounts' REST
-// entries were retired with those endpoints (superseded by the bridges).
+// NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
+//
+// 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists
+// again: the balance readout was RESTORED as a `withBlockScope` REST route so a
+// block can read its viewer's balance by direct fetch, without a page host in
+// the middle (the bridge requires one, which leaves model-slot and
+// non-page-hosted blocks with no balance read at all). It is metered here like
+// every other REST endpoint. Its tRPC twin `blocks.getMyBuzzBalance` is
+// unchanged and still serves the page-host bridge; the two return the identical
+// `{ blue, green, yellow }` projection on purpose.
+//
+// The other three self-reads — transactions / daily-compensation / accounts —
+// remain RETIRED as REST routes and are host-mediated tRPC MUTATIONS only
+// (`blocks.getMyBuzz{Transactions,Accounts}`, `blocks.getMyDailyCompensation`),
+// so they are not metered via this per-endpoint label (mutations carry their own
+// tRPC metrics). The former 'buzz_transactions' / 'buzz_daily_compensation' /
+// 'buzz_accounts' entries were dropped with those endpoints and stay dropped.
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 

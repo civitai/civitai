@@ -1287,9 +1287,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
  * and nothing else. This is the allowlist `normalizeEndpoint` templates against.
  *
  * It is a CLOSED set by construction: Next.js only dispatches a request to a
- * wrapped handler when the URL matches one of the 12 route files verbatim except
- * for their `[id]` positions, so any segment not listed here arrived in a dynamic
- * position and is caller-supplied. Kept in lockstep with those route files by
+ * wrapped handler when the URL matches one of the wrapped route files verbatim
+ * except for their `[id]` positions, so any segment not listed here arrived in a
+ * dynamic position and is caller-supplied. (The count is deliberately not
+ * written here — it was stale at "12" while the population was 13, and it moved
+ * again when `blocks/buzz.ts` was restored. The drift test below is the
+ * authority.) Kept in lockstep with those route files by
  * `block-scope.normalize-endpoint.test.ts`, which derives the set by walking
  * `src/pages/api` for every page extension Next accepts and matching both the
  * direct and indirect `withBlockScope(` wrap, rather than trusting this
@@ -1305,6 +1308,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'api',
   'v1',
   'blocks',
+  'buzz',
   'collections',
   'follow',
   'generation-resources',

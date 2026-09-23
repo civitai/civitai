@@ -134,6 +134,10 @@ type RestExposure =
  * reader concludes the REST surface was already covered.
  */
 const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string }> = {
+  'src/pages/api/v1/blocks/buzz.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s own spendable Buzz balances — getUserBuzzAccounts keyed on the verified token subject, projected to { blue, green, yellow }. A suspended app would otherwise keep reading a signed-in user’s live wallet: how much free Buzz they hold, how much purchased Buzz they hold, and therefore what they can afford. No anonymous caller receives any of that, and the numbers move with the viewer’s spending, so a retained balance read is also a per-user activity signal a takedown is meant to stop.',
+  },
   'src/pages/api/v1/blocks/collections/[id]/follow.ts': {
     exposure: 'WRITE',
     why: 'addContributorToCollection / removeContributorFromCollection, i.e. a suspended app mutating the viewer’s follow graph on their behalf.',
@@ -1213,6 +1217,7 @@ describe('no unguarded block-REST token verification', () => {
    * this file objected to opting any of them in.
    */
   const MUST_FAIL_CLOSED = [
+    'src/pages/api/v1/blocks/buzz.ts',
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
