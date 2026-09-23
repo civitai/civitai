@@ -3,6 +3,7 @@ import { getClickhouse } from '$lib/server/clickhouse';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
+import { getLogger } from '$lib/server/logger';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 import { viewTrackingSql, ownerViewsDailySql } from '$lib/server/analytics-sql';
@@ -570,25 +571,39 @@ async function fetchReactionAudienceSplit(
 }
 
 export const TOP_MEDIA_PER_TYPE = 100;
+// Bounds the payload for an extreme creator; the heaviest month so far is ~40k reacted ids.
+export const TOP_MEDIA_READ_CEILING = 200_000;
+export const TOP_MEDIA_ID_CHUNK = 10_000;
 
-// The content tabs filter this by `type`, so the limit is per type. `reactions` has no media type, so ClickHouse
-// buckets by `images_created.mediaType`. That table misses some live images, so the join is LEFT: those rank in
-// their own '' bucket, and Postgres, which the tabs filter on, decides their type in `capPerType`.
+// The content tabs filter this by `type`, so the limit is per type, and only Postgres can apply it: `reactions` has
+// no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
+// lets deleted ids take a live image's slot. Every reacted id comes back, and `enrichTopImages` cuts.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
-    mediaType: string;
   }>(
-    `WITH ranked AS (SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0) SELECT ranked.imageId AS imageId, ranked.reactions AS reactions, media.mediaType AS mediaType FROM ranked LEFT JOIN (SELECT id, any(mediaType) AS mediaType FROM images_created WHERE id IN (SELECT imageId FROM ranked) GROUP BY id) AS media ON media.id = ranked.imageId ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_PER_TYPE} BY mediaType`
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_READ_CEILING}`
   );
-  return capPerType(await enrichTopImages(raw, from, to));
+  if (raw.length >= TOP_MEDIA_READ_CEILING) {
+    getLogger()
+      .logToAxiom({
+        name: 'top-media-read-ceiling',
+        type: 'warning',
+        userId: uid,
+        from,
+        to,
+        ceiling: TOP_MEDIA_READ_CEILING,
+      })
+      .catch(() => undefined);
+  }
+  return enrichTopImages(raw, from, to);
 }
 
 // Input is in ranking order, so the first N of each type are its top N.
-function capPerType(media: TopImage[]): TopImage[] {
-  const taken = new Map<TopImage['type'], number>();
+function capPerType<T extends { type: string }>(media: T[]): T[] {
+  const taken = new Map<string, number>();
   return media.filter((m) => {
     const count = taken.get(m.type) ?? 0;
     taken.set(m.type, count + 1);
@@ -637,41 +652,52 @@ async function fetchImpressionsByEntity(
 }
 
 // Look up the CF url + nsfwLevel for the top images (Postgres, by primary key) so the analytics grid can show real
-// thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking.
+// thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking. Views and impressions are read
+// only for what survives the per-type cap, since the ranked input can run to tens of thousands of ids.
 async function enrichTopImages(
   raw: { imageId: number | string; reactions: number | string }[],
   from: string,
   to: string
 ): Promise<TopImage[]> {
   const ids = raw.map((r) => Number(r.imageId));
-  const [rows, viewsById, impressionsById] = await Promise.all([
-    ids.length
-      ? dbRead
-          .selectFrom('Image')
-          .where('id', 'in', ids)
-          .select(['id', 'url', 'nsfwLevel', 'type'])
-          .execute()
-      : Promise.resolve([]),
-    fetchViewsByImage(ids, from, to),
-    fetchImpressionsByEntity(VIEW_ENTITY.image, ids, from, to),
-  ]);
-  const byId = new Map(rows.map((i) => [i.id, i]));
+  const byId = new Map<number, { url: string | null; nsfwLevel: number | null; type: string }>();
+  for (let i = 0; i < ids.length; i += TOP_MEDIA_ID_CHUNK) {
+    const { rows } = await sql<{
+      id: number;
+      url: string | null;
+      nsfwLevel: number | null;
+      type: string;
+    }>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${ids.slice(i, i + TOP_MEDIA_ID_CHUNK)})`.execute(
+      dbRead
+    );
+    for (const row of rows) byId.set(Number(row.id), row);
+  }
   // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
-  return raw
-    .map((r): TopImage | null => {
+  const live = capPerType(
+    raw.flatMap((r) => {
       const img = byId.get(Number(r.imageId));
-      if (!img?.url) return null;
-      return {
-        imageId: Number(r.imageId),
-        reactions: Number(r.reactions),
-        views: viewsById.get(Number(r.imageId)) ?? 0,
-        impressions: impressionsById.get(Number(r.imageId)) ?? 0,
-        url: img.url,
-        nsfwLevel: Number(img.nsfwLevel ?? 0),
-        type: img.type as 'image' | 'video' | 'audio',
-      };
+      if (!img?.url) return [];
+      return [
+        {
+          imageId: Number(r.imageId),
+          reactions: Number(r.reactions),
+          url: img.url,
+          nsfwLevel: Number(img.nsfwLevel ?? 0),
+          type: img.type as TopImage['type'],
+        },
+      ];
     })
-    .filter((x): x is TopImage => x !== null);
+  );
+  const keptIds = live.map((m) => m.imageId);
+  const [viewsById, impressionsById] = await Promise.all([
+    fetchViewsByImage(keptIds, from, to),
+    fetchImpressionsByEntity(VIEW_ENTITY.image, keptIds, from, to),
+  ]);
+  return live.map((m) => ({
+    ...m,
+    views: viewsById.get(m.imageId) ?? 0,
+    impressions: impressionsById.get(m.imageId) ?? 0,
+  }));
 }
 
 // One image's view series for the drilldown. Ownership is checked against Postgres first and a miss returns

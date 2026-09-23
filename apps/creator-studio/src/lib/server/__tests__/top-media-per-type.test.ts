@@ -1,45 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type MediaType = 'image' | 'video';
-// `type` is Postgres `Image.type`, which the tabs filter on. `ch` is what ClickHouse's `images_created` holds for
-// the same id, or null when that table has no row for it.
-type Entity = { imageId: number; reactions: number; type: MediaType; ch: MediaType | null };
+// pgType null = deleted: no Postgres row.
+type Entity = { imageId: number; reactions: number; pgType: MediaType | null };
 
-const state = vi.hoisted(() => ({ entities: [] as Entity[], rankingSql: [] as string[] }));
+const state = vi.hoisted(() => ({
+  entities: [] as Entity[],
+  rankingSql: [] as string[],
+  pgBatches: [] as number[][],
+  viewIds: [] as number[][],
+  logged: [] as Record<string, unknown>[],
+}));
 
-// Models the three parts of the ranking query this file depends on, and throws on anything it cannot model: the
-// kind of join to `images_created`, the ORDER BY, and the trailing `LIMIT n` / `LIMIT n BY mediaType`.
-function runRanking(sql: string): { imageId: string; reactions: string; mediaType?: string }[] {
-  if (!/ORDER BY reactions DESC\b[^)]*LIMIT \d+/.test(sql))
+// Models only `ORDER BY reactions DESC` and a trailing `LIMIT n`, and throws on any other shape, so a query this
+// file cannot model fails loudly instead of passing on the fake's own behaviour.
+function runRanking(sql: string): { imageId: string; reactions: string }[] {
+  if (!/ORDER BY reactions DESC\b/.test(sql))
     throw new Error(`fake ClickHouse needs ORDER BY reactions DESC: ${sql.slice(-120)}`);
-  const joinsMediaType = /\bimages_created\b/.test(sql);
-  const leftJoin = /\bLEFT JOIN \(SELECT id, any\(mediaType\)/.test(sql);
-  const rows = state.entities
-    .filter((e) => !joinsMediaType || leftJoin || e.ch !== null)
-    .map((e) => ({ ...e, mediaType: e.ch ?? '' }))
-    .sort((a, b) => b.reactions - a.reactions || b.imageId - a.imageId);
-
-  const limit = sql.match(/LIMIT (\d+)(?: BY (mediaType))?\s*$/);
+  const limit = sql.match(/ORDER BY reactions DESC[^)]*LIMIT (\d+)\s*$/);
   if (!limit) throw new Error(`fake ClickHouse cannot model this query's limit: ${sql.slice(-80)}`);
-  const n = Number(limit[1]);
-  const taken = new Map<string, number>();
-  const kept = limit[2]
-    ? rows.filter((r) => {
-        const count = taken.get(r.mediaType) ?? 0;
-        taken.set(r.mediaType, count + 1);
-        return count < n;
-      })
-    : rows.slice(0, n);
-  return kept.map((r) => ({
-    imageId: String(r.imageId),
-    reactions: String(r.reactions),
-    ...(joinsMediaType && { mediaType: r.mediaType }),
-  }));
+  return [...state.entities]
+    .sort((a, b) => b.reactions - a.reactions || b.imageId - a.imageId)
+    .slice(0, Number(limit[1]))
+    .map((e) => ({ imageId: String(e.imageId), reactions: String(e.reactions) }));
 }
 
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     $query: async (sql: string) => {
+      if (/\bFROM daily_views\b/.test(sql)) {
+        state.viewIds.push(
+          (sql.match(/entityId IN \(([^)]*)\)/)?.[1] ?? '').split(',').map(Number)
+        );
+        return [];
+      }
       if (!/\bFROM reactions\b/.test(sql)) return [];
       state.rankingSql.push(sql);
       return runRanking(sql);
@@ -47,42 +41,53 @@ vi.mock('$lib/server/clickhouse', () => ({
   }),
 }));
 
-vi.mock('$lib/server/db', () => {
-  const chain = (ids: number[]) => ({
-    select: () => ({
-      execute: async () =>
-        state.entities
-          .filter((e) => ids.includes(e.imageId))
-          .map((e) => ({ id: e.imageId, url: `u-${e.imageId}`, nsfwLevel: 1, type: e.type })),
-    }),
-  });
-  return {
-    dbRead: {
-      selectFrom: () => ({ where: (_c: string, _op: string, ids: number[]) => chain(ids) }),
+// The `Image` lookup is the only `sql` query on this path. Rows come back in descending id order, since Postgres
+// promises none, so the page has to keep ClickHouse's ranking itself.
+vi.mock('@civitai/db/kysely', () => ({
+  sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
+    execute: async () => {
+      if (!strings.join('?').includes('FROM "Image"')) return { rows: [] };
+      const ids = values[0] as number[];
+      state.pgBatches.push(ids);
+      const wanted = new Set(ids);
+      return {
+        rows: state.entities
+          .filter((e) => e.pgType !== null && wanted.has(e.imageId))
+          .sort((a, b) => b.imageId - a.imageId)
+          .map((e) => ({ id: e.imageId, url: `u-${e.imageId}`, nsfwLevel: 1, type: e.pgType })),
+      };
     },
-    dbWrite: {},
-  };
-});
+  }),
+}));
+
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+
+vi.mock('$lib/server/logger', () => ({
+  getLogger: () => ({
+    logToAxiom: async (data: Record<string, unknown>) => {
+      state.logged.push(data);
+    },
+  }),
+}));
 
 vi.mock('$lib/server/cache', () => ({
   createCache: <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) => ({ get: fetch }),
   createSysCache: <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) => ({ get: fetch }),
 }));
 
-const { getTopMedia, TOP_MEDIA_PER_TYPE } = await import('../analytics');
+const { getTopMedia, TOP_MEDIA_PER_TYPE, TOP_MEDIA_READ_CEILING, TOP_MEDIA_ID_CHUNK } =
+  await import('../analytics');
 
 const entities = (
-  type: MediaType,
+  pgType: MediaType | null,
   count: number,
   firstId: number,
-  topReactions: number,
-  ch: MediaType | null = type
+  topReactions: number
 ): Entity[] =>
   Array.from({ length: count }, (_, i) => ({
     imageId: firstId + i,
     reactions: topReactions - i,
-    type,
-    ch,
+    pgType,
   }));
 
 async function tabs() {
@@ -96,6 +101,9 @@ async function tabs() {
 describe('top media is ranked per type', () => {
   beforeEach(() => {
     state.rankingSql.length = 0;
+    state.pgBatches.length = 0;
+    state.viewIds.length = 0;
+    state.logged.length = 0;
   });
 
   // The reported case: every video out-reacts every image, and there are more videos than one list holds.
@@ -106,7 +114,7 @@ describe('top media is ranked per type', () => {
     expect(state.rankingSql).toHaveLength(1);
     expect(images.length).toBe(50);
     expect(videos.length).toBe(TOP_MEDIA_PER_TYPE);
-    expect(images[0]).toMatchObject({ imageId: 5_000, reactions: 50 });
+    expect(images.map((i) => i.imageId).slice(0, 3)).toEqual([5_000, 5_001, 5_002]);
   });
 
   it('caps each type on its own', async () => {
@@ -121,29 +129,49 @@ describe('top media is ranked per type', () => {
     expect(images.at(-1)?.reactions).toBe(900 - (TOP_MEDIA_PER_TYPE - 1));
   });
 
-  // `images_created` has ingestion gaps: live images with no row there. An inner join erased them from both tabs.
-  it('keeps a live image that images_created has no row for', async () => {
-    state.entities = [
-      ...entities('image', 1, 9_000, 5_000, null),
-      ...entities('image', 20, 5_000, 900),
-    ];
+  // Reactions outlive the image. A creator who deleted a month's worth of reacted images must still see the live ones.
+  it('keeps live images behind more deleted ones than a tab holds', async () => {
+    state.entities = [...entities(null, 250, 20_000, 2_000), ...entities('image', 30, 5_000, 900)];
     const { images } = await tabs();
 
-    expect(images[0]).toMatchObject({ imageId: 9_000, reactions: 5_000 });
-    expect(images.length).toBe(21);
+    expect(images.length).toBe(30);
+    expect(images[0]).toMatchObject({ imageId: 5_000, reactions: 900 });
   });
 
-  // Images missing from images_created rank in their own bucket, so ClickHouse can return more than the cap of
-  // one Postgres type; the tab must still hold only its top N.
-  it('caps a tab that draws from more than one ClickHouse bucket', async () => {
+  it('reads views only for the items it shows', async () => {
+    state.entities = [...entities(null, 300, 20_000, 2_000), ...entities('image', 130, 5_000, 900)];
+    const { images } = await tabs();
+
+    expect(state.viewIds).toHaveLength(1);
+    expect([...state.viewIds[0]].sort()).toEqual(images.map((i) => i.imageId).sort());
+  });
+
+  it('looks ids up in Postgres in bounded batches', async () => {
+    const count = TOP_MEDIA_ID_CHUNK * 2 + 5;
     state.entities = [
-      ...entities('image', 60, 9_000, 1_000, null),
-      ...entities('image', 100, 5_000, 500),
+      ...entities(null, count - 10, 100_000, 50_000),
+      ...entities('image', 10, 5_000, 10),
     ];
     const { images } = await tabs();
 
-    expect(images.length).toBe(TOP_MEDIA_PER_TYPE);
-    expect(images[0]?.imageId).toBe(9_000);
-    expect(images.at(-1)?.reactions).toBe(500 - (TOP_MEDIA_PER_TYPE - 60 - 1));
+    expect(state.pgBatches.map((b) => b.length)).toEqual([
+      TOP_MEDIA_ID_CHUNK,
+      TOP_MEDIA_ID_CHUNK,
+      5,
+    ]);
+    expect(images.length).toBe(10);
+  });
+
+  // At the ceiling the lowest-ranked ids are not read at all, so it must be visible in the logs when it happens.
+  it('logs when the read hits its ceiling, and not below it', async () => {
+    state.entities = entities('image', TOP_MEDIA_READ_CEILING - 1, 1_000_000, 10_000_000);
+    await tabs();
+    expect(state.logged).toEqual([]);
+
+    state.entities = entities('image', TOP_MEDIA_READ_CEILING + 1, 1_000_000, 10_000_000);
+    await tabs();
+    expect(state.logged).toEqual([
+      expect.objectContaining({ name: 'top-media-read-ceiling', userId: 42 }),
+    ]);
   });
 });
