@@ -82,7 +82,7 @@ describe('Qwen 2.1 licence', () => {
 // deliberately NOT taken with this change, and the same holds for the mature and
 // same-licence gates below. Change this test only alongside that decision.
 describe('Qwen 2.1 licence display does not decide permissions', () => {
-  it('sets no commercial or mature restriction on the licence', () => {
+  it('sets no commercial, mature or same-licence restriction on the licence', () => {
     const license = serverLicense()!;
     expect(license.nonCommercial).toBeUndefined();
     expect(license.disableMature).toBeUndefined();
