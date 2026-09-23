@@ -127,6 +127,14 @@ describe('normalizeEndpoint — leaves genuinely static segments intact', () => 
     ['/api/v1/blocks/shared-storage/unvote', '/api/v1/blocks/shared-storage/unvote'],
     ['/api/v1/blocks/shared-storage/withdraw', '/api/v1/blocks/shared-storage/withdraw'],
     ['/api/v1/blocks/shared-storage/report', '/api/v1/blocks/shared-storage/report'],
+    // The four WORKFLOW routes, listed by hand for the same reason the six above
+    // are. `workflowId` is deliberately NOT a path segment on any of them (it
+    // embeds the viewer's user id — see poll.ts), so there is no `:seg` position
+    // here to lose and no per-workflow value that could fragment the column.
+    ['/api/v1/blocks/workflows/submit', '/api/v1/blocks/workflows/submit'],
+    ['/api/v1/blocks/workflows/estimate', '/api/v1/blocks/workflows/estimate'],
+    ['/api/v1/blocks/workflows/poll', '/api/v1/blocks/workflows/poll'],
+    ['/api/v1/blocks/workflows/cancel', '/api/v1/blocks/workflows/cancel'],
     ['/api/v1/models/4201', '/api/v1/models/:id'],
   ])('%s survives as %s', (url, expected) => {
     expect(normalizeEndpoint(url)).toBe(expected);
@@ -271,6 +279,15 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // withBlockScope REST route (it had been retired in favour of the
       // page-host bridge, which a non-page-hosted block cannot reach).
       'buzz',
+      // `cancel` / `estimate` / `poll` / `submit` / `workflows` — the WORKFLOW
+      // surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
+      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW bridge messages. Five
+      // new STATIC segments, pinned for the same reason the shared ones are:
+      // without them `normalizeEndpoint` collapses the last segment to a
+      // placeholder and the audit log stops distinguishing a SPEND from a price
+      // quote from a status poll — which on this surface is the only thing the
+      // row would have said.
+      'cancel',
       'collections',
       // `counts` / `item` / `list` — the shared-storage READ surface
       // (`v1/blocks/shared-storage/{counts,item,list}.ts`), the v1 replacement for
@@ -279,6 +296,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // them to a placeholder and the audit log would stop distinguishing a feed
       // scan from a point read.
       'counts',
+      'estimate',
       'follow',
       'generation-resources',
       'images',
@@ -287,8 +305,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'list',
       'me',
       'models',
+      'poll',
       'report',
       'shared-storage',
+      'submit',
       'tip',
       'tip-allowance',
       // The read-only chat-tool surface (#398 AC5). Added deliberately: this
@@ -301,6 +321,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'v1',
       'vote',
       'withdraw',
+      'workflows',
     ]);
   });
 });
