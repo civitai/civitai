@@ -571,13 +571,17 @@ async function fetchReactionAudienceSplit(
 }
 
 export const TOP_MEDIA_PER_TYPE = 100;
-// Bounds the payload for an extreme creator; the heaviest month so far is ~40k reacted ids.
+// Bounds the payload for an extreme creator; the heaviest month as of 2026-09 was ~53k reacted ids.
 export const TOP_MEDIA_READ_CEILING = 200_000;
-export const TOP_MEDIA_ID_CHUNK = 10_000;
+// `ANY` already avoids the parameter cap; batching keeps each statement short (~0.7s per batch measured).
+export const TOP_MEDIA_PG_BATCH_SIZE = 10_000;
+// Batches in flight at once, well under the read pool's 20 connections that every other request shares.
+export const TOP_MEDIA_PG_PARALLEL = 4;
 
 // The content tabs filter this by `type`, so the limit is per type, and only Postgres can apply it: `reactions` has
 // no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
-// lets deleted ids take a live image's slot. Every reacted id comes back, and `enrichTopImages` cuts.
+// lets deleted ids take a live image's slot. Every reacted id up to TOP_MEDIA_READ_CEILING comes back, and
+// `enrichTopImages` cuts.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
   const raw = await getClickhouse().$query<{
@@ -590,7 +594,6 @@ async function fetchTopMedia(userId: number, from: string, to: string): Promise<
     getLogger()
       .logToAxiom({
         name: 'top-media-read-ceiling',
-        type: 'warning',
         userId: uid,
         from,
         to,
@@ -660,17 +663,23 @@ async function enrichTopImages(
   to: string
 ): Promise<TopImage[]> {
   const ids = raw.map((r) => Number(r.imageId));
+  const batches: number[][] = [];
+  for (let i = 0; i < ids.length; i += TOP_MEDIA_PG_BATCH_SIZE) {
+    batches.push(ids.slice(i, i + TOP_MEDIA_PG_BATCH_SIZE));
+  }
   const byId = new Map<number, { url: string | null; nsfwLevel: number | null; type: string }>();
-  for (let i = 0; i < ids.length; i += TOP_MEDIA_ID_CHUNK) {
-    const { rows } = await sql<{
-      id: number;
-      url: string | null;
-      nsfwLevel: number | null;
-      type: string;
-    }>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${ids.slice(i, i + TOP_MEDIA_ID_CHUNK)})`.execute(
-      dbRead
+  for (let i = 0; i < batches.length; i += TOP_MEDIA_PG_PARALLEL) {
+    const results = await Promise.all(
+      batches.slice(i, i + TOP_MEDIA_PG_PARALLEL).map((batch) =>
+        sql<{
+          id: number;
+          url: string | null;
+          nsfwLevel: number | null;
+          type: string;
+        }>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(dbRead)
+      )
     );
-    for (const row of rows) byId.set(Number(row.id), row);
+    for (const { rows } of results) for (const row of rows) byId.set(Number(row.id), row);
   }
   // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
   const live = capPerType(

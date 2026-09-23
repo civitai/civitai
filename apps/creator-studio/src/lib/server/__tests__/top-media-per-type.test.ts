@@ -9,6 +9,9 @@ const state = vi.hoisted(() => ({
   rankingSql: [] as string[],
   pgBatches: [] as number[][],
   viewIds: [] as number[][],
+  impressionIds: [] as number[][],
+  pgInFlight: 0,
+  pgMaxInFlight: 0,
   logged: [] as Record<string, unknown>[],
 }));
 
@@ -28,10 +31,13 @@ function runRanking(sql: string): { imageId: string; reactions: string }[] {
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     $query: async (sql: string) => {
+      const ids = () => (sql.match(/entityId IN \(([^)]*)\)/)?.[1] ?? '').split(',').map(Number);
       if (/\bFROM daily_views\b/.test(sql)) {
-        state.viewIds.push(
-          (sql.match(/entityId IN \(([^)]*)\)/)?.[1] ?? '').split(',').map(Number)
-        );
+        state.viewIds.push(ids());
+        return [];
+      }
+      if (/\bFROM daily_impressions\b/.test(sql)) {
+        state.impressionIds.push(ids());
         return [];
       }
       if (!/\bFROM reactions\b/.test(sql)) return [];
@@ -47,8 +53,14 @@ vi.mock('@civitai/db/kysely', () => ({
   sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
     execute: async () => {
       if (!strings.join('?').includes('FROM "Image"')) return { rows: [] };
-      const ids = values[0] as number[];
+      const ids = values[0];
+      if (values.length !== 1 || !Array.isArray(ids))
+        throw new Error('fake Postgres expects the Image lookup to bind exactly one id array');
       state.pgBatches.push(ids);
+      state.pgInFlight++;
+      state.pgMaxInFlight = Math.max(state.pgMaxInFlight, state.pgInFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      state.pgInFlight--;
       const wanted = new Set(ids);
       return {
         rows: state.entities
@@ -75,8 +87,13 @@ vi.mock('$lib/server/cache', () => ({
   createSysCache: <A, R>({ fetch }: { fetch: (args: A) => Promise<R> }) => ({ get: fetch }),
 }));
 
-const { getTopMedia, TOP_MEDIA_PER_TYPE, TOP_MEDIA_READ_CEILING, TOP_MEDIA_ID_CHUNK } =
-  await import('../analytics');
+const {
+  getTopMedia,
+  TOP_MEDIA_PER_TYPE,
+  TOP_MEDIA_READ_CEILING,
+  TOP_MEDIA_PG_BATCH_SIZE,
+  TOP_MEDIA_PG_PARALLEL,
+} = await import('../analytics');
 
 const entities = (
   pgType: MediaType | null,
@@ -103,6 +120,8 @@ describe('top media is ranked per type', () => {
     state.rankingSql.length = 0;
     state.pgBatches.length = 0;
     state.viewIds.length = 0;
+    state.impressionIds.length = 0;
+    state.pgMaxInFlight = 0;
     state.logged.length = 0;
   });
 
@@ -138,16 +157,19 @@ describe('top media is ranked per type', () => {
     expect(images[0]).toMatchObject({ imageId: 5_000, reactions: 900 });
   });
 
-  it('reads views only for the items it shows', async () => {
+  it('reads views and impressions only for the items it shows', async () => {
     state.entities = [...entities(null, 300, 20_000, 2_000), ...entities('image', 130, 5_000, 900)];
     const { images } = await tabs();
+    const shown = images.map((i) => i.imageId).sort((a, b) => a - b);
 
     expect(state.viewIds).toHaveLength(1);
-    expect([...state.viewIds[0]].sort()).toEqual(images.map((i) => i.imageId).sort());
+    expect([...state.viewIds[0]].sort((a, b) => a - b)).toEqual(shown);
+    expect(state.impressionIds).toHaveLength(1);
+    expect([...state.impressionIds[0]].sort((a, b) => a - b)).toEqual(shown);
   });
 
   it('looks ids up in Postgres in bounded batches', async () => {
-    const count = TOP_MEDIA_ID_CHUNK * 2 + 5;
+    const count = TOP_MEDIA_PG_BATCH_SIZE * 2 + 5;
     state.entities = [
       ...entities(null, count - 10, 100_000, 50_000),
       ...entities('image', 10, 5_000, 10),
@@ -155,11 +177,21 @@ describe('top media is ranked per type', () => {
     const { images } = await tabs();
 
     expect(state.pgBatches.map((b) => b.length)).toEqual([
-      TOP_MEDIA_ID_CHUNK,
-      TOP_MEDIA_ID_CHUNK,
+      TOP_MEDIA_PG_BATCH_SIZE,
+      TOP_MEDIA_PG_BATCH_SIZE,
       5,
     ]);
     expect(images.length).toBe(10);
+  });
+
+  // The read pool is shared with every other request, so a heavy creator's lookup must not take all of it.
+  it('keeps a bounded number of Postgres batches in flight', async () => {
+    const batches = TOP_MEDIA_PG_PARALLEL * 2 + 1;
+    state.entities = entities('image', TOP_MEDIA_PG_BATCH_SIZE * batches, 1_000_000, 10_000_000);
+    await tabs();
+
+    expect(state.pgBatches).toHaveLength(batches);
+    expect(state.pgMaxInFlight).toBe(TOP_MEDIA_PG_PARALLEL);
   });
 
   // At the ceiling the lowest-ranked ids are not read at all, so it must be visible in the logs when it happens.
