@@ -27,7 +27,6 @@ type Props = CommentConnectorInput & {
   initialCount?: number;
   limit?: number;
   badges?: CommentV2BadgeProps[];
-  hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
   forceLocked?: boolean;
   hideWhenLocked?: boolean;
@@ -96,7 +95,6 @@ export const useSeededReplyThreads = () => useContext(SeededReplyThreadsCtx);
 export function RootThreadProvider({
   entityType: initialEntityType,
   entityId: initialEntityId,
-  hidden,
   ...props
 }: Props) {
   const router = useRouter();
@@ -171,7 +169,6 @@ export function RootThreadProvider({
       <CommentsProvider
         entityType={entity.entityType}
         entityId={entity.entityId}
-        hidden={hidden}
         level={1}
         {...props}
       />
@@ -198,7 +195,6 @@ export function CommentsProvider({
   initialCount,
   limit: initialLimit = 5,
   badges,
-  hidden,
   forceLocked,
   hideWhenLocked,
   level = 1,
@@ -232,7 +228,7 @@ export function CommentsProvider({
   // costs one request per page instead of one per comment per level. Levels past this stay
   // collapsed on their own: nothing seeds them, and an unseeded thread renders closed.
   const autoExpandDepth = constants.comments.getAutoExpandDepth({ entityType: rootEntityType });
-  const repliesDepth = level === 1 && !hidden && autoExpandDepth > 0 ? autoExpandDepth : undefined;
+  const repliesDepth = level === 1 && autoExpandDepth > 0 ? autoExpandDepth : undefined;
   const replyPageSize = constants.comments.replyPageSize;
 
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
@@ -242,7 +238,6 @@ export function CommentsProvider({
         entityType,
         limit: initialLimit,
         sort,
-        hidden: hidden ?? false,
         targetCommentId: highlighted,
         repliesDepth,
         repliesLimit: replyPageSize,

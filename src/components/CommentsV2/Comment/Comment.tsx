@@ -234,37 +234,58 @@ export function CommentContent({
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
         )} */}
-        <UserAvatar user={comment.user} size="sm" linkToProfile />
+        {concealed ? (
+          <div className="flex size-[26px] items-center justify-center">
+            <IconEyeOff size={16} className="text-dimmed" />
+          </div>
+        ) : (
+          <UserAvatar user={comment.user} size="sm" linkToProfile />
+        )}
       </Group>
 
       <Stack gap={0} style={{ flex: 1 }}>
         <Group justify="space-between">
-          {/* AVATAR */}
-          <Group gap={8} align="center">
-            <UserAvatar
-              user={comment.user}
-              size="md"
-              linkToProfile
-              includeAvatar={false}
-              withUsername
-              badge={badge ? <CommentBadge {...badge} /> : null}
-            />
-            <Text c="dimmed" size="xs" mt={2}>
-              <DaysFromNow date={comment.createdAt} />
-            </Text>
-            {comment.pinnedAt && (
-              <ThemeIcon size="sm" color="orange">
-                <IconPinned size={16} stroke={2} />
-              </ThemeIcon>
-            )}
-            {currentUser?.isModerator && comment.tosViolation && (
-              <Tooltip label="Has TOS Violation">
-                <ThemeIcon color="orange" size="xs">
-                  <IconExclamationCircle />
+          {concealed ? (
+            <Group gap={6} wrap="nowrap">
+              <Text size="sm" c="dimmed" fs="italic">
+                Hidden comment
+              </Text>
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                color="gray"
+                onClick={() => setRevealed(true)}
+              >
+                Show
+              </Button>
+            </Group>
+          ) : (
+            <Group gap={8} align="center">
+              <UserAvatar
+                user={comment.user}
+                size="md"
+                linkToProfile
+                includeAvatar={false}
+                withUsername
+                badge={badge ? <CommentBadge {...badge} /> : null}
+              />
+              <Text c="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
+              {comment.pinnedAt && (
+                <ThemeIcon size="sm" color="orange">
+                  <IconPinned size={16} stroke={2} />
                 </ThemeIcon>
-              </Tooltip>
-            )}
-          </Group>
+              )}
+              {currentUser?.isModerator && comment.tosViolation && (
+                <Tooltip label="Has TOS Violation">
+                  <ThemeIcon color="orange" size="xs">
+                    <IconExclamationCircle />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
+            </Group>
+          )}
 
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
@@ -396,22 +417,7 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
-              {concealed ? (
-                <Group gap={6} my={5} wrap="nowrap">
-                  <IconEyeOff size={14} className="text-dimmed shrink-0" />
-                  <Text size="sm" c="dimmed" fs="italic">
-                    Hidden comment
-                  </Text>
-                  <Button
-                    variant="subtle"
-                    size="compact-xs"
-                    color="gray"
-                    onClick={() => setRevealed(true)}
-                  >
-                    Show
-                  </Button>
-                </Group>
-              ) : (
+              {!concealed && (
                 <Box my={5}>
                   <LineClamp className="text-sm" lineClamp={3} variant="block">
                     <RenderHtml
@@ -425,34 +431,36 @@ export function CommentContent({
                 </Box>
               )}
               {/* COMMENT INTERACTION */}
-              <Group gap={4}>
-                {!concealed && <CommentReactions comment={comment} />}
-                {comment.hidden && revealed && (
-                  <Button
-                    variant="subtle"
-                    radius="xl"
-                    size="compact-xs"
-                    color="gray"
-                    onClick={() => setRevealed(false)}
-                  >
-                    Hide again
-                  </Button>
-                )}
-                {canReply && !viewOnly && (
-                  <Button
-                    variant="subtle"
-                    radius="xl"
-                    onClick={() => setReplying(true)}
-                    size="compact-xs"
-                    color="gray"
-                  >
-                    <Group gap={4}>
-                      <IconArrowBackUp size={14} />
-                      Reply
-                    </Group>
-                  </Button>
-                )}
-              </Group>
+              {!concealed && (
+                <Group gap={4}>
+                  <CommentReactions comment={comment} />
+                  {comment.hidden && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      size="compact-xs"
+                      color="gray"
+                      onClick={() => setRevealed(false)}
+                    >
+                      Hide again
+                    </Button>
+                  )}
+                  {canReply && !viewOnly && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      onClick={() => setReplying(true)}
+                      size="compact-xs"
+                      color="gray"
+                    >
+                      <Group gap={4}>
+                        <IconArrowBackUp size={14} />
+                        Reply
+                      </Group>
+                    </Button>
+                  )}
+                </Group>
+              )}
             </>
           ) : (
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />

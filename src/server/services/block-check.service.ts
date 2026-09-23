@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { muteableThreadsCte } from '~/server/common/thread-chain';
 import { dbRead } from '~/server/db/client';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
@@ -155,15 +157,27 @@ async function rootOwnerOfThread(thread: ThreadContent): Promise<number | undefi
 /**
  * The owner of the content a stored comment ultimately belongs to — never the author of the
  * comment a reply answers, who is not the content owner and must not moderate replies to them.
+ *
+ * Climbs the stored `Thread.commentId -> CommentV2.threadId` chain rather than reading
+ * `Thread.rootThreadId`: the first replier sets that column from client input, so trusting it lets
+ * a commenter name themselves the owner of the replies to them. A chain that ends anywhere but a
+ * content thread resolves no owner, which leaves the comment to moderators.
  */
 export async function getContentOwnerIdForComment(commentId: number) {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { hidden: true, thread: { select: threadContentSelect } },
+    select: { hidden: true, threadId: true },
   });
   if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
-  const ownerId = comment.thread ? await rootOwnerOfThread(comment.thread) : undefined;
-  return { hidden: comment.hidden ?? false, ownerId };
+
+  const [top] = await dbRead.$queryRaw<{ id: number }[]>`
+    ${Prisma.raw(muteableThreadsCte(String(Number(comment.threadId))))}
+    SELECT mt."id" FROM muteable_threads mt ORDER BY mt."depth" DESC LIMIT 1
+  `;
+  const rootThread = top
+    ? await dbRead.thread.findUnique({ where: { id: top.id }, select: threadContentSelect })
+    : null;
+  return { hidden: comment.hidden ?? false, ownerId: await ownerOfThreadContent(rootThread) };
 }
 
 // For a CommentV2 reply target, block if blocked by the parent comment's author

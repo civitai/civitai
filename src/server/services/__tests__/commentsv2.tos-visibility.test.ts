@@ -197,39 +197,35 @@ describe('CommentV2 reads and the hidden flag', () => {
     dbMock.dbRead.$queryRaw
       .mockResolvedValueOnce([{ id: 1, threadId: 10, reactionCount: 0 }])
       .mockResolvedValueOnce([{ id: 11, commentId: 1, locked: false, commentCount: 1, depth: 1 }]);
-    await list(false, { hidden: false, targetCommentId: 77, repliesDepth: 1 });
+    await list(false, { targetCommentId: 77, repliesDepth: 1 });
 
-    const pageSql = String(
-      (queryRaw.mock.calls[0] as unknown as [TemplateStringsArray])[0].join(' ')
-    );
+    const pageSql = renderedSql(0);
     expect(pageSql).toContain('c."threadId" =');
+    expect(pageSql).toContain('c.hidden,');
+    expect(pageSql).not.toMatch(/c\.hidden\s*=/);
     const wheres = whereClauses().filter(Boolean) as Record<string, unknown>[];
     expect(wheres.length).toBeGreaterThanOrEqual(3);
     for (const where of wheres) expect(where.hidden).toBeUndefined();
-    expect(pageFragments(0)).not.toContain('hidden');
-  });
-
-  it('still narrows to hidden comments alone when that view is asked for', async () => {
-    await list(false, { hidden: true });
-
-    expect(pageFragments(0)).toContain('c.hidden = true');
-    expect(pinnedFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ hidden: true }) })
-    );
   });
 });
 
-/** The conditional clauses of the Nth raw query, which arrive as nested `Prisma.sql` values. */
-function pageFragments(call: number) {
-  const [, ...values] = queryRaw.mock.calls[call] as unknown as [
+/**
+ * The Nth raw query as Postgres would receive it: template text with each value spliced in, so a
+ * predicate reads the same whether it is written inline or arrives as a nested `Prisma.sql`.
+ */
+function renderedSql(call: number) {
+  const [strings, ...values] = queryRaw.mock.calls[call] as unknown as [
     TemplateStringsArray,
     ...unknown[]
   ];
-  return values
-    .map((v) =>
-      v && typeof v === 'object' && 'strings' in v
-        ? Array.from((v as { strings: string[] }).strings).join(' ')
-        : ''
-    )
-    .join(' ');
+  const render = (v: unknown): string =>
+    v && typeof v === 'object' && 'strings' in v
+      ? Array.from((v as { strings: string[] }).strings).join('')
+      : typeof v === 'boolean' || typeof v === 'number'
+      ? String(v)
+      : '';
+  return Array.from(strings).reduce(
+    (sql, str, i) => sql + str + (i < values.length ? render(values[i]) : ''),
+    ''
+  );
 }

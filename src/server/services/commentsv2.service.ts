@@ -62,7 +62,6 @@ async function getReplyThreads({
   limit,
   budget,
   sort,
-  hidden,
   excludedUserIds,
   isModerator = false,
 }: {
@@ -71,7 +70,6 @@ async function getReplyThreads({
   limit: number;
   budget: number;
   sort: ThreadSort;
-  hidden: boolean | null;
   excludedUserIds: number[];
   isModerator?: boolean;
 }): Promise<{ threads: ReplyThread[]; childlessCommentIds: number[] }> {
@@ -106,7 +104,6 @@ async function getReplyThreads({
     dbRead.commentV2.findMany({
       where: {
         threadId: { in: threadIds },
-        hidden: hidden ? true : undefined,
         tosViolation: isModerator ? undefined : false,
         userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       },
@@ -826,7 +823,6 @@ export async function togglePinComment({ id }: GetByIdInput) {
  * @param cursor - Comment ID to paginate from (exclusive)
  * @param sort - Sort mode (Oldest, Newest, MostReactions)
  * @param excludedUserIds - User IDs to filter out (blocked/hidden users)
- * @param hidden - Whether to show hidden comments
  * @returns Array of comments in requested sort order
  */
 async function fetchCommentsPaginated({
@@ -835,7 +831,6 @@ async function fetchCommentsPaginated({
   cursor,
   sort,
   excludedUserIds = [],
-  hidden = false,
   isModerator = false,
 }: {
   threadId: number;
@@ -843,7 +838,6 @@ async function fetchCommentsPaginated({
   cursor?: number;
   sort: ThreadSort;
   excludedUserIds: number[];
-  hidden: boolean | null;
   isModerator?: boolean;
 }): Promise<CommentV2Model[]> {
   // Build dynamic ORDER BY based on sort mode
@@ -1005,7 +999,6 @@ async function fetchCommentsPaginated({
           ? Prisma.sql`AND c."userId" != ALL(${excludedUserIds}::int[])`
           : Prisma.empty
       }
-      ${hidden ? Prisma.sql`AND c.hidden = true` : Prisma.empty}
       ${isModerator ? Prisma.empty : Prisma.sql`AND c."tosViolation" = false`}
       ${cursorCondition}
     ORDER BY ${Prisma.raw(orderBy)}
@@ -1026,7 +1019,6 @@ export async function getCommentsInfinite({
   entityType,
   limit = 20,
   sort = ThreadSort.Oldest,
-  hidden = false,
   cursor,
   targetCommentId,
   repliesDepth,
@@ -1049,7 +1041,6 @@ export async function getCommentsInfinite({
             threadId: mainThread.id,
             pinnedAt: { not: null },
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-            hidden: hidden ? true : undefined,
             tosViolation: isModerator ? undefined : false,
           },
           orderBy: { pinnedAt: 'desc' },
@@ -1064,7 +1055,6 @@ export async function getCommentsInfinite({
       cursor,
       sort,
       excludedUserIds,
-      hidden,
       isModerator,
     });
 
@@ -1081,7 +1071,6 @@ export async function getCommentsInfinite({
           where: {
             id: targetCommentId,
             threadId: mainThread.id,
-            hidden: hidden ? true : undefined,
             tosViolation: isModerator ? undefined : false,
             userId: excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
           },
@@ -1104,7 +1093,6 @@ export async function getCommentsInfinite({
           limit: repliesLimit,
           budget: constants.comments.autoExpandBudget,
           sort,
-          hidden,
           excludedUserIds,
           isModerator,
         })
