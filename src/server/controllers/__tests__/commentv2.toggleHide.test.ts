@@ -81,7 +81,8 @@ const imageOwners: Record<number, number> = {
 /**
  * Stands in for Postgres on the owner walk: returns every row of the chain from the seed up, each
  * with its depth, and leaves choosing the top to the query's own ORDER BY. Returning only the answer
- * would let a flipped sort or a different join edge pass.
+ * would let a flipped sort or a different join edge pass. `rooted` is answered only when the query
+ * selects it.
  */
 function runChainWalk(sql: string) {
   let id = Number(/SELECT (\d+) "id"/.exec(sql)?.[1]);
@@ -95,7 +96,10 @@ function runChainWalk(sql: string) {
   const order = /ORDER BY mt\."depth" (ASC|DESC)/.exec(sql)?.[1];
   if (!order) throw new Error(`owner walk has no depth ordering: ${sql}`);
   rows.sort((x, y) => (order === 'DESC' ? y.depth - x.depth : x.depth - y.depth));
-  return /LIMIT 1/.test(sql) ? rows.slice(0, 1) : rows;
+  const selectsRooted = /num_nonnulls\([\s\S]*\) > 0 "rooted"/.test(sql);
+  return (/LIMIT 1\b/.test(sql) ? rows.slice(0, 1) : rows).map((row) =>
+    selectsRooted ? { ...row, rooted: threads[row.id]?.imageId != null } : row
+  );
 }
 
 /** A tagged-template call's SQL with nested `Prisma.sql`/`Prisma.raw` fragments spliced in. */
