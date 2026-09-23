@@ -137,6 +137,7 @@ export const ECO = {
   Flux2Klein_4B_base: 57,
   Qwen: 10,
   Qwen2: 62,
+  Qwen21: 88,
   Qwen3: 80,
   Chroma: 11,
   HyDit1: 12,
@@ -203,6 +204,7 @@ export const ECO = {
   // Root ecosystems - Audio models
   AceAudio: 68,
   MiniMaxMusic3: 85,
+  YuE2: 87,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -236,6 +238,9 @@ export const ECO = {
 
   // Reve AI
   Reve: 77,
+
+  // Meta
+  MuseImage: 86,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -599,11 +604,18 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 91,
   },
   {
+    id: ECO.Qwen21,
+    key: 'Qwen21',
+    displayName: 'Qwen 2.1',
+    familyId: 10,
+    sortOrder: 92,
+  },
+  {
     id: ECO.Qwen3,
     key: 'Qwen3',
     displayName: 'Qwen 3',
     familyId: 10,
-    sortOrder: 92,
+    sortOrder: 93,
   },
 
   // ZImage Family (familyId: 11)
@@ -701,6 +713,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 190,
   },
 
+  // Meta Family (familyId: 25)
+  {
+    id: ECO.MuseImage,
+    key: 'MuseImage',
+    displayName: 'Muse Image',
+    familyId: 25,
+    sortOrder: 195,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -775,7 +796,8 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.MiniMaxH3,
     key: 'MiniMaxH3',
-    displayName: 'Hailuo H3 by MiniMax',
+    displayName: 'MiniMax H3',
+    familyId: 26,
     sortOrder: 211,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -807,6 +829,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.Seedance,
     key: 'Seedance',
     displayName: 'Seedance',
+    familyId: 12,
     sortOrder: 215,
   },
   { id: ECO.Lens, key: 'Lens', displayName: 'Lens', sortOrder: 207 },
@@ -841,8 +864,16 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.MiniMaxMusic3,
     key: 'MiniMaxMusic3',
     displayName: 'MiniMax Music 3',
+    familyId: 26,
     // 301-305 were taken by the 3D block before this landed.
     sortOrder: 306,
+  },
+
+  {
+    id: ECO.YuE2,
+    key: 'YuE2',
+    displayName: 'YuE2',
+    sortOrder: 307,
   },
 
   // 3D Model ecosystems
@@ -956,6 +987,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ace',
   // MiniMaxMusic3Input
   'MiniMaxMusic3',
+  'YuE2',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
   'Hunyuan3D',
   // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
@@ -1045,6 +1077,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
+  // Qwen 2.1 - hosted checkpoint and release-specific LoRAs
+  { ecosystemId: ECO.Qwen21, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // Qwen 3 - checkpoint only
   { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
@@ -1111,7 +1146,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
-  // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
+  // Krea 2 - raw/turbo comfy variants support LoRA and community checkpoints (medium/large FAL tiers do not); LoRA training via AI-Toolkit
   {
     ecosystemId: ECO.Krea2,
     supportType: 'generation',
@@ -1124,6 +1159,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
   { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Muse Image - checkpoint only (Meta Muse Image, locked, FAL engine, no LoRA support)
+  { ecosystemId: ECO.MuseImage, supportType: 'generation', modelTypes: checkpointOnly },
 
   // MageFlow - checkpoint only (Microsoft Mage Flow, six official builds, no community LoRAs yet)
   { ecosystemId: ECO.MageFlow, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1177,7 +1215,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Mage-Flow - LORA training (AI Toolkit only)
   { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
 
-  // Ideogram 4 - LORA training (AI Toolkit only)
+  // Ideogram 4 - checkpoint and LORA; LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Ideogram, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ideogram, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
@@ -1215,6 +1254,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // the graph exposes no resources node, so advertising LoRA support would offer
   // resources the form cannot send.
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1332,6 +1372,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 3072329 },
+    },
+  },
+  {
+    ecosystemId: ECO.Ideogram,
+    defaults: {
+      model: { id: 3246186 },
       modelLocked: true,
     },
   },
@@ -1373,6 +1419,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Qwen2,
     defaults: {
       model: { id: 2744101 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen21,
+    defaults: {
+      model: { id: 3352534 },
       modelLocked: true,
     },
   },
@@ -1679,6 +1732,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.YuE2,
+    defaults: {
+      model: { id: 3337846 },
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.AceAudio,
     defaults: {
       model: { id: 2864949 },
@@ -1696,6 +1756,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Reve,
     defaults: {
       model: { id: 3133202 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MuseImage,
+    defaults: {
+      model: { id: 3291238 },
       modelLocked: true,
     },
   },
@@ -2168,6 +2235,7 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  Qwen21: 107,
   Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
@@ -2193,6 +2261,8 @@ export const BM = {
   Pixal3D: 102,
   Trellis2: 103,
   MiniMaxMusic3: 104,
+  MuseImage: 105,
+  YuE2: 106,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2478,10 +2548,11 @@ export const licenses: LicenseRecord[] = [
     // commit, and section III.1 obliges us to hand over a stable copy.
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     notice:
-      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
-    // Section IV.2 demands this exact string in the product UI. "Powered by
-    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
-    attribution: 'MiniMax H3',
+      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+    // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
+    // header and ecosystem label both render it, so no `attribution` line is
+    // needed under the generate button. "Powered by MiniMax H3" is the separate,
+    // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
   },
   {
@@ -2494,6 +2565,26 @@ export const licenses: LicenseRecord[] = [
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/fbdf52fbaaca799592917417eb05f1899f1255ec/LICENSE',
     // Section 3.1 demands this exact string on the UI of a commercial product.
     attribution: 'MiniMax-Music3',
+  },
+  {
+    id: 43,
+    // Muse Image ships API-only through fal; Meta publishes no model-specific
+    // licence, so the governing text is Meta's general AI terms.
+    name: 'Meta AI Terms of Service',
+    url: 'https://www.meta.com/legal/ai-terms/',
+  },
+  {
+    id: 44,
+    name: 'CC BY-NC 4.0',
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+  },
+  {
+    id: 45,
+    name: 'Qwen Research License Agreement',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
+    nonCommercial: true,
   },
 ];
 
@@ -2623,6 +2714,16 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 24,
     name: 'Reve AI',
     description: "Reve AI's controllable 4K text-to-image generation and editing models",
+  },
+  {
+    id: 25,
+    name: 'Meta',
+    description: "Meta Superintelligence Labs' agentic image generation and editing models",
+  },
+  {
+    id: 26,
+    name: 'MiniMax',
+    description: "MiniMax's video, image and music generation models",
   },
 ];
 
@@ -3083,7 +3184,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen,
     licenseId: 13,
-    experimental: true,
   },
   {
     id: BM.Qwen2,
@@ -3092,6 +3192,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen2,
     licenseId: 13,
+  },
+  {
+    // The 7B 2.1 weights have their own addon compatibility. The shared Qwen
+    // family groups the picker without accepting older 20B Qwen LoRAs.
+    id: BM.Qwen21,
+    name: 'Qwen 2.1',
+    description: "Qwen's 7B model for text-to-image generation and multi-reference image editing",
+    type: 'image',
+    ecosystemId: ECO.Qwen21,
+    licenseId: 45,
   },
   {
     id: BM.Qwen3,
@@ -3322,6 +3432,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 38,
   },
 
+  // Muse Image
+  {
+    id: BM.MuseImage,
+    name: 'Muse Image',
+    description: "Meta's agentic image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MuseImage,
+    licenseId: 43,
+  },
+
   // Seedream
   {
     id: BM.Seedream,
@@ -3515,7 +3635,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 32,
   },
 
-  // Hailuo H3 by MiniMax
+  // MiniMax H3
   {
     id: BM.MiniMaxH3,
     name: 'MiniMax H3',
@@ -3565,6 +3685,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.MiniMaxMusic3,
     licenseId: 42,
+  },
+
+  {
+    id: BM.YuE2,
+    name: 'YuE2',
+    description: 'Multimodal Art Projection music generation from style and lyrics',
+    type: 'audio',
+    ecosystemId: ECO.YuE2,
+    licenseId: 44,
+    hidden: true,
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches

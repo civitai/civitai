@@ -76,7 +76,7 @@ export const actions: Actions = {
 
     const result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
-    // served from a month-long Redis cache, so the likeliest cause is that this page is stale. An
+    // served from a short-lived Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.
     if (result.count === 0)
       return fail(409, {

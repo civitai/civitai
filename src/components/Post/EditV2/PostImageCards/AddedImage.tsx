@@ -105,6 +105,8 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isScanFailed: boolean;
+  isScanNotFound: boolean;
   canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
@@ -203,6 +205,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
+  const isScanFailed = ingestion === ImageIngestionStatus.Error;
+  const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
   const canAdd = canAddFunc(type, meta);
@@ -297,6 +301,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
+        isScanFailed,
+        isScanNotFound,
         canAdd,
         otherImages,
         allowedResources,
@@ -497,11 +503,13 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (!canAdd || !modelVersionId || detected) return;
+    if (!canAdd || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
-      children: 'Are you sure you want to remove this resource from this image?',
+      children: detected
+        ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
+        : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -567,10 +575,10 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           </LegacyActionIcon>
         </Tooltip>
       )}
-      {!canAdd || detected ? (
+      {!canAdd ? (
         <></>
       ) : (
-        <Tooltip label="Delete">
+        <Tooltip label={detected ? 'Not what you used? Remove it' : 'Delete'}>
           <LegacyActionIcon
             color="red"
             size="sm"
@@ -607,6 +615,8 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
+    isScanFailed,
+    isScanNotFound,
     onEditMetaClick,
     isDeleting,
     isUpdating,
@@ -1144,6 +1154,35 @@ function EditDetail() {
             </Text>
           </Alert>
         )}
+        {isScanFailed && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t finish analyzing this image, so it won&apos;t be visible to others.
+              We&apos;ll keep retrying for a while — if this message is still here later, remove the
+              image and upload it again, or contact support.
+            </Text>
+          </Alert>
+        )}
+        {isScanNotFound && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t load this image to analyze it, so it won&apos;t be visible to others.
+              Remove it and upload it again.
+            </Text>
+          </Alert>
+        )}
         {isPendingManualAssignment && (
           <Alert
             color="blue"
@@ -1183,7 +1222,9 @@ function PostImage() {
           src={url}
           width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
-          original={type === 'video' ? true : undefined}
+          // 🔴 PostImageCards renders every image in the post with no virtualisation, and EdgeImage
+          // sets no `loading`, so without this a 16-image post (p90) fetches all of them eagerly.
+          loading="lazy"
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}
           html5Controls

@@ -52,6 +52,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 const EDIT_IMG_IDS = [
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.Seedream,
   ECO.NanoBanana,
@@ -68,6 +69,7 @@ const EDIT_IMG_IDS = [
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
 ];
@@ -94,6 +96,7 @@ const TXT2IMG_IDS = [
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.HiDream,
   ECO.HiDreamO1,
@@ -107,11 +110,13 @@ const TXT2IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.Ernie,
+  ECO.Ideogram,
   ECO.Lens,
   ECO.Krea2,
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.MuseImage,
   ECO.MageFlow,
 ];
 
@@ -360,6 +365,15 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [],
   },
 
+  'vid2vid:preprocess': {
+    label: 'Control Preprocessor',
+    description: 'Run a ControlNet preprocessor on a video (canny, pose, depth, etc.)',
+    category: 'video',
+    showBackButton: true,
+    ecosystemIds: [],
+    isNew: true,
+  },
+
   'vid2vid:edit': {
     label: 'Edit Video',
     description: 'Edit a video with AI',
@@ -393,7 +407,7 @@ export const workflowConfigs: WorkflowConfigs = {
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3],
+    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2],
     stepDisplay: 'separate',
     memberOnly: true,
   },

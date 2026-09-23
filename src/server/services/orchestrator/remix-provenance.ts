@@ -5,7 +5,9 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { imageMetaCache } from '~/server/redis/caches';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { promptDerivationHolds } from '~/utils/prompt-similarity';
 
 /**
  * Provenance for generated media: which on-site images were actually fed to the
@@ -29,14 +31,36 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
  * why it expires. Closing that properly would take the server owning the copy
  * from the orchestrator blob, which the generator→post path doesn't do.
  *
+ * 🔴 One weakening this file now carries deliberately, recorded rather than left
+ * to be rediscovered. `mintRemixProvenance` issues a `mint` token for an image
+ * the user only CLICKED, with no generation behind it. The `k` field keeps those
+ * off the upload path, so the free-submission gate still needs a real job — but
+ * a hand-rolled client can present a `mint` token for image X alongside a
+ * generation that never touched X, and the server cannot tell. Requiring the
+ * token's image to appear in the submitted graph is exactly the check the
+ * destroyed source URL made impossible, which is why this file exists. The cost
+ * of that forgery is one real generation, which is what remixing X honestly
+ * costs anyway.
+ *
  * Absence always means unknown. An off-site remix — download, edit elsewhere,
  * upload — can never carry this, and must never be treated as not a remix.
  */
 
 const VERSION = 1;
 
-/** A job with more inputs than this is a collage, not a derivation worth tracking. */
-const MAX_SOURCE_IMAGES = 8;
+/**
+ * A job with more inputs than this is a collage, not a derivation worth tracking.
+ *
+ * Exported because the submit path now unions two independently-capped sources —
+ * URL-derived ids and verified tokens — and a union of two 8s is a 16 unless the
+ * caller applies the same bound.
+ *
+ * 🔴 It now does double duty: it is also the DoS bound the router applies to the
+ * caller-controlled `sourceProvenance` array, where each element past it costs an
+ * AES-GCM attempt. Raising this for a collage feature raises that ceiling too —
+ * give the router its own constant before you do.
+ */
+export const MAX_SOURCE_IMAGES = 8;
 
 /**
  * How long a token stays usable. Long enough for the ordinary path — generate,
@@ -55,12 +79,48 @@ const MAX_CLOCK_SKEW_SECONDS = 300;
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 
+/**
+ * What a token is entitled to be spent on.
+ *
+ * `job` is the original meaning: the server resolved these ids from a real
+ * submission's validated graph. Only a `job` token may be presented on the
+ * UPLOAD path, where `post.service.ts` reads it out of client-supplied
+ * `meta.extra.provenance` and `sanitizeProvenance` writes the result as the
+ * server's own answer — which `remix-gallery.service.ts` then reads to open the
+ * FREE submission path.
+ *
+ * `mint` is issued by `orchestrator.mintRemixProvenance` for an image the user
+ * merely clicked Remix on. It costs no generation, so accepting one on the
+ * upload path would let anyone claim derivation from any image they can open,
+ * for nothing. It is spendable ONLY into a submit, where the server re-signs
+ * whatever survives as a `job` token.
+ *
+ * `prompt` is issued by `orchestrator.mintPromptProvenance` for an image whose
+ * PROMPT the user reused. There is no source media, so nothing downstream can
+ * recover the link from the graph. It is the only conditional kind: at submit it
+ * is spent only if the prompt the server validated still derives from the
+ * source's own prompt.
+ *
+ * 🔴 That drift check bounds an already-minted click; it is not evidence of
+ * derivation. Measured 2026-09-18 over 30 days, 41% of the 1,683 remix-gallery
+ * submissions whose placer never clicked Remix on the host clear the threshold
+ * anyway. A `prompt` token without the mint behind it would open the free path
+ * to two in five strangers.
+ */
+export type ProvenanceKind = 'job' | 'mint' | 'prompt';
+
 type ProvenancePayload = {
   v: number;
   /** Issued to this user; a token replayed by anyone else fails verification. */
   u: number;
   s: number[];
   t: number;
+  /**
+   * Absent means `job`. Deliberately absent rather than `k:'job'` so every token
+   * minted before this field existed — they are baked into output files and live
+   * for 30 days — keeps verifying on the path it was issued for.
+   */
+  k?: ProvenanceKind;
 };
 
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -144,9 +204,12 @@ export async function resolveSourceImageIds(urls?: string[]): Promise<number[]> 
 export function signProvenance({
   userId,
   sourceImageIds,
+  kind = 'job',
 }: {
   userId: number;
   sourceImageIds: number[];
+  /** See `ProvenanceKind`. Defaults to `job` — only the mint may ask for `mint`. */
+  kind?: ProvenanceKind;
 }): string | undefined {
   if (!userId || !sourceImageIds.length) return undefined;
 
@@ -155,6 +218,11 @@ export function signProvenance({
     u: userId,
     s: sourceImageIds.slice(0, MAX_SOURCE_IMAGES),
     t: Math.floor(Date.now() / 1000),
+    // Omitted for `job` so the encoding matches what pre-existing tokens carry.
+    // Every other kind is written out: `verifyProvenance` reads an absent `k` as
+    // `job`, so a kind that failed to serialise would be a silent promotion to the
+    // strongest audience rather than a token that fails its audience check.
+    ...(kind !== 'job' ? { k: kind } : {}),
   };
 
   const key = provenanceKey();
@@ -180,7 +248,17 @@ export function signProvenance({
  * doesn't verify against this user. Never throws — an unreadable token is an
  * absent signal, not a failed upload.
  */
-export function verifyProvenance(token: unknown, userId: number): number[] | null {
+export function verifyProvenance(
+  token: unknown,
+  userId: number,
+  /**
+   * Which audience this call speaks for. Defaults to `job`, so a caller that has
+   * not thought about it gets the strict answer — the upload path is the one
+   * that must never take a `mint`, and it is also the one most likely to be
+   * reached by a new caller who has not read this file.
+   */
+  expect: ProvenanceKind = 'job'
+): number[] | null {
   if (typeof token !== 'string') return null;
 
   const [prefix, iv, ciphertext, tag] = token.split('.');
@@ -208,6 +286,11 @@ export function verifyProvenance(token: unknown, userId: number): number[] | nul
 
     const payload = JSON.parse(decrypted) as ProvenancePayload;
     if (payload.v !== VERSION || payload.u !== userId) return null;
+    // The audience check. A `mint` token presented on the upload path, or a
+    // `job` token fed back in as a submit input, is refused here — the first is
+    // the free-submission bypass this field exists for, the second is what would
+    // let a token renew its own 30-day expiry by riding one submit to the next.
+    if ((payload.k ?? 'job') !== expect) return null;
     if (!Array.isArray(payload.s)) return null;
 
     // A token is a bearer credential for its user: it says a job of theirs used
@@ -305,6 +388,94 @@ export function storedSourceImageIds(meta: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
   const ids = value.filter((id): id is number => Number.isInteger(id) && (id as number) > 0);
   return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
+}
+
+/**
+ * The source ids a submission is entitled to, from BOTH routes, bounded once.
+ *
+ * Two routes because neither covers the other:
+ *  - `urlSourceImageIds` resolves `image.civitai.com` inputs, which is every
+ *    source a user pasted or an API caller submitted directly — those carry no
+ *    token and are still real derivations.
+ *  - `tokens` cover the remix entry points, whose on-site URL the generation form
+ *    destroys by re-uploading the image as an orchestrator blob before submit.
+ *    That re-encode is why the URL route alone reports nothing for a remix.
+ *
+ * Bounded HERE rather than by the callers: each route applies MAX_SOURCE_IMAGES
+ * to its own output, so a union of two full sets is twice the cap unless the
+ * union re-applies it.
+ *
+ * A token that does not verify contributes nothing and is not an error — an
+ * expired or replayed one is the same "no signal" as an off-site remix.
+ */
+export async function unionSourceImageIds({
+  urlSourceImageIds,
+  tokens,
+  userId,
+  prompt,
+}: {
+  urlSourceImageIds: number[];
+  tokens?: string[];
+  userId: number;
+  /**
+   * The prompt the server validated for this submission, off the graph. Absent
+   * for workflows that have none, which is not a drift verdict: `prompt` tokens
+   * simply cannot be spent there, because there is nothing to compare.
+   */
+  prompt?: string;
+}): Promise<number[]> {
+  // `mint`, not the default: this is the submit path, and the only tokens a
+  // client may present here are the ones the mint issued for an image they
+  // clicked Remix on. Whatever survives is re-signed as `job` by the caller.
+  const fromTokens = (tokens ?? []).flatMap(
+    (token) => verifyProvenance(token, userId, 'mint') ?? []
+  );
+
+  const fromPrompt = await promptDerivedIds({ tokens, userId, prompt });
+
+  return [...new Set([...urlSourceImageIds, ...fromTokens, ...fromPrompt])].slice(
+    0,
+    MAX_SOURCE_IMAGES
+  );
+}
+
+/**
+ * The ids a `prompt` token is allowed to spend, which is the only place drift is
+ * decided.
+ *
+ * The source prompt is the stored one, never the request's: the CURRENT prompt is
+ * taken off the validated graph by the caller, and comparing two values the
+ * client sent would gate on something its subject controls on both sides.
+ *
+ * 🔴 Through `imageMetaCache`, not a raw read. It is the reader that applies
+ * `hideMeta`, and a raw read would compare against a prompt its owner hid — at
+ * which point the free/paid answer confirms or denies a guess at it.
+ */
+async function promptDerivedIds({
+  tokens,
+  userId,
+  prompt,
+}: {
+  tokens?: string[];
+  userId: number;
+  prompt?: string;
+}): Promise<number[]> {
+  if (!prompt?.trim() || !tokens?.length) return [];
+
+  const claimed = [
+    ...new Set(tokens.flatMap((token) => verifyProvenance(token, userId, 'prompt') ?? [])),
+  ].slice(0, MAX_SOURCE_IMAGES);
+  if (!claimed.length) return [];
+
+  const metas = await imageMetaCache.fetch(claimed);
+
+  // Iterates `claimed`, not the cache's keys: what a token spends is bounded by
+  // what the token named, whatever else a lookup returns.
+  return claimed.filter((id) => {
+    const sourcePrompt = metas[id]?.meta?.prompt;
+    if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) return false;
+    return promptDerivationHolds(sourcePrompt, prompt).holds;
+  });
 }
 
 /**

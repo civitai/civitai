@@ -24,22 +24,17 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import {
-  filterWorkflowsByFeatureFlags,
-  filterWorkflowsByGatedEcosystems,
-  getAllWorkflowsGrouped,
   workflowOptionById,
   workflowConfigByKey,
   getWorkflowLabelForEcosystem,
 } from '~/shared/data-graph/generation/config/workflows';
-import {
-  mergeGateStates,
-  rulesToStates,
-  type GateItemState,
-} from '~/shared/data-graph/generation/gates';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { GateItemState } from '~/shared/data-graph/generation/gates';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
+import {
+  useAvailableWorkflowGroups,
+  useWorkflowGateStates,
+} from '~/components/generation_v2/inputs/workflow-visibility';
 
 // =============================================================================
 // Types
@@ -148,8 +143,8 @@ function WorkflowMenuItem({
   gateState,
   gateMessage,
 }: WorkflowMenuItemProps) {
-  // Operator/rule-disabled takes priority over the member-only gate: greyed,
-  // non-selectable, "Disabled" badge + tooltip (mirrors BaseModelInput).
+  // Rule-disabled stays SELECTABLE, badged and dimmed: picking it is how the
+  // form gets to explain why generation is blocked (mirrors BaseModelInput).
   if (gateState === 'disabled') {
     return (
       <Tooltip
@@ -158,7 +153,10 @@ function WorkflowMenuItem({
         withArrow
         openDelay={300}
       >
-        <div className="w-full cursor-not-allowed rounded-md px-3 py-2.5 opacity-50">
+        <UnstyledButton
+          onClick={onSelect}
+          className="w-full rounded-md px-3 py-2.5 opacity-60 hover:bg-gray-1 dark:hover:bg-dark-5"
+        >
           <Group gap="sm" wrap="nowrap" justify="space-between">
             <div className="min-w-0 flex-1">
               <Text size="sm">{workflow.label}</Text>
@@ -172,7 +170,7 @@ function WorkflowMenuItem({
               Disabled
             </Badge>
           </Group>
-        </div>
+        </UnstyledButton>
       </Tooltip>
     );
   }
@@ -316,14 +314,7 @@ function WorkflowListContent({
   // popover and the dialogStore modal that share this renderer get them. Mirrors
   // the workflow node's resolver so client + server agree: hidden keys drop out
   // of the list, the rest carry a per-state badge.
-  const { gateRules } = useGenerationConfig();
-  const { hiddenSet, stateMap } = useMemo(() => {
-    const { hidden, states } = mergeGateStates(undefined, rulesToStates(gateRules).workflows);
-    return {
-      hiddenSet: new Set(hidden),
-      stateMap: new Map(states.map((s) => [s.key, s])),
-    };
-  }, [gateRules]);
+  const { hiddenSet, stateMap } = useWorkflowGateStates();
 
   // Flatten all workflows with compatibility + gate info, dropping hidden keys.
   const allWorkflows = useMemo(() => {
@@ -506,22 +497,7 @@ export function WorkflowInput({
   const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
   const [model3dOpened, { close: closeModel3d, open: openModel3d }] = useDisclosure(false);
 
-  // Get all workflows grouped by category, then drop any whose backing ecosystems
-  // are all HIDDEN by a gate rule for this user (so e.g. the Audio segment
-  // disappears when the only audio ecosystem is hidden and the user is gated).
-  const { gateRules } = useGenerationConfig();
-  const features = useFeatureFlags();
-  const options = useMemo(() => {
-    const hiddenEcosystems = new Set<string>();
-    for (const [key, r] of rulesToStates(gateRules).ecosystems)
-      if (r.state === 'hidden') hiddenEcosystems.add(key);
-    const all = getAllWorkflowsGrouped();
-    const ecoFiltered = filterWorkflowsByGatedEcosystems(all, hiddenEcosystems);
-    return filterWorkflowsByFeatureFlags(
-      ecoFiltered,
-      features as unknown as Record<string, boolean | undefined>
-    );
-  }, [gateRules, features]);
+  const options = useAvailableWorkflowGroups();
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
   // Separate image, video, audio, and 3D model categories

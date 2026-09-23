@@ -48,6 +48,7 @@
     <ImageDetailPanel image={result.image} civitaiUrl={data.civitaiUrl} canAct={data.canAct} />
     <TagsPanel tags={result.tags} shadowTags={result.shadowTags} />
     <ActivityPanel
+      imageId={result.image.id}
       reports={result.reports}
       modActivity={result.modActivity}
       reactions={result.reactions}

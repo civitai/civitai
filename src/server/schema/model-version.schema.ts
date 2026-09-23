@@ -538,9 +538,9 @@ export const modelVersionUpsertSchema2 = z.object({
   // Creator Controls: per-version metric privacy (merged into ModelVersion.meta).
   meta: z
     .object({
-      hideBuzz: z.boolean().optional(),
-      hideDownloads: z.boolean().optional(),
-      hideGenerations: z.boolean().optional(),
+      hideBuzz: z.boolean().nullish(),
+      hideDownloads: z.boolean().nullish(),
+      hideGenerations: z.boolean().nullish(),
     })
     .optional(),
 });

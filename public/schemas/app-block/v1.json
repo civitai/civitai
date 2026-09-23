@@ -93,13 +93,14 @@
           "apps:storage:shared:write",
           "collections:read:self",
           "collections:write:self",
-          "collections:read:private"
+          "collections:read:private",
+          "posts:write:self"
         ]
       }
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `posts:write:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -177,6 +178,12 @@
           "minLength": 1
         }
       }
+    },
+    "bootSkeleton": {
+      "type": "boolean",
+      "default": false,
+      "description": "The app's shipped index.html paints its own loading state inside #root. The full-page run host then stands down its own branded overlay and shows the iframe from mount, so the app's boot state is visible at first paint and its own render replaces it in place with no cross-fade and no reveal transform. Omit (or false) unless the app really ships one: with the overlay stood down, an empty #root is a blank iframe for the whole load. To paint in the HOST's theme rather than guessing from prefers-color-scheme, the app must also be enabled for the BLOCK_INIT URL fragment and read it before first paint; without that the theme is a guess that can disagree with the host and be corrected on BLOCK_INIT.",
+      "$comment": "Honoured by the full-page run host. Other block surfaces ignore it."
     },
     "page": {
       "type": "object",

@@ -125,7 +125,7 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 ) {
   const ref = useRef<T>(null);
   const features = useFeatureFlags();
-  const enabled = features.feedImpressions && !!targets?.length;
+  const enabled = !!features.feedImpressions && !!targets?.length;
 
   // Identity of the entities, not of the array — callers rebuild the array every
   // render, and re-observing on that would be constant churn. This is the effect's

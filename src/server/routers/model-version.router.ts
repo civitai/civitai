@@ -2,6 +2,7 @@ import { finiteOrNull, monthlyPricingAllowance, pricingEligibility } from '@civi
 import {
   countPricingSlotsThisMonth,
   getCreatorScore,
+  listPricingSlots,
 } from '~/server/services/pricing-slot.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 import {
@@ -136,6 +137,7 @@ export const modelVersionRouter = router({
       eligibility: pricingEligibility(score),
     };
   }),
+  getPricingSlots: protectedProcedure.query(({ ctx }) => listPricingSlots(ctx.user.id)),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionSchema)

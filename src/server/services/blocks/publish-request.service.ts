@@ -937,60 +937,6 @@ async function storeBundle(bundleBuffer: Buffer, sha256: string): Promise<string
 }
 
 /**
- * Fire-and-forget Discord notify on a new pending publish request.
- * Posts to DISCORD_WEBHOOK_MOD_ALERTS if set. Never throws — Discord
- * outages must not block submissions. Caller doesn't await.
- */
-async function notifyModsOfNewRequest(opts: {
-  slug: string;
-  version: string;
-  publishRequestId: string;
-  submittedByUsername: string | null;
-  submittedByUserId: number;
-  manifestDiffKind: 'first-version' | 'update';
-  fileChangeCounts: { added: number; changed: number; removed: number };
-}): Promise<void> {
-  try {
-    const { env } = await import('~/env/server');
-    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
-    const reviewUrl = baseUrl ? `${baseUrl}/apps/review` : '/apps/review';
-    const submitter = opts.submittedByUsername ?? `user #${opts.submittedByUserId}`;
-    const changeSummary =
-      opts.manifestDiffKind === 'first-version'
-        ? 'first version'
-        : `+${opts.fileChangeCounts.added} ~${opts.fileChangeCounts.changed} −${opts.fileChangeCounts.removed} files`;
-
-    const payload = {
-      embeds: [
-        {
-          title: `New publish request: ${opts.slug} v${opts.version}`,
-          url: reviewUrl,
-          color: 0x1971c2,
-          fields: [
-            { name: 'Submitted by', value: submitter, inline: true },
-            { name: 'Changes', value: changeSummary, inline: true },
-            { name: 'Request ID', value: `\`${opts.publishRequestId}\`` },
-          ],
-          footer: { text: 'Apps publish-request queue' },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
-    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5_000),
-    }).catch(() => {
-      /* fire and forget */
-    });
-  } catch {
-    /* never let Discord break submission */
-  }
-}
-
-/**
  * Look up the previous APPROVED publish request for this slug, if any.
  * Returns the stored file map + manifest from that row so we can diff
  * against it without re-fetching the bundle from MinIO.
@@ -1389,26 +1335,6 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       );
     }
   }
-
-  // Fire-and-forget Discord notify to the mod queue. Don't await — a
-  // Discord outage must not block submissions.
-  const submitter = await dbRead.user.findUnique({
-    where: { id: submittedByUserId },
-    select: { username: true },
-  });
-  void notifyModsOfNewRequest({
-    slug,
-    version,
-    publishRequestId,
-    submittedByUsername: submitter?.username ?? null,
-    submittedByUserId,
-    manifestDiffKind: manifestDiffSummary.kind === 'first-version' ? 'first-version' : 'update',
-    fileChangeCounts: {
-      added: fileSummary.added.length,
-      changed: fileSummary.changed.length,
-      removed: fileSummary.removed.length,
-    },
-  });
 
   return {
     publishRequestId,
@@ -3336,6 +3262,37 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // Catalog bust: an onsite approve mints/flips the AppListing to `approved`, i.e. it
+  // puts the app INTO the store catalog.
+  //
+  // 🔴 LAZY IMPORT, DELIBERATELY. This module keeps `~/server/db/client` and `~/env/server`
+  // out of its STATIC graph on purpose (see the import header, and its own
+  // `await import('~/server/db/client')` at the top of this function) so the pure-helper
+  // suites can load it without Prisma. `app-listing.service` imports both statically, so a
+  // top-level import here would quietly undo that.
+  //
+  // 🔴 THE `try` WRAPS THE IMPORT, NOT JUST THE CALL. `.catch()` on the call covers a
+  // rejected bust; it does nothing for a THROW out of `await import(...)` — a module-load
+  // failure anywhere in `app-listing.service`'s static graph (it pulls in Prisma, env and
+  // redis) would propagate out of `approveRequest` here, AFTER the DB writes, the build
+  // trigger and the notification have all committed. That is precisely the outcome the
+  // comment above forbids, arrived at from the import instead of from the call. Same
+  // posture as the notification step at the top of this block.
+  try {
+    const { bustAppListingCatalogCache } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    await bustAppListingCatalogCache();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] catalog cache bust failed (id=${params.publishRequestId}); ` +
+        `approve stands, the store grid self-corrects within CacheTTL.sm: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+
   return {
     publishRequestId: request.id,
     appBlockId,
@@ -4465,6 +4422,11 @@ export type MintReviewBlockTokenResult = {
   /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
    *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
   sandbox: string;
+  /** The pending manifest's `bootSkeleton` (render fidelity, same reason as
+   *  `sandbox`): the app paints its own loading state, so the review host must
+   *  stand its veil down exactly as the run page will. Without this a moderator
+   *  approved against a presentation the shipped app does not have. */
+  bootSkeleton: boolean;
   /**
    * MOD REVIEW SANDBOX "run for real" (#2831) — true iff this token was minted
    * with `runForReal:true` (a mod's consent-gated opt-in to run the unapproved app
@@ -4555,6 +4517,13 @@ export async function mintReviewBlockToken(opts: {
     ? manifest.scopes.filter((s): s is string => typeof s === 'string')
     : [];
   const manifestName = typeof manifest.name === 'string' ? manifest.name : row.slug;
+  // 🔴 Carried so the MODERATOR reviews the presentation a user will get. The
+  // review preview mounts the real PageBlockHost; without this it rendered the
+  // host veil while the approved app will not, i.e. the one person deciding
+  // whether to ship it saw a different app. `manifest` is already loaded and
+  // already projected for name/sandbox/scopes — the key was simply omitted.
+  // Same strict `=== true` as every other read: publisher JSON.
+  const manifestBootSkeleton = (manifest as { bootSkeleton?: unknown }).bootSkeleton === true;
   const manifestSandbox =
     manifest.iframe && typeof manifest.iframe.sandbox === 'string'
       ? manifest.iframe.sandbox
@@ -4664,6 +4633,7 @@ export async function mintReviewBlockToken(opts: {
     blockInstanceId: `page_${row.id}`,
     appName: manifestName,
     sandbox: manifestSandbox,
+    bootSkeleton: manifestBootSkeleton,
     runForReal,
     buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
   };

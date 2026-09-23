@@ -108,7 +108,7 @@ export const CosmeticPackPreviewModal = ({
             </Group>
             <Center my="auto" h={250}>
               {pack?.meta.coverUrl ? (
-                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
+                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} optimized />
               ) : (
                 <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} fallbackIcon />
               )}
@@ -129,6 +129,11 @@ export const CosmeticPackPreviewModal = ({
                     it is discounted.
                   </Text>
                 )}
+                {/* Says nothing about those members not being delivered, which
+                    since #5034 they are not. Justin's call, 2026-09-22, asked
+                    and answered: the pack page already lists them and the buyer
+                    made them. Reviews keep proposing the missing sentence — it
+                    was declined, not overlooked. */}
                 {pack.selfAuthored > 0 && (
                   <Text size="xs" c="dimmed">
                     You made {numberWithCommas(pack.selfAuthored)} Buzz worth of what&apos;s in

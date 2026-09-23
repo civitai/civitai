@@ -29,10 +29,15 @@
  * the assertions still pass. Vitest browser mode runs each test file in its own
  * iframe, so the import does not leak into the sibling suites.
  *
- * 🔴 THIS PROJECT IS NOT A GATE. The Vitest browser-mode `component` project is
- * report-only in CI. The gating half of this change is the node-tier
- * `__tests__/chromeGeometry.test.ts` (which is unit coverage of a new module,
- * not regression coverage — see its own header).
+ * 🔴 NOTHING HERE IS A GATE — AND NEITHER IS THE OTHER TIER. The Vitest
+ * browser-mode `component` project runs in CI as the REPORT-ONLY
+ * `preview / component-tests` status. Its node-tier counterpart for this change
+ * is `__tests__/chromeGeometry.test.ts` (which is unit coverage of a new module,
+ * not regression coverage — see its own header); that tier is report-only on a
+ * pull request too (`continue-on-error`) and renders a real verdict on a push to
+ * `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so a red run here is a signal a reviewer
+ * must read, not a door that stays shut.
  */
 import '@mantine/core/styles.css';
 import { describe, expect, test, vi } from 'vitest';

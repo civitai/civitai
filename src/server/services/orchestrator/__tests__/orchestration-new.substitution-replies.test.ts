@@ -244,7 +244,7 @@ const UNRECOGNIZED_ID = 987654321;
 const QWEN_DEFAULT = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
 
 /** A server-shaped context carrying a fresh per-request collector. */
-function ctx() {
+function ctx(overrides: Record<string, unknown> = {}) {
   return {
     limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
     user: { isMember: false, tier: 'free' },
@@ -253,6 +253,7 @@ function ctx() {
     selfHostedMode: 'enabled',
     gateRules: [],
     modelSubstitutions: createModelSubstitutionCollector(classifyModelSubstitutionReason, 'api'),
+    ...overrides,
   } as never;
 }
 
@@ -281,6 +282,55 @@ describe('the graph fixture is still what these tests assume', () => {
   });
 });
 
+// A `disabled` version is deliberately still selectable and still parses, so
+// this refusal is the ONLY thing between it and a billed submit. `QWEN_DEFAULT`
+// rather than an arbitrary id: an unrecognised one is substituted away before
+// the refusal is reached, and the test would pass for the wrong reason.
+describe('gate rules — a disabled version is refused, not costed', () => {
+  const disabledRule = {
+    id: 'gate-1',
+    name: 'maintenance',
+    availableTo: 'nobody',
+    presentation: 'disabled',
+    message: 'Back Monday.',
+    ecosystems: [],
+    workflows: [],
+    modelVersionIds: [QWEN_DEFAULT],
+  };
+
+  it('🔴 refuses the zero-spend estimate', async () => {
+    await expect(
+      whatIfFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  it('🔴 refuses the submit', async () => {
+    await expect(
+      generateFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  // Negative control: the same input with no rules must get past the refusal,
+  // or the two assertions above would pass on any unrelated failure.
+  it('lets the same request through when no rule targets it', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { modelSubstitutions?: unknown };
+
+    expect(result.modelSubstitutions).toBeUndefined();
+  });
+});
+
 describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => {
   it('🔴 reports the swap on the zero-spend estimate', async () => {
     const result = (await whatIfFromGraph({
@@ -302,6 +352,44 @@ describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => 
     } as never)) as Record<string, unknown>;
 
     expect('modelSubstitutions' in result).toBe(false);
+  });
+});
+
+describe('whatIfFromGraph — reply carries the orchestrator step warnings', () => {
+  const retiring = {
+    code: 'modelDeprecated',
+    message: "Model 'max' is deprecated and will be retired on 2026-10-09.",
+  };
+
+  // The reply is the ONLY carrier: read off the steps the ORCHESTRATOR returned, not the step
+  // templates this service built — those never carry warnings, and reading them compiles.
+  it('🔴 reports one warning per distinct code + message', async () => {
+    submitWorkflow.mockImplementationOnce(async () => ({
+      id: '1-20260101000000000',
+      status: 'succeeded',
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      steps: [{ warnings: [retiring] }, { warnings: [{ ...retiring }] }],
+      cost: { total: 60 },
+      transactions: { list: [] },
+    }));
+
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { warnings?: unknown };
+
+    expect(result.warnings).toEqual([retiring]);
+  });
+
+  it('omits the key when the orchestrator sends no warnings', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as Record<string, unknown>;
+
+    expect('warnings' in result).toBe(false);
   });
 });
 

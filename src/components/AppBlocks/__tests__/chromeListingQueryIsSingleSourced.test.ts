@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * The app-block host chrome reads `appListings.getAppDetail` from exactly ONE place.
- * Node `unit` project — the GATING tier (the Vitest browser-mode `component` project
- * is report-only in CI, so `ChromeReviewEntry.browser.test.tsx`, which proves the
- * same property behaviourally against real React Query, cannot block a merge).
+ * Node `unit` project — the tier that EXECUTES this assertion (report-only on a pull
+ * request, an honest verdict on a push to `main`). `ChromeReviewEntry.browser.test.tsx`
+ * proves the same property behaviourally against real React Query, in the REPORT-ONLY
+ * browser tier. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in
+ * this repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHY IT EXISTS. F2 gave the chrome one consumer of that listing row (the app-name
  * crumb's store popover). F4 added a second (the ⋮ menu's review item, which needs

@@ -1,11 +1,17 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import type {
   AddUserHubSourceInput,
+  GetHubSourceCandidatesInput,
   HubSourceExclusionInput,
-  GetHubSourceSuggestionsInput,
+  HubSourceTargetInput,
+  GetHubSourceScopeInput,
+  HubSourceScope,
+  HubTemplate,
   ResolveHubSourceInput,
   SetUserHubOrderInput,
   UpsertUserHubInput,
@@ -14,9 +20,12 @@ import type {
 } from '~/server/schema/user-hub.schema';
 import {
   HUB_COLLECTION_SOURCES_ENABLED,
+  HUB_TAG_SOURCE_FILTER,
   hubFeedFiltersSchema,
   hubLimits,
   hubSourceKey,
+  hubSourceScopeSchema,
+  hubTagGroupKey,
 } from '~/server/schema/user-hub.schema';
 import {
   throwAuthorizationError,
@@ -25,7 +34,6 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   Availability,
-  CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
@@ -37,7 +45,9 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
+import { getReplacedTagIds } from '~/server/services/system-cache';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
@@ -58,7 +68,16 @@ const hubListSelect = {
   metadata: true,
 
   sources: {
-    select: { id: true, type: true, targetId: true, alias: true, enabled: true, index: true },
+    select: {
+      id: true,
+      type: true,
+      targetId: true,
+      alias: true,
+      enabled: true,
+      exclude: true,
+      index: true,
+      groupKey: true,
+    },
     orderBy: { index: 'asc' },
   },
 } as const;
@@ -76,7 +95,7 @@ type HubRow = {
   id: number;
   metadata: Prisma.JsonValue;
   userId: number;
-  sources: { enabled: boolean }[];
+  sources: { enabled: boolean; exclude: boolean }[];
 };
 
 export type HubViewer = { userId?: number; isModerator?: boolean };
@@ -164,7 +183,20 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
     // A source the owner switched off contributes nothing to the feed and is not
     // shown, so shipping it to a viewer publishes part of their curation for no
     // reason. The owner still gets the whole list, which is the one they edit.
-    sources: isOwner ? hub.sources : hub.sources.filter((source) => source.enabled),
+    //
+    // 🔴 Exclusions are withheld from everyone but the owner, and that is a stronger
+    // rule than the one above rather than the same one. A positive source says "I
+    // like this creator"; a negative one says "keep this creator away from me", about
+    // a named person, on a hub anyone with the link can open. Publishing it would
+    // make every public hub a list of who its owner refuses.
+    sources: isOwner
+      ? hub.sources
+      : hub.sources.filter((source) => source.enabled && !source.exclude),
+    // The count without the identities. A viewer who is shown nothing cannot tell a
+    // hub that filters from one that does not — and "Duplicate this hub" copies only
+    // what the payload carries, so a copy silently serves content the original
+    // refuses. A bare number says the feed is narrowed without naming anyone.
+    excludedCount: hub.sources.filter((source) => source.enabled && source.exclude).length,
     description: readDescription(metadata),
     // Re-validated on the way out: what is on the row was written by an older
     // shape of this schema, and the feed refuses some combinations outright.
@@ -172,18 +204,102 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
   };
 }
 
-export type UserHubDetail = Awaited<ReturnType<typeof getUserHubs>>[number];
+export type UserHubDetail = Awaited<ReturnType<typeof getUserHubById>>;
+export type UserHubSummary = Awaited<ReturnType<typeof getUserHubs>>[number];
+
+// Everything but the sources. A nav row needs how MANY of each kind a hub holds, not
+// which ones — and the full lists are the whole payload: 20 hubs of 50 sources is a
+// thousand rows with their aliases on every render of every hub page.
+const hubSummarySelect = {
+  id: true,
+  userId: true,
+  name: true,
+  index: true,
+  sort: true,
+  period: true,
+  mediaTypes: true,
+  availability: true,
+  forcedBrowsingLevel: true,
+  metadata: true,
+} as const;
+
+type HubSourceCountRow = {
+  type: UserHubSourceType;
+  enabled: boolean;
+  exclude: boolean;
+  count: number;
+};
+
+async function hubSourceCounts(hubIds: number[]) {
+  const counts = new Map<number, HubSourceCountRow[]>();
+  if (!hubIds.length) return counts;
+
+  const rows = await dbRead.userHubSource.groupBy({
+    by: ['hubId', 'type', 'enabled', 'exclude'],
+    where: { hubId: { in: hubIds } },
+    _count: { _all: true },
+  });
+
+  for (const row of rows) {
+    const held = counts.get(row.hubId) ?? [];
+    held.push({
+      type: row.type,
+      enabled: row.enabled,
+      exclude: row.exclude,
+      count: row._count._all,
+    });
+    counts.set(row.hubId, held);
+  }
+  return counts;
+}
+
+/**
+ * The list row. Carries the same visibility rule as `toHubDetail` — a non-owner is
+ * told about the sources that fill the feed and nothing else — expressed over counts
+ * rather than rows, since that is all this shape ships.
+ */
+function toHubSummary<T extends { id: number; userId: number; metadata: Prisma.JsonValue }>(
+  { metadata, ...hub }: T,
+  counts: HubSourceCountRow[] = [],
+  viewerId?: number
+) {
+  const stored = readMetadata(metadata);
+  const isOwner = !!viewerId && hub.userId === viewerId;
+  const sum = (rows: HubSourceCountRow[]) => rows.reduce((total, row) => total + row.count, 0);
+
+  const filling = counts.filter((row) => row.enabled && !row.exclude);
+  const sourceCounts = filling.reduce<Partial<Record<UserHubSourceType, number>>>((acc, row) => {
+    acc[row.type] = (acc[row.type] ?? 0) + row.count;
+    return acc;
+  }, {});
+
+  return {
+    ...hub,
+    key: encodeHubId(hub.id),
+    isOwner,
+    sourceCounts,
+    // What the source cap is measured against, so it counts a switched-off source the
+    // way `addUserHubSource` does. A non-owner is shown only what fills the feed,
+    // matching the list they would have been given before.
+    sourceCount: isOwner ? sum(counts.filter((row) => !row.exclude)) : sum(filling),
+    excludedCount: sum(counts.filter((row) => row.enabled && row.exclude)),
+    description: readDescription(metadata),
+    filters: hubFeedFiltersSchema.catch({}).parse(stored.filters ?? {}),
+  };
+}
 
 export async function getUserHubs({ userId }: { userId: number }) {
   const hubs = await dbRead.userHub.findMany({
     where: { userId },
-    select: hubListSelect,
+    select: hubSummarySelect,
     // Alphabetical, not by `index` — subtask 868kwp5m9. `index` is still written by
     // `setUserHubOrder` and still what a hub is created with; nothing reads it for
     // display any more.
     orderBy: { name: 'asc' },
   });
-  return hubs.map((hub) => toHubDetail(hub, userId));
+
+  const counts = await hubSourceCounts(hubs.map((hub) => hub.id));
+  return hubs.map((hub) => toHubSummary(hub, counts.get(hub.id), userId));
 }
 
 // Scoped in the `where` rather than checked after the fetch, so a hub this viewer
@@ -247,10 +363,15 @@ export async function getHubCardData(id: number) {
       name: true,
       metadata: true,
       user: { select: { username: true } },
-      // Enabled only, because that is the number a visitor can see: `toHubDetail`
-      // strips disabled sources for everyone but the owner, so counting all of them
-      // advertises a hub as larger than the page it opens.
-      _count: { select: { sources: { where: { enabled: true } }, followers: true } },
+      // Enabled and POSITIVE only, because that is the number a visitor can see:
+      // `toHubDetail` strips disabled sources — and every exclusion — for everyone but
+      // the owner. Counting all of them advertises a hub as larger than the page it
+      // opens, and counting the exclusions publishes by subtraction the one number the
+      // owner's keep-out list is withheld to keep private. This card answers
+      // unauthenticated, at /api/og?type=hub.
+      _count: {
+        select: { sources: { where: { enabled: true, exclude: false } }, followers: true },
+      },
     },
   });
   if (!hub) return null;
@@ -270,14 +391,19 @@ export async function upsertUserHub({
   ...input
 }: UpsertUserHubInput & { userId: number; isModerator?: boolean }) {
   const writable = hubWriterWhere({ userId, isModerator });
-  const { id, sources, description, filters, ...data } = input;
+  const { id, sources: submitted, description, filters, ...data } = input;
 
-  // `sources[].alias` too: it is user-supplied, it is written by this same call, and a guard that
-  // scans only some of its writer's fields is invisible to a test that counts CALLS.
-  await throwOnBlockedUserContent(
-    [data.name, description, ...(sources?.map((source) => source.alias) ?? [])],
-    { isModerator, surface: 'userHub' }
-  );
+  // The hub's OWN text — the two fields this caller wrote — refuses the save.
+  await throwOnBlockedUserContent([data.name, description], { isModerator, surface: 'userHub' });
+
+  // Aliases are scanned too, but they lose the LABEL rather than the save. They are
+  // other people's usernames and stored model names, arriving by the dozen from a
+  // starting point or a picker, and a hub is now filled before it is saved: one
+  // refusal used to take the whole curated list with it, naming neither the offender
+  // nor a way to drop it. Nulling stores nothing blocked — the identity is
+  // `targetId`, the alias is decoration — so the guard holds and the save survives.
+  const sources =
+    submitted && (await withoutBlockedAliases(submitted, { isModerator, surface: 'userHub' }));
 
   if (sources) {
     const duplicate = new Set<string>();
@@ -287,7 +413,9 @@ export async function upsertUserHub({
       duplicate.add(key);
     }
 
+    assertSourceCounts(sources);
     await assertHubSourcesUsable({ sources, userId });
+    await assertExcludedModelsFit(excludedModelIds(sources));
   }
 
   if (!id) {
@@ -379,6 +507,56 @@ export async function upsertUserHub({
   return toHubDetail(updated, userId);
 }
 
+const excludedModelIds = (
+  sources: { type: UserHubSourceType; targetId: number; exclude?: boolean }[]
+) => sources.filter((s) => s.exclude && s.type === UserHubSourceType.Model).map((s) => s.targetId);
+
+// Each kind against its own cap. Counted here rather than on the zod array, which
+// sees one list and cannot say which half overran it.
+function assertSourceCounts(sources: UserHubSourceInput[]) {
+  const excluded = sources.filter((source) => source.exclude).length;
+  if (sources.length - excluded > hubLimits.sourcesPerHub)
+    throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
+  if (excluded > hubLimits.exclusionsPerHub)
+    throw throwBadRequestError(`A hub can exclude at most ${hubLimits.exclusionsPerHub} sources`);
+}
+
+/**
+ * Everything one added-or-flipped source has to satisfy: the cap on the side it lands
+ * on, the rules for what may be a source at all, and the excluded-model expansion
+ * budget over the set the hub would hold afterwards.
+ *
+ * `ignoreId` is the row being flipped — it is leaving the other side, so counting it
+ * against the destination would charge the hub twice for one target.
+ */
+async function assertHubSourceFits({
+  hub,
+  source,
+  userId,
+  ignoreId,
+}: {
+  hub: { sources: { id: number; type: UserHubSourceType; targetId: number; exclude: boolean }[] };
+  source: { type: UserHubSourceType; targetId: number; exclude: boolean; alias?: string | null };
+  userId: number;
+  ignoreId?: number;
+}) {
+  const held = hub.sources.filter((s) => s.exclude === source.exclude && s.id !== ignoreId).length;
+  if (source.exclude) {
+    if (held >= hubLimits.exclusionsPerHub)
+      throw throwBadRequestError(`A hub can exclude at most ${hubLimits.exclusionsPerHub} sources`);
+  } else if (held >= hubLimits.sourcesPerHub)
+    throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
+
+  await assertHubSourcesUsable({
+    sources: [{ ...source, enabled: true, index: 0 }],
+    userId,
+  });
+
+  await assertExcludedModelsFit(
+    excludedModelIds([...hub.sources.filter((s) => s.id !== ignoreId), source])
+  );
+}
+
 export async function addUserHubSource({
   userId,
   hubId,
@@ -393,7 +571,9 @@ export async function addUserHubSource({
     where: { id: hubId, userId },
     select: {
       id: true,
-      sources: { select: { id: true, type: true, targetId: true, enabled: true, index: true } },
+      sources: {
+        select: { id: true, type: true, targetId: true, enabled: true, exclude: true, index: true },
+      },
     },
   });
   if (!hub) throw throwNotFoundError('Hub not found');
@@ -404,23 +584,30 @@ export async function addUserHubSource({
   if (existing) {
     // A source the owner switched off is invisible to the feed — `resolveHubSources`
     // selects enabled rows only — so reporting "already there" and leaving it off is a
-    // success message for nothing happening.
-    if (existing.enabled) return { hubId, added: false };
+    // success message for nothing happening. Adding the SAME target on the other side
+    // is the same story: the unique key holds one row per target, so asking to exclude
+    // something the hub collects flips it rather than failing.
+    if (existing.enabled && existing.exclude === source.exclude) return { hubId, added: false };
+
+    // 🔴 A flip crosses between the two lists, so it faces the DESTINATION's checks —
+    // its cap, and the same usability rules a create gets. Returning here without them
+    // made this branch a door around both: fifty sources flipped one at a time put
+    // fifty exclusions on a hub whose stated limit is twenty, and since flipping also
+    // empties the positive side, the cycle repeated without bound. That matters beyond
+    // the number, because the exclusion expansion deliberately never truncates.
+    await assertHubSourceFits({ hub, source, userId, ignoreId: existing.id });
 
     // Owner-scoped on the write as well as in the read above, per the argument this
     // file makes for `removeUserHubSource`: id-addressing is safe only while a source
     // row cannot change hubs, and that is not a property anything enforces.
     await dbWrite.userHubSource.updateMany({
       where: { id: existing.id, hub: { userId } },
-      data: { enabled: true },
+      data: { enabled: true, exclude: source.exclude },
     });
     return { hubId, added: true };
   }
 
-  if (hub.sources.length >= hubLimits.sourcesPerHub)
-    throw throwBadRequestError(`A hub can hold at most ${hubLimits.sourcesPerHub} sources`);
-
-  await assertHubSourcesUsable({ sources: [{ ...source, enabled: true, index: 0 }], userId });
+  await assertHubSourceFits({ hub, source, userId });
 
   try {
     await dbWrite.userHubSource.create({
@@ -429,6 +616,7 @@ export async function addUserHubSource({
         type: source.type,
         targetId: source.targetId,
         alias: source.alias ?? null,
+        exclude: source.exclude,
         index: hub.sources.reduce((max, s) => Math.max(max, s.index + 1), 0),
       },
     });
@@ -501,14 +689,541 @@ export async function deleteUserHub({
 export async function getFollowedHubs({ userId }: { userId: number }) {
   const follows = await dbRead.userHubFollow.findMany({
     where: { userId, hub: hubViewerWhere({ userId }) },
-    // `hubListSelect`, not `hubSelect`: the rail renders a name and a source count,
-    // and joining the owner costs two extra round trips per render for a field
-    // nothing reads.
-    select: { hub: { select: hubListSelect } },
+    // The summary shape, not the detail one: the rail renders a name and what the hub
+    // holds, and joining the owner — or the sources themselves — costs a payload
+    // nothing on this surface reads.
+    select: { hub: { select: hubSummarySelect } },
     orderBy: { hub: { name: 'asc' } },
     take: hubLimits.followedHubs,
   });
-  return follows.map((follow) => toHubDetail(follow.hub, userId));
+
+  const counts = await hubSourceCounts(follows.map((follow) => follow.hub.id));
+  return follows.map((follow) => toHubSummary(follow.hub, counts.get(follow.hub.id), userId));
+}
+
+/**
+ * Where one target already sits across the caller's own hubs. The "add to hub" modal
+ * used to derive this from every hub's full source list; it needs three facts per hub
+ * and this ships exactly those.
+ *
+ * `exclude` is the one that cannot be dropped: a hub that keeps this target OUT must
+ * render locked rather than unticked, or ticking it deletes the owner's keep-out from
+ * a modal that never showed the exclusion existed.
+ */
+export async function getHubSourceState({
+  type,
+  targetId,
+  userId,
+}: HubSourceTargetInput & { userId: number }) {
+  return dbRead.userHubSource.findMany({
+    where: { type, targetId, hub: { userId } },
+    select: { hubId: true, enabled: true, exclude: true },
+  });
+}
+
+const hubTemplateNames: Record<HubTemplate, string> = {
+  'my-models': 'Images on my models',
+  following: 'Creators I follow',
+  bookmarks: 'Models I bookmarked',
+};
+
+/**
+ * What a template gathers. Capped at `sourcesPerHub` here rather than left to
+ * `assertSourceCounts`, because overrunning the cap is the expected case for the
+ * users these templates are for — a prolific creator gets their newest 50 models and
+ * a hub, not a refusal.
+ */
+async function hubTemplateSources({
+  template,
+  userId,
+  isModerator,
+}: {
+  template: HubTemplate;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<UserHubSourceInput[]> {
+  if (template === 'my-models') {
+    const models = await dbRead.model.findMany({
+      where: { userId, status: ModelStatus.Published, deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { createdAt: 'desc' },
+      take: hubLimits.sourcesPerHub,
+    });
+    return models.map((model, index) => ({
+      type: UserHubSourceType.Model,
+      targetId: model.id,
+      alias: model.name,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+  }
+
+  if (template === 'bookmarks') {
+    // Same flag as the Bookmarked tab reads with, so "Add 50" collects what the rows
+    // above it are showing.
+    const models = await bookmarkedModels({
+      userId,
+      isModerator,
+      take: hubLimits.sourcesPerHub,
+    });
+    return models.map((model, index) => ({
+      type: UserHubSourceType.Model,
+      targetId: model.id,
+      alias: model.name,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+  }
+
+  // Read wider than the cap, because the deleted accounts are dropped AFTER this
+  // window: at exactly the cap, 50 dead follows report "you are not following
+  // anyone" to someone who follows hundreds.
+  const follows = await dbRead.userEngagement.findMany({
+    where: { userId, type: UserEngagementType.Follow },
+    select: { targetUserId: true },
+    orderBy: { createdAt: 'desc' },
+    take: hubLimits.sourcesPerHub * 3,
+  });
+
+  const users = await dbRead.user.findMany({
+    where: { id: { in: follows.map((follow) => follow.targetUserId) }, deletedAt: null },
+    select: { id: true, username: true },
+  });
+  const byId = new Map(users.map((user) => [user.id, user.username]));
+
+  return follows
+    .map((follow) => ({ id: follow.targetUserId, username: byId.get(follow.targetUserId) }))
+    .filter((user): user is { id: number; username: string } => !!user.username)
+    .slice(0, hubLimits.sourcesPerHub)
+    .map((user, index) => ({
+      type: UserHubSourceType.User,
+      targetId: user.id,
+      alias: user.username,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+}
+
+/**
+ * Drops the sources whose alias the content scan refuses, rather than letting one
+ * refuse the whole template.
+ *
+ * A template's aliases are OTHER people's usernames and the caller's stored model
+ * names — text this user did not write here and cannot edit from this screen. Passed
+ * straight to `upsertUserHub`, one match refuses the create outright, and the message
+ * names neither which of 50 follows caused it nor any way to drop it.
+ *
+ * Scanned as a batch first because that is the normal answer; the per-alias pass runs
+ * only to find the offenders. `userHubTemplate` rather than `userHub` so the staged
+ * enforcement rollout can tell text a user typed from text a template gathered.
+ */
+async function withoutBlockedAliases(
+  sources: UserHubSourceInput[],
+  { isModerator, surface }: { isModerator?: boolean; surface: string }
+) {
+  const options = { isModerator, surface };
+  try {
+    await throwOnBlockedUserContent(
+      sources.map((source) => source.alias),
+      options
+    );
+    return sources;
+  } catch (error) {
+    if (!isBlockedContentError(error)) throw error;
+
+    const scrubbed: UserHubSourceInput[] = [];
+    for (const source of sources) {
+      try {
+        await throwOnBlockedUserContent(source.alias, options);
+        scrubbed.push(source);
+      } catch (perAlias) {
+        if (!isBlockedContentError(perAlias)) throw perAlias;
+        // The source stays — the person chose it — but its label does not. It falls
+        // back to the target id, which is unlovely and vanishingly rare.
+        scrubbed.push({ ...source, alias: null });
+      }
+    }
+    return scrubbed;
+  }
+}
+
+/**
+ * Did the scan REFUSE this text, or did it fail to run?
+ *
+ * 🔴 The difference is the whole guard. `getBlocklistDTO` reads Redis and the replica
+ * unguarded, so a blip throws from inside the scan — and a bare `catch` reads that as
+ * "blocked", which would strip the label off every source on the list and report
+ * success. A refusal is a BAD_REQUEST raised by the scan itself; anything else is
+ * infrastructure and belongs to the caller.
+ */
+function isBlockedContentError(error: unknown) {
+  return error instanceof TRPCError && error.code === 'BAD_REQUEST';
+}
+
+/**
+ * What a starting point would put in a hub: the sources, and how many there were to
+ * choose from. It creates NOTHING — the modal opens holding these and the ordinary
+ * save path writes them, so nobody gets a hub they have not seen.
+ *
+ * `total` is the count before the cap, which is what lets the editor say "your 50
+ * most recent follows — 518 more did not fit". That shortfall reaches nobody today.
+ */
+export async function getHubSourceCandidates({
+  template,
+  userId,
+  isModerator,
+}: GetHubSourceCandidatesInput & { userId: number; isModerator?: boolean }) {
+  const [gathered, total] = await Promise.all([
+    hubTemplateSources({ template, userId, isModerator }),
+    countHubTemplateCandidates({ template, userId }),
+  ]);
+
+  return {
+    name: hubTemplateNames[template],
+    sources: await withoutBlockedAliases(gathered, { surface: 'userHubTemplate' }),
+    total,
+  };
+}
+
+// Counted apart from the gather, which stops at the cap: the two numbers together are
+// the point — what fits, and what there was.
+async function countHubTemplateCandidates({
+  template,
+  userId,
+}: GetHubSourceCandidatesInput & { userId: number }) {
+  if (template === 'my-models')
+    return dbRead.model.count({
+      where: { userId, status: ModelStatus.Published, deletedAt: null },
+    });
+
+  if (template === 'bookmarks') return bookmarkedModelIds(userId).then((ids) => ids.length);
+
+  return dbRead.userEngagement.count({ where: { userId, type: UserEngagementType.Follow } });
+}
+
+/**
+ * Models this viewer kept but did not make: the bookmark collection and the bell,
+ * which the "favourite" button sets together. Their OWN models are excluded — those
+ * are their own group, and a creator seeing their catalogue twice was the complaint.
+ */
+/**
+ * 🔴 BOUNDED, and the bound is load-bearing. Both arms were unbounded, and measured on
+ * the prod replica 2026-09-18 the heaviest account holds 257,115 bell rows and 264,730
+ * bookmark rows: one call was ~390ms and ~1.3GB of buffer traffic, half a million ints
+ * over the wire, deduped on the request thread. The distribution is p50 2-3, p90 44-58,
+ * p99 ~800, so the window below is exact for all but a handful of accounts — past it
+ * the count reads as a floor rather than a total, which is the right trade for a
+ * picker that can only add 50 of them.
+ */
+const BOOKMARK_WINDOW = 2000;
+
+async function bookmarkedModelIds(userId: number) {
+  const bookmarkCollection = await dbRead.collection.findFirst({
+    where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
+    select: { id: true },
+  });
+
+  const [engaged, bookmarked] = await Promise.all([
+    dbRead.modelEngagement.findMany({
+      where: { userId, type: ModelEngagementType.Notify },
+      select: { modelId: true },
+      orderBy: { createdAt: 'desc' },
+      take: BOOKMARK_WINDOW,
+    }),
+    bookmarkCollection
+      ? dbRead.collectionItem.findMany({
+          where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
+          select: { modelId: true },
+          orderBy: { id: 'desc' },
+          take: BOOKMARK_WINDOW,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return [
+    ...new Set([
+      ...engaged.map((row) => row.modelId),
+      ...bookmarked.flatMap((row) => (row.modelId ? [row.modelId] : [])),
+    ]),
+  ];
+}
+
+async function bookmarkedModels({
+  userId,
+  take,
+  term,
+  isModerator,
+}: {
+  userId: number;
+  take: number;
+  term?: string;
+  isModerator?: boolean;
+}) {
+  return bookmarkedModelsByIds({
+    ids: await bookmarkedModelIds(userId),
+    userId,
+    term,
+    take,
+    isModerator,
+  });
+}
+
+async function bookmarkedModelsByIds({
+  ids,
+  userId,
+  take,
+  term,
+  isModerator,
+}: {
+  ids: number[];
+  userId: number;
+  take: number;
+  term?: string;
+  isModerator?: boolean;
+}) {
+  if (!ids.length) return [];
+
+  const models = await dbRead.model.findMany({
+    // A bookmark or a bell outlives the model going private or back to draft, and the
+    // owner's own models belong to the group above this one.
+    //
+    // `isModerator` because this list and the paste-a-link path have to answer the
+    // same question the same way: a moderator who can resolve a model by URL but
+    // cannot see it in their own bookmarks is reading one rule from two places. The
+    // write path gates neither — it validates tags and collections only — so this is
+    // the browse half of that pair, not a permission.
+    where: {
+      id: { in: ids },
+      userId: { not: userId },
+      ...visibleModel(userId, isModerator),
+      ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+    },
+    select: modelRowSelect,
+    take,
+  });
+
+  const position = new Map(ids.map((id, index) => [id, index]));
+  return models.sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+}
+
+// `ModelMetric` is keyed on `modelId` alone in the generated client — one row per
+// model, already the all-time rollup — so there is no timeframe to ask for.
+const modelRowSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  metrics: { select: { imageCount: true }, take: 1 },
+});
+
+type ModelRow = Prisma.ModelGetPayload<{ select: typeof modelRowSelect }>;
+
+const asModelSources = (models: ModelRow[]) =>
+  models.map((model) => ({
+    type: UserHubSourceType.Model,
+    targetId: model.id,
+    alias: model.name,
+    // All-time, because the row answers "is this worth adding", not "what is it doing
+    // this week".
+    imageCount: model.metrics[0]?.imageCount,
+  }));
+
+/**
+ * A creator's face, so a row reads as a person rather than a string.
+ *
+ * Through the two shared caches rather than a `findMany` of its own — this now runs on
+ * every debounced keystroke of the Creators tab, and `profilePictureCache` is also what
+ * carries `nsfwLevel` and `ingestion` to the client, which is what lets the row render
+ * through `UserAvatar` instead of re-deriving the gate.
+ *
+ * Their images are NOT counted: nothing stores that per user — `UserMetric.uploadCount`
+ * is models, not images — and a plausible wrong number is worse than none.
+ */
+async function withFaces(items: { type: UserHubSourceType; targetId: number; alias: string }[]) {
+  if (!items.length) return [];
+
+  const ids = items.map((item) => item.targetId);
+  const [basic, pictures] = await Promise.all([
+    getBasicDataForUsers(ids),
+    getProfilePicturesForUsers(ids),
+  ]);
+
+  return items.map((item) => ({
+    ...item,
+    username: basic[item.targetId]?.username ?? null,
+    deletedAt: basic[item.targetId]?.deletedAt ?? null,
+    image: basic[item.targetId]?.image ?? null,
+    profilePicture: pictures[item.targetId] ?? null,
+  }));
+}
+
+async function ownedModels({
+  userId,
+  term,
+  take,
+}: {
+  userId: number;
+  term?: string;
+  take: number;
+}) {
+  return dbRead.model.findMany({
+    where: {
+      userId,
+      status: ModelStatus.Published,
+      deletedAt: null,
+      ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+    },
+    select: modelRowSelect,
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+}
+
+/**
+ * One tab's worth of the picker: what it holds, how much of it there is, and — when a
+ * search inside it finds nothing — where the matches actually were.
+ *
+ * That last part is what a scoped search owes the person using it. Typing a creator's
+ * name under "My models" finds nothing and says nothing, and the reason ("you are
+ * looking in the wrong drawer") is invisible from the inside.
+ */
+export async function getHubSourceScope({
+  scope,
+  query,
+  userId,
+  isModerator,
+}: GetHubSourceScopeInput & { userId: number; isModerator?: boolean }) {
+  const trimmed = query?.trim();
+  const term = trimmed && trimmed.length >= MIN_SEARCH_TERM ? trimmed : undefined;
+
+  const { items, total } = await readHubSourceScope({ scope, term, userId, isModerator });
+
+  return {
+    items,
+    total,
+    // Only when a SCOPED drawer came up empty on a real search: the other counts are
+    // three more queries answering a question nobody asked until then. Never for
+    // 'all', which has already read all four — re-running them is ~17 round trips to
+    // rebuild a result that is empty by construction.
+    elsewhere:
+      items.length || !term || scope === 'all'
+        ? []
+        : await matchesElsewhere({ scope, term, userId, isModerator }),
+  };
+}
+
+// Annotated because the scope reader now calls ITSELF — 'all' fans out over the
+// others — and TypeScript cannot infer a recursive return.
+type HubScopeItem = {
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string;
+  image?: string | null;
+  // 🔴 The WHOLE row, not just its url. `UserAvatar` decides whether a face may be
+  // shown from `nsfwLevel` and `ingestion`; narrowing this to `{ url }` is what had the
+  // picker hand-rolling an avatar with no gate on it.
+  profilePicture?: ProfileImage | null;
+  username?: string | null;
+  deletedAt?: Date | null;
+  imageCount?: number | null;
+};
+
+async function readHubSourceScope({
+  scope,
+  term,
+  userId,
+  isModerator,
+}: {
+  scope: HubSourceScope;
+  term?: string;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<{ items: HubScopeItem[]; total: number }> {
+  // No tabs above it, so nothing has narrowed the question: the keep-out box asks
+  // every scope at once and answers with whatever matched. Empty until typed, like
+  // the tags scope, because there is no "everything of yours" worth listing.
+  if (scope === 'all') {
+    if (!term) return { items: [], total: 0 };
+
+    const found = await Promise.all(
+      browsableScopes.map((other) =>
+        readHubSourceScope({ scope: other, term, userId, isModerator })
+      )
+    );
+    const items = found.flatMap((result) => result.items);
+    return { items, total: items.length };
+  }
+
+  if (scope === 'tags') {
+    // Nothing of yours to browse: the site's biggest tags are not a list anybody
+    // should add from with one click, so this stays empty until asked.
+    const items = term ? await searchHubTags(term) : [];
+    return { items, total: items.length };
+  }
+
+  if (scope === 'my-models') {
+    const [models, total] = await Promise.all([
+      ownedModels({ userId, term, take: SUGGESTIONS_LIMIT }),
+      // Counted only at rest. The header shows "N matches" while searching and the
+      // bulk button is hidden, so the count query would be work nobody reads —
+      // measured at 21ms/105MB of buffers on the largest catalogue.
+      term ? Promise.resolve(0) : countHubTemplateCandidates({ template: 'my-models', userId }),
+    ]);
+    return { items: asModelSources(models), total };
+  }
+
+  if (scope === 'bookmarks') {
+    // ONE id read, shared. Fetching the models and counting them separately called
+    // this twice, and at the top of the distribution one call is ~390ms and 1.3GB of
+    // buffers — see the cap on the read itself.
+    const ids = await bookmarkedModelIds(userId);
+    const models = await bookmarkedModelsByIds({
+      ids,
+      userId,
+      term,
+      isModerator,
+      take: SUGGESTIONS_LIMIT,
+    });
+    return { items: asModelSources(models), total: term ? 0 : ids.length };
+  }
+
+  const [followed, exact, total] = await Promise.all([
+    followedCreatorSuggestions({ userId, query: term }),
+    // The whole-site reach this drawer would otherwise lack: someone you have never
+    // followed, by exact username. Pattern matching is not available — see
+    // `findCreatorByUsername`.
+    term ? findCreatorByUsername(term) : Promise.resolve(undefined),
+    term ? Promise.resolve(0) : countHubTemplateCandidates({ template: 'following', userId }),
+  ]);
+
+  const merged = [...followed];
+  if (exact && !merged.some((item) => item.targetId === exact.targetId)) merged.unshift(exact);
+
+  return { items: await withFaces(merged), total };
+}
+
+async function matchesElsewhere({
+  scope,
+  term,
+  userId,
+  isModerator,
+}: {
+  scope: HubSourceScope;
+  term: string;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const others = browsableScopes.filter((other) => other !== scope);
+
+  const counts = await Promise.all(
+    others.map(async (other) => ({
+      scope: other,
+      count: (await readHubSourceScope({ scope: other, term, userId, isModerator })).items.length,
+    }))
+  );
+
+  return counts.filter((entry) => entry.count > 0);
 }
 
 export async function followUserHub({ key, userId }: { key: string; userId: number }) {
@@ -566,14 +1281,48 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
   );
 }
 
+/**
+ * A row's tag-group key, or undefined when it is not in a group. Only Tag rows group:
+ * every other kind is its own OR-arm in the feed filter, so a `groupKey` on one is
+ * inert and must not pull anything with it.
+ */
+const tagGroupKey = (source: HubSourceRow) =>
+  source.type === UserHubSourceType.Tag && source.groupKey != null
+    ? hubTagGroupKey({ exclude: source.exclude, groupKey: source.groupKey })
+    : undefined;
+
+/** The columns `resolveHubSources` reads off a hub's source rows. */
+type HubSourceRow = {
+  type: UserHubSourceType;
+  targetId: number;
+  exclude: boolean;
+  groupKey: number | null;
+};
+
 export type ResolvedHubSources = {
   userIds: number[];
   modelVersionIds: number[];
   collectionIds: number[];
+  /**
+   * Image tags, as AND-groups. Unlike a Model source these need no expansion and no
+   * budget: the ids ARE what the index is filtered on.
+   *
+   * Each inner array is ANDed and the groups are ORed, so `[[1,2],[3]]` reads
+   * "(1 and 2) or 3". A hub with no groups set resolves to one id per array, which
+   * is the pre-`groupKey` behaviour.
+   */
+  tagGroups: number[][];
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
   /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
   forcedBrowsingLevel: number;
+  /**
+   * What the hub refuses. Never truncated, unlike the positive sets above: a
+   * trimmed inclusion shows less than the owner asked for, where a trimmed
+   * exclusion shows content they said to keep out. `exclusionsPerHub` is what
+   * bounds this instead.
+   */
+  excluded: { userIds: number[]; modelVersionIds: number[]; tagGroups: number[][] };
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
@@ -593,7 +1342,17 @@ export async function resolveHubSources({
     where: { id: hubId, ...hubViewerWhere({ userId, isModerator }) },
     select: {
       forcedBrowsingLevel: true,
-      sources: { where: { enabled: true }, select: { type: true, targetId: true } },
+      sources: {
+        // ⚠️ Nothing constrains a GROUP's members to share `enabled`, so a half-enabled
+        // group resolves to an AND-set of only the enabled half — a WIDER feed than the
+        // card describes. Benign only because the editor's single control switches the
+        // whole group and only the owner can persist `enabled`. It stops being benign
+        // the day any non-owner surface can write that column, at which point it is the
+        // same widening the session-toggle sweep below exists to prevent, by another
+        // door. Constrain it there, not here.
+        where: { enabled: true },
+        select: { type: true, targetId: true, exclude: true, groupKey: true },
+      },
     },
   });
   if (!hub) return null;
@@ -603,13 +1362,39 @@ export async function resolveHubSources({
   // than in the filter builders because this is the one place the id sets exist,
   // and because subtracting can only ever NARROW the feed: a forged exclusion
   // removes content from the forger, and can add none.
-  const excluded = new Set((excludedSources ?? []).map(hubSourceKey));
-  const sources = excluded.size
-    ? hub.sources.filter((s) => !excluded.has(hubSourceKey(s)))
-    : hub.sources;
+  //
+  // 🔴 That claim is what makes this list safe to accept from the client, and a tag
+  // AND-group is the one thing that can break it. Dropping ONE member turns `A AND B`
+  // into `A`, which matches a SUPERSET — so a toggle landing on any member takes the
+  // whole group with it. That is also what the editor's own switch does, since a
+  // half-enabled group filters on fewer tags than its card shows.
+  //
+  // 🔴 Applied to the POSITIVE sources only. A session toggle reaching the negative
+  // ones would let a viewer switch off somebody else's exclusion, which is the one
+  // direction this list must never be able to move the feed: forging it would ADD
+  // content the owner refused, where forging a positive toggle only removes their
+  // own.
+  const sessionExcluded = new Set((excludedSources ?? []).map(hubSourceKey));
+  const negativeSources = hub.sources.filter((s) => s.exclude);
+  const positive = hub.sources.filter((s) => !s.exclude);
+  // Only tags group, so only a tag's key can pull its siblings out with it. Keyed
+  // through `hubTagGroupKey` rather than on the bare int: these rows are all positive
+  // today, so the polarity is constant — but that is a property of the filter three
+  // lines up, and keying on the int would make this correct only while that holds.
+  const toggledOffGroups = new Set(
+    positive
+      .filter((s) => sessionExcluded.has(hubSourceKey(s)))
+      .map(tagGroupKey)
+      .filter((key): key is string => !!key)
+  );
+  const positiveSources = positive.filter((s) => {
+    if (sessionExcluded.has(hubSourceKey(s))) return false;
+    const group = tagGroupKey(s);
+    return !group || !toggledOffGroups.has(group);
+  });
 
   const byType = (type: UserHubSourceType) =>
-    sources.filter((s) => s.type === type).map((s) => s.targetId);
+    positiveSources.filter((s) => s.type === type).map((s) => s.targetId);
 
   const modelIds = byType(UserHubSourceType.Model);
   const explicitVersionIds = byType(UserHubSourceType.ModelVersion);
@@ -624,6 +1409,21 @@ export async function resolveHubSources({
   // reads enabled in the rail.
   const perModel = modelIds.length ? Math.max(1, Math.floor(budget / modelIds.length)) : 0;
 
+  // Started before the positive expansion below rather than awaited after it: both
+  // are independent reads on the same hot path, and a hub carrying a Model source on
+  // each side would otherwise pay for them end to end before the first Meili call.
+  const excludedPromise = resolveExcludedSources(negativeSources);
+
+  // 🔴 Nothing outside this function reads `truncated`, and that is a decision rather
+  // than an oversight — Justin's call, 2026-09-18. A hub past the budget serves a
+  // partial feed silently, so the flag was traced and a field on the feed response
+  // costed; it was left alone because no hub is near the line. Measured that day:
+  // of 1,034 hubs holding model sources, ZERO exceed the 750 budget, the worst sums
+  // to 476 versions and the average is 22.4.
+  //
+  // Revisit when that stops being true — the model source cap rising, or one very
+  // large catalogue — because the failure is invisible from the outside: a feed that
+  // is quietly missing content looks exactly like a feed.
   let truncated = false;
   const versionIdsOfModels: number[] = [];
   if (modelIds.length && perModel > 0) {
@@ -648,6 +1448,7 @@ export async function resolveHubSources({
     truncated = true;
   }
 
+  const excluded = await excludedPromise;
   const allVersionIds = [...new Set([...explicitVersionIds, ...versionIdsOfModels])];
   const modelVersionIds = allVersionIds.slice(0, hubLimits.resolvedVersionIds);
   if (allVersionIds.length > modelVersionIds.length) truncated = true;
@@ -657,8 +1458,83 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
+    tagGroups: groupTagIds(positiveSources),
     forcedBrowsingLevel: hub.forcedBrowsingLevel,
+    excluded,
   };
+}
+
+/**
+ * The id sets a hub's negative sources become. An excluded Model expands to ALL of
+ * its versions — no per-model budget and no trimming, unlike the positive path,
+ * because a trimmed exclusion is a permissive failure: the content the owner said
+ * to keep out comes back, and nothing anywhere reports it.
+ *
+ * What keeps it affordable is `assertExcludedModelsFit`, which refuses the ADD when
+ * a hub's excluded models would expand past `hubLimits.excludedVersionIds`. The cap
+ * on source COUNT does not bound this on its own — the expansion factor is a
+ * property of the data, not of the code.
+ */
+async function resolveExcludedSources(
+  sources: HubSourceRow[]
+): Promise<ResolvedHubSources['excluded']> {
+  const byType = (type: UserHubSourceType) =>
+    sources.filter((s) => s.type === type).map((s) => s.targetId);
+
+  const modelIds = byType(UserHubSourceType.Model);
+  const versionIds = byType(UserHubSourceType.ModelVersion);
+
+  if (modelIds.length) {
+    const rows = await dbRead.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    });
+    versionIds.push(...rows.map((row) => row.id));
+  }
+
+  return {
+    userIds: byType(UserHubSourceType.User),
+    modelVersionIds: [...new Set(versionIds)],
+    tagGroups: groupTagIds(sources),
+  };
+}
+
+/**
+ * The hub's tag rows as AND-groups: rows sharing a `groupKey` must ALL match, and a
+ * null key is a group of one. An include group 3 and an exclude group 3 are different
+ * groups — scoped by `exclude` being part of the map key, NOT by this happening to be
+ * called once per polarity, so folding the two calls into one cannot quietly merge a
+ * kept-out tag into the hub's own AND-set. `groupHubSources` in hub.utils.ts states
+ * the same rule over display values.
+ *
+ * Exported for `user-hub.service.test.ts`, which calls it with a MIXED list. Through
+ * `resolveHubSources` the polarity scoping is unreachable — the two calls are already
+ * split by polarity, so a test there passes with or without `exclude` in the key, and
+ * would read as coverage of a guard it cannot see.
+ *
+ * Groups keep first-appearance order, and a one-member group is indistinguishable from
+ * an ungrouped tag. That is what leaves every hub predating the column unchanged.
+ */
+export function groupTagIds(sources: HubSourceRow[]) {
+  const groups: number[][] = [];
+  const byKey = new Map<string, number[]>();
+  for (const source of sources) {
+    if (source.type !== UserHubSourceType.Tag) continue;
+    if (source.groupKey == null) {
+      groups.push([source.targetId]);
+      continue;
+    }
+    const key = hubTagGroupKey({ ...source, groupKey: source.groupKey });
+    const held = byKey.get(key);
+    if (held) {
+      held.push(source.targetId);
+      continue;
+    }
+    const group = [source.targetId];
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
 }
 
 /**
@@ -666,9 +1542,8 @@ export async function resolveHubSources({
  * allowed. Returns 0 for "this viewer can see nothing in this hub", which callers
  * must serve as an empty page rather than as an uncapped one.
  *
- * Extracted because three filter builders apply it — the two Meilisearch paths and
- * BitDex — and a cap missing from one of them is a hub quietly serving past its
- * own setting on whichever backend that request happened to take.
+ * Extracted because both Meilisearch filter builders apply it, and a cap missing
+ * from one of them is a hub quietly serving past its own setting.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
   if (!sources.forcedBrowsingLevel) return browsingLevel;
@@ -677,12 +1552,6 @@ export function hubBrowsingLevel(browsingLevel: number | undefined, sources: Res
   // WIDEN a request that asked for no level at all, which is the opposite of what
   // a cap is for.
   return (browsingLevel || NsfwLevel.PG) & sources.forcedBrowsingLevel;
-}
-
-export function hubSourcesAreEmpty(sources: ResolvedHubSources) {
-  return (
-    !sources.userIds.length && !sources.modelVersionIds.length && !sources.collectionIds.length
-  );
 }
 
 // Collection sources are served by the indexed `collectionIds` field, which only
@@ -696,6 +1565,16 @@ async function assertHubSourcesUsable({
   sources: UserHubSourceInput[];
   userId: number;
 }) {
+  await assertHubTagsUsable(sources);
+
+  // A Collection cannot be a NEGATIVE source: `resolveExcludedSources` has no
+  // collection arm, so the row would store, read as an exclusion in the editor, and
+  // filter nothing. Refused rather than quietly ignored, and refused ahead of the
+  // feature flag below so that flipping the flag on does not turn this into the
+  // silent case — whoever flips it will be exercising the positive path.
+  if (sources.some((s) => s.type === UserHubSourceType.Collection && s.exclude))
+    throw throwBadRequestError('A collection cannot be excluded from a hub.');
+
   const collectionIds = sources
     .filter((s) => s.type === UserHubSourceType.Collection)
     .map((s) => s.targetId);
@@ -738,6 +1617,91 @@ async function assertHubSourcesUsable({
       throw throwBadRequestError(
         `"${collection.name}" limits the content ratings it shows, which a hub cannot honour. It cannot be used as a hub source.`
       );
+  }
+}
+
+/**
+ * Whether a hub's excluded models still fit the filter the feed has to build.
+ *
+ * Checked HERE, at the write, because the read cannot fix it: trimming the expansion
+ * is the permissive failure this whole path is shaped to avoid, so the only honest
+ * options are refusing the add or serving a filter that grows without bound. The
+ * caller passes the ids the hub would hold AFTER the write, so it also covers a
+ * source flipped from collected to excluded.
+ */
+async function assertExcludedModelsFit(modelIds: number[]) {
+  if (!modelIds.length) return;
+
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId: { in: modelIds } },
+    select: { modelId: true },
+  });
+  if (versions.length <= hubLimits.excludedVersionIds) return;
+
+  // Names the model that costs the most, because "you have excluded too much" is not
+  // something a user can act on without knowing which one to drop.
+  const perModel = new Map<number, number>();
+  for (const { modelId } of versions) perModel.set(modelId, (perModel.get(modelId) ?? 0) + 1);
+  const [worst] = [...perModel.entries()].sort((a, b) => b[1] - a[1]);
+  const model = await dbRead.model.findFirst({
+    where: { id: worst[0] },
+    select: { name: true },
+  });
+
+  throw throwBadRequestError(
+    `Excluding these models covers ${versions.length} versions, more than a hub can filter on (${hubLimits.excludedVersionIds}). ` +
+      `"${model?.name ?? worst[0]}" alone accounts for ${worst[1]}.`
+  );
+}
+
+/**
+ * Which tags a hub may be keyed on, in either direction, as a `where` fragment. The tag
+ * table is not a vocabulary of subjects — it also carries the moderation labels the
+ * scanners write and the system tags the site runs on, and a hub addressed by id would
+ * otherwise reach every one of them.
+ *
+ * All three paths share it — the picker's tag tab, the add path and paste-a-link — so
+ * none of them can offer what another refuses. `HUB_TAG_SOURCE_FILTER` is the values
+ * and carries the reasoning, including why moderation labels are in as of 2026-09-17
+ * and System tags are not.
+ */
+const hubTagWhere = {
+  unlisted: false,
+  adminOnly: false,
+  target: { hasEvery: [...HUB_TAG_SOURCE_FILTER.entityType] },
+  type: { in: [...HUB_TAG_SOURCE_FILTER.types] },
+};
+
+async function assertHubTagsUsable(sources: UserHubSourceInput[]) {
+  const tagIds = sources
+    .filter((source) => source.type === UserHubSourceType.Tag)
+    .map((source) => source.targetId);
+  if (!tagIds.length) return;
+
+  const [tags, replacedTagIds] = await Promise.all([
+    // Filtered in the QUERY, by the same fragment `resolveHubSourceFromUrl` uses to
+    // look one up by name. Re-deriving the rule from selected columns here would be
+    // a second spelling of it, and the two would drift the first time the vocabulary
+    // moved.
+    dbRead.tag.findMany({
+      where: { id: { in: tagIds }, ...hubTagWhere },
+      select: { id: true },
+    }),
+    // A replaced tag still exists and still reads as browsable, but the index carries
+    // its REPLACEMENT's id — so as a source it matches nothing, and as an exclusion it
+    // keeps nothing out, which is the permissive direction. `getTags` drops these, so
+    // the picker never offers one; the URL input and the raw API reach here without it.
+    getReplacedTagIds(),
+  ]);
+  const replaced = new Set(replacedTagIds);
+  const usable = new Set(tags.map((tag) => tag.id));
+
+  for (const id of tagIds) {
+    // A tag that fails the rule is a not-found rather than a refusal naming it: this
+    // is an id-addressed lookup over a dense id space, so an error that distinguishes
+    // "no such tag" from "that one is a moderation label" enumerates the moderation
+    // vocabulary for anyone willing to count.
+    if (!usable.has(id) || replaced.has(id)) throw throwNotFoundError(`Tag ${id} not found`);
   }
 }
 
@@ -819,6 +1783,36 @@ export async function resolveHubSourceFromUrl({
     };
   }
 
+  if (ref.type === 'tag' || ref.type === 'tagId') {
+    // Plain equals, never `mode: 'insensitive'`: measured on the prod replica, this
+    // is an Index Scan on `Tag_name_cover_idx` at 0.04ms over 567,616 rows, and the
+    // vocabulary clauses ride as a filter over the single row the unique index
+    // returns. 🔴 What carries that is the BIND being citext, not the column — force
+    // the same predicate to `text` and the plan collapses to a parallel seq scan at
+    // 77ms. Prisma leaves the parameter type to the server, which infers citext.
+    //
+    // Note /tag/<name> is the MODEL tag page, and this rule requires an Image-targeted
+    // tag — so a model-only tag resolves to null here, which is correct (it would
+    // match nothing in an image feed) but means the by-name arm succeeds only for
+    // dual-targeted tags.
+    const [tag, replacedTagIds] = await Promise.all([
+      dbRead.tag.findFirst({
+        where:
+          ref.type === 'tag'
+            ? { name: { equals: ref.tagname }, ...hubTagWhere }
+            : { id: ref.tagId, ...hubTagWhere },
+        select: { id: true, name: true },
+      }),
+      getReplacedTagIds(),
+    ]);
+    // Null for a moderation label exactly as for a tag that does not exist. This
+    // endpoint answers before anything is saved, so a distinguishable refusal here
+    // would be a name oracle over the vocabulary the add path hides.
+    if (!tag || replacedTagIds.includes(tag.id)) return null;
+
+    return { type: UserHubSourceType.Tag, targetId: tag.id, alias: tag.name };
+  }
+
   // Same gate the write path enforces, and in the same order: refusing after
   // showing the name is not a refusal.
   if (!HUB_COLLECTION_SOURCES_ENABLED) return null;
@@ -835,6 +1829,16 @@ export async function resolveHubSourceFromUrl({
 
   return { type: UserHubSourceType.Collection, targetId: collection.id, alias: collection.name };
 }
+
+/**
+ * Every scope that holds something to browse — `all` is the fan-out over them, not one
+ * of them. Derived so a fifth kind added to the schema reaches the keep-out search and
+ * the "the matches are over there" count without a second edit: missing one of those is
+ * invisible, because it produces "no results", which is a legal answer.
+ */
+const browsableScopes = hubSourceScopeSchema.options.filter(
+  (scope): scope is Exclude<HubSourceScope, 'all'> => scope !== 'all'
+);
 
 const SUGGESTIONS_LIMIT = 25;
 
@@ -926,157 +1930,117 @@ function bySuggestionOrder<T extends { id: number }>(
  * adds the model to the viewer's bookmark collection at the same time, which is
  * why both are read here.
  */
-export async function getHubSourceSuggestions({
-  userId,
-  type,
-  query,
-  isModerator,
-}: GetHubSourceSuggestionsInput & { userId: number; isModerator?: boolean }) {
+/**
+ * The whole-site reach the Creators tab would otherwise lack, and it is an EQUALITY
+ * match on purpose. That tab searches who you follow, so a creator you have never
+ * followed is invisible to it — which made typing an exact username find nothing.
+ *
+ * Pattern matching is not available here: `User.username` is `citext`, so neither
+ * `ILIKE '%x%'` nor even `ILIKE 'x%'` can use an index. Measured on the prod replica
+ * 2026-09-17 over 13.2M rows: both seq-scan, 5.7s and 4.6s. Equality uses the unique
+ * index and answers in 0.2ms.
+ *
+ * So typing a username in full finds anyone; typing part of one finds who you follow.
+ * Partial matching site-wide needs a trigram index on the column — a deliberate
+ * migration, not something to slip into a keystroke path.
+ */
+async function findCreatorByUsername(term: string) {
+  const user = await dbRead.user.findFirst({
+    where: { username: term, deletedAt: null },
+    select: { id: true, username: true },
+  });
+  if (!user?.username) return undefined;
+
+  return { type: UserHubSourceType.User, targetId: user.id, alias: user.username };
+}
+
+async function searchHubTags(term: string) {
+  const [tags, replacedTagIds] = await Promise.all([
+    dbRead.tag.findMany({
+      where: { name: { contains: term, mode: 'insensitive' }, ...hubTagWhere },
+      select: {
+        id: true,
+        name: true,
+        metrics: {
+          where: { timeframe: MetricTimeframe.AllTime },
+          select: { imageCount: true },
+          take: 1,
+        },
+      },
+      // Read wide and rank below rather than ordering here: `TagMetric` is keyed by
+      // timeframe, so Prisma can only order by how MANY metric rows a tag has, which
+      // is not a measure of anything.
+      take: SUGGESTIONS_LIMIT * 5,
+    }),
+    getReplacedTagIds(),
+  ]);
+
+  const replaced = new Set(replacedTagIds);
+  return (
+    tags
+      .filter((tag) => !replaced.has(tag.id))
+      .map((tag) => ({
+        type: UserHubSourceType.Tag,
+        targetId: tag.id,
+        alias: tag.name,
+        imageCount: tag.metrics[0]?.imageCount ?? 0,
+      }))
+      // By USE, not by name: alphabetically, "swimsuit bottom" outranks "swimsuit" and
+      // the tag someone meant falls off the end of the page. A tag is worth offering in
+      // proportion to what it would actually collect — which is also the number the row
+      // shows, so the order and the column agree.
+      .sort((a, b) => b.imageCount - a.imageCount)
+      .slice(0, SUGGESTIONS_LIMIT)
+  );
+}
+
+/**
+ * Creators this viewer follows, optionally narrowed by name.
+ *
+ * Models and collections used to be arms of this same function, reachable only
+ * through a tRPC procedure no client called. Both are gone; the scopes in
+ * `readHubSourceScope` are the only way in.
+ */
+async function followedCreatorSuggestions({ userId, query }: { userId: number; query?: string }) {
   const trimmed = query?.trim();
   const term = trimmed && trimmed.length >= MIN_SEARCH_TERM ? trimmed : undefined;
 
-  if (type === UserHubSourceType.User) {
-    const follows = await dbRead.userEngagement.findMany({
-      where: { userId, type: UserEngagementType.Follow },
-      select: { targetUserId: true },
-      orderBy: { createdAt: 'desc' },
-      take: suggestionWindow(term),
-    });
-    if (!follows.length) return [];
-
-    // Ordering sits ABOVE the `take`, so it decides which rows come back and not
-    // merely their order. A search wants the whole window ranked by name; a bare
-    // suggestion list wants the most recent relationships, so it is cut to size
-    // here and the names query is left unordered.
-    const followed = scopeSuggestionIds(
-      follows.map((f) => f.targetUserId),
-      term
-    );
-
-    const users = await dbRead.user.findMany({
-      where: {
-        id: { in: followed },
-        deletedAt: null,
-        // citext overloads equality, NOT `LIKE` — a plain `contains` here is
-        // case-SENSITIVE. Safe to ask for ILIKE now only because the id list
-        // above bounds it; unbounded, this is the 4.7GB scan.
-        ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
-      },
-      select: { id: true, username: true },
-      ...(term ? { orderBy: { username: 'asc' as const } } : {}),
-      take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
-    });
-
-    return bySuggestionOrder(users, followed, term)
-      .filter((user): user is { id: number; username: string } => !!user.username)
-      .map((user) => ({
-        type: UserHubSourceType.User,
-        targetId: user.id,
-        alias: user.username,
-      }));
-  }
-
-  if (type === UserHubSourceType.Collection) {
-    // Kept behind the same switch the write path enforces: offering a collection
-    // the server would refuse is worse than not listing it.
-    if (!HUB_COLLECTION_SOURCES_ENABLED) return [];
-
-    const followed = await dbRead.collectionContributor.findMany({
-      where: { userId, permissions: { has: CollectionContributorPermission.VIEW } },
-      select: { collectionId: true },
-      // `nulls: 'last'` because the column is nullable and Postgres sorts DESC as
-      // NULLS FIRST, which would fill the window with the rows carrying no date at
-      // all — the opposite of the recency cut this is. 0 nulls of 2,294,541 rows on
-      // prod today, so it holds the invariant rather than fixing a live bug.
-      orderBy: { createdAt: { sort: 'desc', nulls: 'last' } },
-      take: suggestionWindow(term),
-    });
-    if (!followed.length) return [];
-
-    const collectionIds = scopeSuggestionIds(
-      followed.map((f) => f.collectionId),
-      term
-    );
-
-    const collections = await dbRead.collection.findMany({
-      where: {
-        id: { in: collectionIds },
-        // Unreachable while the switch above is off, and here so that flipping it
-        // does not reopen the models divergence on this arm: a VIEW contributor on
-        // a private collection is someone both the link path and the write path
-        // refuse.
-        read: { not: CollectionReadConfiguration.Private },
-        ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
-      },
-      select: { id: true, name: true },
-      ...(term ? { orderBy: { name: 'asc' as const } } : {}),
-      take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
-    });
-
-    return bySuggestionOrder(collections, collectionIds, term).map((collection) => ({
-      type: UserHubSourceType.Collection,
-      targetId: collection.id,
-      alias: collection.name,
-    }));
-  }
-
-  // The three relationships overlap, so the ids are gathered first and the name
-  // filter runs once over the union.
-  const bookmarkCollection = await dbRead.collection.findFirst({
-    where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
-    select: { id: true },
+  const follows = await dbRead.userEngagement.findMany({
+    where: { userId, type: UserEngagementType.Follow },
+    select: { targetUserId: true },
+    orderBy: { createdAt: 'desc' },
+    take: suggestionWindow(term),
   });
+  if (!follows.length) return [];
 
-  const [ownModels, engaged, bookmarked] = await Promise.all([
-    dbRead.model.findMany({
-      where: { userId, deletedAt: null },
-      select: { id: true },
-      orderBy: { id: 'desc' },
-      take: suggestionWindow(term),
-    }),
-    dbRead.modelEngagement.findMany({
-      where: { userId, type: ModelEngagementType.Notify },
-      select: { modelId: true },
-      orderBy: { createdAt: 'desc' },
-      take: suggestionWindow(term),
-    }),
-    bookmarkCollection
-      ? dbRead.collectionItem.findMany({
-          where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
-          select: { modelId: true },
-          orderBy: { id: 'desc' },
-          take: suggestionWindow(term),
-        })
-      : Promise.resolve([]),
-  ]);
+  // Ordering sits ABOVE the `take`, so it decides which rows come back and not
+  // merely their order. A search wants the whole window ranked by name; a bare
+  // suggestion list wants the most recent relationships, so it is cut to size
+  // here and the names query is left unordered.
+  const followed = scopeSuggestionIds(
+    follows.map((f) => f.targetUserId),
+    term
+  );
 
-  const candidateIds = [
-    ...new Set([
-      ...ownModels.map((m) => m.id),
-      ...engaged.map((e) => e.modelId),
-      ...bookmarked.flatMap((b) => (b.modelId ? [b.modelId] : [])),
-    ]),
-  ];
-  if (!candidateIds.length) return [];
-
-  const scopedIds = scopeSuggestionIds(candidateIds, term);
-
-  const models = await dbRead.model.findMany({
+  const users = await dbRead.user.findMany({
     where: {
-      id: { in: scopedIds },
-      // A bookmark or a bell outlives the model going private or back to draft, so
-      // without this the picker offers by name what `resolveSource` refuses by link.
-      ...visibleModel(userId, isModerator),
-      ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
+      id: { in: followed },
+      deletedAt: null,
+      // citext overloads equality, NOT `LIKE` — a plain `contains` here is
+      // case-SENSITIVE. Safe to ask for ILIKE now only because the id list
+      // above bounds it; unbounded, this is the 4.7GB scan.
+      ...(term ? { username: { contains: term, mode: 'insensitive' as const } } : {}),
     },
-    select: { id: true, name: true },
-    ...(term ? { orderBy: { name: 'asc' as const } } : {}),
+    select: { id: true, username: true },
+    ...(term ? { orderBy: { username: 'asc' as const } } : {}),
     take: term ? SUGGESTIONS_LIMIT : SUGGESTIONS_SLICE,
   });
 
-  return bySuggestionOrder(models, scopedIds, term).map((model) => ({
-    type: UserHubSourceType.Model,
-    targetId: model.id,
-    alias: model.name,
-  }));
+  return bySuggestionOrder(users, followed, term)
+    .filter((user): user is { id: number; username: string } => !!user.username)
+    .map((user) => ({
+      type: UserHubSourceType.User,
+      targetId: user.id,
+      alias: user.username,
+    }));
 }

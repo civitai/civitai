@@ -81,6 +81,7 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -166,20 +167,37 @@ describe('blocks.getInstallConfig', () => {
     expect(out).not.toHaveProperty('name');
   });
 
-  // H3 disclosure correctness: the install modal shows these scopes at the
-  // authorization moment, so they MUST equal the mint ceiling (manifest ∩
-  // approvedScopes), NOT the raw self-declared manifest. A scope the mod did
-  // NOT approve will never be minted — disclosing it would over-state, and an
-  // internal/unapproved scope id the manifest declares must not leak. Mirrors
-  // grantScopes' ceiling + getAppDetail's approved-only projection.
-  it('discloses only manifest ∩ approvedScopes — drops mod-narrowed/unapproved scopes', async () => {
+  // H3 disclosure correctness: the install modal shows these scopes at the authorization
+  // moment, so they MUST equal `manifest.scopes ∩ approvedScopes` — the shared
+  // `effectiveBlockScopes` rule — and NOT the raw self-declared manifest. Disclosing a scope
+  // outside the approval would over-state what the user is consenting to, and an
+  // internal/unapproved scope id the manifest declares must not leak.
+  //
+  // ⚠️ DO NOT CALL THAT SET "THE MINT CEILING" — an earlier revision of this comment did, and it
+  // is the same false mint model retracted at `src/shared/constants/block-effective-scopes.ts`.
+  // No mint computes this intersection: the PRODUCTION mint
+  // (`src/pages/api/v1/block-tokens/index.ts:1054`) signs the MANIFEST filtered to the known
+  // vocabulary and uses `approvedScopes` only as an all-or-nothing 403 veto; the two dev-tunnel
+  // mints source `app.scopes` (`:469`, `resolveDevPageBlockForAuthor`) and `app.approvedScopes`
+  // (`:650`, `resolveOwnedNonApprovedPageBlock`) respectively.
+  //
+  // What this set DOES mirror is `grantScopes`' consent ceiling — same helper, same module,
+  // asserted in "the approved-scope consent ceiling" block below. It does NOT mirror
+  // `getAppDetail`/`scopesSummary`, which project RAW `approved_scopes` with no intersection at
+  // all; that is deliberate for the public pre-launch disclosure. See the retraction at
+  // `src/server/routers/blocks.router.ts` (the `getInstallConfig` call site).
+  it('discloses only manifest ∩ approvedScopes — drops scopes outside the approval', async () => {
     mockDbReadAppBlockFindUnique.mockResolvedValue({
       status: 'approved',
       manifest: {
         name: 'overclaiming app',
         scopes: ['ai:write:budgeted', 'models:read:self', 'social:tip:self', 'INTERNAL_secret'],
       },
-      // The moderator narrowed approval to a subset; the other two are NOT granted.
+      // A STALE-WIDER MANIFEST, not a moderator narrowing — there is no per-scope narrowing
+      // mechanism. The approve paths write `approvedScopes = manifestScopes` verbatim
+      // (`publish-request.service.ts`), so the only way the two diverge like this is a later
+      // publisher push: `src/pages/api/v1/developer/block-manifests.ts` replaces `manifest` and
+      // sets `status:'pending'` without touching `approved_scopes`. The other two are NOT granted.
       approvedScopes: ['ai:write:budgeted', 'models:read:self'],
     });
     const caller = blocksRouter.createCaller(authedCtx(42) as never);
@@ -289,5 +307,207 @@ describe('blocks.getInstallConfig', () => {
     const out = await caller.getInstallConfig({ appBlockId: 'ab_x' });
     expect(out).toEqual({ settings: {}, scopes: [] });
     expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `blocks.grantScopes` — the CONSENT BUDGET write half.
+ *
+ * 🔴 THIS IS A SEAM TEST, AND THAT IS WHY IT EXISTS. The enforcement side
+ * (`blocks.router.scopeEnforcement.test.ts`) mocks the grant READ directly, and the
+ * service side (`scope-grant.service.test.ts`) mocks the DB. Both are hermetic and both
+ * pass whether or not the two halves are wired together — nothing in either builds the
+ * combined state. What is asserted here is the RELATIONSHIP: the value `grantScopes`
+ * hands to the write path is the same shape `getConsentBuzzBudget` reads back, so a
+ * budget the user sets can actually reach the spend path.
+ *
+ * The budget is meaningful only alongside `ai:write:budgeted` — nothing else in the
+ * vocabulary can spend — so a budget sent without it is IGNORED rather than rejected.
+ * See the call site for why ignoring beats erroring.
+ */
+/**
+ * ctx with the appBlocks feature on (the proc gates on `ctx.features.appBlocks`).
+ *
+ * Module-scoped because BOTH `grantScopes` describes below need it. A `function` declared inside a
+ * `describe` callback is scoped to that callback, so the second block could not see the first one's
+ * copy and carried a byte-identical duplicate.
+ */
+function consentCtx(userId = 42) {
+  const ctx = authedCtx(userId, false) as unknown as { features: Record<string, unknown> };
+  ctx.features = { ...ctx.features, appBlocks: true };
+  return ctx;
+}
+
+describe('blocks.grantScopes — consent budget', () => {
+  const grantMock = dbMock.dbWrite.appUserScopeGrant;
+
+  beforeEach(() => {
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      version: '1.2.3',
+      manifest: APPROVED_MANIFEST,
+      approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    grantMock.findUnique.mockReset();
+    grantMock.create.mockReset();
+    grantMock.update.mockReset();
+    grantMock.findUnique.mockResolvedValue(null); // no prior grant
+    grantMock.create.mockResolvedValue({});
+    grantMock.update.mockResolvedValue({});
+  });
+
+  it('PERSISTS the budget when ai:write:budgeted is among the granted scopes', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: 750,
+    });
+    expect(out.granted).toEqual(['ai:write:budgeted']);
+    // The number reached the WRITE, under the column name the read selects.
+    expect(grantMock.create.mock.calls[0][0].data).toMatchObject({ buzzBudgetPerDay: 750 });
+    // ...and the response echoes what was stored, so a client needs no second round-trip.
+    expect(out.buzzBudgetPerDay).toBe(750);
+  });
+
+  it('IGNORES a budget sent without any spend scope (does not error, stores nothing)', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['models:read:self'],
+      buzzBudgetPerDay: 750,
+    });
+    expect(out.granted).toEqual(['models:read:self']);
+    // The KEY is absent, not null: an explicit null would CLEAR a stored budget, and
+    // "ignore" must not double as "erase".
+    const data = grantMock.create.mock.calls[0][0].data;
+    expect(Object.hasOwn(data, 'buzzBudgetPerDay')).toBe(false);
+    expect(out.buzzBudgetPerDay).toBeUndefined();
+  });
+
+  it('HONOURS a budget for an app that ALREADY holds the spend scope', async () => {
+    // Raising a limit on an app you consented to earlier: the scope is not in THIS
+    // call's grant, so the meaningfulness test has to consult the stored grant.
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['models:read:self'],
+      buzzBudgetPerDay: 300,
+    });
+    expect(grantMock.update.mock.calls[0][0].data).toMatchObject({ buzzBudgetPerDay: 300 });
+    expect(out.buzzBudgetPerDay).toBe(300);
+  });
+
+  it('OMITTING the budget leaves a stored one untouched', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await caller.grantScopes({ appBlockId: 'ab_x', scopes: ['models:read:self'] });
+    const data = grantMock.update.mock.calls[0][0].data;
+    expect(Object.hasOwn(data, 'buzzBudgetPerDay')).toBe(false);
+  });
+
+  it('REJECTS a budget above the platform daily cap at the input boundary', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await expect(
+      caller.grantScopes({
+        appBlockId: 'ab_x',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: BLOCK_BUZZ_CAP_PER_DAY + 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.create).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS a zero budget (declining the scope is how you express "never")', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await expect(
+      caller.grantScopes({
+        appBlockId: 'ab_x',
+        scopes: ['ai:write:budgeted'],
+        buzzBudgetPerDay: 0,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `blocks.grantScopes` — THE CONSENT CEILING (`manifest.scopes ∩ approvedScopes`).
+ *
+ * 🔴 WHY THIS BLOCK EXISTS. This is the ONE site in the codebase that decides what a user can
+ * CONSENT TO, and until this block it had NO behavioural coverage at all. Measured on the
+ * pre-existing suite: replacing the ceiling with the RAW MANIFEST — the WIDENING direction, i.e.
+ * ignoring `approvedScopes` entirely — left the file at 16/16 passed, byte-identical to HEAD. The
+ * reason was fixture shape, not a missing assertion: every `grantScopes` fixture above uses a
+ * manifest and an approval that OVERLAP on the scope under test, so no fixture could distinguish
+ * "intersected with the approval" from "took the manifest". The ceiling's own error string
+ * appeared in 0 of 1994 test files.
+ *
+ * So both cases below deliberately use `manifest ⊋ approved` — a stale-wider manifest, which is
+ * reachable via `src/pages/api/v1/developer/block-manifests.ts` (it replaces `manifest` and sets
+ * `status:'pending'` without touching `approved_scopes`). Each one FAILS under the raw-manifest
+ * widening mutant, on its own assertion.
+ */
+describe('blocks.grantScopes — the approved-scope consent ceiling', () => {
+  const grantMock = dbMock.dbWrite.appUserScopeGrant;
+
+  beforeEach(() => {
+    // manifest ⊋ approved: `social:tip:self` is DECLARED but was never approved. It is a
+    // real, sensitive, spend-adjacent scope, not a synthetic id — the over-grant this gate
+    // exists to stop.
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      version: '2.0.0',
+      manifest: {
+        name: 'stale-wider manifest',
+        scopes: ['models:read:self', 'social:tip:self'],
+      },
+      approvedScopes: ['models:read:self'],
+    });
+    grantMock.findUnique.mockReset();
+    grantMock.create.mockReset();
+    grantMock.update.mockReset();
+    grantMock.findUnique.mockResolvedValue(null);
+    grantMock.create.mockResolvedValue({});
+    grantMock.update.mockResolvedValue({});
+  });
+
+  it('🔴 DROPS a declared-but-unapproved scope from the grant, and never writes it', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    const out = await caller.grantScopes({
+      appBlockId: 'ab_stale_wider',
+      scopes: ['models:read:self', 'social:tip:self'],
+    });
+    // The response must not claim the user consented to something outside the approval…
+    expect(out.granted).toEqual(['models:read:self']);
+    expect(out.granted).not.toContain('social:tip:self');
+    // …and the unapproved scope must not reach the PERSISTED grant either, which is what the
+    // enforcement path later reads back.
+    const written = grantMock.create.mock.calls[0][0].data;
+    expect(written.grantedScopes).toEqual(['models:read:self']);
+    expect(written.grantedScopes).not.toContain('social:tip:self');
+  });
+
+  it('🔴 REFUSES outright when EVERY requested scope is outside the approval', async () => {
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await expect(
+      caller.grantScopes({ appBlockId: 'ab_stale_wider', scopes: ['social:tip:self'] })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      // Pinned as the literal the call site emits — it appeared in no test file before this one,
+      // so a reworded or relocated ceiling check had nothing asserting it.
+      message: 'none of the requested scopes are within the app’s approved manifest',
+    });
+    expect(grantMock.create).not.toHaveBeenCalled();
+    expect(grantMock.update).not.toHaveBeenCalled();
   });
 });

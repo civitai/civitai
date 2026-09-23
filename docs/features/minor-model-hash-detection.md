@@ -194,7 +194,9 @@ A clear stamp only restrains the automation. A moderator can still flag the mode
 excluded from the queue).
 
 **Auto-flagged** — models the scan hook flagged that no moderator has signed off yet
-(`queryAutoFlaggedMinorModels`: `source='auto'` and not human-confirmed), newest first. Actions:
+(`queryAutoFlaggedMinorModels`: `source='auto'`, not human-confirmed, not accepted, and flagged within
+`AUTO_FLAG_REVIEW_WINDOW_DAYS` (30)), newest first. Past the window an unreviewed flag is accepted unless
+it has an appeal. Actions:
 
 - **Keep flagged** (`confirmMinorHashAutoFlag`) — promotes the snapshot to `source='manual'` (keeping
   `confirmedFrom`/`confirmedAt`/`confirmedBy`) and records the moderator's own `setMinor` `ModActivity`.
@@ -231,10 +233,11 @@ Both use the same sentence, and both are deliberately vague:
 > contact support.
 
 It names no hash, no matched model, and no source, and it does not enumerate the restrictions
-applied. Each of those details would tell a repeat uploader exactly which bytes to change. There is
-no in-app appeal: the Auto-flagged tab already *is* a moderator review of every automated flag, so an
-appeal queue would duplicate it — owners are routed to support, and a moderator actions it from that
-tab.
+applied. Each of those details would tell a repeat uploader exactly which bytes to change. The
+Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in an Appeals
+queue (`/api/mod/minor-flag/resolve-appeal`). Past the window, the moderator app's
+`/models/minor-hash-matches?q=<modelId>` lookup still offers Revert / Keep flagged for any model with a
+flag snapshot.
 
 **Notification** — `model-flagged-minor` (`minor-flag.notifications.ts`), `NotificationCategory.System`,
 `toggleable: false`. It polls for a snapshot whose `at` is newer than the job cursor, gated on:

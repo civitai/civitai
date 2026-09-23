@@ -6,9 +6,8 @@ import type {
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
-// The `/api/user-account` payload, declared once. Two panels render slices of it — Subscription takes
-// the Buzz balance, UserContent takes the lists — and each previously declared its own copy and issued
-// its own fetch, so every lookup ran the whole endpoint twice, including the 744M-row reaction scan.
+// The `/api/user-account` payload, declared once. Several panels render slices of it, and each used to
+// declare its own copy and issue its own fetch, so every lookup ran the whole endpoint more than once.
 //
 // The row shapes are DERIVED from the service's, through `Jsonified` for the Date→string boundary.
 // Hand-copied duplicates drifted within a day: `nsfw` and `details` were added to the query and stayed
@@ -52,12 +51,6 @@ export type Cosmetic = {
   type: string;
   equipped: boolean;
   obtainedAt: string | null;
-};
-
-export type Reactions = {
-  total: number;
-  creators: number;
-  targets: { userId: number; username: string | null; count: number }[];
 };
 
 export type TrainingRun = {
@@ -128,22 +121,11 @@ export type AvailableCosmetic = { id: number; name: string };
 export type Capped<T> = { items: T[]; truncated: boolean };
 
 export type Account = {
-  /** Mirrors `UserBuzz` in `user-account.service.ts` — the client type for the same payload. */
-  buzz: {
-    balance: number;
-    lifetimeBalance: number;
-    /** Null when the colour-balance read failed; yellow survives on its own. */
-    blue: number | null;
-    green: number | null;
-    blueLifetime: number | null;
-    greenLifetime: number | null;
-  } | null;
   reviews: Capped<Review>;
   receivedReviews: Capped<ReceivedReview>;
   comments: Capped<Comment>;
   commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
-  reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;

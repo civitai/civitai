@@ -174,6 +174,13 @@ function versionAuditRows() {
     .filter((row) => row.entityType === 'ModelVersion');
 }
 
+/** The Model-level rows, which `versionAuditRows` filters out. */
+function modelAuditRows() {
+  return entityChanges.mock.calls
+    .flatMap((call) => call[0] as unknown as Record<string, unknown>[])
+    .filter((row) => row.entityType === 'Model');
+}
+
 function clearCall() {
   return mockDbWrite.modelVersion.updateMany.mock.calls[0]?.[0] as
     | { where: { id: { in: number[] } }; data: Record<string, unknown> }
@@ -231,6 +238,39 @@ describe('upsertModel — licensing lineage on a model type change', () => {
       where: { id: { in: [VERSION_ID] } },
       data: { licensingSourceVersionId: null },
     });
+  });
+
+  /**
+   * 🔴 The audit's before-side type must come from the WRITER's read, not `beforeUpdate`'s `dbRead`
+   * one. The fixture is the divergent state on purpose — `dbRead` says Checkpoint, the writer says
+   * LORA, the payload says Checkpoint — so a replica-sourced before-side sees Checkpoint→Checkpoint,
+   * emits nothing, and the type change that clears every stamped fee beneath this model goes
+   * unrecorded on exactly the save whose clears need explaining.
+   *
+   * This is the behavioural half of the source-text guard in
+   * `src/server/utils/__tests__/entity-change.licensing-source.test.ts`, which can only pin the
+   * variable's NAME: `typeBeforeUpdate = beforeUpdate?.type` keeps that string and passes there,
+   * and fails here.
+   */
+  it('audits the type change against the writer read, not the replica', async () => {
+    // The DIVERGENCE is the test, and only half of it used to be visible here: the replica side came
+    // from the shared `storedModel`. Normalising that fixture to LORA would have left this assertion
+    // passing AND the mutation passing, with no other case in the file noticing, since nothing else
+    // reads `storedModel.type`. Pinned locally so a distant edit cannot reach it.
+    mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, type: ModelType.Checkpoint });
+    storedTypeOnWriter(ModelType.LORA);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
+
+    expect(modelAuditRows()).toEqual([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        field: 'type',
+        oldValue: '"LORA"',
+        newValue: '"Checkpoint"',
+      }),
+    ]);
   });
 
   it('keeps a root the new type supports', async () => {

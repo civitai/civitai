@@ -21,13 +21,23 @@ import { trpc } from '~/utils/trpc';
 export default function AddToHubModal({
   source,
 }: {
-  source: Omit<AddUserHubSourceInput, 'hubId'>;
+  // `exclude` is omitted, not defaulted: every entry point into this modal is a
+  // "put this in a hub" affordance on a creator or model page. Keeping the field out
+  // of the prop means a caller cannot quietly turn one of them into an exclusion.
+  source: Omit<AddUserHubSourceInput, 'hubId' | 'exclude'>;
 }) {
   const dialog = useDialogContext();
   const invalidateHub = useInvalidateHub();
   const [name, setName] = useState('');
 
   const { data: hubs, isLoading } = trpc.userHub.getAll.useQuery();
+  // Where this one target already sits. Separate from the hub list because it is the
+  // only thing on this screen that is per-target: the list itself carries no sources.
+  const { data: state = [] } = trpc.userHub.sourceState.useQuery({
+    type: source.type,
+    targetId: source.targetId,
+  });
+  const stateByHub = new Map(state.map((row) => [row.hubId, row]));
 
   const onError = (title: string) => (error: { message: string }) =>
     showErrorNotification({ title, error: new Error(error.message) });
@@ -70,22 +80,33 @@ export default function AddToHubModal({
                 // Membership here means "this hub shows me that source", so a row the
                 // owner switched off in the rail reads as unticked: the hub is not
                 // showing it, and ticking is what turns it back on.
-                const checked = hub.sources.some(
-                  (s) => s.type === source.type && s.targetId === source.targetId && s.enabled
-                );
-                const full = hub.sources.length >= hubLimits.sourcesPerHub;
+                const row = stateByHub.get(hub.id);
+                const checked = !!row?.enabled && !row.exclude;
+                // 🔴 A hub that EXCLUDES this target must not render as an empty box.
+                // The server flips a row rather than refusing the pair, so ticking it
+                // would delete the owner's keep-out — from a modal that never showed
+                // the exclusion existed, in one click, with no warning. Locked instead;
+                // removing an exclusion is an edit you make in the hub, where you can
+                // see it.
+                const excluded = !!row?.exclude;
+                // Exclusions have their own cap, so counting them here would report a
+                // hub as full while it still had room for what this box adds.
+                const held = hub.sourceCount;
+                const full = held >= hubLimits.sourcesPerHub;
                 return (
                   <Checkbox
                     key={hub.id}
                     checked={checked}
-                    disabled={pending || (full && !checked)}
+                    disabled={pending || excluded || (full && !checked)}
                     label={
                       <Group gap={6} wrap="nowrap">
                         <Text size="sm">{hub.name}</Text>
                         <Text size="xs" c="dimmed">
-                          {full && !checked
+                          {excluded
+                            ? 'Kept out of this hub'
+                            : full && !checked
                             ? 'Full'
-                            : `${hub.sources.length}/${hubLimits.sourcesPerHub}`}
+                            : `${held}/${hubLimits.sourcesPerHub}`}
                         </Text>
                       </Group>
                     }

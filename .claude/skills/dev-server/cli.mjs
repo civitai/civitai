@@ -8,8 +8,14 @@ import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
-import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
+import {
+  exitCodeFor,
+  isTerminal as isTerminalStatus,
+  laneConcurrencyArgs,
+  parseMaxWorkersFlag,
+} from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,8 +32,39 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
-const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
+
+// ONE daemon serves every worktree, so it must not live inside one. The skill directory is
+// committed, so `__dirname` names whichever tree the agent happened to run the CLI from — and a
+// daemon spawned there holds that directory open for its whole life, so `wt rm` on it fails EBUSY
+// for whoever finishes their PR first. It also survives the tree: the daemon's own copy of
+// daemon.mjs would be deleted out from under it.
+//
+// So the daemon's script, its pid file and its cwd all come from the checkout that owns the .git
+// directory. Falls back to the caller's own tree when git cannot answer — a wrong-tree daemon is
+// worse than a right-tree one, but no daemon at all is worse than either.
+const daemonHome = resolveDaemonHome(__dirname, projectRoot);
+
+const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
+const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
+
+/**
+ * Exit after draining pending writes.
+ *
+ * process.exit() terminates the process WITHOUT waiting for buffered writes to finish, so the last
+ * `console.log`/`console.error` lines can be LOST when stdout/stderr is a pipe-backed capture (e.g.
+ * exec background). Call this instead of process.exit whenever a waiter has just printed output:
+ * the empty-string write is queued after the pending data, and the callback fires only once all
+ * earlier writes have been flushed to the kernel.
+ */
+function drainThenExit(code) {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  // Safety: if neither callback fires within 500ms (unlikely but makes the bug unreproducible
+  // rather than systemic), exit anyway — a slightly stale exit code is better than a hung process.
+  setTimeout(() => process.exit(code), 500).unref();
+}
 
 // Overridable via DEV_DAEMON_PORT, so a second daemon can be exercised without touching the
 // shared one. The whole decision — port included — is made in scripts/daemon-port.mjs, which is
@@ -59,7 +96,9 @@ async function startDaemon() {
   const spawnOptions = {
     detached: true,
     stdio: 'ignore',
-    cwd: projectRoot,
+    // The primary checkout, not the caller's. A cwd inside a worktree is itself a handle on that
+    // directory, so pointing only the script at the primary would still pin the tree.
+    cwd: daemonHome.home,
     windowsHide: true,
   };
 
@@ -497,8 +536,8 @@ function describeRun(run) {
     lines.push(`Run ${run.id} started (nothing ahead of it).`);
   } else if (run.paused) {
     lines.push(
-      `Run ${run.id} queued at position ${run.position}, but the queue is PAUSED (concurrency 0).`,
-      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs test config 1`
+      `Run ${run.id} queued at position ${run.position}, but its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0).`,
+      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs ${run.resumeCommand ?? 'test config 1'}`
     );
   } else {
     lines.push(
@@ -549,11 +588,11 @@ async function cmdTestWait(id) {
         `Run ${id} is unknown to the daemon. It was most likely restarted, which drops queued and ` +
           `in-flight runs. Request a new run.`
       );
-      process.exit(EXIT_UNKNOWN_RUN);
+      drainThenExit(EXIT_UNKNOWN_RUN);
     }
     if (!result.ok) {
       console.error(`Cannot reach the daemon: ${result.error || result.data?.error}`);
-      process.exit(EXIT_UNKNOWN_RUN);
+      drainThenExit(EXIT_UNKNOWN_RUN);
     }
 
     const run = result.data;
@@ -566,7 +605,9 @@ async function cmdTestWait(id) {
       lastStatus = run.status;
     }
     if (run.paused && !announcedPause && !isTerminalStatus(run.status)) {
-      console.log('queue is PAUSED (concurrency 0) — nothing will start until it is raised');
+      console.log(
+        'queue is PAUSED (the unit lane is at 0) — nothing will start until it is raised'
+      );
       announcedPause = true;
     }
 
@@ -588,7 +629,7 @@ async function cmdTestWait(id) {
         );
       }
       console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
-      process.exit(exitCodeFor(run));
+      drainThenExit(exitCodeFor(run));
     }
 
     await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
@@ -616,14 +657,34 @@ async function cmdTest(sub, rest) {
     case 'cancel':
       result = await daemonRequest(`/test-runs/${rest[0]}`, { method: 'DELETE' });
       break;
-    case 'config':
-      result = rest[0]
-        ? await daemonRequest('/test-runs/config', {
-            method: 'POST',
-            body: JSON.stringify({ concurrency: Number(rest[0]) }),
-          })
+    case 'config': {
+      // `test config 2 --max-workers 15` sets both in one POST. Each key is sent only when it was
+      // typed, because the daemon leaves an absent key alone — sending a default for the one you
+      // did not mean to change is how the cap gets dropped while raising concurrency.
+      const body = {};
+      if (rest[0] !== undefined && !rest[0].startsWith('--')) body.concurrency = Number(rest[0]);
+      Object.assign(body, laneConcurrencyArgs(rest));
+      const cacheAt = rest.findIndex((a) => /^--cache(=|$)/.test(a));
+      if (cacheAt !== -1) {
+        const inline = rest[cacheAt].split('=')[1];
+        body.cacheMode = inline !== undefined ? inline : rest[cacheAt + 1];
+      }
+      const capAt = rest.findIndex((a) => /^--max-workers(=|$)/.test(a));
+      if (capAt !== -1) {
+        const inline = rest[capAt].split('=')[1];
+        const raw = inline !== undefined ? inline : rest[capAt + 1];
+        try {
+          body.maxWorkers = parseMaxWorkersFlag(raw);
+        } catch (err) {
+          console.error(err.message);
+          process.exit(1);
+        }
+      }
+      result = Object.keys(body).length
+        ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
         : await daemonRequest('/test-runs/config');
       break;
+    }
     default:
       console.error(`Unknown test subcommand: ${action}`);
       console.error('Usage: test [run|wait|list|show|logs|cancel|config]');
@@ -1008,7 +1069,20 @@ Commands:
   test wait <run-id>  Block until that run finishes; exits with the run's exit code
   test list           List runs and queue state
   test cancel <id>    Cancel a queued or running run
-  test config [n]     Show or set the concurrency limit (0 pauses the queue)
+  test config [n]     Show or set the UNIT lane's concurrency (0 pauses that lane;
+                      --typecheck n does the same for the typecheck lane)
+                      [--max-workers <n>|none] also caps each run's vitest pool
+                      [--typecheck <n>] sets the typecheck lane's limit
+                      [--typecheck-apps <n>] sets the app-typecheck lane's limit
+                      [--component <n>] sets the component (browser) lane's limit
+                      [--packages <n>] sets the packages suite lane's limit
+                      [--apps <n>] sets the apps suite lane's limit
+                      [--geometry <n>] sets the geometry (browser) lane's limit
+                      [--lint <n>] sets the lint lane's limit
+                      [--lint-packages <n>] sets the packages-lint lane's limit
+                      [--saturating <n>] how many box-hungry runs may share the machine
+                      [--light <n>] how many cheap runs may sit beside them
+                      [--cache off|shadow|on] result cache: on skips unchanged tests
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)
                       [--stop-server] [--force]

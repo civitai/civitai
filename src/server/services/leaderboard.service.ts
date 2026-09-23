@@ -72,7 +72,10 @@ export async function getLeaderboards(input: GetLeaderboardsInput) {
       title: true,
       description: true,
       scoringDescription: true,
-      domain: true,
+      // `domain` is deliberately NOT selected. The `where` above is the only place
+      // domain scoping belongs; shipping the column invites a client to re-derive it,
+      // which is the bug this replaced.
+      //
       // Unconditional: the `where` above already limits non-moderators to public
       // boards, and UserProfileEditModal filters its showcase options on this
       // field — selecting it only for moderators would blank that list for

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -13,10 +13,18 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
-  import { BULK_SOURCE_LABELS, BULK_SOURCES } from './sources';
+  import {
+    BULK_SOURCE_LABELS,
+    BULK_SOURCES,
+    REMOVED_FILTER_LABELS,
+    REMOVED_FILTERS,
+    isRemovedFilter,
+    type RemovedFilter,
+  } from './sources';
   import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_SELECTION } from './limits';
   import { batchKey } from './selection';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
@@ -40,7 +48,7 @@
     });
   });
 
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
 
   const batchSubject = $derived(batchKey(page.url));
 
@@ -77,9 +85,8 @@
     new Set<string | number>([...seen].filter(([, v]) => v.blocked).map(([id]) => id))
   );
 
-  // Retool filtered the fetched batch client-side, and so does this: the batch is one query the
-  // moderator already paid for, and re-running it per filter change would drop the selection they are
-  // assembling. `matched` is shown against the loaded count, never the source total.
+  // Rating and prompt filter the loaded page, unlike `removed`: re-querying changes `batchKey` and
+  // clears a selection that spans pages. `matched` is against the loaded count, not the source total.
   let filters = $state<Record<string, string>>({});
   const filterFields: FilterField[] = [
     {
@@ -96,23 +103,12 @@
         ['0', 'Unrated'],
       ],
     },
-    {
-      kind: 'select',
-      key: 'status',
-      label: 'Removed',
-      options: [
-        ['removed', "Only ToS'd"],
-        ['live', 'Hide removed'],
-      ],
-    },
     { kind: 'search', key: 'q', label: 'Search prompt' },
   ];
 
   const filteredItems = $derived(
     (data.batch?.items ?? []).filter((i) => {
       if (filters.rating && i.nsfwLevel !== Number(filters.rating)) return false;
-      if (filters.status === 'removed' && i.ingestion !== 'Blocked') return false;
-      if (filters.status === 'live' && i.ingestion === 'Blocked') return false;
       // The negative prompt too: a blocked term sitting in the negative is the same finding, and
       // Retool's prompt search matched both.
       const q = filters.q?.trim().toLowerCase();
@@ -163,13 +159,15 @@
   // `limit` is carried through a new search rather than reset: a moderator who raised it did so because
   // this account needs it, and every subsequent lookup on that account would otherwise snap back to 200.
   // Built from scratch rather than mutated: changing the source or the term makes `offset` — and any
-  // stale term — describe a batch that no longer exists.
-  const navigate = (value: string, limit: number) =>
+  // stale term — describe a batch that no longer exists. `removed` is NOT carried into a new search, so
+  // the next account never opens already narrowed.
+  const navigate = (value: string, limit: number, removed: RemovedFilter | null = null) =>
     goto(
       urlWith(new URL(page.url.pathname, page.url), {
         source,
         q: value || null,
         limit: limit === DEFAULT_LIMIT ? null : limit,
+        removed,
       }),
       { keepFocus: true }
     );
@@ -178,6 +176,15 @@
     e.preventDefault();
     navigate(term.trim(), data.limit);
   };
+
+  const setRemoved = (value: string) =>
+    goto(
+      urlWith(page.url, {
+        removed: isRemovedFilter(value) ? value : null,
+        offset: null,
+      }),
+      { keepFocus: true }
+    );
 
   // Paging keeps the batch and changes only the window, so it mutates the URL rather than rebuilding
   // it — the opposite of `navigate`, which is changing WHICH batch is on screen.
@@ -290,7 +297,7 @@
       <Select.Root
         type="single"
         value={String(data.limit)}
-        onValueChange={(v) => navigate(term.trim(), Number(v))}
+        onValueChange={(v) => navigate(term.trim(), Number(v), data.removed)}
       >
         <Select.Trigger class="w-32">{num(data.limit)} images</Select.Trigger>
         <Select.Content>
@@ -300,6 +307,18 @@
         </Select.Content>
       </Select.Root>
       <span class="text-xs text-dark-2">per page</span>
+
+      <Select.Root type="single" value={data.removed ?? 'all'} onValueChange={setRemoved}>
+        <Select.Trigger class="w-40" aria-label="Removed filter">
+          {data.removed ? REMOVED_FILTER_LABELS[data.removed] : 'Removed and live'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value="all">Removed and live</Select.Item>
+          {#each REMOVED_FILTERS as f (f)}
+            <Select.Item value={f}>{REMOVED_FILTER_LABELS[f]}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
 
       {#if batch.total > data.limit}
         <div class="ml-auto flex items-center gap-2">
@@ -349,8 +368,7 @@
   />
 
   {#if data.canAct}
-    <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. That is the whole
-         point of filtering to ToS'd before acting. -->
+    <!-- `selectable` is the FILTERED set, so "Select all" means what is on screen. -->
     <ImageActionBar
       {selected}
       selectable={filteredItems.map((i) => i.id)}
@@ -369,7 +387,9 @@
     civitaiUrl={data.civitaiUrl}
     selected={data.canAct ? selected : undefined}
     card={imageCard}
-    empty="No images in this batch."
+    empty={data.removed
+      ? `No images in this batch match "${REMOVED_FILTER_LABELS[data.removed]}".`
+      : 'No images in this batch.'}
     endLabel={batch.truncated ? null : 'End of batch.'}
   />
 

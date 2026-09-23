@@ -157,6 +157,46 @@ describe('mintReviewBlockToken', () => {
     expect(res.appName).toBe('plain-app'); // falls back to slug
   });
 
+  it('carries the manifest bootSkeleton so the moderator reviews the SHIPPED presentation', async () => {
+    // Render fidelity, same class as `sandbox` above: the review preview mounts
+    // the real PageBlockHost, so a declaration the approved app will honour must
+    // reach it. Without this the moderator approves a presentation the shipped
+    // app does not have — and the projection was reversible with a green gate.
+    mockFindUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'boot-app',
+      manifest: { scopes: ['models:read:self'], bootSkeleton: true },
+    });
+    const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+    expect(res.bootSkeleton).toBe(true);
+  });
+
+  it('bootSkeleton defaults to false, and a TRUTHY non-boolean does not enable it', async () => {
+    // Publisher JSON on an UNREVIEWED manifest — the strictest place for the
+    // `=== true` coercion, since this value is read before any moderator has
+    // looked at it.
+    for (const [manifestValue, expected] of [
+      [undefined, false],
+      ['true', false],
+      [1, false],
+      [{}, false],
+      [true, true],
+    ] as const) {
+      mockFindUnique.mockResolvedValue({
+        id: PUBREQ,
+        status: 'pending',
+        slug: 'boot-app',
+        manifest:
+          manifestValue === undefined
+            ? { scopes: [] }
+            : { scopes: [], bootSkeleton: manifestValue },
+      });
+      const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+      expect(res.bootSkeleton).toBe(expected);
+    }
+  });
+
   it('THROWS for a missing request (no oracle) and never signs', async () => {
     mockFindUnique.mockResolvedValue(null);
     await expect(

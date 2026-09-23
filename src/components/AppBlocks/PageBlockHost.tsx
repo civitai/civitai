@@ -1,4 +1,4 @@
-import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
+import { Avatar, Box, Button, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -32,6 +32,21 @@ import {
   toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import {
+  buildCollectionFollowConsentCopy,
+  createCollectionFollowSettlement,
+  createCollectionLookupBudget,
+  resolveCollectionFollowRequest,
+  resolveCollectionIdentity,
+  type CollectionLookupBudget,
+} from './collectionFollowGate';
+import {
+  buildCreatePostConsentCopy,
+  createPostSettlement,
+  resolveCreatePostRequest,
+  type CreatePostPreview,
+} from './createPostFromAppGate';
+import { CreatePostConsentBody } from './CreatePostConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -249,10 +264,12 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  * unreachable content), so the number's only job is to make the band as small as
  * it can be while still catching the degenerate case. Raising it widens the
  * population that sees two scrollbars, so the value is bounded on BOTH sides —
- * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
- * the copy that can block a merge) and again in
- * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
- * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * in `__tests__/pageRunScrollContract.test.ts` (the node `unit` suite, which
+ * renders a real verdict on a push to `main`) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (the report-only browser tier, which
+ * is why it is not the only one). NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so both are signals a reviewer must read,
+ * not doors that stay shut. The NUMBERS deliberately live in those tests, not here: a band
  * declared beside the value it bounds can be moved in the same edit. What lives
  * here is the ARITHMETIC that justifies them.
  *
@@ -309,9 +326,17 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *
  * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
  * do not cap themselves") is only half true, and the half that is false is what
- * decides where this value sits. Across the 13 first-party App Block repos — 11
- * with a `page` surface; the other two are `model.sidebar_top` slot blocks and a
- * PAGE cap cannot reach them:
+ * decides where this value sits.
+ *
+ * ⚠️ THE CENSUS BELOW IS A CROSS-REPO READING, NOT SOMETHING THIS REPO CAN CHECK, AND
+ * NOTHING ASSERTS IT. It was taken by reading 13 separate first-party App Block repos
+ * at whatever refs they were at when the cap was chosen; no ref is recorded, no
+ * fixture reproduces it, and every number in it (13 repos, 11 page surfaces, the nine
+ * wells, median 860, max 1100) would silently rot as those repos change. Treat it as
+ * the RATIONALE that was in front of whoever picked 1600, not as a live measurement —
+ * and re-take it, recording refs, before leaning on it to move the cap. Across those
+ * 13 repos as read then — 11 with a `page` surface; the other two are
+ * `model.sidebar_top` slot blocks and a PAGE cap cannot reach them:
  *
  *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
  *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
@@ -337,23 +362,53 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
  *         border-box) is the widest container size in use across `src/pages`,
  *         and `APPS_TWO_COLUMN_DETAIL_MEASURE` (the store-preview page an app is
- *         usually launched FROM) is exactly it. An app capped below this would
+ *         usually launched FROM) starts there. An app capped below this would
  *         render narrower than the page that linked to it, which reads as a
  *         downgrade rather than a frame.
- *   1920  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
+ *         ⚠️ THAT CONSTANT IS NO LONGER A SINGLE NUMBER, and the sentence above used
+ *         to say "is exactly it". It is a BAND now — `{min: 1288, max: 1600}` — so on
+ *         a wide screen the store-preview page reaches 1600, which is EXACTLY this
+ *         cap rather than 312px below it. The conclusion survives (an app is never
+ *         narrower than the page that launched it) but the MARGIN this paragraph
+ *         implied is gone: at the top of that band the two are equal. If the
+ *         store-preview band is ever raised again, this cap stops being a ceiling
+ *         over it and the reasoning here has to be re-made rather than re-read.
+ *   2560  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
  *         outlier for a reason that does NOT transfer: it exists for card GRIDS
  *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
  *         genuinely spend the space. An app block may be a grid, but it may just
  *         as easily be a single form, and the host cannot tell which.
+ *         ⚠️ IT WAS 1920 WHEN THIS BAND WAS CHOSEN and the ultrawide pass moved it
+ *         to 2560. The gap between the cap and the outlier therefore WIDENED, which
+ *         does not by itself justify widening the cap — see below.
  *
- * 1600 is above every ordinary content measure on the site and below the grid
- * container, i.e. no app is ever narrower than a civitai page and none is ever
- * wider than the widest first-party surface. It also clears the widest
- * app-imposed well (1100) by ~45%, so the cap can never letterbox an app that has
- * already thought about its own width, while leaving a two-pane shell like
- * Notepad or Sensei a ~1350px content pane — the case the cap exists for.
- * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 1920 holds six).
+ * 1600 is at-or-above every ordinary content measure on the site and below the grid
+ * container, i.e. no app is ever narrower than a civitai page. ⚠️ "AT-OR-ABOVE" IS THE
+ * CORRECTION: this read "above every ordinary content measure" while
+ * `APPS_TWO_COLUMN_DETAIL_MEASURE` was the fixed 1288. It is a band now, topping out at
+ * exactly 1600, so on a wide screen the store-preview page and this cap are the SAME
+ * width. The claim that matters — no app renders narrower than the page that launched it
+ * — still holds at equality; the headroom it used to have does not. It also clears the
+ * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
+ * that has already thought about its own width, while leaving a two-pane shell — a
+ * fixed sidebar beside an unbounded `flex: 1` pane — a ~1350px content pane. That
+ * SHAPE is the case the cap exists for: it is the one that had nothing of its own
+ * bounding it. ⚠️ NO PARTICULAR APP IS NAMED AS THAT CASE, and the census above is
+ * not a list of apps this cap governs — an individual app of that shape may be
+ * excused by the ledger, which is why the membership is not restated in this file
+ * (see the note on that below). This paragraph is about what the VALUE 1600 buys
+ * where it applies, not about where it applies. Concretely it holds five columns of
+ * a `minmax(300px, 1fr)` grid (1288 holds four, 2560 holds eight).
+ *
+ * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
+ * used to appear here and it is a moving target: the apps container has taken three
+ * values over time — 1600 → 1920 → 2560 — without any of them being a statement about
+ * how wide a THIRD-PARTY app should be. The cap's real justification is the two bounds above
+ * it does control — at-or-above every ordinary content measure, and comfortably clear of
+ * the widest app-imposed well — neither of which moves when the apps CONTAINER does.
+ * (The store-preview band's ceiling does sit exactly on the first of those two, so it is
+ * a bound this cap now touches rather than clears; raising that band again would invert
+ * it, and this reasoning would have to be re-made.) Widening 1600 is a separate decision with its own evidence.
  *
  * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
  * rather than after it: Playable Collections. Re-read at its DEPLOYED ref
@@ -374,10 +429,14 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * So an opt-out here is per-APP and would unbound all three modes, not tidy up
  * one. That may well be right — a ticker and a wall want width, and the player's
  * media is `object-fit: contain` so a centred column simply shrinks it — but it
- * is a bigger product call than "the app already governs this", and it is not
- * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
- * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
- * to be added deliberately.
+ * is a bigger product call than "the app already governs this", and it was not
+ * made in the commit that shipped the cap.
+ *
+ * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
+ * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
+ * is a claim that rots on the next entry. The ledger lives in `globals.css` with
+ * each member's reasoning on its own rule, and its membership is ENUMERATED in
+ * `__tests__/pageBlockHostMaxWidth.test.ts`, which fails on growth AND shrink.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
@@ -403,6 +462,47 @@ export interface PageBlockHostProps {
   appName: string;
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
+  /**
+   * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
+   * paints its own boot state (THEMED only if the app is also enabled for the
+   * BLOCK_INIT fragment and reads it before first paint; otherwise it is
+   * guessing from prefers-color-scheme), so the host must stand back and let it show.
+   *
+   * 🔴 This does three things, not one, and all three are required: without any
+   * of them the app's boot state is invisible and the declaration is a lie.
+   *   1. no branded veil (it is opaque, `inset: 0`, until BLOCK_READY);
+   *   2. the iframe is visible from mount rather than `opacity: 0` until ready;
+   *   3. no `translateY` settle on reveal — that IS a layout shift, and the
+   *      point of an app-painted skeleton is that hydration moves nothing.
+   *
+   * The host's own skeleton stays the default for every app that does NOT
+   * declare this: an app with an empty `#root` and no veil is a blank white
+   * iframe for 300-1200ms, which is worse than what we had.
+   *
+   * 🔴 IT ALSO WIDENS WHAT AN APP CAN PAINT, AND WHEN. Without this the block
+   * could put no pixels on screen before BLOCK_READY (opacity 0 + an opaque
+   * veil); with it, publisher-controlled content is visible from mount, before
+   * the host holds a token. `pointerEvents` still blocks the mouse and
+   * AppBlockChrome still sits above, and an app can already paint freely once
+   * ready — so the change is to TIMING, not capability. It is named here
+   * because the surrounding comments discuss anti-spoof posture and this is
+   * part of it.
+   *
+   * 🔴 NOTHING VALIDATES THE DECLARATION TODAY — do not rest a safety argument
+   * on a build gate that does not exist yet. An app may set this over an empty
+   * `#root` and the result is that blank iframe, with no rejection anywhere in
+   * submit, approve or build. A platform-build check is planned (talos-infra);
+   * until it lands, the only thing standing between a false declaration and a
+   * blank run page is the author looking at their own app.
+   */
+  // REQUIRED, and passed explicitly by every call site — the same shape
+  // `surface` above uses, for the same reason. An optional prop with a
+  // `= false` default made the DEV route and the MODERATOR REVIEW preview
+  // silently render the veil: the author checking their own app and the
+  // moderator approving it both saw the pre-feature presentation, and the
+  // first person to see the real one would have been a user. Required means
+  // a new host is a type error until someone decides what it should do.
+  bootSkeleton: boolean;
   /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
@@ -454,6 +554,10 @@ export interface PageBlockHostProps {
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
+  /** The domain ceiling intersected with the VIEWER's own browsing level (see
+   *  `projectBlockInitMaturity`). Absent → the block falls back to
+   *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
+  effectiveBrowsingLevel?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -597,6 +701,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  bootSkeleton,
   surface,
   sandbox,
   trustTier,
@@ -610,6 +715,7 @@ export function PageBlockHost({
   tokenTerminal = false,
   domain,
   maxBrowsingLevel,
+  effectiveBrowsingLevel,
   viewer,
   theme,
   onConsentGranted,
@@ -629,6 +735,31 @@ export function PageBlockHost({
   const reviewNack = reviewMode && !reviewRunForReal;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  /**
+   * Which app's missing-permissions notice the viewer dismissed.
+   *
+   * Not persisted across a page load, deliberately: the notice is the only thing
+   * standing between "the app silently cannot do the thing" and the viewer, so a
+   * remembered dismissal would make the hole permanent for exactly the people who
+   * have already met it once.
+   *
+   * 🔴 THE APP ID, NOT A BOOLEAN, AND THE BOOLEAN WAS A REAL BUG. This component
+   * is NOT remounted when the viewer moves between two `/apps/run/<slug>` pages —
+   * `_app.tsx` puts no `key` on `<Component>` and the run page renders this with
+   * none — and the chrome THIS component draws is itself that one-click path
+   * ("Recently run" items are `NextLink`s). So a bare flag meant dismissing app
+   * A's notice silently suppressed app B's for the rest of the SPA session, for
+   * apps the viewer had never seen it for. Found by the ROUND-1 AUDIT, which
+   * reproduced it with a two-armed control; the committed test carries the
+   * with-dismiss arm, and the without-dismiss arm is covered by the mutation
+   * that reverts this to a boolean.
+   *
+   * The three structural facts this rests on were RE-VERIFIED here rather than
+   * taken from the audit on trust: `_app.tsx:175` renders `<Component>` with no
+   * `key`, the run page renders `<PageBlockHost` unkeyed, and
+   * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
+   */
+  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -977,7 +1108,13 @@ export function PageBlockHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+  const { send, onMessage, nack, reportNoToken } = usePostMessage({
+    iframeRef,
+    expectedOrigin,
+    opaqueOrigin,
+    host: 'PageBlockHost',
+    appBlockId,
+  });
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
   // Emitted exactly once per mount at the BLOCK_READY transition (see the
@@ -1068,7 +1205,7 @@ export function PageBlockHost({
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
-      ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
+      ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
     }),
     [
       appId,
@@ -1082,6 +1219,7 @@ export function PageBlockHost({
       theme,
       domain,
       maxBrowsingLevel,
+      effectiveBrowsingLevel,
     ]
   );
   buildInitPayloadRef.current = buildInitPayload;
@@ -1298,7 +1436,18 @@ export function PageBlockHost({
   // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
-      if (!token || !initSentRef.current) return;
+      if (!token || !initSentRef.current) {
+        // 🔴 COUNTED, NOT ANSWERED — and IframeHost does the identical thing, per
+        // the "MUST STAY IN STEP" note above. `REQUEST_TOKEN` is in
+        // `BRIDGE_NACK_EXEMPT`: `isValidTokenRefreshResponse` requires a valid
+        // `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is dropped at
+        // the block's own trust boundary and the block would hang exactly as
+        // before while we believed we had fixed it. Closing the block-facing half
+        // needs a failure variant in the SDK message union; the operator-facing
+        // half lands now.
+        reportNoToken('REQUEST_TOKEN');
+        return;
+      }
       const requestId =
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
@@ -1311,7 +1460,7 @@ export function PageBlockHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, grantedScopes, send, onMessage]);
+  }, [token, expiresAt, grantedScopes, send, onMessage, reportNoToken]);
 
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
@@ -1492,6 +1641,42 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+  /**
+   * Open the host's consent UI for a set of withheld scopes.
+   *
+   * 🔴 ONE OPENER, TWO CALLERS, ON PURPOSE. The block-initiated REQUEST_CONSENT
+   * handler below and the host's own missing-permissions notice must build
+   * IDENTICAL props — a second inline `dialogStore.trigger` would be the same
+   * rule in two places, and the two would drift on the first prop that changes.
+   */
+  const openConsentModal = useCallback(
+    (scopes: string[]) => {
+      dialogStore.trigger({
+        // 🔴 A STABLE ID, BECAUSE `trigger` DEDUPES ON `id` AND NOTHING ELSE.
+        // Without one it falls back to `Date.now()` (dialogStore.ts:47), so two
+        // clicks in different milliseconds stack TWO consent modals. That was
+        // latent while the only caller was a message handler; the notice below is
+        // the first HUMAN-clickable trigger, which is what makes it reachable.
+        // Measured BY THE ROUND-1 AUDIT, attributed rather than restated as my
+        // own: two clicks 30ms apart produced 2 dialogs. The committed
+        // idempotence test reproduces the mechanism without the timing.
+        id: `block-consent-${appBlockId}`,
+        component: BlockConsentModal,
+        props: {
+          appBlockId,
+          // PageBlockHost surfaces the app name as `appName` (the model host
+          // uses `install.manifest.name`).
+          blockName: appName,
+          missingScopes: scopes,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    },
+    [appBlockId, appName, onConsentGranted]
+  );
+
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -1574,19 +1759,7 @@ export function PageBlockHost({
 
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
-        dialogStore.trigger({
-          component: BlockConsentModal,
-          props: {
-            appBlockId,
-            // PageBlockHost surfaces the app name as `appName` (the model host
-            // uses `install.manifest.name`).
-            blockName: appName,
-            missingScopes: scopesToGrant,
-            onGranted: () => {
-              onConsentGranted?.();
-            },
-          },
-        });
+        openConsentModal(scopesToGrant);
         return;
       }
       // Issue B — nothing is grantable-via-consent. Distinguish the BENIGN case
@@ -1761,7 +1934,9 @@ export function PageBlockHost({
   const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
   const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
   // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
-  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // `useViewer()` hook and is the host-mediated TWIN of GET /blocks/me, not its
+  // successor — both stay; the REST route is the default surface for a viewer
+  // read (see "Direction" under Routes in docs/features/app-blocks.md). A
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
@@ -1781,12 +1956,32 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
+  // consent payload server-side, then the write. Both are block-token-authed.
+  const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
+  const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
   // the whole point (the real download gates apply). A MUTATION deliberately: the
   // response carries a short-lived signed URL (see the router comment).
   const resolveWildcardPackMutation = trpc.generation.resolveWildcardPack.useMutation();
+  // Collection follow/unfollow bridge (SET_COLLECTION_FOLLOW). SESSION-authed
+  // (protectedProcedure), like resolveWildcardPack above and for the same reason:
+  // these are the SAME procedures the site's own follow button calls, so the
+  // handler self-binds to `ctx.user.id` server-side and reuses
+  // `addContributorToCollection` / `removeContributorFromCollection` verbatim.
+  // The block token is deliberately NOT involved — the point of this bridge is
+  // that a block needs no `collections:write:self` scope.
+  const followCollectionMutation = trpc.collection.follow.useMutation();
+  const unfollowCollectionMutation = trpc.collection.unfollow.useMutation();
+  // 🔴 This block instance's DISTINCT-collection-id lookup budget. A ref, not
+  // module scope and not state: per-instance (two blocks on a page cannot drain
+  // each other), reset on remount, and read synchronously inside the message
+  // handler. Lazily constructed so a render never allocates a Set it throws away.
+  // The reasoning — and the authenticated visibility oracle it closes — lives on
+  // `createCollectionLookupBudget`.
+  const collectionLookupBudgetRef = useRef<CollectionLookupBudget | null>(null);
   // In-flight fetch+parse count for the concurrency cap below. A ref (not state)
   // so incrementing/decrementing never re-renders and the count is read
   // synchronously in the message handler (JS is single-threaded, so the
@@ -1809,7 +2004,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('SUBMIT_WORKFLOW', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       // Idempotency (item 2, gen half): forward the OPTIONAL client key to the
       // server so a lost-response retry collapses to one Buzz charge. Host-first:
@@ -1832,7 +2031,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, submitWorkflowMutation, reviewNack, nack]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -1848,7 +2047,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        if (!raw || typeof raw.requestId !== 'string') return;
+        if (!token) {
+          nack('ESTIMATE_WORKFLOW', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           const { snapshot } = await estimateWorkflowMutation.mutateAsync({
@@ -1862,7 +2065,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, estimateWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, estimateWorkflowMutation, reviewNack, nack]);
 
   // POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS.
   useEffect(() => {
@@ -1882,9 +2085,12 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.workflowId !== 'string' ||
-          raw.workflowId.length === 0 ||
-          !token
+          raw.workflowId.length === 0
         ) {
+          return;
+        }
+        if (!token) {
+          nack('POLL_WORKFLOW', raw.requestId);
           return;
         }
         const requestId = raw.requestId;
@@ -1900,7 +2106,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, pollWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, pollWorkflowMutation, reviewNack, nack]);
 
   // CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED. Ownership is
   // enforced server-side by the viewer's orchestrator token.
@@ -1921,9 +2127,12 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.workflowId !== 'string' ||
-          raw.workflowId.length === 0 ||
-          !token
+          raw.workflowId.length === 0
         ) {
+          return;
+        }
+        if (!token) {
+          nack('CANCEL_WORKFLOW', raw.requestId);
           return;
         }
         const requestId = raw.requestId;
@@ -1939,7 +2148,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, cancelWorkflowMutation, reviewNack, nack]);
 
   // QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows → APP_WORKFLOWS_RESULT. The
   // app's OWN tag-scoped generation subqueue (host page token + SERVER-forced
@@ -1961,6 +2170,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('QUERY_APP_WORKFLOWS');
           send('APP_WORKFLOWS_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -1981,7 +2191,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewNack]);
+  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewNack, reportNoToken]);
 
   // CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow → CANCEL_APP_WORKFLOW_RESULT.
   // FAIL-CLOSED server-side (ownership + app-tag guard — the orchestrator by-id
@@ -2008,6 +2218,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('CANCEL_APP_WORKFLOW');
           send('CANCEL_APP_WORKFLOW_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2026,7 +2237,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewNack, reportNoToken]);
 
   // PUBLISH_GENERATION_OUTPUTS → blocks.publishGenerationOutputs → PUBLISH_RESULT.
   // Turn the app's OWN workflow outputs into bare, real-scanned public images.
@@ -2045,6 +2256,7 @@ export function PageBlockHost({
         if (!req) return; // missing requestId / workflowId — drop, nothing to publish
         const { requestId, workflowId, imageIndexes } = req;
         if (!token) {
+          reportNoToken('PUBLISH_GENERATION_OUTPUTS');
           send('PUBLISH_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2085,12 +2297,15 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, appName, publishGenerationOutputsMutation]);
+  }, [onMessage, send, token, appName, publishGenerationOutputsMutation, reportNoToken]);
 
   // GET_IMAGES_BY_IDS → blocks.getImagesByIds → IMAGES_RESULT. Per-viewer gated
   // read of the shared-grid image ids. The SERVER self-binds the viewer + applies
-  // their browsing-level clamp (an above-ceiling / unscanned / flagged image comes
-  // back `hidden` with NO url). An empty (post-sanitization) id list short-circuits
+  // their browsing-level clamp (an above-ceiling / flagged image — and anyone
+  // else's not-yet-rated one — comes back `hidden` with NO url; the viewer's OWN
+  // not-yet-rated image comes back `visible` with the url and NO rating, see
+  // BlockGatedImage's `ratingPending`). An empty (post-sanitization) id list
+  // short-circuits
   // to an empty result — never hitting the server schema (which requires ≥1 id).
   // REQUEST-style ⇒ reply on every path; on a null token we reply with the error variant.
   useEffect(() => {
@@ -2105,6 +2320,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_IMAGES_BY_IDS');
           send('IMAGES_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2120,7 +2336,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getImagesByIdsMutation]);
+  }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK
@@ -2130,7 +2346,9 @@ export function PageBlockHost({
   // BOUND `sub` server-side (never client input). REQUEST-style ⇒ every path MUST
   // post a reply or the block hangs to its SDK timeout.
   //
-  // DEVIATION from the workflow handlers (which DROP a `!token` request silently):
+  // This was the FIRST handler to answer a `!token` request instead of dropping
+  // it. Every handler now does (`nack` / `reportNoToken`); this one keeps its own
+  // reply shape. The note is kept because the rationale below is still the reason:
   // a balance read is a pure UI affordance, not a spend — dropping it strands the
   // hook with no data and no error. So on a null token we reply with the ERROR
   // variant (`error: <message>`) instead of dropping, mirroring the storage
@@ -2146,6 +2364,7 @@ export function PageBlockHost({
         return;
       }
       if (!token) {
+        reportNoToken('GET_BUZZ_BALANCE');
         send('BUZZ_BALANCE_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2160,7 +2379,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
   // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
@@ -2179,6 +2398,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_BUZZ_TRANSACTIONS');
           send('BUZZ_TRANSACTIONS_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2202,7 +2422,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_ACCOUNTS → blocks.getMyBuzzAccounts → BUZZ_ACCOUNTS_RESULT. All-pool
   // balances (spendable + creator payout pools). Same host-mediated + consent +
@@ -2216,6 +2436,7 @@ export function PageBlockHost({
         return;
       }
       if (!token) {
+        reportNoToken('GET_BUZZ_ACCOUNTS');
         send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2230,7 +2451,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack, reportNoToken]);
 
   // GET_DAILY_COMPENSATION → blocks.getMyDailyCompensation → DAILY_COMPENSATION_RESULT.
   // Per-modelVersion generation earnings for the month of `date`. Same contract.
@@ -2246,6 +2467,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_DAILY_COMPENSATION');
           send('DAILY_COMPENSATION_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2266,12 +2488,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack]);
+  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack, reportNoToken]);
 
   // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
-  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
-  // GET /blocks/me REST call, so a page block can render the viewer's name /
-  // gate write UI on their moderation status without holding the scope directly.
+  // that backs the SDK `useViewer()` hook — the host-mediated TWIN of the
+  // GET /blocks/me REST call (not its successor; both stay, and the REST route
+  // is the default surface for this read), so a page block can render the
+  // viewer's name / gate write UI on their moderation status without holding
+  // the scope directly.
   // Host-MEDIATED: the iframe never sees a session; the identity is derived from
   // the token's SELF-BOUND `sub` server-side (never client input), gated on the
   // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page
@@ -2284,6 +2508,7 @@ export function PageBlockHost({
       if (!raw || typeof raw.requestId !== 'string') return;
       const requestId = raw.requestId;
       if (!token) {
+        reportNoToken('GET_VIEWER');
         send('VIEWER_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2298,7 +2523,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyViewerMutation]);
+  }, [onMessage, send, token, getMyViewerMutation, reportNoToken]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
@@ -2450,7 +2675,8 @@ export function PageBlockHost({
   // token is a PROP here (string | null) — PageBlockHost does NOT use
   // useBlockToken (that's the page route). apps.storage.* require a non-null
   // blockToken (z.string().min(1)); a null token means the block never rendered a
-  // usable surface, so each handler drops a `!token` request without replying
+  // usable surface. Every handler now ANSWERS a `!token` request (see `nack` /
+  // `reportNoToken` in usePostMessage) rather than dropping it
   // (consistent with the #2618 workflow handlers — the mint path surfaces
   // no_token/error terminal states above). A missing requestId is likewise
   // dropped without replying (mirrors IframeHost).
@@ -2476,8 +2702,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_GET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.storage.get.fetch(
@@ -2498,7 +2727,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // APP_STORAGE_SET → apps.storage.set → APP_STORAGE_SET_RESULT.
   useEffect(() => {
@@ -2515,8 +2744,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_SET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await storageSetMutation.mutateAsync({
@@ -2542,7 +2774,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack, nack]);
 
   // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
   useEffect(() => {
@@ -2560,8 +2792,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_DELETE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await storageDeleteMutation.mutateAsync({
@@ -2587,7 +2822,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack, nack]);
 
   // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
   useEffect(() => {
@@ -2610,7 +2845,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('APP_STORAGE_LIST', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
@@ -2646,7 +2885,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
   useEffect(() => {
@@ -2664,7 +2903,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('APP_STORAGE_QUOTA', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const result = await trpcUtils.apps.storage.getQuota.fetch(
@@ -2690,7 +2933,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // ── App Blocks SHARED (cross-user / app-global) storage bridge (Phase 2b) ──
   //
@@ -2731,7 +2974,11 @@ export function PageBlockHost({
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('SHARED_LIST', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
@@ -2772,15 +3019,18 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_GET_COUNT → apps.shared.getCount → SHARED_GET_COUNT_RESULT (query).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_GET_COUNT',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_GET_COUNT', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.getCount.fetch(
@@ -2797,14 +3047,18 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_GET_COUNTS → apps.shared.getCounts → SHARED_GET_COUNTS_RESULT (query).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; keys?: unknown } | undefined>(
       'SHARED_GET_COUNTS',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys) || !token) return;
+        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys)) return;
+        if (!token) {
+          nack('SHARED_GET_COUNTS', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.getCounts.fetch(
@@ -2821,7 +3075,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_APPEND → apps.shared.append → SHARED_APPEND_RESULT (mutation).
   useEffect(() => {
@@ -2842,10 +3096,13 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.value !== 'object' ||
-          raw.value === null ||
-          !token
+          raw.value === null
         )
           return;
+        if (!token) {
+          nack('SHARED_APPEND', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           // Server zod-validates {title, body?}; a malformed value rejects
@@ -2864,7 +3121,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode, nack]);
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
@@ -2897,10 +3154,13 @@ export function PageBlockHost({
           typeof raw.requestId !== 'string' ||
           typeof raw.key !== 'string' ||
           typeof raw.value !== 'object' ||
-          raw.value === null ||
-          !token
+          raw.value === null
         )
           return;
+        if (!token) {
+          nack('SHARED_UPDATE', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           // Server zod-validates {title, body?}; a malformed value rejects
@@ -2920,7 +3180,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode, nack]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
@@ -2934,8 +3194,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_VOTE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
@@ -2949,7 +3212,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode, nack]);
 
   // SHARED_UNVOTE → apps.shared.unvote → SHARED_UNVOTE_RESULT (mutation).
   useEffect(() => {
@@ -2963,8 +3226,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_UNVOTE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedUnvoteMutation.mutateAsync({
@@ -2981,7 +3247,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode, nack]);
 
   // SHARED_WITHDRAW → apps.shared.withdraw → SHARED_WITHDRAW_RESULT (mutation).
   useEffect(() => {
@@ -2998,8 +3264,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_WITHDRAW', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedWithdrawMutation.mutateAsync({
@@ -3016,7 +3285,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode, nack]);
 
   // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
   // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
@@ -3027,8 +3296,11 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_GET',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_GET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.get.fetch(
@@ -3065,7 +3337,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
   // reports a posted row for mod review; the server already trust-gates + rate-
@@ -3090,8 +3362,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_REPORT', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
         try {
@@ -3106,7 +3381,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode, nack]);
 
   // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
   // state) so increment/decrement never re-renders and the count is read
@@ -3158,6 +3433,7 @@ export function PageBlockHost({
         }
         // id variant — route through the gated per-viewer read.
         if (!token) {
+          reportNoToken('SAVE_IMAGE');
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'no block token' });
           return;
         }
@@ -3167,8 +3443,11 @@ export function PageBlockHost({
         });
         const image = result.images.find((i) => i.imageId === req.imageId);
         if (!image || image.status !== 'visible') {
-          // Withheld (hidden / above-ceiling / unscanned / flagged) or unresolvable
-          // → never saveable. Do NOT leak which reason.
+          // Withheld (hidden / above-ceiling / flagged, or another author's
+          // not-yet-rated image) or unresolvable → never saveable. Do NOT leak
+          // which reason. The viewer's OWN not-yet-rated image comes back
+          // `visible` + `ratingPending`, so it IS saveable — it is theirs, and the
+          // block was already handed the same picture by `pollWorkflow`.
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image is not available' });
           return;
         }
@@ -3183,7 +3462,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getImagesByIdsMutation]);
+  }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
 
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
@@ -3679,6 +3958,286 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
+  // ── SET_COLLECTION_FOLLOW → COLLECTION_FOLLOW_RESULT ────────────────────────
+  //
+  // A block asks the host to follow / unfollow a collection for the viewer. The
+  // decision layer is SHARED with IframeHost (`collectionFollowGate.ts`) and
+  // carries the full rationale; the two things this host contributes are its own
+  // `viewer` prop (the signed-in signal) and `reviewNack`.
+  //
+  // 🔴 THE CONSENT BOUNDARY IS THE CONFIRM CLICK, AND IT IS THE ONLY CONSENT THIS
+  // PATH HAS EVER HAD. The HTTP endpoint's `collections:write:self` scope is
+  // CONSENT-EXEMPT server-side, so it never prompted anyone — see the retracted
+  // claim recorded in `collectionFollowGate.ts`. This bridge therefore TIGHTENS a
+  // zero-prompt path into one prompt per action. Do not "simplify" it by calling
+  // the mutation directly, and do not delete the confirm as redundant with a
+  // scope grant that does not exist.
+  //
+  // 🔴 THE DIALOG MUST NAME THE COLLECTION, and the name must be the one the HOST
+  // resolved from `collectionId` — never one the block supplied. A block can
+  // render its own "Follow ⭐ Cute Cats" card and post a different id; host chrome
+  // that asserts nothing about the object cannot contradict it.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / lookup failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs to its SDK
+  // timeout; `createCollectionFollowSettlement` owns that latch AND the consent
+  // latch that keeps `declined` meaning "no write occurred". Only a payload with
+  // no usable requestId is dropped — there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('SET_COLLECTION_FOLLOW', (raw) => {
+      const gate = resolveCollectionFollowRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        // `viewer` is non-null ONLY for a signed-in viewer (the page route
+        // renders for logged-out viewers too, with viewer: null).
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('COLLECTION_FOLLOW_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, collectionId, follow } = gate.request;
+      const settlement = createCollectionFollowSettlement({
+        requestId,
+        emit: (payload) => send('COLLECTION_FOLLOW_RESULT', payload),
+      });
+      // 🔴 BOUND THE PROBE, BEFORE SPENDING AN AUTHENTICATED READ. The identity
+      // lookup below runs in the VIEWER'S session and completes before any
+      // dialog, so without a bound it is a per-id "can this viewer see it?"
+      // oracle the block can drive at the transport's 30 msg/s. DISTINCT ids,
+      // not calls — a repeat is free forever, so re-following a collection the
+      // viewer has already been asked about keeps working past the cap. The
+      // refusal deliberately reuses `collection-unavailable`; a distinct code
+      // would hand back the bit the cap withholds. Full reasoning (incl. why a
+      // distinct-id cap rather than a time window) on the factory.
+      const lookupBudget = (collectionLookupBudgetRef.current ??= createCollectionLookupBudget());
+      if (!lookupBudget.admit(collectionId)) {
+        settlement.reply({ error: 'collection-unavailable' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHO/WHAT the viewer is being asked about, server-side, from the
+        // same id we are about to act on. A failed lookup refuses WITH a reply —
+        // never a hang, and never a dialog missing the name it promised.
+        let identity;
+        try {
+          identity = resolveCollectionIdentity(
+            await trpcUtils.collection.getById.fetch({ id: collectionId }, { staleTime: 0 })
+          );
+        } catch {
+          // Not found / not visible / feature-flagged / network — all one
+          // outcome, so the reply cannot be used to probe for existence.
+          identity = { kind: 'unavailable' } as const;
+        }
+        if (identity.kind !== 'ok') {
+          settlement.reply({ error: 'collection-unavailable' });
+          return;
+        }
+        const copy = buildCollectionFollowConsentCopy({
+          follow,
+          appName,
+          collectionId,
+          collection: identity.identity,
+        });
+        dialogStore.trigger({
+          // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
+          // not reproducible, since rendering a Mantine modal costs >1 ms.)
+          id: `block-collection-follow-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: copy.message,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a write that is under way.
+              settlement.markConsented();
+              try {
+                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+                // actor and target, so `collectionId` is the ONLY thing the block
+                // influences.
+                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+                else await unfollowCollectionMutation.mutateAsync({ collectionId });
+                settlement.reply({ result: { collectionId, followed: follow } });
+              } catch (err) {
+                // FORBIDDEN from the collection services (e.g. a private
+                // collection this viewer may not follow) lands here as a message,
+                // never as a hang.
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    followCollectionMutation,
+    unfollowCollectionMutation,
+  ]);
+
+  // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
+  //
+  // A block asks the host to publish a REAL Post on the viewer's profile from the
+  // app's OWN outputs. The strictly-more-consequential sibling of
+  // PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row with no feed
+  // presence; this one makes public, feed-visible, reward-earning content under
+  // the VIEWER'S byline.
+  //
+  // 🔴 TWO SERVER CALLS, AND THE FIRST ONE IS WHAT MAKES THE DIALOG A CONSENT
+  // SCREEN. `previewPostFromApp` resolves — server-side, from ids the server
+  // verified — the exact copy, the tag names that will ACTUALLY be applied, the
+  // host-fetched model/version names, and real image thumbnails. Only then is the
+  // viewer asked. A dialog rendering the BLOCK'S strings and the BLOCK'S
+  // thumbnails would let a sandboxed iframe show one post and publish another,
+  // which is the failure `collectionFollowGate.ts` documents for the follow
+  // bridge — and it binds harder here, because this dialog names copy, tags,
+  // images AND a destination rather than one object.
+  //
+  // 🔴 THE PREVIEW IS NOT AUTHORIZATION. `createPostFromApp` re-runs every guard
+  // from scratch — scope, flags, write-trust, per-source ownership, the
+  // self-dealing guard, rate limits. A preview/commit divergence is a UX bug,
+  // never a hole; the client could skip the preview entirely and get the same
+  // refusals.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / preview failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs for TEN MINUTES
+  // (the `human` timeout bucket). `createPostSettlement` owns that latch AND the
+  // consent latch that keeps `declined` meaning "NO POST WAS CREATED" — it is the
+  // FIXED shape from the follow gate, deliberately not the bare `settled` boolean
+  // the publish handler above still carries. Only a payload with no usable
+  // requestId is dropped: there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('CREATE_POST_FROM_APP', (raw) => {
+      const gate = resolveCreatePostRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('CREATE_POST_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, sources, title, detail, tags, modelVersionId } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('CREATE_POST_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('CREATE_POST_FROM_APP');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHAT the viewer is being asked to publish, server-side, from
+        // the same payload we are about to act on. A failed preview refuses WITH
+        // a reply — never a hang, and never a dialog missing the content it
+        // promised to show.
+        let preview: CreatePostPreview;
+        try {
+          preview = (await previewPostFromAppMutation.mutateAsync({
+            blockToken: token,
+            sources: sources as never,
+            ...(title != null ? { title } : {}),
+            ...(detail != null ? { detail } : {}),
+            ...(tags ? { tags } : {}),
+            ...(modelVersionId != null ? { modelVersionId } : {}),
+          })) as CreatePostPreview;
+        } catch (err) {
+          // Scope / flag / trust / ownership / self-dealing refusals all surface
+          // here as a legible message rather than a wedged button. The server's
+          // refusals are deliberately uniform where they would otherwise be an
+          // existence oracle.
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        if (preview.images.length === 0) {
+          settlement.reply({ error: 'no images to post' });
+          return;
+        }
+        const copy = buildCreatePostConsentCopy({ appName, preview });
+        dialogStore.trigger({
+          // Per-request id so two CREATE_POST_FROM_APP calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          id: `block-create-post-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <CreatePostConsentBody copy={copy} preview={preview} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a post that is being created.
+              settlement.markConsented();
+              try {
+                const result = await createPostFromAppMutation.mutateAsync({
+                  blockToken: token,
+                  sources: sources as never,
+                  ...(title != null ? { title } : {}),
+                  ...(detail != null ? { detail } : {}),
+                  ...(tags ? { tags } : {}),
+                  ...(modelVersionId != null ? { modelVersionId } : {}),
+                  // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
+                  // SERVER'S OWN preview — never from the block. Preview and
+                  // write resolve `sources` independently, so a workflow that
+                  // gains an output between them would publish more images than
+                  // the dialog displayed. The server refuses on a mismatch. This
+                  // value is host chrome, not block input: the block never holds
+                  // the block token and cannot reach the procedure.
+                  confirmedImageCount: preview.images.length,
+                });
+                settlement.reply({ result });
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op and
+            // the confirm path settles it.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    previewPostFromAppMutation,
+    createPostFromAppMutation,
+    reportNoToken,
+  ]);
+
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from
   // this, so they can never disagree about the fallback. Same sanitizer the
@@ -3806,33 +4365,29 @@ export function PageBlockHost({
       style={{
         display: 'flex',
         flexDirection: 'column',
+        // 🔴 THE ROOT IS FULL-BLEED ON PURPOSE, AND THIS IS A REVERSAL — READ THE
+        // NOTE BEFORE "RESTORING" A CAP HERE. The ultrawide cap used to live on
+        // THIS element, so the trust chrome and the app took one measure. It now
+        // lives on the CONTENT wrapper below, which holds the app and the failure
+        // card but NOT `AppBlockChrome`.
+        //
+        // The argument the old placement made — that a breadcrumb vouching for the
+        // app should not span a width the app does not occupy — is real, but it was
+        // outweighed in practice: the chrome is site furniture, and stopping it at
+        // 1600px made a full-page app look like a boxed widget dropped into the
+        // page rather than a page of the site. Every other site-level bar spans the
+        // viewport, so the capped one read as the odd element. Operator decision;
+        // the cost is that on a very wide display the chrome is wider than the app
+        // it labels, which is the same relationship the site header already has to
+        // every page's content column.
+        //
+        // What did NOT change: the cap's VALUE, the `var()` read, the fallback, and
+        // the `data-block-id` opt-out ledger — the custom property is still declared
+        // once in globals.css and still overridden per-app on THIS element, from
+        // which it INHERITS to the content wrapper. So a ledger entry keyed on
+        // `[data-app-page-frame][data-block-id='…']` keeps working exactly as
+        // documented, with no change to its selector.
         width: '100%',
-        // ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
-        // full width below it. See that constant for the value's justification and
-        // `--app-page-max-width` in globals.css for the per-app opt-out.
-        //
-        // 🔴 BOTH DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
-        // `width: 100%` above already resolves narrower than the cap, so `max-width`
-        // clamps nothing; and `margin-inline: auto` distributes the LEFTOVER inline
-        // space, of which there is none on a box that fills its parent, so both
-        // margins resolve to 0. Nothing about the rendered geometry moves until the
-        // parent is wider than the cap — measured at 1024 and 1280 in
-        // `PageBlockHostMaxWidth.browser.test.tsx`.
-        //
-        // 🔴 IT IS APPLIED TO THE HOST ROOT, NOT TO THE `<iframe>`, so the trust
-        // chrome, the app and the failure card all take ONE measure. Capping the
-        // iframe alone would leave `AppBlockChrome` — the breadcrumb that vouches
-        // for the app — spanning a width the app it labels does not occupy, and
-        // would leave the `BlockFallback` card stretched to the monitor while the
-        // app beside it was not.
-        //
-        // 🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
-        // (`'--app-page-max-width': …`) would win over any stylesheet rule on this
-        // same element, which is precisely the rule shape the opt-out ledger uses —
-        // so writing the value inline would silently make the opt-out inert while
-        // looking tidier.
-        maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
-        marginInline: 'auto',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
         ...(fit === 'fill'
@@ -3854,6 +4409,28 @@ export function PageBlockHost({
             }),
       }}
       data-testid="app-page-frame"
+      // 🔴 THE OPT-OUT LEDGER'S OTHER HALF, AND IT EXISTS BECAUSE `data-testid`
+      // DOES NOT SHIP. `next.config.mjs` sets
+      // `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` under
+      // `NODE_ENV === 'production'`, so EVERY `data-testid` is compiled out of the
+      // production DOM. The ledger in globals.css used to be keyed on
+      // `[data-testid='app-page-frame'][data-block-id='…']`, which therefore
+      // matched nothing on the live site while passing in every test tier (they
+      // all run with `NODE_ENV !== 'production'`, where the testid is present) —
+      // measured on civitai.com/apps/run/playable-collections: the rule shipped
+      // verbatim in the CSS, 0 elements matched the compound selector, 1 matched
+      // `[data-block-id='playable-collections']`, and the app was letterboxed at
+      // the 1600px cap. This attribute is the production-surviving spelling of
+      // "this is the page host", the same way `data-app-footer` and
+      // `data-adhesive-ad` mark their elements for `globals.css` elsewhere.
+      //
+      // It carries no value on purpose: it is a presence marker, not data. Never
+      // re-key the ledger onto `data-testid` (stripped) and never delete this —
+      // both make every ledger rule inert with nothing visibly wrong. Guarded by
+      // `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which reads the strip
+      // list out of `next.config.mjs` and the ledger selectors out of globals.css
+      // and compares them, rather than restating either.
+      data-app-page-frame=""
       // Observable sizing mode, so a regression test (and DevTools) can assert
       // WHICH branch a surface took rather than re-deriving it from computed
       // styles that jsdom does not resolve.
@@ -3869,10 +4446,17 @@ export function PageBlockHost({
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
-      // is NOT terminal here), but a block requesting an ungranted consent-gated
-      // scope drives its own REQUEST_CONSENT against the missing set. This makes
-      // the host-known signal visible to the block frame / debugging rather than
-      // silently swallowed.
+      // is NOT terminal here), and a block requesting an ungranted consent-gated
+      // scope drives its own REQUEST_CONSENT against the missing set.
+      //
+      // ⚠️ THIS ATTRIBUTE IS OBSERVABILITY, NOT THE BACKSTOP, AND AN EARLIER
+      // VERSION OF THIS COMMENT LEFT THAT AMBIGUOUS. For a long time it was the
+      // ONLY thing `needsConsent` reached: nothing read it, and the modal opened
+      // only when a block PULLED it, so any app that never sent REQUEST_CONSENT
+      // was silently broken with no host-side signal to the viewer at all. The
+      // notice rendered below the chrome is the backstop; this stays for
+      // debugging. ⚠️ NOT read by any test — an earlier draft of this comment
+      // said "and for tests", which was false: nothing asserts on it.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
       <AppBlockChrome
@@ -3888,6 +4472,99 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         canOpenPage={canOpenPage}
       />
+      {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. The mint is FAIL-CLOSED on a missing
+          `app_user_scope_grants` row, so a viewer who has never consented gets a
+          token with every consent-gated scope withheld — and until this existed,
+          the ONLY thing that could tell them was the block itself, via
+          REQUEST_CONSENT. An app that did not think to ask left the viewer with a
+          working-looking control that could never succeed.
+
+          Measured 2026-09-08 on `playable-collections`: a real 2-Buzz tip was
+          refused on both legs at the scope gate, the Buzz ledger confirms nothing
+          moved, and the viewer saw only "None of that tip came back confirmed" —
+          no prompt, no explanation, permanently. `social:tip:self` was granted on
+          ONE row in the whole grants table, so that was the ORDINARY path.
+
+          🔴 A NOTICE, NOT AN AUTO-OPENED MODAL, DELIBERATELY. A block can be fully
+          usable unconsented — `collections:read:self` is consent-exempt, so
+          `playable-collections` browses public collections fine with no grant at
+          all — and an unconditional modal would interrupt every viewer of every
+          app that merely REQUESTS a consent-gated scope. The viewer decides.
+
+          🔴 `!reviewMode` IS STRICTER THAN THE BLOCK-INITIATED PATH, NOT A MIRROR
+          OF IT — an earlier version of this comment claimed it matched, and that
+          was wrong. That path's absolute rule is "never a MODAL at the mod", and
+          it deliberately emits a PASSIVE notice instead, because dropping the
+          request silently "meant the reviewer got nothing at all… which reads as
+          'this app is broken'" (see its comment above). This suppresses the notice
+          ENTIRELY, which re-creates that silence.
+          Accepted because it is UNREACHABLE today — `ReviewBlockPreviewHost`
+          hardcodes `missingScopes={[]}` / `needsConsent={false}` and
+          `mintReviewBlockToken` returns neither field — and because the safety
+          property (no scope grant from the sandbox) holds either way. 🔴 If those
+          props are ever threaded from `mintData`, do NOT simply delete this term:
+          render the notice WITHOUT its Review button, or route it through
+          `resolveReviewConsentNotice` as the block path does.
+
+          Gated through `resolveRequestConsent`, the SAME predicate the
+          block-initiated path uses, so the two cannot disagree about when consent
+          is offerable: it requires `ready` (no notice over a still-loading block)
+          and a non-empty missing set.
+
+          Through `toHostGateStatus` for the same reason the message handlers go
+          through it: this component's `Status` carries an extra `'error'` member
+          that `HostStatus` does not, so the converter is the one place that
+          decides how it maps. A cast here would have compiled and silently
+          disagreed with every other gate. (`pnpm typecheck` caught exactly that —
+          the first version of this passed `status` raw.) */}
+      {consentNoticeDismissedFor !== appBlockId &&
+        !reviewMode &&
+        needsConsent &&
+        resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []) != null && (
+          <Box
+            role="status"
+            data-testid="block-consent-notice"
+            px="md"
+            py="xs"
+            style={{
+              borderBottom: '1px solid var(--mantine-color-default-border)',
+              background: 'var(--mantine-color-body)',
+            }}
+          >
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Text size="sm">{appName} is missing permissions it needs to work fully.</Text>
+              <Group gap="xs" wrap="nowrap">
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  data-testid="block-consent-notice-review"
+                  onClick={() => {
+                    // Recomputed at CLICK time, not captured at render: a
+                    // TOKEN_REFRESH between the two can shrink the missing set,
+                    // and granting a scope the viewer already has is a worse
+                    // prompt than no prompt.
+                    const scopes = resolveRequestConsent(
+                      toHostGateStatus(status),
+                      missingScopes ?? []
+                    );
+                    if (scopes != null) openConsentModal(scopes);
+                  }}
+                >
+                  Review permissions
+                </Button>
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  aria-label="Dismiss the missing-permissions notice"
+                  data-testid="block-consent-notice-dismiss"
+                  onClick={() => setConsentNoticeDismissedFor(appBlockId)}
+                >
+                  Dismiss
+                </Button>
+              </Group>
+            </Group>
+          </Box>
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires
@@ -3904,107 +4581,210 @@ export function PageBlockHost({
           }}
         />
       ))}
-      {showIframe ? (
-        // The iframe fills the remaining viewport. While the block is still
-        // handshaking (status === 'loading', before BLOCK_READY), the surface
-        // would otherwise be blank — the iframe is mounted but visually empty and
-        // non-interactive (pointerEvents:none). Overlay a centered branded
-        // launch state (app initial + a content-shaped skeleton) on top
-        // so the user sees a loading state instead of a blank page. The overlay
-        // is gated purely on `status === 'loading'`: it unmounts the instant the
-        // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
-        // terminal path (timeout / fatal / no_token / error, which also flip
-        // `showIframe` to false and render the BlockFallback below) — so it can
-        // never spin forever.
-        <Box
-          style={{
-            position: 'relative',
-            flex: 1,
-            display: 'flex',
-            // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
-            // handshaking the iframe carries `translateY(8px)`, and a transform
-            // does not change layout but DOES extend the SCROLLABLE OVERFLOW
-            // region — so those 8px pushed past this wrapper and asked the
-            // nearest scrolling ancestor for a scrollbar. Measured, not
-            // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
-            // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
-            // motion should never be able to do that. Clipping here is also
-            // free — the iframe fills this box exactly, so nothing else can be
-            // cut off. Covered by the GREEN ARM in
-            // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
-            // equality precisely so an 8px leak cannot hide in a tolerance.
-            overflow: 'hidden',
-          }}
-        >
-          <iframe
-            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
-            // the iframe (fresh contentWindow), not just reloads its src — the
-            // re-armed init handshake then talks to a clean frame.
-            key={reloadNonce}
-            ref={iframeRef}
-            src={renderedIframeSrc}
-            sandbox={effectiveSandbox}
-            referrerPolicy="no-referrer"
-            // Sanitize the publisher-controlled appName for the iframe title too
-            // (same sanitizer as the visible chrome + the loader aria-label), so
-            // every appName-derived plain-text attribute is consistent. Falls
-            // back to blockId when nothing legible remains.
-            title={sanitizeAppChromeName(appName) || blockId}
-            data-testid="app-page-iframe"
-            data-block-instance-id={blockInstanceId}
-            data-block-ready={isReady ? 'true' : 'false'}
+      {/* THE APP'S OWN COLUMN — everything the cap applies to, and nothing else.
+          `AppBlockChrome` above is deliberately OUTSIDE it (see the root's note): the
+          chrome spans the page like every other site-level bar, the app does not.
+
+          🔴 ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
+          full width below it. See that constant for the value's justification and
+          `--app-page-max-width` in globals.css for the per-app opt-out ledger.
+
+          🔴 BOTH CAP DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
+          `width: 100%` already resolves narrower than the cap on any ordinary display,
+          so `max-width` clamps nothing; and `margin-inline: auto` distributes the
+          LEFTOVER inline space, of which there is none on a box that fills its parent,
+          so both margins resolve to 0. Nothing about the rendered geometry moves until
+          the parent is wider than the cap — measured in
+          `PageBlockHostMaxWidth.browser.test.tsx`.
+
+          🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
+          (`'--app-page-max-width': …`) would win over any stylesheet rule targeting the
+          same element, which is precisely the rule shape the opt-out ledger uses — so
+          writing the value inline would silently make the opt-out inert while looking
+          tidier. The property is set on the ROOT and inherits down to here, so the
+          ledger's existing `[data-app-page-frame][data-block-id='…']` selector
+          is unchanged by the move.
+
+          🔴 IT REPRODUCES THE VERTICAL CHAIN IT WAS INSERTED INTO, which is the only
+          way this can be a width-only change. It was previously the iframe wrapper's
+          `flex: 1` that consumed the space left by the chrome, as a direct child of the
+          root's column; this box now takes that role and re-offers it, so it must be a
+          column flex container AND a `flex: 1` item itself.
+
+          🔴 `flex: 1` IS THE LOAD-BEARING ONE AND NOTHING RENDERED CATCHES ITS LOSS.
+          Measured by mutation: dropping it leaves the FULL node suite and the FULL
+          `AppBlocks` browser suite green while the app column collapses to ~150px at a
+          900px content height — a running App Block reduced to a sliver, with every tier
+          green. `__tests__/pageBlockHostMaxWidth.test.ts` therefore pins this style block
+          verbatim in the node `unit` tier; that source pin is the only thing that CATCHES
+          that mutation at all. It does not BLOCK it: `main` requires no status check in
+          this repo, so what the pin buys is a red run a reviewer has to read (and an
+          honest verdict on a push to `main`), not a door that stays shut.
+
+          ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
+          NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit
+          and max-width browser suites 20/20 green, because the child iframe wrapper already
+          carries `overflow: hidden`, which per CSS Flexbox §4.5 gives it an automatic
+          minimum size of 0 — so this box's content-based minimum is 0 with or without the
+          declaration. It is kept because that reasoning depends on a property of a DIFFERENT
+          element that nothing pins, and it costs nothing; an earlier version of this comment
+          credited `PageBlockHostScrollFit.browser.test.tsx` with covering it, which would
+          have misled anyone auditing whether it could go. */}
+      <Box
+        data-testid="app-page-content"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
+          marginInline: 'auto',
+        }}
+      >
+        {showIframe ? (
+          // The iframe fills the remaining viewport. While the block is still
+          // handshaking (status === 'loading', before BLOCK_READY), the surface
+          // would otherwise be blank — the iframe is mounted but visually empty and
+          // non-interactive (pointerEvents:none). Overlay a centered branded
+          // launch state (app initial + a content-shaped skeleton) on top
+          // so the user sees a loading state instead of a blank page. The overlay
+          // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
+          // inside `status === 'loading'`: it unmounts the instant the
+          // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
+          // terminal path (timeout / fatal / no_token / error, which also flip
+          // `showIframe` to false and render the BlockFallback below) — so it can
+          // never spin forever.
+          <Box
             style={{
+              position: 'relative',
               flex: 1,
-              display: 'block',
-              width: '100%',
-              border: 0,
-              pointerEvents: isReady ? 'auto' : 'none',
-              // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
-              // cross-fading with the branded overlay below. Under reduced motion
-              // `revealMs` is 0 → no transition is emitted and the opacity flip is
-              // instantaneous (the pre-animation behaviour).
-              opacity: isReady ? 1 : 0,
-              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
-              transition:
-                revealMs === 0
-                  ? undefined
-                  : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
+              display: 'flex',
+              // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
+              // handshaking the iframe carries `translateY(8px)`, and a transform
+              // does not change layout but DOES extend the SCROLLABLE OVERFLOW
+              // region — so those 8px pushed past this wrapper and asked the
+              // nearest scrolling ancestor for a scrollbar. Measured, not
+              // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
+              // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
+              // motion should never be able to do that. Clipping here is also
+              // free — the iframe fills this box exactly, so nothing else can be
+              // cut off. Covered by the GREEN ARM in
+              // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
+              // equality precisely so an 8px leak cannot hide in a tolerance.
+              overflow: 'hidden',
             }}
-          />
-          {overlayMounted && (
-            <Center
-              data-testid="app-page-loading"
-              // Announce the loading state on the REGION: role="status" +
-              // aria-busy mark the overlay container as a live busy region so a
-              // screen reader announces it when it appears. The region is the
-              // ONLY thing that announces — the skeleton group below is
-              // aria-hidden and exposes nothing, deliberately (see its own
-              // comment). Do not give that group a role to "restore" a labelled
-              // graphic: its label would then be read as part of this region and
-              // the app name would announce twice.
-              // Once the block IS ready the overlay is a purely decorative
-              // fading-out veil, so it drops the live-region roles and hides from
-              // the a11y tree instead of announcing a stale "loading".
-              {...(isReady
-                ? { 'aria-hidden': true }
-                : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
-              // Observable reveal state (DevTools / manual QA): 'false' while the
-              // block is still handshaking, 'true' for the one cross-fade after
-              // BLOCK_READY, then the node unmounts.
-              data-revealing={isReady ? 'true' : 'false'}
+          >
+            <iframe
+              // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+              // the iframe (fresh contentWindow), not just reloads its src — the
+              // re-armed init handshake then talks to a clean frame.
+              key={reloadNonce}
+              ref={iframeRef}
+              src={renderedIframeSrc}
+              sandbox={effectiveSandbox}
+              referrerPolicy="no-referrer"
+              // Sanitize the publisher-controlled appName for the iframe title too
+              // (same sanitizer as the visible chrome + the loader aria-label), so
+              // every appName-derived plain-text attribute is consistent. Falls
+              // back to blockId when nothing legible remains.
+              title={sanitizeAppChromeName(appName) || blockId}
+              data-testid="app-page-iframe"
+              data-block-instance-id={blockInstanceId}
+              data-block-ready={isReady ? 'true' : 'false'}
+              /* 🔴 A11Y. The veil is the host's ONLY loading announcement
+                (role="status" + aria-busy). Standing it down for a bootSkeleton
+                app removed it with nothing in its place — measured, ZERO
+                elements matching [role="status"],[aria-busy],[role="alert"] —
+                and the host cannot borrow the app's, because that boot state is
+                inside a cross-origin frame it can never read. Marking the frame
+                itself busy restores a machine-readable "still loading" without
+                claiming to know what it says. `reloadNonce === 0` is what makes
+                "only while the veil is absent" TRUE rather than merely stated:
+                the retry path brings the veil (role="status") back, and without
+                that term both were busy at once — measured, 2 regions. */
+              aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
               style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'var(--mantine-color-body)',
-                // Never intercept clicks: during loading the iframe is already
-                // pointer-inert, and during the fade-out the block is live
-                // underneath — the veil must not swallow that first click.
-                pointerEvents: 'none',
-                opacity: isReady ? 0 : 1,
-                transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+                flex: 1,
+                display: 'block',
+                width: '100%',
+                border: 0,
+                pointerEvents: isReady ? 'auto' : 'none',
+                // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
+                // cross-fading with the branded overlay below. Under reduced motion
+                // `revealMs` is 0 → no transition is emitted and the opacity flip is
+                // instantaneous (the pre-animation behaviour).
+                //
+                // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
+                // their own boot state in the HTML they ship (themed only if they also
+                // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
+                // guess), so hiding the
+                // iframe until BLOCK_READY would hide exactly that, and the
+                // translateY settle would move it on arrival — a layout shift, at
+                // the one moment the app is trying not to move. Visible from mount,
+                // no transform, no transition: the app's skeleton is on screen at
+                // first paint and its own React render replaces it in place.
+                // `pointerEvents` is deliberately NOT opted out — a skeleton is not
+                // interactive, and the block must stay inert until it has a token.
+                opacity: bootSkeleton || isReady ? 1 : 0,
+                transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+                transition:
+                  bootSkeleton || revealMs === 0
+                    ? undefined
+                    : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
               }}
-            >
-              {/* Branded launch state. The app's initial in the same Avatar
+            />
+            {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
+              `inset: 0` until BLOCK_READY, so leaving it up would cover the very
+              boot state the app ships — the declaration would be inert and the
+              app author would have no way to tell. For every other app it stays
+              exactly as it was, and it is the reason NOT declaring the field is
+              the safe default: no veil plus an empty `#root` is a blank white
+              iframe. */}
+            {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
+              bootSkeleton app. The opt-out is about FIRST boot, where the app's
+              own skeleton is about to paint. A RETRY is the opposite situation:
+              `key={reloadNonce}` remounts the iframe, so the app's document is
+              being re-fetched and its skeleton is NOT on screen — and the
+              "Retrying …" copy lives inside this veil, so suppressing it left
+              the user with an empty region and no indication anything had
+              happened, for the manual attempt and every automatic one.
+              Measured: veil absent, iframe blank, the string "Retrying" nowhere
+              in the document. */}
+            {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
+              <Center
+                data-testid="app-page-loading"
+                // Announce the loading state on the REGION: role="status" +
+                // aria-busy mark the overlay container as a live busy region so a
+                // screen reader announces it when it appears. The region is the
+                // ONLY thing that announces — the skeleton group below is
+                // aria-hidden and exposes nothing, deliberately (see its own
+                // comment). Do not give that group a role to "restore" a labelled
+                // graphic: its label would then be read as part of this region and
+                // the app name would announce twice.
+                // Once the block IS ready the overlay is a purely decorative
+                // fading-out veil, so it drops the live-region roles and hides from
+                // the a11y tree instead of announcing a stale "loading".
+                {...(isReady
+                  ? { 'aria-hidden': true }
+                  : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
+                // Observable reveal state (DevTools / manual QA): 'false' while the
+                // block is still handshaking, 'true' for the one cross-fade after
+                // BLOCK_READY, then the node unmounts.
+                data-revealing={isReady ? 'true' : 'false'}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'var(--mantine-color-body)',
+                  // Never intercept clicks: during loading the iframe is already
+                  // pointer-inert, and during the fade-out the block is live
+                  // underneath — the veil must not swallow that first click.
+                  pointerEvents: 'none',
+                  opacity: isReady ? 0 : 1,
+                  transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+                }}
+              >
+                {/* Branded launch state. The app's initial in the same Avatar
                   treatment the store card uses gives a visual through-line from
                   card → run page, so opening an app feels continuous rather than
                   landing on a bare spinner. Purely presentational: every string is
@@ -4013,7 +4793,7 @@ export function PageBlockHost({
                   carry control/bidi/zalgo spoofing here either — consistency with
                   AppBlockChrome, not a new gate. Falls back to 'app' when nothing
                   legible remains. */}
-              {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
+                {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
                   Stack is a shrink-to-fit flex item of the <Center>, so its
                   width is set by its widest CONTENT-sized child — the
                   "Starting {appName}…" text. A percentage width on the
@@ -4024,16 +4804,16 @@ export function PageBlockHost({
                   loading state would look different for every app in the
                   store. Constraining the Stack instead makes the group's
                   100%/maw pair mean what it says. */}
-              <Stack align="center" gap="sm" w="100%">
-                <Avatar radius="md" size={56} alt="" aria-hidden>
-                  {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
+                <Stack align="center" gap="sm" w="100%">
+                  <Avatar radius="md" size={56} alt="" aria-hidden>
+                    {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
                       surrogate pair, so an emoji-leading app name would render a
                       broken half-glyph. Falls back to the SAME string as the
                       visible copy below so the two can't disagree. */}
-                  {(Array.from(launchName)[0] ?? '').toUpperCase()}
-                </Avatar>
-                <Text size="sm" c="dimmed">
-                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                    {(Array.from(launchName)[0] ?? '').toUpperCase()}
+                  </Avatar>
+                  <Text size="sm" c="dimmed">
+                    {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
                       (manual AND automatic — both go through performRetry), so
                       a re-attempt reads as a retry-in-progress rather than an
                       identical "Starting …" that looks like nothing happened.
@@ -4051,9 +4831,9 @@ export function PageBlockHost({
                       against a stated maximum of 2. The bounded count belongs to
                       the terminal card, where the budget is meaningful; this line
                       only has to say that something is happening again. */}
-                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
-                </Text>
-                {/* CONTENT-SHAPED LOADING STATE, not a spinner.
+                    {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
+                  </Text>
+                  {/* CONTENT-SHAPED LOADING STATE, not a spinner.
                     A spinner says "busy"; a skeleton says "content is coming and
                     this is roughly its shape", which is what the sidebar slot
                     already gets for free — `IframeHost` renders BlockFallback's
@@ -4089,56 +4869,63 @@ export function PageBlockHost({
                     Carries no aria-label: on an aria-hidden node it would be
                     permanently inert, and `data-testid` below is what the
                     suite queries. */}
-                <Box aria-hidden w="100%" maw={420} px="md" data-testid="app-page-loading-skeleton">
-                  <Stack gap="xs">
-                    {/* `animate={!reduceMotion}` — same call the fallback makes.
+                  <Box
+                    aria-hidden
+                    w="100%"
+                    maw={420}
+                    px="md"
+                    data-testid="app-page-loading-skeleton"
+                  >
+                    <Stack gap="xs">
+                      {/* `animate={!reduceMotion}` — same call the fallback makes.
                         Under prefers-reduced-motion the bars stay as static
                         placeholder boxes instead of shimmering. */}
-                    <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
-                    <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
-                    <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
-                    <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
-                  </Stack>
-                </Box>
-              </Stack>
-            </Center>
-          )}
-        </Box>
-      ) : fallbackReason ? (
-        <Box
-          style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
-          data-testid="app-page-fallback"
-        >
-          <BlockFallback
-            reason={fallbackReason}
-            blockName={sanitizeAppChromeName(appName) || blockId}
-            onRetry={handleRetry}
-            // 🔴 The REAL terminal message renders the instant the status goes
-            // terminal — a pending automatic attempt is surfaced INSIDE it, never
-            // instead of it. The user is never held in a loading state waiting on
-            // a quiet retry (the silent-blank failure class), and the manual
-            // affordance stays available the whole time.
-            autoRetry={
-              autoRetry.kind === 'retry'
-                ? {
-                    attempt: autoRetry.attempt,
-                    // The ceiling REACHABLE from here, not the raw attempt cap —
-                    // an auth terminal is bounded by the lower re-mint budget, so
-                    // showing MAX_AUTO_RETRIES would promise a retry that will
-                    // never happen. Derived in decideAutoRetry.
-                    maxAttempts: autoRetry.maxAttempts,
-                    // prefers-reduced-motion: reduce → no spinner.
-                    animate: !reduceMotion,
-                  }
-                : undefined
-            }
-            autoRetriesSpent={autoRetryBudget.attempts}
-            // Automatic recovery has settled (exhausted, or never applicable):
-            // the button is now the only path forward, so make it unmissable.
-            prominentRetry={autoRetrySettled}
-          />
-        </Box>
-      ) : null}
+                      <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
+                      <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Center>
+            )}
+          </Box>
+        ) : fallbackReason ? (
+          <Box
+            style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
+            data-testid="app-page-fallback"
+          >
+            <BlockFallback
+              reason={fallbackReason}
+              blockName={sanitizeAppChromeName(appName) || blockId}
+              onRetry={handleRetry}
+              // 🔴 The REAL terminal message renders the instant the status goes
+              // terminal — a pending automatic attempt is surfaced INSIDE it, never
+              // instead of it. The user is never held in a loading state waiting on
+              // a quiet retry (the silent-blank failure class), and the manual
+              // affordance stays available the whole time.
+              autoRetry={
+                autoRetry.kind === 'retry'
+                  ? {
+                      attempt: autoRetry.attempt,
+                      // The ceiling REACHABLE from here, not the raw attempt cap —
+                      // an auth terminal is bounded by the lower re-mint budget, so
+                      // showing MAX_AUTO_RETRIES would promise a retry that will
+                      // never happen. Derived in decideAutoRetry.
+                      maxAttempts: autoRetry.maxAttempts,
+                      // prefers-reduced-motion: reduce → no spinner.
+                      animate: !reduceMotion,
+                    }
+                  : undefined
+              }
+              autoRetriesSpent={autoRetryBudget.attempts}
+              // Automatic recovery has settled (exhausted, or never applicable):
+              // the button is now the only path forward, so make it unmissable.
+              prominentRetry={autoRetrySettled}
+            />
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
 }

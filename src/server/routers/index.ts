@@ -36,6 +36,9 @@ export const appRouter = router({
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
   feedback: lazy(() => import('./feedback.router').then((m) => m.feedbackRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
+  huggingFaceImport: lazy(() =>
+    import('./huggingface-import.router').then((m) => m.huggingFaceImportRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
@@ -138,6 +141,9 @@ export const appRouter = router({
     import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
   ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
+  resourceLoad: lazy(() =>
+    import('~/server/routers/resource-load.router').then((m) => m.resourceLoadRouter)
+  ),
   changelog: lazy(() => import('~/server/routers/changelog.router').then((m) => m.changelogRouter)),
   bug: lazy(() => import('~/server/routers/bug.router').then((m) => m.bugRouter)),
   nowPayments: lazy(() => import('./nowpayments.router').then((m) => m.nowPaymentsRouter)),

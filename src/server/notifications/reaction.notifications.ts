@@ -1,6 +1,8 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -14,7 +16,10 @@ export const reactionNotifications = createNotificationProcessor({
     category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
+      url: getModelCommentThreadUrl({
+        modelId: details.modelId,
+        commentId: details.rootCommentId,
+      }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
@@ -82,7 +87,17 @@ export const reactionNotifications = createNotificationProcessor({
         } model has received ${details.reactionCount} reactions`;
       }
 
-      return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
+      // `postId` is null for images that are not in a post (an article cover, for one:
+      // 25,135 such images on prod as of 2026-09-03). Interpolated, that null became the
+      // literal string `null`, and `/images/[imageId]` parses `postId` with `numericString`,
+      // so `Number('null')` -> NaN -> a thrown ZodError during SSR -> a 500 on the link we
+      // just mailed the user. Omit the param instead; the page reads a missing `postId` fine.
+      const url =
+        details.postId != null
+          ? `/images/${details.imageId}?postId=${details.postId}`
+          : `/images/${details.imageId}`;
+
+      return { message, url };
     },
   },
   'article-reaction-milestone': {
@@ -93,7 +108,13 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, excludedUserIds }) => {
+      // The displayed article count filters metric-suppressed accounts; a milestone that
+      // did not would congratulate someone on a number their own page never shows. The
+      // LENIENT reader on purpose — a failed read here degrades to the pre-exclusion
+      // count, which is how this fired before, rather than to no notification at all.
+      const excludedFilter = excludedReactorFilter(excludedUserIds ?? []);
+      return `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -106,7 +127,7 @@ export const reactionNotifications = createNotificationProcessor({
           a.affected_id,
           COUNT(r."articleId") reaction_count
         FROM "ArticleReaction" r
-        JOIN affected a ON a.affected_id = r."articleId"
+        JOIN affected a ON a.affected_id = r."articleId" ${excludedFilter}
         GROUP BY a.affected_id
         HAVING COUNT(*) >= ${articleReactionMilestones[0]}
       ), reaction_milestone AS (
@@ -129,6 +150,7 @@ export const reactionNotifications = createNotificationProcessor({
         details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone')
-    `,
+    `;
+    },
   },
 });

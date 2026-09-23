@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { BuzzWriteOptions } from '@civitai/buzz';
+import type { BuzzReadOptions, BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -55,6 +55,7 @@ import {
   coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -235,10 +236,17 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
     ? Math.min(Math.max(rawMultiplier, 1), MAX_GLOBAL_BONUS)
     : 1;
 
+  // `globalRewardsBonus` is guarded above; `base.rewardsMultiplier` is read straight off
+  // operator-authored `Product.metadata`, and this is the value the award computation and the Redis
+  // Lua cap script are handed. `foldUserMultipliers` floors it on the way in, but that runs on a
+  // cache MISS: `userMultipliersCache` has a 1-day TTL, so entries folded before this shipped are
+  // served unfloored until they expire.
+  const baseRewardsMultiplier = clampRewardMultiplier(base.rewardsMultiplier);
+
   return {
     ...base,
-    rewardsMultiplier: base.rewardsMultiplier * globalRewardsBonus,
-    baseRewardsMultiplier: base.rewardsMultiplier,
+    rewardsMultiplier: baseRewardsMultiplier * globalRewardsBonus,
+    baseRewardsMultiplier,
     globalRewardsBonus,
     rewardsBonusEvent:
       event && globalRewardsBonus > 1
@@ -1237,8 +1245,8 @@ export async function pingBuzzService() {
   return buzzService.ping();
 }
 
-export async function getTransactionByExternalId(externalId: string) {
-  const data = await buzzService.getTransactionByExternalId(externalId);
+export async function getTransactionByExternalId(externalId: string, opts?: BuzzReadOptions) {
+  const data = await buzzService.getTransactionByExternalId(externalId, opts);
   if (data === null) return null;
   return getBuzzTransactionResponse.parse(data);
 }
@@ -1343,7 +1351,7 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
   // Create the transaction
   await createBuzzTransaction({
     amount: claimStatus.details.useMultiplier
-      ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
+      ? Math.ceil(claimStatus.details.amount * clampRewardMultiplier(rewardsMultiplier))
       : claimStatus.details.amount,
     externalTransactionId: claimStatus.claimId,
     fromAccountId: 0,

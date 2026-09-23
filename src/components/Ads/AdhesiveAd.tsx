@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { IconX } from '@tabler/icons-react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { isMobileDevice } from '~/hooks/useIsMobile';
+import { useIsMobileDevice } from '~/hooks/useIsMobile';
 
 // Grace period before an unfilled ad is treated as failed and the bar becomes closeable.
 // Long enough that a slow-but-valid ad still registers its impression first.
@@ -16,7 +16,8 @@ function AdhesiveAdContent({
   onClose?: () => void;
   preserveLayout?: boolean;
 }) {
-  const isMobile = isMobileDevice();
+  const isMobile = useIsMobileDevice();
+  const adHeight = isMobile ? 50 : 90;
   const tracked = AdUnitAdhesive.useImpressionTracked();
   const { adsBlocked } = useAdsContext();
 
@@ -58,11 +59,14 @@ function AdhesiveAdContent({
         // ad that was visible before `viewport-fit=cover`, now sitting above the
         // home indicator instead of partly behind it.
         style={{
-          minHeight: `calc(${isMobile ? 50 : 90}px + var(--safe-area-inset-bottom))`,
+          minHeight: `calc(${adHeight}px + var(--safe-area-inset-bottom))`,
           paddingBottom: 'var(--safe-area-inset-bottom)',
         }}
       >
-        <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout && !isMobile} />
+        {/* useAdSizes reads maxHeight once, on mount, so it must not mount on the server's guess. */}
+        {isMobile !== undefined && (
+          <AdUnitAdhesive maxHeight={adHeight} preserveLayout={preserveLayout && !isMobile} />
+        )}
         {canClose && onClose && (
           <button
             // `inset-y-0` would stretch the close button through the padding and

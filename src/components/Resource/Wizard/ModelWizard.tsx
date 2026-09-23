@@ -30,6 +30,7 @@ import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/uti
 import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
+import { resolveTrainedFileName } from '~/utils/file-display-helpers';
 import { QS } from '~/utils/qs';
 import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -270,7 +271,7 @@ export function TrainStepModelFileRename({
     <TextInput
       label="Download filename"
       description="The name users will see when downloading this model file"
-      placeholder={`${modelVersion.name || 'model'}.safetensors`}
+      placeholder={modelFile.name}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
     />
@@ -322,9 +323,17 @@ const TrainSteps = ({
     useWizardStepSave(navigateToStep);
 
   const modelFile = modelVersion.files.find((f) => f.type === 'Model');
-  const [fileName, setFileName] = useState<string>(
-    modelFile?.overrideName ?? (modelVersion.name ? `${modelVersion.name}.safetensors` : '')
-  );
+  // null means untouched; '' is a real edit that clears the override.
+  const [editedFileName, setEditedFileName] = useState<string | null>(null);
+  const fileName = modelFile
+    ? resolveTrainedFileName({
+        editedName: editedFileName,
+        overrideName: modelFile.overrideName,
+        modelName: model.name,
+        versionName: modelVersion.name,
+        fileName: modelFile.name,
+      })
+    : '';
   const updateFileMutation = trpc.modelFile.update.useMutation();
 
   const handleVersionNext = async () => {
@@ -416,7 +425,7 @@ const TrainSteps = ({
               <TrainStepModelFileRename
                 modelVersion={modelVersion}
                 value={fileName}
-                onChange={setFileName}
+                onChange={setEditedFileName}
               />
             }
           >

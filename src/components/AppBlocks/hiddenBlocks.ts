@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
  * given block can hide it locally via the host trust-frame's ⋯ menu — the
  * choice lives only in their browser (localStorage), never on the server, so it
  * doesn't affect the publisher's install or other viewers. Hidden blocks can be
- * restored from the "Hidden" tab on /apps/installed.
+ * restored from the "Hidden" tab on /apps/activity.
  *
  * Keyed on `blockInstanceId` (the specific install instance) so hiding a block
  * on one model doesn't hide the same app on another. A little metadata (app +

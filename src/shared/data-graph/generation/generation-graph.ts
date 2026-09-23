@@ -26,6 +26,7 @@ import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
 import { imageRemoveBackgroundGraph } from './image-remove-background-graph';
 import { imagePreprocessGraph } from './image-preprocess-graph';
+import { videoPreprocessGraph } from './video-preprocess-graph';
 import { metadataExtractionGraph } from './metadata-extraction-graph';
 import { promptEnhancementGraph } from './prompt-enhancement-graph';
 import { ecosystemGraph } from './ecosystem-graph';
@@ -111,7 +112,7 @@ const NEW_TO_OLD: Record<string, string> = {
 };
 
 /** Migrate stored workflow key to current format, falling back to txt2img if unknown */
-function migrateWorkflowKey(key: string | undefined): string | undefined {
+export function migrateWorkflowKey(key: string | undefined): string | undefined {
   if (!key) return key;
   // Migrate old first-last-frame key to img2vid (now an alias on Vidu)
   if (key === 'img2vid:first-last-frame') return 'img2vid';
@@ -279,6 +280,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
     { values: ['img2img:upscale'] as const, graph: imageUpscaleGraph },
     { values: ['img2img:remove-background'] as const, graph: imageRemoveBackgroundGraph },
     { values: ['img2img:preprocess'] as const, graph: imagePreprocessGraph },
+    { values: ['vid2vid:preprocess'] as const, graph: videoPreprocessGraph },
     // Utility workflows (no ecosystem support, no submission)
     { values: ['img2meta'] as const, graph: metadataExtractionGraph },
     { values: ['prompt:enhance'] as const, graph: promptEnhancementGraph },

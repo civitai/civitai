@@ -15,16 +15,16 @@ import clsx from 'clsx';
 
 export type OutputFormat = 'jpeg' | 'png';
 
-export interface OutputFormatOption {
+export interface OutputFormatOption<V extends string = string> {
   label: string;
-  value: string;
+  value: V;
   offset?: number;
 }
 
-export interface OutputFormatInputProps {
-  value?: string;
-  onChange?: (format: string) => void;
-  options: OutputFormatOption[];
+export interface OutputFormatInputProps<V extends string = string> {
+  value?: V;
+  onChange?: (format: V) => void;
+  options: OutputFormatOption<V>[];
   isMember?: boolean;
 }
 
@@ -62,12 +62,12 @@ function FormatLabel({ label, offset = 0, isFreeForMember = false }: FormatLabel
 // Component
 // =============================================================================
 
-export function OutputFormatInput({
+export function OutputFormatInput<V extends string = string>({
   value,
   onChange,
   options,
   isMember = false,
-}: OutputFormatInputProps) {
+}: OutputFormatInputProps<V>) {
   const selected = value ? options.find((x) => x.value === value) : undefined;
 
   return (

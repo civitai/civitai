@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
@@ -11,6 +11,11 @@ import {
   writeDismissedCookieClient,
 } from '~/components/Announcements/announcements-dismissed-cookie';
 import { resolveAnnouncementExposure } from '~/components/Announcements/announcements-exposure';
+import { useMergeServerDismissals } from '~/components/Announcements/announcement-dismissal-merge';
+import {
+  recordAnnouncementDismissals,
+  useServerDismissedAnnouncements,
+} from '~/components/Announcements/announcement-dismissal-sync';
 import { createDismissalStore } from '~/store/dismissal-store';
 
 // The announcements query is SSR-seeded (see AppProvider / `/api/user/settings`).
@@ -50,6 +55,7 @@ export const useAnnouncementsStore = announcementDismissals.useStore;
 
 export function dismissAnnouncements(ids: number | number[], type: AnnouncementType = 'site') {
   announcementDismissals.dismiss(ids, type);
+  recordAnnouncementDismissals(ids);
 }
 
 export function useGetAnnouncements(type: AnnouncementType = 'site') {
@@ -79,6 +85,16 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
     () => (data ?? []).filter((x) => (x.metadata.type ?? 'site') === type),
     [data, type]
   );
+
+  // The account's dismissals, merged into this type's bucket. Intersected with `typed` inside
+  // the hook, so a creator announcement's id and another type's id can never land here.
+  const serverDismissedIds = useServerDismissedAnnouncements();
+  const typedIds = useMemo(() => typed.map((x) => x.id), [typed]);
+  const mergeDismissed = useCallback(
+    (ids: number[]) => announcementDismissals.dismiss(ids, type),
+    [type]
+  );
+  useMergeServerDismissals({ liveIds: typedIds, serverDismissedIds, merge: mergeDismissed });
 
   // v5: query onSettled removed — prune this type's dismissed ids to those still
   // present once data loads. The store writes only when something was actually

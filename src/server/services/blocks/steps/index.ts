@@ -1,6 +1,7 @@
 import type * as z from 'zod';
 import { chatCompletionStep } from './chat-completion.step';
 import { convertImageStep } from './convert-image.step';
+import { assertStepTypeAllowed } from './orchestrator-denylist';
 import type { StepOutputMedia } from './output';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,7 +538,7 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 // for why). Re-exported here so `~/server/services/blocks/steps` stays the one
 // import site for consumers that aren't registry entries.
 export type { StepOutputMedia } from './output';
-export { mediaFromBlobs } from './output';
+export { mediaFromBlobs, splitPassThroughStepOutput } from './output';
 
 /**
  * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with
@@ -1450,8 +1451,15 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // (standalone `$type` with a consumer-recipe endpoint, deterministic CPU
 // hashing, bounded hash-string output, no resources) but has no demonstrated
 // developer demand, and every registered id is a permanent public wire
-// commitment. Adding it later is one file plus one line here — which is the
-// entire point of the registry.
+// commitment. ~~Adding it later is one file plus one line here~~ —
+// 🔴 NO LONGER TRUE, and the correction is the point: `mediaHash` is now on the
+// platform-internal DENYLIST (`./orchestrator-denylist.ts`, "hashing / model
+// ingestion"), so clause (0a) throws at registry LOAD for it. Writing the step
+// file and adding the line here would be a BOOT failure, not a test failure.
+// The two judgements genuinely conflict — this paragraph adjudicated it
+// app-safe, the denylist adjudicated it platform machinery — and the denylist
+// is the newer decision. To register it, that decision has to be reopened
+// first; do not discover this by breaking the boot.
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 FROZEN, FOR THE SAME REASON `STEP_TYPE_ACCEPTABLE_POSTURES` IS — and BE
 // PRECISE ABOUT WHAT THAT BUYS, because it is less than the freeze above buys.
@@ -1546,6 +1554,36 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
   if (step.id !== id) {
     throw new Error(`${where}: registry key must equal step.id (got '${step.id}')`);
   }
+
+  // (0a) POLICY GATE, DELIBERATELY FIRST AFTER THE IDENTITY CHECK: the
+  // orchestrator `$type` must not be PLATFORM-INTERNAL. Scanners, moderation
+  // classifiers, hashing/ingestion and the catalog's own internals are the
+  // platform's machinery, not app capability — `orchestrator-denylist.ts` says
+  // why each entry is in that set and which three are a reversible judgement
+  // call.
+  //
+  // 🔴 PLACED HERE BECAUSE IT WAS UNREACHABLE LOWER DOWN, and that is worth
+  // recording rather than quietly fixing. It first sat after clause (9), where
+  // it never executed: `STEP_TYPE_ACCEPTABLE_POSTURES` (clause (1b), :1667) rejects a
+  // posture/`$type` mismatch earlier, so an entry mutated to declare
+  // `xGuardModeration` died with "the declared posture does not cover the
+  // moderation surface this step actually produces" and the denylist never ran.
+  // The tell was only visible because the test asserts
+  // `PlatformInternalStepTypeError` SPECIFICALLY — a generic `.toThrow()` would
+  // have been green over dead code.
+  //
+  // First also gives the right ERROR: an author registering a scanner should be
+  // told it is platform-internal, not that their posture is wrong.
+  //
+  // 🔴 SCOPE — THIS IS THE ONLY PLACE THE DENYLIST BITES TODAY. No current wire
+  // arm lets a block name an arbitrary `$type`: `kind:'step'` is enum-bound to
+  // `REGISTERED_STEP_IDS`, and `textToImage`/`customComfy` build their own. So
+  // the live property is narrower than "a block cannot submit a scanner" — it is
+  // "a scanner cannot be REGISTERED as a block step", which is the seam a future
+  // widening would otherwise walk straight through. When the wide `kind:'steps'`
+  // arm lands it MUST call `assertStepTypeAllowed` on the submitted `$type`
+  // before any spend reservation; this clause does not cover that path.
+  assertStepTypeAllowed(step.orchestratorType, where);
 
   // (1) The declared moderation posture must have an implemented handler. A
   // text-producing step cannot be registered until someone answers the policy

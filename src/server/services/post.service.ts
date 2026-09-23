@@ -44,6 +44,10 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForPostCascade,
+} from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
@@ -368,7 +372,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (sort === PostSort.RecentlyAdded && !collectionId) {
+  if (sort === PostSort.RecentlyAdded && !collectionId && !draftOnly) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 
@@ -806,6 +810,19 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
   return combinePostEditImageData(images, user);
 };
 
+export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const images = await dbRead.image.findMany({
+    where: {
+      postId: id,
+      post: user.isModerator
+        ? undefined
+        : { OR: [{ publishedAt: { not: null } }, { userId: user.id }] },
+    },
+    select: { id: true },
+  });
+  return images.map((image) => image.id);
+};
+
 export const createPost = async ({
   userId,
   tag,
@@ -1000,6 +1017,10 @@ export const updatePost = async ({
 };
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
+  // Before the transaction: `CollectionItem.postId` cascades and the post's images go
+  // with it, so nothing can resolve this afterwards.
+  const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
+
   const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
     async (tx) => {
       // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
@@ -1056,6 +1077,11 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     // takes three times as long to surface.
     { timeout: 10000 }
   );
+
+  // Immediately after the commit, ahead of the de-index/S3/cache steps below. Those can
+  // reject, and by this point the rows are gone — the pre-delete snapshot is the only
+  // remaining record of which documents went stale.
+  await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 

@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * A PUBLISHER-CONTROLLED LABEL IN THE APP-BLOCK CHROME MUST BE HELD TO ONE LINE.
- * Node `unit` project — the GATING tier. The rendered proof lives in
- * `AppBlockChromeRecentsClamp.browser.test.tsx`; this is the copy that can block a
- * merge.
+ * Node `unit` project — the tier that EXECUTES this assertion (report-only on a
+ * pull request, an honest verdict on a push to `main`). The rendered proof lives in
+ * `AppBlockChromeRecentsClamp.browser.test.tsx`, in the REPORT-ONLY browser tier.
+ * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this repo,
+ * so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHAT BROKE. F3 consolidated the chrome's two dropdowns and its bottom sheets onto
  * one primitive (`ChromeSurface`). Its sheet row wraps children in
@@ -16,7 +18,7 @@ import { describe, expect, it } from 'vitest';
  * which the pre-primitive chrome wrapped in exactly that `Text`, with the comment
  * "`lineClamp={1}` keeps a pathologically long name from blowing out the dropdown at
  * ANY of its widths". The consolidation dropped it on the desktop path only, and
- * nothing noticed: the whole gating tier and all seven touched browser suites stayed
+ * nothing noticed: the whole node `unit` tier and all seven touched browser suites stayed
  * green. Measured at 1440×900 with a 63-char name (`APP_CHROME_NAME_MAX` is 64), the
  * row went 35px → 78px — three lines — ×`RECENTLY_RUN_LIMIT` = 5. (The audit reported
  * 33.6 → 56.7 for the same defect with a shorter fixture; the gap is the name length,

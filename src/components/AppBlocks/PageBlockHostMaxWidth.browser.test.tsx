@@ -44,10 +44,13 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * NOTE ON REACH: the browser `component` project runs in CI as the
  * `preview / component-tests` status — REPORT-ONLY, so a break here is visible
- * but does not block a merge. This file is the EMPIRICAL half; the gating half
- * is the source guard in `__tests__/pageBlockHostMaxWidth.test.ts`, which is in
- * the node `unit` project. Neither can replace the other: only a real layout can
- * see a width, and only the gating tier can stop a merge.
+ * but does not block a merge. This file is the EMPIRICAL half; the source-guard
+ * half is `__tests__/pageBlockHostMaxWidth.test.ts`, which is in the node `unit`
+ * project — report-only on a pull request too (`continue-on-error`), and an
+ * honest verdict on a push to `main` or a `workflow_dispatch`. NEITHER TIER
+ * BLOCKS A MERGE: `main` requires no status check at all in this repo. Neither
+ * can replace the other either: only a real layout can see a width, and only the
+ * node tier stays honest on `main`.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -60,6 +63,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   // down to "0 tests collected".
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -74,6 +84,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -124,6 +140,9 @@ const baseProps = {
   appName: 'Max Width App',
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: BLOCK_ID,
@@ -156,6 +175,42 @@ afterEach(() => {
 });
 
 /**
+ * The ONE spelling of "a `data-block-id` value inside a selector", used by BOTH
+ * the CSSOM walk below and the raw-text parse it is checked against.
+ *
+ * 🔴 SHARED ON PURPOSE. The two parses are compared for EQUALITY, so the claim that
+ * comparison makes must be about WHERE a rule is reachable from — and about nothing
+ * else. An attribute value may be written unquoted in CSS (`[data-block-id=sensei]`
+ * is legal, and `selectorText` hands it back quoted), so two patterns that disagreed
+ * about quoting would make the comparison fail over a spelling difference, with a
+ * message pointing a reader at an at-rule that is not there. One pattern, tolerant
+ * of both, cannot. Built fresh per call rather than hoisted as a `/g` literal so no
+ * caller can inherit another's `lastIndex`.
+ *
+ * Sorted, because neither side's order is meaningful: the walk yields document
+ * order within whatever it descended into, the raw parse yields file order.
+ */
+function blockIdsIn(text: string): string[] {
+  return [...text.matchAll(/\[data-block-id\s*=\s*['"]?([^'"\]]+)['"]?\]/g)]
+    .map((m) => m[1])
+    .sort();
+}
+
+/**
+ * `globals.css` with its block comments removed.
+ *
+ * The ledger's own doc comment contains a TEMPLATE rule (`'my-canvas-app'`), and
+ * the entries discuss their own selectors in prose, so an id count taken over the
+ * raw file counts things that do not ship. Same strip, for the same reason, as
+ * `code()` in `__tests__/pageBlockHostMaxWidth.test.ts`. Block comments only —
+ * CSS has no `//` comment, and stripping one would eat the rest of any line
+ * holding a `url(https://…)`.
+ */
+function cssWithoutComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/**
  * The REAL full-bleed opt-out rules, parsed out of `globals.css` itself.
  *
  * 🔴 WHY THIS INDIRECTION EXISTS RATHER THAN JUST LOADING THE STYLESHEET. The
@@ -175,6 +230,16 @@ afterEach(() => {
  * there each shipped a defect (a comment glued to the next property, a `}` inside
  * a string truncating the capture), because several regexes cannot agree on where
  * a CSS block ends. `replaceSync` hands that to the engine that will evaluate it.
+ *
+ * ⚠️ WHAT THE WALK DOES NOT REACH, AND WHY THAT IS CHECKED RATHER THAN TRUSTED. It
+ * descends through `@layer` blocks and nothing else — not `@media`, `@supports` or
+ * `@container` — because a rule inside a conditional at-rule cannot be injected
+ * unconditionally without changing what it means. That is a deliberate limit, and
+ * it is also a HOLE: a member whose rule moves into such a block disappears from
+ * `ids`, the derived green arm never measures it, and the test still passes on the
+ * remaining members. So the caller asserts these `ids` EQUAL the ids in the raw
+ * file text — see the assertion in the LEDGER case, which is the only thing
+ * standing between that limit and a silently unmeasured member.
  */
 function ledgerFromGlobals(): { css: string; ids: string[] } {
   const sheet = new CSSStyleSheet();
@@ -186,8 +251,7 @@ function ledgerFromGlobals(): { css: string; ids: string[] } {
       if (rule instanceof CSSStyleRule) {
         if (!rule.selectorText.includes('data-block-id')) continue;
         css.push(rule.cssText);
-        for (const m of rule.selectorText.matchAll(/\[data-block-id\s*=\s*['"]?([^'"\]]+)['"]?\]/g))
-          ids.push(m[1]);
+        ids.push(...blockIdsIn(rule.selectorText));
       } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
         walk(rule.cssRules);
       }
@@ -237,7 +301,20 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
   await page.viewport(width, height);
   renderInPageChain(props);
   await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
-  const host = page.getByTestId('app-page-frame').element() as HTMLElement;
+  // 🔴 TWO BOXES, AND WHICH ONE ANSWERS WHICH QUESTION IS THE POINT OF THIS SUITE.
+  // The cap used to live on the FRAME (the host root), so frame and app column were
+  // the same measurement and one element answered everything. They are now different
+  // elements with OPPOSITE contracts:
+  //   · `app-page-frame`   — the host root. Carries `AppBlockChrome`, and is FULL-BLEED
+  //                          so the chrome spans the page like every other site bar.
+  //   · `app-page-content` — the app's own column (iframe or failure card). This is
+  //                          what the ultrawide cap binds.
+  // `hostWidth` therefore reads the CONTENT box: every capped/centred claim below is
+  // about the app column, and pointing it at the frame would make all of them assert
+  // the opposite of the design. `frameWidth` is measured alongside so the full-bleed
+  // half can be asserted rather than assumed.
+  const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
+  const host = page.getByTestId('app-page-content').element() as HTMLElement;
   const parent = page.getByTestId('page-wrapper').element() as HTMLElement;
   // `measure` re-reads the live boxes, so a test can change the cascade and ask
   // again WITHOUT a second `renderInPageChain()` — two mounted trees would leave
@@ -248,12 +325,13 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
     const parentRect = parent.getBoundingClientRect();
     return {
       hostWidth: hostRect.width,
+      frameWidth: frame.getBoundingClientRect().width,
       parentWidth: parentRect.width,
       gutterLeft: hostRect.left - parentRect.left,
       gutterRight: parentRect.right - hostRect.right,
     };
   };
-  return { host, measure, ...measure() };
+  return { host, frame, measure, ...measure() };
 }
 
 describe('PageBlockHost — the app stops growing on a wide display', () => {
@@ -277,6 +355,36 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
     ).toBeGreaterThan(2400);
   });
 
+  /**
+   * 🔴 THE CHROME SPANS, THE APP DOES NOT — the pair that defines this layout, and
+   * the half that is NEW. The cap used to sit on the host root, so the chrome was
+   * capped along with the app and a full-page app read as a boxed widget dropped
+   * into the page instead of a page of the site. The chrome is site furniture and
+   * now behaves like it; the app keeps its measure.
+   *
+   * BOTH ARMS ARE IN ONE TEST DELIBERATELY. "The frame is full width" alone is green
+   * on any revision where the cap simply does not work — including the pre-cap base —
+   * so on its own it is an invariant guard, not coverage. Pairing it with "and the app
+   * column inside it is NOT full width" is what makes this assert the actual delta:
+   * two different widths, in the right order, on the right elements.
+   */
+  test('at 2560x1080 the chrome spans the page while the app column stays capped', async () => {
+    const { frameWidth, hostWidth, parentWidth } = await mountAt(2560, 1080);
+
+    expect(
+      frameWidth,
+      `at 2560x1080 the host frame is ${frameWidth}px inside a ${parentWidth}px parent — the ` +
+        'chrome is being capped again. It is meant to span the page like every other site-level ' +
+        'bar; the cap belongs on `app-page-content`, not on the frame.'
+    ).toBe(parentWidth);
+
+    expect(
+      hostWidth,
+      `at 2560x1080 the app column spans the whole ${parentWidth}px frame — the ultrawide cap ` +
+        'moved off the content wrapper as well as off the frame, so nothing caps the app at all'
+    ).toBeLessThan(frameWidth);
+  });
+
   test('at 2560x1080 the host is a centred column, NOT the full monitor width', async () => {
     const { hostWidth, parentWidth, gutterLeft, gutterRight } = await mountAt(2560, 1080);
 
@@ -291,9 +399,10 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
     // Lower: below ~1280 the cap would be narrower than the widest ORDINARY
     // civitai content measure (Mantine `xl`, 1320 border-box / 1288 content), i.e.
     // an app would render narrower than the store page that launched it.
-    // Upper: above ~1920 (`APPS_PAGE_CONTAINER_WIDTH`) the cap would be wider than
-    // the widest first-party surface on the site and would stop being a cap at the
-    // sizes that motivated it.
+    // Upper: ~1920 is the width `APPS_PAGE_CONTAINER_WIDTH` held when this bound was
+    // chosen; that constant is now 2560 and the bound deliberately does not follow it
+    // (see `__tests__/pageBlockHostMaxWidth.test.ts` — keeping 1920 is the tighter,
+    // still-true ceiling, and the cap is 1600, nowhere near either).
     expect(hostWidth, 'at 2560x1080 the capped host is implausibly narrow').toBeGreaterThanOrEqual(
       1280
     );
@@ -396,7 +505,8 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
 
   /**
    * THE DOCUMENTED FULL-BLEED OPT-OUT, end to end: the ledger in `globals.css`
-   * keys on `data-block-id`, which the host stamps.
+   * keys on `data-app-page-frame` + `data-block-id`, both of which the host
+   * stamps on its root.
    *
    * Both halves are in ONE test on purpose. The second assertion alone is GREEN
    * on the base revision (an uncapped host is full width for reasons that have
@@ -404,6 +514,18 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
    * than coverage. Pairing it with the capped measurement makes the test assert
    * a DELTA — the rule changed something — which is only true once both the cap
    * and the `data-block-id` anchor exist.
+   *
+   * ⚠️ THIS TIER IS STRUCTURALLY BLIND TO THE ONE DEFECT THAT ACTUALLY SHIPPED,
+   * AND SAYING SO IS THE POINT. The selector below used to read
+   * `[data-testid='app-page-frame'][data-block-id='…']`, which is what
+   * `globals.css` shipped — and `next.config.mjs` strips every `data-testid` from
+   * the DOM under `NODE_ENV === 'production'`, so on the live site it matched
+   * nothing and `playable-collections` was letterboxed at the cap. This test
+   * passed throughout, because vitest never runs with `NODE_ENV=production`; no
+   * assertion added here can change that. The check that CAN see it compares the
+   * two configurations instead of rendering:
+   * `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`. Do not "strengthen" this
+   * test to cover it — widen that one.
    */
   test('an app can opt out of the cap with a CSS rule keyed on `data-block-id`', async () => {
     const { measure, hostWidth, parentWidth } = await mountAt(2560, 1080);
@@ -411,66 +533,137 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       parentWidth
     );
 
-    injectCss(
-      `[data-testid='app-page-frame'][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`
-    );
+    injectCss(`[data-app-page-frame][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`);
     const optedOut = measure();
     expect(
       optedOut.hostWidth,
       'the ledger rule shape documented on `--app-page-max-width` in globals.css did not ' +
-        'restore full-bleed at 2560x1080 — either `data-block-id` is no longer stamped or the ' +
-        'cap is no longer overridable, and every opt-out in that ledger is inert'
+        'restore full-bleed at 2560x1080 — either `data-app-page-frame`/`data-block-id` are no ' +
+        'longer stamped on the host root or the cap is no longer overridable, and every opt-out ' +
+        'in that ledger is inert'
     ).toBe(optedOut.parentWidth);
   });
 
   /**
-   * 🔴 THE LEDGER'S ONE REAL MEMBER, EXERCISED AGAINST THE SHIPPED RULE.
+   * 🔴 EVERY REAL MEMBER OF THE LEDGER, EXERCISED AGAINST THE SHIPPED RULES.
    *
-   * `playable-collections` is opted out of the cap by an explicit product
-   * decision: every one of its open-collection surfaces is uncapped by the app
-   * (the 960px well it has applies only to its browse shell, behind an early
-   * return), so a centred column shrinks the player and truncates the ticker and
-   * wall grids. The reasoning, with file:line evidence, is on the rule itself in
-   * `globals.css`; the membership set is pinned in
-   * `__tests__/pageBlockHostMaxWidth.test.ts`.
+   * ⚠️ THIS USED TO READ "THE LEDGER'S ONE REAL MEMBER" AND NAME
+   * `playable-collections` IN ITS OWN TITLE, AND THAT WAS THE THIRD PLACE THE
+   * MEMBERSHIP WAS RESTATED — the other two being the ledger header in
+   * `globals.css` and the paragraph on `APP_PAGE_MAX_WIDTH_PX`. All three went stale
+   * together the moment a second app was added, and this one kept reading as
+   * authoritative while doing so. A cross-reference is a claim; the failure mode is
+   * updating two of three and leaving the third to be believed.
    *
-   * THIS IS A PAIR, and the second arm is what makes the first mean anything.
-   * Both arms render at 2560 with the SAME real ledger CSS injected and differ
-   * ONLY in `blockId`. Without the second arm, "the host is full width" is
-   * satisfied by a cap that stopped working for every app.
+   * So the green arm is now DERIVED from the rules this file already parses out of
+   * `globals.css`: EVERY member is measured, no count is stated anywhere here, and a
+   * future entry is covered the day its rule lands rather than the day somebody
+   * remembers this file. The ENUMERATION — the thing that must fail on growth and on
+   * shrink — stays where it was, in `__tests__/pageBlockHostMaxWidth.test.ts`; this
+   * tier asks only whether each rule that exists actually renders full-bleed. Those
+   * are different claims and neither tier can make the other's.
+   *
+   * THIS IS A PAIR, and the negative arm is what makes the green ones mean anything.
+   * Every arm renders at 2560 with the SAME real ledger CSS injected and differs ONLY
+   * in `blockId`. Without it, "the host is full width" is equally satisfied by a cap
+   * that stopped working for every app.
+   *
+   * 🔴 WHAT A GREEN RUN HERE IS **NOT** EVIDENCE FOR: that a ledger selector works on
+   * civitai.com. Vitest never runs with `NODE_ENV=production`, so the
+   * `reactRemoveProperties` strip in `next.config.mjs` never applies in this tier —
+   * which is exactly how the `data-testid` spelling shipped broken with this suite
+   * passing throughout. That claim is owned by
+   * `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which compares the two
+   * CONFIGURATIONS instead of rendering, and it cannot be moved here.
    */
-  test('LEDGER — `playable-collections` is full-bleed at 2560x1080 while another app stays capped', async () => {
+  test('LEDGER — every member is full-bleed at 2560x1080 while a non-member stays capped', async () => {
     const ledger = ledgerFromGlobals();
 
     // POSITIVE CONTROL on the extraction itself. If the parse returned nothing —
     // a renamed property, a rule moved into an at-rule this walk skips, or a
-    // `?raw` import that silently resolved to an empty string — the green arm
-    // would fail with a confusing width mismatch instead of naming the cause.
+    // `?raw` import that silently resolved to an empty string — the loop below
+    // would run ZERO times and this test would pass having measured nothing,
+    // which is the reassuring-zero shape a derived arm has to defend against.
     expect(
       ledger.ids,
       'no `[data-block-id=…]` rules were parsed out of src/styles/globals.css. Either the ' +
         'full-bleed ledger is empty (then this test should be deleted deliberately, together ' +
         'with the membership expectation in __tests__/pageBlockHostMaxWidth.test.ts), or the ' +
-        'rules moved somewhere this walk does not reach.'
-    ).toContain('playable-collections');
+        'rules moved somewhere this walk does not reach — and with an empty list the green arm ' +
+        'below iterates nothing and asserts nothing.'
+    ).not.toHaveLength(0);
+
+    /**
+     * 🔴 AND NON-EMPTY IS NOT ENOUGH — THE WALK MUST HAVE REACHED *EVERY* MEMBER.
+     *
+     * A count cannot see a PARTIAL loss, and that is the whole exposure of a derived
+     * arm: with two members, one rule moving into an `@media`/`@supports`/`@container`
+     * block drops it from `ids` while the OTHER member keeps the list non-empty, so the
+     * check above passes, the loop measures one app, and the app that just stopped
+     * being full-bleed is never mounted. Measured, not theorised: wrapping the sensei
+     * rule in `@media (min-width: 3000px)` — a plausible "only above the cap"
+     * refinement with a wrong bound — left this file 11/11 and the two node-tier guard
+     * files 16/16 while sensei rendered capped at 1600 on a 2560 display. Neither of
+     * those guards can see it: the membership assertion in
+     * `__tests__/pageBlockHostMaxWidth.test.ts` regexes the raw text, where the id is
+     * still present, and `__tests__/ledgerSelectorSurvivesProdStrip.test.ts` is
+     * text-based too. Only a CSSOM read can tell a reachable rule from a written one,
+     * and this file is the only tier that has one.
+     *
+     * So the relationship is pinned instead: what the CSSOM walk could REACH equals
+     * what the file SAYS. No membership is restated here — both sides are derived from
+     * the same shipped file — and a future entry is covered the day its rule lands.
+     * The two sides differ in exactly one respect, which is the respect that matters:
+     * one went through the engine's rule tree, the other did not.
+     */
+    expect(
+      [...ledger.ids].sort(),
+      'the CSSOM walk over src/styles/globals.css did not reach the same set of ' +
+        '`[data-block-id=…]` rules that the file textually contains. RECEIVED is what ' +
+        '`ledgerFromGlobals` could reach by walking the parsed stylesheet; EXPECTED is every id ' +
+        'in the file with comments stripped. An id that is MISSING from the walk means its rule ' +
+        'now sits inside an at-rule the walk does not descend into — `@media`, `@supports`, ' +
+        '`@container`, anything but `@layer` — so the derived green arm below never mounts that ' +
+        'app, this test stays green on the OTHER members alone, and an app that was excused from ' +
+        'the ultrawide cap is being letterboxed again at every width the at-rule excludes. Fix ' +
+        'it by moving the rule back to the top level (or into a `@layer`), or by teaching ' +
+        '`ledgerFromGlobals` to descend into that at-rule AND mounting the green arm at a ' +
+        'viewport its condition admits — not by relaxing this assertion. An EXTRA id in the walk ' +
+        'is the mirror case: the raw parse missed a spelling the engine accepts, so it is the ' +
+        'regex in `blockIdsIn` that is wrong.'
+    ).toEqual(blockIdsIn(cssWithoutComments(globalsCss)));
+
+    // …and the negative arm must really be OUTSIDE the set it is contrasted with.
+    // If the fixture's own slug ever became a ledger member, the last assertion in
+    // this test would be asserting the opposite of the design and would read as a
+    // broken cap rather than as a fixture collision.
+    expect(
+      ledger.ids,
+      `the fixture slug '${BLOCK_ID}' is itself a full-bleed ledger member, so the negative arm ` +
+        'below cannot distinguish "the ledger works" from "the cap stopped working". Rename the ' +
+        'fixture, or point the negative arm at a slug that is not in the ledger.'
+    ).not.toContain(BLOCK_ID);
+
     injectCss(ledger.css);
 
-    // GREEN ARM — the opted-out app takes the full width of its parent.
-    const optedOut = await mountAt(2560, 1080, { blockId: 'playable-collections' });
-    expect(
-      optedOut.hostWidth,
-      'at 2560x1080 the app `playable-collections` is NOT full-bleed. Its ledger rule in ' +
-        'src/styles/globals.css is missing, mistyped, or no longer overrides ' +
-        '`--app-page-max-width` — so a collection player whose every view mode is uncapped by ' +
-        'the app is being letterboxed to the default cap again.'
-    ).toBe(optedOut.parentWidth);
+    // GREEN ARMS — each opted-out app takes the full width of its parent.
+    for (const blockId of ledger.ids) {
+      const optedOut = await mountAt(2560, 1080, { blockId });
+      expect(
+        optedOut.hostWidth,
+        `at 2560x1080 the app '${blockId}' is NOT full-bleed despite having a ledger rule in ` +
+          'src/styles/globals.css. That rule is mistyped, or no longer overrides ' +
+          '`--app-page-max-width` — so an app that was deliberately excused from the ultrawide ' +
+          'cap is being letterboxed to it again, with nothing about the page looking wrong.'
+      ).toBe(optedOut.parentWidth);
 
-    // The two arms mount separately, so the first tree has to go: two mounted
-    // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
-    // single-match rule.
-    await cleanup();
+      // Each arm mounts its own tree, so the previous one has to go: two mounted
+      // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
+      // single-match rule.
+      await cleanup();
+    }
 
-    // RED-PAIR ARM — an app NOT in the ledger, same cascade, still capped. This
+    // NEGATIVE ARM — an app NOT in the ledger, same cascade, still capped. This
     // is what distinguishes "the ledger works" from "the cap stopped working".
     const stillCapped = await mountAt(2560, 1080, { blockId: BLOCK_ID });
     expect(

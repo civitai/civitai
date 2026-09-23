@@ -111,6 +111,36 @@ const GATE_LEDGER: Record<string, string> = {
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
+  'src/server/services/blocks/author-fee-accrual.service.ts':
+    'accrueBlockAuthorFee credits the app OWNER only — `oauthClient.userId`, snapshotted ' +
+    'onto the row at write time — and is deliberately NOT widened to ACCEPTED ' +
+    'collaborators. This is D4 applied to a new earnings surface, not a new decision: ' +
+    'earnings reads are appOwnerUserId-keyed precisely so an ex-owner keeps the money ' +
+    'they accrued before transferring an app away, and widening the WRITE would make ' +
+    'that impossible to express — a row would owe several people with no split anyone ' +
+    'has specified. Resolving the owner at SETTLEMENT instead would be worse still: it ' +
+    'would retroactively re-route earnings on every ownership transfer. NO mod bypass ' +
+    '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
+    'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
+    'as an explicit split on top of this row, not as a widened owner lookup.',
+  'src/server/services/blocks/block-approval.service.ts':
+    'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
+    '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +
+    'the approved-status check on a REAL, NOT-approved row: the ' +
+    'owner-dev-tunnel case (clawgate #571). It is a SEPARATE query rather than a nested ' +
+    'select on the row read, because without `relationJoins` a nested relation is a ' +
+    'second round trip anyway and would bill every bridge call and every REST request ' +
+    'for a column only this branch consults. DELIBERATELY OWNER-ONLY, and the reason is ' +
+    'that it is a MIRROR rather than a policy of its own: the only mint that can issue ' +
+    'such a token, `resolveOwnedNonApprovedPageBlock`, resolves `where: { app: { userId ' +
+    '} }` — owner-only, not widened to seats. Widening THIS read to ACCEPTED ' +
+    'collaborators would exempt a class of token the mint can never produce, i.e. it ' +
+    'would only ever loosen the gate for a stale token, never enable a real editor ' +
+    'workflow. If collaborator dev tunnels are ever specified, the MINT is what changes ' +
+    'first and this read follows it — never the other way round. NO mod bypass (D1): a ' +
+    'moderator reviewing a non-approved app already has its own exemption, the signed ' +
+    '`reviewRunForReal` claim answered before this read, so a mod override here would ' +
+    'be a second, weaker path to the same thing.',
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +
@@ -232,6 +262,38 @@ const GATE_LEDGER: Record<string, string> = {
     'it is masked today because both HTTP callers require isModerator. If that is ever ' +
     'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
     'owner (or collaborator) check.',
+  'src/server/services/blocks/publisher-ban-revocation.service.ts':
+    'NOT a caller-identity gate, and DELIBERATELY NOT WIDENED — the inverse direction ' +
+    'from every other entry here. `app: { userId }` selects the BANNED PUBLISHER’s own ' +
+    'apps so `toggleBan` can revoke their live block instances. Widening it to "any app ' +
+    'this user can reach" would let a ban on a seated EDITOR revoke every live token of ' +
+    'an app owned by somebody who was not banned — a moderation action against one ' +
+    'account taking down another account’s product. So here an editor seat must NOT ' +
+    'expand the set: banning the OWNER is the case this closes. 🔴 IT NOW ROUTES THROUGH ' +
+    'resolveCanonicalListingOwner, as a three-branch Prisma predicate — this entry said ' +
+    'it "resolves no AppListing, so D5 does not apply" and that stopped being true when ' +
+    'the writer was corrected. `app.userId` is NOT the owner for a kind:offsite listing, ' +
+    'and both claimListing (the impersonation remedy that PRECEDES a ban) and ' +
+    'acceptTransfer (ordinary, user-driven) move only the listing column — so keying on ' +
+    'app.userId over-revoked the victim. The defence that made it look safe, "off-site ' +
+    'apps mint no block token", was never proven and is FALSE: no mint path reads ' +
+    'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
+    'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
+    'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/user-app-surface.service.ts':
+    'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
+    'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +
+    'because an author driving their own block writes ordinary block_scope_invocations rows ' +
+    'and the card would otherwise tell them an app used their account without an install ' +
+    '(2 of the 13 measured pairs are exactly that). It keys on the CANONICAL owner ' +
+    'AppBlock.app.userId, never a denormalized AppListing.userId (D5). 🔴 DELIBERATELY NOT ' +
+    'widened to ACCEPTED collaborators and NOT given a mod bypass: every other entry here ' +
+    'answers "may this caller act on the app", while this one answers "is this row about ' +
+    'the viewer’s relationship to someone else’s app". A seated editor has no install and ' +
+    'no consent of their own, so their activity row is true and informative; suppressing it ' +
+    'would hide a real relationship, and a mod bypass would show a moderator a card about ' +
+    'an app they happen to own. The skip fails OPEN on an unresolvable owner (shows the ' +
+    'row) because dropping rows is the wrong direction for a transparency surface.',
 };
 
 /**

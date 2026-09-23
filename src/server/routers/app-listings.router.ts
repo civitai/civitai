@@ -119,6 +119,15 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
  * mods only. (The mod-only `backfillAssets` proc keeps `enforceAppBlocksFlag`.)
  */
 const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
+  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
+  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
+  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
+  // subject (a capability has nothing to authorize without one), so the compiler makes
+  // this refusal mandatory rather than optional. Keep it: it is also what makes the
+  // middleware safe if it is ever attached to a `publicProcedure`.
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
+  }
   if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
@@ -1152,10 +1161,22 @@ export const appListingsRouter = router({
    * de-dup in `listMyOrphanedSubmissions` excludes it from this read on purpose. The
    * population that still lands here: first versions the developer WITHDREW (which does
    * delete the draft), anything a mod `purgeListing`d, and the rows rejected before that
-   * change. The "your app was rejected" notification points at `/apps/mine`, which renders
-   * both surfaces, so it is correct either way.
+   * change. The "your app was rejected" notification points at `OWNER_SUBMISSIONS_URL`
+   * (`/apps/build`, state C), which renders both surfaces, so it is correct either way.
    *
-   * Same `appBlocksAuthor`-only gate as the page and `listingHistory`.
+   * ⚠️ Two clauses here were stale until the `/apps/build` consolidation corrected them, and
+   * they were wrong in DIFFERENT directions: the destination said `/apps/mine`, a route that
+   * no longer exists (it 301s), and the gate said `appBlocksAuthor`-only, which was true of
+   * `/apps/mine` and is NOT true of the page that replaced it. THIS PROCEDURE still carries
+   * the `appBlocksAuthor`-only gate (`appDeveloperProcedure`) — the page does not. They are
+   * no longer "the same gate", so do not re-derive one from the other.
+   *
+   * The page's gate is `canAccessAppsBuild` = `hasAppsStoreAccess(features) &&
+   * (isAppDeveloper(user, …) || appBlocksGetStarted)` — strictly narrower than this
+   * procedure's. A caller this procedure serves can therefore be refused by the page that
+   * displays its rows; that cohort is empty today only because `app-blocks-author` and
+   * `app-listings` roll out to the same two Flipt segments, which nothing here enforces
+   * (see `app-listing.notifications.ts` for the measurement and what would break it).
    */
   listMyOrphanedSubmissions: appDeveloperProcedure.query(async ({ ctx }) => {
     if (!ctx.user) return [];

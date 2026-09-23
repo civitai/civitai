@@ -1,3 +1,4 @@
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -14,15 +15,16 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import {
-  type BaseModel,
-  DEPRECATED_BASE_MODELS,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  planReciprocalAssociations,
+  selectNewlyAddedModelIds,
+} from '~/server/services/model-association.utils';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
 import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
@@ -30,7 +32,7 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   isTransientMeiliError,
   MeiliCallTimeoutError,
@@ -99,6 +101,10 @@ import {
   getUserCollectionPermissionsById,
   saveItemInCollections,
 } from '~/server/services/collection.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForModelCascade,
+} from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
@@ -107,6 +113,7 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -185,7 +192,10 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
+  getGatedModelIds,
+  getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
+import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -241,6 +251,7 @@ type ModelRaw = {
   publishedAt: Date | null;
   locked: boolean;
   earlyAccessDeadline: Date | null;
+  hasActivePaidAccess: boolean;
   mode: string;
   rank: {
     downloadCount: number;
@@ -284,20 +295,6 @@ type ModelRaw = {
  * Test endpoint: GET /api/internal/test-model-feed-filters?token=<JOB_TOKEN>
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
-
-export async function getModelEarlyAccessDeadlines(modelIds: number[]): Promise<Map<number, Date>> {
-  if (!modelIds.length) return new Map();
-  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
-    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
-    FROM "PaidAccess" pa
-    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
-    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
-      AND mv.status = 'Published'::"ModelStatus"
-      AND mv."modelId" IN (${Prisma.join(modelIds)})
-    GROUP BY mv."modelId"
-  `;
-  return new Map(rows.map((r) => [Number(r.modelId), r.deadline]));
-}
 
 export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
@@ -394,6 +391,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     paidAccess,
+    hidePaid,
     onSale,
     supportsGeneration,
     fromPlatform,
@@ -780,6 +778,19 @@ export const getModelsRaw = async ({
       )`
     );
   }
+  if (hidePaid) {
+    // NOT EXISTS rather than an id list: the gated set is ~3k models and grows ~2.5k/month, and this
+    // keeps the probe on PaidAccess_pkey. Measured 1.09ms -> 2.06ms on a p50 feed page; the planner
+    // places it above every other predicate, so it only sees rows that already survived them.
+    AND.push(
+      Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+        WHERE ${paidAccessLiveSql}
+          AND mv."modelId" = m.id
+      )`
+    );
+  }
   if (onSale) {
     // A sale prices a PERMANENT gate only (timeframeDays IS NULL), matching the resolver — a version in a
     // timed early-access window is never discounted, so listing it as on sale would be a lie the price
@@ -1092,27 +1103,23 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [
-    userBasicData,
-    profilePictures,
-    userCosmetics,
-    modelData,
-    cosmetics,
-    earlyAccessDeadlines,
-  ] = await withSpan('model:getAll:parallelFetch', () =>
-    Promise.all([
-      userBasicCache.fetch(userIds),
-      getProfilePicturesForUsers(userIds),
-      getCosmeticsForUsers(userIds),
-      dataForModelsCache.fetch(modelIds),
-      includeCosmetics
-        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-      getModelEarlyAccessDeadlines(modelIds),
-    ])
-  );
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, paidAccessGates] =
+    await withSpan('model:getAll:parallelFetch', () =>
+      Promise.all([
+        userBasicCache.fetch(userIds),
+        getProfilePicturesForUsers(userIds),
+        getCosmeticsForUsers(userIds),
+        dataForModelsCache.fetch(modelIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+        getModelPaidAccessGates(modelIds),
+      ])
+    );
   for (const model of models) {
-    model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
+    const gate = paidAccessGates.get(model.id);
+    model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
+    model.hasActivePaidAccess = gate?.gated ?? false;
   }
 
   let nextCursor: string | bigint | undefined;
@@ -1268,6 +1275,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     needsReview,
     earlyAccess,
     paidAccess,
+    hidePaid,
     supportsGeneration,
     followed,
     collectionId,
@@ -1361,6 +1369,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   if (paidAccess) {
     AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
+  }
+
+  if (hidePaid) {
+    AND.push({ id: { notIn: await getGatedModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -1622,10 +1634,12 @@ export const getModelsWithImagesAndModelVersions = async ({
           (input.user || input.username || includeDrafts);
         if (!filteredImages.length && !showImageless) return null;
 
-        const canGenerate =
-          !!version?.covered &&
-          !isGenerationDisabled(version.flags) &&
-          isBaseModelGenerationSupported(version.baseModel, model.type);
+        const canGenerate = isGenerationEligible({
+          covered: version?.covered,
+          baseModel: version?.baseModel ?? '',
+          modelType: model.type,
+          flags: version?.flags ?? 0,
+        });
 
         const isOwner = isMod || model.user.id === user?.id;
         const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
@@ -1906,6 +1920,69 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //   publishedAt IS NULL    -> Draft
   //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
   //   publishedAt <= NOW()   -> Unpublished
+  //
+  // 🔴 `"updatedAt" = now()` is load-bearing. This is `$queryRaw`, so Prisma's
+  // `@updatedAt` does NOT fire and the row keeps the timestamp it carried while
+  // deleted — the deletion instant, since `deleteModelById` writes through the
+  // client.
+  //
+  // 🔴 READ THE REAPER'S PREDICATE BEFORE EDITING THIS COMMENT. Three successive
+  // versions of it justified the bump with a story about what restoring does,
+  // and all three were false. `remove-old-drafts` selects on:
+  //
+  //     status IN ('Draft','Deleted')
+  //     AND m."updatedAt" < now() - INTERVAL '30 days'   -- REAP_AGE_DAYS
+  //     AND mm."downloadCount" < 10
+  //     AND m."availability" != 'Private'
+  //     AND NOT EXISTS (recent ModelVersion) AND NOT EXISTS (recent ModelFile)
+  //
+  // `'Deleted'` is IN that set, so the clock is already running while the model
+  // sits deleted: a low-download model is destroyed the night after
+  // deletion + 30 days, still `Deleted`, having never been restored. Restoring
+  // changes exactly one term — status goes `Deleted` -> `Draft` (still in the
+  // set) or `Unpublished`/`Scheduled` (out of it). Nothing else the predicate
+  // reads moves: the `ModelVersion` statement below is raw SQL and does not bump
+  // `mv."updatedAt"` either, and downloadCount / availability / the ModelMetric
+  // join are untouched. **The post-restore candidate set is therefore a strict
+  // subset of the pre-restore one — without this bump, restoring can never make
+  // a model reapable that was not already.** Do not re-justify this line with a
+  // "restore it and it dies that night" scenario; no such model exists.
+  //
+  // What the bump actually buys, both real:
+  //
+  //  1. A PARTLY-SPENT CLOCK. Deleted day 0, restored day 29: without the bump
+  //     the model is reaped the night of day 30/31 — one day after restore, with
+  //     the version fence (where the delete set one at all) expiring at the same
+  //     instant. The bump turns whatever remains of the window into a full
+  //     REAP_AGE_DAYS, which is what a restored model is entitled to.
+  //  2. THE `old-draft` WARNING, and this is the stronger one. That notification
+  //     warns on `Draft` ONLY — a `Deleted` model is deliberately never warned —
+  //     and its band is evaluated ONCE, at `U + OLD_DRAFT_NOTICE_DAYS` (23 days),
+  //     never re-evaluated for that `U` (`model.notifications.ts`). A model
+  //     restored while carrying its pre-restore `U` is now `Draft`, so it is
+  //     warnable for the first time — but only if its band has not already gone
+  //     by.
+  //       - restored BEFORE `U + 23d`: the band still matches, and it IS warned.
+  //         Deleted day 0, restored day 10 -> `Draft` at day 23 with `U` = day 0
+  //         -> warned. The bump is not what saves this one.
+  //       - restored AFTER `U + 23d` (the day-29 case above, or a path where
+  //         `downloadCount` drops below 10 late): the band is in the past and is
+  //         never revisited, so the model is cascade-deleted UNWARNED.
+  //     So the bump re-arms the band, and that is the only way the user hears
+  //     about it in the second case. Stated at that width deliberately: this
+  //     comment tells the next editor not to justify the line from a story, so
+  //     it has to meet its own bar.
+  //
+  // And independently of the reaper: restoring a model is a write to the row, so
+  // the bump is what the column is supposed to mean.
+  //
+  // (Nuance, so the fences are not over-credited: `deleteModelById`'s nested
+  // `modelVersions.updateMany` is scoped to `status IN (Published, Scheduled)`,
+  // so a Draft-only model has NO ModelVersion row bumped at delete time. Those
+  // timestamps are older still, making the fences less protective, not more.)
+  //
+  // Pinned by `no-unbumped-draft-status-write.test.ts` and exercised through
+  // this function by `restore-model-updated-at.service.test.ts`.
   const result = await dbWrite.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ userId: number }[]>`
       UPDATE "Model"
@@ -1915,7 +1992,8 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
             WHEN "publishedAt" IS NULL      THEN 'Draft'::"ModelStatus"
             WHEN "publishedAt" >  NOW()     THEN 'Scheduled'::"ModelStatus"
             ELSE 'Unpublished'::"ModelStatus"
-          END
+          END,
+          "updatedAt" = now()
       WHERE id = ${id}
         AND "status" = 'Deleted'::"ModelStatus"
       RETURNING "userId"
@@ -1949,6 +2027,14 @@ export const permaDeleteModelById = async ({
   // Version ids captured inside the tx (before the cascade removes them) so the
   // post-commit storage-resolver deregister can reach every reaped version.
   let versionIds: number[] = [];
+
+  // Resolved BEFORE the tx, not inside it and not after: `CollectionItem` cascades
+  // from `Model`, `Post` AND `Image` — all three of which this transaction destroys —
+  // so post-commit there is nothing left to read, and a
+  // failed statement inside a Postgres tx aborts the whole tx — this bookkeeping read
+  // must never be able to take the delete down with it. The resolver is non-throwing,
+  // so a failure costs the reindex, not the deletion.
+  const collectionsToRebuild = await getCollectionIdsForModelCascade({ modelId: id });
 
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
@@ -2052,6 +2138,33 @@ export const permaDeleteModelById = async ({
           error,
         });
       }
+    }
+    // Rebuild the collections that held this model, its posts or its gallery images,
+    // using the pre-tx snapshot — the membership rows cascaded away with the delete,
+    // so this is the only remaining record of which documents went stale.
+    // `enqueueCollectionRebuild` is non-throwing by contract, but wrapped anyway so
+    // this step matches its siblings above rather than resting the S3 and
+    // storage-resolver cleanup below on another module keeping that promise.
+    //
+    // ⚠️ This catch is therefore UNREACHABLE through the real callee, and no test
+    // pins it: removing the try/catch entirely leaves the suite green, measured. It is
+    // defence-in-depth against the contract being broken later, not covered behaviour.
+    // Exercising it would mean mocking collection-media-index in a suite that
+    // deliberately runs the real one so its payload assertions mean something.
+    try {
+      await enqueueCollectionRebuild({
+        ...collectionsToRebuild,
+        source: 'model-perma-delete',
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-perma-delete-collection-search-index',
+        message: `Failed to queue collection search index update for model ${id}`,
+        // `logToAxiom` JSON.stringifies its payload and a bare Error serialises to
+        // `{}`. The siblings above predate that finding; this one does not.
+        error: safeError(error),
+      });
     }
     // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
     if (modelFileUrls.length > 0) {
@@ -2258,10 +2371,18 @@ export async function setModelMinor({
   minor,
   userId,
   activity,
-}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
+  tracker,
+  isModerator,
+}: SetModelMinorInput & {
+  userId: number;
+  activity?: ModelMinorActivity;
+  tracker?: Tracker;
+  isModerator?: boolean;
+}) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
+      userId: true,
       poi: true,
       minor: true,
       sfwOnly: true,
@@ -2284,23 +2405,25 @@ export async function setModelMinor({
 
   const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
 
+  // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
+  // have been legitimately SFW-only before it was flagged, and guessing wrong would
+  // silently re-open NSFW generation nobody asked to re-open.
+  const data = minor
+    ? {
+        minor: true,
+        nsfw: false,
+        sfwOnly: true,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        minor: false,
+        lockedProperties,
+      };
+
   const result = await dbWrite.model.update({
     where: { id },
-    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
-    // have been legitimately SFW-only before it was flagged, and guessing wrong would
-    // silently re-open NSFW generation nobody asked to re-open.
-    data: minor
-      ? {
-          minor: true,
-          nsfw: false,
-          sfwOnly: true,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
-          lockedProperties,
-        }
-      : {
-          minor: false,
-          lockedProperties,
-        },
+    data,
     select: {
       id: true,
       name: true,
@@ -2315,13 +2438,14 @@ export async function setModelMinor({
   });
 
   await preventReplicationLag('model', id);
-  // Audit before the fan-out: the flag write has already committed, so a fan-out
-  // failure must not cost us the record of who flipped it. The audit write itself
-  // must not block the fan-out either, so failures are logged, not thrown.
+  const modActivity = activity ?? (minor ? 'setMinor' : 'unsetMinor');
+  // Audit before the fan-out: the flag write has already committed, so a fan-out failure
+  // must not cost the record of who flipped it — and neither audit write may block the
+  // fan-out, so both swallow their own errors.
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
+    activity: modActivity,
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2330,6 +2454,25 @@ export async function setModelMinor({
       error,
     })
   );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;
@@ -2343,10 +2486,13 @@ export async function setModelSfwOnly({
   id,
   sfwOnly,
   userId,
-}: SetModelSfwOnlyInput & { userId: number }) {
+  tracker,
+  isModerator,
+}: SetModelSfwOnlyInput & { userId: number; tracker?: Tracker; isModerator?: boolean }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
+      userId: true,
       poi: true,
       minor: true,
       sfwOnly: true,
@@ -2374,22 +2520,24 @@ export async function setModelSfwOnly({
 
   const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
 
+  // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
+  // legitimately SFW before it was flagged, and guessing wrong would silently re-open
+  // NSFW generation nobody asked to re-open.
+  const data = sfwOnly
+    ? {
+        sfwOnly: true,
+        nsfw: false,
+        gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+        lockedProperties,
+      }
+    : {
+        sfwOnly: false,
+        lockedProperties,
+      };
+
   const result = await dbWrite.model.update({
     where: { id },
-    // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
-    // legitimately SFW before it was flagged, and guessing wrong would silently re-open
-    // NSFW generation nobody asked to re-open.
-    data: sfwOnly
-      ? {
-          sfwOnly: true,
-          nsfw: false,
-          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
-          lockedProperties,
-        }
-      : {
-          sfwOnly: false,
-          lockedProperties,
-        },
+    data,
     select: {
       id: true,
       name: true,
@@ -2404,10 +2552,11 @@ export async function setModelSfwOnly({
   });
 
   await preventReplicationLag('model', id);
+  const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly',
+    activity: modActivity,
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2416,6 +2565,25 @@ export async function setModelSfwOnly({
       error,
     })
   );
+  if (tracker) {
+    tracker
+      .entityChanges(
+        diffEntityChanges({
+          entityType: 'Model',
+          entityId: id,
+          ownerId: before.userId,
+          before,
+          after: data as Record<string, unknown>,
+          actorRole: resolveActorRole({
+            actorUserId: userId,
+            ownerId: before.userId,
+            isModerator,
+          }),
+          reason: modActivity,
+        })
+      )
+      .catch(() => null);
+  }
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;
@@ -2655,14 +2823,14 @@ export const upsertModel = async (
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
+    let typeBeforeUpdate: ModelType | undefined;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
         // unchanged", skipping the repair below on exactly the save that needed it.
-        const typeBeforeUpdate = (
-          await tx.model.findUnique({ where: { id }, select: { type: true } })
-        )?.type;
+        typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
+          ?.type;
 
         const updated = await tx.model.update({
           select: {
@@ -2782,7 +2950,10 @@ export const upsertModel = async (
         entityType: 'Model',
         entityId: id as number,
         ownerId: beforeUpdate.userId,
-        before: beforeUpdate,
+        // `type` off the transaction's own read, not the `dbRead` one beside it: a stale replica
+        // reads as "type unchanged" and emits no row, on exactly the save whose fee clears need
+        // explaining. Same reason the repair above does not use `beforeUpdate.type`.
+        before: { ...beforeUpdate, type: typeBeforeUpdate ?? beforeUpdate.type },
         after: data as Record<string, unknown>,
         actorRole: resolveActorRole({
           actorUserId: userId,
@@ -3206,6 +3377,18 @@ export const publishModelById = async ({
     select: { id: true },
   });
 
+  // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
+  // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
+  // republish otherwise never touches the image rows — see buildRepublishImageIndexTouch). A
+  // first/scheduled publish's images were just created, so they carry a fresh updatedAt the delta
+  // scan already sees; bumping thousands of rows there is pure duplicate work against the direct
+  // queueUpdate below.
+  if (republishing && allVersionIds.length > 0) {
+    await dbWrite.$executeRaw(
+      buildRepublishImageIndexTouch({ userId: model.userId, versionIds: allVersionIds })
+    );
+  }
+
   // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // Update search index for all affected images
@@ -3465,6 +3648,18 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
       {
         uploadType: ModelUploadType.Trained,
         status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+      },
+      // A Published model is excluded by the model-status branches above, so a new
+      // version scheduled on it (version status Scheduled, publishedAt in the future)
+      // or still being drafted (version status Draft) was invisible in Drafts — the
+      // one place creators go to find and manage pending work. Match on the child
+      // version's status so that pending version surfaces here regardless of the
+      // parent model's status.
+      {
+        status: { not: ModelStatus.Deleted },
+        modelVersions: {
+          some: { status: { in: [ModelStatus.Scheduled, ModelStatus.Draft] } },
+        },
       },
     ],
   };
@@ -3889,7 +4084,7 @@ export const getAssociatedResourcesSimple = async ({
 };
 
 export const setAssociatedResources = async (
-  { fromId, type, associations }: SetAssociatedResourcesInput,
+  { fromId, type, associations, reciprocal }: SetAssociatedResourcesInput,
   user?: SessionUser
 ) => {
   const fromModel = await dbWrite.model.findUnique({
@@ -3898,7 +4093,7 @@ export const setAssociatedResources = async (
       userId: true,
       associations: {
         where: { type },
-        select: { id: true },
+        select: { id: true, toModelId: true },
         orderBy: { index: 'asc' },
       },
     },
@@ -3909,11 +4104,14 @@ export const setAssociatedResources = async (
   if (!user?.isModerator && fromModel.userId !== user?.id) throw throwAuthorizationError();
 
   const existingAssociations = fromModel.associations.map((x) => x.id);
+  const existingModelTargets = new Set(
+    fromModel.associations.map((x) => x.toModelId).filter(isDefined)
+  );
   const associationsToRemove = existingAssociations.filter(
     (existingToId) => !associations.find((item) => item.id === existingToId)
   );
 
-  return await dbWrite.$transaction([
+  const result = await dbWrite.$transaction([
     // remove associated resources not included in payload
     dbWrite.modelAssociations.deleteMany({
       where: {
@@ -3936,6 +4134,100 @@ export const setAssociatedResources = async (
       });
     }),
   ]);
+
+  const reciprocalRequested = new Set(reciprocal ?? []);
+  const reciprocalResult = reciprocalRequested.size
+    ? await addReciprocalAssociations({
+        fromId,
+        ownerId: fromModel.userId,
+        type,
+        // Only resources added during this edit, never the ones already on the list. An
+        // association the model already held is one the creator linked at some earlier point
+        // and chose not to link back then; a later save of an unrelated change must not
+        // retroactively reach into those models.
+        //
+        // This is the whole enforcement of that rule, and it deliberately asks the database
+        // which models are already linked rather than trusting the payload's association ids.
+        // Those ids are absent for a row the client believes is new, and the client is wrong
+        // about that more often than it looks: it writes its own id-less array into the query
+        // cache after a save, so a second save in the same page session presents every row as
+        // new. Comparing model ids is immune to that, and to a caller omitting an id on purpose.
+        // The shared derivation decides what is eligible; the request only narrows it. A caller
+        // naming a model that was already on the list, or one it does not own, gets nothing.
+        targetIds: selectNewlyAddedModelIds(associations, existingModelTargets).filter((id) =>
+          reciprocalRequested.has(id)
+        ),
+        actorId: user?.id,
+      })
+    : { linked: 0, skipped: [] };
+
+  return { associations: result, reciprocal: reciprocalResult };
+};
+
+/**
+ * Writes the "link both ways" back-links: adds `fromId` to the suggested-resource list of
+ * every target that `ownerId` also owns. Targets owned by anyone else are skipped, not
+ * rejected, so a mixed selection still saves its forward links.
+ *
+ * This is the only path that writes an association whose `fromModelId` is a model the
+ * request did not name, so ownership is re-derived here from the database rather than
+ * trusted from the caller.
+ */
+const addReciprocalAssociations = async ({
+  fromId,
+  ownerId,
+  type,
+  targetIds,
+  actorId,
+}: {
+  fromId: number;
+  ownerId: number;
+  type: AssociationType;
+  targetIds: number[];
+  actorId?: number;
+}) => {
+  const ids = [...new Set(targetIds)].filter((id) => id !== fromId);
+  if (!ids.length) return { linked: 0, skipped: [] };
+
+  // Both reads go to the writer. Ownership decides whether a row may be written into a model
+  // the request never named, and a replica within its lag window can report the previous owner
+  // of a model that just changed hands. The same lag would hide a back-link committed moments
+  // earlier, which is what stops a second save duplicating it.
+  const [targets, existing] = await Promise.all([
+    dbWrite.model.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
+    dbWrite.modelAssociations.findMany({
+      where: { fromModelId: { in: ids }, type },
+      select: { fromModelId: true, toModelId: true },
+    }),
+  ]);
+
+  const existingCounts = new Map<number, number>();
+  const alreadyLinked = new Set<number>();
+  for (const association of existing) {
+    existingCounts.set(
+      association.fromModelId,
+      (existingCounts.get(association.fromModelId) ?? 0) + 1
+    );
+    if (association.toModelId === fromId) alreadyLinked.add(association.fromModelId);
+  }
+
+  const { create, skipped } = planReciprocalAssociations({
+    sourceModelId: fromId,
+    ownerId,
+    candidates: targets.map((target) => ({ modelId: target.id, ownerId: target.userId })),
+    existingCounts,
+    alreadyLinked,
+    limit: constants.modelAssociations.limit,
+  });
+
+  if (create.length) {
+    await dbWrite.modelAssociations.createMany({
+      data: create.map((row) => ({ ...row, type, associatedById: actorId })),
+      skipDuplicates: true,
+    });
+  }
+
+  return { linked: create.length, skipped };
 };
 // #endregion
 

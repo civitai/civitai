@@ -6,6 +6,7 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NAV_KEYS } from '~/shared/constants/nav.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -118,6 +119,8 @@ export const userUpdateSchema = z.object({
       format: z.string().optional(),
       size: z.string().optional(),
       fp: z.string().optional(),
+      // Accepted but unread: the media-quality control is gone, and a cached client still
+      // sending its stored value must not 400 the whole preferences save.
       imageFormat: z.string().optional(),
       quantType: z.string().max(64).optional(),
     })
@@ -274,8 +277,42 @@ export type UserContentSettings = UserSettingsSchema & {
   blurNsfw?: boolean;
   autoplayGifs?: boolean | null;
 };
+const navZone = z.array(z.enum(NAV_KEYS)).max(NAV_KEYS.length);
+
+/**
+ * A user's sub-nav layout. `bar` and `more` are GROUP MEMBERSHIP plus order — every item belongs
+ * to exactly one. `hidden` is visibility and is orthogonal, so an item switched off keeps its
+ * place in its group and comes back where the user left it.
+ *
+ * Bounded deliberately. This rides `User.settings`, which is Redis-cached per user and serialised
+ * into the HTML of every logged-in SSR render, so an unbounded user-writable array here is an
+ * amplification on the hot render path rather than a private preference.
+ */
+export type NavigationSettingsSchema = z.infer<typeof navigationSettingsSchema>;
+export const navigationSettingsSchema = z
+  .object({
+    bar: navZone,
+    more: navZone,
+    hidden: navZone,
+    showLabels: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and
+    // reaches React as a duplicate `key` prop. `hidden` deliberately OVERLAPS the groups — it is
+    // a visibility set, not a third group — so it is only checked against itself.
+    const grouped = [...value.bar, ...value.more];
+    if (new Set(grouped).size !== grouped.length)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A navigation item cannot appear in more than one group',
+      });
+    if (new Set(value.hidden).size !== value.hidden.length)
+      ctx.addIssue({ code: 'custom', message: 'A navigation item cannot be hidden twice' });
+  });
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
+  navigation: navigationSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -327,7 +364,6 @@ export const userSettingsSchema = z.object({
   ).optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
@@ -383,6 +419,9 @@ export const setUserSettingsInput = z.object({
   hideModelGenerations: z.boolean().optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
+  // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
+  // outright. The modal must send every zone, not a delta.
+  navigation: navigationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),
@@ -471,6 +510,18 @@ export const userMeta = z.object({
   muteReason: z.string().optional(),
   mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Stamped at onboarding when the account ends up without a verified address. Read by
+  // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
+  emailVerificationRequired: z.boolean().optional(),
+  // Retry state for the Stripe scrub of a deleted account, so one account that keeps failing
+  // cannot consume every run. Removed with `customerId` once the scrub finishes.
+  gdprStripeScrub: z
+    .object({
+      attempts: z.number(),
+      lastAttemptAt: z.string(),
+      lastError: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -482,7 +533,6 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
-  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
@@ -522,3 +572,14 @@ export type ValidateEmailTokenInput = z.infer<typeof validateEmailTokenSchema>;
 export const validateEmailTokenSchema = z.object({
   token: z.string().min(1),
 });
+
+/**
+ * Bounded on purpose: this is a public endpoint taking an array, and the caller is a
+ * search page. `SearchLayout` asks for 50 hits, `CollectionSelectModal` for 20, and one
+ * InstantSearch render can issue several requests — so a real page never approaches this,
+ * and anything that does is not a search.
+ */
+export const getUserSearchHydrationSchema = z.object({
+  ids: z.array(z.number()).min(1).max(200),
+});
+export type GetUserSearchHydrationInput = z.infer<typeof getUserSearchHydrationSchema>;

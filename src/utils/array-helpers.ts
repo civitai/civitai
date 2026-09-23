@@ -88,6 +88,29 @@ export function indexOfOr<T>(array: T[], value: T, or: number) {
   return index === -1 ? or : index;
 }
 
+/**
+ * Ids split into request-sized chunks, deduped, **in insertion order**.
+ *
+ * Sorting would make the key independent of the order ids arrive in, which is
+ * worth a little when two components ask for the same set differently ordered —
+ * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
+ * ids as it pages; sorted, each one lands mid-list, shifts every chunk boundary
+ * after it, changes every chunk key, and refetches the whole surface.
+ *
+ * Every id lands in exactly one chunk, so no collection is silently truncated to
+ * the first.
+ *
+ * A caller that never appends may sort before calling — `reactionQueryChunks` does, to make its
+ * key repeat across mounts. That belongs at the caller, not here: the paging callers need the
+ * order they hand over left alone.
+ */
+export function chunkIds(ids: number[], size: number): number[][] {
+  const unique = [...new Set(ids)];
+  const result: number[][] = [];
+  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
+  return result;
+}
+
 export function shuffle<T>(array: T[]) {
   return array.sort(() => Math.random() - 0.5);
 }

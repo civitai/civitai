@@ -1,13 +1,13 @@
 # Creator Shop — Proposal & Change Summary
 
-> **Status:** Design complete, pre-implementation. Seeking team feedback on the data-model approach.
+> **Status:** Superseded — accepted and built. Current behaviour lives in [`creator-shop.md`](./creator-shop.md); this file is the proposal as it was circulated. The 70/30 split shipped (`computeCreatorShopSplit`), so any line below describing it as unbuilt is historical.
 > **Mockups:** `designs/creator-shop.pen` · **Living doc:** [`creator-shop.md`](./creator-shop.md) · **Plan of record:** HackMD `@civitai/S1iNtOxXzl`
 
 ## TL;DR
 
 - Active **Creator Program** members submit and sell their own **cosmetics** (merch later) from a **Shop** tab on their profile. Buyers pay in **Buzz**; creators keep **70%**; moderators review submissions before they go live.
 - **Data model: extend the existing cosmetic-shop tables, don't build new ones.** The current schema already covers pricing, quantity/availability, ownership, purchases, refunds, and a payout path. We add a handful of nullable columns and keep per-creator shop settings as JSON on `User` — **no new tables** — a much smaller footprint than the original plan's three.
-- Two things need an explicit owner: the **70/30 payout rate** (today's path pays out 100%) and treating **merch as a separate product** (not a cosmetic).
+- Two things needed an explicit owner: the **70/30 payout rate** (accepted — built as `computeCreatorShopSplit`) and treating **merch as a separate product**, not a cosmetic (accepted; merch not started).
 
 ## What we're building
 
@@ -74,14 +74,14 @@ It's a curated CMS table (banner image, `placement`, `published`, moderator-adde
 
 ## Code touchpoints (first pass)
 
-- `src/server/services/cosmetic-shop.service.ts` — `purchaseCosmeticShopItem` (apply **70/30**, set `paidToUserIds = [creator]`); new submit/review/publish service fns; storefront read scoped by `createdById` + `status`.
+- `src/server/services/cosmetic-shop.service.ts` — `purchaseCosmeticShopItem` (apply **70/30**, pay `Cosmetic.createdById`); new submit/review/publish service fns; storefront read scoped by `createdById` + `status`.
 - `src/server/routers/cosmetic-shop.router.ts` — creator-facing procedures (submit, edit, archive, set-featured, shop-settings) gated to the item owner; moderator review/approve/reject procedures.
 - `src/server/schema/cosmetic-shop.schema.ts` — extend `cosmeticShopItemMeta` (fee, `lastApprovedAmount`); status + settings input schemas.
 - Migration SQL committed for review and **applied manually** (we do not run `prisma migrate deploy`).
 
 ## Open questions / asks for the team
 
-1. **Payout rate:** today's `paidToUserIds` path pays out the **full** price (platform keeps 0). Confirm **70/30** and that the platform retains 30% — this is a policy change in `purchaseCosmeticShopItem`, not new plumbing.
+1. **Payout rate — ANSWERED.** 70/30 confirmed and shipped: `computeCreatorShopSplit` in `creator-shop.schema.ts`, creator pool `floor(price × 0.7)`, platform keeps the rest. Creator items route on `Cosmetic.createdById`; `paidToUserIds` remains only for legacy official items.
 2. **Status on the listing vs. the asset:** proposal puts review `status` on `CosmeticShopItem` (the listing) and authorship on `Cosmetic` (the asset). Agree?
 3. **Featured storage:** ordered `featuredItemIds` in `User.settings.creatorShop` vs. a flag on the listing. (Recommendation: the array — order matters, cap 6, keeps the hot item table clean.)
 4. **Models toggle source:** confirm the query for "this user's early/paid-access models" (existing early-access system) the shop should union in.

@@ -54,6 +54,13 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
@@ -69,6 +76,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -189,6 +202,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -289,13 +305,34 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
-    const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'model'];
+    const sensitiveAbsent = [
+      'availability',
+      'hasAccess',
+      'canGenerate',
+      'image',
+      'name',
+      'nsfw',
+      'nsfwLevel',
+      'poi',
+      'minor',
+      'sfwOnly',
+      'userId',
+      'model',
+    ];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
-    expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'clipSkip', 'maxStrength', 'minStrength', 'modelId', 'modelName',
-        'modelType', 'strength', 'trainedWords', 'versionId', 'versionName']
-    );
+    expect(Object.keys(sel).sort()).toEqual([
+      'baseModel',
+      'clipSkip',
+      'maxStrength',
+      'minStrength',
+      'modelId',
+      'modelName',
+      'modelType',
+      'strength',
+      'trainedWords',
+      'versionId',
+      'versionName',
+    ]);
     replies.stop();
   });
 
@@ -444,7 +481,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_a', resourceType: 'Checkpoint' });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
     lastResourceModalProps().onSelect(
-      fakeResource({ id: 111, baseModel: 'Flux.1 D', model: { id: 11, name: 'CK', type: 'Checkpoint' } as any })
+      fakeResource({
+        id: 111,
+        baseModel: 'Flux.1 D',
+        model: { id: 11, name: 'CK', type: 'Checkpoint' } as any,
+      })
     );
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
@@ -456,7 +497,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_b', resourceType: 'LORA' });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
     lastResourceModalProps().onSelect(
-      fakeResource({ id: 222, baseModel: 'SDXL 1.0', model: { id: 22, name: 'LoRA', type: 'LORA' } as any })
+      fakeResource({
+        id: 222,
+        baseModel: 'SDXL 1.0',
+        model: { id: 22, name: 'LoRA', type: 'LORA' } as any,
+      })
     );
 
     await vi.waitFor(() => {

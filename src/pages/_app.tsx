@@ -1,5 +1,10 @@
 // src/pages/_app.tsx
 
+// Side-effect import: starts the bounded console/network snapshot a bug report attaches. FIRST,
+// and deliberately so — `console.error` leaves no buffer to replay, so anything React logs before
+// this module evaluates (a hydration mismatch above all, which is the case the feature exists for)
+// is unrecoverable. It is a no-op under SSR. See the file for the rest.
+import '~/utils/feedback/startBrowserErrorLog';
 import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.
@@ -12,6 +17,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { ReactElement } from 'react';
+import { useState } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -51,6 +57,7 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
@@ -87,6 +94,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { getSiteSchema } from '~/components/Meta/site-schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
@@ -125,7 +133,7 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
@@ -165,6 +173,8 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
+  const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
+
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
   //   return <Component {...pageProps} />;
@@ -182,6 +192,7 @@ function MyApp(props: CustomAppProps) {
                 left={Component.left}
                 right={Component.right}
                 subNav={Component.subNav}
+                pageNav={Component.pageNav}
                 scrollable={Component.scrollable}
                 header={Component.header}
                 footer={Component.footer}
@@ -220,6 +231,13 @@ function MyApp(props: CustomAppProps) {
     >
       <Head>
         <title>Civitai | Share your models</title>
+        {siteSchema && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(siteSchema) }}
+            key="site-schema"
+          />
+        )}
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         <ThirdPartyConsentProvider
@@ -235,58 +253,85 @@ function MyApp(props: CustomAppProps) {
           >
             <UpdateRequiredWatcher>
               <IsClientProvider>
-                <ClientHistoryStore />
-                <RegisterCatchNavigation />
-                <RouterTransition />
-                {/* <ChadGPT isAuthed={!!session} /> */}
-                <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
-                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
-                  <FaroProvider />
-                  <GoogleAnalytics />
-                  <AccountProvider>
-                    <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                      <ErrorBoundary>
-                        <BrowserSettingsProvider>
-                          <BrowsingLevelProvider>
-                            <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                              <SignalsProviderStack>
-                                <ActivityReportingProvider>
-                                  <ReferralsProvider {...cookies.referrals}>
-                                    <FiltersProvider>
-                                      <AdsProvider gated={adsGated}>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </AdsProvider>
-                                    </FiltersProvider>
-                                  </ReferralsProvider>
-                                </ActivityReportingProvider>
-                              </SignalsProviderStack>
-                            </BrowsingSettingsAddonsProvider>
-                          </BrowsingLevelProvider>
-                        </BrowserSettingsProvider>
-                      </ErrorBoundary>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </FeatureFlagsProvider>
+                {/* The `/apps/*` left rail's collapse state, SSR-seeded from the cookie
+                    `parseCookies` already reads above — the same shape as
+                    `cookies.consent` / `cookies.disableHidden` / `cookies.referrals`
+                    going to their own providers.
+
+                    🔴 IT IS MOUNTED HERE, ABOVE THE ROUTER OUTLET, BECAUSE THAT IS WHAT
+                    MAKES THE COLLAPSE ONE GLOBAL VALUE. `AppsPageLayout` is unmounted
+                    and remounted on every navigation, so state held there would re-open
+                    the rail on every click between apps pages — and
+                    `AppsPageLayout.chromeAlignment.browser.test.tsx` asserts the rail's
+                    left edge and width are identical on all 12 routes. */}
+                <AppsRailProvider value={cookies.appsRail}>
+                  <ClientHistoryStore />
+                  <RegisterCatchNavigation />
+                  <RouterTransition />
+                  {/* <ChadGPT isAuthed={!!session} /> */}
+                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
+                        `region` is the SAME SSR-derived country code ThirdPartyConsentProvider
+                        receives above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded
+                        in as a prop so RUM beacons carry a geography dimension (→ Loki
+                        session_attr_region / session_attr_timezone). See
+                        src/utils/faro/geoAttributes.ts.
+                        🔴 OPTIONAL-CHAIN IT. `region` is an SSR-ONLY prop: `getInitialProps`
+                        early-returns before `getRegion(request)` on a CLIENT-SIDE navigation
+                        (no `req`), so `region` is `undefined` on every route transition even
+                        though `CustomAppProps` types it non-optional. A bare `region.countryCode`
+                        throws inside the ROOT error boundary and white-screens the app — that is
+                        exactly what shipped in v5.1.117 (#5001), surfacing in v5.1.118.
+                        `FaroProvider` accepts `undefined | null`
+                        by design; pinned by
+                        src/tests/pages/app-region-optional-chain.test.ts. */}
+                    <FaroProvider region={region?.countryCode} />
+                    <GoogleAnalytics />
+                    <AccountProvider>
+                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                        <ErrorBoundary>
+                          <BrowserSettingsProvider>
+                            <BrowsingLevelProvider>
+                              <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
+                                <SignalsProviderStack>
+                                  <ActivityReportingProvider>
+                                    <ReferralsProvider {...cookies.referrals}>
+                                      <FiltersProvider>
+                                        <AdsProvider gated={adsGated}>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </AdsProvider>
+                                      </FiltersProvider>
+                                    </ReferralsProvider>
+                                  </ActivityReportingProvider>
+                                </SignalsProviderStack>
+                              </BrowsingSettingsAddonsProvider>
+                            </BrowsingLevelProvider>
+                          </BrowserSettingsProvider>
+                        </ErrorBoundary>
+                      </CivitaiSessionProvider>
+                    </AccountProvider>
+                  </FeatureFlagsProvider>
+                </AppsRailProvider>
               </IsClientProvider>
             </UpdateRequiredWatcher>
           </SessionProvider>
@@ -491,9 +536,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
   } = settingsBootstrap;
-  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(
-    '~/server/services/feature-flags.service'
-  );
+  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
+    await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
@@ -519,7 +563,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   rides down through pageProps to AppProvider as-is.
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
-    userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+    userFeatureFlags = computeUserFeatureFlagsOverlay(
+      settings.features,
+      flags,
+      getFliptGatedEligibility({ user: session.user, host: request?.headers.host, req: request })
+    );
   }
 
   // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a

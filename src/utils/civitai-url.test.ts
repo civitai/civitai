@@ -140,6 +140,73 @@ describe('parseCivitaiUrlSafe', () => {
     expect(parseCivitaiUrlSafe('https://image.civitai.com/models/123')).toBeNull();
   });
 
+  it('reads a tag page as a NAME, not an id', () => {
+    // /tag/<name> is what the address bar holds. The name is what identifies it;
+    // there is no id in this URL to fall back on.
+    expect(parseCivitaiUrlSafe('https://civitai.com/tag/dragon')).toEqual({
+      type: 'tag',
+      tagname: 'dragon',
+    });
+    // Percent-escapes are decoded with the rest of the path, so a multi-word tag
+    // arrives as the name the database holds rather than as 'blue%20hair'.
+    expect(parseCivitaiUrlSafe('https://civitai.com/tag/blue%20hair')).toEqual({
+      type: 'tag',
+      tagname: 'blue hair',
+    });
+  });
+
+  it('reads a single-tag feed link as an ID', () => {
+    // What a tag chip in the feed links to.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=5499')).toEqual({
+      type: 'tagId',
+      tagId: 5499,
+    });
+  });
+
+  it('reads the SAME tag param on every feed that emits it', () => {
+    // The tag chip row is mounted on /images and /videos and writes the param on
+    // whichever route the user is on, so a link the site produced for one feed
+    // must not be refused because it came from the other. /posts is the same shape.
+    for (const feed of ['images', 'videos', 'posts']) {
+      expect(parseCivitaiUrlSafe(`https://civitai.com/${feed}?tags=5499`)).toEqual({
+        type: 'tagId',
+        tagId: 5499,
+      });
+    }
+  });
+
+  it('does not read a tag off an image DETAIL link', () => {
+    // /images/<id> is one image, not a feed. Without the segment check, a detail
+    // link that happened to carry the feed's query would add a tag source the
+    // sender never picked. Nothing pushes that URL with a query today, which is
+    // exactly why the check has to be here rather than relied upon there.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images/12345?tags=5499')).toBeNull();
+  });
+
+  it('refuses a feed link carrying more than one tag', () => {
+    // 🔴 The dangerous direction: a hub source is ONE tag, so picking the first of
+    // several would silently discard what the sender meant and add a source they
+    // did not choose. Unrecognised is the honest answer.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=5499&tags=5133')).toBeNull();
+  });
+
+  it('refuses every OTHER encoding of more than one tag', () => {
+    // The repeated-param form above is what `qs` emits today, but the app's own
+    // reader also accepts a JSON array, so both are URLs a user can hold. These
+    // are refused only as a side effect of the strict integer test — relax that to
+    // `parseInt` and `?tags=5499,5133` silently becomes tag 5499, which is the
+    // take-the-first hazard back through the encoding nothing covered.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=5499,5133')).toBeNull();
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=[5499,5133]')).toBeNull();
+  });
+
+  it('refuses a feed link with no tag at all', () => {
+    // The control for the two above: without it, a parser that returned a tag ref
+    // for any /images link would pass them both.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images')).toBeNull();
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=notanid')).toBeNull();
+  });
+
   it('returns null for a bare id so the caller decides what it means', () => {
     expect(parseCivitaiUrlSafe('123')).toBeNull();
     expect(parseCivitaiUrlSafe('')).toBeNull();

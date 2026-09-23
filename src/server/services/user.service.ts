@@ -76,6 +76,7 @@ import {
   disarmAccountDeletionImagePurge,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
+import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImageById } from '~/server/services/image.service';
 import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
@@ -103,7 +104,7 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { imageRemovalMode } from '~/server/utils/image-removal-mode';
+import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -132,6 +133,10 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
+import {
+  clearBlockInstancesForPublisher,
+  revokeBlockInstancesForPublisher,
+} from '~/server/services/blocks/publisher-ban-revocation.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -1136,39 +1141,68 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         type: { not: UserEngagementType.Block },
       },
     }),
+    // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+    // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+    dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+    dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
     dbWrite.user.update({
       where: { id: user.id },
       data: {
         deletedAt: new Date(),
         email: null,
         username: null,
+        name: null,
+        // customerId is deliberately absent: see the webhook test in
+        // __tests__/delete-user-pii-scrub.test.ts before adding it.
         paddleCustomerId: null,
         image: null,
         profilePictureId: null,
         meta,
       },
     }),
+    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
+    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
+    // subscription -> customer -> charges, whose receipt_email and billing_details.name
+    // still identify the person.
+    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
+  // The account is deleted from here on. A failing step must not skip a later one (a skipped
+  // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
+  // an error: the user would read a completed deletion as a failed one and retry.
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      await logToAxiom({
+        name: step,
+        type: 'error',
+        source: 'deleteUser',
+        userId: user.id,
+        message: (error as Error)?.message,
+      }).catch(() => null);
+    }
+  };
+
+  await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('cancel-stripe-subscription', () =>
+    cancelSubscription({ userId: user.id, removeRecord: true })
+  );
 
   // The engagement rows are gone for real now, so the deleted user's own follow set
   // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
   // their own TTL — a popular account has six figures of them, and what each holds
   // is an id whose content this same call has already removed.
-  await userFollowsCache.bust(user.id);
-
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBasicDataForUser(id);
-
-  // Cancel their subscription
-  await cancelSubscription({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  await runStep('bust-follows-cache', () => userFollowsCache.bust(user.id));
+  await runStep('search-index-delete', () =>
+    usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
-  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
-  await invalidateSession(id, 'moderation');
+  await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+
+  // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
+  await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
 
   return result;
 };
@@ -1185,8 +1219,13 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session rows and every
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is not restored, and
+ * do NOT read that as "the subscription is gone": the cancels below run through runStep, which
+ * swallows, the Paddle one never deletes the CustomerSubscription row, and the Stripe one only
+ * deletes it for an active/past_due/trialing row. 6,816 soft-deleted accounts hold a surviving
+ * row today, 96 of them still live (prod, 2026-09-21). Check the billing record independently. It also hard-deletes Account / Session / UserProfile / UserLink
+ * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
@@ -1199,6 +1238,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
  *   so restoring inside the window brings the images back.
  * Posts are hard-deleted on the immediate path only and are not recoverable.
+ *
+ * UserProfile and UserLink rows are unrecoverable too, so a restored account comes back with an
+ * empty profile. Nothing restores name.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
@@ -1265,7 +1307,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+  // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
+  // account would inherit its old attempt count, so its first failure would already be backed off
+  // for hours and it would alert as stuck long before it is.
+  const {
+    imageRemoval: _removalChoice,
+    gdprStripeScrub: _scrubState,
+    ...meta
+  } = (user.meta ?? {}) as UserMeta;
 
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
@@ -1329,6 +1378,14 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
       blockedFor: BlockedReason.CSAM,
     },
   });
+  // A CSAM block outranks an account-deletion grace block. If this account had already
+  // self-deleted with the grace option, every image carries the restore breadcrumbs; left on, a
+  // later restore would un-block CSAM-blocked content.
+  //
+  // Account-wide here, unlike the ban branch in `toggleBan`: the UPDATE above carries no
+  // `ingestion` predicate, so it blocked EVERY image this user owns. The clear's scope and the
+  // block's scope are the same set, which is what makes the wide form correct in this one place.
+  await clearAccountDeletionImageMarkers({ userId: id });
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1362,7 +1419,23 @@ export const updateAccountScope = async ({
   }
 };
 
-export const removeAllContent = async ({ id }: { id: number }) => {
+/**
+ * Moderator hard-wipe of a user's content. IRREVERSIBLE — unlike `deleteUser`
+ * above, which soft-deletes and has a live inverse in `restoreUser`.
+ *
+ * `actorUserId` is the acting moderator when one exists. It is OPTIONAL because
+ * one of the two callers genuinely has no user identity: `/api/mod/remove-all-
+ * content` is a `WebhookEndpoint`, authenticated by a shared secret, so there is
+ * no actor to thread. The tRPC caller (`user.removeAllContent`, a
+ * `moderatorProcedure`) passes `ctx.user.id`.
+ */
+export const removeAllContent = async ({
+  id,
+  actorUserId = null,
+}: {
+  id: number;
+  actorUserId?: number | null;
+}) => {
   const models = await dbRead.model.findMany({ where: { userId: id }, select: { id: true } });
   const images = await dbRead.image.findMany({
     where: { userId: id },
@@ -1435,6 +1508,105 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   for (const m of models) {
     await deleteBidsForModel({ modelId: m.id });
   }
+
+  // ── App Blocks per-user storage (W4) ────────────────────────────────────────
+  // Everything above lives in the MAIN db (plus S3 + the search indexes). A
+  // user's App Storage rows do not: they sit in per-app `app_<slug>` schemas in
+  // the SEPARATE apps database, reached through a different pool, and nothing in
+  // this function could see them. Before this, a moderator hard-wipe left them
+  // behind in full — `user-storage-purge.service.ts` names that as the second of
+  // the two gaps it exists to close, and closing it needs a caller.
+  //
+  // 🔴 LAST, AND LOG-AND-CONTINUE. Same posture as the (3c) storage-provision
+  // block in `publish-request.service.ts`, for the same reason. The wipe is
+  // already complete by the time we get here, there is no transaction spanning
+  // the two databases, and a purge failure must NEVER abort or appear to undo it:
+  // a moderator's content wipe failing because an apps-DB schema was briefly
+  // unreachable would be a regression, not a safety feature. On ANY error we warn
+  // and return normally; the storage is recoverable via
+  // `apps.mod.userStorage.purgeAccount`, which is exactly this call by hand.
+  //
+  // Dynamic import, again mirroring (3c): this module is already enormous and the
+  // purge service pulls in the apps-db pool, which nothing else on this path
+  // needs.
+  //
+  // AUDIT SURVIVES THE FAILURE MODE, NOT JUST THE HAPPY PATH: the purge writes
+  // its `AppListingModerationEvent` row BEFORE it deletes anything, so a crash
+  // between the two leaves a record of what was about to go, never a silent
+  // destruction. That ordering is the purge's own safety argument and calling it
+  // from here does not weaken it.
+  //
+  // 🔴 READ THE RESULT, DO NOT ONLY CATCH. The sweep is log-and-continue BY
+  // DESIGN: it catches each app's failure into `failures[]` and RESOLVES. So a
+  // bare try/catch here sees a clean resolve and says nothing, no matter how
+  // much failed — the outer catch only ever fires for an enumeration-stage
+  // fault. That is not hypothetical: until the `action` CHECK widen is applied,
+  // EVERY app's audit write is rejected with 23514, every app lands in
+  // `failures[]`, nothing is purged, and the operator would have seen a silent
+  // success. A warning that cannot fire for the most likely failure is worse
+  // than no warning, because it reads as coverage.
+  try {
+    const { purgeUserAppStorageForAccountWipe } = await import(
+      '~/server/services/apps/user-storage-purge.service'
+    );
+    const result = await purgeUserAppStorageForAccountWipe({ targetUserId: id, actorUserId });
+    if (result.failures.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage purge INCOMPLETE (userId=${id}): ` +
+          `${result.failures.length} app(s) failed, ${result.totals.appCount} purged. ` +
+          `The content wipe COMPLETED and is unaffected — re-run via ` +
+          `apps.mod.userStorage.purgeAccount. Failures: ` +
+          result.failures
+            .map((f) => `${f.slug}(${f.auditEventId ?? 'no-audit-row'}): ${f.error}`)
+            .join('; ')
+      );
+    }
+    if (result.schemasTruncated) {
+      // The THIRD way the sweep can complete having deliberately skipped rows,
+      // alongside `failures[]` and `unmappedSchemas[]`. Unreachable today (the cap
+      // is 500 against ~20 schemas), but a reader of this block would reasonably
+      // assume all three conditions are covered, and two of three is how the next
+      // silent partial wipe happens.
+      // 🔴 DO NOT tell the operator to re-run `purgeAccount` here. That path
+      // enumerates the same `information_schema` names, `.sort()`s them and takes
+      // the same `.slice(0, MAX)` — so a re-run drops exactly the same schemas,
+      // deterministically, forever. (Re-running genuinely does help for
+      // `failures[]`, which is transient, and the `unmappedSchemas` warning
+      // correctly asks for a human; this one needed its own remedy.)
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: the schema sweep for userId=${id} ` +
+          `hit its candidate cap, so some schemas were NOT examined — and re-running ` +
+          `purgeAccount would skip the SAME ones (the candidate list is sorted and ` +
+          `truncated deterministically). Purge the remaining apps individually via ` +
+          `apps.mod.userStorage.purgeApp, or raise APP_USER_STORAGE_MAX_SCHEMAS. ` +
+          `NOTE: purgeApp records as a MODERATOR purge, so its audit row keeps the ` +
+          `per-key snapshot (key names, sizes, md5 fingerprints) that the wipe path ` +
+          `deliberately withholds for an erased account — prefer raising the cap.`
+      );
+    }
+    if (result.unmappedSchemas.length > 0) {
+      // Reported separately because it is a different condition with a different
+      // remedy: these schemas hold the user's rows but map to no single AppBlock,
+      // so the sweep deliberately skipped them and they need a human.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[removeAllContent] App Blocks per-user storage: ${result.unmappedSchemas.length} ` +
+          `schema(s) hold rows for userId=${id} but map to no single app block and were SKIPPED: ` +
+          result.unmappedSchemas.join(', ')
+      );
+    }
+  } catch (err) {
+    // The enumeration-stage faults only — a dead apps DB, a bad pool checkout.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[removeAllContent] App Blocks per-user storage purge failed (userId=${id}); ` +
+        `the content wipe COMPLETED and is unaffected — re-run via apps.mod.userStorage.purgeAccount: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
 };
 
 export const getUserCosmetics = ({
@@ -1455,14 +1627,15 @@ export const getUserCosmetics = ({
           claimKey: true,
           data: true,
           cosmetic: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              type: true,
-              source: true,
-              data: true,
-            },
+            // Spread rather than hand-listed, so a field added to the shared
+            // selector reaches this read too — it is the one the whole cosmetics
+            // UI runs on, and a divergence here surfaces as one surface missing a
+            // field nobody thinks to check.
+            //
+            // `createdById` is extra: a scalar on the row already being selected,
+            // so no join and no extra round trip, and it is what lets the sticker
+            // tray filter to your own without asking a second procedure.
+            select: { ...simpleCosmeticSelect, createdById: true },
           },
         },
       },
@@ -1594,12 +1767,6 @@ const leaderboardRankInsert = ({
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
     WHERE lr.date = current_date
       AND lr.position <= 100
-      -- UserRank is a single global table but the badge (title + cosmetic) renders
-      -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-      -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-      -- is visible on any SFW domain still earns a badge (requiring 'all' would
-      -- strip the badge from everyone on the green/blue-scoped boards).
-      AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
       ${leaderboardFilter}
       ${userFilter}
   ),
@@ -1960,6 +2127,34 @@ export const toggleBan = async ({
         })
       ),
 
+      // Revoke every live App Block instance of every block this user PUBLISHES.
+      // `invalidateSession` above ends their own browser sessions; it does not touch
+      // a block token, which is a separate RS256 JWT the runtime guards check against
+      // a per-instance Redis marker. Without this the tokens their blocks already hold
+      // keep authenticating against the REST and tRPC bridges until natural `exp` —
+      // 900s by default, 14400s for a `dev` token. See the writer's own docblock for
+      // what is and is not in that set (owner only, not seated collaborators).
+      //
+      // Isolated like every other leg of this fan-out: the marker write must never be
+      // able to fail the ban. `revokeInstance` already swallows Redis errors; this
+      // catch covers the DB read in front of it.
+      revokeBlockInstancesForPublisher({ userId: id })
+        .then((revoked) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-revoke-block-instances',
+            message: `revoked ${revoked} block instance(s) for banned publisher ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-block-instances',
+            message: (error as Error).message,
+            error,
+          })
+        ),
+
       // Group B: External operations (subscription + search indexes)
       Promise.all([
         // Stop the recurring membership from auto-renewing while banned. Cancel
@@ -1995,6 +2190,47 @@ export const toggleBan = async ({
       removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
     if (shouldRemoveMedia) {
       try {
+        // The rows this ban is about to block that still carry account-deletion grace
+        // breadcrumbs. Read BEFORE the UPDATE: afterwards they are indistinguishable from the
+        // rows the grace pass itself blocked, because both end up `ingestion = 'Blocked'` with
+        // `blockedFor = 'moderated'`.
+        //
+        // 🔴 NOT `clearAccountDeletionImageMarkers({ userId: id })`, and do not "simplify" it back
+        // to that. Both of `remove-deleted-user-images`'s statements write the breadcrumb only on
+        // a row they leave `ingestion = 'Blocked'` — one sets it in the same UPDATE, the other
+        // requires it — and the UPDATE below only touches rows that are NOT Blocked. So for every
+        // row the grace pass marked, an account-wide clear here strips a breadcrumb off a row
+        // this ban provably did not touch. Lift the ban, restore the
+        // account, and `countPendingAccountDeletionImageRestores` (which keys on the breadcrumb)
+        // reads 0: `restoreUser` never queues the account, `restore-user-images` never runs, and
+        // the library stays Blocked with the recorded prior `ingestion` values gone — silent in
+        // the row and silent in the `imagesPendingRestore` the moderator is shown.
+        //
+        // This set is normally EMPTY. It is non-empty only for a row that was breadcrumbed and
+        // then un-blocked during the grace period — `handleUnblockImages` sets
+        // `ingestion = 'Scanned'` without stripping the breadcrumb — which is exactly the row a
+        // later account restore would otherwise un-block back out of this ban.
+        // Its own catch: this read is new, and the media block is the part of a ban that must not
+        // be able to fail because of it. Falling back to an empty set degrades the clear to what
+        // shipped before the breadcrumbs existed, which is the recoverable direction; letting it
+        // escape into the outer catch would skip the block and leave a banned account's media up.
+        let graceMarked: { id: number }[] = [];
+        try {
+          graceMarked = await dbWrite.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE "userId" = ${id}
+              AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+              AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
+          `;
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-grace-marker-scan',
+            message: (error as Error).message,
+            error,
+          });
+        }
+
         await dbWrite.image.updateMany({
           where: { userId: id, ingestion: { not: 'Blocked' } },
           data: {
@@ -2003,6 +2239,11 @@ export const toggleBan = async ({
             blockedFor: BlockedReason.Moderated,
           },
         });
+
+        // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
+        // actually blocked rather than to the account: a ban outranks a grace block, so the
+        // restore breadcrumbs come off the rows it hid.
+        await clearAccountDeletionImageMarkers({ ids: graceMarked.map((x) => x.id) });
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -2056,6 +2297,38 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
+    // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a
+    // dev token is involved — and re-minting did NOT help: `isRevoked` keys on
+    // `claims.blockInstanceId`, and every namespace's id is stable across a re-mint, so a
+    // fresh token carries the same id the marker names. The only remedy was a moderator
+    // deleting Redis keys by hand. (This card's own AC-3 asserted the opposite; it was
+    // wrong, and `blocks/publisher-ban-revocation.service.ts` carries the measurement.)
+    //
+    // Clears the BAN keyspace only — an INSTALL marker from a genuine uninstall or
+    // toggle-off is a different key and survives, so lifting a ban cannot silently
+    // re-enable an install its own consumer switched off.
+    //
+    // Isolated for the same reason as the search re-index below: the unban has already
+    // committed, and an unguarded throw here would skip the `account-unbanned` email and
+    // hand the moderator a 500 for an action that succeeded.
+    await clearBlockInstancesForPublisher({ userId: id })
+      .then((cleared) =>
+        logToAxiom({
+          type: 'info',
+          name: 'unban-user-clear-block-instances',
+          message: `cleared ${cleared} block-instance ban marker(s) for unbanned publisher ${id}`,
+        })
+      )
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-clear-block-instances',
+          message: (error as Error).message,
+          error,
+        })
+      );
 
     // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
     // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is
@@ -2753,41 +3026,49 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
-  domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
-  if (
-    blurNsfw !== undefined ||
-    showNsfw !== undefined ||
-    // Red domain we'll store in the settings.
-    (browsingLevel !== undefined && domain !== 'red') ||
-    autoplayGifs !== undefined
-  ) {
-    await dbWrite.user.update({
-      where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+  try {
+    // Settings first: if the column write below then fails, the level did not change and the
+    // only loss is the retired red copy. The other order could commit a new level while
+    // leaving that copy for the one-off fold to apply over it.
+    if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
+      // Only the keys this call is changing. Re-reading the blob and writing it back
+      // would restore every other key to the value it held at read time, discarding a
+      // concurrent write to any of them (notice dismissals, feature toggles, …).
+      await patchUserSettings(userId, {
+        set: removeEmpty(data),
+        // A level set now supersedes any retired red-domain copy, so the one-off fold of those
+        // copies into the column never applies a stale value over it.
+        ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
+        location: 'user.service:updateContentSettings',
+      });
+    }
+    if (
+      blurNsfw !== undefined ||
+      showNsfw !== undefined ||
+      browsingLevel !== undefined ||
+      autoplayGifs !== undefined
+    ) {
+      await dbWrite.user.update({
+        where: { id: userId },
+        data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+      });
+      userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+      await userSettingsCache().bust([userId]);
+    }
+  } finally {
+    // Also when a later write throws: an earlier one may already have committed, and the
+    // cached session must not keep serving the old value for its whole lifetime.
+    //
+    // Await so the refresh marker is set in Redis before this mutation returns.
+    // Otherwise the fire-and-forget can race the next API call / session read
+    // and hand back a stale session.user, which then overrides the user's
+    // toggle client-side via BrowserSettingsProvider's smart-merge.
+    await refreshSession(userId, { caller: 'profile' }).catch((err) => {
+      console.error('Failed to refresh session for user', userId, err);
     });
-    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
-    await userSettingsCache().bust([userId]);
   }
-  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
-    // Only the keys this call is changing. Re-reading the blob and writing it back
-    // would restore every other key to the value it held at read time, discarding a
-    // concurrent write to any of them (notice dismissals, feature toggles, …).
-    await setUserSetting(userId, {
-      ...removeEmpty(data),
-      ...(domain === 'red' && browsingLevel !== undefined
-        ? { redBrowsingLevel: browsingLevel }
-        : {}),
-    });
-  }
-  // Await so the refresh marker is set in Redis before this mutation returns.
-  // Otherwise the fire-and-forget can race the next API call / session read
-  // and hand back a stale session.user, which then overrides the user's
-  // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
-    console.error('Failed to refresh session for user', userId, err);
-  });
 }
 
 // #region [user settings]
@@ -3090,6 +3371,23 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
  * notices can now overlap without either being lost — which the previous
  * read-the-array-in-JS-and-write-it-back form could not survive.
  */
+/**
+ * Set `meta.emailVerificationRequired` without reading `meta` into JS first.
+ *
+ * `User.meta` is shared: `banDetails`, `muteReason`/`mutedBy`, contest-ban state and more live on it,
+ * written by moderation paths that know nothing about this one. A read-modify-write would clobber
+ * whichever of them landed in the window — and the read would be off the replica, so the window is
+ * replica lag rather than milliseconds. `jsonb_set` merges in the database, touching one key.
+ */
+export async function setEmailVerificationRequired(userId: number, required: boolean) {
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{emailVerificationRequired}', to_jsonb(${required}::boolean))
+    WHERE id = ${userId}
+  `;
+  userUpdateCounter?.inc({ location: 'user.service:setEmailVerificationRequired' });
+}
+
 export async function setAlertDismissed(userId: number, alertId: string, dismissed: boolean) {
   // `settings->'dismissedAlerts'` is read inside the statement, so nothing about the
   // array is carried through JS. Add is idempotent (`@>` containment guard); `jsonb_agg`

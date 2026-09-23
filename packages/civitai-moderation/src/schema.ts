@@ -54,6 +54,32 @@ const MAX_INT4 = 2_147_483_647;
  */
 export const MAX_FINDINGS_PER_REPORT = 1_000;
 
+/**
+ * Characters one finding's `reason` may carry.
+ *
+ * EXPORTED for the same structural reason as the cap above, one step earlier in the pipe: a producer
+ * that renders a reason has to truncate it to this bound BEFORE it calls, because an over-long reason
+ * does not lose the finding — it fails the parse and loses the whole report, every correctly-built
+ * finding beside it included. A producer that restates the literal holds a copy that can drift
+ * silently: lowering the bound here would leave it trimming to the old, now-invalid length, and the
+ * first sign of it would be that detector's runs vanishing from the board.
+ *
+ * ⚠️ IMPORTING THIS MAKES ONE PRODUCER'S TRUNCATION EQUAL TO THE PARSER'S CAP — IT DOES NOT MAKE
+ * THEM ALL EQUAL, and the export by itself enforces nothing. `new-order-abuse-detection` imports it;
+ * `bot-account-detection` and `reaction-withdrawal-detection` still declare their own local
+ * `MAX_REASON_LENGTH = 2_000`, and each has a suite pinning that literal. They are consistent with
+ * this value today by coincidence of the number, not by construction. The set of producers still
+ * holding a local copy is pinned as an explicit ledger in
+ * `src/server/services/new-order-abuse-detection/__tests__/max-reason-length-ledger.test.ts`, which
+ * fails if it grows or shrinks.
+ *
+ * That ledger catches the COMMON shape, not every shape. It matches the identifier
+ * `MAX_REASON_LENGTH` declared in a `src/server/services/<name>/report.ts`, so a copy under a
+ * different name (`const REASON_CAP = 2_000`), or one in a producer laid out differently, stays
+ * green. Read it as a tripwire on the likely case rather than a guarantee that no copy can appear.
+ */
+export const MAX_REASON_LENGTH = 2_000;
+
 /** Declared once and used by both timestamp fields, so neither can regress without the other. */
 const isoWithOffset = z.iso.datetime({ offset: true });
 
@@ -72,7 +98,7 @@ const abuseFinding = z
     confidence: z.number().min(0).max(1),
     // Why. The evidence-citing sentence, which is the whole value of the row to a moderator, so an
     // empty one is not a finding.
-    reason: z.string().min(1).max(2_000),
+    reason: z.string().min(1).max(MAX_REASON_LENGTH),
     // 🔴 Whether the producer ACTED. False is the common case and the interesting one: it is a
     // detection the system chose not to act on, which is exactly what no existing surface can
     // represent and what a human review queue needs.
@@ -86,6 +112,20 @@ const abuseFinding = z
     // and a producer serialising a nullable field emits `null`. Refusing that would lose every run
     // from the commonest possible payload.
     action: z.string().min(1).max(64).nullish(),
+    // 🔴 OPTIONAL, AND IT HAS TO STAY THAT WAY. Three detectors already post to this board and none
+    // of them sends this field; a required key here would 400 every one of their reports and take
+    // the whole surface down to add a feature none of them uses.
+    //
+    // What it is: the producer's own claim that several findings in THIS report are one actor, so a
+    // moderator rules them once instead of N times. An opaque key — the reader groups on equality
+    // and never parses it — scoped to the run by the reader, because the same key in two runs is two
+    // separate decisions over two different cohorts.
+    //
+    // 🔴 A PRODUCER MUST NOT PUT ANYTHING IN HERE THAT THE FINDING'S OWN `reason` DOES NOT ALREADY
+    // SAY. The key is rendered on a board with a wider audience than the investigative tools, so it
+    // is a disclosure surface, not just an identifier. `.nullish()` for the same reason `action` has
+    // it: a serialiser emitting `null` for an absent optional must not lose the report.
+    groupKey: z.string().min(1).max(200).nullish(),
   })
   .superRefine((f, ctx) => {
     // 🔴 `!= null`, NOT `!== undefined`. Loose equality is deliberate: it treats `null` and

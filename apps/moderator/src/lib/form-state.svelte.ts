@@ -32,6 +32,20 @@ export class FormState {
       onSuccess: ((data?: Record<string, unknown>) => void) | null;
       reload?: boolean;
       /**
+       * Clear the form's fields on a successful write. Defaults TRUE — the shape for an entry form,
+       * where the operator types something, posts it, and wants a blank box back.
+       *
+       * 🔴 Set FALSE for a form whose inputs are pre-filled from SERVER state, or the field is
+       * silently emptied and the next submit posts the empty value back. `update()` calls
+       * `HTMLFormElement.prototype.reset()`, which restores the element's `defaultValue` — and
+       * Svelte writes `element.value`, never `defaultValue`, so the default is the empty string.
+       * Repopulation afterwards depends on the bound expression CHANGING: `set_value` returns early
+       * when the new value equals the cached one, so a save that leaves the stored value untouched
+       * leaves the box blank over a column that still holds text. The next submit then overwrites
+       * that column with `''`.
+       */
+      reset?: boolean;
+      /**
        * Runs when the submit STARTS, before the server has answered.
        *
        * For the one thing `onSuccess` cannot do: read state that the response is about to replace.
@@ -77,7 +91,7 @@ export class FormState {
       // Reset on success ONLY. Clearing the fields after a refusal throws away what the operator
       // typed, on the one path where they need it back to fix and resubmit.
       await update({
-        reset: result.type === 'success',
+        reset: result.type === 'success' && (this.opts.reset ?? true),
         invalidateAll: this.opts.reload ?? false,
       });
       this.error =

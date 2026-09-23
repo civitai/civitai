@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -45,6 +44,7 @@ import type {
   UserByReferralCodeSchema,
   UserOnboardingSchema,
   UserUpdateInput,
+  GetUserSearchHydrationInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
 import type {
@@ -56,6 +56,7 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
@@ -80,6 +81,7 @@ import {
   getUserBookmarkCollections,
   getBanContentPreview,
   getUserById,
+  getProfilePicturesForUsers,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
@@ -97,6 +99,7 @@ import {
   restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
+  setEmailVerificationRequired,
   patchUserSettings,
   splitSettingsPatch,
   toggleBan,
@@ -115,6 +118,7 @@ import {
   userByReferralCode,
 } from '~/server/services/user.service';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
+import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -138,6 +142,7 @@ import type { FeatureAccess } from '../services/feature-flags.service';
 import {
   computeUserFeatureFlagsOverlay,
   defaultToggleableFeatures,
+  getFliptGatedEligibility,
 } from '../services/feature-flags.service';
 import {
   getEntityCoverImage,
@@ -242,6 +247,32 @@ export const getUserByIdHandler = async ({ input }: { input: GetByIdInput }) => 
   }
 };
 
+/**
+ * The authoritative avatar for a set of users, for search results to render.
+ *
+ * The search indexes carry a COPY of this, baked in when the document was last built, and
+ * nothing rebuilds an existing document when the user changes their avatar — so the copy
+ * is stale for as long as the document is not otherwise touched, and becomes a broken
+ * image once `remove-replaced-images` reaps the original. Measured on production: 100 of
+ * 120 sampled `collections_v3` documents, and 69 of 120 `models_v9`.
+ *
+ * Reads through `profilePictureCache`, so this is a Redis hit rather than a query.
+ *
+ * Public because search is public, and this returns nothing a search hit does not already
+ * expose. The id list is capped in the schema.
+ */
+export const getUserSearchHydrationHandler = async ({
+  input,
+}: {
+  input: GetUserSearchHydrationInput;
+}) => {
+  try {
+    return { profilePictures: await getProfilePicturesForUsers([...new Set(input.ids)]) };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
 export const getNotificationSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   const { id } = ctx.user;
 
@@ -267,12 +298,16 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
-    const [unreadCount, placementCounts] = await Promise.all([
+    const [unreadCount, placementCounts, collectionReviewCounts] = await Promise.all([
       getUserNotificationCount({ userId: id, unread: true }),
       // Degrades to zeroes rather than failing the request, matching
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
+        total: 0,
+        byCollection: {},
+      })),
     ]);
 
     const reduced = unreadCount.reduce(
@@ -305,6 +340,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       pendingPlacements: placementCounts.sticker + placementCounts.remix,
       pendingStickerPlacements: placementCounts.sticker,
       pendingRemixSubmissions: placementCounts.remix,
+      // The sum only. The per-collection breakdown rides `collection.getAllUser`
+      // instead: `applyMarkReadToCounts` is typed over a Record<string, number>,
+      // so an object here breaks that generic — and if it ever fell out of
+      // NON_CATEGORY_COUNT_KEYS the blanket branch would assign 0 OVER the map
+      // rather than merely zero a count.
+      pendingCollectionReviews: collectionReviewCounts.total,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -401,13 +442,73 @@ export const completeOnboardingHandler = async ({
       case OnboardingSteps.Profile: {
         if (input.username && !(await isUsernamePermitted(input.username)))
           throw throwBadRequestError('Invalid username');
+
+        // Off the row, not off `ctx.user`: the session shape is cached for up to 4h, so comparing
+        // against it lets a stale email skip `assertEmailAllowed` and skip the stamp below. From the
+        // PRIMARY, because the comparison decides a write — a replica read would decide on a row that
+        // may already have moved.
+        const current = await dbWrite.user.findUnique({
+          where: { id },
+          select: { email: true, emailVerified: true, username: true },
+        });
         // OAuth providers that hand us no email (Reddit) land here with `email: null`, and this step
         // then REQUIRES one — free text that is never verified, which is the burner ring's door in.
-        if (input.email && input.email !== ctx.user.email) await assertEmailAllowed(input.email);
+        // Compared case-insensitively because the column is `citext`: a case-only retype is the SAME
+        // address, and treating it as a change would revoke a verification the user already earned.
+        const emailChanged =
+          !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
+        if (emailChanged) await assertEmailAllowed(input.email);
+
+        // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
+        // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
+        // verified provider, then type someone else's address here.
+        const verified = emailChanged ? null : current?.emailVerified ?? null;
+
+        // 🔴 BEFORE the row write, and the order is the whole point. These are three statements with
+        // no transaction between them. Stamped second, a failure here after the row had committed
+        // would leave the user retrying a step whose `changed` and `emailChanged` are now both false —
+        // so the retry writes no stamp and the account finishes ungated, permanently, with nothing
+        // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
+        //
+        // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
+        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // input, so without that condition any account could mark itself, including one that predates
+        // the rule and has been posting for years.
+        if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
+
         await dbWrite.user.update({
           where: { id },
-          data: { onboarding, username: input.username, email: input.email },
+          data: {
+            onboarding,
+            username: input.username,
+            email: input.email,
+            ...(emailChanged ? { emailVerified: null } : {}),
+          },
         });
+
+        // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
+        // every address change made this an unmetered way to mail an arbitrary third party from
+        // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
+        // once per account, so this path sends at most once. A user who mistypes their address
+        // corrects it and uses the banner's resend.
+        //
+        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
+        // `User.email` to the account holder — this step rewrites it without the immutability check in
+        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
+        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
+        // rather than a bound on WHO can be mailed.
+        //
+        // The address is passed rather than re-read: a replica read right after this write can still
+        // hold the OLD row, and a token minted for the old address silently reverts the change when
+        // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
+        // the mail reached. Best-effort: the step is committed above, and a mail failure must not
+        // report a step the user then re-submits.
+        if (changed && !verified && input.email)
+          await issueEmailVerification(
+            id,
+            input.email,
+            input.username ?? current?.username ?? null
+          ).catch(handleLogError);
         break;
       }
       case OnboardingSteps.BrowsingLevels: {
@@ -668,8 +769,9 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  const canRemoveAsModerator = !isProd && currentUser.isModerator;
-  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
+  // Self-only, in every environment. A moderator deleting somebody else's account goes through
+  // `/api/mod/user/delete`, which writes a ModActivity row.
+  if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser(input);
@@ -1397,7 +1499,11 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContex
 
     // Shared pure overlay computation — also used by the SSR seed in _app
     // getInitialProps so the injected initialData byte-matches this response.
-    return computeUserFeatureFlagsOverlay(features, ctx.features);
+    return computeUserFeatureFlagsOverlay(
+      features,
+      ctx.features,
+      getFliptGatedEligibility({ user: ctx.user, req: ctx.req })
+    );
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1448,10 +1554,9 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
 /**
  * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
  * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
- * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `allowAds`, `isEarlyAdopter`). Writing one of these without busting
  * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
- * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
- * endpoint cannot write it (see the gate below).
+ * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
 
@@ -1491,7 +1596,7 @@ export const setUserSettingHandler = async ({
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
-    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and
     // folds them into the SessionUser — and the hub caches that projection in
     // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
     // client-side (the `getSettings` cache is patched optimistically) while every session
@@ -1505,8 +1610,6 @@ export const setUserSettingHandler = async ({
     // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
     // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
     // silent re-introduction of the same bug (#4298's defect class).
-    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
-    // it is written by `updateContentSettings`, which performs its own bust.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the

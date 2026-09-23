@@ -4,6 +4,8 @@ Investigation of errors logged by the `/api/webhooks/image-scan-result` handler 
 `processImageScanResult` (`src/server/services/image-scan-result.service.ts`), which became the
 default scan-result path on 2026-07-22.
 
+> **2026-09 note:** `processImageScanResult` is gone. The webhook now dispatches to `processImageScanWorkflow` (wdTagging + mediaRating) or `processImageScanningWorkflow` (imageScanning), and the shared stages moved to `image-scan-pipeline.ts`. Errors log as `name: 'image-scan-result'` or `'image-scanning-result'` by lane; submit failures log as `'image-ingestion'` or `'image-scanning-ingestion'`.
+
 ## Where failures are logged
 
 | Signal | Dataset | Shape |
@@ -181,9 +183,9 @@ await signalClient
 This is already the house pattern — `src/server/services/referral.service.ts` and
 `src/server/auth/session-invalidation.ts` both catch-and-log around `signalClient.send`.
 
-Apply the same change to the legacy path at `src/pages/api/webhooks/image-scan-result.ts` (the
-unguarded `await signalClient.send` in the `data.ingestion !== 'Blocked'` branch) — that call is
-why timeout/signal-500 errors also appear on days before the 07-22 cutover.
+The legacy (non-orchestrator) path in `src/pages/api/webhooks/image-scan-result.ts` that also sent
+this signal unguarded has since been removed; it is why timeout/signal-500 errors also appear on days
+before the 07-22 cutover.
 
 ### Tradeoff
 
@@ -326,5 +328,5 @@ Images rejected as "too large" end up terminally `Error` and unscanned. That is 
 downscaling before submit, or raising the orchestrator's limit. Worth a follow-up decision.
 
 `markImageScanSubmitFailure` duplicates the jsonb shape written by `markImageScanError` in
-`image-scan-result.service.ts`. They differ (submit failures have no `workflowId`), but the two
+`image-scan-pipeline.ts`. They differ (submit failures have no `workflowId`), but the two
 should probably share a helper before a third caller appears.

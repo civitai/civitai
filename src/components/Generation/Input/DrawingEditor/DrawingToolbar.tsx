@@ -93,13 +93,15 @@ function ActionsOverflowMenu({
 }) {
   return (
     <Menu withinPortal withArrow shadow="md" radius="md" position="top">
-      <Menu.Target>
-        <Tooltip label="More actions" withArrow>
+      {/* Tooltip WRAPS Menu.Target, not the other way round — the inner nesting
+          silently stops the menu opening. See AppListingActionsMenu.tsx. */}
+      <Tooltip label="More actions" withArrow>
+        <Menu.Target>
           <ActionIcon variant="subtle" size="lg" radius="md">
             <IconDotsVertical size={20} />
           </ActionIcon>
-        </Tooltip>
-      </Menu.Target>
+        </Menu.Target>
+      </Tooltip>
       <Menu.Dropdown>
         {onDownload && (
           <Menu.Item leftSection={<IconDownload size={16} />} onClick={onDownload}>

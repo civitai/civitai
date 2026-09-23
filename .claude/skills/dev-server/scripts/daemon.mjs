@@ -23,9 +23,9 @@ import { fileURLToPath } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
-import { samePath, canonicalPath } from './paths.mjs';
+import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { TestQueue } from './test-queue.mjs';
+import { RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -40,34 +40,10 @@ const skillDir = resolve(__dirname, '..');
 const projectRoot = resolve(skillDir, '../../..');
 const pidFile = resolve(skillDir, 'daemon.pid');
 
-// The checkout that owns the .git directory — the base of every env chain. This is NOT projectRoot:
-// the skill directory is committed, so a daemon launched from a worktree derives projectRoot as that
-// worktree, and the "fall back to the primary" half of every chain then points at a file the
-// worktree does not have. `git rev-parse --git-common-dir` resolves to the primary's `.git` from
-// inside any worktree, which is the only spelling of this that does not depend on where the process
-// was started. Falls back to projectRoot when git cannot answer, which is the pre-worktree behaviour.
-function resolvePrimaryCheckout() {
-  try {
-    const gitCommonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      // The daemon has no console of its own, so every console child it starts without this
-      // allocates one — which Windows 11 hands to the default terminal app, popping a Windows
-      // Terminal window that takes focus. Piping stdio does not prevent the allocation.
-      windowsHide: true,
-      // This runs at module load, before the listener exists, so a wedged git would hang the daemon
-      // where `ensureDaemon` reports a bare "Failed to start daemon" with nothing naming git.
-      timeout: 5000,
-    }).trim();
-    if (gitCommonDir) return { path: resolve(gitCommonDir, '..'), derived: true, error: null };
-  } catch (e) {
-    return { path: projectRoot, derived: false, error: e.message };
-  }
-  return { path: projectRoot, derived: false, error: 'git named no common dir' };
-}
-
-const primaryResolution = resolvePrimaryCheckout();
+// The checkout that owns the .git directory — the base of every env chain, and since cli.mjs now
+// spawns this process from there, normally projectRoot as well. Still resolved rather than assumed:
+// a daemon started by hand from a worktree must not take that worktree as the base of every chain.
+const primaryResolution = resolvePrimaryCheckout(projectRoot);
 const primaryCheckout = primaryResolution.path;
 
 // Configuration
@@ -111,6 +87,9 @@ function loadSkillConfig() {
     prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,
+    typecheckConcurrency: 1,
+    testMaxWorkers: null,
+    testCacheMode: 'off',
     prodGroups: [],
   };
 
@@ -190,6 +169,29 @@ function loadSkillConfig() {
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 0) config.testConcurrency = parsed;
           else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
+          break;
+        }
+        case 'TYPECHECK_CONCURRENCY': {
+          // Same guard as TEST_CONCURRENCY, for the same reason: the queue is built at module
+          // scope and its constructor throws, so a typo here must degrade, not stop the daemon.
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 0) config.typecheckConcurrency = parsed;
+          else if (value) console.error(`Ignoring TYPECHECK_CONCURRENCY=${value} (want an integer >= 0)`);
+          break;
+        }
+        case 'TEST_CACHE_MODE':
+          // Degrades rather than throws, like every setting the module-scope queue consumes.
+          if (['off', 'shadow', 'on'].includes(value)) config.testCacheMode = value;
+          else if (value) console.error(`Ignoring TEST_CACHE_MODE=${value} (want off, shadow or on)`);
+          break;
+        case 'TEST_MAX_WORKERS': {
+          // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
+          // the queue is built at module scope, so a typo would stop the daemon binding at all.
+          // An empty value means "no cap", which is the default and not an error.
+          if (!value) break;
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
+          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1)`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':
@@ -2014,7 +2016,14 @@ async function stopAppSessions() {
 // Session manager
 const sessions = new Map();
 
-const testQueue = new TestQueue({ concurrency: skillConfig.testConcurrency });
+const testQueue = new TestQueue({
+  concurrency: {
+    unit: skillConfig.testConcurrency,
+    typecheck: skillConfig.typecheckConcurrency,
+  },
+  maxWorkers: skillConfig.testMaxWorkers,
+  cacheMode: skillConfig.testCacheMode,
+});
 
 // A tracked session owns its port whatever its status says. Status is a report the daemon
 // writes about a process it cannot see into — it has read `crashed` for a session whose
@@ -2274,6 +2283,15 @@ async function main() {
           status: 'running',
           pid: process.pid,
           uptime: process.uptime(),
+          // Both handles this process holds on a directory, which the caller cannot derive. `wt rm`
+          // reads them to name itself as the holder rather than blaming a stray shell.
+          //
+          // cwd as well as skillDir, because they can differ: a daemon started BY HAND from inside a
+          // worktree (`node <primary>/.claude/.../daemon.mjs`) runs the primary's script while
+          // holding the worktree open through its working directory alone. Reporting only skillDir
+          // would answer "not the holder" there — confidently, and wrongly.
+          skillDir,
+          cwd: process.cwd(),
           sessions: await listSessions(),
         }));
         return;
@@ -2585,11 +2603,22 @@ async function main() {
             }));
             return;
           }
+          // `request` throws on an unknown kind, and it does so inside a request handler: unguarded,
+          // that is a malformed body taking the handler down rather than a 400 to the caller.
+          let view;
+          try {
+            view = testQueue.request({
+              worktree: resolve(parsed.worktree),
+              args: Array.isArray(parsed.args) ? parsed.args : [],
+              kind: parsed.kind,
+            });
+          } catch (err) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
           res.writeHead(200);
-          res.end(JSON.stringify(testQueue.request({
-            worktree: resolve(parsed.worktree),
-            args: Array.isArray(parsed.args) ? parsed.args : [],
-          })));
+          res.end(JSON.stringify(view));
           return;
         }
 
@@ -2604,19 +2633,69 @@ async function main() {
               return;
             }
             try {
-              testQueue.setConcurrency(parsed.concurrency);
+              // Each key is applied only when the caller sent it. A POST carrying one field must
+              // not reset the others to their defaults: that is how a concurrency change would
+              // silently drop the worker cap and hand the box an uncapped pair.
+              //
+              // Read from RUN_KINDS rather than one `if` per lane. A lane declared there but
+              // missed here runs at its default limit and cannot be seen or changed, which fails
+              // in the direction that reads as working.
+              for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+                if (parsed[spec.configKey] !== undefined) {
+                  testQueue.setConcurrency(parsed[spec.configKey], kind);
+                }
+              }
+              for (const [group, spec] of Object.entries(RUN_GROUPS)) {
+                if (parsed[spec.configKey] !== undefined) {
+                  testQueue.setGroupConcurrency(parsed[spec.configKey], group);
+                }
+              }
+              if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
+              if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
             } catch (err) {
               res.writeHead(400);
               res.end(JSON.stringify({ error: err.message }));
               return;
             }
           }
+          const laneLimits = {};
+          const lanes = {};
+          for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+            laneLimits[spec.configKey] = testQueue.concurrencyFor(kind);
+            const group = RUN_KINDS[kind].group;
+            lanes[kind] = {
+              queued: testQueue.queuedFor(kind),
+              running: testQueue.runningFor(kind),
+              // Top-level `paused` is the unit lane alone, so `--typecheck 0` was a pause nothing
+              // reported: a queued typecheck sat at position 1 and read as merely waiting.
+              paused: testQueue.pausedFor(kind),
+              group,
+              // What the lane's limit is WORTH, which is not what it is set to. A saturating lane
+              // raised past its group budget admits nothing extra, and a caller who read only its
+              // own number would be told a width the queue will never give them.
+              // The queue's own method, not a second copy of the rule: `pausedFor` is derived
+              // from it, so a hand-computed duplicate here would drift from what the queue does.
+              effectiveLimit: testQueue.effectiveLimitFor(kind),
+            };
+          }
+          const groups = {};
+          for (const [group, spec] of Object.entries(RUN_GROUPS)) {
+            laneLimits[spec.configKey] = testQueue.groupConcurrencyFor(group);
+            groups[group] = {
+              limit: testQueue.groupConcurrencyFor(group),
+              running: testQueue.runningForGroup(group),
+            };
+          }
           res.writeHead(200);
           res.end(JSON.stringify({
-            concurrency: testQueue.concurrency,
+            ...laneLimits,
+            maxWorkers: testQueue.maxWorkers,
+            cacheMode: testQueue.cacheMode,
             paused: testQueue.paused,
             queued: testQueue.order.length,
             running: testQueue.running.size,
+            lanes,
+            groups,
           }));
           return;
         }

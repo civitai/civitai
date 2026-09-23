@@ -111,7 +111,7 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       every gallery image via `UPDATE "Image" SET minor = …, poi = …`, queueing those ids into the image
       index. `poi` is on `modelUpsertSchema` beside `minor` and `upsertModel` calls that fan-out, so
       flipping poi today already does all of it. Image-level `poi` also excludes from the image search
-      index and is re-derived from the parent model at scan time (`image-scan-result.service.ts:1089`).
+      index and is re-derived from the parent model at scan time (`getAssociatedEntities` in `image-scan-pipeline.ts`).
 
       What `poi` genuinely lacks against `minor` is narrower, and is a build list rather than a question:
       **no dedicated setter / `moderatorProcedure`**, **no snapshot** (so no rollback), **absent from
@@ -305,8 +305,12 @@ findings are done — see the parity checklist.
       2026-08-24 it is what removes the comment, and a ban purge can set it across an account in one
       action. Wants the mirror of the flag — a moderator-only unflag that also reopens the reports the
       ToS action closed.
-- [ ] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
-      troubleshoot issues."* (The Payments/Receipts split and filters are parity; raising the cap is not.)
+- [x] **More than 50 buzz entries.** *"Only showing 50 buzz entries will be too few for support to
+      troubleshoot issues."* The quoted 50 was already wrong — the cap was 200 — but the real defect
+      was that one cap covered both sides, so a reward-earning account's receipts consumed all of it
+      and its payments were unreachable at any window. Now capped **per side**, with `?limit=` on
+      `/api/user-buzz-history/[userId]` (clamped 1..2000) and a "Load 200 more" per column. Each
+      column states its own truncation; a full receipts column no longer implies a full payments one.
 - [ ] 🎥 **Ban-evasion view**: other accounts sharing an ISP, and whether action has been taken on each.
       *"Very important to track down people who try to avoid bans, repeat abusers."* We show shared
       IPs/socials; the same-ISP dimension and the per-account action state are extra.

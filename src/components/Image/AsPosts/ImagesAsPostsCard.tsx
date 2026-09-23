@@ -316,6 +316,8 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -330,6 +332,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -441,6 +444,8 @@ function PostCarouselSlide({
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -453,6 +458,7 @@ function PostCarouselSlide({
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -622,7 +628,15 @@ export function LazyPostImagesCarousel({
   const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
       postId != null
-        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        ? {
+            postId,
+            imageCount: total,
+            filters,
+            browsingLevel,
+            hiddenImageIds,
+            hiddenTags,
+            hiddenUsers,
+          }
         : undefined,
     [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );

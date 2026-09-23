@@ -13,6 +13,7 @@ import {
   IconGift,
   IconGraphOff,
   IconGraph,
+  IconEye,
   IconMicrophone,
   IconMicrophoneOff,
   IconRefresh,
@@ -21,6 +22,7 @@ import {
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
+import { openHiddenImagesFromUserModal } from '~/components/Dialog/triggers/hidden-images-from-user';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -31,6 +33,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -47,6 +50,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { impersonate } = useAccountContext();
+  // A hidden profile cover is filtered out of the header along with its own
+  // context menu, so this menu is the only place left to reach it from.
+  const hasHiddenImages = useHiddenPreferencesData().hiddenImages.some((x) => x.hidden);
 
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
@@ -58,14 +64,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     !!currentUser.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(username);
   const removeContentMutation = trpc.user.removeAllContent.useMutation();
-  // const deleteAccountMutation = trpc.user.delete.useMutation({
-  //   onSuccess() {
-  //     showSuccessNotification({
-  //       title: 'Account Deleted',
-  //       message: 'This account has been deleted.',
-  //     });
-  //   },
-  // });
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
@@ -212,16 +210,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   //     onConfirm: () => removeContentMutation.mutate({ id: user.id }),
   //   });
   // };
-  // const handleDeleteAccount = () => {
-  //   if (!user) return;
-  //   openConfirmModal({
-  //     title: 'Delete Account',
-  //     children: `Are you sure you want to delete this account? This action cannot be undone.`,
-  //     labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
-  //     confirmProps: { color: 'red' },
-  //     onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
-  //   });
-  // };
   const handleEnableTipalti = () => {
     if (user) enableTipaltiMutation.mutate({ id: user.id });
   };
@@ -326,13 +314,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 Remove all content
               </Menu.Item> */}
-              {/* <Menu.Item
-                color="red"
-                leftSection={<IconUserMinus size={14} stroke={1.5} />}
-                onClick={handleDeleteAccount}
-              >
-                Delete Account
-              </Menu.Item> */}
               <Menu.Item
                 leftSection={
                   user.muted ? (
@@ -392,6 +373,18 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>
               Manage model categories
+            </Menu.Item>
+          )}
+          {hasHiddenImages && (
+            <Menu.Item
+              leftSection={<IconEye size={14} stroke={1.5} />}
+              onClick={() =>
+                openHiddenImagesFromUserModal({
+                  props: { userId: user.id, username: user.username },
+                })
+              }
+            >
+              Review hidden images
             </Menu.Item>
           )}
           <HideUserButton as="menu-item" userId={user.id} />

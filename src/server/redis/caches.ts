@@ -49,9 +49,8 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -1370,6 +1369,23 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidateTtl: CacheTTL.hour,
+  // Brotli-compress every value at rest (see #4588). image-meta is the ELASTIC component of the
+  // cache — its resident set swings ~5x under load and is what drives the cluster to its memory
+  // cap — and its values are prompt/generation-parameter text, i.e. highly repetitive. Measured on
+  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved, at under 2% of app CPU as a
+  // deliberately pessimistic upper bound (that bound attributes ALL cache traffic to this one
+  // prefix). The codec is async (libuv threadpool), so it never blocks the event loop.
+  //
+  // ALL values, not a size threshold: measured, `> 4 KiB` saves only 47.5% of the prefix's bytes
+  // against 67.6% for everything — the ~20pp difference is the difference between clearing the cap
+  // at peak and not — and it trades away the scarce resource (memory) to protect one that is not
+  // scarce (CPU). `> 1 KiB` is within 1pp of "all"; the primitive has no threshold support anyway,
+  // so "all" is also the least code.
+  //
+  // Back-compat: entries are sentinel-tagged and the read path decodes legacy uncompressed values
+  // transparently, so this needed no key-bust. Turning it back OFF is NOT symmetric — a compressed
+  // key read through the general path throws and is evicted — so that would need one.
+  compress: true,
   // NO per-pod L1 here (deliberate): `meta` is gated on `hideMeta`, and when an owner
   // flips hideMeta false→true the write path calls imageMetaCache.refresh() (meta→NULL).
   // A per-pod L1 can't observe that cross-pod refresh, so other viewers' pods would keep
@@ -1879,17 +1895,11 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
     const versionInfo = await Promise.all(
       mvInfo.map(async (v) => {
         try {
-          const primaryFile = getPrimaryFile(
-            v.files as { type: string; metadata: BasicFileMetadata }[]
-          );
           const md = await getModelClient({
             token: env.ORCHESTRATOR_ACCESS_TOKEN,
-            air: stringifyAIR({
-              baseModel: v.baseModel,
-              type: v.model.type,
-              modelId: v.model.id,
-              id: v.id,
-              fileType: primaryFile?.type,
+            air: modelVersionToAir({
+              ...v,
+              files: v.files as { type: string; metadata: BasicFileMetadata }[],
             }),
           });
           if (!md || !!md.error)

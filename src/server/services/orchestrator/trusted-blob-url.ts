@@ -4,13 +4,26 @@ import { env } from '~/env/server';
  * The blob hosts stored epoch URLs actually use. Kept alongside `ORCHESTRATOR_ENDPOINT` rather than
  * derived from it: that variable may name an internal API host that never appears in a blob URL.
  */
-const KNOWN_ORCHESTRATOR_HOSTS = [
+// Exported so the test can pin it as an exact set — see the ledger in
+// __tests__/trusted-blob-url.test.ts, which fails when this list GROWS as well as when
+// it shrinks. That is the guard; a per-name assertion would only catch names someone
+// thought to enumerate.
+export const KNOWN_ORCHESTRATOR_HOSTS = [
   'orchestration.civitai.com',
   'orchestration-new.civitai.com',
-  'orchestration-stage.civitai.com',
-  'orchestration-dev.civitai.com',
-  'image-generation.civitai.com',
+  // The "next" orchestrator's public origin. A PR preview can be opted onto that
+  // orchestrator, and it mints asset URLs on this host; without it here, training
+  // epoch/asset downloads from such a preview are refused as `Invalid asset URL`.
+  // The server-side endpoint those previews use is an internal address, so it can
+  // never widen this list via the `configured` entry below — it has to be listed.
+  'orchestration-next.civitai.com',
 ];
+// Entries are removed once they stop resolving: a name with no DNS record cannot serve a
+// blob, so trusting it buys nothing, and a record created later would inherit that trust
+// without review. ⚠ This list is NOT the only place that trust lives — the training-studio
+// trace proxy (apps/training-studio/src/routes/api/trace/+server.ts) accepts ANY
+// `.civitai.com` subdomain by wildcard, so keeping this list tight does not close the
+// class, only this consumer's half of it.
 
 function hostOf(value: string | undefined | null) {
   if (!value) return undefined;

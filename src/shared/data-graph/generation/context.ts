@@ -37,9 +37,9 @@ export type GenerationCtx = {
   selfHostedMode?: 'enabled' | 'disabled' | 'memberOnly';
   /**
    * Gate rules that apply to this user (already audience-filtered server side —
-   * see `applicableRulesFor`). The ecosystem / workflow / model nodes fold these
-   * into their per-item gate-state map via `rulesToStates`, so a single
-   * resolver drives hide/disable/upsell on both client and server.
+   * see `applicableRulesFor`). Ecosystem and workflow nodes refuse a gated value
+   * in their own output schema; the model node keeps `disabled` versions
+   * selectable, so only those reach `validateInput`'s `gatedSelectionRefusal`.
    */
   gateRules?: GateRule[];
   /**

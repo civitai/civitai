@@ -38,7 +38,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 | `images.mjs` | Image moderation | review-queue, review-counts, moderate, tos-violation, rescan, report-csam, poi-tags, user-images, rating-requests, ingestion-errors, resolve-ingestion, downleveled, pending-ingestion, toggle-flag |
 | `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
 | `generation.mjs` | Generation moderation | flagged-consumers, flagged-reasons, consumer-strikes, review-strikes, user-generations, restrictions, resolve-restriction, allowlist-add, debug-audit, todays-counts, suspicious-matches |
-| `content.mjs` | Content & training | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, training-models, approve-training, deny-training, mod-rule |
+| `content.mjs` | Content moderation | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, mod-rule |
 | `model3ds.mjs` | 3D Models moderation | list, get, files, unpublish, delete, restore, set-nsfw-level, toggle-tos, toggle-poi, toggle-minor, toggle-nsfw, toggle-unlisted |
 | `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
 
@@ -200,7 +200,7 @@ node .claude/skills/mod-actions/generation.mjs allowlist-add --trigger "girl" --
 
 ---
 
-## content.mjs — Content & Training Moderation
+## content.mjs — Content Moderation
 
 ```bash
 node .claude/skills/mod-actions/content.mjs <command> [options]
@@ -217,18 +217,17 @@ node .claude/skills/mod-actions/content.mjs <command> [options]
 | `toggle-cannot-promote <id>` | WRITE | Toggle promotion eligibility |
 | `toggle-cannot-publish <id>` | WRITE | Toggle publish ability |
 | `articles` | READ | Articles for mod review |
-| `training-models` | READ | Training models for review |
-| `approve-training <id>` | WRITE | Approve training data |
-| `deny-training <id>` | WRITE | Deny training data |
 | `mod-rule <id>` | READ | Get moderation rule |
 
 **Options:** `--ids`, `--page`, `--limit`, `--json`, `--dry-run`
 
+Training moderation (list / approve / deny training data) moved to the moderator spoke
+(`/audit/training-models`, `/audit/training-data`) in the moderator-app migration and is no
+longer reachable via tRPC — see `docs/moderator-app/page-migration-checklist.md`.
+
 ```bash
 node .claude/skills/mod-actions/content.mjs flagged-models --limit 10
 node .claude/skills/mod-actions/content.mjs resolve-flagged --ids 1,2,3 --dry-run
-node .claude/skills/mod-actions/content.mjs training-models --limit 20
-node .claude/skills/mod-actions/content.mjs approve-training 456
 node .claude/skills/mod-actions/content.mjs rescan-model 789
 ```
 

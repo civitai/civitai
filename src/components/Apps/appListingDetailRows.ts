@@ -41,6 +41,8 @@
 
 import {
   LISTING_KIND_APP_LABELS,
+  LISTING_FACET_LABELS,
+  LISTING_REVIEWS_ANCHOR_ID,
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
@@ -69,6 +71,22 @@ export type ListingDetailRow = {
    * this is defence in depth on a link we already constrain, not the only control.
    */
   href?: string;
+  /**
+   * When set, the row's value renders as a SAME-PAGE fragment link to this element id.
+   * Only the `reviews` row sets it, and only when there is something to jump to.
+   *
+   * 🔴 DELIBERATELY A SEPARATE FIELD FROM {@link href}, NOT A FRAGMENT SQUEEZED INTO IT.
+   * `href`'s contract obliges the renderer to emit `target="_blank"` +
+   * `rel="noopener noreferrer"`, which is correct for an outbound third-party URL and
+   * WRONG here — it would open this page's own reviews section in a new tab. Two
+   * different link kinds with two different security postures do not share one field;
+   * merging them is how the `noopener` requirement quietly stops applying to the case
+   * that needs it.
+   *
+   * 🔴 The id must be `LISTING_REVIEWS_ANCHOR_ID`, the same constant the section
+   * renders — a fragment link to an id nothing renders fails SILENTLY.
+   */
+  anchorId?: string;
   /**
    * Mantine colour token for the value, when the value carries a verdict. Only the
    * `reviews` row sets it (the rating ladder's colour); everything else renders in the
@@ -112,7 +130,10 @@ export function buildListingDetailRows(
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
 
-  rows.push({ key: 'kind', label: 'Kind', value: kindLabel(detail) });
+  // `key` stays `'kind'` — it is the stable row identity the tests and any consumer
+  // select on. Only the human LABEL is single-sourced, so the detail rail and the
+  // store filter cannot drift apart again (they said "Kind" and "Type").
+  rows.push({ key: 'kind', label: LISTING_FACET_LABELS.kind, value: kindLabel(detail) });
 
   // 🔴 BOTH VALUES GO THROUGH THEIR DISPLAY-LABEL MAP. These two rows shipped
   // rendering the RAW stored enum — a tester read "utility" and "pg13" in the store
@@ -169,6 +190,9 @@ export function buildListingDetailRows(
       // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
       // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
       // about an app nobody has reviewed.
+      // No `href` in the zero-review case: there is a section to jump to, but nothing
+      // in it, so a link would move the viewer to an empty heading. The link is an
+      // affordance for content that exists.
       rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
     } else {
       const { label, color } = getRatingLabel({
@@ -180,6 +204,14 @@ export function buildListingDetailRows(
         label: 'Reviews',
         value: `${label} (${detail.reviewCount.toLocaleString()})`,
         color: String(color),
+        // 🔴 Only in this branch — the zero-review row above deliberately omits it.
+        // No `preview` guard is needed HERE because the whole block is already inside
+        // `if (!opts.preview)`. That matters: the reviews SECTION is not rendered in
+        // the preview posture, so a link emitted there would point at an id that does
+        // not exist on the page — and a dead fragment link fails silently. The
+        // existing row-level gate is what keeps that from happening; do not move this
+        // row out from under it without moving the link too.
+        anchorId: LISTING_REVIEWS_ANCHOR_ID,
       });
     }
   }

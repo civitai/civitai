@@ -34,6 +34,8 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
+import { getImage } from '~/server/services/image.service';
+import { MAX_SOURCE_IMAGES, signProvenance } from '~/server/services/orchestrator/remix-provenance';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -80,6 +82,21 @@ import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isRawAirResource } from '~/shared/utils/air';
+
+/**
+ * True when the (unvalidated) graph input carries raw-AIR resources — training
+ * epoch blobs referenced directly, without a ModelVersion row. Used to gate the
+ * feature-flag before the input reaches the service, mirroring the
+ * workflow-flag gates below.
+ */
+function containsRawAirResources(formInput: unknown): boolean {
+  const resources = (formInput as { resources?: unknown } | undefined)?.resources;
+  if (!Array.isArray(resources)) return false;
+  return resources.some(
+    (r) => typeof r === 'object' && r !== null && isRawAirResource(r as { id?: unknown })
+  );
+}
 
 /**
  * Resolves the currencies to use for a generation request.
@@ -344,6 +361,7 @@ export const orchestratorRouter = router({
         buzzType,
         externalId,
         acknowledgedSoftBlock,
+        sourceProvenance,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -382,6 +400,15 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Raw-AIR (training epoch blob) resources are flag-gated. The service
+      // still enforces ownership regardless of the flag; this is the rollout gate.
+      if (containsRawAirResources(formInput) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
+        });
+      }
+
       // Check generation status early
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
@@ -414,6 +441,30 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         externalId,
+        // Tokens minted by `mintRemixProvenance` for the sources this submission
+        // started from. `.input(z.any())`, so the shape is asserted here rather
+        // than assumed: anything that is not a string survives to
+        // `verifyProvenance`, which returns null for a non-string, but narrowing
+        // at the boundary keeps that a type guarantee instead of a coincidence.
+        // Bounded HERE, at the boundary. `.input(z.any())` means the array arrives
+        // unvalidated, and every element past the cap costs an AES-GCM decrypt
+        // attempt on the event loop before the prompt audit or any Buzz check.
+        //
+        // `.slice` BEFORE `.filter`, deliberately: filtering first walks and
+        // reallocates the whole caller-controlled array before the cap applies,
+        // so the crypto would be bounded while the O(n) pass was not.
+        //
+        // What this trims is TOKENS, not resolved ids — `unionSourceImageIds`
+        // caps the ids. The two differ only when more than `MAX_SOURCE_IMAGES`
+        // tokens arrive and some of the first few fail to verify, where tokens
+        // that would once have backfilled the cap are now dropped unread. That
+        // direction is strictly fewer verified ids, never more, so it can only
+        // under-grant the free-submission gate.
+        sourceProvenance: Array.isArray(sourceProvenance)
+          ? sourceProvenance
+              .slice(0, MAX_SOURCE_IMAGES)
+              .filter((x): x is string => typeof x === 'string')
+          : undefined,
         // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
@@ -461,6 +512,14 @@ export const orchestratorRouter = router({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'This workflow is not available for your account.',
+        });
+      }
+
+      // Mirror of the raw-AIR flag gate in `generateFromGraph`.
+      if (containsRawAirResources(input) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
         });
       }
 
@@ -523,6 +582,84 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
+  // #region [Remix provenance]
+  /**
+   * Issue a provenance token for a source image the user picked through a remix
+   * entry point.
+   *
+   * Why this exists as its own call rather than being derived at submit: the
+   * generation form re-uploads any source that is not already an orchestrator
+   * URL, so the `image.civitai.com` URL a remix seeds is gone by the time
+   * `resolveSourceImageIds` runs — measured, the engine the Animate button picks
+   * kept its on-site URL 98 times out of 2,526. Minting here binds the token to
+   * the image the user actually clicked, before the form can rewrite it.
+   *
+   * `getImage` is the gate, not a bare id lookup: it applies the needs-review,
+   * published-or-owner and Blocked checks, so a token cannot be minted for an
+   * image the caller could not open. Reused rather than reimplemented — a second
+   * copy of those rules is a second place for them to drift.
+   *
+   * Returns `{ provenance: undefined }` rather than throwing when signing is
+   * unavailable (`signProvenance` fails closed on a missing secret). An absent
+   * token means the remix simply carries no verified link, which is the same
+   * state as an off-site remix and is handled everywhere downstream.
+   */
+  mintRemixProvenance: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await getImage({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+      return {
+        // `mint`, so this token is spendable ONLY into a submit. The upload path
+        // refuses it — otherwise a click here would be worth a free remix-gallery
+        // submission with no generation behind it.
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'mint',
+        }),
+      };
+    }),
+
+  /**
+   * The same mint for the reuse-prompt entry point, which seeds no media and so
+   * leaves the server nothing to resolve a link from at submit.
+   *
+   * Separate from `mintRemixProvenance` rather than a `kind` parameter: the kind
+   * is the whole security property, and a client-chosen one would let the caller
+   * ask for the stronger `mint` audience from the weaker click.
+   *
+   * `getImage` is the gate here for the same reason it is there — it applies the
+   * needs-review, published-or-owner and Blocked checks, so a token cannot be
+   * minted for an image the caller could not open.
+   */
+  mintPromptProvenance: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await getImage({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+      return {
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'prompt',
+        }),
+      };
+    }),
+  // #endregion
+
   // #region [Image upload]
   imageUpload: orchestratorGuardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
@@ -543,6 +680,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
+        domain: ctx.domain,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);
@@ -608,7 +746,10 @@ export const orchestratorRouter = router({
 
   // ── Generic iterative image editor endpoints ──
 
-  iterateGenerate: protectedProcedure
+  // `guardedProcedure`, like every other generation entry point on this router: this submits a
+  // workflow and spends Buzz, so it answers to the same onboarding, mute and email-verification
+  // checks. It was the one that did not.
+  iterateGenerate: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({

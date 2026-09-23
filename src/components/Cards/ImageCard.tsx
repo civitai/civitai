@@ -7,7 +7,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
-import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
@@ -63,6 +63,7 @@ export function ImageCard({ data }: Props) {
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
+              metricsUnknown={data.stats?.statsUnknown}
               metrics={{
                 likeCount: data.stats?.likeCountAllTime,
                 dislikeCount: data.stats?.dislikeCountAllTime,

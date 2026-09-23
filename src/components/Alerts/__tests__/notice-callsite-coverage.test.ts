@@ -98,7 +98,7 @@ const CALL_SITE_LEDGER: Record<string, string[]> = {
     'referralTokenShop',
   ],
   // Guarded by feature-notice.characterization.browser.test.tsx
-  'components/Alerts/NavTidyNotice.tsx': ['navTidy'],
+  'components/Alerts/NavCustomizeNotice.tsx': ['navCustomize'],
   'components/Alerts/YellowBuzzMigrationNotice.tsx': ['yellowBuzzMigration'],
   'components/Buzz/CryptoDeposit/OnrampGuidance.tsx': ['cryptoOnrampGuidance'],
 };
@@ -111,7 +111,7 @@ describe('feature-notice call-site ledger', () => {
     // and a scan wired to nothing returns `{}` — which would make an emptied
     // ledger pass and a "no new call sites" claim vacuous.
     expect(Object.keys(actual).length).toBeGreaterThan(0);
-    expect(actual['components/Alerts/NavTidyNotice.tsx']).toContain('navTidy');
+    expect(actual['components/Alerts/NavCustomizeNotice.tsx']).toContain('navCustomize');
   });
 
   test('every file referencing FEATURE_NOTICES is a known, guarded call site', () => {
@@ -205,7 +205,7 @@ describe('feature-notice audience ledger', () => {
     // field and a file that legitimately does not. Without the second half a
     // detector wired to `true` would pass.
     expect(readsAudience('components/RemixGallery/RemixGalleryExplainer.tsx')).toBe(true);
-    expect(readsAudience('components/Alerts/NavTidyNotice.tsx')).toBe(false);
+    expect(readsAudience('components/Alerts/NavCustomizeNotice.tsx')).toBe(false);
   });
 
   test('every call site of a TARGETED notice reads isInAudience', () => {

@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { ComponentFileType, ModelFileType } from '~/server/common/constants';
-import { componentFileTypes, constants } from '~/server/common/constants';
+import { componentFileTypes } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
@@ -13,13 +13,13 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model-file-naming';
+import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
-import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
@@ -301,18 +301,23 @@ export const getFileForModelVersion = async ({
   };
 
   let file: FileResult | null = null;
+  // The files `file` sits beside, so the name it gets can be made distinct from theirs.
+  let versionFiles: FileResult[] = [];
   if (fileId) {
-    // Direct file lookup by ID — bypasses type-based resolution
-    const fileWhere: Prisma.ModelFileWhereInput = { id: fileId, modelVersionId };
+    // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
+    // files rather than the one row so the siblings come along; it is the same single query.
+    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const found = await dbRead.modelFile.findFirst({ where: fileWhere, select: fileSelect });
-    file = found as FileResult | null;
+    const found = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    versionFiles = found as FileResult[];
+    file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
     // Try local files on this model version first
     const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
     const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    versionFiles = files as FileResult[];
     const metadata = {
       ...user?.filePreferences,
       ...removeEmpty({ format, size, fp, quantType }),
@@ -341,6 +346,8 @@ export const getFileForModelVersion = async ({
         });
         if (linkedFile) {
           file = { ...linkedFile, type: type } as FileResult;
+          // Belongs to the linked version, so this version's files are not its siblings.
+          versionFiles = [];
         }
       }
     }
@@ -351,6 +358,7 @@ export const getFileForModelVersion = async ({
     model: modelVersion.model,
     modelVersion,
     file,
+    versionFiles,
   });
   try {
     const { url } = await resolveDownloadUrl(file.id, file.url, filename, { direct });
@@ -410,48 +418,14 @@ export function getDownloadFilename({
   model,
   modelVersion,
   file,
+  versionFiles,
 }: {
-  model: { name: string; type: ModelType };
-  modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; overrideName?: string | null; type: ModelFileType | string };
+  model: NameableModel;
+  modelVersion: NameableVersion;
+  file: NameableFile;
+  versionFiles?: NameableFile[];
 }) {
-  if (file.overrideName) return file.overrideName;
-
-  let fileName = file.name;
-  const modelName = filenamize(model.name);
-  let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
-
-  // If the model name is empty (due to unsupported characters), we should keep the filename as is
-  // OR if the type is LORA or LoCon
-  const shouldKeepFilename =
-    modelName.length === 0 || model.type === ModelType.LORA || model.type === ModelType.LoCon;
-  if (shouldKeepFilename) return fileName;
-
-  const ext = file.name.split('.').pop();
-  if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
-  const fileType = file.type as ModelFileType;
-
-  if (fileType === 'Training Data') {
-    fileName = `${modelName}_${versionName}_trainingData.zip`;
-  } else if (model.type === ModelType.TextualInversion) {
-    const trainedWord = modelVersion.trainedWords?.[0];
-    let fileSuffix = '';
-    if (fileType === 'Negative') fileSuffix = '-neg';
-
-    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.${ext}`;
-  } else if (fileType !== 'VAE') {
-    let fileSuffix = '';
-    if (fileName.toLowerCase().includes('-inpainting')) {
-      versionName = versionName.replace(/_?inpainting/i, '');
-      fileSuffix = '-inpainting';
-    } else if (fileName.toLowerCase().includes('.instruct-pix2pix')) {
-      versionName = versionName.replace(/_?instruct|-?pix2pix/gi, '');
-      fileSuffix = '.instruct-pix2pix';
-    } else if (fileType === 'Text Encoder') fileSuffix = '_txt';
-
-    fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
-  }
-  return fileName;
+  return resolveModelFileName({ model, modelVersion, file, versionFiles });
 }
 
 type ModelVersionFileResult =

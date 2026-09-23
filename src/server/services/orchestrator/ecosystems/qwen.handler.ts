@@ -1,30 +1,36 @@
 /**
  * Qwen Family Handler
  *
- * Handles Qwen, Qwen 2 and Qwen 3 workflows using imageGen step type.
+ * Handles Qwen, Qwen 2, Qwen 2.1 and Qwen 3 workflows using imageGen step type.
  * Discriminates between ecosystems:
- * - Qwen: sdcpp engine, model version-based routing, LoRA support
+ * - Qwen: comfy engine, model version-based routing, LoRA support
  * - Qwen 2: fal engine, aspect ratio mapped to imageSize enum
+ * - Qwen 2.1: comfy engine, unified generation/editing, release-specific LoRAs
  * - Qwen 3: qwen engine (Alibaba DashScope), explicit width/height
  */
 
 import type {
-  Qwen20bCreateImageGenInput,
-  Qwen20bEditImageGenInput,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
-  ImageGenStepTemplate,
 } from '@civitai/client';
+import type {
+  ImageGenStepTemplate,
+  ComfyQwen21CreateImageGenInput,
+  ComfyQwen21EditImageGenInput,
+  ComfyQwen20bCreateImageGenInput,
+  ComfyQwen20bEditImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' | 'Qwen3' };
+type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' | 'Qwen21' | 'Qwen3' };
 
 // =============================================================================
 // Qwen version mapping
@@ -68,11 +74,53 @@ const QWEN3_EDIT_MODEL: QwenApiEditImageGenInput['model'] = '3.0-pro';
 
 /**
  * Creates imageGen input for Qwen family ecosystems.
- * Routes to Qwen (sdcpp), Qwen 2 (fal) or Qwen 3 (qwen) based on ecosystem.
+ * Routes to Qwen (comfy), Qwen 2 (fal) or Qwen 3 (qwen) based on ecosystem.
  */
 export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const isTxt2Img = data.workflow.startsWith('txt');
   const quantity = data.quantity ?? 1;
+
+  // Qwen 2.1 — unified generation/editing with its own LoRA compatibility
+  if (data.ecosystem === 'Qwen21') {
+    if (!('resolution' in data)) throw new Error('Qwen 2.1 settings are required');
+    const loras: Record<string, number> = {};
+    for (const resource of data.resources ?? []) {
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+    }
+    const baseInput = {
+      engine: 'comfy' as const,
+      ecosystem: 'qwen' as const,
+      model: '2.1' as const,
+      diffusionModel: qwen21DiffusionModel(data.model, ctx.airs),
+      prompt: data.prompt,
+      negativePrompt: data.negativePrompt,
+      steps: data.steps,
+      cfgScale: data.cfgScale,
+      sampler: 'euler' as const,
+      scheduler: 'simple' as const,
+      quantity,
+      seed: data.seed,
+      loras: Object.keys(loras).length ? loras : undefined,
+      outputFormat: data.outputFormat,
+    };
+    if (isTxt2Img) {
+      if (!data.aspectRatio) throw new Error('Aspect ratio is required');
+      const input = {
+        ...baseInput,
+        operation: 'createImage',
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+      } satisfies ComfyQwen21CreateImageGenInput;
+      return [{ $type: 'imageGen', input: removeEmpty(input) }];
+    }
+    const input = {
+      ...baseInput,
+      operation: 'editImage',
+      resolution: data.resolution === '2K' ? 2048 : 1024,
+      images: data.images?.map((image) => image.url) ?? [],
+    } satisfies Omit<ComfyQwen21EditImageGenInput, 'width' | 'height'>;
+    return [{ $type: 'imageGen', input: removeEmpty(input) }];
+  }
 
   // Qwen 3 — qwen engine (Alibaba DashScope)
   if (data.ecosystem === 'Qwen3') {
@@ -149,7 +197,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
     ];
   }
 
-  // Qwen — sdcpp engine
+  // Qwen — comfy engine
   let process: 'txt2img' | 'img2img' = 'txt2img';
   let version: Txt2ImgVersion | Img2ImgVersion = '2512';
   if (data.model) {
@@ -168,7 +216,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
   }
 
   const baseInput = {
-    engine: 'sdcpp',
+    engine: 'comfy',
     ecosystem: 'qwen',
     model: '20b' as const,
     version,
@@ -190,7 +238,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
         input: removeEmpty({
           ...baseInput,
           operation: 'createImage',
-        }) as Qwen20bCreateImageGenInput,
+        }) as ComfyQwen20bCreateImageGenInput,
       },
     ];
   }
@@ -201,7 +249,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
         ...baseInput,
         operation: 'editImage',
         images: data.images?.map((x) => x.url) ?? [],
-      }) as Qwen20bEditImageGenInput,
+      }) as ComfyQwen20bEditImageGenInput,
     },
   ];
 });

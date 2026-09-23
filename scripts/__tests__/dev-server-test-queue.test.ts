@@ -1,12 +1,16 @@
 import { EventEmitter } from 'events';
+import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Ships with the dev-server skill (plain .mjs, loaded by the daemon under node, never bundled),
 // so it is imported by path rather than moved into src/ — same arrangement as the port probe.
+import type { RunHandle } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 import { TestQueue, exitCodeFor } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
+type Kill = RunHandle['kill'];
+
 type FakeRun = EventEmitter & {
-  kill: ReturnType<typeof vi.fn>;
+  kill: Mock<Kill>;
   finish: (code: number) => void;
   worktree: string;
 };
@@ -20,13 +24,23 @@ function makeRunner() {
   const started: FakeRun[] = [];
   const startRun = ({ worktree }: RunnerArgs): FakeRun => {
     const handle = new EventEmitter() as FakeRun;
-    handle.kill = vi.fn(() => handle.emit('exit', 1));
+    handle.kill = vi.fn<Kill>(() => {
+      handle.emit('exit', 1);
+    });
     handle.finish = (code: number) => handle.emit('exit', code);
     handle.worktree = worktree;
     started.push(handle);
     return handle;
   };
   return { started, startRun };
+}
+
+// Through `get`, not `view`: reading a run is also the touch that keeps it from being swept, and
+// several tests depend on that side effect.
+function mustGet(queue: TestQueue, id: string) {
+  const view = queue.get(id);
+  if (!view) throw new Error(`the queue has no run ${id}`);
+  return view;
 }
 
 describe('dev-server test queue', () => {
@@ -70,10 +84,10 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(0);
 
-    expect(queue.get(first.id).status).toBe('completed');
-    expect(queue.get(first.id).exitCode).toBe(0);
-    expect(queue.get(second.id).status).toBe('running');
-    expect(queue.get(second.id).position).toBe(0);
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).exitCode).toBe(0);
+    expect(mustGet(queue, second.id).status).toBe('running');
+    expect(mustGet(queue, second.id).position).toBe(0);
     expect(runner.started).toHaveLength(2);
   });
 
@@ -84,13 +98,15 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(1);
 
-    expect(queue.get(first.id).status).toBe('failed');
-    expect(queue.get(first.id).exitCode).toBe(1);
-    expect(queue.get(second.id).status).toBe('running');
+    expect(mustGet(queue, first.id).status).toBe('failed');
+    expect(mustGet(queue, first.id).exitCode).toBe(1);
+    expect(mustGet(queue, second.id).status).toBe('running');
   });
 
   it('honours a configured concurrency above one', () => {
-    const queue = build({ concurrency: 2 });
+    // The group limit is raised WITH the lane limit because they are different constraints: this
+    // test is about the lane one. The case where they disagree is pinned on its own below.
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 2 } });
 
     queue.request({ worktree: '/wt/a' });
     queue.request({ worktree: '/wt/b' });
@@ -100,6 +116,141 @@ describe('dev-server test queue', () => {
     expect(third.status).toBe('queued');
     expect(third.position).toBe(1);
   });
+
+  /**
+   * 🔴 The group budget is a CEILING over the lane limits, not a suggestion. Raising a saturating
+   * lane past its group's limit does not admit a second run - `unit`, `packages`, `apps` and
+   * `component` each want most of the machine, so only one of them runs at a time whichever lane
+   * it came from.
+   *
+   * If you are here because `test config 2` no longer starts two suites: that is this rule, and
+   * the fix is `test config 2 --saturating 2`, not deleting the condition. Six lanes at 1 each
+   * admitting together was ~62 vitest workers on 32 cores, two 8 GB tsc heaps and a browser suite,
+   * which is what this exists to stop. Decision taken 2026-09-22.
+   */
+  it('does not admit a second saturating run just because the lane limit allows one', () => {
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 1 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const second = queue.request({ worktree: '/wt/b' });
+
+    expect(runner.started).toHaveLength(1);
+    expect(second.status).toBe('queued');
+  });
+
+  it('admits a light run beside a saturating one, which is what the groups are for', () => {
+    const queue = build({ concurrency: 1, groupConcurrency: { saturating: 1, light: 2 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const check = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+
+    expect(check.status).toBe('running');
+  });
+
+  /**
+   * 🔴 Arrival order WITHIN a group, not lane-declaration order. `pump` used to walk the lanes and
+   * take each one's own head, which made the first-declared lane in a group a permanent priority:
+   * with `saturating` at 1 and this box running the unit suite constantly, a queued `component`
+   * run was measured still waiting after six later-arriving unit runs had started and finished.
+   *
+   * Overtaking ACROSS groups stays deliberate and is pinned separately below.
+   */
+  it('gives a freed saturating slot to the run that asked first, not to the first lane declared', () => {
+    const queue = build({ groupConcurrency: { saturating: 1 } });
+
+    const first = queue.request({ worktree: '/wt/a' });
+    const component = queue.request({ worktree: '/wt/b', kind: 'component' });
+    const laterUnit = queue.request({ worktree: '/wt/c' });
+
+    expect([component.status, laterUnit.status]).toEqual(['queued', 'queued']);
+
+    runner.started[0].finish(0);
+
+    expect(mustGet(queue, component.id).status).toBe('running');
+    expect(mustGet(queue, laterUnit.id).status).toBe('queued');
+  });
+
+  /**
+   * 🔴 A lane its GROUP has stopped is paused, whatever its own limit says. Reporting only the
+   * lane meant `--saturating 0` wedged five lanes while every surface said `paused: false` — the
+   * waiter printed a position and polled forever, and polling touches the run, so the abandon
+   * sweep never reclaimed it either.
+   */
+  it('reports a lane as paused when its group is what stopped it', () => {
+    const queue = build({ concurrency: 1, groupConcurrency: { saturating: 0 } });
+    const run = queue.request({ worktree: '/wt/a' });
+
+    expect(run.status).toBe('queued');
+    expect(run.paused).toBe(true);
+    expect(run.effectiveLimit).toBe(0);
+  });
+
+  /**
+   * 🔴 The light lane overtakes a run that is ALREADY QUEUED, not merely one that never arrived.
+   * Nothing pinned this: the other overtake test requests its typecheck against an empty queue, so
+   * a `pump` that only ever considers `this.order[0]` passed every test in this file while
+   * destroying the property the lanes exist for — an edit/verify loop waiting behind someone
+   * else's 500-second suite.
+   */
+  it('starts a light run that arrived AFTER a saturating run was already queued', () => {
+    const queue = build({ groupConcurrency: { saturating: 1, light: 2 } });
+
+    queue.request({ worktree: '/wt/a' });
+    const blocked = queue.request({ worktree: '/wt/b' });
+    const check = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+
+    expect(blocked.status).toBe('queued');
+    expect(check.status).toBe('running');
+  });
+
+  /**
+   * 🔴 Busy is not paused. A `pausedFor` that also counted a FULL group would make the waiter
+   * announce "nothing will start until it is raised" on every ordinary wait, which is the kind of
+   * false alarm people learn to ignore — and then miss the real one.
+   */
+  it('does not call a run paused just because its group is occupied', () => {
+    const queue = build({ groupConcurrency: { saturating: 1 } });
+    queue.request({ worktree: '/wt/a' });
+    const waiting = queue.request({ worktree: '/wt/b', kind: 'component' });
+
+    expect(waiting.status).toBe('queued');
+    expect(waiting.paused).toBe(false);
+    expect(waiting.pausedBy).toBeNull();
+    expect(waiting.groupRunning).toBe(1);
+  });
+
+  /**
+   * 🔴 A pause message must name the knob that actually unpauses it. `test config 1` raises the
+   * unit LANE; printing that while the GROUP sits at 0 leaves the run wedged and reprints the same
+   * advice. These assert the command, not merely that some command was produced.
+   */
+  it('names the group when the group is what stopped it', () => {
+    const queue = build({ groupConcurrency: { saturating: 0 } });
+    const run = queue.request({ worktree: '/wt/a' });
+    expect(run.pausedBy).toBe('group');
+    expect(run.resumeCommand).toBe('test config --saturating 1');
+  });
+
+  it('names the lane, with its own flag, when the lane is what stopped it', () => {
+    const queue = build({ concurrency: { component: 0 } });
+    const run = queue.request({ worktree: '/wt/a', kind: 'component' });
+    expect(run.pausedBy).toBe('lane');
+    expect(run.resumeCommand).toBe('test config --component 1');
+  });
+
+  /**
+   * 🔴 The saturating group holds the lanes that each want most of the machine. If you are here
+   * because you moved one of these into `light`: that is the 31-vitest-workers-plus-12-Chromium
+   * pair CLAUDE.md names, and arbitrating it is what this queue exists for.
+   */
+  it.each(['component', 'packages', 'apps', 'geometry'])(
+    'does not start a %s run beside a running unit suite',
+    (kind) => {
+      const queue = build({ groupConcurrency: { saturating: 1 } });
+      queue.request({ worktree: '/wt/a' });
+      expect(queue.request({ worktree: '/wt/b', kind }).status).toBe('queued');
+    }
+  );
 
   it('treats concurrency 0 as paused, and says so rather than leaving the caller guessing', () => {
     const queue = build({ concurrency: 0 });
@@ -113,8 +264,8 @@ describe('dev-server test queue', () => {
 
     queue.setConcurrency(1);
 
-    expect(queue.get(run.id).status).toBe('running');
-    expect(queue.get(run.id).paused).toBe(false);
+    expect(mustGet(queue, run.id).status).toBe('running');
+    expect(mustGet(queue, run.id).paused).toBe(false);
   });
 
   it('rejects a negative concurrency instead of quietly clamping it', () => {
@@ -135,14 +286,16 @@ describe('dev-server test queue', () => {
     const swept = queue.sweep();
 
     expect(swept.abandoned).toEqual([abandoned.id]);
-    expect(queue.get(abandoned.id).status).toBe('abandoned');
-    expect(queue.get(behind.id).status).toBe('queued');
-    expect(queue.get(behind.id).position).toBe(1);
-    expect(queue.get(first.id).status).toBe('running');
+    expect(mustGet(queue, abandoned.id).status).toBe('abandoned');
+    expect(mustGet(queue, behind.id).status).toBe('queued');
+    expect(mustGet(queue, behind.id).position).toBe(1);
+    expect(mustGet(queue, first.id).status).toBe('running');
   });
 
   it('never abandons a run that is already executing — the daemon owns it, not the caller', () => {
-    const queue = build({ concurrency: 2 });
+    // Two running and one queued is the shape this test needs; the group limit is raised only to
+    // reach it, and has nothing to do with what is being asserted.
+    const queue = build({ concurrency: 2, groupConcurrency: { saturating: 2 } });
     const executing = queue.request({ worktree: '/wt/a' });
     queue.request({ worktree: '/wt/b' });
     const waiting = queue.request({ worktree: '/wt/c' });
@@ -153,7 +306,7 @@ describe('dev-server test queue', () => {
     // The queued sibling proves the sweep ran and was capable of abandoning something; without it
     // an empty `abandoned` list would be true no matter what the sweep did.
     expect(swept.abandoned).toEqual([waiting.id]);
-    expect(queue.get(executing.id).status).toBe('running');
+    expect(mustGet(queue, executing.id).status).toBe('running');
   });
 
   it('kills a run that overruns the ceiling and hands the slot to the next caller', () => {
@@ -174,8 +327,8 @@ describe('dev-server test queue', () => {
 
     expect(swept.timedOut).toEqual([stuck.id]);
     expect(runner.started[0].kill).toHaveBeenCalledTimes(1);
-    expect(queue.get(stuck.id).status).toBe('timeout');
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   it('frees the slot when a killed process never exits, rather than holding it forever', () => {
@@ -183,7 +336,7 @@ describe('dev-server test queue', () => {
     // A process that swallows the kill — the wedge this whole queue exists to prevent.
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -195,16 +348,16 @@ describe('dev-server test queue', () => {
     now += 60_001;
     queue.get(next.id);
     expect(queue.sweep().timedOut).toEqual([stuck.id]);
-    expect(queue.get(stuck.id).status).toBe('running'); // kill issued, exit not seen yet
-    expect(queue.get(next.id).status).toBe('queued');
+    expect(mustGet(queue, stuck.id).status).toBe('running'); // kill issued, exit not seen yet
+    expect(mustGet(queue, next.id).status).toBe('queued');
 
     now += 5_000;
     const swept = queue.sweep();
 
     expect(swept.forced).toEqual([stuck.id]);
-    expect(queue.get(stuck.id).status).toBe('timeout');
-    expect(queue.get(stuck.id).error).toMatch(/did not exit after kill/);
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).error).toMatch(/did not exit after kill/);
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   /**
@@ -222,7 +375,7 @@ describe('dev-server test queue', () => {
     const disposals: string[] = [];
     const stubborn = (tag: string) => (): FakeRun => {
       const handle = new EventEmitter() as FakeRun & { dispose: () => void };
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = '/wt';
       handle.dispose = vi.fn(() => disposals.push(tag));
@@ -264,7 +417,7 @@ describe('dev-server test queue', () => {
     runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun & { dispose: () => void };
       let done = false;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       // The shape of the real handle: dispose and exit share one latch.
       handle.dispose = () => {
         done = true;
@@ -284,8 +437,8 @@ describe('dev-server test queue', () => {
     // The SIGKILLed child's exit arrives after the dispose and is swallowed — as it is in reality.
     runner.started[0].finish(-1);
 
-    expect(queue.get(run.id).status).toBe('cancelled');
-    expect(queue.get(run.id).error).toMatch(/daemon-shutdown/);
+    expect(mustGet(queue, run.id).status).toBe('cancelled');
+    expect(mustGet(queue, run.id).error).toMatch(/daemon-shutdown/);
     // The slot, which is the thing that actually wedges: it must be free.
     expect(queue.running.size).toBe(0);
   });
@@ -314,7 +467,7 @@ describe('dev-server test queue', () => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun & { dispose: () => void };
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.dispose = () => {
         throw new Error('capture release blew up');
@@ -331,11 +484,13 @@ describe('dev-server test queue', () => {
     // The exact status for THIS path, not either-of. `toContain` over both would pass with the
     // wrong terminal status — a shutdown reported as a timeout, or the reverse — which is the
     // shape of assertion that lets a real mix-up through.
-    expect(queue.get(run.id).status).toBe(expected);
+    expect(mustGet(queue, run.id).status).toBe(expected);
     // And it must SAY so. Swallowing this silently hides a clipped log behind `logsDropped: 0`,
     // which is the one outcome the queue's log contract rules out — and nothing asserted the line
     // existed, so both call sites could revert to a silent catch with the suite still green.
-    expect(queue.logs(run.id).map((l: { message: string }) => l.message)).toContainEqual(
+    const logs = queue.logs(run.id);
+    if (!logs) throw new Error(`the queue has no run ${run.id}`);
+    expect(logs.map((l: { message: string }) => l.message)).toContainEqual(
       expect.stringContaining('capture release failed: capture release blew up')
     );
   });
@@ -345,7 +500,7 @@ describe('dev-server test queue', () => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -356,7 +511,7 @@ describe('dev-server test queue', () => {
     queue.sweep();
     now += 5_000;
     expect(() => queue.sweep()).not.toThrow();
-    expect(queue.get(stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
   });
 
   it('does not settle a forced run twice when its exit finally arrives', () => {
@@ -367,14 +522,14 @@ describe('dev-server test queue', () => {
     now += 60_001;
     queue.get(next.id);
     queue.sweep(); // kill requested; the fake's kill emits exit, settling it here
-    expect(queue.get(stuck.id).status).toBe('timeout');
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, next.id).status).toBe('running');
 
     now += 10_000;
     const swept = queue.sweep();
 
     expect(swept.forced).toEqual([]);
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -384,14 +539,14 @@ describe('dev-server test queue', () => {
     const second = queue.request({ worktree: '/wt/b' });
 
     runner.started[0].finish(0);
-    expect(queue.get(second.id).status).toBe('running');
+    expect(mustGet(queue, second.id).status).toBe('running');
 
     // A late exit from the first run's dead handle must not settle anything or free a second slot.
     runner.started[0].finish(1);
 
-    expect(queue.get(first.id).status).toBe('completed');
-    expect(queue.get(first.id).exitCode).toBe(0);
-    expect(queue.get(second.id).status).toBe('running');
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).exitCode).toBe(0);
+    expect(mustGet(queue, second.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -403,9 +558,9 @@ describe('dev-server test queue', () => {
 
     queue.cancel(doomed.id);
 
-    expect(queue.get(doomed.id).status).toBe('cancelled');
-    expect(queue.get(behind.id).position).toBe(1);
-    expect(queue.get(running.id).status).toBe('running');
+    expect(mustGet(queue, doomed.id).status).toBe('cancelled');
+    expect(mustGet(queue, behind.id).position).toBe(1);
+    expect(mustGet(queue, running.id).status).toBe('running');
     expect(runner.started).toHaveLength(1);
   });
 
@@ -424,7 +579,7 @@ describe('dev-server test queue', () => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -446,7 +601,7 @@ describe('dev-server test queue', () => {
     now += 1_001;
 
     expect(queue.sweep().forced).toEqual([stuck.id]);
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   it('refuses to call a killed run a pass, even when its process exited 0', () => {
@@ -455,7 +610,7 @@ describe('dev-server test queue', () => {
     // taskkill, so the child can still exit on its own terms first.
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = (code: number) => handle.emit('exit', code);
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -467,7 +622,7 @@ describe('dev-server test queue', () => {
     // The child exited cleanly in the window between the kill being issued and it landing.
     runner.started[0].finish(0);
 
-    const view = queue.get(run.id);
+    const view = mustGet(queue, run.id);
     expect(view.status).toBe('cancelled');
     expect(view.exitCode).toBe(0);
     // What a waiter would exit with. 0 here would report a green suite that never finished.
@@ -493,15 +648,15 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(-1); // node reports no code when a child dies by signal
 
-    expect(queue.get(run.id).status).toBe('error');
-    expect(exitCodeFor(queue.get(run.id))).toBe(1);
+    expect(mustGet(queue, run.id).status).toBe('error');
+    expect(exitCodeFor(mustGet(queue, run.id))).toBe(1);
   });
 
   it('keeps the verdict of a runner that reported an exit and then threw', () => {
     const queue = build();
     runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -511,15 +666,15 @@ describe('dev-server test queue', () => {
 
     const run = queue.request({ worktree: '/wt/a' });
 
-    expect(queue.get(run.id).status).toBe('completed');
-    expect(queue.get(run.id).exitCode).toBe(0);
+    expect(mustGet(queue, run.id).status).toBe('completed');
+    expect(mustGet(queue, run.id).exitCode).toBe(0);
   });
 
   it('ignores a late exit arriving after the slot was force-released', () => {
     const queue = build({ killGraceMs: 5_000 });
     runner.startRun = ({ worktree }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = (code: number) => handle.emit('exit', code);
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -533,14 +688,14 @@ describe('dev-server test queue', () => {
     queue.sweep();
     now += 5_001;
     expect(queue.sweep().forced).toEqual([stuck.id]);
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
 
     // The abandoned process finally exits, cleanly, long after its slot was given away.
     runner.started[0].finish(0);
 
-    expect(queue.get(stuck.id).status).toBe('timeout');
-    expect(queue.get(stuck.id).exitCode).toBeNull();
-    expect(queue.get(next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).exitCode).toBeNull();
+    expect(mustGet(queue, next.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -548,7 +703,7 @@ describe('dev-server test queue', () => {
     const queue = build();
     runner.startRun = ({ worktree, onExit }: RunnerArgs): FakeRun => {
       const handle = new EventEmitter() as FakeRun;
-      handle.kill = vi.fn();
+      handle.kill = vi.fn<Kill>();
       handle.finish = () => {};
       handle.worktree = worktree;
       runner.started.push(handle);
@@ -561,8 +716,8 @@ describe('dev-server test queue', () => {
 
     // Without this, the finished run holds the only slot until the run ceiling expires and
     // everything behind it is abandoned instead of run.
-    expect(queue.get(first.id).status).toBe('completed');
-    expect(queue.get(second.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, second.id).status).toBe('completed');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -589,7 +744,7 @@ describe('a clipped log announces itself', () => {
     const view = queue.request({ worktree: '/repo' });
     const run = queue.runs.get(view.id);
     for (let i = 0; i < lines; i++) queue.addLog(run, 'stdout', `line ${i}`);
-    return queue.get(view.id);
+    return mustGet(queue, view.id);
   };
 
   it('reports nothing dropped while the window still holds everything', () => {

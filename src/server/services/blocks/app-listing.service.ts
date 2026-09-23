@@ -8,6 +8,7 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -35,7 +36,14 @@ import {
   readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
-import { queryCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+// The cache TAG NAMES live in a dependency-free LEAF module, never here — a router
+// that must `await import()` this service cannot name a constant exported from it
+// without making that lazy import graph-inert. See that module's header.
+import {
+  APP_LISTING_CATALOG_TAG,
+  APP_LISTING_RECOMMEND_MEAN_TAG,
+} from '~/server/services/blocks/app-listing-cache.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -226,6 +234,23 @@ export const listingHydrateSelect = {
   contentRating: true,
   externalUrl: true,
   connectClientId: true,
+  // 🔴 `connectRequestedScopes` IS DELIBERATELY *NOT* HERE — it is spread in at the two
+  // DETAIL call sites instead, the same pattern `status` and `revisionOfId` already use,
+  // so the public `/apps` GRID this select backs is untouched.
+  //
+  // ⚠ An earlier draft of this PR did put it here, justified as "beside `connectClientId`,
+  // which it shipped alongside in the same W13 block". That justification was FALSE and
+  // the placement inherited its risk: the two columns are in DIFFERENT manual-apply
+  // migrations sixteen days apart — `connect_client_id` in
+  // `20260701120000_w13_p0_app_listing/`, `connect_requested_scopes` in
+  // `20260717120000_w13_connect_scope_review/`, whose own header says "MANUAL APPLY … CI /
+  // deploy does NOT run it" and "If that code ships before the columns exist, those
+  // queries 500." Two migrations have two independent apply histories, so one column's
+  // presence is no evidence about the other's. Selecting it here would have put the whole
+  // public store grid behind a migration it never previously needed — the exact outcome
+  // `sourceRepoUrl` records having MEASURED on a preview env ("5 smoke specs 500'd here").
+  // The column IS applied in production (verified directly against `public.app_listings`);
+  // that is a fact about prod, not about every environment.
   appBlockId: true,
   icon: { select: { url: true } },
   cover: { select: { url: true } },
@@ -237,12 +262,24 @@ export const listingHydrateSelect = {
   // column the public `popular` sort already orders every approved listing by
   // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
   // already — see the DTO field's allowlist justification.
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
+  // `openCount` feeds the store CARD's play-count stat. Selected here (the shared
+  // card+detail select) but projected onto the CARD only — see `cardOpenCount` and
+  // the DTO field's allowlist justification. It is an aggregate over the whole
+  // audience; the column is `Int NOT NULL DEFAULT 0`, so the null-vs-zero decision
+  // is made in the projection, never here.
+  metric: {
+    select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true, openCount: true },
+  },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
   // available while a new version re-builds).
-  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
+  // `approvedScopes` feeds the DETAIL DTO's pre-launch permission disclosure.
+  // Projected onto the DETAIL only (see `scopes` in `projectListingDetail`); the
+  // card deliberately does not carry it, for the same reason `sourceRepoUrl` is
+  // detail-only — a grid tile has no room for the context that makes a
+  // capability list readable.
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true, approvedScopes: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -280,6 +317,69 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
 }
 
 /**
+ * The card's play count: a NUMBER for an on-site listing, `null` for an off-site one.
+ *
+ * 🔴 THE DISCRIMINATION IS THE WHOLE POINT, and `row.metric?.openCount ?? 0` alone —
+ * the obvious implementation — is WRONG for every off-site card. `open_count` is
+ * `Int NOT NULL DEFAULT 0`, so an off-site row carries a literal `0`; projecting it
+ * would render "nobody has ever used this app" for an app whose CTA is a plain
+ * `target="_blank"` anchor to a third party, where no on-platform request follows the
+ * click and there is therefore nothing trustworthy to count. That number is ABSENT,
+ * not zero, and `null` is how the DTO says so (the renderer omits the stat row).
+ *
+ * 🔴 AND DO NOT OVER-NULL. An on-site listing nobody has opened yet is a genuine `0`.
+ * A missing metric row means "no plays recorded yet" ⇒ `0`, the same COALESCE-to-0
+ * reading `installCount` uses — NOT `null`.
+ *
+ * 🔴 DISCRIMINATE ON `kind`, NEVER ON `appBlockId` NULLNESS. They are not the same
+ * predicate: `schema.prisma` states at the `appBlockId` field that a natively-created
+ * OFF-SITE listing also leaves it NULL, so an `appBlockId`-based test would be right
+ * by accident on some rows and wrong on others.
+ *
+ * The positive `=== 'onsite'` test (rather than `!== 'offsite'`) is deliberate: it
+ * fails CLOSED to `null` for any kind added later, because an omitted stat row is
+ * honest about an unmeasured app while a `0` is a false claim about it. That property
+ * is GUARDED, not merely stated — see the unknown-future-kind case in
+ * `__tests__/app-listing.service.test.ts`; every other fixture there is onsite/offsite
+ * and cannot tell this form apart from the fail-OPEN `=== 'offsite'` one.
+ *
+ * ✅ MERGE-ORDER CONSTRAINT — DISCHARGED. THIS PARAGRAPH IS RE-DERIVED, NOT EDITED
+ * AROUND, SO READ IT RATHER THAN THE ONE IT REPLACES.
+ *
+ * It used to open "🔴 READ BEFORE SHIPPING THE RENDERER (Stage 4). NOTHING WRITES
+ * `open_count` YET. `appListing.metrics.sql.ts` populates `install_count` only — its
+ * own suite asserts `expect(upsert).not.toContain('open_count')`", and it required the
+ * renderer either to wait for #4653 or to ship behind a flag, on the grounds that a
+ * premature renderer would print "0 plays" on every on-site app INCLUDING heavily used
+ * ones — by this field's own standard the worst outcome available, and on a public
+ * surface.
+ *
+ * Every clause of that is now false, checked rather than assumed:
+ *   · #4653 IS MERGED (`f9f81dcfb5`, "derive app_listing_metrics.open_count from
+ *     App_Open events"), and #4652 before it (`6ff42aed42`) ships the App_Open events
+ *     it derives from;
+ *   · `appListing.metrics.sql.ts` names `open_count` in its INSERT and ON CONFLICT
+ *     lists, and the suite assertion quoted above has INVERTED — the same file now
+ *     asserts `toContain('COALESCE(oc."open_count", 0)')` and
+ *     `toContain('"open_count" = EXCLUDED."open_count"')`;
+ *   · the count is DERIVED from an all-time read on every rollup run rather than
+ *     accumulated, so there is no backfill step gating correctness — a listing's
+ *     number becomes right the first time the job covers it.
+ *
+ * The renderer (stage 4) therefore ships unflagged, and the flag this paragraph
+ * declined to build is still not built and is no longer wanted.
+ *
+ * ⚠️ WHAT IS **NOT** CLAIMED HERE: that the rollup has already RUN over the whole
+ * catalog in any given environment. That is an operational fact about a scheduled
+ * job, not a property of this code — an on-site listing whose row the job has not yet
+ * covered reads a truthful-by-the-DTO's-rule `0` until it does.
+ */
+function cardOpenCount(row: HydratedListing): number | null {
+  if (row.kind !== 'onsite') return null;
+  return row.metric?.openCount ?? 0;
+}
+
+/**
  * Project a hydrated listing row → the PUBLIC card DTO (allowlist).
  *
  * 🔴 `beta` is passed IN, and it is the SAME manual-apply trap `projectListingDetail`
@@ -314,6 +414,8 @@ export function projectListingCard(
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // Number for on-site, `null` for off-site — see `cardOpenCount`.
+    openCount: cardOpenCount(row),
     kindData: cardKindData(row),
   };
 }
@@ -407,7 +509,10 @@ export async function getListingPreviewForReview(args: {
     // PARENT for a shadow. Spread here rather than added to `listingHydrateSelect`, so the
     // public grid and detail reads are untouched (same pattern as `status` on the public
     // detail read). It is an ordinary long-standing column, not a manual-apply one.
-    select: { ...listingHydrateSelect, revisionOfId: true },
+    // `connectRequestedScopes` is spread in here rather than living in
+    // `listingHydrateSelect`, so the public grid never depends on its manual-apply
+    // migration — see the note at that select. Same reason `revisionOfId` is spread.
+    select: { ...listingHydrateSelect, revisionOfId: true, connectRequestedScopes: true },
   });
   if (!row) return null;
   // Same manual-apply guard as the public read — a moderator previewing a shadow must
@@ -441,7 +546,7 @@ export async function getListingPreviewForReview(args: {
   ]);
   return {
     card: projectListingCard(row, beta),
-    detail: projectListingDetail(row, [], sourceRepo.value, beta),
+    detail: projectListingDetail(row, [], sourceRepo.value, beta, row.connectRequestedScopes),
   };
 }
 
@@ -477,7 +582,18 @@ export function projectListingDetail(
   row: HydratedListing,
   collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
   sourceRepoUrl: string | null = null,
-  beta: ListingBetaRead = BETA_NOT_SET
+  beta: ListingBetaRead = BETA_NOT_SET,
+  /**
+   * The raw `AppListing.connectRequestedScopes` bitmask, PASSED IN for the same reason
+   * `sourceRepoUrl` and `beta` are: its column is manual-apply and is deliberately not
+   * named in `listingHydrateSelect`, which the public `/apps` GRID shares. Each DETAIL
+   * caller spreads it into its own select and hands it here.
+   *
+   * Defaulting to `null` means a caller that forgets it discloses NOTHING rather than
+   * throwing — the safe direction for a permissions surface, and the same default shape
+   * as its two neighbours.
+   */
+  connectRequestedScopes: number | null = null
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
@@ -521,6 +637,118 @@ export function projectListingDetail(
     sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
+    // Pre-launch permission disclosure. IDENTICAL projection to the one
+    // `BlockRegistry.getAppDetail` already ships for the same purpose — the
+    // approved scope ids, string-filtered, `[]` when the column is NULL.
+    //
+    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`, AND THE REASON
+    // IS THAT THE TWO GENUINELY DIVERGE — do not "simplify" this to `manifest.scopes`.
+    //
+    // ⚠ An earlier version of this comment claimed they "can never disagree because
+    // the approve paths write them in the same update". That is FALSE, and it deleted
+    // the only reason this line reads the column it does.
+    // `src/pages/api/v1/developer/block-manifests.ts` updates `manifest` + `version`
+    // on an existing AppBlock WITHOUT touching `approvedScopes`, and sets
+    // `status: 'pending'` — deliberately, so a publisher cannot swap `iframe.src` or
+    // sandbox tokens post-approval without re-entering moderation. So a row can hold
+    // a v2 manifest declaring `['models:read:self','ai:write:budgeted']` alongside a
+    // v1 `approvedScopes` of `['models:read:self']`.
+    //
+    // Reading the manifest there would publish a scope NOBODY APPROVED on a public
+    // store page — the app's own claim about itself, rendered as if granted.
+    // `approvedScopes` is written only by the three approve paths
+    // (`publish-request.service.ts`), which take `manifest.scopes` verbatim at approve
+    // time; there is no per-scope narrowing mechanism, so the only skew is
+    // approve→deploy, where this over-discloses. That is the safe direction.
+    //
+    // 🔴 GATED ON `kind`, NEVER ON `appBlockId` NULLNESS — they are not the same
+    // predicate. `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null
+    // `appBlockId` whenever the source AppBlock carries an `externalUrl`, reachable
+    // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
+    // as many words to discriminate on `kind`.
+    //
+    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — `CAPABILITIES_BY_KIND` /
+    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`.
+    // If this gate is ever consolidated, ADD A CAPABILITY CELL there; do NOT build a
+    // new helper.
+    //
+    // 🔴 DELIBERATELY NO COUNTS AND NO SITE LIST HERE — read
+    // `KIND_CAPABILITY_LEDGER` in
+    // `src/server/services/blocks/__tests__/app-access.call-site-ledger.test.ts`,
+    // which is growth-and-shrink gated and therefore cannot go stale the way a
+    // sentence can. THREE successive drafts of this comment quoted a number or a
+    // site list and all three were WRONG: "the third consumer" (undercount), then
+    // "five, open-coded by hand" (two already used the table), then "~14 absorbed"
+    // (that figure belongs to `app-access.service.ts`'s separate OWNERSHIP-gate
+    // consolidation, not to the capability table) alongside "two of five already
+    // route through it" (it is four of five). Each wrong draft was written while
+    // fixing the previous one. The form is the defect, not the arithmetic — so the
+    // number now lives only where a test asserts it.
+    //
+    // Without the gate, such a row renders the off-site disclosure — "This app runs
+    // entirely off-platform — no Civitai install, account access, or permissions" —
+    // directly above "This app can… ai:write:budgeted". Two contradictory SECURITY
+    // claims on a public store page. The population is 0 in production (measured
+    // 2026-08-11: offsite 5 rows, 0 with a block), so this is PREVENTION, not a
+    // live bug — and prevention is cheap here because it is one clause.
+    scopes:
+      row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
+        ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+        : [],
+    // The OFF-SITE analog of `scopes` above: the account permissions an
+    // OAuth-connect listing will ASK the viewer to approve, decoded from the
+    // `connectRequestedScopes` bitmask into TokenScope enum-keys.
+    //
+    // 🔴 GATED ON `kind` **AND ON THE CONNECT CLIENT'S PRESENCE**, and the second
+    // half is not belt-and-braces — omitting it is a live public-page defect.
+    //
+    // `connectClient` is `onDelete: SetNull` (`schema.full.prisma:2899`) while
+    // `connectRequestedScopes` is an independent `Int?` the cascade never touches, and
+    // deleting an OAuth client is owner-callable with no check for referencing
+    // listings. `app-transfer.constants.ts` already records the resulting state in
+    // writing — "SetNull nulls the listing's connectClientId, STRANDING the
+    // connectRequestedScopes … an owner-initiated route out of this refusal EXISTS
+    // TODAY". The listing stays `approved` and keeps serving.
+    //
+    // Without this clause that stranded row publishes scopes while
+    // `shouldShowOffsiteDisclosure` — which is `… && !kindData.connectClientId` — turns
+    // TRUE, so one public page renders "no Civitai install, account access, or
+    // permissions" directly above "Permissions this app may request (2) / Sensitive
+    // permissions (2)". Two contradictory SECURITY claims, and the permissions half is
+    // the FALSE one: with no client, nothing can be asked for. `app-listing.service.test.ts`
+    // already refuses exactly this shape for `scopes`, in those words.
+    //
+    // ⚠ THIS IS NOT THE `appBlockId`-vs-`kind` RULE, AND AN EARLIER DRAFT CONFLATED
+    // THEM. That rule says do not infer an on-site KIND from `appBlockId` nullness —
+    // `mapAppBlockToListing` can mint `kind: 'offsite'` WITH a non-null `appBlockId`, so
+    // `kind` is the kind discriminator and stays one here. `connectClientId` is not
+    // being used as a kind discriminator: it answers a different question — is there a
+    // client that could request anything at all — and `kind === 'offsite'` does not
+    // imply there is one.
+    //
+    // 🔴 DECODED HERE, SERVER-SIDE, THROUGH THE SHARED TABLE. `tokenScopeMaskToList`
+    // is the same expansion the hub's OAuth consent screen uses; its own module
+    // says forking the bitmask/labels would be a latent security bug. Sending the
+    // raw Int instead would push that decode onto every consumer of a PUBLIC REST
+    // endpoint and couple them to bit positions.
+    //
+    // 🔴 NO STATUS CLAUSE, DELIBERATELY. `getListingDetail` already returns null
+    // for `status !== 'approved'` before reaching this projection, so a draft's
+    // intended scopes cannot ride the public read; adding the clause here would be
+    // unreachable on that path. On the OTHER caller it would be actively wrong —
+    // `getListingPreviewForReview` is deliberately not status-filtered so a
+    // moderator can preview a draft, and a status gate here would blank the
+    // enumeration they are reviewing. `appListingConnectScopes.test.ts` pins both
+    // halves so this reliance cannot rot into a sentence nobody rechecks.
+    // Truthiness on `connectClientId`, not `!= null` — `kindData` normalises `'' → null`
+    // (`row.connectClientId || null` above), so an empty string must read as "no client"
+    // on BOTH sides or the two surfaces disagree at exactly that value.
+    connectScopes:
+      row.kind === 'offsite' &&
+      Boolean(row.connectClientId) &&
+      typeof connectRequestedScopes === 'number'
+        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        : [],
   };
 }
 
@@ -636,9 +864,155 @@ export async function getGlobalRecommendMean(): Promise<number> {
       WHERE al.status = 'approved'
         AND (m.thumbs_up_count + m.thumbs_down_count) > 0
     `,
-    { ttl: CacheTTL.hour, tag: ['app-listing:recommend-global-mean'] }
+    { ttl: CacheTTL.hour, tag: [APP_LISTING_RECOMMEND_MEAN_TAG] }
   );
   return rows[0]?.mean ?? DEFAULT_RECOMMEND_MEAN;
+}
+
+// ---------------------------------------------------------------------------
+// The unified store CATALOG cache (`listAvailableListings`) + its ONE buster.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the read-through cache for the `/apps` store's keyset id page, for ONE
+ * viewer class.
+ *
+ * 🔴 THE TWO SECURITY-BOUNDARY AXES ARE LITERAL KEY SEGMENTS, NOT HASH INPUT.
+ *
+ * `queryCache` builds its redis key as `[key, version, hashifyObject(query)]
+ * .join(':')` (`~/server/utils/cache-helpers`). `hashifyObject` → `hashify`
+ * (`~/utils/string-helpers`) is a **32-bit** rolling hash
+ * (`hash = (hash << 5) - hash + chr; hash |= 0`). It is neither injective nor
+ * one-way, and it is LINEAR — collisions against a chosen target are constructed
+ * algebraically, not brute-forced. An earlier revision of this code passed a
+ * single constant `key` and relied on "every axis is interpolated into the
+ * statement, so every axis is in the key". That reasoning silently assumes the
+ * hash is injective, and it is not.
+ *
+ * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
+ * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
+ * arbitrary free strings (only `cursorMean` is range-validated), the router
+ * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * statement as bound params. That is enough tuning room to steer the 32-bit hash
+ * onto any target value.
+ *
+ * So the two axes that are SECURITY BOUNDARIES are lifted out of the hashed
+ * payload and into the `key` string itself:
+ *
+ *   · `scope` — `listingPublicVisibilityFilter`. `full` is the whole approved
+ *     catalog; `public-external` is offsite-only. That is the public/onsite
+ *     boundary (civitai#3983). A cross-scope collision would serve on-site apps
+ *     into the anonymous `GET /api/v1/apps` response, and the reverse direction
+ *     is cache poisoning.
+ *   · `redCapable` — `listingMatureFilter`. A cross-capability collision serves
+ *     `r`/`x` listings onto a SFW host.
+ *
+ * With both in the literal prefix, a hash collision can only ever mix two pages
+ * WITHIN one viewer class — the class boundary is no longer hash-dependent.
+ * `__tests__/app-listing.catalog-cache.test.ts` pins that the boundary lives in
+ * the un-hashed segments.
+ *
+ * 🔴 WHAT IS LEFT UN-CONTAINED, STATED AS A RESIDUAL RATHER THAN A REASSURANCE. The
+ * remaining axes (`kind`, `category`, `sort`, `cursor`, `limit`) stay in the hash, and
+ * a constructed collision across them is CROSS-USER CACHE POISONING of the shared
+ * `/apps` grid — not, as an earlier version of this comment said, "the attacker's own
+ * page served back to themselves". The entry is shared by every viewer in the class,
+ * and `full` is the class for ordinary logged-in users. The attacker's crafted-cursor
+ * request MISSES, so it is the request that WRITES the colliding key; every later
+ * reader deriving that key HITS it. So one request can pin the store's first page to
+ * an arbitrary filtered — or empty — result for up to `CacheTTL.sm` (180s) for everyone
+ * in that class.
+ *
+ * What it is NOT is a disclosure boundary: every row in a poisoned page came from a
+ * statement carrying the SAME `scope` and `redCapable` predicates, so no listing
+ * appears that the viewer was not already entitled to see. That is the whole reason
+ * those two axes, and only those two, were lifted out of the hash.
+ *
+ * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
+ * grid defect above. The alternative to accepting it is putting the remaining axes in
+ * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
+ * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
+ * label request-controlled and unbounded — exactly the property the note at the bottom
+ * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
+ * `limit` is 1..50, so those four could be lifted; they would multiply the label
+ * cardinality by their product, and they do not help while `cursor` stays hashed,
+ * because `cursor` is the tuning room the collision is built out of.) Widening
+ * `hashify` is the other alternative and it is global — see below.
+ *
+ * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
+ * cursor DIGEST computed with a real hash, not to widen `hashify`.
+ *
+ * 🔴 DO NOT "FIX" THIS BY WIDENING `hashify` — it is used across the codebase for
+ * cache keys, DOM ids and de-dup, so changing its output is a global blast radius.
+ * The containment belongs here, at the one call site that has a security boundary.
+ *
+ * Why `queryCache` + a bust tag, and not the alternatives:
+ *
+ * · **NOT `fetchThroughCache`** — it takes no `tag` option, so `bustCacheTag`
+ *   cannot drive it and a moderator's approve/delist would not be visible until
+ *   the TTL expired.
+ *
+ * · **NOT `clearCacheByPattern`** — banned for bust-on-mutation; see that
+ *   function's own header. A prior use ran a cluster SCAN over a ~60M-key shard,
+ *   producing redis timeouts and 504 waves, and was reverted.
+ *
+ * · **NOT a generation counter** — a counter folded into the key leaves the old
+ *   entries in redis to expire on their own, so a bust multiplies the keyspace
+ *   instead of reclaiming it. The tag set holds the exact keys to delete.
+ *
+ * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
+ * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
+ * never a request-controlled string.
+ */
+function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+  return queryCache(
+    dbRead,
+    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    'v1'
+  );
+}
+
+/**
+ * Bust the `/apps` store catalog cache. THE one buster — nothing else deletes the tag.
+ *
+ * 🔴 THE RULE IS "BUST WHEN A CACHED AXIS OR CATALOG MEMBERSHIP MOVES", NOT "every
+ * listing-state mutation busts". Several call sites used to invoke the latter as a
+ * "uniform rule"; it is not uniform, and stating it that way made a reader's model of
+ * the cache wrong in the expensive direction — it implies that a writer WITHOUT a bust
+ * is a bug, when a whole enumerated list of them are deliberate and correct. The cached
+ * statement reads
+ * `al.status`, `al.kind`, `al.revision_of_id`, `al.category`, `al.content_rating`,
+ * `al.app_block_id` + `ab.current_version_deployed_at` (the deploy gate and its join
+ * key) and the `sort_key` inputs (`al.name`, `al.created_at`, the metric rollup) — and
+ * nothing else. Every other column on the card is hydrated live below the cache and can
+ * never be served stale. ⚠️ The metric rollup is on `app_listing_metrics`, not on this
+ * table, and its two writers deliberately do NOT bust; `APP_LISTING_CATALOG_TAG`'s
+ * header in `app-listing-cache.constants.ts` states that exception in full.
+ *
+ * Some busts ARE kept on paths that are inert today, as cheap defence-in-depth against
+ * a future edit promoting the row into the catalog: `updateListing`'s `removed` and
+ * `draft`/`pending` branches, its material-shadow branch, `submitListingRevision`,
+ * `rejectExternalRequest` and `claimListing`. Each says so at its own call site. They
+ * are a judgement, not the rule.
+ *
+ * ⚠️ THAT LIST IS PROSE AND NOTHING ASSERTS ON IT. The ledger pins WHICH functions bust
+ * and which are `EXEMPT`; it does not pin which of the busts are inert, because that is
+ * a claim about the SQL a branch can write rather than about a call site. Re-derive it
+ * from the call-site comments rather than trusting the enumeration here.
+ *
+ * The asserted form of the rule — every `AppListing` writer either busts or is on an
+ * `EXEMPT` list with a reason — is
+ * `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`. That
+ * file, not this paragraph, is what a new mutation has to satisfy.
+ *
+ * Fire-and-forget by the caller's convention (mirrors `bustRecommendMeanCache` in
+ * `app-listing-review.service`): a cache-bus outage must never fail the mutation
+ * that already committed. The worst case of a swallowed failure is a stale store
+ * grid for at most `CacheTTL.sm`; the worst case of a thrown one is a moderator
+ * action that reports failure after having succeeded.
+ */
+export async function bustAppListingCatalogCache(): Promise<void> {
+  await bustCacheTag([APP_LISTING_CATALOG_TAG]);
 }
 
 // ---------------------------------------------------------------------------
@@ -684,7 +1058,31 @@ export async function listAvailableListings(
   const kindParam = kind === 'all' ? null : kind;
   const categoryParam = category ?? null;
 
-  const idRows = await dbRead.$queryRaw<{ id: string; sort_key: string }[]>(Prisma.sql`
+  // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
+  // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
+  // a card's mutable projection fields are never served from two different ages.
+  // `nextCursor` is derived from these (now cached) rows, same as there.
+  //
+  // The cache is built PER VIEWER CLASS: `scope` and `redCapable` are literal segments
+  // of the redis key, deliberately outside the 32-bit `hashifyObject` of the statement.
+  // See {@link catalogPageCache} for why that is load-bearing rather than stylistic.
+  //
+  // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
+  // leave only through moderator approve/delist/reject/purge or an owner
+  // unpublish/republish, and every one of those paths calls
+  // `bustAppListingCatalogCache()`.
+  //
+  // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
+  // no mutation to hang a bust on — chiefly a row that ages into visibility. It is NOT
+  // a redis-outage backstop: `queryCache` has no try/catch and no fail-open (unlike
+  // `fetchThroughCache`), so a redis outage does not degrade to a live DB read here, it
+  // throws — a 500 on `/apps` and on `GET /api/v1/apps`. That is the dependency this
+  // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
+  // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
+  // bust cannot stretch past.
+  const cacheable = catalogPageCache(scope, redCapable);
+  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
+    Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
@@ -714,7 +1112,9 @@ export async function listAvailableListings(
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
-  `);
+  `,
+    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+  );
 
   const trimmed = idRows.slice(0, limit);
   const last = trimmed[trimmed.length - 1];
@@ -790,7 +1190,9 @@ export async function getListingDetail(
 
   const row = await dbRead.appListing.findFirst({
     where,
-    select: { ...listingHydrateSelect, status: true },
+    // `connectRequestedScopes` spread in for the DETAIL only — see the note at
+    // `listingHydrateSelect` for why it must not live in the grid-shared select.
+    select: { ...listingHydrateSelect, status: true, connectRequestedScopes: true },
   });
   // Status check in the app layer (like the AppBlock path) so a future caller
   // can't reuse this for a non-public path: a non-approved row returns null
@@ -824,7 +1226,13 @@ export async function getListingDetail(
     readListingSourceRepoUrl(row.id, dbRead),
     readListingBetaForRender(row.id, dbRead),
   ]);
-  return projectListingDetail(row, collaborators, sourceRepo.value, beta);
+  return projectListingDetail(
+    row,
+    collaborators,
+    sourceRepo.value,
+    beta,
+    row.connectRequestedScopes
+  );
 }
 
 /**

@@ -23,8 +23,11 @@ Also check the `FliptFlag` enum in [src/server/flipt/client.ts](../src/server/fl
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
-| `apiKeys`    | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
-| `oauthApps`  | ❌ Restored — destructured in [user/account.tsx:30](../src/pages/user/account.tsx#L30) |
+| `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
+| `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
+
+⚠️ Every account-page flag has **two** consumers while `accountSettingsV2` is alive — the pane
+(`AccountPanes.tsx`) and the fallback (`LegacyAccountPage.tsx`). One grep hit is not the whole answer.
 
 `apiKeys: ['public']` is decorative-only (always-true gate); see Tier 4.
 
@@ -47,7 +50,7 @@ Each has exactly one real consumer; the question is whether the feature itself i
 | `questions`               | [90](../src/server/services/feature-flags.service.ts#L90)   | [pages-old/questions/...](../src/pages-old/questions/[questionId]/[[...questionDetailSlug]].tsx#L27)                                                                               | Lives in `pages-old/` — strong signal the section is archived. Delete page + flag together |
 | `kinguinIframe`           | [177](../src/server/services/feature-flags.service.ts#L177) | [KinguinCheckout.tsx:85](../src/components/KinguinCheckout/KinguinCheckout.tsx#L85)                                                                                                | Is Kinguin still being used at all?                                                        |
 | `annualMemberships`       | [168](../src/server/services/feature-flags.service.ts#L168) | [MembershipPlans.tsx:221](../src/components/Purchase/MembershipPlans.tsx#L221)                                                                                                     | `['dev']` — ship it or remove                                                              |
-| `civitaiLink`             | [58](../src/server/services/feature-flags.service.ts#L58)   | [CivitaiLinkProvider.tsx:294](../src/components/CivitaiLink/CivitaiLinkProvider.tsx#L294), [CivitaiLinkPopover.tsx:182](../src/components/CivitaiLink/CivitaiLinkPopover.tsx#L182) | Desktop link app — still shipping?                                                         |
+| `civitaiLink`             | [190](../src/server/services/feature-flags.service.ts#L190)  | [CivitaiLinkProvider.tsx:355](../src/components/CivitaiLink/CivitaiLinkProvider.tsx#L355), [CivitaiLinkPopover.tsx:341](../src/components/CivitaiLink/CivitaiLinkPopover.tsx#L341) | **Keep.** Desktop `v1.21.0` and node pack `v0.6.0` both shipped Sep 2026; `['mod','member']` is the supporter gate, not a rollout leftover |
 | `thirtyDayEarlyAccess`    | [174](../src/server/services/feature-flags.service.ts#L174) | [constants.ts:1708,1718](../src/server/common/constants.ts#L1708)                                                                                                                  | Sets early-access duration ceiling to 30 days — likely still meaningful, but verify        |
 | `prepaidBuzzTransactions` | [187](../src/server/services/feature-flags.service.ts#L187) | [PrepaidBuzzTransactions.tsx:81](../src/components/Subscriptions/PrepaidBuzzTransactions.tsx#L81)                                                                                  | Single mod component                                                                       |
 | `safety`                  | [123](../src/server/services/feature-flags.service.ts#L123) | [AppFooter.tsx:36](../src/components/AppLayout/AppFooter.tsx#L36)                                                                                                                  | Just gates a footer link                                                                   |
@@ -57,11 +60,62 @@ Each has exactly one real consumer; the question is whether the feature itself i
 
 ## Tier 4 — Long-public flags worth promoting (decorative-only)
 
-These have been `['public']` forever with no Flipt key, so the gate always evaluates `true`. Each `features.X` consumer can be inlined to `true` (or just the gate removed). This is mostly a code-tidying pass — there's no risk of behavior change.
+A flag here is safe to inline to `true` (or have its gate removed) only if **all three** hold. Check
+them against the registry entry rather than against this list — the list is a snapshot and has
+drifted repeatedly, always toward looking safer than it is:
 
-`canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`, `imageGeneration`, `collections`, `profileCollections`, `imageSearch`, `buzz`, `cosmeticShop`, `donationGoals`, `appTour`, `privateModels`, `toolSearch`, `vault`, `draftMode`, `membershipsV2`, `prepaidMemberships`, `newsroom`, `bounties` (mostly public), `creatorComp`, `alternateHome`, `auctions` (public), `disablePayments`, `challengePlatform`, `largerGenerationImages` (toggleable but defaulted), `air` (toggleable but defaulted), `assistant` (toggleable but defaulted).
+1. `availability: ['public']` exactly. A domain list (`['blue', 'red', 'public']`) or a role
+   (`['user']`) means the flag is already false for somebody.
+2. **No `fliptKey`.** A flag carrying one is never decorative: Flipt overrides static availability
+   in both directions, so inlining deletes a no-deploy off-switch.
 
-⚠️ Before promoting any of these, double-check that `ENV` overrides via `FEATURE_FLAG_X` are not expected to flip them off in some deployment.
+   ⚠️ …but only where Flipt still has control, and a `FEATURE_FLAG_<KEY>` variable can take it
+   away. The rule is not "is the variable set" — it depends on the registry entry:
+
+   | Registry entry | Its variable | Flipt |
+   | --- | --- | --- |
+   | `availability: []` **with** a `fliptKey` | **ignored** | **keeps control** |
+   | anything else | **applied** | **skipped entirely** |
+
+   So a non-dark flag's `fliptKey` can be set `enabled: false` and have no effect, which makes it
+   look decorative when it is merely pinned. Do not invert this on a dark flag: a variable naming
+   one is discarded, and the flag stays dark, off and Flipt-owned.
+3. Not `toggleable`. A toggleable flag is user-settable — `computeUserFeatureFlagsOverlay` in
+   `src/server/services/feature-flags.service.ts` merges each user's stored choice over the
+   defaults — so inlining one removes an existing opt-out even when its `default` is `true`. With
+   `default: false` it is additionally off for everyone who has not opted in.
+
+Derive it, don't trust the prose: the current split is 20 safe and 6 not.
+
+**Safe:** `canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`,
+`imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`,
+`appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`,
+`newsroom`, `creatorComp`, `alternateHome`.
+
+**Not safe, and previously listed as if they were:**
+
+| Flag | Why inlining it changes behaviour |
+| --- | --- |
+| `disablePayments` | `['blue', 'red', 'public']`. Inlining to `true` disables the purchase buttons (`src/components/Buzz/BuzzPurchase.tsx`, `src/pages/user/membership.tsx`, the pricing redirect). |
+| `bounties` | `['blue', 'red', 'public']` — domain-gated, on for some colors only. |
+| `auctions` | `['blue', 'red', 'green', 'public']` — same. |
+| `air` | `['user']`, not `['public']` — false for anonymous visitors. |
+| `assistant` | `['user']` — same. |
+| `largerGenerationImages` | `toggleable` with `default: false`, so it is **off** unless a user opts in. The old "toggleable but defaulted" annotation reads the wrong way round. |
+
+Three more were removed from this list entirely rather than annotated: `imageSearch`
+(`availability: []` plus a live `image-search` key — image search is retired, so inlining re-ships
+it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
+kill-switch key), and `vault` (`['user']`).
+
+Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
+toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
+condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+`largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
+condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
+above: drop condition 3 and the split is 21/5, not 20/6. `nativeVideoControls` was never on the
+Tier 4 list so it does not move the split, but it is the same shape and is already in the registry —
+the flag this condition exists to catch is not hypothetical.
 
 ## Open question — only ship truthy flags to the client?
 

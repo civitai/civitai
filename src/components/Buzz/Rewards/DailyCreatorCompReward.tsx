@@ -88,14 +88,14 @@ export function DailyCreatorCompReward({
 
   const { data, isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, accountType: buzzAccountType, source },
-    { enabled: features.buzz }
+    { enabled: !!features.buzz }
   );
   const resources = data?.resources ?? [];
   const hasPublishedResources = data?.hasPublishedResources ?? false;
 
   const { data: licenseProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, source: 'licenseFee' },
-    { enabled: features.buzz && source === 'compensation' }
+    { enabled: !!features.buzz && source === 'compensation' }
   );
   const hasLicenseEarnings = (licenseProbe?.resources.length ?? 0) > 0 || source === 'licenseFee';
   const theme = useMantineTheme();

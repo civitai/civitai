@@ -30,11 +30,13 @@ export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "Ae
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
+export type HuggingFaceImportStatus = "Queued" | "Transferring" | "Completed" | "Failed" | "Canceled";
+
 export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Unpublished" | "UnpublishedViolation" | "GatherInterest" | "Deleted";
 
 export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
 
-export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
+export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell" | "SellMerge";
 
 export type CheckpointType = "Trained" | "Merge";
 
@@ -252,7 +254,7 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
-export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection";
+export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
 export interface Account {
   id: number;
@@ -539,6 +541,7 @@ export interface User {
   metrics?: UserMetric[];
   reports?: Report[];
   feedback?: Feedback[];
+  feedbackHandled?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -660,6 +663,8 @@ export interface User {
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
   blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
+  blockAuthorFeeAccrualsAsAppOwner?: BlockAuthorFeeAccrual[];
+  blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
@@ -681,6 +686,7 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  dismissedAnnouncements?: AnnouncementDismissal[];
   authoredAnnouncements?: Announcement[];
   announcementSpends?: AnnouncementSpend[];
   announcementMutesGiven?: UserAnnouncementMute[];
@@ -831,6 +837,40 @@ export interface Import {
   model?: Model | null;
   children?: Import[];
   importId: number | null;
+}
+
+export interface HuggingFaceImport {
+  id: number;
+  repo: string;
+  revision: string;
+  filename: string;
+  groupName: string;
+  sourceUrl: string;
+  sizeBytes: bigint | null;
+  sourceSha256: string | null;
+  status: HuggingFaceImportStatus;
+  bytesTransferred: bigint;
+  uploadId: string | null;
+  partSize: number | null;
+  parts: JsonValue | null;
+  bucket: string | null;
+  key: string | null;
+  url: string | null;
+  error: string | null;
+  attempts: number;
+  nextAttemptAt: Date | null;
+  userId: number | null;
+  modelVersionId: number | null;
+  modelFileId: number | null;
+  attachVersionId: number | null;
+  attachType: string | null;
+  claimedBy: string | null;
+  claimedAt: Date | null;
+  heartbeatAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Model {
@@ -988,6 +1028,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -1228,6 +1269,7 @@ export interface Report {
   automated?: ReportAutomated | null;
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
+  announcement?: AnnouncementReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1498,6 +1540,12 @@ export interface ImageTagForReview {
   tagId: number;
 }
 
+export interface ImageMetaFlags {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
+}
+
 export interface ImageFlag {
   imageId: number;
   image?: Image;
@@ -1612,12 +1660,13 @@ export interface CollectionMetric {
 export interface Tag {
   id: number;
   name: string;
+  displayName: string | null;
   color: string | null;
   createdAt: Date;
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
@@ -1815,6 +1864,12 @@ export interface Feedback {
   context: JsonValue;
   status: string;
   createdAt: Date;
+  triageNote: string | null;
+  handledById: number | null;
+  handledBy?: User | null;
+  handledAt: Date | null;
+  bugId: number | null;
+  bug?: Bug | null;
 }
 
 export interface ApiKey {
@@ -1855,6 +1910,7 @@ export interface OauthClient {
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   connectListings?: AppListing[];
 }
@@ -1922,6 +1978,7 @@ export interface AppBlock {
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
@@ -2281,6 +2338,7 @@ export interface BlockSpendAttribution {
   contentAuthorUserId: number | null;
   contentAuthor?: User | null;
   sharedContentKey: string | null;
+  generationType: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;
@@ -2288,6 +2346,30 @@ export interface BlockSpendAttribution {
   voidedAt: Date | null;
   paidOutAt: Date | null;
   payoutId: string | null;
+}
+
+export interface BlockAuthorFeeAccrual {
+  id: string;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  appOwnerUserId: number;
+  appOwner?: User;
+  viewerUserId: number;
+  viewer?: User;
+  buzzType: string;
+  feeBuzz: number;
+  baseGenerationBuzz: number;
+  flatLegBuzz: number;
+  pctLegBuzz: number;
+  governingLeg: string;
+  generationType: string | null;
+  status: string;
+  settlementKey: string | null;
+  accruedAt: Date;
+  settledAt: Date | null;
 }
 
 export interface BlockSubscriptionAttribution {
@@ -2355,6 +2437,7 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  buzzBudgetPerDay: number | null;
 }
 
 export interface AppDevForgejoIdentity {
@@ -2680,7 +2763,9 @@ export interface Announcement {
   cover?: Image | null;
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  dismissals?: AnnouncementDismissal[];
   spends?: AnnouncementSpend[];
+  reports?: AnnouncementReport[];
 }
 
 export interface AnnouncementSpend {
@@ -2703,6 +2788,14 @@ export interface UserAnnouncementMute {
 export interface AnnouncementUser {
   announcementId: number;
   userId: number;
+  announcement?: Announcement;
+  user?: User;
+}
+
+export interface AnnouncementDismissal {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Date;
   announcement?: Announcement;
   user?: User;
 }
@@ -2911,6 +3004,7 @@ export interface Article {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  isOfficial: boolean;
   status: ArticleStatus;
   thread?: Thread | null;
   reactions?: ArticleReaction[];
@@ -3860,6 +3954,7 @@ export interface Bug {
   disabled: boolean;
   domain: DomainColor[];
   tags: string[];
+  feedback?: Feedback[];
 }
 
 export interface NewOrderPlayer {
@@ -4003,6 +4098,13 @@ export interface ChallengeEntryComparison {
 export interface ChallengeReport {
   challengeId: number;
   challenge?: Challenge;
+  reportId: number;
+  report?: Report;
+}
+
+export interface AnnouncementReport {
+  announcementId: number;
+  announcement?: Announcement;
   reportId: number;
   report?: Report;
 }
@@ -4525,7 +4627,6 @@ export interface ImageTag {
   tag?: Tag;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -4625,6 +4726,7 @@ export interface GenerationCoverage {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   covered: boolean;
+  coveredNext: boolean;
 }
 
 export interface UserProfile {
@@ -5428,7 +5530,9 @@ export interface UserHubSource {
   targetId: number;
   alias: string | null;
   enabled: boolean;
+  exclude: boolean;
   index: number;
+  groupKey: number | null;
 }
 
 export interface Blurb {

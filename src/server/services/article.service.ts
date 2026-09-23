@@ -17,6 +17,7 @@ import type {
   ArticleMetadata,
   CreateArticleRatingReviewInput,
   GetInfiniteArticlesSchema,
+  SetArticleOfficialInput,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { articleWhereSchema } from '~/server/schema/article.schema';
@@ -51,6 +52,10 @@ import {
   enqueueImageIngestion,
   resolveIngestionError,
 } from '~/server/services/image.service';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForArticle,
+} from '~/server/services/collection-media-index';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
@@ -105,6 +110,7 @@ type ArticleRaw = {
   availability: Availability;
   userId: number | null;
   status: ArticleStatus;
+  isOfficial: boolean;
   tags: {
     tag: {
       id: number;
@@ -159,6 +165,7 @@ export const getArticles = async ({
   cursor,
   query,
   tags,
+  isOfficial,
   period,
   periodMode,
   sort,
@@ -211,6 +218,11 @@ export const getArticles = async ({
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
+    // Only `true` narrows. An explicit `false` is treated as no filter, matching the
+    // schema comment: nobody browses FOR community articles, and a `false` that filtered
+    // would let a stale url hide every official article from a feed.
+    if (isOfficial) AND.push(Prisma.sql`a."isOfficial" = true`);
+
     if (!!tags?.length) {
       AND.push(
         Prisma.sql`EXISTS (
@@ -448,6 +460,7 @@ export const getArticles = async ({
         a."availability",
         a."userId",
         a.status,
+        a."isOfficial",
         (
           SELECT COALESCE(
             jsonb_agg(
@@ -681,21 +694,36 @@ export const getCivitaiEvents = async () => {
 };
 
 /**
- * Does the article exist as a published article for anyone, regardless of ingestion state?
+ * Ingestion state of an article that is published for everyone, or null if it is not published at
+ * all. Callers apply their own policy to it — the two that exist disagree, deliberately.
  *
- * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so editing a live
- * article (which sets `Rescan`) makes it throw NOT_FOUND to the public for the length of the scan
- * — minutes, or longer when a scan is stranded. SSR uses this to tell "nobody can ever see this"
- * apart from "temporarily unrenderable", so only the first becomes a 404.
+ * `getArticleById` additionally requires `ingestion = Scanned` for non-owners, so a published
+ * article throws NOT_FOUND to the public until its images finish scanning. An edit to a live
+ * article re-enters that window (upsert sets `Rescan`), so it is not publish-only.
+ *
+ * SSR asks "could this ever render?" and holds its 200 for anything that might still resolve,
+ * because a 404 on an indexed URL is not a state to enter transiently. The viewer-facing
+ * procedure asks the narrower "is it resolving right now?" — `Error` may recover on a retry but
+ * has no bounded wait to promise a reader, and `Blocked` never resolves.
  */
-export const isArticlePublished = async (id: number) => {
+export const getPublishedArticleIngestion = async (
+  id: number
+): Promise<ArticleIngestionStatus | null> => {
   const db = await getDbWithoutLag('article', id);
   const article = await db.article.findFirst({
     where: { id, publishedAt: { not: null }, status: ArticleStatus.Published },
-    select: { id: true },
+    select: { ingestion: true },
   });
 
-  return !!article;
+  return article?.ingestion ?? null;
+};
+
+/** Is the article inside the transient scan window that hides it from non-owners? */
+export const isArticleProcessing = async ({ id }: GetByIdInput) => {
+  const ingestion = await getPublishedArticleIngestion(id);
+  return (
+    ingestion === ArticleIngestionStatus.Pending || ingestion === ArticleIngestionStatus.Rescan
+  );
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
@@ -1470,6 +1498,9 @@ export const deleteArticleById = async ({
       select: { imageId: true },
     });
 
+    // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
+    const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
+
     const deleted = await dbWrite.$transaction(async (tx) => {
       const article = await tx.article.delete({
         where: { id },
@@ -1484,8 +1515,20 @@ export const deleteArticleById = async ({
       return article;
     });
 
-    // Delete cover image (DB + S3 + cache)
-    if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
+    // Immediately after the commit: the steps below can reject, and the article row is
+    // already gone, so the pre-delete snapshot is the only record left.
+    await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
+
+    // Delete cover image (DB + S3 + cache). Guarded like the content-image loop below:
+    // unguarded, a rejection here skips the articles-index `Delete` at the end of this
+    // function and the deleted article stays in that index indefinitely.
+    if (deleted.coverId)
+      await deleteImageById({ id: deleted.coverId }).catch((error) => {
+        handleLogError(error, 'article-cover-image-cleanup', {
+          articleId: id,
+          imageId: deleted.coverId,
+        });
+      });
 
     // Delete content images (DB + S3 + cache), excluding cover (already handled above)
     // Only delete images that have no remaining connections to ANY entity
@@ -1820,7 +1863,7 @@ export type ArticleTextModerationStatus = {
   updatedAt: Date | null;
 };
 
-// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service, scan
+// `scanJobs.error` is stamped by `markImageScanError` (image-scan-pipeline, scan
 // verdicts) and `markImageScanSubmitFailure` (image.service, submit rejections). Both
 // carry the classifier's verdict (transient | permanent | unknown) plus the human reason,
 // letting the scan-status UI render a class-aware cause.
@@ -2919,3 +2962,39 @@ export async function getArticleRatingReviewForOwner({
 // NOTE(moderator-migration): the moderator resolution path (formerly resolveArticleRatingReview) now
 // lives in the spoke app (apps/moderator, Kysely). The owner-facing create + auto-resolve paths above
 // stay here.
+
+/**
+ * Mark an article as published by Civitai, or take that mark off.
+ *
+ * Mirrors `setModelOfficial` (model.service.ts) deliberately, down to the moderator check:
+ * this is a provenance claim, so the authority has to be a permission the user cannot give
+ * themselves. The earlier design put it on an `adminOnly` TAG, which a review killed —
+ * article tags attach by NAME through `connectOrCreate`, so the marker was a string any
+ * user could type, and the row it creates defaults to not-adminOnly.
+ *
+ * 🔴 The `isModerator` argument is passed by the caller, so it is only as true as the
+ * caller. The router mounts this on `moderatorProcedure`; keep it there. Do not add a
+ * second caller that computes this flag from anything a request body carries.
+ */
+export const setArticleOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetArticleOfficialInput & { isModerator: boolean }) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const article = await dbRead.article.findUnique({ where: { id }, select: { id: true } });
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  const updated = await dbWrite.article.update({
+    where: { id },
+    data: { isOfficial },
+    select: { id: true, isOfficial: true },
+  });
+
+  // The index document spreads `articleDetailSelect`, which now carries `isOfficial`, so
+  // a stale document would keep serving the old provenance to search.
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return updated;
+};

@@ -5,6 +5,12 @@ import type {
   OpenAiGpt2CreateImageInput,
   OpenAiGpt2EditImageInput,
 } from '@civitai/client';
+import type {
+  OpenAiGpt25FlareCreateImageInput,
+  OpenAiGpt25FlareEditImageInput,
+  OpenAiGpt25SunburstCreateImageInput,
+  OpenAiGpt25SunburstEditImageInput,
+} from '@civitai/orchestration-client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 
@@ -15,12 +21,20 @@ const openAISizes = [
 ];
 
 type OpenaiModel = (typeof openaiModels)[number];
-export const openaiModels = ['gpt-image-1', 'gpt-image-1.5', 'gpt-image-2'] as const;
+export const openaiModels = [
+  'gpt-image-1',
+  'gpt-image-1.5',
+  'gpt-image-2',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+] as const;
 
 export const openaiModelVersionToModelMap = new Map<number, { model: OpenaiModel; name: string }>([
   [1733399, { model: 'gpt-image-1', name: 'v1' }],
   [2512167, { model: 'gpt-image-1.5', name: 'v1.5' }],
   [2880272, { model: 'gpt-image-2', name: 'v2' }],
+  [3311434, { model: 'gpt-image-2.5-flare', name: 'v2.5 Flare' }],
+  [3311436, { model: 'gpt-image-2.5-sunburst', name: 'v2.5 Sunburst' }],
 ]);
 
 export const openaiConfig = ImageGenConfig({
@@ -53,17 +67,25 @@ export const openaiConfig = ImageGenConfig({
     | OpenAiGpt1CreateImageInput
     | OpenAiGpt1EditImageInput
     | OpenAiGpt2CreateImageInput
-    | OpenAiGpt2EditImageInput => {
+    | OpenAiGpt2EditImageInput
+    | OpenAiGpt25FlareCreateImageInput
+    | OpenAiGpt25FlareEditImageInput
+    | OpenAiGpt25SunburstCreateImageInput
+    | OpenAiGpt25SunburstEditImageInput => {
     const checkpoint = resources.find((resource) => openaiModelVersionToModelMap.get(resource.id));
     const model = checkpoint ? openaiModelVersionToModelMap.get(checkpoint.id)?.model : undefined;
 
-    if (model === 'gpt-image-2') {
+    if (
+      model === 'gpt-image-2' ||
+      model === 'gpt-image-2.5-flare' ||
+      model === 'gpt-image-2.5-sunburst'
+    ) {
       const baseData = {
         engine: params.engine,
-        model: 'gpt-image-2' as const,
+        model,
         prompt: params.prompt,
         quantity: params.quantity,
-        // gpt-image-2's quality enum has no 'auto' (gpt-image-1 does); clamp it.
+        // gpt-image-2 and 2.5 have no 'auto' in their quality enum (gpt-image-1 does); clamp it.
         quality: params.quality === 'auto' ? 'high' : params.quality,
         width: params.width,
         height: params.height,
@@ -73,13 +95,19 @@ export const openaiConfig = ImageGenConfig({
         return {
           ...baseData,
           operation: 'createImage',
-        } as OpenAiGpt2CreateImageInput;
+        } as
+          | OpenAiGpt2CreateImageInput
+          | OpenAiGpt25FlareCreateImageInput
+          | OpenAiGpt25SunburstCreateImageInput;
       } else {
         return {
           ...baseData,
           operation: 'editImage',
           images: params.images.map((x) => x.url),
-        } as OpenAiGpt2EditImageInput;
+        } as
+          | OpenAiGpt2EditImageInput
+          | OpenAiGpt25FlareEditImageInput
+          | OpenAiGpt25SunburstEditImageInput;
       }
     }
 

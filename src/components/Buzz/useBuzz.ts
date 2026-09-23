@@ -76,7 +76,7 @@ export const useUserMultipliers = () => {
     },
     isLoading,
   } = trpc.buzz.getUserMultipliers.useQuery(undefined, {
-    enabled: !!currentUser && features.buzz,
+    enabled: !!currentUser && !!features.buzz,
   });
 
   return {
@@ -99,7 +99,7 @@ export const useBuzzTransactions = (
       accountId: accountId as number,
       accountType,
     },
-    { enabled: !!accountId && features.buzz }
+    { enabled: !!accountId && !!features.buzz }
   );
 
   return {

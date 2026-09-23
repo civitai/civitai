@@ -50,7 +50,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/env/server', () => ({
-  env: { APPS_DOMAIN: 'civit.ai', DISCORD_WEBHOOK_MOD_ALERTS: undefined },
+  env: { APPS_DOMAIN: 'civit.ai' },
 }));
 
 vi.mock('~/utils/bundle-s3', () => ({

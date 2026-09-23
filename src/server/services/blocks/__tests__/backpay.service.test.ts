@@ -1,29 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * App Blocks BACKPAY reader coverage (W3 attribution back-half, Slice 4).
+ * App Blocks MEMBERSHIP BACKPAY reader coverage (W3 attribution flow C).
  *
  * This is MONEY-COMPUTATION code — the load-bearing property is the DOUBLE-DARK
  * gate (a fail-closed Flipt flag AND a signed-off rate-card version, BOTH
- * required) plus the conservation/ceiling invariants, idempotency, the per-app
- * Sybil cap, and dryRun. The reader moves NO money; it only transitions
+ * required) plus the conservation invariants, idempotency, the per-app Sybil
+ * cap, and dryRun. The reader moves NO money; it only transitions
  * tracked → confirmed/held and stamps the share.
  *
+ * MEMBERSHIP ONLY. The buzz-SPEND leg was removed with the platform-funded
+ * bounty it backpaid; `block_spend_attribution` rows are never read here.
+ *
  * Prisma + logger + the Flipt flag are mocked at the module boundary so the
- * test stays in-process and deterministic. `computeSpendShare` /
- * `computeSubscriptionShare` stay REAL (mocking the money math would defeat the
- * point) — only `ACTIVE_RATE_CARD` is overlaid with a fixed test card so the
- * percentages are stable regardless of the live card.
+ * test stays in-process and deterministic. `computeSubscriptionShare` stays
+ * REAL (mocking the money math would defeat the point) — only
+ * `ACTIVE_RATE_CARD` is overlaid with a fixed test card so the percentages are
+ * stable regardless of the live card.
  */
 
 const { mockDbRead, mockDbWrite, mockLog, mockFlag } = vi.hoisted(() => ({
   mockDbRead: {
     blockSubscriptionAttribution: { findMany: vi.fn() },
-    blockSpendAttribution: { findMany: vi.fn() },
   },
   mockDbWrite: {
     blockSubscriptionAttribution: { updateMany: vi.fn() },
-    blockSpendAttribution: { updateMany: vi.fn() },
   },
   mockLog: vi.fn(),
   mockFlag: vi.fn(),
@@ -43,10 +44,10 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksBackpayEnabled: () => mockFlag(),
 }));
 
-// A fixed test rate card: subscription 20%, spend 10%, no internal owners. We
-// keep computeSpendShare/computeSubscriptionShare REAL and only overlay
-// ACTIVE_RATE_CARD so the math is deterministic. The mock exposes ACTIVE_RATE_CARD
-// as a GETTER over a mutable holder so a test can swap to a 0%-rate card.
+// A fixed test rate card: subscription 20%, no internal owners. We keep
+// computeSubscriptionShare REAL and only overlay ACTIVE_RATE_CARD so the math is
+// deterministic. The mock exposes ACTIVE_RATE_CARD as a GETTER over a mutable
+// holder so a test can swap to a 0%-rate card.
 const DEFAULT_TEST_CARD = {
   version: 'test-v1',
   publisherSharePctByScope: {
@@ -56,19 +57,13 @@ const DEFAULT_TEST_CARD = {
     platform_default: 0,
     viewer_global: 0,
   },
-  spendSharePct: 10,
+  spendSharePct: 0,
   subscriptionSharePct: 20,
   internalAppOwnerUserIds: [] as number[],
   effectiveFrom: '2026-06-18',
 };
 const TEST_CARD = { ...DEFAULT_TEST_CARD };
 const cardHolder = vi.hoisted(() => ({ current: null as unknown }));
-// Lets ONE test override computeSpendShare to simulate a compute bug (a
-// wrong-but-≤gross bounty) so the spend independent-invariant belt can be
-// exercised. null = use the REAL implementation (the default for every test).
-const computeHolder = vi.hoisted(() => ({
-  spend: null as null | ((arg: unknown) => unknown),
-}));
 
 vi.mock('../rate-card', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../rate-card')>();
@@ -77,8 +72,6 @@ vi.mock('../rate-card', async (importOriginal) => {
     get ACTIVE_RATE_CARD() {
       return cardHolder.current;
     },
-    computeSpendShare: (arg: unknown) =>
-      (computeHolder.spend ?? actual.computeSpendShare)(arg),
   };
 });
 
@@ -96,13 +89,6 @@ type SubRow = {
   appBlockId: string;
   appOwnerUserId: number;
 };
-type SpendRow = {
-  id: string;
-  grossValueCents: number;
-  appBlockId: string;
-  appOwnerUserId: number;
-  buzzType: string;
-};
 
 function subRow(over: Partial<SubRow> = {}): SubRow {
   return {
@@ -114,18 +100,6 @@ function subRow(over: Partial<SubRow> = {}): SubRow {
     ...over,
   };
 }
-function spendRow(over: Partial<SpendRow> = {}): SpendRow {
-  return {
-    id: 'bsa_1',
-    grossValueCents: 1000,
-    appBlockId: 'apb_1',
-    appOwnerUserId: 42,
-    // Default to the payout-eligible currency (matches the DB column default
-    // 'yellow' that pre-parity rows carry). Payout-safety tests override this.
-    buzzType: 'yellow',
-    ...over,
-  };
-}
 
 /** Force the signed-off-version gate open to the test card's version. */
 function signOff(version: string | null = TEST_CARD.version) {
@@ -134,14 +108,11 @@ function signOff(version: string | null = TEST_CARD.version) {
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  cardHolder.current = TEST_CARD; // reset to the default 20%/10% card
-  computeHolder.spend = null; // default: REAL computeSpendShare
+  cardHolder.current = TEST_CARD; // reset to the default 20% card
   mockLog.mockReset();
   mockFlag.mockReset();
   mockDbRead.blockSubscriptionAttribution.findMany.mockReset().mockResolvedValue([]);
-  mockDbRead.blockSpendAttribution.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.blockSubscriptionAttribution.updateMany.mockReset().mockResolvedValue({ count: 1 });
-  mockDbWrite.blockSpendAttribution.updateMany.mockReset().mockResolvedValue({ count: 1 });
   // Default: flag ON (gate half 1 open) — individual tests override.
   mockFlag.mockResolvedValue(true);
 });
@@ -162,9 +133,7 @@ describe('DOUBLE-DARK gate', () => {
     expect(out.enabled).toBe(false);
     expect(out.skipped).toBe('flag-disabled');
     expect(mockDbRead.blockSubscriptionAttribution.findMany).not.toHaveBeenCalled();
-    expect(mockDbRead.blockSpendAttribution.findMany).not.toHaveBeenCalled();
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
   });
 
   it('flag on but signed-off version null → no writes, skipped=no-signed-off-rate', async () => {
@@ -176,7 +145,7 @@ describe('DOUBLE-DARK gate', () => {
     expect(out.enabled).toBe(false);
     expect(out.skipped).toBe('no-signed-off-rate');
     expect(mockDbRead.blockSubscriptionAttribution.findMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
   });
 
   it('signed-off version set but != ACTIVE_RATE_CARD.version → refuse', async () => {
@@ -188,7 +157,6 @@ describe('DOUBLE-DARK gate', () => {
     expect(out.enabled).toBe(false);
     expect(out.skipped).toBe('signed-off-version-mismatch');
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -209,6 +177,7 @@ describe('happy path (gate forced open)', () => {
 
     expect(out.enabled).toBe(true);
     expect(out.skipped).toBeUndefined();
+    expect(out.processed.subscription).toBe(1);
     expect(out.confirmedCount).toBe(1);
     expect(out.confirmedShareCents).toBe(180);
     expect(out.heldCount).toBe(0);
@@ -251,89 +220,28 @@ describe('happy path (gate forced open)', () => {
       'webhooks'
     );
   });
-
-  it('spend tracked → confirmed with share<=gross; version + pct stamped', async () => {
-    // gross 1000, spend 10% → author = 100, <= gross.
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_x', grossValueCents: 1000, appOwnerUserId: 7 }),
-    ]);
-
-    const out = await backpayTrackedAttributions();
-
-    expect(out.confirmedCount).toBe(1);
-    expect(out.confirmedShareCents).toBe(100);
-
-    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: 'bsa_x', status: 'tracked' });
-    expect(call.data.status).toBe('confirmed');
-    expect(call.data.rateCardVersion).toBe(TEST_CARD.version);
-    expect(call.data.spendSharePct).toBe(10);
-    expect(call.data.appOwnerShareCents).toBe(100);
-    expect(call.data.appOwnerShareCents).toBeLessThanOrEqual(1000);
-    expect(call.data.confirmedAt).toBeInstanceOf(Date);
-  });
 });
 
-/**
- * PAYOUT-SAFETY at the payout boundary (App Blocks Sybil / payout review).
- * Block currencies were widened to on-site parity (blue/green/yellow); the
- * backpay rail MUST exclude the FREE type (blue) from the author bounty so the
- * widening can never become platform-funded farming. PAID Buzz (green + yellow)
- * is eligible. The gate lives in computeSpendShare (via isPayoutEligibleBuzz)
- * and is threaded the row's buzzType here.
- */
-describe('payout-safety — the free currency (blue) is excluded from the bounty', () => {
-  beforeEach(() => {
+describe('the SPEND leg is gone — no block_spend_attribution access at all', () => {
+  it('a fully open gate never reaches the spend table', async () => {
     mockFlag.mockResolvedValue(true);
     signOff();
-  });
-
-  it('a green (paid) spend row confirms WITH the bounty', async () => {
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_green', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'green' }),
-    ]);
-
+    // 🔴 THE GUARD HERE IS THE MOCK'S SHAPE, NOT AN `expect` LINE. The hoisted
+    // `mockDbRead` exposes ONLY `blockSubscriptionAttribution` (see its
+    // declaration at the top of this file), so a reader that reinstated
+    // `dbRead.blockSpendAttribution.findMany(...)` would throw on the undefined
+    // delegate. The two assertions below therefore only hold if no spend read
+    // was attempted: reaching a resolved summary at all IS the proof.
+    //
+    // An earlier revision added `expect(mockDbRead).not.toHaveProperty(
+    // 'blockSpendAttribution')` here. It was DELETED rather than kept: it
+    // asserted a property of this file's own mock literal, so it could only ever
+    // fail if someone edited that literal — it said nothing about the service,
+    // while reading like coverage of it.
     const out = await backpayTrackedAttributions();
 
-    // green is PAID → pays the bounty (1000 @ 10%).
-    expect(out.confirmedShareCents).toBe(100);
-    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(call.data.status).toBe('confirmed');
-    expect(call.data.spendSharePct).toBe(10);
-    expect(call.data.appOwnerShareCents).toBe(100);
-  });
-
-  it('a blue (free generation) spend row confirms with ZERO bounty', async () => {
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_blue', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'blue' }),
-    ]);
-
-    const out = await backpayTrackedAttributions();
-
-    expect(out.confirmedShareCents).toBe(0);
-    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(call.data.appOwnerShareCents).toBe(0);
-    expect(call.data.spendSharePct).toBe(0);
-  });
-
-  it('a yellow (purchased/earned) spend row still pays the bounty (control)', async () => {
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_yellow', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'yellow' }),
-    ]);
-
-    const out = await backpayTrackedAttributions();
-
-    expect(out.confirmedShareCents).toBe(100); // 1000 @ 10%
-    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(call.data.appOwnerShareCents).toBe(100);
-  });
-
-  it('selects buzzType from the row so the gate has the currency to discriminate', async () => {
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([]);
-    await backpayTrackedAttributions();
-    expect(mockDbRead.blockSpendAttribution.findMany.mock.calls[0][0].select).toMatchObject({
-      buzzType: true,
-    });
+    expect(out.enabled).toBe(true);
+    expect(out.processed).toEqual({ subscription: 0 });
   });
 });
 
@@ -342,7 +250,6 @@ describe('idempotency', () => {
     mockFlag.mockResolvedValue(true);
     signOff();
     mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([subRow({ id: 'bsu_i' })]);
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([spendRow({ id: 'bsa_i' })]);
 
     await backpayTrackedAttributions();
 
@@ -350,13 +257,7 @@ describe('idempotency', () => {
       status: 'tracked',
       entryType: 'charge',
     });
-    expect(mockDbRead.blockSpendAttribution.findMany.mock.calls[0][0].where).toMatchObject({
-      status: 'tracked',
-    });
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany.mock.calls[0][0].where.status).toBe(
-      'tracked'
-    );
-    expect(mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0].where.status).toBe(
       'tracked'
     );
   });
@@ -366,14 +267,12 @@ describe('idempotency', () => {
     signOff();
     // No tracked rows left (the first run confirmed them).
     mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([]);
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([]);
 
     const out = await backpayTrackedAttributions();
 
     expect(out.confirmedCount).toBe(0);
     expect(out.heldCount).toBe(0);
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -386,7 +285,6 @@ describe('voided rows are never processed', () => {
     expect(mockDbRead.blockSubscriptionAttribution.findMany.mock.calls[0][0].where.status).toBe(
       'tracked'
     );
-    expect(mockDbRead.blockSpendAttribution.findMany.mock.calls[0][0].where.status).toBe('tracked');
   });
 });
 
@@ -397,43 +295,78 @@ describe('Sybil per-app cap', () => {
   });
 
   it('rows beyond MAX_BACKPAY_CENTS_PER_APP_PER_RUN for one app → held, not confirmed', async () => {
-    // Spend share is 10% of gross. To cross the 100_00-cent cap fast, use a
-    // gross of 60_000 cents → share 6_000 per row. Three rows = 18_000 share;
-    // cap = 10_000. Row1 (6_000) confirms (total 6_000). Row2 would push to
-    // 12_000 > 10_000 → held. Row3 also held.
-    const gross = 60_000;
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_1', grossValueCents: gross, appBlockId: 'apb_cap', appOwnerUserId: 7 }),
-      spendRow({ id: 'bsa_2', grossValueCents: gross, appBlockId: 'apb_cap', appOwnerUserId: 7 }),
-      spendRow({ id: 'bsa_3', grossValueCents: gross, appBlockId: 'apb_cap', appOwnerUserId: 7 }),
+    // Subscription share is 20% of net. With fee 0 and gross 30_000 the share is
+    // 6_000 per row; the cap is 10_000. Row1 (6_000) confirms (total 6_000).
+    // Row2 would push to 12_000 > 10_000 → held. Row3 also held.
+    const gross = 30_000;
+    mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
+      subRow({
+        id: 'bsu_1',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_cap',
+        appOwnerUserId: 7,
+      }),
+      subRow({
+        id: 'bsu_2',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_cap',
+        appOwnerUserId: 7,
+      }),
+      subRow({
+        id: 'bsu_3',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_cap',
+        appOwnerUserId: 7,
+      }),
     ]);
 
     const out = await backpayTrackedAttributions();
 
     // sanity: a single row's share is under the cap so the first confirms
-    expect(60_000 * 0.1).toBeLessThanOrEqual(MAX_BACKPAY_CENTS_PER_APP_PER_RUN);
+    expect(gross * 0.2).toBeLessThanOrEqual(MAX_BACKPAY_CENTS_PER_APP_PER_RUN);
     expect(out.confirmedCount).toBe(1);
     expect(out.confirmedShareCents).toBe(6_000);
     expect(out.heldCount).toBe(2);
     expect(out.cappedApps).toHaveLength(1);
     expect(out.cappedApps[0]).toMatchObject({ appBlockId: 'apb_cap', heldCount: 2 });
 
-    const calls = mockDbWrite.blockSpendAttribution.updateMany.mock.calls.map((c) => c[0]);
+    const calls = mockDbWrite.blockSubscriptionAttribution.updateMany.mock.calls.map((c) => c[0]);
     const confirmCalls = calls.filter((c) => c.data.status === 'confirmed');
     const heldCalls = calls.filter((c) => c.data.status === 'held');
     expect(confirmCalls).toHaveLength(1);
-    expect(confirmCalls[0].where.id).toBe('bsa_1');
+    expect(confirmCalls[0].where.id).toBe('bsu_1');
     expect(heldCalls).toHaveLength(2);
     expect(heldCalls.every((c) => c.data.voidedReason === 'manual_review')).toBe(true);
     expect(heldCalls.every((c) => c.where.status === 'tracked')).toBe(true);
   });
 
   it('the cap is per app_block_id — a different app is unaffected', async () => {
-    const gross = 60_000;
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'a1', grossValueCents: gross, appBlockId: 'apb_A', appOwnerUserId: 7 }),
-      spendRow({ id: 'a2', grossValueCents: gross, appBlockId: 'apb_A', appOwnerUserId: 7 }),
-      spendRow({ id: 'b1', grossValueCents: gross, appBlockId: 'apb_B', appOwnerUserId: 7 }),
+    const gross = 30_000;
+    mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
+      subRow({
+        id: 'a1',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_A',
+        appOwnerUserId: 7,
+      }),
+      subRow({
+        id: 'a2',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_A',
+        appOwnerUserId: 7,
+      }),
+      subRow({
+        id: 'b1',
+        grossValueCents: gross,
+        providerFeeCents: 0,
+        appBlockId: 'apb_B',
+        appOwnerUserId: 7,
+      }),
     ]);
 
     const out = await backpayTrackedAttributions();
@@ -452,39 +385,32 @@ describe('dryRun', () => {
     mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
       subRow({ id: 'bsu_d', grossValueCents: 1000, providerFeeCents: 100, appOwnerUserId: 7 }),
     ]);
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_d', grossValueCents: 1000, appOwnerUserId: 7 }),
-    ]);
 
     const out = await backpayTrackedAttributions({ dryRun: true });
 
     expect(out.enabled).toBe(true);
     expect(out.dryRun).toBe(true);
-    // would confirm both: sub author 180 + spend author 100 = 280
-    expect(out.confirmedCount).toBe(2);
-    expect(out.confirmedShareCents).toBe(280);
+    // would confirm: net 900 @ 20% = 180
+    expect(out.confirmedCount).toBe(1);
+    expect(out.confirmedShareCents).toBe(180);
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
   });
 });
 
 describe('0%-rate signed-off card (edge)', () => {
   it('author share 0 still transitions tracked → confirmed, conservation holds', async () => {
     // Overlay a 0% card and sign it off.
-    cardHolder.current = { ...TEST_CARD, version: 'zero-v', spendSharePct: 0, subscriptionSharePct: 0 };
+    cardHolder.current = { ...TEST_CARD, version: 'zero-v', subscriptionSharePct: 0 };
     mockFlag.mockResolvedValue(true);
     signOff('zero-v');
 
     mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
       subRow({ id: 'bsu_z', grossValueCents: 1000, providerFeeCents: 100, appOwnerUserId: 7 }),
     ]);
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_z', grossValueCents: 1000, appOwnerUserId: 7 }),
-    ]);
 
     const out = await backpayTrackedAttributions();
 
-    expect(out.confirmedCount).toBe(2);
+    expect(out.confirmedCount).toBe(1);
     expect(out.confirmedShareCents).toBe(0); // 0% → no author share
     expect(out.heldCount).toBe(0);
 
@@ -495,14 +421,10 @@ describe('0%-rate signed-off card (edge)', () => {
     // row's STORED fee (100): fee 100 + platform 900 + author 0 = gross 1000.
     expect(subCall.data.providerFeeCents).toBeUndefined();
     expect(100 + subCall.data.platformShareCents + subCall.data.appOwnerShareCents).toBe(1000);
-
-    const spendCall = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(spendCall.data.status).toBe('confirmed');
-    expect(spendCall.data.appOwnerShareCents).toBe(0);
   });
 });
 
-describe('independent invariant belts — no false positives on legit edges, fires on a real mismatch', () => {
+describe('independent invariant belts — no false positives on legit edges', () => {
   beforeEach(() => {
     mockFlag.mockResolvedValue(true);
     signOff();
@@ -532,40 +454,5 @@ describe('independent invariant belts — no false positives on legit edges, fir
     expect(call.data.status).toBe('confirmed');
     expect(call.data.appOwnerShareCents).toBe(0);
     expect(call.data.platformShareCents).toBe(0);
-  });
-
-  it('spend gross==0 → still confirms with share 0 (no false skip at the zero edge)', async () => {
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_0', grossValueCents: 0, appOwnerUserId: 7 }),
-    ]);
-    const out = await backpayTrackedAttributions();
-    expect(out.confirmedCount).toBe(1);
-    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
-    expect(call.data.status).toBe('confirmed');
-    expect(call.data.appOwnerShareCents).toBe(0);
-  });
-
-  it('spend bounty that disagrees with the independent re-derivation → skipped (belt fires)', async () => {
-    // Simulate a computeSpendShare bug: returns 999 for gross 1000 @ 10%
-    // (expected 100). 999 <= gross, so the bare `> gross` ceiling would MISS it;
-    // the independent re-derivation catches it and skips the row.
-    computeHolder.spend = () => ({
-      rateCardVersion: TEST_CARD.version,
-      spendSharePct: 10,
-      appOwnerShareCents: 999,
-    });
-    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
-      spendRow({ id: 'bsa_bad', grossValueCents: 1000, appOwnerUserId: 7 }),
-    ]);
-    const out = await backpayTrackedAttributions();
-    expect(out.confirmedCount).toBe(0);
-    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
-    expect(mockLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: expect.stringContaining('spend share failed an independent invariant'),
-        expectedShareCents: 100,
-      }),
-      'webhooks'
-    );
   });
 });

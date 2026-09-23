@@ -155,7 +155,7 @@ export function RichTextEditor({
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
   // point; this is the equivalent for the two that don't go through it.
-  const stickersEnabled = useFeatureFlags().stickers && addStickers;
+  const stickersEnabled = !!useFeatureFlags().stickers && addStickers;
   const { sticker: ownedStickers } = useOwnedSticker();
   const { data: stickerBalances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: stickersEnabled,
@@ -172,7 +172,7 @@ export function RichTextEditor({
   }, [stickersEnabled, ownedStickers, stickerBalances]);
 
   const currentUser = useCurrentUser();
-  const blurbsEnabled = useFeatureFlags().textBlurbs && addBlurbs;
+  const blurbsEnabled = !!useFeatureFlags().textBlurbs && addBlurbs;
   const [hasOrphanedBlurb, setHasOrphanedBlurb] = useState(false);
   // Not also "the document holds a chip": `blurb.getMine` is behind the same flag, so a fetch
   // without it is a guaranteed 403 rather than the orphan detection it used to buy.

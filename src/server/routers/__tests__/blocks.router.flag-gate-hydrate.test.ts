@@ -94,12 +94,32 @@ vi.mock('~/server/services/block-registry.service', () => ({
     resolveBlockInstance: vi.fn(),
   },
 }));
+// 🔴 THE BLOCKS RATE LIMITERS, ALWAYS ALLOWING. Declared because the procedures this file drives
+// now charge a bucket, and the REAL limiter reads `redisMock`, whose `incrBy` returns `undefined`
+// when a test has not configured it — `undefined <= MAX` is false, so the unconfigured mock reads
+// as OVER the ceiling and every case here would fail with TOO_MANY_REQUESTS instead of reaching
+// the guard it is about. Refusal behaviour is covered by
+// `blocks.router.bridgeRateLimits.test.ts`; this file is about something else.
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: async () => ({ allowed: true }),
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
+  checkBlockPublishRateLimit: async () => ({ allowed: true }),
+  checkBlockPostRateLimit: async () => ({ allowed: true }),
+  checkBlockPostAppRateLimit: async () => ({ allowed: true }),
+}));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
 });
 
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -113,6 +133,12 @@ redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
 redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
 redisMock.sysRedis.expire.mockImplementation(async () => true);
 redisMock.sysRedis.ttl.mockImplementation(async () => -1);
+
+// Every workflow a block can legitimately name carries its producing app's provenance tag, and
+// `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
+// they carry the default claims' tag; the scoping guard itself is exercised in
+// blocks.router.workflowScope.test.ts.
+const BLOCK_APP_TAG = 'app-block:app_test';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -164,6 +190,7 @@ beforeEach(() => {
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockGetWorkflow.mockResolvedValue({
+    tags: [BLOCK_APP_TAG],
     id: 'wf_1',
     status: 'succeeded',
     cost: { total: 0 },
@@ -179,6 +206,12 @@ beforeEach(() => {
     async (_flag: string, _entityId: string, ctx?: Record<string, string>) =>
       ctx?.isModerator === 'true'
   );
+});
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
 });
 
 describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from the real SessionUser', () => {
@@ -231,20 +264,94 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     expect((appBlocksCall as [string, string, Record<string, string>])[2].tier).toBe('gold');
   });
 
-  it('a vanished subject → undefined user → global eval → flag false → blocked (fail-closed preserved)', async () => {
+  it('a vanished subject is refused BEFORE the flag is consulted (no Flipt call at all)', async () => {
     mockGetSessionUser.mockResolvedValue(undefined as never);
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'runtime block token subject could not be resolved',
+    });
 
-    // Global eval: with no user, isAppBlocksEnabled takes the no-user branch and
-    // calls isFlipt(flag) with NO entityId/context (buildFliptContext is never
-    // run) → the moderators-segmented default stub resolves false.
-    const appBlocksCall = mockIsFlipt.mock.calls.find((c) => c[0] === 'app-blocks-enabled');
-    expect(appBlocksCall).toBeDefined();
-    // No context argument was passed (global eval), so the segment can't match.
-    expect((appBlocksCall as unknown[])[2]).toBeUndefined();
+    // 🔴 THIS ASSERTION IS THE POINT, and it replaces one that asserted the
+    // opposite. The old test pinned "isFlipt was called with NO entityId/context
+    // (a global eval), so the segment can't match" — which is true and proves
+    // nothing: a global eval returns the flag's BASE value, so that test passed
+    // only because the stub's base was false. See the base-true case below.
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-enabled');
+    expect(mockIsFlipt.mock.calls.filter((c) => c[0] === 'app-blocks-enabled')).toHaveLength(0);
+  });
+
+  it('🔴 a vanished subject is STILL refused when the flag is base-`enabled: true` (the GA flip)', async () => {
+    // The forcing condition for this whole gate: `app-blocks-enabled` widened by
+    // BASE rather than by segment. Every stub in this file's default setup has a
+    // false base, which is what made the retracted "global eval → fail-closed"
+    // derivation look tested. Here the flag says yes to everything, exactly as a
+    // base-enabled flag does for a no-entityId eval (measured against the real
+    // wasm engine in `app-blocks-flag.base-enabled-flip.test.ts`).
+    mockIsFlipt.mockImplementation(async () => true);
+    mockGetSessionUser.mockResolvedValue(undefined as never);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'runtime block token subject could not be resolved',
+    });
+  });
+
+  it('POSITIVE CONTROL: the same base-true flag still ADMITS a subject that hydrates', async () => {
+    // Without this, the two refusals above are indistinguishable from a harness
+    // that rejects `pollWorkflow` for some unrelated reason.
+    mockIsFlipt.mockImplementation(async () => true);
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'gold' } as never);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).resolves.toBeDefined();
+  });
+});
+
+describe('assertViewerIsAppDeveloper — the AUTHOR gate refuses an unresolvable subject', () => {
+  it('🔴 refuses with its OWN message when the subject vanishes between the two gates, base-true flag', async () => {
+    // `updateUserSettings` is the single remaining call site of the author gate. It
+    // runs `assertAppBlocksEnabledForTokenUser` first and `assertViewerIsAppDeveloper`
+    // second, and each resolves the subject independently against the hub-backed
+    // session client — so a subject deleted between the two awaits is a real, if
+    // narrow, state. `mockResolvedValueOnce` reproduces it and is the only way to
+    // reach the author gate's own branch without stubbing the gate under test.
+    mockIsFlipt.mockImplementation(async () => true); // base-`enabled: true`
+    mockGetSessionUser
+      .mockResolvedValueOnce({ id: 42, isModerator: false, tier: 'free' } as never)
+      .mockResolvedValue(undefined as never);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.updateUserSettings({ blockToken: 'tok', settings: {} })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'app-authoring subject could not be resolved',
+    });
+  });
+
+  it('POSITIVE CONTROL: a subject that hydrates on both calls passes BOTH gates', async () => {
+    // Proves the refusal above is attributable to the missing subject, not to the
+    // author capability or to anything downstream: same flag, same input, same
+    // mocks — only the second hydration differs. Asserting the SPECIFIC downstream
+    // outcome is load-bearing: `rejects.not.toMatchObject(...)` passes on ANY other
+    // rejection, so it cannot tell "got past both gates" from "blew up differently".
+    // NOT_FOUND / 'Block install not found' comes from the mocked BlockRegistry
+    // returning no instance, which is several steps PAST both gates.
+    mockIsFlipt.mockImplementation(async () => true);
+    mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' } as never);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.updateUserSettings({ blockToken: 'tok', settings: {} })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Block install not found' });
   });
 });

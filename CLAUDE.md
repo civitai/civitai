@@ -59,11 +59,13 @@ pnpm run build            # Production build
 
 ### Code Quality
 ```bash
-pnpm run typecheck        # Run TypeScript type checking
+pnpm run typecheck        # Run TypeScript type checking (5.9 — the authoritative one)
+pnpm run typecheck:fast   # TypeScript 7, edit loop only, NOT authoritative. Needs a one-time install
 pnpm run lint             # Run ESLint
 pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
+
 
 #### SvelteKit apps have their own standard
 
@@ -142,14 +144,14 @@ merge; the strongest a red one gets is rendering red for a human to notice, and 
 The vitest suites are projects in `vitest.config.mts`. The unit suite is **two** projects —
 `unit` and `unit-native` — so select it as **`--project 'unit*'`**, never `--project unit`.
 
-🔴 **`--project unit` silently runs 1059 of 1065 files and exits 0.** The six `unit-native` files are
+🔴 **`--project unit` silently runs 1846 of 1852 files and exits 0.** The six `unit-native` files are
 `exclude`d from `unit` rather than merely routed elsewhere, so naming one of them explicitly reports
 `No test files found`. A selector matching one project and not the other is a green run over a
 suite you did not run — the scripts above already use `'unit*'` for this reason.
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~41,600 tests over 1,852 files, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
@@ -174,6 +176,21 @@ as running all of it. Two source files gave the identical number.
 ⚠️ **A green full-suite run can still hide a failure you caused.** Read the failing-file list, not the
 count: when 17 tests fail across 7 files, `git stash` and re-run those same files to see whether they
 already failed on `main`. On Windows several do — see the portability notes below.
+
+#### Queued unit runs can be served from a result cache
+
+When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a queued `test:unit:run`
+skips every test file whose inputs are unchanged since it last passed — its source, every module it imports,
+every file it read, and the lockfile/configs. Results are shared between worktrees. It prints what it did:
+
+```
+[test-cache] 1880 test files: 41 ran, 1839 skipped as unchanged since they last passed. 92 unchanged file(s) re-run to verify; false skips: 0.
+```
+
+A random ~5% of the unchanged files run anyway. If one of those fails, the cache predicted a pass it could not
+deliver — a **false skip** — and it trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
+**Known blind spot:** environment variables are not part of the key. Never on in CI; a run that filters
+files (a filename, directory or substring) is never trimmed. Code and details: `scripts/test-cache/`.
 
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
@@ -211,18 +228,43 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 22 live in
-`src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
-`no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
-`no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
+Several repo conventions are enforced by tests, not by eslint. 45 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+`no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
+`no-divergent-active-sales-cap` (SERVER side only: the `model.getActiveSales` parser enforces the id cap, and the chunk size a card surface splits to does not exceed it — it CANNOT see the call site, which is pinned behaviourally by `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, a file in the full unit suite but NOT in `test:lint-rules`, so a `test:lint-rules` run alone does not cover that half; the procedure was rejecting every call from a scrolled feed as an input-validation 400, so no 5xx was recorded and the sale badge simply vanished from the grid), `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount` — the three are indistinguishable positive Buzz integers, so a percentage of the wrong one takes a cut of another creator's licensing fee),
+`no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
+`no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-prompt-derivation` (the prompt-reuse remix threshold has one constant and one option-less verdict function, called by both the client claim check and the server's free-submission gate — it was a default parameter any caller could pass past), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
+`no-job-kind-on-remix-mint` (the remix provenance mint must sign `kind: 'mint'` — a `job`
+token there is spendable on the upload path, which is the free remix-gallery submission),
 `no-lint-rules-script-drift`,
+`no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
+the trigger silently stops opening — six sites had it independently),
 `no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
-`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
-`no-unbounded-paging-fake`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
-owner checked — see `assertWorkflowOwner`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
-`no-unmuteable-comment-processor`,
-`no-unverified-provenance-write`,
+`no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
+`no-unbounded-paging-fake`, `no-unbumped-draft-status-write` (a raw-SQL write that moves a Model
+into `Draft` must set `"updatedAt" = now()`, or `remove-old-drafts` can cascade-delete it with no
+grace period), `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
+owner checked — see `assertWorkflowOwner`),
+`no-unguarded-block-rest-token` (every block REST page route must be wrapped by
+`withBlockScope`, which is the only place the REST surface takes the approved-status
+decision — an open-coded `verifyBlockToken` in a route is the same shape the bridge had),
+`no-unguarded-block-bridge-token` (every tRPC bridge proc must resolve its claims through
+`authorizeBlockBridgeToken` — a bare `verifyBlockToken` honours a revoked install and a
+suspended app for a whole token lifetime), `no-unlimited-block-bridge-proc` (every tRPC bridge proc
+carries a RECORDED rate-limit decision — a bucket, or a stated reason for having none. Not "limit
+everything": a poll ceiling sized too tight breaks generation for honest blocks, and
+`submitWorkflow` is bounded by the per-app generation velocity cap instead. The eighteenth bridge
+proc, copied from the seventeenth, is what this catches), `no-unfiltered-reaction-metric-sum` (a metric job that SUMs a reaction table must exclude the metric-suppressed
+accounts — the Postgres sums never decay, so an unfiltered total is permanent rather than
+stale), `no-unguarded-user-text`, `no-unhydrated-home-block-reactions` (a home block hands its images to `ImagesProvider` with `reactions: []`, because its payload is one shared anonymous cache entry — an un-highlighted reaction is one the viewer clicks OFF), `no-unledgered-settle-caller` (the customComfy post-paid settle path has exactly two production callers — `pollWorkflow` and `cancelWorkflow` — which is the assumption clawgate #572 accepted the 25h stranded-reservation window on; a third caller, or a lost one, changes that decision and must be loud), `no-unloadable-image-fixture`,
+`no-unmoderated-blob-retraction` (the ledger of flows allowed to ask the image-cache service to
+destroy an image's SHARED stored object — content-addressed, so it takes every byte-identical image
+of every owner with it; moderation only),
+`no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
+`no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
+flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
+`no-unroled-image-resource-match` (resource detection must not match an image to a model on
+hash value alone — a bundled upstream component file otherwise credits a stranger's checkpoint),
 `no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock` (the `importOriginal` rule above) — plus
 `hub-filter-parity` beside them, `src/server/schema/__tests__/track.addView.schema.test.ts`,
 `src/server/notifications/__tests__/notification-settings-polarity.test.ts` and
@@ -235,7 +277,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 27 files today.
+`test:lint-rules` names 50 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
@@ -512,6 +554,81 @@ In an existing checkout that already works:
    until it is shut down — run it under the node from `.nvmrc`. (On NixOS,
    `nix run .#dev-server` does that for you.)
 
+### Local development — the traps that cost hours
+
+Every one of these presents as something OTHER than its cause, which is why they are
+written down. None is OS-specific.
+
+🔴 **`.env.development` is SILENTLY INERT for any key `.env` also defines — but only
+when the dev-server daemon starts the app.** The daemon injects the primary
+checkout's `.env` into the child's ENVIRONMENT, and a real environment variable beats
+any dotenv file, so an override you add to `.env.development` never takes effect while
+the value also exists in `.env`. Keys absent from `.env` DO get through, which is what
+makes it confusing: half your overrides work. Running the app directly (`pnpm dev`)
+uses ordinary Next precedence, where `.env.development` wins as documented.
+**Diagnose it by reading the running process's environment, not the files** — but note
+`/proc/<pid>/environ` (or its equivalent) shows only what was exported at exec time,
+never values dotenv loaded at runtime, so use `@next/env`'s `loadEnvConfig` to see
+what the app actually resolved. The tell is an override that plainly should work and
+does not, e.g. a connection error naming a host you already pointed elsewhere.
+
+🔴 **Sign-in needs the AUTH HUB, and its env does not come with a checkout.**
+`apps/auth/.env` is gitignored, so a fresh clone has none and login simply fails.
+It needs an **EC P-256 keypair whose private half is PKCS8** (a SEC1 key throws at
+import), an issuer/JWKS pair pointing at the hub's own port, and `NEXTAUTH_SECRET` +
+`AUTH_INTERNAL_TOKEN` **identical to the main app's**. Start it via the `/dev-server`
+skill's `auth` verbs. Verify with the hub's JWKS endpoint: it must serve the `kid` of
+the key you just generated — that is the positive control that it signs with your key.
+
+🔴 **The hub always connects to Postgres over SSL, and a stock local Postgres has
+none.** It rewrites its own connection string to `sslmode=no-verify`, so adding
+`?sslmode=disable` to the URL does nothing. Login then fails with a generic
+*"Something went wrong on our end."* on the form, and the real error —
+`The server does not support SSL connections` — appears only in the hub's log. Give
+the local database a self-signed certificate and turn SSL on; `no-verify` accepts it.
+
+🔴 **Two database columns gate a usable local account, and one is silent.**
+`isModerator` is the obvious one. The other is `onboarding`, which must equal
+`OnboardingComplete` (see `src/server/common/enums.ts`) — otherwise every gated route
+renders the **"Welcome!" onboarding wizard**, often with a hydration error, which
+reads exactly like the route being broken. **Sessions are cached**: after changing
+either column, clear the Redis caches AND log in again, or the app keeps serving the
+old values from cache.
+
+🔴 **Feature flags have TWO independent paths, and they fail apart.** Client/SSR gates
+read the feature-flag service, which honours a `FEATURE_FLAG_<KEY>=public` environment
+override (see `getEnvOverrides` in `src/server/services/feature-flags.service.ts`).
+Several server-side gates call Flipt directly and fail closed, so the env override does
+not reach them — set only that and you get a rendered page with an empty result set,
+which looks like a broken query. **Take the flag's real key from `fliptKey` in that
+service; never infer it from the camelCase name** — an unknown key evaluates false and
+is indistinguishable from a feature that is legitimately off.
+
+🔴 **A flag declared `availability: []` that also carries a `fliptKey` cannot be switched on
+with `FEATURE_FLAG_<KEY>` at all** — that pairing hands the decision to Flipt alone, so the env
+override is ignored for it. Use `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` instead — comma-separated
+`key=value` pairs keyed by `fliptKey`, `on`/`off` for booleans, ignored when
+`NODE_ENV=production`. It reaches the feature-flag service and every `isFlipt`/`isFliptSync`
+gate, but **not** the `getFliptBoolean` gates, which ignore local overrides by design.
+
+**Both halves of that sentence are load-bearing.** A flag declared `availability: []` with **no**
+`fliptKey` — `coinbasePayments` and `nowpaymentPayments`, written in the legacy array form
+`coinbasePayments: []` — is the exception at both ends: its `FEATURE_FLAG_<KEY>` variable still
+applies and is the *only* switch it has, and `FLIPT_LOCAL_OVERRIDES` cannot reach it because
+there is no key to name. Check for a `fliptKey` before concluding a dark flag is unswitchable.
+
+🔴 **App Blocks need a signing keypair or they 503.** With `BLOCK_TOKEN_PRIVATE_KEY` /
+`BLOCK_TOKEN_PUBLIC_KEY` unset, `POST /api/v1/block-tokens` returns
+`Block tokens not configured` and the UI shows **"Couldn't authenticate this app"** —
+an auth-shaped message whose cause is missing configuration. The `kid` is derived from
+the key, so no third variable is needed. Separately, a block's iframe loads from the
+origin in its manifest, which is usually NOT served locally; the host then sits on its
+boot skeleton indefinitely.
+
+⚠ **`data-testid` attributes are stripped from production builds**
+(`reactRemoveProperties` in `next.config.mjs`). They are reliable selectors for local
+work and match nothing against a deployed environment.
+
 ### Git Worktrees
 
 Worktrees live in `<repos-root>/worktrees/<name>` — all of them, no prefix on the directory name. Keep
@@ -581,9 +698,15 @@ node .claude/skills/dev-server/cli.mjs wt stale        # what's finished, and wh
 node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlinks links, deletes, prunes
 ```
 
-`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), and a tree with a
-running dev server (`--stop-server`). It deletes the branch only when `gh` reports a **merged** PR, keeps
-it when commits exist on no remote, and prints the SHA when it does delete. Left alone, worktrees
+`wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), a tree with a
+running dev server (`--stop-server`), and a tree the dev-server daemon itself is running from. It
+deletes the branch only when `gh` reports a **merged** PR, keeps
+it when commits exist on no remote, and prints the SHA when it does delete. `wt stale` applies that
+daemon check too. **A running daemon that will not say where it runs from blocks both** — it predates
+PR #4641, and a daemon that could not be asked has not been ruled out, so `wt stale` clears no tree and
+`wt rm` refuses (`--force` overrides that one, but never a named holder). A daemon that is *not
+running* blocks nothing: it holds no directory open. That turns on the transport, not on a good
+response — a live daemon that errors on `/` is still running, and still blocks. Left alone, worktrees
 accumulate: 22 stale ones were removed in one sweep on 2026-08-12, 15 with already-merged PRs.
 
 **Two checks that fail *clean* if you verify merge state yourself.** Both return success-shaped output
@@ -608,6 +731,11 @@ It doesn't report red, it reports nothing, and a run that collected nothing stil
 as a pass to anyone checking an exit code or skimming a summary. **Validate any worktree test run by confirming
 that file collected a nonzero count** — it was 308 tests on one base. If it reports 0, the run tells you nothing
 about your change, whatever the summary says.
+
+On a queued run with the result cache on, that file can be absent from the output for a legitimate reason:
+it was skipped as unchanged since it last passed. The `[test-cache]` line names how many files were skipped.
+To apply this check, confirm the file either ran with a nonzero count or is not in your diff's reach —
+or run it by its full filename, which never goes through the cache.
 
 **A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
 get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system
@@ -789,6 +917,8 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
+| Civitai Link | [docs/features/civitai-link.md](docs/features/civitai-link.md) |
+| Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](docs/features/generator-model-onboarding.md) |
 
 ## Troubleshooting
 

@@ -92,6 +92,11 @@ describe('ActiveTagFilter', () => {
  * and both of those states are pinned in ImageFeedTagBar's own suite, beside the mount
  * guard for the bar itself.
  *
+ * /articles left this list for the same reason when its category bar came back: the `All`
+ * chip on `ArticleCategories` is the escape hatch there, and that component renders this
+ * one where the chip is absent — a settled-empty category list. Both states are pinned in
+ * ArticleCategories' own suite. The page's mount is asserted there, not here.
+ *
  * `/tools/[slug]` was named alongside the two `/user/*` pages as a third gap (868kz0qq6)
  * and is deliberately NOT here: it destructures a fixed field list out of
  * `useImageQueryParams()` that omits `tags`, and passes `disableStoreFilters`, so the
@@ -105,7 +110,7 @@ describe('ActiveTagFilter', () => {
  * `/user/[username]/videos`, both backed by `UserMediaInfinite`, which spreads `...query`
  * (retaining `tags`) into `ImagesInfinite` and renders no tag control at all, while
  * `getAllImages` applies its tag clause for every viewer. Do not read a green run here as
- * "every tag-filtered feed is covered" — read it as "these five".
+ * "every tag-filtered feed is covered" — read it as "these four".
  *
  * The note above about /images and /videos means the ROOT feeds, whose escape hatch is the
  * `All` chip on ImageFeedTagBar. That bar is not on the profile tabs.
@@ -113,7 +118,6 @@ describe('ActiveTagFilter', () => {
 describe('the tag-filtered feeds mount the clear control', () => {
   it.each([
     ['src/pages/posts/index.tsx'],
-    ['src/pages/articles/index.tsx'],
     // Read-only `?tags=` since its category scroller was removed, and it reads the param
     // with `parseNumericStringArray` — the same dead end, on a flag-gated feed.
     ['src/pages/3d-models/index.tsx'],

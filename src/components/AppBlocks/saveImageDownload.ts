@@ -30,7 +30,21 @@
  */
 export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
   'image.civitai.com',
+  // Same hostname as the default of `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT` (src/env/client-schema.ts),
+  // for a different reason: there it is the base URL the browser CALLS, here it is a host this
+  // bridge may FETCH from. Keep them separate — but a blob URL minted by that origin must be
+  // fetchable here, so if the public orchestrator host changes, this entry changes with it. Asserted
+  // in src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts. This list may legally
+  // hold MORE hosts than that one origin (an old host kept fetchable across a migration, the image
+  // CDN); it may not hold fewer.
   'orchestration.civitai.com',
+  // The "next" orchestrator's public origin. Not the default of
+  // `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT`, so the one-directional assertion in the
+  // test above does not require it — but a preview opted onto that orchestrator
+  // browses against this origin, and a blob URL it mints has to be fetchable
+  // here for the same reason the entry above exists. The list may legally hold
+  // more hosts than that one origin; this is one of them.
+  'orchestration-next.civitai.com',
 ];
 
 /** Bound the host-side blob fetch so a hostile block can't pull an unbounded video. */

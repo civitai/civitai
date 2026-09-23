@@ -1,4 +1,4 @@
-import { BUZZ_EVENTS_MAX_MULTIPLIER } from '@civitai/clickhouse';
+import { BUZZ_EVENTS_MAX_MULTIPLIER, clampBuzzEventMultiplier } from '@civitai/clickhouse';
 import type { ClickHouseClient } from '@clickhouse/client';
 import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
@@ -13,9 +13,14 @@ import {
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getMultipliersForUser,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -27,6 +32,16 @@ const BATCH_RETRY_DELAY = 500;
 // ~2.5s of retries: 1 retry (= 2 attempts) with a short backoff.
 const INLINE_RETRY_COUNT = 1;
 const INLINE_RETRY_DELAY = 200;
+// The ledger read on the refusal path runs inside the same user mutations, and its own
+// failure handling is "leave the cap consumed" — so a failed lookup and a skipped lookup
+// end the same way, and retrying it buys nothing a single bounded attempt does not. The
+// client otherwise retries any error four times with no deadline at all.
+const LEDGER_LOOKUP_TIMEOUT_MS = 1000;
+// Released only for a payment comfortably before the boundary, because the two sides of
+// that comparison are different clocks: the ledger stamps `date`, this process computes
+// midnight. Skew costs a repeat in the last minutes of a day its cap release, which is
+// the direction that does not hand back money.
+const LEDGER_DAY_BOUNDARY_GRACE_MS = 5 * 60 * 1000;
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
@@ -80,6 +95,27 @@ export const ON_DEMAND_REWARD_SCRIPT = `
   redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[5]))
 
   return toAward
+`;
+
+// Clears what a dedup entry PAID without clearing the entry itself: the entry still
+// dedups the rest of the day, but contributes 0 to the cap sum the script above
+// enforces. Used when the ledger reports the award was a duplicate.
+//
+// An absent hash returns early rather than writing: `HSET` on a missing key would
+// recreate the hash with NO expiry, and `rewardsDailyReset` is the only other thing
+// that removes it.
+export const ON_DEMAND_ZERO_ENTRY_SCRIPT = `
+  local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
+  if not cacheJson then
+    return 0
+  end
+  local cache = cjson.decode(cacheJson)
+  if cache[ARGV[2]] == nil then
+    return 0
+  end
+  cache[ARGV[2]] = 'a:0'
+  redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))
+  return 1
 `;
 
 /** `a:<amount>` as written by the Lua; `undefined` for a legacy timestamp entry. */
@@ -144,11 +180,14 @@ export function createBuzzEvent<T>({
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
-    // Apply multipliers
+    // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
+    // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
+    // is a fourth, in buzz.service.ts, and it pays.
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
-    if (rewardsMultiplier !== 1) {
-      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
-      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
+    const multiplier = clampRewardMultiplier(rewardsMultiplier);
+    if (multiplier !== 1) {
+      data.awardAmount = Math.ceil(multiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(multiplier * data.cap);
     }
 
     if (!isOnDemand) {
@@ -177,7 +216,7 @@ export function createBuzzEvent<T>({
               `,
               format: 'JSONEachRow',
             })
-            .then((x) => x.json<{ total: number }[]>())) ?? []
+            .then((x) => x.json<{ total: number }>())) ?? []
         : [];
      */
 
@@ -199,8 +238,13 @@ export function createBuzzEvent<T>({
     return data;
   };
 
+  const externalTransactionIdFor = (event: BuzzEventLog) =>
+    event.type === 'userReferred' || event.type === 'refereeCreated'
+      ? `${event.type}:${event.forId}-${event.ip}`
+      : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`;
+
   const sendAward = async (events: BuzzEventLog[]) => {
-    await withRetries(() =>
+    return await withRetries(() =>
       createBuzzTransactionMany(
         events
           .map((event) => {
@@ -208,7 +252,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
+              amount: Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -216,10 +260,7 @@ export function createBuzzEvent<T>({
                 byUserId: event.byUserId,
                 ...JSON.parse(event?.transactionDetails ?? '{}'),
               },
-              externalTransactionId:
-                event.type === 'userReferred' || event.type === 'refereeCreated'
-                  ? `${event.type}:${event.forId}-${event.ip}`
-                  : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
+              externalTransactionId: externalTransactionIdFor(event),
               toAccountType: buzzEvent.toAccountType ?? 'yellow',
             };
           })
@@ -240,11 +281,20 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    // WHETHER to clamp: `getMultipliersForUser` floors its BASE and then multiplies by the bonus
+    // without re-clamping the product, so it can hand this a non-finite value built from two finite
+    // floored factors — see `can return a NON-FINITE multiplier` in
+    // buzz.service.multiplier-floor.test.ts.
+    //
+    // WHERE, and this is the part that is easy to get wrong: clamping at `apply`'s read would close
+    // the same case, but it normalises the value before `toClickhouseBuzzEvent` sees it and
+    // destroys the `multiplierRaw` audit fidelity — see base.reward.forid.test.ts.
+    const effective = clampRewardMultiplier(multiplier);
+    const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
     // Lua, which would throw out of the script and into the user's mutation.
     const effectiveCap =
-      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * effective);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
@@ -260,7 +310,7 @@ export function createBuzzEvent<T>({
 
     if (result === -1) return false; // Already awarded
     // `toAward` is what the cap left, which is NOT always the full award.
-    return { toAward: result, effectiveAward };
+    return { toAward: result, effectiveAward, hashField, cacheKey };
   };
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
@@ -314,10 +364,12 @@ export function createBuzzEvent<T>({
       transactionDetails: JSON.stringify(transactionDetails ?? {}),
     };
 
+    let dedup: { hashField: string; cacheKey: string } | undefined;
     if (isOnDemand) {
       const outcome = await processOnDemand(key, rewardsMultiplier, config);
       if (outcome === false) return; // already awarded
       const { toAward, effectiveAward } = outcome;
+      dedup = { hashField: outcome.hashField, cacheKey: outcome.cacheKey };
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
       if (event.status === 'capped') {
@@ -375,9 +427,9 @@ export function createBuzzEvent<T>({
     }
 
     if (event.status === 'awarded') {
+      let result: Awaited<ReturnType<typeof sendAward>>;
       try {
-        await sendAward([event]);
-        rewardGivenCounter?.inc?.();
+        result = await sendAward([event]);
       } catch (error) {
         log(event, {
           message: 'Failed to send award for Buzz event',
@@ -390,6 +442,72 @@ export function createBuzzEvent<T>({
         // credit during the outage; the user's mutation still succeeds.
         return;
       }
+
+      // `externalTransactionId` carries no date, so the ledger's idempotency guard is the only
+      // lifetime memory of an award — the Redis dedup entry dies at 00:00 UTC together with the
+      // day's cap accounting it shares a hash field with. A repeat therefore re-qualifies, is
+      // refused by the ledger, and without this would still consume the user's daily cap.
+      //
+      // The counts identify THIS event only because the on-demand path submits exactly one
+      // transaction; batching that call breaks the read with nothing to notice it. The same
+      // reconciliation is hand-rolled at three App Blocks call sites and once more in
+      // `buzz.controller`, each with its own expression — worth one classifier beside
+      // `createBuzzTransactionMany` the next time one of them changes.
+      const settled = result?.transactions?.length ?? 0;
+      const conflicted = result?.conflicts?.length ?? 0;
+      if (dedup && settled === 0 && conflicted > 0) {
+        await releaseCapForRefusedAward(event, dedup);
+        return;
+      }
+
+      rewardGivenCounter?.inc?.();
+    }
+  };
+
+  /**
+   * A refusal says the ledger already holds this `externalTransactionId`. It does NOT say this
+   * call paid nothing: `withRetries` here and another layer inside the buzz client both re-send
+   * on any error, so a retry after a committed-but-unreported attempt is refused by the award it
+   * just made. Freeing the cap there would hand back an award the user was really paid.
+   *
+   * The counts cannot separate those, so ask what is on file. Only an award from an earlier UTC
+   * day is the stale one this exists for; today's, a missing record and a failed lookup all leave
+   * the cap consumed, which is what happens without this. The lookup is a GET, so the retrying
+   * that makes the write ambiguous cannot make the answer ambiguous.
+   *
+   * Nothing corrects the ClickHouse row on purpose. `buzzEvents` is ReplacingMergeTree ordered by
+   * the same key this event dedups on, so a corrected row does not sit beside the original — it
+   * REPLACES it, and the surviving row would report 0 paid for an award that really was paid on
+   * an earlier day. The cap is the user-visible harm and `getUserRewardDetails` reads it from
+   * Redis, so fixing Redis alone fixes what the user sees.
+   */
+  const releaseCapForRefusedAward = async (
+    event: BuzzEventLog,
+    dedup: { hashField: string; cacheKey: string }
+  ) => {
+    try {
+      const paid = await getTransactionByExternalId(externalTransactionIdFor(event), {
+        timeoutMs: LEDGER_LOOKUP_TIMEOUT_MS,
+        retries: 0,
+      });
+      const paidAt = paid?.date?.getTime();
+      if (paidAt === undefined || Number.isNaN(paidAt)) return;
+      if (paidAt >= new Date().setUTCHours(0, 0, 0, 0) - LEDGER_DAY_BOUNDARY_GRACE_MS) return;
+
+      await redis.eval(ON_DEMAND_ZERO_ENTRY_SCRIPT, {
+        keys: [REDIS_KEYS.BUZZ_EVENTS],
+        arguments: [dedup.hashField, dedup.cacheKey],
+      });
+      log(event, {
+        message: 'Released the cap for an award the ledger had already paid',
+        paidAt: paid?.date?.toISOString(),
+      });
+    } catch (error) {
+      log(event, {
+        message: 'Failed to release the cap for a refused award',
+        error,
+      });
+      rewardFailedCounter?.inc?.();
     }
   };
 
@@ -624,14 +742,31 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   }
 
   let multiplier = event.multiplier;
-  if (multiplier !== undefined && multiplier > BUZZ_EVENTS_MAX_MULTIPLIER) {
-    coerced.multiplierRaw = multiplier;
-    multiplier = BUZZ_EVENTS_MAX_MULTIPLIER;
-    // On the batch path this value is not audit — `process-rewards` reads it back out and
-    // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
-    // rounding a record. Reported once per batch by the caller, not here: the condition becomes
-    // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
-    // events at once, and this function runs per event per retry.
+  if (multiplier !== undefined) {
+    // Shared with the moderator's writer so the two apps cannot disagree about what the column
+    // holds. That shared floor is also why an already-written row cannot arrive here with a
+    // `multiplierRaw` this function would then overwrite in the merge below: `process` never
+    // recomputes `multiplier`, so a row the other writer clamped comes back already in range.
+    // `Number()` for the same reason as the `status === 0` read below: this value comes back out
+    // of a ClickHouse `Decimal(3, 2)` on the process path, and `Number.isFinite` does not coerce
+    // where the `>` test it replaced did. A quoted `'4.00'` would otherwise take the non-finite
+    // fallback and rewrite a legitimate multiplier to 1 — an underpay, since `sendAward` pays
+    // from it.
+    const raw = Number(multiplier);
+    const clamped = clampBuzzEventMultiplier(raw);
+    if (clamped !== raw) {
+      // `JSON.stringify` writes +/-Infinity and NaN as `null`, which reads as "the raw was absent"
+      // — the one case that most needs a legible audit trail records the least. The moderator's
+      // writer omits the key instead; it can, because it builds its row fresh. Here an omitted key
+      // would leave `coerced` empty and return the unclamped event below.
+      coerced.multiplierRaw = Number.isFinite(raw) ? raw : String(multiplier);
+      multiplier = clamped;
+      // On the batch path this value is not audit — `process-rewards` reads it back out and
+      // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
+      // rounding a record. Reported once per batch by the caller, not here: the condition becomes
+      // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
+      // events at once, and this function runs per event per retry.
+    }
   }
 
   if (Object.keys(coerced).length === 0) return event;
@@ -665,7 +800,7 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
     logToAxiom({
       name: 'buzz-rewards',
       type: 'error',
-      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
       clampedEvents: clamped,
       batchSize: events.length,
       clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,

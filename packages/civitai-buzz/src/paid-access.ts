@@ -286,9 +286,19 @@ export const SALE_DAYS_BY_TIER: Record<string, number> = {
 };
 
 /**
- * Creator score (`User.meta.scores.models`) required to charge for anything — a new price, or a sale.
+ * The floor required to charge for anything — a new price, or a sale.
+ *
+ * The two gates do not read the same number, and this constant cannot make them. The PRICING gate
+ * compares `User.meta.scores.total`, the figure `/user/account` shows. The SALE gate compares the
+ * spoke's aggregate, `GREATEST(sum of the six categories, total)`, which is >= it — so a small
+ * cohort sits below this floor for pricing and at or above it for sales (46 accounts when measured
+ * 2026-09-04). Reconciling them is a
+ * separate decision; until it is made, do not read this comment as one definition.
  *
  * Deliberately NOT waived for moderators: it states who may sell here, not a permission level.
+ * The two paths do not resolve their input identically — see the private operations note before
+ * treating this constant as a description of the sale gate's behaviour.
+ *
  * The sale gate reads it via `minCreatorScoreForSale`, which a KeyValue override can move without a
  * deploy; the pricing gate has no override.
  */

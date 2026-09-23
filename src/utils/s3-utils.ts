@@ -109,6 +109,73 @@ export async function getImageUploadBackend(): Promise<{
 }
 
 /**
+ * How many times the READ-ONLY probe client may attempt a request. ONE — i.e. no retries.
+ *
+ * 🔴 THIS IS THE ONLY THING THAT MAKES A PROBE'S WALL TIME BOUNDABLE. An `abortSignal`
+ * bounds each network ATTEMPT but not the call: the SDK sleeps BETWEEN attempts on a plain,
+ * non-abort-aware timer, so a deadline landing mid-backoff lets that sleep run to
+ * completion (documented on {@link checkFileExists}; measured there — a 300 ms budget with a
+ * ~5 s backoff in flight returned in ~4.7 s). With one attempt there is no between, so the
+ * abort budget IS the call's budget.
+ */
+export const B2_IMAGE_PROBE_MAX_ATTEMPTS = 1;
+
+let _b2ImageProbeS3Client: S3Client | null = null;
+/**
+ * A SEPARATE, retry-free B2 image client for read-only existence probes on user-facing
+ * paths.
+ *
+ * 🔴 WHY NOT JUST SET `maxAttempts` ON {@link getB2ImageS3Client}: that client is SHARED by
+ * the live upload-completion endpoints (`src/pages/api/upload/complete.ts`,
+ * `src/pages/api/upload/abort.ts`), the announcement media check
+ * (`src/server/jobs/announcement-media-check.ts`) and the server-side upload/delete paths.
+ * Those WANT the SDK's default retries — a transient 500 there loses a user's bytes. Taking
+ * retries away from all of them to bound a telemetry probe would be a production change far
+ * wider than the probe. So the probe gets its own client and the shared factory above is
+ * untouched.
+ *
+ * Same credentials, same region, same endpoint, same PUT-metrics wrapper — the ONLY
+ * difference is `maxAttempts`. Anything else drifting between the two would mean the probe
+ * is asking a different store than the one the key was minted into.
+ */
+export function getB2ImageProbeS3Client(): S3Client {
+  if (!env.S3_IMAGE_B2_ACCESS_KEY || !env.S3_IMAGE_B2_SECRET_KEY || !env.S3_IMAGE_B2_ENDPOINT) {
+    throw new Error('B2 image upload credentials not configured');
+  }
+  if (!_b2ImageProbeS3Client) {
+    _b2ImageProbeS3Client = instrumentB2Client(
+      new S3Client({
+        credentials: {
+          accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
+          secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
+        },
+        region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
+        endpoint: env.S3_IMAGE_B2_ENDPOINT,
+        forcePathStyle: true,
+        maxAttempts: B2_IMAGE_PROBE_MAX_ATTEMPTS,
+      })
+    );
+  }
+  return _b2ImageProbeS3Client;
+}
+
+/**
+ * The image-upload backend, with the retry-free probe client in place of the shared one.
+ *
+ * The BUCKET is taken from {@link getImageUploadBackend} rather than re-read from `env`, so
+ * a probe can never end up asking a different bucket than the one the upload path mints
+ * keys into — the two cannot drift because there is only one expression.
+ */
+export async function getImageUploadProbeBackend(): Promise<{
+  s3: S3Client;
+  bucket: string;
+  backend: ImageUploadBackend;
+}> {
+  const { bucket, backend } = await getImageUploadBackend();
+  return { s3: getB2ImageProbeS3Client(), bucket, backend };
+}
+
+/**
  * Server-side: upload ALREADY-FETCHED image bytes into the SAME store the
  * browser-direct client upload path uses (the B2 image bucket resolved by
  * `getImageUploadBackend`, registered in storage-resolver) and return the UUID
@@ -291,6 +358,26 @@ export async function urlsSafeToDelete(
 }
 
 /**
+ * Why this reports an OUTCOME rather than returning void.
+ *
+ * Every early return below is a case where the object is STILL THERE: the refcount guard
+ * declined, the bucket is not allowlisted, the url did not parse. A caller that treats "did not
+ * throw" as "deleted" therefore records a deletion that did not happen — and for the two callers
+ * that keep their row and set `dataPurged: true`, that writes a durable lie: the row leaves the
+ * eligible set forever while the bytes remain. That is strictly worse than a thrown error, which
+ * at least leaves the row to be retried.
+ *
+ * So a skip is reported, not silent. `deleted: false` is not an error and must not be logged as
+ * one — `still-referenced` in particular is the guard working as designed.
+ */
+export type DeleteModelFileObjectOutcome =
+  | { deleted: true }
+  | {
+      deleted: false;
+      reason: 'empty-url' | 'still-referenced' | 'bucket-not-allowed' | 'unparseable';
+    };
+
+/**
  * Delete the S3 object referenced by a ModelFile URL.
  * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
  * never assumes a single bucket env var, since ModelFile URLs span historical
@@ -301,44 +388,89 @@ export async function urlsSafeToDelete(
  * pointing the delete at an arbitrary bucket (defense in depth — schema
  * validation is z.url() only).
  *
- * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`)
- * — see `urlsSafeToDelete`.
+ * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`,
+ * `delete-old-training-data`) — see `urlsSafeToDelete`.
+ *
+ * 🔴 Returns a `DeleteModelFileObjectOutcome`; see the type above for why. A caller that only
+ * cares about "best effort, don't block" may ignore it, and several do.
  */
-export async function deleteModelFileObject(url: string, excludeId?: number) {
-  if (!url) return;
+/**
+ * Where a ModelFile url would be deleted from, or why it would not be — the LOCAL half of the
+ * decision, with no database access and no network.
+ *
+ * 🔴 IT EXISTS SO THERE IS ONE AUTHORITY, NOT TWO. A caller that wants to preview a delete
+ * without performing one (a dry run) otherwise has to re-implement backend selection and the
+ * allowlist, and the copy drifts from the original the first time either changes — which is
+ * exactly the defect class this whole change came out of. `deleteModelFileObject` below is a
+ * consumer of this function, not a parallel implementation of it.
+ *
+ * What it deliberately CANNOT tell you: whether the object is still referenced. That answer needs
+ * a query, so a preview built on this function must say it has not checked rather than imply the
+ * delete would succeed.
+ */
+export type ModelFileDeleteTarget =
+  | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
+  | { ok: false; reason: 'empty-url' | 'unparseable' }
+  // 🔴 `bucket-not-allowed` CARRIES THE BUCKET, and the other two refusals cannot. A refusal that
+  // only says "not allowed" is unqueryable: the field that names WHICH foreign bucket was
+  // targeted is the whole value of this event to anyone investigating. An earlier version of this
+  // type collapsed all three refusals into a bare `reason`, which silently dropped that field
+  // from the warn below — the plural helper still logs it, so one event name had two payload
+  // shapes and nothing said so.
+  | { ok: false; reason: 'bucket-not-allowed'; backend: 'b2' | 'default'; bucket: string };
+
+export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
+  if (!url) return { ok: false, reason: 'empty-url' };
+  const b2 = parseB2Url(url);
+  if (b2) {
+    if (!isAllowedModelFileBucket(b2.bucket))
+      return { ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: b2.bucket };
+    return { ok: true, backend: 'b2', bucket: b2.bucket, key: b2.key };
+  }
+  const { key, bucket } = parseKey(url);
+  if (!key || !bucket) return { ok: false, reason: 'unparseable' };
+  if (!isAllowedModelFileBucket(bucket))
+    return { ok: false, reason: 'bucket-not-allowed', backend: 'default', bucket };
+  return { ok: true, backend: 'default', bucket, key };
+}
+
+export async function deleteModelFileObject(
+  url: string,
+  excludeId?: number
+): Promise<DeleteModelFileObjectOutcome> {
+  // ⚠ THE LOCAL CHECKS NOW RUN BEFORE THE REFCOUNT QUERY, WHERE THEY USED TO RUN AFTER. Both are
+  // still required before anything is deleted, so the guarantee is unchanged; what changes is
+  // that a url which can never be deleted no longer costs a database round-trip, and a url that
+  // is both still-referenced and non-allowlisted now reports the latter. Ordering the free checks
+  // first is also what lets a dry run reuse this decision without touching the database.
+  const target = resolveModelFileDeleteTarget(url);
+  if (!target.ok) {
+    if (target.reason === 'bucket-not-allowed') {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        // 'r2' rather than 'default' so this payload stays identical to the plural helper's,
+        // which is the other producer of this event name. Two shapes under one name is how a
+        // group-by silently returns half the truth.
+        backend: target.backend === 'b2' ? 'b2' : 'r2',
+        bucket: target.bucket,
+        url,
+      });
+    }
+    return { deleted: false, reason: target.reason };
+  }
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
   const { safe } = await urlsSafeToDelete([url], excludeId);
-  if (safe.length === 0) return;
-  const b2 = parseB2Url(url);
-  if (b2) {
-    if (!isAllowedModelFileBucket(b2.bucket)) {
-      logToAxiom({
-        type: 'warn',
-        name: 'model-file-delete-s3-object-blocked',
-        backend: 'b2',
-        bucket: b2.bucket,
-        url,
-      });
-      return;
-    }
-    return deleteObject(b2.bucket, b2.key, getB2S3Client());
-  }
-  const { key, bucket } = parseKey(url);
-  if (!key || !bucket) return;
-  if (!isAllowedModelFileBucket(bucket)) {
-    logToAxiom({
-      type: 'warn',
-      name: 'model-file-delete-s3-object-blocked',
-      backend: 'r2',
-      bucket,
-      url,
-    });
-    return;
-  }
-  await deleteObject(bucket, key);
+  if (safe.length === 0) return { deleted: false, reason: 'still-referenced' };
+  await deleteObject(
+    target.bucket,
+    target.key,
+    target.backend === 'b2' ? getB2S3Client() : undefined
+  );
+  return { deleted: true };
 }
 
 /**
@@ -614,6 +746,61 @@ export async function getMultipartPutUrl(
   if (bucket && B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
 
   return { urls, bucket, key, uploadId: UploadId, chunkSize };
+}
+
+/**
+ * Start a multipart upload WITHOUT presigning its parts, for a server-side transfer that uploads
+ * parts itself. {@link getMultipartPutUrl} presigns every part up front because the browser has no
+ * credentials; a transfer that spans several job runs cannot use those URLs — they expire, and the
+ * part count is only known once the source reports its size.
+ */
+export async function createMultipartUpload({
+  bucket,
+  key,
+  mimeType,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  mimeType?: string;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const { UploadId } = await s3.send(
+    new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: mimeType })
+  );
+  if (!UploadId) throw new Error(`S3 returned no UploadId for ${key}`);
+  return UploadId;
+}
+
+/** Upload one part of an in-flight multipart upload from the pod. Returns the part's ETag. */
+export async function uploadPart({
+  bucket,
+  key,
+  uploadId,
+  partNumber,
+  body,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  body: Uint8Array;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const { ETag } = await s3.send(
+    new UploadPartCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+      Body: body,
+    })
+  );
+  if (!ETag) throw new Error(`S3 returned no ETag for part ${partNumber} of ${key}`);
+  return ETag;
 }
 
 interface MultipartUploadPart {

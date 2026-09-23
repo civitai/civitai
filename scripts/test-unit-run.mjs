@@ -31,7 +31,28 @@ let DAEMON = null;
 // Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
 // answered by starting a second, unqueued suite — see the note where this is set.
 let accepted = false;
+/** Read by a caller of `runQueued` deciding what a later failure may do. */
+export const queueAccepted = () => accepted;
 const POLL_MS = 2000;
+
+/**
+ * Exit after flushing pending writes.
+ *
+ * process.exit() terminates immediately without waiting for buffered stdout/stderr writes to
+ * complete. When running through a pipe-backed capture (exec background), the last lines of output
+ * are lost — both the exit code and the log then agree on "green" over a red run. Drain both
+ * streams before exiting so the capture file is complete when the process manager fires its
+ * completion notification.
+ */
+function exitAfterDrain(code) {
+  let pending = 2;
+  const done = () => { if (--pending === 0) process.exit(code); };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  // If the callbacks never fire (e.g. the streams are in an error state), exit anyway after
+  // a short safety net rather than hang.
+  setTimeout(() => process.exit(code), 500).unref();
+}
 
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
@@ -99,7 +120,15 @@ function warnIfLogsDropped(state) {
   );
 }
 
-async function runQueued(args) {
+/**
+ * Exported so `scripts/typecheck.mjs` can queue through the SAME client rather than a copy of it.
+ * Everything below — the accepted flag, the 404-means-restarted rule, the drain before exit — was
+ * learned the hard way on this path, and a second client would have to relearn each of them.
+ *
+ * `fallback` is what an unusable queue degrades to. It is only ever called BEFORE the daemon has
+ * accepted the run; after acceptance a failure exits 2 instead, for the reason given at `accepted`.
+ */
+export async function runQueued(args, { kind = 'unit', fallback = runDirect } = {}) {
   // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
@@ -114,20 +143,20 @@ async function runQueued(args) {
     DAEMON = resolveDaemonUrl();
   } catch (err) {
     console.error(`Test queue address unusable (${err.message}); running directly.`);
-    return runDirect(args);
+    return fallback(args);
   }
 
   let run;
   try {
-    run = await post('/test-runs', { worktree: repoRoot, args });
+    run = await post('/test-runs', { worktree: repoRoot, args, kind });
   } catch {
     await ensureDaemon();
     try {
-      run = await post('/test-runs', { worktree: repoRoot, args });
+      run = await post('/test-runs', { worktree: repoRoot, args, kind });
     } catch (err) {
       // Never leave a caller unable to run tests because the queue is unavailable.
       console.error(`Test queue unreachable (${err.message}); running directly.`);
-      return runDirect(args);
+      return fallback(args);
     }
   }
 
@@ -147,7 +176,7 @@ async function runQueued(args) {
   if (run.status === 'queued') {
     console.error(
       run.paused
-        ? `Queued at position ${run.position}. The queue is PAUSED (concurrency 0) — nothing starts until it is raised.`
+        ? `Queued at position ${run.position}. Its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0) — nothing starts until \`${run.resumeCommand ?? 'test config 1'}\`.`
         : `Queued at position ${run.position} of ${run.queueLength} (${run.running}/${run.concurrency} running).`
     );
   }
@@ -183,7 +212,7 @@ async function runQueued(args) {
       // here. The copy that used to live on this line read `state.exitCode || 1`, which passes a
       // signal-killed run's recorded -1 straight through: `process.exit(-1)` gives the shell 255,
       // the exact number `exitCodeFor` exists to avoid, and `[ $? -eq 1 ]` misreads it.
-      process.exit(exitCodeFor(state));
+      exitAfterDrain(exitCodeFor(state));
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }

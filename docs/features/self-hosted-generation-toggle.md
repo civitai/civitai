@@ -61,8 +61,8 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 | Input type                | Ecosystems (ECO keys)                                                                                                      | Handler                                                                                                            |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `TextToImageInput`        | `SD1`, `SD2`, `SDXL`, `Pony`, `Illustrious`, `NoobAI`, `Flux1`, `FluxKrea`, `Chroma`, `HiDream`, `PonyV7`                  | `stable-diffusion.handler.ts`, `flux.handler.ts`, `chroma.handler.ts`, `hi-dream.handler.ts`, `pony-v7.handler.ts` |
-| `ComfyImageGenInput`      | `Anima`, `Ernie`, `Lens`, `HiDream-O1` + SD-family img2img/face-fix/hires-fix (already covered by the SD ecosystems above) | `anima/ernie/lens/hi-dream-o1.handler.ts`, `comfy-input.ts`                                                        |
-| `SdCppImageGenInput`      | `ZImageTurbo`, `ZImageBase`, `Qwen`                                                                                        | `z-image.handler.ts`, `qwen.handler.ts`                                                                            |
+| `ComfyImageGenInput`      | `Anima`, `Ernie`, `Lens`, `HiDream-O1`, `ZImageTurbo`, `ZImageBase`, `Qwen` + SD-family img2img/face-fix/hires-fix (already covered by the SD ecosystems above) | `anima/ernie/lens/hi-dream-o1/z-image/qwen.handler.ts`, `comfy-input.ts` |
+| `SdCppImageGenInput`      | _(none — ZImage and Qwen moved to comfy; see the `ComfyImageGenInput` row)_                                               | —                                                                                                                  |
 | `Flux2KleinImageGenInput` | `Flux2Klein_9B`, `Flux2Klein_9B_base`, `Flux2Klein_4B`, `Flux2Klein_4B_base`                                               | `flux2-klein.handler.ts`                                                                                           |
 | `ComfyVideoGenInput`      | _(no active ecosystem — see note)_                                                                                         | —                                                                                                                  |
 | `ComfyLtx2VideoGenInput`  | `LTXV2`                                                                                                                    | `ltx.handler.ts`                                                                                                   |
@@ -74,7 +74,7 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 ### Traps — lookalike ecosystems that are EXTERNAL (must NOT be gated)
 
 - **`Flux2`** (plain) → external (`flux2` engine). Only **`Flux2Klein*`** is self-hosted.
-- **`Qwen2`** → external (`fal`). Only **`Qwen`** (sdcpp) is self-hosted.
+- **`Qwen2`** → external (`fal`). Only **`Qwen`** (comfy) is self-hosted.
 - **All `Wan*` ecosystems** → external (FAL) today. Out of scope.
 
 > **Decision 1 — RESOLVED: clean ecosystem-key granularity.** Every self-hosted ecosystem is all-or-nothing at the ecosystem-key level. No flag-conditional cases, no version-level lists. The static `selfHosted: true` flag fully describes the set.
@@ -156,7 +156,7 @@ The disabled list flows the **same path `gatedEcosystems` already takes**, but w
    - **Grey + block interaction:** reuse the existing `opacity-60`/`opacity-50` + `cursor-not-allowed` styling and guard `onClick` to early-return for disabled keys (mirrors the `disabled` guard already at line 838).
    - **Tooltip (optional):** wrap in a `Tooltip` explaining why (e.g. "Members-only generation" / "Temporarily unavailable"), same pattern as the existing "Will switch to …" tooltip at line 373.
 
-4. **`ResourceAlerts`** (`src/components/generation_v2/ResourceAlerts.tsx`): new alert following the `ExperimentalModelAlert` / `GrokEcosystemAlert` pattern, shown when the selected ecosystem ∈ disabled set. Copy matches the badge variant — `selfHostedMode === 'disabled'` → "this model can't be generated right now"; `selfHostedMode === 'memberOnly'` → members-only upsell (link to membership). Read `selfHostedMode` from `useGenerationConfig()`.
+4. **`ResourceAlerts`** (`src/components/generation_v2/ResourceAlerts.tsx`): new alert following the `GateRuleAlerts` (`src/components/generation_v2/Experimental.tsx`) / `GrokEcosystemAlert` pattern, shown when the selected ecosystem ∈ disabled set. Copy matches the badge variant — `selfHostedMode === 'disabled'` → "this model can't be generated right now"; `selfHostedMode === 'memberOnly'` → members-only upsell (link to membership). Read `selfHostedMode` from `useGenerationConfig()`.
 
 5. **Generate button** — **no direct edit needed.** Because validation lives in the ecosystem node's `output` refine (step 2), a disabled selection makes the graph invalid and submission is already blocked through the normal graph-validity path. _(Confirm during implementation that the button's disabled state reflects graph validity; if it only keys off `canGenerate`/queue today, wire graph-invalid into that one place rather than re-deriving the disabled set.)_
 

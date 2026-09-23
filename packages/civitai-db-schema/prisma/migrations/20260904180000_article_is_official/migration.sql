@@ -1,0 +1,13 @@
+-- Marks an article as published by Civitai rather than by a community author.
+--
+-- Mirrors `Model.isOfficial` (schema.prisma:967), which is the same concept on models: a
+-- column with a moderator-only setter and a "Mark Official" menu item. Justin chose this
+-- over a tag on 2026-09-04, after a review of the tag version found four defects that the
+-- column does not have -- chiefly that article tags attach by NAME through
+-- `connectOrCreate`, so a tag-based marker is a string any user can type, and the row it
+-- creates defaults to not-adminOnly.
+--
+-- `DEFAULT false NOT NULL` on a boolean is metadata-only in Postgres 11+ (no table
+-- rewrite), so this is safe to apply to `Article` while the site is up. Measured on prod
+-- 2026-09-04: 27,002 rows, server_version 18.3.
+ALTER TABLE "Article" ADD COLUMN IF NOT EXISTS "isOfficial" BOOLEAN NOT NULL DEFAULT false;

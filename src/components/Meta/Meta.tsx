@@ -3,6 +3,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { resolveMetaHref } from '~/components/Meta/canonical';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { create } from 'zustand';
@@ -47,6 +48,9 @@ type MetaBaseProps<TImage> = {
   title?: string;
   description?: string;
   schema?: object;
+  /** Emitted as its own JSON-LD block, so `Gated`'s paywall augmentation of
+   *  `schema` can't reach in and attach entity properties to the crumb list. */
+  breadcrumb?: object;
   images?: TImage | TImage[] | null;
   imageUrl?: string;
   ogEndpoint?: string;
@@ -64,6 +68,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   title,
   description,
   schema,
+  breadcrumb,
   deIndex,
   canonical,
   alternate,
@@ -126,13 +131,24 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
       {(deIndex || !canIndex || hasDialogParam) && (
         <meta name="robots" content="noindex,nofollow" />
       )}
-      {canonical && <link rel="canonical" href={`${env.NEXT_PUBLIC_BASE_URL}${canonical}`} />}
-      {alternate && <link rel="alternate" href={`${env.NEXT_PUBLIC_BASE_URL}${alternate}`} />}
+      {canonical && (
+        <link rel="canonical" href={resolveMetaHref(canonical, env.NEXT_PUBLIC_BASE_URL ?? '')} />
+      )}
+      {alternate && (
+        <link rel="alternate" href={resolveMetaHref(alternate, env.NEXT_PUBLIC_BASE_URL ?? '')} />
+      )}
       {schema && (
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
           key="product-schema"
+        />
+      )}
+      {breadcrumb && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }}
+          key="breadcrumb-schema"
         />
       )}
     </Head>

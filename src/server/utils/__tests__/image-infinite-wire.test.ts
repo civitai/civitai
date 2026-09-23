@@ -152,7 +152,7 @@ describe('image-infinite-wire', () => {
     });
 
     it('removes the keys even when present as explicit null (the getAllImagesIndex shape)', () => {
-      // The Meili/BitDex tRPC path (`getAllImagesIndex`) builds each item as an
+      // The Meili tRPC path (`getAllImagesIndex`) builds each item as an
       // object literal that sets `scannedAt`/`mimeType`/`postTitle` to `null`
       // explicitly. Those props SERIALIZE unless removed. Assert the strip deletes
       // the KEYS (not merely nulls them) so they leave the wire entirely.

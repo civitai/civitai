@@ -1,6 +1,13 @@
 import { noEdgeCache } from '~/server/middleware.trpc';
-import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
-import { getAllHiddenForUser, toggleHidden } from '~/server/services/user-preferences.service';
+import {
+  getHiddenImagesForUserSchema,
+  toggleHiddenSchema,
+} from '~/server/schema/user-preferences.schema';
+import {
+  getAllHiddenForUser,
+  getHiddenImagesForUser,
+  toggleHidden,
+} from '~/server/services/user-preferences.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -17,6 +24,14 @@ export const hiddenPreferencesRouter = router({
     // shape, so downstream data is identical. See `~/shared/hidden-preferences/compact`.
     .query(({ ctx }) =>
       getAllHiddenForUser({ userId: ctx.user?.id, compact: !!ctx.features?.hiddenPrefsCompact })
+    ),
+  // Per-viewer by definition, so it must never be edge-cached.
+  getHiddenImagesForUser: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .use(noEdgeCache())
+    .input(getHiddenImagesForUserSchema)
+    .query(({ input, ctx }) =>
+      getHiddenImagesForUser({ userId: ctx.user.id, targetUserId: input.userId })
     ),
   toggleHidden: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })

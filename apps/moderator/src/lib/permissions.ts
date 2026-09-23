@@ -32,7 +32,7 @@ export const PERMISSIONS = [
   { id: 'user.buzz.bank', label: 'See bank transactions in Buzz history' },
   { id: 'user.moderator.toggle', label: 'Activate or deactivate moderator' },
   { id: 'user.cosmetics.grant', label: 'Grant cosmetics' },
-  // The three account-ending actions on User Lookup. They were gated on the `/users` PAGE grant, so
+  // Three destructive actions on User Lookup that were gated on the `/users` PAGE grant, so
   // granting a role the new-signups list handed it mass comment deletion, ban and purge in the same
   // tick — a page grant standing in for a permission, which is the weld this app's CLAUDE.md records
   // as having cost the team once already. Separate ids because they are separate decisions: a role can
@@ -41,11 +41,33 @@ export const PERMISSIONS = [
   { id: 'user.ban', label: 'Ban or unban an account' },
   { id: 'user.purge', label: 'Purge an account’s content (irreversible)' },
   { id: 'user.comments.bulk', label: 'Bulk delete or ToS an account’s comments' },
+
+  // Also destructive, but never behind the page grant: an erasure request, carried out by the
+  // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
+  // `src/server/services/moderator-grants.ts`), so rename the two together.
+  { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
+  // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
+  { id: 'user.generations.view', label: 'View a user’s generated media' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
   { id: 'csam.report.file', label: 'File a CSAM report' },
+  // Reading the feedback queue is what the `/feedback` PAGE grant means — there is deliberately no
+  // `feedback.read` id, because a permission duplicating a page grant is the weld this file's
+  // header records. These two are the writes.
+  //
+  // Two ids rather than one because the blast radius differs: a status and an internal note are
+  // moderator-only and reversible, while promoting mints a row in `Bug`, the table behind the
+  // public Known Issues board. Same split, same reason, as `audit.ban.execute`.
+  //
+  // They launch granted to the SAME roles — a promoted Bug lands with `publishedAt` NULL and is
+  // invisible without the `bugsEdit` flag, so the thing that would justify a narrower grant does
+  // not exist. Keeping the ids separate is what makes narrowing it later one tick on `/admin`
+  // instead of a rename, and a rename orphans stored grant rows.
+  { id: 'feedback.status.set', label: 'Set feedback status and triage notes' },
+  { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

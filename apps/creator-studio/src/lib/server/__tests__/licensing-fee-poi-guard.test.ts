@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   released: [] as number[][],
   releaseFilters: [] as string[],
   slotsUsed: 0,
-  modelsScore: 50_000,
+  creatorScore: 50_000,
   // modelVersionId -> the last licenseFee charge ClickHouse reports for it.
   charges: {} as Record<number, string>,
   chargeQueries: [] as string[],
@@ -64,7 +64,12 @@ vi.mock('$lib/server/db', () => {
       });
     if (table === 'User')
       return chain({
-        executeTakeFirst: async () => ({ meta: { scores: { models: state.modelsScore } } }),
+        executeTakeFirst: async () => ({
+          // `models` is deliberately high and unequal: with a single-key fixture the spoke's
+          // getTotalScore and its aggregate getCreatorScore return the same number, and swapping
+          // the gate between them stays green. This is what makes that swap visible.
+          meta: { scores: { total: state.creatorScore, models: 50_000 } },
+        }),
       });
     if (table === 'PricingSlot')
       return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
@@ -125,6 +130,8 @@ const MAX_IMAGE_FEE = maxLicensingFeeCeiling('image');
 // `gated` stands in for a permanent PaidAccess row on the version (null = none).
 const version = (over: Partial<Record<string, unknown>> = {}) => ({
   id: 1,
+  modelName: 'Test Model',
+  versionName: 'v1.0',
   baseModel: 'SDXL 1.0',
   modelType: 'Checkpoint',
   currentFee: null,
@@ -144,7 +151,7 @@ beforeEach(() => {
   state.chargeQueries = [];
   state.clickhouseDown = false;
   state.slotsUsed = 0;
-  state.modelsScore = 50_000;
+  state.creatorScore = 50_000;
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -389,6 +396,43 @@ describe('licensing fee POI guard', () => {
     expect(state.written).toEqual([]);
   });
 
+  // The refusal named nothing, so the offender was unfindable in a multi-page selection (868m15nnc).
+  it('names the blocking versions in the bulk refusal', async () => {
+    state.rows = [
+      version(),
+      version({ id: 2, poi: true, modelName: 'Face LoRA', versionName: 'v2' }),
+    ];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2], 1, true);
+
+    expect(result).toMatchObject({ error: expect.stringContaining('Face LoRA — v2') });
+    expect((result as { error: string }).error).not.toContain('Test Model');
+  });
+
+  it('truncates a name too long to read in a toast', async () => {
+    state.rows = [version({ poi: true, modelName: 'M'.repeat(200) })];
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('…');
+    expect(error.length).toBeLessThan(200);
+  });
+
+  // Naming every offender in a 4,700-version selection is its own unreadable wall.
+  it('names the first few and counts the rest', async () => {
+    state.rows = Array.from({ length: 8 }, (_, i) =>
+      version({ id: i + 1, poi: true, modelName: `M${i + 1}` })
+    );
+
+    const result = await bulkSetLicensingFee(7, GOLD, [1, 2, 3, 4, 5, 6, 7, 8], 1, true);
+
+    const { error } = result as { error: string };
+    expect(error).toContain('M5 — v1.0');
+    expect(error).not.toContain('M6');
+    expect(error).toContain('and 3 more');
+  });
+
   it('allows the same bulk fee when no selected version is POI', async () => {
     state.rows = [version(), version({ id: 2 })];
 
@@ -405,7 +449,7 @@ describe('licensing fee POI guard', () => {
 describe('eligibility floor and monthly allowance', () => {
   it('refuses a first fee from a creator below the score floor, and writes nothing', async () => {
     state.rows = [version()];
-    state.modelsScore = 9_999;
+    state.creatorScore = 9_999;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);
 
@@ -414,9 +458,34 @@ describe('eligibility floor and monthly allowance', () => {
     expect(state.slots).toEqual([]);
   });
 
+  // User.meta is JSON, so a string-typed score is possible. getTotalScore reads it strictly for this
+  // reason: coercing it here would allow a row the main app refuses, at the same money gate on the
+  // same account. Nothing else in the spoke exercises that strictness.
+  it('refuses a string score rather than coercing it, matching the main app', async () => {
+    state.rows = [version()];
+    state.creatorScore = '999999' as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  // The other direction the fixture could not previously see: `total` absent entirely must not fall
+  // back to another key.
+  it('refuses when the total score is missing altogether', async () => {
+    state.rows = [version()];
+    state.creatorScore = undefined as unknown as number;
+
+    const result = await setLicensingFee(7, GOLD, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
   it('lets a below-floor creator change a fee they already charge', async () => {
     state.rows = [version({ currentFee: 2 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
 
     const result = await setLicensingFee(7, GOLD, 1, 5, true);
 
@@ -428,7 +497,7 @@ describe('eligibility floor and monthly allowance', () => {
   // Already sells through a permanent gate, so it is exempt from both rules.
   it('treats a version with a permanent gate and no fee as already priced', async () => {
     state.rows = [version({ gated: 1 })];
-    state.modelsScore = 0;
+    state.creatorScore = 0;
     state.slotsUsed = 3;
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);

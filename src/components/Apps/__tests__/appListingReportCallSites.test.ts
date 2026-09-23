@@ -52,11 +52,17 @@ const SRC = path.resolve(__dirname, '../../..');
 const MODAL_MODULE = 'components/Apps/ReportListingModal.tsx';
 
 /**
- * Every PRODUCTION site that mounts `ReportListingModal`. One today: the listing
- * detail body, which is the live store surface. Adding a second report surface means
- * adding it here — that is the point, not an inconvenience.
+ * Every PRODUCTION site that mounts `ReportListingModal`. One today: the SHARED `⋮`
+ * overflow menu, which both live store surfaces (the card and the listing detail body)
+ * render. Adding a second report surface means adding it here — that is the point, not
+ * an inconvenience.
+ *
+ * 🔴 IT USED TO BE `AppListingDetailBody.tsx`. The menu was extracted so the card could
+ * render it too, and the modal moved with it. That the ledger had to be edited at all is
+ * the ledger working: an extraction that silently dropped the wiring would have shown up
+ * here as a SHRINK.
  */
-const MODAL_MOUNT_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
+const MODAL_MOUNT_SITES = ['components/Apps/AppListingActionsMenu.tsx'] as const;
 
 /**
  * Every PRODUCTION site that renders the report TRIGGER, identified by the stable
@@ -64,7 +70,7 @@ const MODAL_MOUNT_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
  * a rename shows up here as a SHRINK, not as a silent hole.
  */
 const TRIGGER_TEST_ID = 'apps-listing-report-action';
-const TRIGGER_SITES = ['components/Apps/AppListingDetailBody.tsx'] as const;
+const TRIGGER_SITES = ['components/Apps/AppListingActionsMenu.tsx'] as const;
 
 type MountSite = { file: string; onReportedWired: boolean };
 type TriggerSite = { file: string; disabledFromState: boolean; labelFromState: boolean };

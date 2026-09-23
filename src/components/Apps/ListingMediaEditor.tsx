@@ -192,7 +192,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
         title: 'Sent for review',
         message: 'Your image changes go live once a moderator re-approves them.',
       });
-      void router.push('/apps/mine');
+      void router.push('/apps/build');
     } catch (e) {
       const message = (e as { message?: string }).message ?? 'Failed to submit for review.';
       showErrorNotification({ title: 'Could not submit', error: new Error(message) });

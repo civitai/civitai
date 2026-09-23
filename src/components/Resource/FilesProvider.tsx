@@ -22,7 +22,9 @@ import {
   getModelFileFormat,
   inferGgufQuantType,
   inferSafetensorsPrecision,
+  resolveUploadPrecision,
 } from '~/utils/file-helpers';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -84,6 +86,8 @@ type FilesContextState = {
   files: FileFromContextProps[];
   linkedComponents: LinkedComponent[];
   modelId?: number;
+  modelVersionId?: number;
+  modelType?: ModelType | null;
   baseModel?: string;
   usageControl?: ModelUsageControl | null;
   dropzoneConfig: DropzoneOptions;
@@ -96,6 +100,7 @@ type FilesContextState = {
   addLinkedComponent: (
     component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
   ) => Promise<void>;
+  adoptFiles: (modelFileIds: number[]) => Promise<void>;
   removeLinkedComponent: (versionId: number) => void;
 };
 
@@ -108,6 +113,27 @@ type FilesProviderProps = {
   children: React.ReactNode;
 };
 
+function toFileFromContext(
+  file: NonNullable<ModelVersionById['files']>[number],
+  { versionId, modelType, uuid }: { versionId?: number; modelType?: ModelType | null; uuid: string }
+) {
+  return {
+    id: file.id,
+    name: file.name,
+    overrideName: file.overrideName ?? null,
+    type: file.type as ModelFileType,
+    sizeKB: file.sizeKB,
+    size: file.metadata?.size,
+    fp: file.metadata?.fp,
+    format: file.metadata?.format,
+    quantType: file.metadata?.quantType,
+    isRequired: file.metadata?.isRequired ?? null,
+    versionId,
+    uuid,
+    modelType,
+  } as FileFromContextProps;
+}
+
 const FilesContext = createContext<FilesContextState | null>(null);
 export const useFilesContext = () => {
   const context = useContext(FilesContext);
@@ -117,27 +143,20 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { precisions } = useModelFileOptions();
   const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
   const [errors, setErrors] = useState<FileErrors | null>(null);
   const [files, setFiles] = useState<FileFromContextProps[]>(() => {
-    const initialFiles = (version?.files?.map((file) => ({
-      id: file.id,
-      name: file.name,
-      overrideName: file.overrideName ?? null,
-      type: file.type as ModelFileType,
-      sizeKB: file.sizeKB,
-      size: file.metadata?.size,
-      fp: file.metadata?.fp,
-      format: file.metadata?.format,
-      quantType: file.metadata?.quantType,
-      isRequired: file.metadata?.isRequired ?? null,
-      versionId: version.id,
-      uuid: randomId(),
-      modelType: model?.type ?? null,
-    })) ?? []) as FileFromContextProps[];
+    const initialFiles = (version?.files ?? []).map((file) =>
+      toFileFromContext(file, {
+        versionId: version?.id,
+        modelType: model?.type ?? null,
+        uuid: randomId(),
+      })
+    );
     const uploading = useS3UploadStore
       .getState()
       .items.filter((x) => x.meta?.versionId === version?.id)
@@ -163,6 +182,38 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   // Tracks files whose byte-upload has already been kicked off so the auto-start
   // effect doesn't start the same file twice across renders.
   const startedUploadsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * For files created outside this provider. `files` is seeded once in a `useState` initializer,
+   * so no query invalidation reaches it.
+   *
+   * 🔴 Append-only, and only the named ids. Re-seeding would revert unsaved metadata edits and
+   * duplicate an upload whose row the server committed before this client learned its id.
+   *
+   * `getByIdForEdit`, not `getById`: it reads the primary (`forceWriteDb`), so a file created a
+   * moment ago is not lost to replica lag.
+   */
+  const adoptFiles = async (modelFileIds: number[]) => {
+    if (!version?.id || !modelFileIds.length) return;
+    const fresh = await queryUtils.modelVersion.getByIdForEdit.fetch({
+      id: version.id,
+      withFiles: true,
+    });
+    const wanted = new Set(modelFileIds);
+    setFiles((state) => {
+      const present = new Set(state.map((file) => file.id).filter(isDefined));
+      const added = (fresh?.files ?? [])
+        .filter((file) => wanted.has(file.id) && !present.has(file.id))
+        .map((file) =>
+          toFileFromContext(file, {
+            versionId: version.id,
+            modelType: model?.type ?? null,
+            uuid: randomId(),
+          })
+        );
+      return added.length ? [...state, ...added] : state;
+    });
+  };
 
   const handleUpdateFile = (uuid: string, file: Partial<FileFromContextProps>) => {
     setFiles((state) => state.map((x) => (x.uuid === uuid ? { ...x, ...file } : x)));
@@ -570,7 +621,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const fileName = item.file.name.toLowerCase();
       if (fileName.endsWith('.safetensors') || fileName.endsWith('.sft')) {
         inferSafetensorsPrecision(item.file)
-          .then((fp) => {
+          .then((headerFp) => {
+            const fp = resolveUploadPrecision({
+              fileName: item.name,
+              headerFp,
+              precisions,
+            });
             if (fp) handleUpdateFile(item.uuid, { fp });
           })
           .catch(() => null);
@@ -788,9 +844,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         removeFile,
         dropzoneConfig,
         modelId: model?.id,
+        modelVersionId: version?.id,
+        modelType: model?.type ?? null,
         baseModel: version?.baseModel ?? undefined,
         usageControl: version?.usageControl,
         validationCheck: checkValidation,
+        adoptFiles,
         addLinkedComponent,
         removeLinkedComponent,
       }}

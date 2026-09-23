@@ -5,13 +5,16 @@
  * Meta contains only dynamic props - static props defined in components.
  *
  * OpenAI models:
- * - gpt-image-1    (v1)
- * - gpt-image-1.5  (v1.5)
- * - gpt-image-2    (v2) — different API shape (width/height, no transparent/seed)
+ * - gpt-image-1              (v1)
+ * - gpt-image-1.5            (v1.5)
+ * - gpt-image-2              (v2)   — different API shape (width/height, no transparent/seed)
+ * - gpt-image-2.5-flare      (v2.5) — v2's shape; the faster of the two 2.5 builds
+ * - gpt-image-2.5-sunburst   (v2.5) — v2's shape; higher fidelity, slower
  *
- * GPT-1 / GPT-1.5 share a subgraph; GPT-2 has its own subgraph. Variant is
- * computed from the selected model id and fed into a discriminator, so the
- * form swaps controls when the user switches models.
+ * GPT-1 / GPT-1.5 share a subgraph; GPT-2 and the two 2.5 builds share the
+ * other one — their control surface is identical. Variant is computed from the
+ * selected model id and fed into a discriminator, so the form swaps controls
+ * when the user switches models.
  *
  * Note: No LoRA support, no negative prompts, samplers, steps, CFG scale, or CLIP skip.
  */
@@ -34,11 +37,13 @@ import {
 // OpenAI Model Constants
 // =============================================================================
 
-/** OpenAI model version IDs. Ordered oldest → latest; the last entry is the default. */
+/** OpenAI model version IDs. Ordered oldest → latest. */
 const openaiVersionIds = {
   v1: 1733399,
   'v1.5': 2512167,
   v2: 2880272,
+  'v2.5-flare': 3311434,
+  'v2.5-sunburst': 3311436,
 } as const;
 
 /** Options for OpenAI model mode selector (using version IDs as values) */
@@ -46,40 +51,61 @@ const openaiModeVersionOptions = [
   { label: 'v1', value: openaiVersionIds.v1 },
   { label: 'v1.5', value: openaiVersionIds['v1.5'] },
   { label: 'v2', value: openaiVersionIds.v2 },
+  { label: 'v2.5 Flare', value: openaiVersionIds['v2.5-flare'] },
+  { label: 'v2.5 Sunburst', value: openaiVersionIds['v2.5-sunburst'] },
 ];
 
-/** Default to the newest version. Sourced from the last entry in `openaiVersionIds`. */
-const defaultOpenaiVersionId = Object.values(openaiVersionIds).slice(-1)[0];
+/** Not the newest: the 2.5 versions are still Draft, so v2 is the newest published one. */
+const defaultOpenaiVersionId = openaiVersionIds.v2;
 
 type OpenAIVariant = 'gpt1' | 'gpt2';
 
-/** Map version ID to variant. v1 and v1.5 both map to gpt1 (shared subgraph). */
+/**
+ * Map version ID to variant. v1 and v1.5 both map to gpt1; v2 and both 2.5
+ * builds map to gpt2, whose controls they share.
+ */
 const versionIdToVariant = new Map<number, OpenAIVariant>([
   [openaiVersionIds.v1, 'gpt1'],
   [openaiVersionIds['v1.5'], 'gpt1'],
   [openaiVersionIds.v2, 'gpt2'],
+  [openaiVersionIds['v2.5-flare'], 'gpt2'],
+  [openaiVersionIds['v2.5-sunburst'], 'gpt2'],
 ]);
 
 // =============================================================================
 // Aspect Ratios
 // =============================================================================
 
-/**
- * Shared aspect ratios. Supported by both GPT-1/1.5 and GPT-2:
- * - GPT-1/1.5 `size` enum: 1024x1024 | 1536x1024 | 1024x1536
- * - GPT-2 accepts numeric width/height; same three resolutions are valid.
- */
-const openaiAspectRatios = [
+/** GPT-1/1.5 `size` is an enum: 1024x1024 | 1536x1024 | 1024x1536. */
+const openaiGpt1AspectRatios = [
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '3:2', value: '3:2', width: 1536, height: 1024 },
   { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+];
+
+/**
+ * GPT-2/2.5 take free width/height. Provider limits: both edges multiples of 16,
+ * max edge 3840, ratio <= 3:1, total pixels 655,360–8,294,400.
+ */
+const openaiGpt2AspectRatios = [
+  { label: '21:9', value: '21:9', width: 1680, height: 720 },
+  { label: '16:9', value: '16:9', width: 1536, height: 864 },
+  { label: '3:2', value: '3:2', width: 1536, height: 1024 },
+  { label: '4:3', value: '4:3', width: 1344, height: 1008 },
+  { label: '5:4', value: '5:4', width: 1280, height: 1024 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '4:5', value: '4:5', width: 1024, height: 1280 },
+  { label: '3:4', value: '3:4', width: 1008, height: 1344 },
+  { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+  { label: '9:16', value: '9:16', width: 864, height: 1536 },
+  { label: '9:21', value: '9:21', width: 720, height: 1680 },
 ];
 
 // =============================================================================
 // Quality Options
 // =============================================================================
 
-/** Shared quality enum — matches GPT-2 exactly, subset of GPT-1/1.5's enum (no 'auto'). */
+/** Shared quality enum — matches GPT-2 and 2.5 exactly, subset of GPT-1/1.5's enum (no 'auto'). */
 const qualityOptions = ['high', 'medium', 'low'] as const;
 type OpenAIQuality = (typeof qualityOptions)[number];
 
@@ -101,6 +127,7 @@ const qualityNode = {
 
 /** GPT-1 / GPT-1.5: supports transparent background. */
 const openaiGpt1Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
+  .node('aspectRatio', aspectRatioNode({ options: openaiGpt1AspectRatios, defaultValue: '1:1' }))
   .node('transparent', {
     input: z.boolean().optional(),
     output: z.boolean(),
@@ -108,11 +135,17 @@ const openaiGpt1Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   })
   .node('quality', qualityNode);
 
-/** GPT-2: no transparent — quality is the only variant-specific control. */
-const openaiGpt2Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>().node(
-  'quality',
-  qualityNode
-);
+/** GPT-2 and GPT-2.5: no transparent background. */
+const openaiGpt2Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
+  .node(
+    'aspectRatio',
+    aspectRatioNode({
+      options: openaiGpt2AspectRatios,
+      defaultValue: '1:1',
+      priorityOptions: ['16:9', '3:2', '1:1', '2:3', '9:16'],
+    })
+  )
+  .node('quality', qualityNode);
 
 // =============================================================================
 // OpenAI Graph V2
@@ -146,8 +179,6 @@ export const openaiGraph = new DataGraph<
       }),
     []
   )
-  // Aspect ratio (shared across all OpenAI models)
-  .node('aspectRatio', aspectRatioNode({ options: openaiAspectRatios, defaultValue: '1:1' }))
   // Seed lives at the top level so both variant subgraphs expose it. GPT-2
   // doesn't actually use it in the API, but keeping the node keeps the
   // ecosystem's Ctx union shape consistent with the rest of the generator.

@@ -19,6 +19,7 @@ import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workf
 import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import { trpc } from '~/utils/trpc';
+import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
@@ -100,10 +101,14 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       ...snapshot,
       prompt: (snapshot.prompt as string) || 'cost estimation',
       musicDescription: (snapshot.musicDescription as string) || 'cost estimation',
+      lyrics: (snapshot.lyrics as string) || 'cost estimation',
     });
   }, [snapshot, graph]);
 
   const canEstimateCost = validationResult?.success ?? false;
+
+  // Don't estimate a selection the server will refuse.
+  const gateBlocked = useDisabledGates(snapshot).length > 0;
 
   // Build the query payload from validated data.
   // Note: buzz type is NOT included here — cost is the same regardless of which
@@ -122,6 +127,12 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       'styleReferences', // Krea 2
     ]);
 
+    if ('yue2Abc' in outputSnapshot) {
+      outputSnapshot.yue2Abc =
+        typeof outputSnapshot.yue2Abc === 'string' && outputSnapshot.yue2Abc.trim()
+          ? 'provided score'
+          : '';
+    }
     return filterSnapshotForSubmit(outputSnapshot, {
       computedKeys: graph.getComputedKeys(),
     });
@@ -137,6 +148,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     enabled:
       enabled &&
       !isNoSubmit &&
+      !gateBlocked &&
       !!currentUser &&
       !!queryPayload &&
       !resourcesLoading &&
@@ -162,6 +174,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     data,
     isLoading: queryResult.isFetching || imagesPending,
     canEstimateCost,
+    gateBlocked,
     validationErrors,
   };
 }

@@ -6,6 +6,7 @@ import {
   stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
 import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
+import { chunkIds } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -43,6 +44,12 @@ export type ResolvedSticker = {
   animated?: boolean;
   /** What one more use costs. Absent = this sticker doesn't sell top-ups. */
   pricePerUse?: number;
+  /**
+   * Who made it. `null` is a staff-authored cosmetic with no creator;
+   * `undefined` means NOT FETCHED — only `useOwnedSticker` populates this, and
+   * `useStickerCosmetics`, which every other sticker surface uses, never does.
+   */
+  createdById?: number | null;
 };
 
 const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
@@ -63,13 +70,14 @@ export function useOwnedSticker() {
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
     const resolved = owned
-      .map(({ id, name, data: stickerData, obtainedAt }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt, createdById }) => ({
         id,
         name,
         slug: stickerData?.slug,
         url: stickerData?.url,
         animated: stickerData?.animated,
         pricePerUse: stickerData?.pricePerUse,
+        createdById,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)
@@ -131,32 +139,13 @@ export const draftedCosmeticIds = (drafts: { cosmeticId: number }[]) =>
   drafts.map((draft) => draft.cosmeticId);
 
 /**
- * Ids split into request-sized chunks, deduped, **in insertion order**.
- *
- * Sorting would make the key independent of the order ids arrive in, which is
- * worth a little when two components ask for the same set differently ordered —
- * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
- * cosmetic ids as it pages; sorted, each one lands mid-list, shifts every chunk
- * boundary after it, changes every chunk key, and refetches the whole surface.
- *
- * Every id lands in exactly one chunk, so no collection is silently truncated to
- * the first.
- */
-export function chunkStickerIds(ids: number[], size: number): number[][] {
-  const unique = [...new Set(ids)];
-  const result: number[][] = [];
-  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
-  return result;
-}
-
-/**
  * One request per 100 distinct ids for a whole surface, rather than one per
  * rendered sticker — tRPC request batching sits behind a feature flag that is off
  * by default, so per-component queries would be per-component HTTP requests.
  */
 export function useStickerCosmetics(ids: number[]) {
   const chunks = useMemo(
-    () => chunkStickerIds(ids, STICKER_FETCH_CHUNK),
+    () => chunkIds(ids, STICKER_FETCH_CHUNK),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ids.join(',')]
   );

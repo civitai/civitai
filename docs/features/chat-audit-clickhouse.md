@@ -88,8 +88,15 @@ is absent, so the page reads as unconfigured rather than broken in dev.
 
 ## Known gaps
 
-- **`edit` has no emitter.** `updateMessage` is still unrouted, so the type is
-  declared and unused.
+- **Two readers, and only one is in this repo's main app.** `chat.getAudit` backs
+  `/moderator/chat-audit`; `apps/moderator`'s Chat Audit transcript reads every
+  `type = 'edit'` row for a message, oldest first, to show each superseded
+  version — `ChatMessage.content` is overwritten in place and Postgres keeps no
+  copy. The rows chain (each `oldValue` equals the previous `newValue`, verified
+  across every multi-edit message), so the log is a full history rather than a
+  before/after pair: 144 of 1,025 edited messages have more than one edit and one
+  has 21. Reducing it to first-and-last is what the reader used to do, and it
+  also mis-dated the surviving text — see `message-edit-chain.test.ts`.
 - **Retention is not absolute.** Account deletion and the auto-mute-scam cron
   both hard-delete `ChatMessage` rows from Postgres. The audit row survives with
   its content copy, but the thread around it does not.

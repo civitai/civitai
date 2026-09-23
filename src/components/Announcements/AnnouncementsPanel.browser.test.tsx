@@ -1,10 +1,20 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import { cleanup } from 'vitest-browser-react';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as AnnouncementsUtils from '~/components/Announcements/announcements.utils';
 import type * as CreatorUtils from '~/components/Announcements/creator-announcements.utils';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as IsClientProvider from '~/providers/IsClientProvider';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
+import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvider';
+import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type * as Trpc from '~/utils/trpc';
+import type * as ReportTrigger from '~/components/Dialog/triggers/report';
+import {
+  clearDismissedCreatorAnnouncements,
+  CREATOR_ANNOUNCEMENTS_DISMISSED_KEY,
+} from '~/components/Announcements/creator-announcement-dismissals';
 
 /**
  * The chips decide which SOURCE renders, and both are on by default. The failure this
@@ -16,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   civitai: [] as any[],
   creators: [] as any[],
   featureEnabled: true,
+  openReportModal: vi.fn(),
 }));
 
 vi.mock('~/components/Announcements/announcements.utils', async (importOriginal) => ({
@@ -32,6 +43,8 @@ vi.mock('~/components/Announcements/creator-announcements.utils', async (importO
   }),
   useMutedCreators: () => [],
   useDeleteCreatorAnnouncement: () => ({ deleteAnnouncement: vi.fn(), isLoading: false }),
+  // `useToggleAnnouncementMute` calls `trpc.useUtils()`, which the stub below doesn't cover.
+  useToggleAnnouncementMute: () => ({ toggle: vi.fn(), isLoading: false }),
 }));
 
 // The panel's leaves read providers `renderWithProviders` does not mount: `useCurrentUser`
@@ -45,6 +58,55 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof IsClientProvider>()),
   useIsClient: () => true,
+}));
+
+// The byline's avatar reads three more providers this scaffold does not mount.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useFeatureFlags: () => ({ canViewNsfw: false, creatorAnnouncements: true }),
+}));
+
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowserSettingsProvider>()),
+  useBrowsingSettings: () => false,
+}));
+
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelProvider>()),
+  useViewerBrowsingLevelDebounced: () => 1,
+}));
+
+// A STUB tRPC client, not a narrowed real one. `trpc` is a tRPC flat Proxy, and spreading a
+// Proxy reads ownKeys — which is empty — so `{...actual.trpc}` yields `{}`. Anything not
+// named here is absent by construction; the Proxy below turns that into a named error
+// instead of `Cannot read properties of undefined` inside a render, which empties the tree
+// and makes every assertion in the file time out with nothing pointing at tRPC.
+//
+// `UserAvatar` calls `trpc.user.getById.useQuery` even when handed a complete user (the
+// query is disabled, the hook still runs), and this scaffold mounts no tRPC provider.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof Trpc>();
+  const stubbed: Record<string, unknown> = {
+    user: { getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) } },
+    // `CreatorAnnouncement` records analytics through `useTrackEvent`, which mounts the
+    // trackShare mutation whether or not a share ever happens. Absent here the Proxy below
+    // throws during render and every assertion in the file reads an empty body.
+    track: { trackShare: { useMutation: () => ({ mutateAsync: async () => undefined }) } },
+  };
+  return {
+    ...actual,
+    trpc: new Proxy(stubbed, {
+      get(target, prop: string) {
+        if (Object.hasOwn(target, prop)) return target[prop];
+        throw new Error(`Unmocked tRPC router in a component test: trpc.${String(prop)}`);
+      },
+    }),
+  };
+});
+
+vi.mock('~/components/Dialog/triggers/report', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReportTrigger>()),
+  openReportModal: mocks.openReportModal,
 }));
 
 const civitaiAnnouncement = {
@@ -73,7 +135,14 @@ const creatorAnnouncement = {
   userId: 99,
   nsfwLevel: 1,
   cover: null,
-  user: { id: 99, username: 'someone' },
+  user: {
+    id: 99,
+    username: 'someone',
+    image: null,
+    deletedAt: null,
+    cosmetics: [],
+    profilePicture: null,
+  },
 };
 
 async function renderPanel(sources: Array<'civitai' | 'creators'>) {
@@ -86,6 +155,14 @@ describe('AnnouncementsPanel', () => {
     mocks.civitai = [civitaiAnnouncement];
     mocks.creators = [creatorAnnouncement];
     mocks.featureEnabled = true;
+    // The dismissal store is module-scope and reads localStorage ONCE, at import. In browser
+    // mode the module is not re-evaluated between tests — `vi.resetModules()` does not do it,
+    // measured: moving the dismissal test to run first made four later tests fail on a leaked
+    // dismissal. Reset through the store's state rather than by pruning against an empty live
+    // set: that is the behaviour the panel deliberately guards against, so a reset built on it
+    // would no-op the day anyone moves that guard down into the store.
+    clearDismissedCreatorAnnouncements();
+    window.localStorage.removeItem(CREATOR_ANNOUNCEMENTS_DISMISSED_KEY);
   });
 
   test('both chips on renders both sources', async () => {
@@ -123,5 +200,127 @@ describe('AnnouncementsPanel', () => {
     await renderPanel(['civitai', 'creators']);
 
     await expect.element(page.getByText('All caught up! Nothing to see here')).toBeInTheDocument();
+  });
+
+  test('a creator announcement in the panel names its author and is marked as a creator post', async () => {
+    await renderPanel(['civitai', 'creators']);
+
+    await expect.element(page.getByText('someone')).toBeInTheDocument();
+
+    // The href exactly, not a role-name match: a name matches as a SUBSTRING, so that
+    // assertion passes against a link pointing anywhere.
+    const hrefs = page
+      .getByRole('link')
+      .elements()
+      .map((el) => el.getAttribute('href'));
+    expect(hrefs).toContain('/user/someone');
+  });
+
+  // BOTH sources render, and the assertion is scoped to the Civitai card's own subtree.
+  // Rendering only `['civitai']` would pass with the whole feature deleted — the creator
+  // card simply would not be on screen — which is a different fact than the one under test.
+  test('a civitai announcement carries no creator byline while a creator one does', async () => {
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
+
+    const civitaiCard = page.getByText('Civitai says hello').element().closest('.rounded-md');
+    const creatorCard = page.getByText('Creator says hello').element().closest('.rounded-md');
+    if (!civitaiCard || !creatorCard) throw new Error('both cards should have rendered');
+
+    expect(civitaiCard.querySelector('a[href="/user/someone"]')).toBeNull();
+    expect(civitaiCard.classList.contains('flex-col')).toBe(false);
+    // The positive half, in the same list: whatever distinguishes them has to be present on
+    // one card and absent on the other, or "absent here" means nothing.
+    expect(creatorCard.querySelector('a[href="/user/someone"]')).not.toBeNull();
+    expect(creatorCard.classList.contains('flex-col')).toBe(true);
+  });
+
+  test('dismissing a creator announcement removes it and leaves the civitai one', async () => {
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
+
+    await page.getByRole('button', { name: 'Dismiss creator announcement' }).click();
+
+    await expect.element(page.getByText('Creator says hello')).not.toBeInTheDocument();
+    // The control: dismissal is targeted, not a panel-wide clear.
+    await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
+  });
+
+  // The prune's whole contract is the early return on an empty live set: `pruneDismissals`
+  // cannot tell "nothing is live" from "nothing has loaded", so pruning against an empty
+  // load would drop every dismissal the user has made. Deleting THAT GUARD makes this test
+  // fail — the card comes back. Deleting the effect does not; the test below is the one that
+  // covers the effect, and the two are separate arms on purpose.
+  test('a load with no creator announcements does not resurrect a dismissal', async () => {
+    await renderPanel(['civitai', 'creators']);
+    await page.getByRole('button', { name: 'Dismiss creator announcement' }).click();
+    await expect.element(page.getByText('Creator says hello')).not.toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [creatorAnnouncement];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
+    expect(page.getByText('Creator says hello').elements()).toHaveLength(0);
+  });
+
+  // The other arm: the effect has to actually run, or dismissals accumulate forever in a
+  // store that is never swept. A load that no longer carries a dismissed id must drop it,
+  // so the id coming back later is visible again rather than dismissed by a stale entry.
+  test('an id that leaves the feed is pruned, so it is visible again if it returns', async () => {
+    await renderPanel(['civitai', 'creators']);
+    await page.getByRole('button', { name: 'Dismiss creator announcement' }).click();
+    await expect.element(page.getByText('Creator says hello')).not.toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [{ ...creatorAnnouncement, id: 7, title: 'Someone else' }];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Someone else')).toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [creatorAnnouncement];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
+  });
+
+  test("the kebab offers Report on someone else's announcement", async () => {
+    // `ReportMenuItem` wraps in `LoginRedirect`, which gates on `window.isAuthed` — set by
+    // `CivitaiSessionProvider` post-hydration in production — rather than on `useCurrentUser()`,
+    // so the mocked user above is not enough on its own to reach `onReport`.
+    window.isAuthed = true;
+    try {
+      await renderPanel(['creators']);
+
+      await page.getByRole('button', { name: 'Announcement options' }).click();
+      const report = page.getByRole('menuitem', { name: 'Report announcement' });
+      await expect.element(report).toBeVisible();
+
+      await report.click();
+      expect(mocks.openReportModal).toHaveBeenCalledWith({
+        entityType: 'announcement',
+        entityId: 2,
+      });
+    } finally {
+      window.isAuthed = undefined;
+    }
+  });
+
+  test('the kebab does not offer Report on your own announcement', async () => {
+    mocks.creators = [
+      { ...creatorAnnouncement, userId: 1, user: { ...creatorAnnouncement.user, id: 1 } },
+    ];
+    await renderPanel(['creators']);
+
+    await page.getByRole('button', { name: 'Announcement options' }).click();
+    // The menu is open — assert on a sibling that IS there, so this cannot pass by the
+    // dropdown simply never having rendered.
+    await expect.element(page.getByRole('menuitem', { name: /Delete announcement/ })).toBeVisible();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Report announcement' }))
+      .not.toBeInTheDocument();
   });
 });

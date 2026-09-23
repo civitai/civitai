@@ -108,6 +108,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket; declared so the poll cases here reach
+  // the moderation path instead of failing on a missing mock export.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -139,6 +142,13 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
 
 import * as z from 'zod';
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   allBrowsingLevelsFlag,
@@ -225,6 +235,8 @@ function chatWorkflow(content = GENERATED_TEXT) {
   return {
     id: 'wf_1',
     status: 'succeeded',
+    // The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it.
+    tags: [`app-block:${APP_ID}`],
     createdAt: '2026-01-01T00:00:00.000Z',
     cost: { total: 7 },
     steps: [
@@ -343,6 +355,12 @@ beforeEach(() => {
   registryOverride.clear();
   registryOverride.set(CHAT_TYPE, textStep);
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
   it('the injected fixture is a genuinely registrable entry (the suite CONTROL)', () => {
@@ -434,6 +452,7 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
     mockGetWorkflow.mockResolvedValue({
       id: 'wf_1',
       status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
       cost: { total: 10 },
       steps: [
         {

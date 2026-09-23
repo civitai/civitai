@@ -38,6 +38,7 @@ import {
   getStoredOutputScope,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
+import { isRawAirResource } from '~/shared/utils/air';
 import {
   useGenerationGraphStore,
   generationGraphStore,
@@ -950,8 +951,9 @@ export function GenerationFormProvider({
 /** Convert GenerationResource to ResourceData (matching data-graph resourceSchema).
  * Resources arriving from the cross-domain handoff or storage may be partially
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
-function toResourceData(r: GenerationResource): ResourceData {
+export function toResourceData(r: GenerationResource): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
+  if (isRawAirResource(r)) return r; // Raw-AIR resources are self-contained (no ModelVersion row) — pass through whole so air/workflowId survive to submission
   return {
     id: r.id,
     baseModel: r.baseModel,

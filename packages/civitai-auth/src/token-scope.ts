@@ -80,6 +80,11 @@ export const TokenScope = {
   // AppBlocksSubmit it is EXCLUDED from `Full` so it never widens an existing key.
   AppBlocksDevTunnel: 1 << 26, // 67108864
 
+  // Civitai Link — pair the Civitai Link desktop app with this account. Opt-in and
+  // EXCLUDED from `Full`: link-service introspects the app's access token and refuses
+  // to mint an instance key without this bit.
+  LinkConnect: 1 << 27, // 134217728
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
@@ -96,7 +101,7 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit` and `AppBlocksDevTunnel`). Use this as the
+ * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel` and `LinkConnect`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -134,6 +139,7 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.VaultWrite]: 'Manage vault',
   [TokenScope.AppBlocksSubmit]: 'Submit Apps for review',
   [TokenScope.AppBlocksDevTunnel]: 'Open on-site dev tunnels',
+  [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
 };
 
 /** Convenience presets for the API key creation UI */
@@ -285,9 +291,7 @@ export function tokenScopeKeyByBit(bit: number): string | undefined {
  * bit ascending. Mirrors `Flags.hasFlag(mask, bit)` with an inlined bit test so
  * this stays a dependency-free leaf module. Empty mask (0) ⇒ [].
  */
-export function tokenScopeMaskToList(
-  mask: number
-): { bit: number; key: string; label: string }[] {
+export function tokenScopeMaskToList(mask: number): { bit: number; key: string; label: string }[] {
   return TOKEN_SCOPE_BITS.filter(({ bit }) => (mask & bit) === bit).map(({ bit, key }) => ({
     bit,
     key,
@@ -328,17 +332,13 @@ export function validateConnectScopeJustifications(
       continue;
     }
     if ((requestedScopes & bit) !== bit) {
-      errors.push(
-        `scopeJustifications["${key}"] is not among the requested scopes`
-      );
+      errors.push(`scopeJustifications["${key}"] is not among the requested scopes`);
       continue;
     }
     if (typeof value !== 'string' || value.length === 0) {
       errors.push(`scopeJustifications["${key}"] must be a non-empty string`);
     } else if (value.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
-      errors.push(
-        `scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
-      );
+      errors.push(`scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`);
     }
   }
   return errors;
@@ -366,8 +366,8 @@ export function validateConnectScopeJustifications(
  * moderator can eyeball exactly which permissions are flagged, and adding a new
  * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
  * that expose only PUBLIC data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
- * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in App-Block
- * scopes (`AppBlocksSubmit`/`AppBlocksDevTunnel`, never part of a connect ceiling).
+ * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in scopes
+ * (`AppBlocksSubmit`/`AppBlocksDevTunnel`/`LinkConnect`, never part of a connect ceiling).
  * `NotificationsWrite`/`VaultWrite` are included as account-mutating writes even
  * though they are self-scoped.
  */

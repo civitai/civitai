@@ -259,108 +259,6 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
 });
 
-// Metrics for the BitDex publish re-emitter job (reemit-bitdex-ops): runs is the
-// liveness signal, images_emitted/runs tracks emission volume, and the duration
-// histogram guards the emit statement against getting slow.
-export const reemitAttemptsCounter = registerCounter({
-  name: 'reemit_attempts_total',
-  help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',
-});
-export const reemitRunsCounter = registerCounter({
-  name: 'reemit_runs_total',
-  help: 'BitDex publish re-emitter runs that emitted SUCCESSFULLY (success-only; compare to reemit_attempts_total for the error rate)',
-});
-export const reemitErrorsCounter = registerCounter({
-  name: 'reemit_errors_total',
-  help: 'BitDex publish re-emitter emits that threw (e.g. a missing shared PG function) before rethrowing',
-});
-export const reemitPostsScannedCounter = registerCounter({
-  name: 'reemit_posts_scanned_total',
-  help: 'Distinct posts scanned by the BitDex publish re-emitter across all runs',
-});
-export const reemitImagesEmittedCounter = registerCounter({
-  name: 'reemit_images_emitted_total',
-  help: 'BitdexOps rows (per-image ops) written by the BitDex publish re-emitter across all runs',
-});
-export const reemitRunDurationHistogram = registerHistogram({
-  name: 'reemit_run_duration_seconds',
-  help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-});
-export const reemitSkippedRateLimitCounter = registerCounter({
-  name: 'reemit_skipped_rate_limit_total',
-  help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
-});
-
-// The re-emitter's second scope: future-scheduled posts, which no trailing-past-window
-// scan can reach. Kept as separate series from the reemit_posts_scanned/images_emitted
-// pair above because this scan's volume is ~100x larger and steady — summing the two
-// would swamp the published-window emission signal.
-export const reemitScheduledPostsScannedCounter = registerCounter({
-  name: 'reemit_scheduled_posts_scanned_total',
-  help: 'Distinct future-scheduled posts (publishedAt > now()) scanned by the BitDex publish re-emitter across all runs',
-});
-export const reemitScheduledImagesEmittedCounter = registerCounter({
-  name: 'reemit_scheduled_images_emitted_total',
-  help: 'BitdexOps rows written by the BitDex publish re-emitter for images of future-scheduled posts across all runs',
-});
-
-// Metrics for the standing PG<->BitDex consistency audit (audit-bitdex-consistency).
-// mismatch_total is the alerting series. `stratum` is the sampled population, `kind` the
-// failure mode — both fixed low-cardinality enums (the `MismatchKind` union in the job).
-//
-// 🔴 `checked_total` is the LIVENESS signal, not a denominator: it counts rows SAMPLED.
-// Rows whose document is absent or unpublished are skipped before any comparison, so a
-// stratum that compared nothing still reports them. Use `compared_total` as the
-// denominator, and `opportunity_total{kind}` for a particular kind's zero.
-export const bitdexAuditCheckedCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_checked_total',
-  help: 'Images SAMPLED by the consistency audit, by sample stratum — the liveness signal, NOT a denominator (see compared_total)',
-  labelNames: ['stratum'] as const,
-});
-export const bitdexAuditMismatchCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_mismatch_total',
-  help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
-  labelNames: ['stratum', 'kind'] as const,
-});
-// The denominators a mismatch count of zero has to be read against, on the SAME surface
-// an alert reads. `checked_total` counts rows SAMPLED; a row whose document is absent or
-// unpublished is skipped before any comparison, so a stratum that compared nothing emits
-// a mismatch zero indistinguishable from perfect agreement unless these are here too.
-// `opportunity` is the arm-specific count: compared documents on which that arm COULD
-// have fired at all.
-export const bitdexAuditComparedCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_compared_total',
-  help: 'Sampled images the consistency audit actually compared (document present and published), by sample stratum',
-  labelNames: ['stratum'] as const,
-});
-export const bitdexAuditOpportunityCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_opportunity_total',
-  help: 'Compared images on which a given audit failure kind could have fired, by sample stratum and failure kind — the denominator for that kind of zero',
-  labelNames: ['stratum', 'kind'] as const,
-});
-// Which stratum died, when one is caught rather than taking the whole run down. Without
-// this, a stratum that has been failing for a week is invisible: runs_total still ticks
-// (the run completed for the others) and errors_total cannot say which one.
-export const bitdexAuditStratumFailedCounter = registerCounterWithLabels({
-  name: 'bitdex_audit_stratum_failed_total',
-  help: 'Consistency audit strata that failed and were caught, by sample stratum — the run continues for the others',
-  labelNames: ['stratum'] as const,
-});
-export const bitdexAuditRunsCounter = registerCounter({
-  name: 'bitdex_audit_runs_total',
-  help: 'BitDex consistency audit runs that completed — the liveness signal. ⚠️ A run counts here even when ONE stratum failed and was caught, because it did complete for the others: pair it with stratum_failed_total before trusting a per-stratum zero',
-});
-export const bitdexAuditErrorsCounter = registerCounter({
-  name: 'bitdex_audit_errors_total',
-  help: 'BitDex consistency audit runs that hit an error — a whole-run throw, or a single stratum failing and being caught. Unlabelled: see stratum_failed_total for which one',
-});
-export const bitdexAuditRunDurationHistogram = registerHistogram({
-  name: 'bitdex_audit_run_duration_seconds',
-  help: 'Wall-clock duration of a BitDex consistency audit run (all three strata: PG sample + BitDex fetch + compare)',
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-});
-
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',
@@ -415,6 +313,60 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['status'] as const,
 });
 
+// App Blocks PER-GENERATION AUTHOR FEE — DARK. These three count what the fee
+// WOULD be; slice 1 charges nobody and stores nothing, so this counter trio is
+// the only record that the computation ran, and the only way to size the
+// settlement slice from real traffic before anyone is billed.
+//
+// `coarse_type` is the COARSE generation key (`blockGenerationCoarseType`) or
+// the literal `unknown` — bounded by the step/recipe registries, so the label is
+// low-cardinality by construction and cannot be widened by traffic.
+// `outcome` is which leg governed (`flat` / `pct` / `none`), or one of two
+// counted SKIPS:
+//   `base-unavailable`  the orchestrator surfaced no `WorkflowCost.base` to
+//                       compute against — the RECOVERABLE blind spot.
+//   `price-is-cap`      `WorkflowCost.variable` was true, i.e. the price is a
+//                       CAP that may settle lower (a post-billed step charged
+//                       up front at its maximum and refunded down). No fee is
+//                       computed on one: a percentage of a number the viewer is
+//                       partly refunded is a fee on money they did not spend.
+//                       Kept SEPARATE from `base-unavailable` on purpose — that
+//                       one is a denominator the slice-2 sizing read divides by,
+//                       and a cap-priced generation would not have charged even
+//                       with a base in hand.
+// The `flag-disabled` skip is NOT here: it emits no counter at all by design and
+// is visible only as the Axiom `authorFeeSkipped` field.
+// 🔴 HYPHEN, not underscore, and this is the ONLY place in the repo that
+// enumerates the value set — so it is what an operator writing the slice-2
+// sizing join reads. Each skip is deliberately the SAME string as the Axiom
+// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` /
+// `BLOCK_AUTHOR_FEE_PRICE_IS_CAP` in
+// `~/server/services/blocks/author-fee`), because that join is the whole point:
+// querying `outcome="base_unavailable"` returns an empty series, which reads as
+// "no generation lacked a base" rather than "you spelled the label wrong".
+export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_observed_total',
+  help: 'App Blocks per-generation author-fee computations observed (dark — no money moves), by coarse generation type and governing leg',
+  labelNames: ['coarse_type', 'outcome'] as const,
+});
+
+// Sum of the fee that WOULD have been charged. Divide by the base counter below
+// for the realized effective rate per coarse type; on its own it is the Buzz
+// volume slice 2 would have to settle.
+export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_buzz_total',
+  help: 'Buzz the App Blocks per-generation author fee would have charged (dark), by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
+// The denominator: sum of `WorkflowCost.base` the fee was computed against.
+// NOT the workflow total — that already carries licensing fees and tips.
+export const blockAuthorFeeBaseBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_base_buzz_total',
+  help: 'Base generation Buzz the App Blocks author fee was computed against, by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
 // App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
 // block-initiated membership purchase).
 export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
@@ -460,6 +412,93 @@ export const redisCommandDuration = registerHistogram({
   labelNames: ['client'] as const,
   // Up to 30s to capture the parked-command tail that maps onto the Traefik 30s ceiling → 504.
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+});
+
+// Duration of the brotli codec on the opt-in compressed `redis.packed` paths, by `op`
+// (compress | decompress) and `cache_name`.
+//
+// 🔴 WHAT A SAMPLE CONTAINS, because the name says "codec" and the number is wider than that. The
+// clock starts before the promisified call is enqueued and stops at the `await` CONTINUATION on the
+// JS thread, so a sample is threadpool queue wait + codec work + whatever event-loop delay sits
+// between the completion landing and the continuation running. Measured: a 50 ms main-thread block
+// held while a decompress is in flight yields a 50.79 ms sample — event-loop delay is absorbed ~1:1.
+// And the floor is dispatch, not codec: a 1-byte payload (no real codec work) round-trips in ~11 µs
+// p50 on one machine and ~22 µs on another, against a typical ~25-36 µs decompress — i.e. roughly
+// half or more of a typical sample is the hand-off, not brotli. Read the low buckets accordingly.
+//
+// WHY A SEPARATE HISTOGRAM. Two existing signals both LOOK like they cover this and neither does:
+//   - CPU profiles: the codec is `promisify(zlib.brotli*)`, i.e. it runs on the libuv threadpool.
+//     Threadpool work carries no JS stack, so no `brotli*` frame is ever sampled — a profile search
+//     returns zero, which reads as "the codec is free" rather than "the profiler cannot see it".
+//   - redis_command_duration_seconds: that observation closes when the redis round trip closes,
+//     while compress happens before the write and decompress after the read. Worse, it moves the
+//     WRONG WAY — a compressed payload is smaller on the wire, so turning compression on makes that
+//     histogram improve while adding codec cost it structurally cannot observe.
+// So this is the only signal that can answer "what does compression cost us".
+//
+// `cache_name` is the cache PREFIX (e.g. `packed:caches:image-meta`). It is chosen so cardinality
+// stays bounded by the small set of caches that opt into `compress`; callers with no bounded name
+// report 'unknown'.
+//
+// HOW FAR THE JOIN TO CACHE TRAFFIC GOES — it holds for ONE of the two consumers, so do not plan a
+// dashboard on it without checking which:
+//   - createCachedArray / createCachedObject DO join: the builder passes its `key` as this label
+//     AND passes the same `key` as `cache_name` to cacheHitCounter/cacheMissCounter, so the two
+//     label values are equal by construction.
+//   - fetchThroughCache does NOT join: it emits no hit/miss counters at all, so there is no
+//     cache-traffic series carrying this `cache_name` to join against. (The nearest counter a
+//     reader might reach for — the tensor-metadata in-process LRU — labels itself
+//     'tensor-metadata-full', a different value naming a different cache.) The label still earns
+//     its place there by separating one cache's codec cost from another's; it is simply not a join
+//     key today.
+//
+// BUCKETS — seconds, and the floor has to be MICROseconds, cut against measured values rather
+// than against a guess at the order of magnitude. Two earlier floors were both wrong, in the same
+// direction, for the same reason: they were placed at or just under where typical samples land,
+// which is precisely where a first edge must NOT be. Everything at or below the first edge is
+// indistinguishable — `histogram_quantile` cannot see inside bucket one — so a floor sitting in
+// the middle of the population reports a stable, plausible number that barely moves whatever the
+// codec does. 0.0005 was ~19x the typical decompress. 0.00002 (20us) looked far safer and was
+// still inside the population: measured over 48 real image-meta values pulled off the live cache
+// and timed through this exact `promisify(zlib.brotli*)` shape, 38.5% of decompress samples landed
+// AT OR BELOW 20us.
+//
+// What the measurements say, and what each end of the list is cut to:
+//   - DISPATCH FLOOR. A 1-byte payload through the same async shape costs p50 17.7us / p90 38.6us
+//     / p99 140.9us. That is threadpool round trip, not codec work, and nothing can be faster than
+//     it. So the first edge belongs BELOW it: 5us, chosen so bucket one means "impossibly fast —
+//     something is wrong with the instrument", not "typical".
+//   - DECOMPRESS, the overwhelming majority of samples by count: p50 21.9-30.2us, p90 41.9-66.2us,
+//     p99 182.7us. The 10-70us band therefore carries the readable quantiles and gets the finest
+//     edges in the list (1.33x-1.67x steps).
+//   - COMPRESS at q6: p50 111.6us, p90 216.3us, p99 3.8ms. The 100-250us band gets the same
+//     treatment; the ms decade covers its p99.
+//   - LARGE VALUES. tensor-metadata's ~335 KB blob is ~36 ms to compress in the worst case
+//     measured. Rare, but it is the tail the metric exists to show, so the list runs past it.
+// (Those are per-value codec timings and nothing else — no rate, no volume, is implied by them.)
+// ⚠️ Changing these edges resets every series' history — settle them before this ships.
+//
+// Exported so the resolution invariant can be checked mechanically rather than by eye. The guard
+// in ./__tests__/packed-codec-buckets.test.ts does NOT read this constant for its verdict — it
+// observes a sample and reads the `le` set back off the REGISTERED histogram, so editing `buckets:`
+// below without editing this list (or the reverse) fails. It pins four properties: the first edge
+// is below the measured dispatch floor, the measured common case is not swallowed by the first
+// bucket, the large-blob tail is covered, and the ORDERED SEQUENCE OF ADJACENT RATIOS is exactly
+// the one written out here. That last one is deliberately an equality and not a bound — see the
+// comment on EXPECTED_EDGE_RATIOS in that file for why a bound is the wrong shape of guard.
+export const PACKED_CODEC_DURATION_BUCKETS = [
+  // 5us -> 250us: the dispatch floor and the decompress/compress bulk, at 1.33x-2x.
+  0.000005, 0.00001, 0.000015, 0.00002, 0.00003, 0.00005, 0.000075, 0.0001, 0.00015, 0.00025,
+  // 0.5ms -> 1s: the compress p99 (~3.8ms), the ~36ms large-blob tail, and headroom above it,
+  // at the usual 1-2-5 decade steps.
+  0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1,
+] as const;
+
+export const packedCodecDuration = registerHistogram({
+  name: 'packed_codec_duration_seconds',
+  help: 'Brotli codec duration for compressed redis.packed values, by op and cache_name. Wall clock as the CALLER sees it, NOT CPU time: the clock stops at the await continuation on the JS thread, so a sample is libuv threadpool QUEUE WAIT + codec work + EVENT-LOOP DELAY before the completion is delivered (a blocked JS thread inflates it ~1:1 — a 50ms block measured 50.79ms). The threadpool round-trip floor is p50 17.7us / p90 38.6us even for a 1-byte payload, so the lowest buckets are dispatch overhead rather than codec time and the first edge (5us) sits below that floor deliberately: a sample in bucket one means the instrument, not the codec. A rise means the codec PATH got slower; it does NOT on its own mean brotli got more expensive. Invisible to CPU profiles (the codec runs off the JS stack) and not covered by redis_command_duration_seconds, which stops at the round trip.',
+  labelNames: ['op', 'cache_name'] as const,
+  buckets: [...PACKED_CODEC_DURATION_BUCKETS],
 });
 
 // SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces
@@ -536,9 +575,49 @@ export const appStorageOpsCounter = registerCounterWithLabels({
   labelNames: ['op', 'outcome'] as const,
 });
 
+// App Blocks KV writes refused by a storage ceiling. `ceiling` says WHICH one,
+// because the two want opposite responses and used to be indistinguishable here:
+// `ceiling="app"` is the 50MB / 1M-row per-APP budget — rare, shared by every
+// user of the app, and needs an operator; `ceiling="user"` is the per-USER
+// sub-budget beneath it — routine, self-inflicted, self-recoverable, and not an
+// ops signal. Alert on the first; the second belongs on a dashboard. A query that
+// sums without the label keeps its previous meaning (both ceilings combined).
+//
+// 🔴 NOT named `scope`. In this codebase `scope: '<literal>'` inside a router file
+// means an App Blocks PERMISSION scope (`apps:storage:write`, …), and
+// `analytics-bucket-labels.drift.test.ts` greps exactly that spelling out of
+// apps.router.ts to gate the analytics Scopes card. A Prometheus label keyed
+// `scope` there is picked up as a permission scope and pollutes that guard —
+// measured, it added "app" and "user" to its expected set. `quota_scope` would
+// not have helped either: the guard's regex has no word boundary, so it matches
+// the `scope: '…'` tail inside it. `ceiling` is both collision-free and the more
+// accurate word for what the label distinguishes.
 export const appStorageQuotaExceededCounter = registerCounterWithLabels({
   name: 'app_blocks_storage_quota_exceeded_total',
-  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
+  help: 'App Blocks KV writes rejected by a storage ceiling (ceiling=app: the per-app budget; ceiling=user: the per-user sub-budget)',
+  labelNames: ['app_block_id', 'ceiling'] as const,
+});
+
+// App Blocks KV writes served against a schema that has no `user_quota` relation
+// yet, i.e. writes on which the per-USER sub-budget was NOT enforced.
+//
+// `user_quota` is created by AppStorageProvisioner.provision, whose only callers
+// are new-version approval and a manual admin backfill endpoint — nothing
+// schedules either, so an app provisioned before the table existed keeps serving
+// writes with the sub-budget inert, indefinitely and by default. The set path
+// falls back rather than failing closed (refusing writes for want of a counter
+// that does not exist turns a missing upgrade into an outage), which means the
+// inert state is silent by construction unless something counts it.
+//
+// 🔴 It is deliberately its OWN series and not an `outcome` on
+// app_blocks_storage_ops_total. A state visible only as some other series
+// changing shape is not alertable — the same argument countStorageFault makes
+// about faults being visible solely as the `ok` series falling to zero. This is
+// the series to alert on ("some app has been running unmetered for N days") and
+// the series that goes to zero when the backfill has actually reached everything.
+export const appStorageUserQuotaUntrackedCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_user_quota_untracked_total',
+  help: 'App Blocks KV writes served without a per-user quota relation (sub-budget not enforced; app needs the storage backfill)',
   labelNames: ['app_block_id'] as const,
 });
 
@@ -561,7 +640,7 @@ export const imageScanWebhookCounter = registerCounterWithLabels({
 
 export const imageScanSubmittedCounter = registerCounterWithLabels({
   name: 'image_scan_submitted_total',
-  help: 'ingestImage() scan submissions by lane (new|legacy) and result (success|failed)',
+  help: 'ingestImage() scan submissions by lane (new = wdTagging+mediaRating | imageScanning) and result (success|failed)',
   labelNames: ['lane', 'result'] as const,
 });
 

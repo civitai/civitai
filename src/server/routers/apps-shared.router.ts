@@ -2,11 +2,26 @@
 //
 // Mounted at `trpc.apps.shared.*` (block-token authed) + `trpc.apps.mod.*`
 // (session moderatorProcedure). This is the FIRST App Blocks surface that opens
-// the per-app datastore to PUBLIC cross-user writes — today per-user KV is
-// reachable only by mods + app-dev-testers (apps.router `assertViewerIsAppDeveloper`).
-// Every control here exists because a community app serves GENERAL users; see the
-// hardened design (`shared-storage-design.md`, "HARDENED per design security
-// review"). Read that before touching auth/counter/trust logic.
+// the per-app datastore to PUBLIC cross-user writes. The per-user KV path
+// (apps.router) is scoped by every query to the writer's OWN
+// (block_instance_id, user_id) rows, and is gated on the RUN capability
+// (`app-blocks-enabled`, via apps.router's `assertAppBlocksEnabledForTokenUser`).
+// It is NO LONGER limited to app authors: `assertViewerIsAppDeveloper` left that
+// path when per-user storage was re-gated on the run capability, and now guards
+// only the mod review-preview ("run for real") branch. That is CLOSE TO, but not
+// identical to, "whoever may open the app at all" — the block-token mint gates on
+// `getFeatureFlags({ user }).appBlocks`, which falls back to the static
+// `availability: ['mod']` evaluation when Flipt returns null, whereas
+// `isAppBlocksEnabled` has no mod floor. So with Flipt unavailable a moderator can
+// mint a token that the per-user KV gate then refuses: a divergence in the SAFE
+// direction, on a path that is already degraded.
+//
+// Here, by contrast, a write is readable, votable and reportable by OTHER users
+// of the app, which is what every control below (min-trust, per-user row cap,
+// rate limits, revocation, content safety) is answering. The security review that
+// motivated those controls is not a document in this repo; the rationale that
+// survives is the per-control comments below — read those before touching
+// auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
 //   - shared_kv(key ULID PK [SERVER-generated], author_user_id, value jsonb, …)
@@ -30,10 +45,9 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import { Flags } from '~/shared/utils/flags';
-import { OnboardingSteps } from '~/server/common/enums';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -44,8 +58,10 @@ import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
+  checkSharedWithdrawRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
 // ── Limits (design M2/M3) ─────────────────────────────────────────────────────
 // The app quota row is SHARED with the per-user kv path; these mirror the
@@ -63,12 +79,16 @@ const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 const SHARED_KV_PER_USER_ROW_CAP = 50;
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
-// Account must be older than this to write/vote (anti-sybil). Starts at 7d.
-const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-// Flag-toggleable STRONG anti-sybil lever (design H5): require a paid tier to
-// write/vote. OFF by default — flip to true (or wire to a flag) if sybil pressure
-// materializes. `free`/absent tier fails when on.
-const REQUIRE_PAID_TIER = false;
+// MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
+// SECOND caller (`blocks.createPostFromApp`), and a trust predicate open-coded at
+// two sites is one that will be wrong at one of them. The rule, its signals and
+// its exact deny messages are unchanged.
+//
+// NOT re-exported from here. The importers of this module were enumerated when
+// the predicate moved, and none of them took `assertSharedWriteTrust`,
+// `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
+// `appsSharedRouter`/`appsModRouter` and the counter helpers. Import the
+// predicate from the service that owns it.
 
 type SharedOp =
   | 'list'
@@ -92,53 +112,6 @@ const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCo
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
 
-/**
- * The min-trust gate (design H3). Reuses EXISTING civitai trust signals hydrated
- * from `SessionUser` — no new trust score. FAIL-CLOSED: a vanished subject (null),
- * banned, muted, onboarding-incomplete, unverified-AND-no-OAuth, or too-new account
- * is DENIED. `asserts` narrows `user` to non-null for the caller.
- *
- * "Verified email" is satisfied by `emailVerified` OR a linked OAuth account
- * (`hasLinkedOAuth`, a row in the `Account` table). Rationale: civitai's
- * `emailVerified` is only ever set by the email-CHANGE flow — OAuth sign-in
- * (GitHub/Google/Discord, ~69% of active users) never sets it, so the raw check
- * locked out most legitimate users. A linked OAuth account is a provider-verified
- * identity and a STRONGER anti-sybil signal than an unverified civitai email
- * (minting N GitHub/Google accounts is harder than N unverified civitai accounts).
- * A user with NEITHER a verified email NOR an OAuth link genuinely still needs to
- * verify, so that case keeps the original deny.
- *
- * Signals (all AND-ed):
- *   sub!=anon (caller passes non-null) · !bannedAt · !muted ·
- *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) ·
- *   (emailVerified present OR hasLinkedOAuth) ·
- *   account age ≥ MIN_ACCOUNT_AGE_MS · [optional] paid tier.
- */
-export function assertSharedWriteTrust(
-  user: SessionUser | null,
-  hasLinkedOAuth: boolean
-): asserts user is SessionUser {
-  const deny = (message: string): never => {
-    throw new TRPCError({ code: 'FORBIDDEN', message });
-  };
-  if (!user) return deny('Your account is not eligible for this action');
-  if (user.bannedAt) return deny('Your account is not eligible for this action');
-  if (user.muted) return deny('Your account has been restricted');
-  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
-    return deny('Complete onboarding before contributing');
-  }
-  if (!user.emailVerified && !hasLinkedOAuth) {
-    return deny('Verify your email before contributing');
-  }
-  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
-    return deny('Your account is too new to contribute');
-  }
-  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
-    return deny('A membership is required to contribute');
-  }
-}
-
 interface SharedContext {
   userId: number | null;
   subjectUser: SessionUser | null;
@@ -158,7 +131,10 @@ interface SharedContext {
  *   4. for WRITE ops: authenticated subject + the min-trust gate
  * Anon may READ list/counts; anon NEVER writes/votes.
  */
-export async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
+export async function resolveSharedContext(
+  blockToken: string,
+  op: SharedOp
+): Promise<SharedContext> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
@@ -170,6 +146,17 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
     });
   }
 
+  // 🔴 THE STRICTEST OF THE THREE RESOLVERS THAT READ THIS ROW, AND DELIBERATELY SO.
+  // The other two are `resolveAppBlockApprovalVerdict`
+  // (`~/server/services/blocks/block-approval.service`), the shared predicate for the REST
+  // middleware and the tRPC bridge, which exempts a run-for-real review token, a token
+  // with no backing row, and an owner with a live dev tunnel; and `resolveStorageContext`
+  // (`apps.router`), which exempts only the run-for-real review token. This one exempts
+  // NOTHING, because shared storage is cross-user, app-global state and the review mint
+  // never grants `apps:storage:shared:*` at all — so there is no case here to exempt, not
+  // a disagreement about what approval means. Do not "align" these three without deciding
+  // it; the reconciliation and its rationale are ledgered, and enforced on both growth and
+  // shrink, in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
     select: { id: true, status: true },
@@ -182,8 +169,17 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
   // Per-instance revocation — the missing containment leg (audit M-1). The REST
   // `withBlockScope` path enforces this; the tRPC shared path must too, so an
   // uninstalled / toggled-off / publisher-banned instance can't keep writing
-  // until token expiry. Mirrors block-scope.middleware's check.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+  // until token expiry. Mirrors block-scope.middleware's check. (The ban leg is new as
+  // of clawgate #618 and lives in its OWN keyspace: install writes go through
+  // `revokeInstance` — `uninstallFromModel`, `toggleEnabled(false)` — and ban writes
+  // through `revokeInstanceForBan`, from `revokeBlockInstancesForPublisher`. Read
+  // `block-scope.middleware.ts` before reasoning about the ban path from here.)
+
+  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
+  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
+  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
+  // the alternative is a silent trap pointed at unsubmitted-app storage.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 
@@ -205,15 +201,44 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
     throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
   }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
-  // the flag segment eval and the trust gate. Fail-closed on a vanished subject.
+  // the flag segment eval and the trust gate.
   const subjectUser =
     userId != null
       ? ((await sessionClient.getSessionUserById(userId)) as SessionUser | null)
       : null;
 
-  // Dedicated fail-closed kill-switch (evaluated with the subject's context so the
-  // flag's mod/cohort segments resolve identically to the client gate; anon read →
-  // global eval → fail-closed until a base-enabled GA flip).
+  // 🔴 A VANISHED SUBJECT IS NOT AN ANONYMOUS CALLER — refuse it here, before the
+  // flag. Both used to collapse into the single `subjectUser ?? undefined` below,
+  // and the comment claimed that was "fail-closed on a vanished subject". It was
+  // not: a no-user eval cannot match a segment, but its answer is the flag's own
+  // base `enabled` value, so a base-`enabled: true` GA flip of
+  // `app-blocks-shared-storage` would admit a token whose subject no longer exists.
+  // The WRITE path happened to catch it downstream (the `userId == null` check +
+  // the min-trust gate below); EVERY op in `READ_OPS` skips that block entirely and
+  // has no second belt, so the flag was the only thing standing in front of all of
+  // them. Do not re-enumerate that set here — it is four ops today and adding a
+  // fifth must not silently make this comment wrong. Mechanism + the measurement
+  // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  //
+  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
+  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
+  // runtime branch, so a bundler that drops it re-opens the exposure with the source
+  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
+  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
+  // so line numbers do not matter, and the message text is free to change because the
+  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
+  // or rewriting that condition, fails the production Docker build at
+  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
+  // same commit.
+  if (userId != null && !subjectUser) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
+  }
+
+  // Dedicated kill-switch, evaluated with the subject's context so the flag's
+  // mod/cohort segments resolve identically to the client gate. An ANON token
+  // (`sub:'anon'`, `userId == null`) still reaches this with no user, which is
+  // deliberate: that is a global eval, i.e. the flag's BASE value, and anon shared
+  // access is exactly the GA widening a base-`enabled` flip is meant to perform.
   if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
   }
@@ -255,7 +280,24 @@ function pgQuoteLiteral(value: string): string {
 }
 
 const blockTokenInput = z.object({ blockToken: z.string().min(1) });
-const sharedKeyInput = z.string().min(1).max(64);
+
+// Bounds shared by the tRPC inputs below AND the block REST adapters
+// (`/api/v1/blocks/shared-storage/{list,item,counts}`). Exported so each surface
+// restates the NUMBER in exactly one place: both run the SAME resolver and the
+// SAME SQL, so a bound that silently disagreed between them is a difference only
+// a fuzzer would ever find.
+export const SHARED_KEY_MAX = 64;
+export const SHARED_PREFIX_MAX = 64;
+export const SHARED_CURSOR_MAX = 200;
+export const SHARED_LIST_LIMIT_MAX = 100;
+export const SHARED_LIST_LIMIT_DEFAULT = 50;
+export const SHARED_COUNTS_KEYS_MAX = 100;
+// `report.reason` — free-text, moderator-facing only (never rendered to other
+// app users), so it carries no content-safety belt; the bound is what keeps it
+// from becoming a storage channel.
+export const SHARED_REASON_MAX = 500;
+
+const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 
 // Structured append payload (design M3: title ≤200, body ≤ few KB).
 //
@@ -272,439 +314,455 @@ const sharedKeyInput = z.string().min(1).max(64);
 // (which is moderated); `data` must carry ONLY opaque app structure, never a text
 // surface shown to other users outside the sandbox. Size is bounded by the whole-
 // value SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
-const appendValueInput = z.object({
+//
+// EXPORTED because the REST adapters (`/api/v1/blocks/shared-storage/{append,
+// update}`) validate the SAME payload. Exporting the schema rather than its three
+// bounds is deliberate: `title`/`body`/`data` is a SHAPE, not three numbers, and a
+// REST copy that drifted — an extra key admitted, `title` made optional — would be
+// a difference only a fuzzer would find, on the one input that reaches the
+// content-safety belt.
+export const sharedValueInput = z.object({
   title: z.string().min(1).max(SHARED_TITLE_MAX),
   body: z.string().max(SHARED_BODY_MAX).optional(),
   data: z.unknown().optional(),
 });
 
-export const appsSharedRouter = router({
-  /**
-   * Cursor-paginated list of shared_kv rows (the "requests" feed). shared_kv +
-   * counter aggregate ONLY — NEVER the per-user kv, NEVER the raw vote rows.
-   * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
-   * (newest-first, DESC).
-   */
-  list: publicProcedure
-    .input(
-      blockTokenInput.extend({
-        prefix: z.string().max(64).optional(),
-        limit: z.number().int().min(1).max(100).default(50),
-        cursor: z.string().max(200).optional(),
-      })
+// ── Shared READ surface (tRPC procedures + block REST adapters) ───────────────
+// The three functions below are the ONE implementation of every shared read.
+// They take a raw bearer block token (never a tRPC ctx), exactly like
+// `getTopSharedCounters` / `incrementSharedCounter` below, so the REST adapters
+// in `src/pages/api/v1/blocks/shared-storage/` and the tRPC procedures in
+// `appsSharedRouter` are the SAME code path — same `resolveSharedContext` op,
+// same SQL, same visibility gate. A read that behaved differently over REST than
+// over the bridge is precisely the divergence this shape exists to prevent, and
+// it is why the procedures below are one-liners rather than a second copy.
+//
+// 🔴 `schema` is derived inside `resolveSharedContext` from the VERIFIED token
+// (`sanitizeAppSlug(claims.blockId)`), never from anything a caller sends. No
+// argument on any of these functions can influence which app's schema is read.
+
+/** One row of the shared feed, as `list` and `get` both project it. */
+export interface SharedKvItem {
+  key: string;
+  authorUserId: number;
+  value: unknown;
+  count: number;
+  createdAt: Date;
+  updatedAt: Date;
+  viewerVoted: boolean;
+}
+
+interface SharedKvRow {
+  key: string;
+  author_user_id: number;
+  value: unknown;
+  count: string;
+  created_at: Date;
+  updated_at: Date;
+  viewer_voted: boolean;
+}
+
+function toSharedKvItem(r: SharedKvRow): SharedKvItem {
+  return {
+    key: r.key,
+    authorUserId: r.author_user_id,
+    value: r.value,
+    count: Number(r.count),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    viewerVoted: r.viewer_voted,
+  };
+}
+
+/**
+ * Cursor-paginated list of shared_kv rows (the "requests" feed). shared_kv +
+ * counter aggregate ONLY — NEVER the per-user kv, NEVER the raw vote rows.
+ * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
+ * (newest-first, DESC). `cursor` is an opaque base64 of the last key seen; a
+ * malformed one simply decodes to a key that matches nothing, never an error.
+ */
+export async function listSharedRows(
+  blockToken: string,
+  { prefix, limit, cursor }: { prefix?: string; limit: number; cursor?: string }
+): Promise<{ items: SharedKvItem[]; nextCursor?: string }> {
+  // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
+  // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+  const { schema, userId } = await resolveSharedContext(blockToken, 'list');
+  const pool = requireAppsDb();
+
+  const afterKey = cursor ? Buffer.from(cursor, 'base64').toString('utf8') : null;
+  const escapedPrefix = (prefix ?? '').replace(/([\\%_])/g, '\\$1');
+  const prefixPattern = `${escapedPrefix}%`;
+
+  // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
+  // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
+  // (never true) for a NULL param, so an anonymous viewer always reads
+  // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
+  // is index-covered and adds no scan to the hot list path. The raw vote rows
+  // are NEVER returned — only the boolean derived from the viewer's own row.
+  const rows = (
+    await pool.query<SharedKvRow>(
+      `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+              s.created_at, s.updated_at,
+              (v.user_id IS NOT NULL) AS viewer_voted
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+         LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
+        WHERE s.hidden_at IS NULL
+          AND s.key LIKE $1 ESCAPE '\\'
+          AND ($2::text IS NULL OR s.key < $2)
+        ORDER BY s.key DESC
+        LIMIT $3`,
+      [prefixPattern, afterKey, limit, userId]
     )
-    .query(async ({ input }) => {
-      // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
-      // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
-      const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
-      const pool = requireAppsDb();
+  ).rows;
 
-      const afterKey = input.cursor
-        ? Buffer.from(input.cursor, 'base64').toString('utf8')
-        : null;
-      const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
-      const prefixPattern = `${escapedPrefix}%`;
+  const nextCursor =
+    rows.length === limit
+      ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
+      : undefined;
 
-      // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
-      // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
-      // (never true) for a NULL param, so an anonymous viewer always reads
-      // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
-      // is index-covered and adds no scan to the hot list path. The raw vote rows
-      // are NEVER returned — only the boolean derived from the viewer's own row.
-      const rows = (
-        await pool.query<{
-          key: string;
-          author_user_id: number;
-          value: unknown;
-          count: string;
-          created_at: Date;
-          updated_at: Date;
-          viewer_voted: boolean;
-        }>(
-          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at,
-                  (v.user_id IS NOT NULL) AS viewer_voted
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
-            WHERE s.hidden_at IS NULL
-              AND s.key LIKE $1 ESCAPE '\\'
-              AND ($2::text IS NULL OR s.key < $2)
-            ORDER BY s.key DESC
-            LIMIT $3`,
-          [prefixPattern, afterKey, input.limit, userId]
-        )
-      ).rows;
+  return { items: rows.map(toSharedKvItem), nextCursor };
+}
 
-      const nextCursor =
-        rows.length === input.limit
-          ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
-          : undefined;
+/**
+ * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
+ * item shape as `listSharedRows`, or `null` when the key is missing OR hidden —
+ * applying the identical `hidden_at IS NULL` visibility gate as the list, so a
+ * direct key fetch can NOT leak a withdrawn / moderator-hidden row the paged
+ * list excludes.
+ */
+export async function getSharedRow(
+  blockToken: string,
+  key: string
+): Promise<{ item: SharedKvItem | null }> {
+  const { schema, userId } = await resolveSharedContext(blockToken, 'get');
+  const pool = requireAppsDb();
+  const row = (
+    await pool.query<SharedKvRow>(
+      `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+              s.created_at, s.updated_at,
+              (v.user_id IS NOT NULL) AS viewer_voted
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+         LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
+        WHERE s.key = $1 AND s.hidden_at IS NULL`,
+      [key, userId]
+    )
+  ).rows[0];
+  return { item: row ? toSharedKvItem(row) : null };
+}
 
-      return {
-        items: rows.map((r) => ({
-          key: r.key,
-          authorUserId: r.author_user_id,
-          value: r.value,
-          count: Number(r.count),
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-          viewerVoted: r.viewer_voted,
-        })),
-        nextCursor,
-      };
-    }),
+/**
+ * Batch aggregate vote counts. `counters` ONLY — the raw vote rows are never
+ * listable. Unknown/hidden keys resolve to 0, so the returned map always has one
+ * entry per requested key (the single-key `getCount` procedure is this function
+ * with a one-element array; there is no second query shape for it).
+ */
+export async function getSharedCounts(
+  blockToken: string,
+  keys: string[]
+): Promise<{ counts: Record<string, number> }> {
+  const { schema } = await resolveSharedContext(blockToken, 'getCount');
+  const pool = requireAppsDb();
+  const rows = (
+    await pool.query<{ key: string; count: string }>(
+      `SELECT s.key, COALESCE(c.count, 0)::text AS count
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+        WHERE s.key = ANY($1) AND s.hidden_at IS NULL`,
+      [keys]
+    )
+  ).rows;
+  const counts: Record<string, number> = {};
+  for (const k of keys) counts[k] = 0;
+  for (const r of rows) counts[r.key] = Number(r.count);
+  return { counts };
+}
 
-  /**
-   * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
-   * item shape as `list` (incl. `count` + the per-viewer `viewerVoted`), or
-   * `null` when the key is missing OR hidden — applying the identical
-   * `hidden_at IS NULL` visibility gate as `list`, so a direct key fetch can
-   * NOT leak a withdrawn / moderator-hidden row that the paged list excludes.
-   * READ op (anon-allowed like `list`/`getCount`). Reuses `resolveSharedContext`
-   * so per-app isolation, the approved-block + revocation checks, the read scope,
-   * and the fail-closed kill-switch all hold verbatim. The `votes`/`kv` rows are
-   * never returned — only the aggregate count + the viewer's own vote boolean.
-   */
-  get: publicProcedure
-    .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .query(async ({ input }) => {
-      const { schema, userId } = await resolveSharedContext(input.blockToken, 'get');
-      const pool = requireAppsDb();
-      const row = (
-        await pool.query<{
-          key: string;
-          author_user_id: number;
-          value: unknown;
-          count: string;
-          created_at: Date;
-          updated_at: Date;
-          viewer_voted: boolean;
-        }>(
-          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at,
-                  (v.user_id IS NOT NULL) AS viewer_voted
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
-            WHERE s.key = $1 AND s.hidden_at IS NULL`,
-          [input.key, userId]
-        )
-      ).rows[0];
-      if (!row) return { item: null };
-      return {
-        item: {
-          key: row.key,
-          authorUserId: row.author_user_id,
-          value: row.value,
-          count: Number(row.count),
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          viewerVoted: row.viewer_voted,
-        },
-      };
-    }),
+// ── Shared WRITE surface (tRPC procedures + block REST adapters) ──────────────
+// Same shape, same reason as the read functions above: the six write bodies are
+// ONE implementation each, taking a raw bearer block token rather than a tRPC
+// ctx, so `appsSharedRouter.{append,update,vote,unvote,withdraw,report}` and the
+// REST adapters in `src/pages/api/v1/blocks/shared-storage/` are the SAME code
+// path. A write that behaved differently over REST than over the bridge — a
+// rate-limit bucket wired one way here and another way there, a trust gate run
+// on one surface and not the other — is exactly the divergence this shape exists
+// to prevent, and it is why the procedures below are one-liners.
+//
+// 🔴 EVERY control still lives in ONE place and runs on BOTH surfaces:
+//   - `resolveSharedContext(token, <op>)` — token verification, approved-block,
+//     revocation, the per-op scope assertion, the fail-closed kill-switch, the
+//     anon refusal (UNAUTHORIZED) and `assertSharedWriteTrust`.
+//   - `schema` is derived INSIDE that resolver from the VERIFIED token
+//     (`sanitizeAppSlug(claims.blockId)`). No argument on any function below can
+//     influence which app's schema is written.
+//   - the per-(user, app) rate-limit bucket, taken BEFORE any pooled connection.
+//   - `assertSharedValueSafeAndSerialize` — the blocking content-safety belt.
 
-  /**
-   * Aggregate vote count for a single key. counters only (never the vote rows).
-   * Returns 0 for a missing/hidden key.
-   */
-  getCount: publicProcedure
-    .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'getCount');
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ count: string }>(
-          `SELECT COALESCE(c.count, 0)::text AS count
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-            WHERE s.key = $1 AND s.hidden_at IS NULL`,
-          [input.key]
-        )
-      ).rows;
-      return { count: Number(rows[0]?.count ?? '0') };
-    }),
+/** The moderated title/body plus the opaque app-owned `data` blob. */
+export interface SharedValueInput {
+  title: string;
+  body?: string;
+  data?: unknown;
+}
 
-  /**
-   * Batch aggregate counts. counters only. Unknown/hidden keys resolve to 0.
-   */
-  getCounts: publicProcedure
-    .input(blockTokenInput.extend({ keys: z.array(sharedKeyInput).min(1).max(100) }))
-    .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'getCount');
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ key: string; count: string }>(
-          `SELECT s.key, COALESCE(c.count, 0)::text AS count
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-            WHERE s.key = ANY($1) AND s.hidden_at IS NULL`,
-          [input.keys]
-        )
-      ).rows;
-      const counts: Record<string, number> = {};
-      for (const k of input.keys) counts[k] = 0;
-      for (const r of rows) counts[r.key] = Number(r.count);
-      return { counts };
-    }),
+/**
+ * Create a shared row (a "request"). The server GENERATES a ULID key (C1: never
+ * accept a client key on create → user B can't overwrite user A's row).
+ * INSERT-only; author = the token subject. Runs the BLOCKING content-safety belt
+ * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
+ * per-(user,app) daily rate limit — all before the row lands.
+ */
+export async function appendSharedRow(
+  blockToken: string,
+  value: SharedValueInput
+): Promise<{ key: string }> {
+  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+    blockToken,
+    'append'
+  );
+  // userId is non-null (trust gate ran in the resolver).
+  const uid = userId as number;
 
-  /**
-   * Create a shared row (a "request"). The server GENERATES a ULID key (C1: never
-   * accept a client key on create → user B can't overwrite user A's row).
-   * INSERT-only; author = the token subject. Runs the BLOCKING content-safety belt
-   * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
-   * per-(user,app) daily rate limit — all before the row lands.
-   */
-  append: publicProcedure
-    .input(blockTokenInput.extend({ value: appendValueInput }))
-    .mutation(async ({ input }) => {
-      const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-        input.blockToken,
-        'append'
-      );
-      // userId is non-null (trust gate ran in the resolver).
-      const uid = userId as number;
+  // Rate limit FIRST — bounds a flood AND the external-moderation cost the
+  // safety belt would otherwise incur per attempt.
+  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
 
-      // Rate limit FIRST — bounds a flood AND the external-moderation cost the
-      // safety belt would otherwise incur per attempt.
-      const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-      if (!rl.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
-        });
-      }
+  // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
+  // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
+  // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
+  // are moderated identically. Throws a clean 4xx on any rejection — no row is
+  // ever written on failure.
+  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+    schema,
+    slug,
+    appBlockId,
+    uid,
+    subjectUser,
+    value,
+  });
 
-      // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
-      // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
-      // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
-      // are moderated identically. Throws a clean 4xx on any rejection — no row is
-      // ever written on failure.
-      const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
-        schema,
-        slug,
-        appBlockId,
-        uid,
-        subjectUser,
-        value: input.value,
-      });
+  const pool = requireAppsDb();
 
-      const pool = requireAppsDb();
+  // Per-USER row cap (design M2).
+  const userRowCount = Number(
+    (
+      await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${schema}.shared_kv WHERE author_user_id = $1`,
+        [uid]
+      )
+    ).rows[0]?.n ?? '0'
+  );
+  if (userRowCount + 1 > SHARED_KV_PER_USER_ROW_CAP) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'you have reached the maximum number of submissions for this app',
+    });
+  }
 
-      // Per-USER row cap (design M2).
-      const userRowCount = Number(
-        (
-          await pool.query<{ n: string }>(
-            `SELECT count(*)::text AS n FROM ${schema}.shared_kv WHERE author_user_id = $1`,
-            [uid]
-          )
-        ).rows[0]?.n ?? '0'
-      );
-      if (userRowCount + 1 > SHARED_KV_PER_USER_ROW_CAP) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'you have reached the maximum number of submissions for this app',
-        });
-      }
+  // Per-app byte + row quota (shared with the per-user kv path).
+  const quota = (
+    await pool.query<{ used_bytes: string; row_count: string }>(
+      `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
+      [appBlockId]
+    )
+  ).rows[0];
+  const usedBytes = Number(quota?.used_bytes ?? '0');
+  const rowCount = Number(quota?.row_count ?? '0');
+  if (usedBytes + byteSize > APP_QUOTA_BYTES) {
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+  }
+  if (rowCount + 1 > APP_ROW_LIMIT) {
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app row limit exceeded' });
+  }
 
-      // Per-app byte + row quota (shared with the per-user kv path).
-      const quota = (
-        await pool.query<{ used_bytes: string; row_count: string }>(
-          `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
-          [appBlockId]
-        )
-      ).rows[0];
-      const usedBytes = Number(quota?.used_bytes ?? '0');
-      const rowCount = Number(quota?.row_count ?? '0');
-      if (usedBytes + byteSize > APP_QUOTA_BYTES) {
-        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
-      }
-      if (rowCount + 1 > APP_ROW_LIMIT) {
-        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app row limit exceeded' });
-      }
-
-      const key = newUlid();
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        // GUC drives the shared_kv quota trigger (byte/row accounting).
-        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-        await client.query(
-          `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
+  const key = newUlid();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // GUC drives the shared_kv quota trigger (byte/row accounting).
+    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    await client.query(
+      `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
            VALUES ($1, $2, $3::jsonb)`,
-          [key, uid, serialized]
-        );
-        // Seed the counter cache (votes are the source of truth).
-        await client.query(
-          `INSERT INTO ${schema}.counters (key, count) VALUES ($1, 0)
+      [key, uid, serialized]
+    );
+    // Seed the counter cache (votes are the source of truth).
+    await client.query(
+      `INSERT INTO ${schema}.counters (key, count) VALUES ($1, 0)
            ON CONFLICT (key) DO NOTHING`,
-          [key]
-        );
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
+      [key]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 
-      return { key };
-    }),
+  return { key };
+}
 
-  /**
-   * Author-scoped in-place UPDATE of an OWN published row (fixes "editing creates a
-   * new one" — `append` is INSERT-only). GENERIC: it edits any shared_kv row by key,
-   * no app-specific concept. Gated identically to `append` (shared:write scope +
-   * min-trust, enforced in resolveSharedContext). The row is resolved by `key` in
-   * the CALLER'S app schema (derived from the verified token, never client input):
-   *   - NOT_FOUND if the key is missing OR hidden (hidden_at IS NOT NULL)
-   *   - FORBIDDEN unless author_user_id = the token subject (a non-author cannot edit;
-   *     mods use apps.mod.purgeSharedRow, not this)
-   * The new title/body run the SAME blocking content-safety belt as append (a
-   * policy-violating edit is rejected, no write); the opaque `data` blob stays
-   * UNMODERATED (same trust boundary as append). The whole value is serialize-guarded
-   * + capped, and the per-app quota is re-checked on the byte DELTA (new − old) BEFORE
-   * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
-   * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
-   * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
-   * Shares append's daily rate-limit bucket so an edit isn't an unbounded write.
-   */
-  update: publicProcedure
-    .input(blockTokenInput.extend({ key: sharedKeyInput, value: appendValueInput }))
-    .mutation(async ({ input }) => {
-      const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-        input.blockToken,
-        'update'
-      );
-      // userId is non-null (trust gate ran in the resolver).
-      const uid = userId as number;
+/**
+ * Author-scoped in-place UPDATE of an OWN published row (fixes "editing creates a
+ * new one" — `append` is INSERT-only). GENERIC: it edits any shared_kv row by key,
+ * no app-specific concept. Gated identically to `append` (shared:write scope +
+ * min-trust, enforced in resolveSharedContext). The row is resolved by `key` in
+ * the CALLER'S app schema (derived from the verified token, never client input):
+ *   - NOT_FOUND if the key is missing OR hidden (hidden_at IS NOT NULL)
+ *   - FORBIDDEN unless author_user_id = the token subject (a non-author cannot edit;
+ *     mods use apps.mod.purgeSharedRow, not this)
+ * The new title/body run the SAME blocking content-safety belt as append (a
+ * policy-violating edit is rejected, no write); the opaque `data` blob stays
+ * UNMODERATED (same trust boundary as append). The whole value is serialize-guarded
+ * + capped, and the per-app quota is re-checked on the byte DELTA (new − old) BEFORE
+ * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
+ * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
+ * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
+ * Shares append's daily rate-limit bucket so an edit isn't an unbounded write.
+ */
+export async function updateSharedRow(
+  blockToken: string,
+  key: string,
+  value: SharedValueInput
+): Promise<{ ok: true }> {
+  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+    blockToken,
+    'update'
+  );
+  // userId is non-null (trust gate ran in the resolver).
+  const uid = userId as number;
 
-      // Same daily bucket as append (design H4) so repeated edits can't become an
-      // unbounded write — AND it bounds the external-moderation cost the belt incurs.
-      const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-      if (!rl.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
-        });
-      }
+  // Same daily bucket as append (design H4) so repeated edits can't become an
+  // unbounded write — AND it bounds the external-moderation cost the belt incurs.
+  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many submissions — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
 
-      const pool = requireAppsDb();
+  const pool = requireAppsDb();
 
-      // Resolve the target row in THIS app's schema (schema is server-derived from the
-      // verified token, never client-supplied). Missing OR hidden → NOT_FOUND. The
-      // stored size_bytes is the CURRENT byte weight, used for the quota delta below.
-      const existing = (
-        await pool.query<{ author_user_id: number; size_bytes: number }>(
-          `SELECT author_user_id, size_bytes FROM ${schema}.shared_kv
+  // Resolve the target row in THIS app's schema (schema is server-derived from the
+  // verified token, never client-supplied). Missing OR hidden → NOT_FOUND. The
+  // stored size_bytes is the CURRENT byte weight, used for the quota delta below.
+  const existing = (
+    await pool.query<{ author_user_id: number; size_bytes: number }>(
+      `SELECT author_user_id, size_bytes FROM ${schema}.shared_kv
             WHERE key = $1 AND hidden_at IS NULL`,
-          [input.key]
-        )
-      ).rows[0];
-      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
-      // Author gate: only the row's author may edit it. A non-author is FORBIDDEN
-      // (mods hide/purge via apps.mod.purgeSharedRow, never this write path).
-      if (existing.author_user_id !== uid) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'you can only edit your own submissions',
-        });
-      }
+      [key]
+    )
+  ).rows[0];
+  if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+  // Author gate: only the row's author may edit it. A non-author is FORBIDDEN
+  // (mods hide/purge via apps.mod.purgeSharedRow, never this write path).
+  if (existing.author_user_id !== uid) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'you can only edit your own submissions',
+    });
+  }
 
-      // Belt on the NEW title/body + serialize-guard + whole-value byte cap (mirrors
-      // append EXACTLY — same helper). A policy-violating edit throws here, before any
-      // write, so the stored row is never touched.
-      const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
-        schema,
-        slug,
-        appBlockId,
-        uid,
-        subjectUser,
-        value: input.value,
-      });
+  // Belt on the NEW title/body + serialize-guard + whole-value byte cap (mirrors
+  // append EXACTLY — same helper). A policy-violating edit throws here, before any
+  // write, so the stored row is never touched.
+  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+    schema,
+    slug,
+    appBlockId,
+    uid,
+    subjectUser,
+    value,
+  });
 
-      // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
-      // fits; a growing edit must sit within the remaining budget. Row count is
-      // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
-      const quota = (
-        await pool.query<{ used_bytes: string }>(
-          `SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1`,
-          [appBlockId]
-        )
-      ).rows[0];
-      const usedBytes = Number(quota?.used_bytes ?? '0');
-      const oldBytes = Number(existing.size_bytes ?? 0);
-      if (usedBytes + (byteSize - oldBytes) > APP_QUOTA_BYTES) {
-        throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
-      }
+  // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
+  // fits; a growing edit must sit within the remaining budget. Row count is
+  // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
+  const quota = (
+    await pool.query<{ used_bytes: string }>(
+      `SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1`,
+      [appBlockId]
+    )
+  ).rows[0];
+  const usedBytes = Number(quota?.used_bytes ?? '0');
+  const oldBytes = Number(existing.size_bytes ?? 0);
+  if (usedBytes + (byteSize - oldBytes) > APP_QUOTA_BYTES) {
+    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
+  }
 
-      // In-place UPDATE under the quota GUC (the shared_kv UPDATE trigger reclaims the
-      // byte delta into quota.used_bytes automatically). Author-gated + visibility-
-      // gated in the WHERE too — belt-and-suspenders against a race between the SELECT
-      // above and this write. Only `value`/`updated_at` change → key, author_user_id,
-      // created_at and the FK'd votes/counters/reports are all PRESERVED.
-      const client = await pool.connect();
-      let updated = 0;
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-        const result = await client.query(
-          `UPDATE ${schema}.shared_kv
+  // In-place UPDATE under the quota GUC (the shared_kv UPDATE trigger reclaims the
+  // byte delta into quota.used_bytes automatically). Author-gated + visibility-
+  // gated in the WHERE too — belt-and-suspenders against a race between the SELECT
+  // above and this write. Only `value`/`updated_at` change → key, author_user_id,
+  // created_at and the FK'd votes/counters/reports are all PRESERVED.
+  const client = await pool.connect();
+  let updated = 0;
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    const result = await client.query(
+      `UPDATE ${schema}.shared_kv
               SET value = $2::jsonb, updated_at = now()
             WHERE key = $1 AND author_user_id = $3 AND hidden_at IS NULL`,
-          [input.key, serialized, uid]
-        );
-        updated = result.rowCount ?? 0;
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
-      // Lost a race (row vanished / was hidden / reassigned between SELECT and UPDATE).
-      if (updated === 0) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+      [key, serialized, uid]
+    );
+    updated = result.rowCount ?? 0;
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  // Lost a race (row vanished / was hidden / reassigned between SELECT and UPDATE).
+  if (updated === 0) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
 
-      return { ok: true as const };
-    }),
+  return { ok: true as const };
+}
 
-  /**
-   * Up-vote a request. FK-checked (H2: a vote on a non-existent request rejects
-   * NOT_FOUND) + visibility-checked (hidden rows can't be voted). The counter
-   * increment is ATOMICALLY gated on the vote row actually inserting (H1: a double
-   * vote is a no-op, the counter never inflates). Rate-limited per (user, app).
-   */
-  vote: publicProcedure
-    .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .mutation(async ({ input }) => {
-      const { userId, schema, appBlockId } = await resolveSharedContext(input.blockToken, 'vote');
-      const uid = userId as number;
+/**
+ * Up-vote a request. FK-checked (H2: a vote on a non-existent request rejects
+ * NOT_FOUND) + visibility-checked (hidden rows can't be voted). The counter
+ * increment is ATOMICALLY gated on the vote row actually inserting (H1: a double
+ * vote is a no-op, the counter never inflates). Rate-limited per (user, app).
+ */
+export async function voteSharedRow(blockToken: string, key: string): Promise<{ count: number }> {
+  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'vote');
+  const uid = userId as number;
 
-      const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-      if (!rl.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
-        });
-      }
+  const rl = await checkSharedVoteRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
 
-      const pool = requireAppsDb();
-      // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
-      // FK on votes.key is the belt for a race between this and the insert.
-      const exists = (
-        await pool.query(
-          `SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`,
-          [input.key]
-        )
-      ).rowCount;
-      if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+  const pool = requireAppsDb();
+  // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
+  // FK on votes.key is the belt for a race between this and the insert.
+  const exists = (
+    await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`, [
+      key,
+    ])
+  ).rowCount;
+  if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
 
-      try {
-        // Atomic insert-gated counter (design H1). EXCLUDED.count = |ins| ∈ {0,1}.
-        const rows = (
-          await pool.query<{ count: string }>(
-            `WITH ins AS (
+  try {
+    // Atomic insert-gated counter (design H1). EXCLUDED.count = |ins| ∈ {0,1}.
+    const rows = (
+      await pool.query<{ count: string }>(
+        `WITH ins AS (
                INSERT INTO ${schema}.votes (key, user_id) VALUES ($1, $2)
                ON CONFLICT (key, user_id) DO NOTHING
                RETURNING 1
@@ -714,167 +772,253 @@ export const appsSharedRouter = router({
              ON CONFLICT (key) DO UPDATE
                SET count = c.count + EXCLUDED.count
              RETURNING c.count::text AS count`,
-            [input.key, uid]
-          )
-        ).rows;
-        return { count: Number(rows[0]?.count ?? '0') };
-      } catch (err) {
-        // FK violation (key vanished mid-op) → NOT_FOUND (H2).
-        if (isForeignKeyViolation(err)) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
-        }
-        throw err;
-      }
-    }),
+        [key, uid]
+      )
+    ).rows;
+    return { count: Number(rows[0]?.count ?? '0') };
+  } catch (err) {
+    // FK violation (key vanished mid-op) → NOT_FOUND (H2).
+    if (isForeignKeyViolation(err)) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+    }
+    throw err;
+  }
+}
 
-  /**
-   * Withdraw an up-vote. Symmetric to vote: the counter decrements by exactly the
-   * number of vote rows deleted (0 or 1); the `CHECK(count >= 0)` constraint blocks
-   * any underflow (H1). Rate-limited on the same per (user, app) vote bucket.
-   */
-  unvote: publicProcedure
-    .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .mutation(async ({ input }) => {
-      const { userId, schema, appBlockId } = await resolveSharedContext(input.blockToken, 'unvote');
-      const uid = userId as number;
+/**
+ * Withdraw an up-vote. Symmetric to vote: the counter decrements by exactly the
+ * number of vote rows deleted (0 or 1); the `CHECK(count >= 0)` constraint blocks
+ * any underflow (H1). Rate-limited on the same per (user, app) vote bucket.
+ */
+export async function unvoteSharedRow(blockToken: string, key: string): Promise<{ count: number }> {
+  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'unvote');
+  const uid = userId as number;
 
-      const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-      if (!rl.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
-        });
-      }
+  const rl = await checkSharedVoteRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many votes — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
 
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ count: string }>(
-          `WITH del AS (
+  const pool = requireAppsDb();
+  const rows = (
+    await pool.query<{ count: string }>(
+      `WITH del AS (
              DELETE FROM ${schema}.votes WHERE key = $1 AND user_id = $2 RETURNING 1
            )
            UPDATE ${schema}.counters
               SET count = count - (SELECT count(*) FROM del)
             WHERE key = $1
            RETURNING count::text AS count`,
-          [input.key, uid]
-        )
-      ).rows;
-      return { count: Number(rows[0]?.count ?? '0') };
-    }),
+      [key, uid]
+    )
+  ).rows;
+  return { count: Number(rows[0]?.count ?? '0') };
+}
+
+/**
+ * Author withdraws their OWN request (design LOCKED #4). Deletes the shared_kv
+ * row ONLY when author_user_id = subject; the FK cascade drops its votes +
+ * counter. SET LOCAL GUC so the quota trigger reclaims the bytes/row.
+ */
+export async function withdrawSharedRow(
+  blockToken: string,
+  key: string
+): Promise<{ ok: true; deleted: boolean }> {
+  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'withdraw');
+  const uid = userId as number;
+
+  // This op had NO bucket while every other write on the surface had one — a
+  // gap worth closing on its own terms, and one a REST ingress would widen.
+  // Own per-minute bucket; the window/ceiling rationale (and why it is NOT the
+  // append daily bucket and NOT the shared vote bucket) lives beside the
+  // constants in shared-storage-rate-limit.ts.
+  const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
+
+  const pool = requireAppsDb();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+    const result = await client.query(
+      `DELETE FROM ${schema}.shared_kv WHERE key = $1 AND author_user_id = $2`,
+      [key, uid]
+    );
+    await client.query('COMMIT');
+    return { ok: true as const, deleted: (result.rowCount ?? 0) > 0 };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * User report (design M5). Files a shared_kv_reports row for mod review. Requires
+ * the write scope + trust gate (only eligible users can report, to bound report
+ * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
+ */
+export async function reportSharedRow(
+  blockToken: string,
+  key: string,
+  reasonInput?: string
+): Promise<{ ok: true }> {
+  const { userId, slug, schema, appBlockId } = await resolveSharedContext(blockToken, 'report');
+  const uid = userId as number;
+
+  // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
+  // and each report files a row. Every OTHER shared write op is rate-limited; this
+  // one was not — so a trusted user could loop it into report-table growth. Bound
+  // the per-(user, app) report velocity on its own daily bucket (fail-open, like the
+  // other buckets — the containment is defence-in-depth, not the auth boundary).
+  const rl = await checkSharedReportRateLimit(uid, appBlockId);
+  if (!rl.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: `Too many reports — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
+
+  const pool = requireAppsDb();
+  const exists = (await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key]))
+    .rowCount;
+  if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+  const reason = reasonInput ?? 'user-report';
+
+  // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
+  // no 2nd row, no 2nd alert. `filed` is false when this (reporter, key) pair
+  // already has a report row, and the observability emit below is skipped entirely.
+  // Only a genuinely-new report fires it (distinct keys / distinct reporters are
+  // unaffected).
+  const filed = await insertUserSharedReportDeduped(schema, {
+    key,
+    reporterUserId: uid,
+    reason,
+  });
+  if (!filed) return { ok: true as const };
+
+  // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): a user report previously
+  // filed a `shared_kv_reports` row that NOTHING reads, so ordinary abuse
+  // (harassment / brigading / spam that dodged the auto-audit) was invisible.
+  // Emit a structured, alertable event mirroring the auto-block emit above —
+  // METADATA ONLY (userId / slug / appBlockId / reason / reported key), NEVER the
+  // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
+  // never fail a legitimate report.
+  //
+  // This emit is now the ONLY outbound side effect of a report. The mod-Discord
+  // webhook this path used to fire alongside it has been removed as redundant: it
+  // carried the same metadata this event already carries, to a surface that cannot
+  // be triaged, ranked or ruled on and that scrolls away. The durable record is the
+  // `shared_kv_reports` row filed just above; a moderator acts on a reported row via
+  // `apps.mod.purgeSharedRow`.
+  logToAxiom(
+    {
+      name: 'app-blocks-shared-storage-report',
+      type: 'warning',
+      userId: uid,
+      slug,
+      appBlockId,
+      reason,
+      key,
+    },
+    'block-audit'
+  ).catch(() => {});
+
+  return { ok: true as const };
+}
+
+export const appsSharedRouter = router({
+  /** @see listSharedRows — the shared implementation, also behind GET /api/v1/blocks/shared-storage/list. */
+  list: publicProcedure
+    .input(
+      blockTokenInput.extend({
+        prefix: z.string().max(SHARED_PREFIX_MAX).optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(SHARED_LIST_LIMIT_MAX)
+          .default(SHARED_LIST_LIMIT_DEFAULT),
+        cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
+      })
+    )
+    .query(async ({ input }) =>
+      listSharedRows(input.blockToken, {
+        prefix: input.prefix,
+        limit: input.limit,
+        cursor: input.cursor,
+      })
+    ),
+
+  /** @see getSharedRow — also behind GET /api/v1/blocks/shared-storage/item. */
+  get: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .query(async ({ input }) => getSharedRow(input.blockToken, input.key)),
 
   /**
-   * Author withdraws their OWN request (design LOCKED #4). Deletes the shared_kv
-   * row ONLY when author_user_id = subject; the FK cascade drops its votes +
-   * counter. SET LOCAL GUC so the quota trigger reclaims the bytes/row.
+   * Aggregate vote count for a single key. Delegates to `getSharedCounts` with a
+   * one-element array — the batch query already returns 0 for a missing/hidden
+   * key, so there is no separate single-key SQL to keep in step.
    */
+  getCount: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .query(async ({ input }) => {
+      const { counts } = await getSharedCounts(input.blockToken, [input.key]);
+      return { count: counts[input.key] ?? 0 };
+    }),
+
+  /** @see getSharedCounts — also behind GET /api/v1/blocks/shared-storage/counts. */
+  getCounts: publicProcedure
+    .input(
+      blockTokenInput.extend({
+        keys: z.array(sharedKeyInput).min(1).max(SHARED_COUNTS_KEYS_MAX),
+      })
+    )
+    .query(async ({ input }) => getSharedCounts(input.blockToken, input.keys)),
+
+  /** @see appendSharedRow — also behind POST /api/v1/blocks/shared-storage/append. */
+  append: publicProcedure
+    .input(blockTokenInput.extend({ value: sharedValueInput }))
+    .mutation(async ({ input }) => appendSharedRow(input.blockToken, input.value)),
+
+  /** @see updateSharedRow — also behind POST /api/v1/blocks/shared-storage/update. */
+  update: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput, value: sharedValueInput }))
+    .mutation(async ({ input }) => updateSharedRow(input.blockToken, input.key, input.value)),
+
+  /** @see voteSharedRow — also behind POST /api/v1/blocks/shared-storage/vote. */
+  vote: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .mutation(async ({ input }) => voteSharedRow(input.blockToken, input.key)),
+
+  /** @see unvoteSharedRow — also behind POST /api/v1/blocks/shared-storage/unvote. */
+  unvote: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .mutation(async ({ input }) => unvoteSharedRow(input.blockToken, input.key)),
+
+  /** @see withdrawSharedRow — also behind POST /api/v1/blocks/shared-storage/withdraw. */
   withdraw: publicProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .mutation(async ({ input }) => {
-      const { userId, schema, appBlockId } = await resolveSharedContext(
-        input.blockToken,
-        'withdraw'
-      );
-      const uid = userId as number;
-      const pool = requireAppsDb();
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-        const result = await client.query(
-          `DELETE FROM ${schema}.shared_kv WHERE key = $1 AND author_user_id = $2`,
-          [input.key, uid]
-        );
-        await client.query('COMMIT');
-        return { ok: true as const, deleted: (result.rowCount ?? 0) > 0 };
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
-    }),
+    .mutation(async ({ input }) => withdrawSharedRow(input.blockToken, input.key)),
 
-  /**
-   * User report (design M5). Files a shared_kv_reports row for mod review. Requires
-   * the write scope + trust gate (only eligible users can report, to bound report
-   * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
-   */
+  /** @see reportSharedRow — also behind POST /api/v1/blocks/shared-storage/report. */
   report: publicProcedure
     .input(
-      blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() })
+      blockTokenInput.extend({
+        key: sharedKeyInput,
+        reason: z.string().max(SHARED_REASON_MAX).optional(),
+      })
     )
-    .mutation(async ({ input }) => {
-      const { userId, slug, schema, appBlockId } = await resolveSharedContext(
-        input.blockToken,
-        'report'
-      );
-      const uid = userId as number;
-
-      // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
-      // and each report files a row AND fires a mod-channel Discord webhook. Every
-      // OTHER shared write op is rate-limited; this one was not — so a trusted user
-      // could loop it into report-table growth + mod-channel flooding. Bound the
-      // per-(user, app) report velocity on its own daily bucket (fail-open, like the
-      // other buckets — the containment is defence-in-depth, not the auth boundary).
-      const rl = await checkSharedReportRateLimit(uid, appBlockId);
-      if (!rl.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many reports — retry in ${rl.retryAfterSeconds}s`,
-        });
-      }
-
-      const pool = requireAppsDb();
-      const exists = (
-        await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [input.key])
-      ).rowCount;
-      if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
-      const reason = input.reason ?? 'user-report';
-
-      // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
-      // no 2nd row, no 2nd webhook, no 2nd alert. `filed` is false when this
-      // (reporter, key) pair already has a report row, and the observability +
-      // mod-notify side effects below are skipped entirely. Only a genuinely-new
-      // report fires them (distinct keys / distinct reporters are unaffected).
-      const filed = await insertUserSharedReportDeduped(schema, {
-        key: input.key,
-        reporterUserId: uid,
-        reason,
-      });
-      if (!filed) return { ok: true as const };
-
-      // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): a user report previously
-      // filed a `shared_kv_reports` row that NOTHING reads, so ordinary abuse
-      // (harassment / brigading / spam that dodged the auto-audit) was invisible.
-      // Emit a structured, alertable event mirroring the auto-block emit above —
-      // METADATA ONLY (userId / slug / appBlockId / reason / reported key), NEVER the
-      // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
-      // never fail a legitimate report.
-      logToAxiom(
-        {
-          name: 'app-blocks-shared-storage-report',
-          type: 'warning',
-          userId: uid,
-          slug,
-          appBlockId,
-          reason,
-          key: input.key,
-        },
-        'block-audit'
-      ).catch(() => {});
-      // Also fire the mod-Discord notify if the webhook is wired (same pattern as
-      // the W1 publish-request flow). Self-contained + fire-and-forget: never awaited
-      // in a way that can block/fail the report, and swallows its own errors.
-      void notifyModsOfSharedReport({
-        slug,
-        appBlockId,
-        reportedKey: input.key,
-        reporterUserId: uid,
-        reason,
-      });
-
-      return { ok: true as const };
-    }),
+    .mutation(async ({ input }) => reportSharedRow(input.blockToken, input.key, input.reason)),
 });
 
 // ── App Blocks play-counts (block REST endpoints) ─────────────────────────────
@@ -999,6 +1143,16 @@ export function assertValidCounterKey(key: unknown): string {
  * from client input.
  */
 export const appsModRouter = router({
+  /**
+   * PER-USER storage moderation (`apps.mod.userStorage.*`) — preview + targeted
+   * purge + account-wide purge. A DIFFERENT surface from `purgeSharedRow` below:
+   * that one is row-scoped on `shared_kv` (app-global, cross-user readable, with
+   * votes cascading off it), this one is user-scoped on `kv` (the user's own
+   * self-scoped data) plus its `user_quota` accounting. Neither reaches the
+   * other's tables — see `user-storage-purge.service.ts` for why they stay apart.
+   */
+  userStorage: appsModUserStorageRouter,
+
   purgeSharedRow: moderatorProcedure
     .input(
       z.object({
@@ -1182,8 +1336,8 @@ async function insertSharedReport(
  * F1 — file a USER report row with per-(reporter, key) dedup. A single
  * conditional INSERT that no-ops when this reporter already has a report row for
  * this key. Returns true iff a NEW row was filed — the caller then emits the
- * abuse alert + fires the mod webhook; false on a duplicate (skip both, so a
- * re-report can't grow the table or re-ping the mod channel).
+ * abuse alert; false on a duplicate (skip it, so a re-report can't grow the table
+ * or re-emit the same alert).
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
@@ -1191,7 +1345,7 @@ async function insertSharedReport(
  * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
  * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
  * the per-(user, app) report rate limit is the hard ceiling; this collapses the
- * common repeat-click / retry case, which is the actual webhook-spam vector.
+ * common repeat-click / retry case, which is the actual report-spam vector.
  */
 async function insertUserSharedReportDeduped(
   schema: string,
@@ -1208,81 +1362,6 @@ async function insertUserSharedReportDeduped(
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
   return (res.rowCount ?? 0) > 0;
-}
-
-/**
- * Neutralize Discord markdown in reporter-supplied free text before it is embedded
- * in a mod-alerts message. A hostile reporter must NOT be able to plant a masked
- * link `[label](https://phish.example)` (phishing) or other markdown/formatting in
- * the mod channel. We strip the structural markdown characters — masked-link
- * brackets/parens `[ ] ( )`, backticks, and emphasis/strike/spoiler/quote markers
- * `* _ ~ | >` — then collapse whitespace. The caller ALSO wraps the result in an
- * inline code span (belt-and-suspenders: no markdown, no URL auto-link, and no
- * mention ping renders inside a code span). Returns a bounded, single-line string.
- * NOTE: the Axiom copy of `reason` is deliberately left RAW — it is a structured
- * log field, never rendered, so escaping there would only corrupt the record.
- */
-export function sanitizeDiscordText(input: string): string {
-  return input
-    .replace(/[`[\]()*_~|>]/g, ' ') // drop markdown / masked-link structural chars
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 500);
-}
-
-/**
- * FIX 1 — fire-and-forget mod-Discord notify on a USER report of a shared row.
- * Mirrors the W1 publish-request `notifyModsOfNewRequest` pattern: posts to
- * `DISCORD_WEBHOOK_MOD_ALERTS` if it is set, otherwise a no-op. NEVER throws (a
- * Discord outage must not affect the report), and the caller does not await it —
- * so the report op returns immediately. Carries METADATA ONLY: slug / app-block /
- * reported key / reporter id + the reporter's stated reason (bounded to 500 chars
- * by the input schema). It does NOT — and cannot — include the reported content
- * (the op only holds the row key).
- */
-async function notifyModsOfSharedReport(opts: {
-  slug: string;
-  appBlockId: string;
-  reportedKey: string;
-  reporterUserId: number;
-  reason: string;
-}): Promise<void> {
-  try {
-    const { env } = await import('~/env/server');
-    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
-    const appUrl = baseUrl ? `${baseUrl}/${opts.slug}` : opts.slug;
-    const payload = {
-      embeds: [
-        {
-          title: `Shared-storage report: ${opts.slug}`,
-          url: appUrl,
-          color: 0xe03131,
-          fields: [
-            { name: 'App block', value: `\`${opts.appBlockId}\``, inline: true },
-            { name: 'Reported by', value: `user #${opts.reporterUserId}`, inline: true },
-            { name: 'Row key', value: `\`${opts.reportedKey}\`` },
-            // Reporter free text: markdown-neutralized + code-span-wrapped so a
-            // hostile reason can't plant a masked/phishing link in the mod channel
-            // (the other fields are already backtick-wrapped).
-            { name: 'Reason', value: `\`${sanitizeDiscordText(opts.reason) || 'user-report'}\`` },
-          ],
-          footer: { text: 'App Blocks shared storage' },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
-    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5_000),
-    }).catch(() => {
-      /* fire and forget */
-    });
-  } catch {
-    /* never let Discord break a report */
-  }
 }
 
 function isForeignKeyViolation(err: unknown): boolean {

@@ -271,6 +271,55 @@ export function allowMatureContentForCeiling(maxBrowsingLevel: number): boolean 
   return Flags.intersects(maxBrowsingLevel, nsfwBrowsingLevelsFlag) ? undefined : false;
 }
 
+/**
+ * The EFFECTIVE browsing-level ceiling for one viewer on one color domain: the
+ * bitwise intersection of what the DOMAIN permits and what the VIEWER's own
+ * NSFW setting permits.
+ *
+ * 🔴 THE TWO INPUTS ROUTINELY DISAGREE, AND EITHER ONE CAN BE THE WIDER.
+ *   - On `blue`, `domainBrowsingCeiling` returns SFW (an App-Blocks-scoped
+ *     product decision — see its docstring) while `getServerBrowsingLevel`
+ *     returns the viewer's saved preference, which may carry R/X/XXX. The
+ *     VIEWER is wider; the domain must win.
+ *   - On `red`, the domain ceiling is every level while a viewer who never
+ *     enabled NSFW sits at PG. The DOMAIN is wider; the viewer must win.
+ * Taking either input alone is wrong in one of those two directions, which is
+ * why this returns the intersection and not a "max" or a preference order.
+ *
+ * FAIL CLOSED on both axes, and note they fail closed to DIFFERENT values:
+ *   - An absent / non-finite DOMAIN ceiling collapses to `sfwBrowsingLevelsFlag`
+ *     — the same most-restrictive-non-empty fallback `domainBrowsingCeiling`
+ *     uses for an unknown domain.
+ *   - An absent / non-finite / negative VIEWER level collapses to
+ *     `publicBrowsingLevelsFlag` (PG), matching what `getServerBrowsingLevel`
+ *     returns for an anonymous viewer. "We could not establish who is looking"
+ *     and "nobody is looking" must resolve to the same, narrowest answer.
+ * A negative viewer level is rejected rather than masked because a two's
+ * complement value has every high bit set: `-1 & ceiling === ceiling` would
+ * silently resolve to the FULL domain ceiling, i.e. junk input would read as
+ * the widest possible viewer, which is the one outcome this function exists to
+ * make impossible.
+ *
+ * The result is always a subset of the domain ceiling, so a consumer handed
+ * this value can never act on more than the domain allows.
+ */
+export function effectiveBrowsingCeiling(
+  domainCeiling: number | null | undefined,
+  viewerBrowsingLevel: number | null | undefined
+): number {
+  const ceiling =
+    typeof domainCeiling === 'number' && Number.isFinite(domainCeiling)
+      ? domainCeiling
+      : sfwBrowsingLevelsFlag;
+  const viewer =
+    typeof viewerBrowsingLevel === 'number' &&
+    Number.isFinite(viewerBrowsingLevel) &&
+    viewerBrowsingLevel >= 0
+      ? viewerBrowsingLevel
+      : publicBrowsingLevelsFlag;
+  return Flags.intersection(ceiling, viewer);
+}
+
 // helpers
 export function onlySelectableLevels(level: number) {
   if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);

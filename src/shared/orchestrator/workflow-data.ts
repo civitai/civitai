@@ -112,6 +112,12 @@ export class WorkflowData {
     return this.steps.flatMap((s) => s.blockedReasons);
   }
 
+  /** Whether any step still owes the user an output. See `StepData.awaitingOutput`. */
+  get awaitingOutput(): boolean {
+    if (!this.steps.length) return true;
+    return this.steps.some((s) => s.awaitingOutput);
+  }
+
   /** Create a StepData bound to this workflow. */
   step(step: Record<string, any> & Pick<NormalizedStep, 'metadata'>) {
     return new StepData(step, this);
@@ -205,7 +211,8 @@ export class StepData {
 
   /**
    * Logical media type of this step's output, independent of the blob container format.
-   * aceStepAudio emits a VideoBlob (audio + cover) or AudioBlob; both are semantically 'audio'.
+   * An audio step emits an AudioBlob, or a VideoBlob when a cover image is bundled in — both
+   * are semantically 'audio'.
    */
   get mediaType(): 'image' | 'video' | 'audio' {
     switch (this.$type) {
@@ -213,8 +220,12 @@ export class StepData {
       case 'videoUpscaler':
       case 'videoEnhancement':
       case 'videoInterpolation':
+      // preprocessVideo emits a VideoBlob.
+      case 'preprocessVideo':
         return 'video';
       case 'aceStepAudio':
+      case 'miniMaxMusic3':
+      case 'yuE2':
         return 'audio';
       default:
         return 'image';
@@ -247,6 +258,16 @@ export class StepData {
   /** Blocked reason strings (for display grouping). */
   get blockedReasons(): string[] {
     return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
+  }
+  /**
+   * Whether this step still owes the user an output. A non-terminal status is not
+   * enough on its own: the orchestrator holds a workflow at `processing` indefinitely
+   * when a mature result needs the owner to unlock it (`allowMatureContent: false` +
+   * `upgradeMode: 'manual'`), and every output has already landed by then.
+   */
+  get awaitingOutput(): boolean {
+    if (this.status && orchestratorCompletedStatuses.includes(this.status)) return false;
+    return !this.output.length || this.processingCount > 0;
   }
 }
 
@@ -409,8 +430,8 @@ export abstract class BlobData {
 
   /**
    * Logical media type, derived from the parent step's `$type`.
-   * Distinct from `type` (the blob container format): aceStepAudio emits a VideoBlob when a
-   * cover image is combined with audio, but its mediaType is still 'audio'.
+   * Distinct from `type` (the blob container format): an audio step's cover-image output is a
+   * VideoBlob, but its mediaType is still 'audio'.
    */
   get mediaType(): 'image' | 'video' | 'audio' {
     return this.#step.mediaType;

@@ -2,8 +2,8 @@
  * PreprocessorExamples
  *
  * Card showing a preprocessor's description plus before/after example images so
- * the user knows what output to expect. Used by both the standalone Control
- * Preprocessor workflow (`preprocessKind` controller) and the ControlNets input.
+ * the user knows what output to expect. Used by the standalone Control
+ * Preprocessor workflows (image and video) and by the H3 control-video input.
  *
  * When `onPrev`/`onNext` are provided the preview becomes a focusable carousel:
  * chevron buttons flank it and ←/→ cycle through preprocessors while focused, so
@@ -37,6 +37,8 @@ interface PreprocessorExamplesProps {
   onPrev?: () => void;
   /** Select the next preprocessor. Enables the next/→ control. */
   onNext?: () => void;
+  /** Caveat rendered under the preview — e.g. that a video preview is a still. */
+  note?: string;
 }
 
 export function PreprocessorExamples({
@@ -46,6 +48,7 @@ export function PreprocessorExamples({
   description,
   onPrev,
   onNext,
+  note,
 }: PreprocessorExamplesProps) {
   // Reset the "missing" set whenever the example set changes (kind switched).
   const outputsKey = examples.map((e) => e.output).join('|');
@@ -136,6 +139,11 @@ export function PreprocessorExamples({
           </div>
         ) : (
           previewBody
+        )}
+        {note && hasExamples && (
+          <Text fz={10} c="dimmed" ta="center">
+            {note}
+          </Text>
         )}
       </Stack>
     </Card>

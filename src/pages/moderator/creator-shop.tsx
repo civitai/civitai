@@ -444,7 +444,7 @@ function CreatorShopReviewPage() {
   const similarQuery = trpc.creatorShop.getSimilarCosmetics.useQuery(
     { cosmeticId: selected?.cosmetic?.id as number },
     {
-      enabled: features.cosmeticSimilarity && !!selected?.cosmetic?.id,
+      enabled: !!features.cosmeticSimilarity && !!selected?.cosmetic?.id,
       // The repo default is `staleTime: Infinity`, which would make this answer
       // permanent for the session — including the "not fingerprinted yet, check
       // back in about 15 minutes" one, whose whole point is that coming back
@@ -847,6 +847,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : selectedMeta.coverUrl ? (
                         <EdgeMedia
@@ -854,6 +855,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : isPack ? (
                         <PackCoverTiles

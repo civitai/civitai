@@ -8,8 +8,10 @@ import {
   middleware,
 } from '~/server/trpc';
 import {
+  dismissAnnouncementsSchema,
   domainColorEnum,
   getAnnouncementsPagedSchema,
+  getDismissedAnnouncementsSchema,
   getCreatorAnnouncementsSchema,
   getCurrentAnnouncementsSchema,
   upsertAnnouncementSchema,
@@ -17,7 +19,9 @@ import {
 } from '~/server/schema/announcement.schema';
 import {
   deleteAnnouncement,
+  dismissAnnouncementsForUser,
   getAnnouncementsPaged,
+  getDismissedAnnouncementIds,
   getAnnouncementTargetUserIds,
   getCurrentAnnouncements,
   upsertAnnouncement,
@@ -55,6 +59,21 @@ export const announcementRouter = router({
   getAnnouncementTargets: moderatorProcedure
     .input(getByIdSchema)
     .query(({ input }) => getAnnouncementTargetUserIds(input.id)),
+
+  // The account-level backstop for the device dismissal stores. Neither procedure is on the
+  // render path: the cookie still decides what the first frame shows, and these only reconcile
+  // the two stores for a signed-in user.
+  dismissAnnouncements: protectedProcedure
+    .input(dismissAnnouncementsSchema)
+    .mutation(({ ctx, input }) =>
+      dismissAnnouncementsForUser({ userId: ctx.user.id, ids: input.ids })
+    ),
+  getDismissedAnnouncements: protectedProcedure
+    .input(getDismissedAnnouncementsSchema.default({}))
+    .use(applyRequestDomainColor)
+    .query(({ ctx, input }) =>
+      getDismissedAnnouncementIds({ userId: ctx.user.id, domain: input.domain })
+    ),
 
   // Creator-authored announcements. Separate procedures on purpose: the moderator
   // mutations above can set `domain` and `metadata.type`, and nothing on this path can
@@ -110,5 +129,25 @@ export const announcementRouter = router({
   toggleAnnouncementMute: protectedProcedure
     .use(isFlagProtected('creatorAnnouncements'))
     .input(z.object({ creatorId: z.number(), muted: z.boolean() }))
-    .mutation(({ ctx, input }) => toggleAnnouncementMute({ ...input, userId: ctx.user.id })),
+    .mutation(async ({ ctx, input }) => {
+      const result = await toggleAnnouncementMute({ ...input, userId: ctx.user.id });
+      // Recorded here rather than in the service because the tracker lives on the request
+      // context. Server-side on purpose: unlike the impression beacon, which authenticates
+      // nothing, this count cannot be inflated by anything but a real signed-in mutation.
+      if (result.changed)
+        ctx.track
+          .action(
+            {
+              type: result.muted ? 'Announcement_Mute' : 'Announcement_Unmute',
+              details: { creatorId: input.creatorId },
+            },
+            // No `ip`/`userAgent`. Unmuting removes the Postgres row, but `actions` has no
+            // TTL, so without this a reversible, private control leaves a permanent
+            // IP-stamped record of who muted whom. The chart needs a count per day; it does
+            // not need an actor.
+            { skipActorMeta: true }
+          )
+          .catch(() => undefined);
+      return result;
+    }),
 });

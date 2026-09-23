@@ -357,7 +357,7 @@ export const trainingModelInfo: {
     description: "Krea AI's in-house image generation model.",
     // Krea 2 is an AI-Toolkit-only ecosystem, so this AIR is NOT sent as the orchestrator
     // `model` (the orchestrator resolves the base model from the ecosystem); it's only used for
-    // UI display / getModel. Points at the locked Krea 2 generation checkpoint.
+    // UI display / getModel. Points at a Krea 2 generation checkpoint.
     air: 'urn:air:krea2:checkpoint:civitai:2656567@2983022',
     baseModel: 'Krea 2',
     isNew: true,

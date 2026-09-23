@@ -93,12 +93,14 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
@@ -123,7 +125,6 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -814,6 +815,7 @@ export default function ModelDetailsV2({
     description: removeTags(model.description ?? ''),
     name: model.name,
     image: imageUrl,
+    // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
     author:
       !model.user.deletedAt && model.user.username
         ? {
@@ -823,7 +825,7 @@ export default function ModelDetailsV2({
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: model.publishedAt,
     ...(totalRatingCount > 0 && {
       aggregateRating: {
@@ -857,11 +859,6 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
-  const unpublishedMessage =
-    unpublishedReason !== 'other'
-      ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
   const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
   const showRail = !model.poi && !adsDisabledByUser;
@@ -882,6 +879,13 @@ export default function ModelDetailsV2({
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Models', path: '/models' },
+          ...(category
+            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+            : []),
+          { name: model.name },
+        ]),
         deIndex:
           model.status !== ModelStatus.Published ||
           model.availability === Availability.Unsearchable,
@@ -1431,23 +1435,10 @@ export default function ModelDetailsV2({
                 </Alert>
               )}
               {model.status === ModelStatus.UnpublishedViolation && !model.meta?.needsReview && (
-                <Alert color="red">
-                  <Group gap="xs" wrap="nowrap" align="flex-start">
-                    <ThemeIcon color="red">
-                      <IconExclamationMark />
-                    </ThemeIcon>
-                    <Text size="sm" mt={-3}>
-                      This model has been unpublished due to a violation of our{' '}
-                      <Text component="a" c="blue.4" href="/content/tos" target="_blank">
-                        guidelines
-                      </Text>{' '}
-                      and is not visible to the community.{' '}
-                      {unpublishedReason && unpublishedMessage ? unpublishedMessage : null} If you
-                      adjust your model to comply with our guidelines, you can request a review from
-                      one of our moderators.
-                    </Text>
-                  </Group>
-                </Alert>
+                <ModelUnpublishedAlert
+                  reason={model.meta?.unpublishedReason}
+                  customMessage={model.meta?.customMessage}
+                />
               )}
               {model.status === ModelStatus.UnpublishedViolation && model.meta?.needsReview && (
                 <Alert color="yellow">

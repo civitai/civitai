@@ -137,7 +137,9 @@ export default MixedAuthEndpoint(async function handler(
               fileSizeBytes: file.sizeKB * 1024,
               estimateVram,
             }),
-          { ttl: CacheTTL.month, compress: true }
+          // `cacheName` is the PREFIX, not the `${prefix}:${id}` key above — the codec
+          // histogram's `cache_name` label has to stay bounded.
+          { ttl: CacheTTL.month, compress: true, cacheName: REDIS_KEYS.CACHES.TENSOR_METADATA }
         )
       );
 

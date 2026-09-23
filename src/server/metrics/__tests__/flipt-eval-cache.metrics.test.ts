@@ -56,7 +56,7 @@ beforeEach(() => {
  * import in `src/pages/api/metrics.ts`. Deleting that line left the whole
  * `src/server/metrics/` suite green (131/131), i.e. registered-but-unreached —
  * this repo's documented #1 metric-death mode, and exactly what the sibling seam
- * tests for substitutions and bitdex-feed-serve exist to catch.
+ * tests for substitutions exist to catch.
  *
  * So this asserts against the module that SERVES the scrape, not the one that
  * declares the metric. Behavioural on purpose: parsing `metrics.ts` for the

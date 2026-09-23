@@ -12,10 +12,10 @@ Per-page design docs for `creator.civitai.com`. These sit **under** the umbrella
 
 **Paid Access (early access + permanent paid access):**
 
-- [paid-access-current-state.md](paid-access-current-state.md) — **start here to continue paid-access work**: what's built (permanent + usage-control pricing), where the code lives across both apps, the verified purchase→access flow, gotchas, and open items (incl. the still-open findings consolidated from the phase-1 reviews).
-- [paid-access-followups.md](paid-access-followups.md) — the actionable **checklist** from the Justin/Ellie review + notes (button label, buzz-icon prefixes, badge pricing, studio CP-join, nav link, etc.).
-- [paid-access-schema.md](paid-access-schema.md) — the `PaidAccess` table + `terms` shapes (data reference).
-- [onsite-monetization-parity.md](onsite-monetization-parity.md) — the design rationale / staging behind the refactor.
+- [paid-access-current-state.md](monetization/paid-access-current-state.md) — **start here to continue paid-access work**: what's built (permanent + usage-control pricing), where the code lives across both apps, the verified purchase→access flow, gotchas, and open items (incl. the still-open findings consolidated from the phase-1 reviews).
+- [paid-access-followups.md](monetization/paid-access-followups.md) — the actionable **checklist** from the Justin/Ellie review + notes (button label, buzz-icon prefixes, badge pricing, studio CP-join, nav link, etc.).
+- [paid-access-schema.md](monetization/paid-access-schema.md) — the `PaidAccess` table + `terms` shapes (data reference).
+- [onsite-monetization-parity.md](monetization/onsite-monetization-parity.md) — the design rationale / staging behind the refactor.
 
 _The phase-1 plan/review/cutover process docs are done and were removed; the migration record is in `prisma/migrations/`._
 
@@ -37,7 +37,7 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 |---|---|---|---|
 | Dashboard / overview | [dashboard.md](dashboard.md) | ✓ | at-a-glance earnings + entry points |
 | Model management | [models.md](models.md) | ⭐ | access toggles, per-version licensing fee, sell-indefinitely |
-| Analytics | [analytics.md](analytics.md) | ⭐ | `/earnings/analytics` — ClickHouse usage/earnings charts |
+| Analytics | [analytics.md](analytics.md) | ⭐ | `/analytics` — ClickHouse usage/earnings charts (moved from `/earnings/analytics`) |
 | Earnings | [earnings.md](earnings.md) | ✓ | `/earnings` — earnings by source (ClickHouse) |
 | Licensing fees (bulk) | [licensing.md](licensing.md) | ~ | bulk fee editor; may trail the per-version editor |
 | Settings | [settings.md](settings.md) | ✓ | Tipalti/tier status, default fee suggestions |
@@ -47,7 +47,7 @@ Actions (writes) → States → Gating → Shared/cross-refs → Open questions.
 
 ## Cross-cutting (not a page — referenced by several)
 
-- **Nav** — one app-local `nav.ts` constant drives the desktop sidebar + mobile header ([plan §3](../creator-studio-plan.md#3-page-list-v1)).
+- **Nav** — one app-local `nav.ts` constant drives the Studio shell's desktop sidebar + mobile header ([plan §3](../creator-studio-plan.md#3-page-list-v1)). `/admin` is a separate shell with its own list (`$lib/admin-nav.ts`); `nav.ts`'s `adminOnly` item is only the way in.
 - **Member gate** — most write actions are member-`tier` gated; the exact bar (tier vs full CP membership) is a
   [pending confirm](../creator-studio-plan.md#9-decisions--open-questions).
 - **Monetization module** — `setLicensingFee` / `bulkSetLicensingFee` / `setUnlimitedAccess`

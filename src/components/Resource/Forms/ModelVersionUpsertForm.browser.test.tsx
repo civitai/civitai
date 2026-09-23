@@ -21,9 +21,118 @@ const allowance = vi.hoisted(() => ({
   data: { used: 0, limit: 3 } as Record<string, unknown>,
 }));
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
+/**
+ * The `trpc` mock is in two layers, and the split between them is the whole point.
+ *
+ * MODELLED — every proc whose *behaviour* a test reads. Those keep exactly the shape they had, and
+ * a proc a test depends on has to stay here.
+ *
+ * FALLBACK — a Proxy over the router surface for everything else, so a component may call any proc
+ * it likes and get an inert react-query result back instead of `TypeError: Cannot read properties
+ * of undefined (reading 'useQuery')`. The hand-listed object this replaces went red twice for that
+ * reason: once when the allowance counter landed, and again when `PricingSlotHistory` started
+ * reading `modelVersion.getPricingSlots` (2cbacbc4d5). The comment that recorded the first
+ * occurrence did not stop the second — a note describing a trap is not a guard against it.
+ *
+ * 🔴 The fallback is deliberately the EMPTY result, not a satisfying one. `data: undefined` is what
+ * react-query hands a query that has not resolved: every consumer already guards on it, so the
+ * component renders, and there is nothing for an assertion to land on, so an unlisted proc can never
+ * make a test pass that should fail. The Proxy stops the crash; it is not a stand-in for a fixture.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  /** react-query's shape for a query with no data — the same state an `enabled: false` query sits in. */
+  const noData = () => ({
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    // v5 defines `isLoading` as `isPending && isFetching`. A query that is not running is pending but
+    // NOT loading, so a consumer's spinner branch stays shut and its empty branch is what renders.
+    isLoading: false,
+    isFetching: false,
+    isRefetching: false,
+    isError: false,
+    isSuccess: false,
+    refetch: vi.fn(async () => ({ data: undefined })),
+  });
+  const inertHook: Record<string, () => unknown> = {
+    useQuery: noData,
+    useSuspenseQuery: noData,
+    useInfiniteQuery: () => ({
+      ...noData(),
+      fetchNextPage: vi.fn(async () => undefined),
+      fetchPreviousPage: vi.fn(async () => undefined),
+      hasNextPage: false,
+      hasPreviousPage: false,
+      isFetchingNextPage: false,
+    }),
+    useMutation: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => undefined),
+      reset: vi.fn(),
+      data: undefined,
+      error: null,
+      isPending: false,
+      isError: false,
+      isSuccess: false,
+    }),
+  };
+
+  // A proc. A modelled hook wins outright — it is NOT merged with the inert defaults, because merging
+  // would quietly widen a mock a test reads (`getLicensingRoots` returns `{ data }` and nothing else,
+  // on purpose). Anything that is not a hook name — `_def`, `then`, a symbol React or the runtime
+  // probes for — stays `undefined`, so the proxy is never mistaken for a promise or a real procedure.
+  const proc = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) => (typeof key === 'string' ? target[key] ?? inertHook[key] : undefined),
+    });
+
+  const router = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) =>
+        typeof key === 'string'
+          ? proc(target[key] as Record<string, unknown> | undefined)
+          : undefined,
+    });
+
+  // `useUtils` is the same hazard one surface over: the form invalidates by path after a save, so a
+  // newly-added `utils.<router>.<proc>.invalidate()` would throw exactly the way a new query did.
+  // Same split, and the verb list is closed rather than "anything is callable" — an unknown member of
+  // a utils proc is still `undefined`.
+  const utilsVerbs = new Set([
+    'invalidate',
+    'refetch',
+    'cancel',
+    'reset',
+    'setData',
+    'getData',
+    'setInfiniteData',
+    'getInfiniteData',
+    'prefetch',
+    'fetch',
+    'ensureData',
+  ]);
+  const utilsProc = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) => {
+        if (typeof key !== 'string') return undefined;
+        return target[key] ?? (utilsVerbs.has(key) ? vi.fn(async () => undefined) : undefined);
+      },
+    });
+  const utils = (modelled: Record<string, Record<string, unknown>>) =>
+    new Proxy(modelled, {
+      get: (target, key) =>
+        typeof key === 'string'
+          ? new Proxy(target[key] ?? {}, {
+              get: (routerTarget, procKey) =>
+                typeof procKey === 'string'
+                  ? utilsProc(routerTarget[procKey] as Record<string, unknown> | undefined)
+                  : undefined,
+            })
+          : undefined,
+    });
+
+  const modelled: Record<string, unknown> = {
     modelVersion: {
       getLicensingRoots: {
         // Modelled on react-query's own contract, because that contract is what the fix turns on: a
@@ -34,20 +143,35 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         }),
       },
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
-      // Hand-listed, so every router entry the component reads has to appear here or it throws on
-      // render — the whole suite went red on this one when the allowance counter was added.
       getPricingAllowance: { useQuery: () => ({ data: allowance.data }) },
       upsert: { useMutation: () => ({ mutateAsync, isPending: false }) },
     },
-    useUtils: () => ({
-      modelVersion: {
-        getById: { invalidate: vi.fn() },
-        getByIdForEdit: { invalidate: vi.fn() },
+    // Rebuilt per call, so each render gets its own spies — the shape the hand-listed version had.
+    useUtils: () =>
+      utils({
+        modelVersion: {
+          getById: { invalidate: vi.fn() },
+          getByIdForEdit: { invalidate: vi.fn() },
+        },
+        model: { getById: { invalidate: vi.fn() } },
+      }),
+  };
+  // tRPC's deprecated alias for the same thing; a component still on it must not fall into `router()`.
+  modelled.useContext = modelled.useUtils;
+
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: new Proxy(modelled, {
+      get: (target, key) => {
+        if (typeof key !== 'string') return undefined;
+        const own = target[key];
+        // Members of the client itself (`useUtils`, `useContext`) are functions, not routers.
+        if (typeof own === 'function') return own;
+        return router(own as Record<string, unknown> | undefined);
       },
-      model: { getById: { invalidate: vi.fn() } },
     }),
-  },
-}));
+  };
+});
 /** Anima's default licensing root: a Checkpoint charging 5 Buzz per image, settled to its own owner. */
 const ANIMA_CHECKPOINT_ROOT = {
   id: 2945208,

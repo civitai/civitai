@@ -1,10 +1,8 @@
 import {
   Alert,
   Anchor,
-  Box,
   Button,
   Code,
-  CopyButton,
   Group,
   List,
   Stack,
@@ -12,7 +10,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconBrandGithub, IconCheck, IconClipboard, IconTerminal2 } from '@tabler/icons-react';
+import { IconBrandGithub, IconCheck, IconTerminal2 } from '@tabler/icons-react';
 import {
   CIVITAI_CLI_GITHUB_URL,
   CIVITAI_CLI_RELEASES_URL,
@@ -22,35 +20,7 @@ import {
   CLI_INSTALL_NPM,
   CLI_SUBMIT_COMMAND,
 } from '~/components/Apps/cliCommands';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-
-function CopyableCommand({ command }: { command: string }) {
-  return (
-    <CopyButton value={command}>
-      {({ copied, copy }) => (
-        <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-          <Code
-            block
-            color={copied ? 'green' : undefined}
-            style={{ wordBreak: 'break-all', paddingRight: 36 }}
-          >
-            {copied ? 'Copied' : `$ ${command}`}
-          </Code>
-          <LegacyActionIcon
-            className="absolute right-2 top-1/2 -translate-y-1/2"
-            right={8}
-            variant="transparent"
-            color="gray"
-            aria-label={`Copy command: ${command}`}
-            onClick={copy}
-          >
-            {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
-          </LegacyActionIcon>
-        </Box>
-      )}
-    </CopyButton>
-  );
-}
+import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 
 /**
  * CLI-first submit CTA — the ONLY path for authoring and submitting an on-platform

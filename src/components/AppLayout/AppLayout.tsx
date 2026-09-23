@@ -18,6 +18,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
+import { VerifyEmailBanner } from '~/components/User/VerifyEmailBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -30,6 +31,7 @@ export function AppLayout({
   renderSearchComponent,
   header = <AppHeader renderSearchComponent={renderSearchComponent} />,
   subNav = <SubNav2 />,
+  pageNav,
   left,
   right,
   scrollable = true,
@@ -41,6 +43,12 @@ export function AppLayout({
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
   subNav?: React.ReactNode | null;
+  /**
+   * The page's OWN navigation, on its own row inside the same sticky bar: beside the
+   * site tabs it reads as another one of them. Rendered bare — the row styles itself,
+   * so one that hides at a breakpoint leaves no empty bar behind.
+   */
+  pageNav?: React.ReactNode;
   left?: React.ReactNode;
   right?: React.ReactNode;
   header?: React.ReactNode | null;
@@ -80,6 +88,7 @@ export function AppLayout({
           {left}
           <MainContent
             subNav={subNav}
+            pageNav={pageNav}
             scrollable={scrollable}
             footer={footer}
             announcements={announcements}
@@ -112,6 +121,7 @@ function AdhesiveFooter() {
 export function MainContent({
   children,
   subNav = <SubNav2 />,
+  pageNav,
   footer = <AppFooter />,
   scrollable = true,
   announcements,
@@ -119,6 +129,7 @@ export function MainContent({
 }: {
   children: React.ReactNode;
   subNav?: React.ReactNode | null;
+  pageNav?: React.ReactNode;
   scrollable?: boolean;
   footer?: React.ReactNode | null;
   announcements?: boolean;
@@ -126,13 +137,19 @@ export function MainContent({
   return scrollable ? (
     <ScrollArea {...props}>
       <main className="min-w-0 flex-1">
-        {subNav && (
+        {subNav || pageNav ? (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
+            {pageNav}
           </SubNav>
+        ) : (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
         )}
-        {!subNav && <RewardsBonusBanner />}
         {announcements && <Announcements className="mb-3" />}
         {children}
       </main>
@@ -141,13 +158,19 @@ export function MainContent({
   ) : (
     <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
-        {subNav && (
+        {subNav || pageNav ? (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
+            {pageNav}
           </SubNav>
+        ) : (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
         )}
-        {!subNav && <RewardsBonusBanner />}
         {children}
       </main>
       {footer}
@@ -192,6 +215,10 @@ export function SubNav({
   return (
     <div
       {...props}
+      // Read by anything that pins itself below the subnav: it keeps its layout box while hidden,
+      // so a fixed offset leaves a gap once it retracts. See `useSubnavBottom`, which also has to
+      // re-measure on this element's `transitionend` — the slide outlives the scroll that caused it.
+      data-subnav=""
       className={clsx(
         'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
         className

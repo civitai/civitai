@@ -1,21 +1,3 @@
-.label {
-  font-size: 12px;
-  font-weight: 600;
-
-  &[data-checked] {
-
-    &,
-    &:hover {
-      color: light-dark(var(--mantine-color-white), var(--mantine-color-black));
-      border: 1px solid var(--mantine-color-primary);
-    }
-
-    &[data-variant='filled'] {
-      background-color: transparent;
-    }
-  }
-}
-
 .opened {
   transform: rotate(180deg);
   transition: transform 200ms ease;

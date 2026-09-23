@@ -8,29 +8,30 @@
  * Two surfaces, each complete on its own rather than one controlling the other:
  *   - the flask, at the point of choice, carrying the full message on hover or
  *     tap. It answers "why is this marked?" where the marker is.
- *   - one alert above the submit row per experimental thing selected, dismissible
- *     and keyed by the message so an edit re-notifies. It's the last read before
- *     Buzz is committed.
+ *   - one alert per selected item, beside the model selector rather than in the
+ *     footer, so the explanation sits where the choice was made. None is
+ *     dismissible.
+ *
+ * Standalone messaging (pricing, maintenance) is a separate system that renders
+ * in the footer — see `shared/generation/messages.ts`.
  */
 
 import { Alert, Popover, Text, ThemeIcon } from '@mantine/core';
-import { IconFlask } from '@tabler/icons-react';
+import { IconAlertTriangle, IconFlask } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useIsClient } from '~/providers/IsClientProvider';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
-import { experimentalTargets } from '~/shared/data-graph/generation/gates';
+import { experimentalTargets, gateMessage } from '~/shared/data-graph/generation/gates';
+import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import {
-  liveExperimentalDismissIds,
   resolveExperimental,
   resolveExperimentalMatches,
   type ExperimentalMatch,
   type ExperimentalTarget,
 } from '~/shared/data-graph/generation/experimental';
-import { experimentalDismissals } from '~/store/experimental-dismissal.store';
 import { setExperimentalRules, useExperimentalRulesStore } from '~/store/experimental-rules.store';
 
 // =============================================================================
@@ -64,20 +65,15 @@ function messageOf(match: ExperimentalMatch): string {
 // =============================================================================
 
 /**
- * Mirrors the generator config's gate rules into the store the markers read, and
- * collects dismissals the rules can no longer produce. Mounted once, by
- * `GenerationFormProvider`.
+ * Mirrors the generator config's gate rules into the store the markers read.
+ * Mounted once by each generator root — without it every marker and alert
+ * silently renders nothing.
  */
 export function ExperimentalRulesSync() {
   const { gateRules } = useGenerationConfig();
 
   useEffect(() => {
     setExperimentalRules(gateRules);
-    // Not before the rules land: an unresolved config reads as "no rules", and
-    // pruning against a live set missing all of them would drop every rule-derived
-    // dismissal on the first mount.
-    if (!gateRules.length) return;
-    experimentalDismissals.prune(liveExperimentalDismissIds(experimentalTargets(gateRules)));
   }, [gateRules]);
 
   return null;
@@ -98,25 +94,21 @@ export function useExperimental(target?: ExperimentalTarget): ExperimentalMatch 
   }, [rules, target?.kind, target?.key]);
 }
 
+const candidatesFingerprint = (candidates: (ExperimentalTarget | undefined)[]) =>
+  candidates.map((c) => (c ? `${c.kind}:${c.key}` : '')).join(',');
+
 /** Every experimental match among the candidates, in the order given. */
 export function useExperimentalMatches(
   candidates: (ExperimentalTarget | undefined)[]
 ): ExperimentalMatch[] {
   const rules = useExperimentalRulesStore((state) => state.rules);
-  const fingerprint = candidates.map((c) => (c ? `${c.kind}:${c.key}` : '')).join(',');
+  const fingerprint = candidatesFingerprint(candidates);
 
   return useMemo(
     () => resolveExperimentalMatches(experimentalTargets(rules), candidates),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- candidates is rebuilt each render; compare by value
     [rules, fingerprint]
   );
-}
-
-/** Dismissal state for one warning. Only the alert dismisses; the flask doesn't. */
-function useExperimentalDismissal(dismissId: string) {
-  const dismissed = experimentalDismissals.useDismissed().includes(dismissId);
-
-  return { dismissed, dismiss: () => experimentalDismissals.dismiss(dismissId) };
 }
 
 // =============================================================================
@@ -175,7 +167,7 @@ interface ExperimentalFlaskProps {
 /**
  * The marker, carrying its own message. Opens on hover for a pointer and on tap
  * for touch, where hover never fires — the message can't live in a tooltip for
- * that reason, nor in the footer alert alone, which is too far from the choice to
+ * that reason, nor in the body alert alone, which is too far from the picker to
  * explain it.
  *
  * The target is a `span`, not a button: pickers put the flask inside a row that
@@ -242,42 +234,41 @@ export function ExperimentalFlask({ target, size = 18, className }: Experimental
 // Warning
 // =============================================================================
 
-/**
- * One warning per match, so a dismissal is scoped to the thing that earned it —
- * silencing an ecosystem's warning can't also silence a version's.
- */
-function ExperimentalAlert({ match }: { match: ExperimentalMatch }) {
-  const { dismissed, dismiss } = useExperimentalDismissal(match.dismissId);
-  const isClient = useIsClient();
+/** Every block and experimental warning the current selection has earned. */
+export function GateRuleAlerts({ selection }: { selection: ExperimentalSelection }) {
+  const candidates = experimentalSelectionTargets(selection);
+  const blocks = useDisabledGates(selection);
+  const matches = useExperimentalMatches(candidates);
 
-  if (!isClient || dismissed) return null;
-
-  return (
-    <Alert
-      color="violet"
-      radius="md"
-      py={8}
-      icon={<IconFlask size={18} />}
-      title="Experimental Build"
-      withCloseButton
-      closeButtonLabel="Dismiss this warning"
-      onClose={dismiss}
-    >
-      <Text size="xs">{messageOf(match)}</Text>
-    </Alert>
-  );
-}
-
-/** Every warning the current selection has earned. */
-export function ExperimentalAlerts({ selection }: { selection: ExperimentalSelection }) {
-  const matches = useExperimentalMatches(experimentalSelectionTargets(selection));
-
-  if (!matches.length) return null;
+  if (!blocks.length && !matches.length) return null;
 
   return (
     <div className="flex flex-col gap-2">
+      {blocks.map((gate) => (
+        <Alert
+          key={`${gate.subject}:${gate.state}`}
+          color="orange"
+          radius="md"
+          py={8}
+          icon={<IconAlertTriangle size={20} />}
+          // Title-less: Mantine's icon slot is a fixed 20px box in a wrapper with
+          // no `align-items`, so the icon hangs above single-line copy without this.
+          classNames={{ wrapper: 'items-center' }}
+        >
+          <Text size="xs">{gateMessage(gate)}</Text>
+        </Alert>
+      ))}
       {matches.map((match) => (
-        <ExperimentalAlert key={match.dismissId} match={match} />
+        <Alert
+          key={match.key}
+          color="violet"
+          radius="md"
+          py={8}
+          icon={<IconFlask size={18} />}
+          title="Experimental Build"
+        >
+          <Text size="xs">{messageOf(match)}</Text>
+        </Alert>
       ))}
     </div>
   );

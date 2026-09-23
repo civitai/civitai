@@ -185,6 +185,9 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [
+      // pnpm link: to the local checkout during the data-graph port — Turbopack
+      // won't resolve the out-of-root symlink without transpiling it
+      'form-graph',
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
@@ -384,19 +387,58 @@ export default defineNextConfig(
       // here would be pruned to nothing at build time anyway since
       // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
+        // ── The `/apps/build` consolidation ────────────────────────────────────────
+        // `/apps/get-started` (a static marketing page whose every CTA pointed
+        // off-platform) and `/apps/mine` (the real author table) merged into ONE
+        // state-aware `/apps/build`: pitch → first-app → workbench. Both page components
+        // are DELETED, not emptied — a stub whose only job is to redirect is dead code
+        // that reads as a live route, and `appsPageWidths`' fs-walk would then demand a
+        // width classification for a route that never renders.
+        //
+        // 🔴 ALL THREE ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
+        // to **308**, which preserves the request METHOD — correct in general, but these
+        // are GET-only pages whose inbound links are bookmarks, notification URLs and
+        // search results, and 301 is the status those consumers cache and rewrite on. The
+        // two options are mutually exclusive in Next's schema, so this is `statusCode`
+        // alone.
+        //
+        // 🔴 NO CHAIN. `/apps/my-submissions` used to land on `/apps/mine`; it now lands
+        // on `/apps/build` DIRECTLY. Repointing only the two new rules and leaving that
+        // one would have made it a two-hop 301→301 — which costs a round trip, and which
+        // some link-equity and bookmark-rewriting consumers stop following.
         {
-          // `/apps/my-submissions` merged into `/apps/mine` — one author table over every
-          // app you own or hold a seat on, with each app's submission history nested in
-          // its row. The page component is DELETED, not emptied: a stub whose only job is
-          // to redirect is dead code that reads as a live route.
-          //
-          // 🔴 `statusCode: 301`, not `permanent: true`. Next maps `permanent` to **308**,
-          // which preserves the request METHOD — correct in general, but this is a GET-only
-          // author page whose inbound links are bookmarks, notification URLs and search
-          // results, and 301 is the status those consumers cache and rewrite on. The two
-          // options are mutually exclusive in Next's schema, so this is `statusCode` alone.
           source: '/apps/my-submissions',
-          destination: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/mine',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        {
+          source: '/apps/get-started',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        // ── `/apps/installed` → `/apps/activity` ───────────────────────────────────
+        // The page was renamed when it stopped being an installs surface: it now opens
+        // on the activity feed, and its gate widened from `appBlocks` (the model-slot
+        // flag) to `appBlocks || appBlocksPages`, so a viewer whose only app usage is a
+        // full-page app reaches it. The page component is MOVED (`installed.tsx` →
+        // `activity.tsx`), not stubbed — same reason as the three rules above.
+        //
+        // 🔴 `statusCode: 301`, matching its neighbours and for the same reason: Next
+        // maps `permanent: true` to 308, and these are GET-only pages whose inbound
+        // links are bookmarks and search results. The two keys are mutually exclusive
+        // in Next's schema.
+        //
+        // Next preserves the query string across a redirect, so an inbound
+        // `/apps/installed?tab=permissions` keeps its `?tab=` — which only became a
+        // meaningful statement when the tabs went URL-backed in the same change.
+        {
+          source: '/apps/installed',
+          destination: '/apps/activity',
           statusCode: 301,
         },
         {

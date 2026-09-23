@@ -7,6 +7,7 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import type { SessionUser } from '~/types/session';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
@@ -20,7 +21,22 @@ import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpe
 // rules whose userReq passes. So a tighter cap for a sub-group can't share a period
 // with a looser base rule (the looser one would win). The new-account clamp therefore
 // lives on the `hour` period, which no base/established rule uses (mirrors
-// articleRateLimits). Daily ceilings tier UP by reputation.
+// articleRateLimits). Daily ceilings tier UP by reputation, and members get
+// MEMBER_DAILY_POST_MULTIPLIER times each tier. That takes one member rule PER tier:
+// a single member rule would be one number, beaten by the higher reputation tiers.
+const dailyPostTiers = [
+  { minScore: 0, limit: 20 },
+  { minScore: 1000, limit: 60 },
+  { minScore: 5000, limit: 150 },
+];
+export const MEMBER_DAILY_POST_MULTIPLIER = 2;
+
+const dailyPostLimitMessage =
+  "You've reached your daily limit for new posts. Please try again tomorrow.";
+const hasReputation = (user: SessionUser, minScore: number) =>
+  (user.meta?.scores?.total ?? 0) >= minScore;
+const isPaidMember = (user: SessionUser) => !!user.tier && user.tier !== 'free';
+
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
@@ -31,26 +47,22 @@ export const postRateLimits: RateLimit[] = [
     userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
     errorMessage: 'New accounts have a lower hourly posting limit on their first day.',
   },
-  // Base daily ceiling (all users, incl. new + low-reputation).
-  {
-    limit: 20,
-    period: CacheTTL.day,
-    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
-  },
-  // Established accounts.
-  {
-    limit: 60,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
-    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
-  },
-  // High-reputation accounts.
-  {
-    limit: 150,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 5000,
-    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
-  },
+  // The minScore-0 tier must stay unconditional: a user matching no daily rule has
+  // no daily limit at all.
+  ...dailyPostTiers.flatMap(({ minScore, limit }): RateLimit[] => [
+    {
+      limit,
+      period: CacheTTL.day,
+      userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
+      errorMessage: dailyPostLimitMessage,
+    },
+    {
+      limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
+      period: CacheTTL.day,
+      userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
+      errorMessage: dailyPostLimitMessage,
+    },
+  ]),
 ];
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;

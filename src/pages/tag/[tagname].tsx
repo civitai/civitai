@@ -11,13 +11,14 @@ import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import type { TagPageSeoData } from '~/server/services/tag.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
+import { tagDisplayName } from '~/utils/tag-display-name';
 import { trpc } from '~/utils/trpc';
 import styles from './[tagname].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async ({ ctx, ssg, features }) => {
     const tagname = ctx.query.tagname as string;
 
     if (tagname) {
@@ -29,19 +30,48 @@ export const getServerSideProps = createServerSideProps({
 
     if (tagname) await ssg?.tag.getTagWithModelCount.prefetch({ name: tagname });
 
+    const isGreen = !!features?.isGreen;
     let seoData: TagPageSeoData = { count: 0, models: [] };
+    let deIndexForDomain = false;
+    let greenCanonical: string | null = null;
     if (tagname) {
-      const { getTagPageSeoData } = await import('~/server/services/tag.service');
-      seoData = await getTagPageSeoData({ name: tagname });
+      const {
+        getTagPageSeoData,
+        shouldDeIndexAdultTermOnGreen,
+        shouldDeIndexMatureOnlyTag,
+        shouldDeIndexSafeOnlyTag,
+        shouldPointTagCanonicalAtGreen,
+      } = await import('~/server/services/tag.service');
+      seoData = await getTagPageSeoData({ name: tagname, safeOnly: isGreen });
+      deIndexForDomain = isGreen
+        ? shouldDeIndexAdultTermOnGreen(seoData) || shouldDeIndexMatureOnlyTag(seoData)
+        : shouldDeIndexSafeOnlyTag(seoData);
+
+      if (!isGreen && !deIndexForDomain && shouldPointTagCanonicalAtGreen(seoData)) {
+        // Read the green host directly: `getBaseUrl('green')` falls back to this deployment's own
+        // URL when SERVER_DOMAIN_GREEN is unset, which would hand red a self-canonical that looks
+        // right in the HTML and quietly cancels the rule.
+        const { serverDomainPrimaryMap } = await import('~/server/utils/server-domain');
+        const greenHost = serverDomainPrimaryMap.green;
+        if (greenHost) greenCanonical = `https://${greenHost}/tag/${encodeURIComponent(tagname)}`;
+      }
     }
 
-    return { props: { tagname, seoData } };
+    // GAM keys on the page's context, not only its grid: "Hentai AI Models" is a policy risk
+    // however safely green filters the models below it. Viewer-independent for the reason
+    // `isAdGatedContent` is — a single auction from anyone puts the URL in the violation centre.
+    // Red is exempt: it serves direct ads, no auction.
+    const suppressAds = isGreen && seoData.nsfwTerm === true;
+
+    return { props: { tagname, seoData, deIndexForDomain, greenCanonical }, suppressAds };
   },
 });
 
 export default function TagPage({
   tagname,
   seoData,
+  deIndexForDomain,
+  greenCanonical,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { set, ...queryFilters } = useModelQueryParams();
 
@@ -49,22 +79,32 @@ export default function TagPage({
   const [tag] = data;
 
   const baseUrl = env.NEXT_PUBLIC_BASE_URL ?? 'https://civitai.com';
+  const displayName = tagDisplayName({
+    name: tag?.name ?? tagname,
+    displayName: tag?.displayName,
+  });
+  const count = seoData.count;
+  const description = `Browse ${
+    count > 0 ? `${count.toLocaleString('en-US')} ` : ''
+  }AI models tagged "${displayName}" on Civitai, including checkpoints and LoRAs for Illustrious, Pony, SDXL, Flux and more. Download or generate online.`;
+  const title = `${displayName} AI Models${
+    count > 0 ? ` (${count.toLocaleString('en-US')})` : ''
+  } | Civitai`;
+
   const schema =
     tag && seoData.models.length > 0
       ? {
           '@context': 'https://schema.org',
           '@type': 'CollectionPage',
-          name: `${tag.name} AI Models`,
-          description: `Browse ${seoData.count.toLocaleString()} Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings tagged with ${
-            tag.name
-          }.`,
+          name: `${displayName} AI Models`,
+          description,
           url: `${baseUrl}/tag/${tagname}`,
           numberOfItems: seoData.count,
           hasPart: seoData.models.map((m) => ({
             '@type': 'SoftwareApplication',
             name: m.name,
             applicationCategory: m.type,
-            url: `${baseUrl}/models/${m.id}/${slugit(m.name)}`,
+            url: `${baseUrl}${getModelUrl({ modelId: m.id, modelName: m.name })}`,
             author: { '@type': 'Person', name: m.creator },
             interactionStatistic: [
               {
@@ -82,22 +122,13 @@ export default function TagPage({
         }
       : undefined;
 
-  const description =
-    seoData.count > 0
-      ? `Browse ${seoData.count.toLocaleString()} Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings tagged with ${
-          tag?.name ?? tagname
-        }.`
-      : `Browse ${
-          tag?.name ?? tagname
-        } Stable Diffusion & Flux models, LoRAs, checkpoints, embeddings, and more for AI image generation.`;
-
   return (
     <>
       <Meta
-        title={`${tag?.name ?? tagname} AI Models | Civitai`}
+        title={title}
         description={description}
-        canonical={`/tag/${tagname}`}
-        deIndex={tag?.unfeatured ?? false}
+        canonical={greenCanonical ?? `/tag/${tagname}`}
+        deIndex={(tag?.unfeatured ?? false) || deIndexForDomain}
         schema={schema}
       />
       {tag && (
@@ -105,7 +136,7 @@ export default function TagPage({
           <Center>
             <Stack gap="xs">
               <Title order={1} className="text-center">
-                {tag.name}
+                {displayName}
               </Title>
               <Text className="text-center" color="dimmed">
                 {description}
@@ -127,6 +158,7 @@ export default function TagPage({
             </Group>
             <ModelsInfinite
               filters={{ ...queryFilters, followed: false, newCreators: false, hidden: false }}
+              periodFallback
               showEof
               showAds
             />

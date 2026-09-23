@@ -55,7 +55,9 @@ export function ListingCollaboratorByline({
       </Text>
       {chips.map((chip) => {
         const username = chip.username as string;
-        const avatarSrc = chip.image ? getEdgeUrl(chip.image, { width: 64 }) : undefined;
+        const avatarSrc = chip.image
+          ? getEdgeUrl(chip.image, { width: 64, optimized: true })
+          : undefined;
         return (
           <Anchor
             key={chip.id}

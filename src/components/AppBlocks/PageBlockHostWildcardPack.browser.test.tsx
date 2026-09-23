@@ -37,6 +37,13 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: {
       resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.resolve }) },
     },
@@ -53,6 +60,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -77,7 +90,11 @@ vi.mock('~/utils/trpc', () => ({
           getCounts: { fetch: vi.fn() },
           get: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -100,7 +117,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -131,6 +152,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'wildcard-app',
@@ -180,7 +204,10 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
     // Harmless default so the BLOCK_READY analytics beacon (which also uses the
     // stubbed global fetch) gets a real Promise Response and never crashes the
     // test; each test overrides for the pack fetch.
-    mocks.fetch.mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as Response);
     vi.stubGlobal('fetch', mocks.fetch);
     useDialogStore.getState().closeAll();
   });
@@ -212,7 +239,10 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       const payload = r.payload as { requestId: string; pack?: any; error?: string };
       expect(payload.requestId).toBe('rq_wp');
       expect(payload.error).toBeUndefined();
-      expect(payload.pack.lists).toEqual({ colors: ['red', 'blue', '#ffffff'], animals: ['cat', 'dog'] });
+      expect(payload.pack.lists).toEqual({
+        colors: ['red', 'blue', '#ffffff'],
+        animals: ['cat', 'dog'],
+      });
       expect(payload.pack.modelVersionId).toBe(100);
       expect(payload.pack.creatorUsername).toBe('creator');
       expect(payload.pack.maturity).toEqual(RESOLVED_MATURITY);

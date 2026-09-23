@@ -10,13 +10,13 @@ import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { openWildcardPreview } from '~/components/Dialog/triggers/wildcard-preview';
 import { editPromptAttentionRange } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useGraph, useGraphSubscription } from '~/libs/data-graph/react/DataGraphProvider';
 import type { SnippetReference, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { SnippetCategory } from './SnippetCategory';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
 import { createSnippetCategorySuggestion } from './snippetCategorySuggestion';
 import { useSnippetCategories } from './useSnippetCategories';
+import { useSnippetsGraph } from './useSnippetsGraph';
 
 /**
  * Tiptap-based textarea-style input for the GenerationForm. Pairs with
@@ -129,14 +129,12 @@ export function GenerationTextEditor(props: GenerationTextEditorProps) {
 
 function SnippetsAwareEditor(props: GenerationTextEditorProps) {
   const { categories, isLoading, loadedSets } = useSnippetCategories();
-  const graph = useGraph();
 
   // Subscribe to the snippets node so the editor footer re-renders when the
-  // modal writes a new seed back into `snippets.seed`. The hook returns
-  // `null` when the active subgraph doesn't have a snippets node — that's
-  // fine, the footer just won't render below.
-  const snippetsSnapshot = useGraphSubscription(graph, 'snippets');
-  const snippetsValue = snippetsSnapshot?.value as SnippetsNodeValue | undefined;
+  // modal writes a new seed back into `snippets.seed`. `snippets` is
+  // undefined when the active subgraph doesn't have a snippets node —
+  // that's fine, the footer just won't render below.
+  const { snippets: snippetsValue, getState, setSnippets } = useSnippetsGraph();
   const currentSeed = snippetsValue?.seed;
 
   // The Preview button lives on every snippets-aware editor but opens the
@@ -157,7 +155,7 @@ function SnippetsAwareEditor(props: GenerationTextEditorProps) {
   );
 
   const onPreview = useCallback(() => {
-    const snap = graph.getSnapshot() as Record<string, unknown> & {
+    const snap = getState() as Record<string, unknown> & {
       snippets?: SnippetsNodeValue;
     };
     const snippets = snap.snippets;
@@ -185,19 +183,19 @@ function SnippetsAwareEditor(props: GenerationTextEditorProps) {
       // Commit the modal's seed to form state when the user clicks OK.
       // FormFooter clears `snippets.seed` on submit so it never persists.
       onSeedChange: (seed) => {
-        const current = (graph.getSnapshot() as { snippets?: SnippetsNodeValue }).snippets;
+        const current = (getState() as { snippets?: SnippetsNodeValue }).snippets;
         if (!current) return;
-        graph.set({ snippets: { ...current, seed } } as Parameters<typeof graph.set>[0]);
+        setSnippets({ ...current, seed });
       },
     });
-  }, [graph]);
+  }, [getState, setSnippets]);
 
   const onClearSeed = useCallback(() => {
-    const current = (graph.getSnapshot() as { snippets?: SnippetsNodeValue }).snippets;
+    const current = (getState() as { snippets?: SnippetsNodeValue }).snippets;
     if (!current || current.seed === undefined) return;
     const { seed: _seed, ...rest } = current;
-    graph.set({ snippets: rest } as Parameters<typeof graph.set>[0]);
-  }, [graph]);
+    setSnippets(rest);
+  }, [getState, setSnippets]);
 
   const showFooter = hasLoadedSets && hasRefsInThisEditor;
 

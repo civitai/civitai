@@ -27,7 +27,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
@@ -126,6 +126,8 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
                       width={450}
+                      hiDpi={features.hiDpiPreviews}
+                      sourceWidth={image.width}
                       placeholder="empty"
                       contain
                       loading="lazy"
@@ -363,6 +365,7 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
           entityType="image"
           reactions={image.reactions}
           metrics={metrics}
+          metricsUnknown={image.stats?.statsUnknown}
           targetUserId={image.user.id}
           readonly={readonly}
           className="justify-between p-2"

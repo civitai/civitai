@@ -46,6 +46,7 @@ import type {
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
@@ -86,6 +87,78 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
   if (recommend.recommendPct == null) return 'No reviews yet';
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/**
+ * Play count → display label (`1 play` / `12.4k plays`), or `null` when the card
+ * should print no play stat at all.
+ *
+ * 🔴 TWO DIFFERENT REASONS FOR ABSENCE, ONE SHARED RENDERING — AND THE SHARING IS
+ * AN OPERATOR OVERRIDE, NOT A DERIVATION. Read this before "fixing" either case.
+ *
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so no on-platform request follows the
+ *     click and nothing observes it. There is no number, and there never will be
+ *     one for that listing.
+ *   · `0` — MEASURED, AND EMPTY. An on-site listing nobody has opened yet is a
+ *     genuine zero (the COALESCE-to-0 reading `app-listing.service.ts`'s
+ *     `cardOpenCount` documents). The number exists, is trustworthy, and is zero.
+ *
+ * These are NOT the same fact. The DTO keeps them apart deliberately and must keep
+ * doing so — `cardOpenCount`'s "do not over-null" paragraph exists to stop an
+ * on-site row being reported as unmeasurable. What the operator decided
+ * (2026-09-06) is only what the CARD DOES WITH THEM: **both render nothing**.
+ * "dont show 0 plays (just show nothing)" — a `0 plays` chip is noise on a browsing
+ * grid and reads as a verdict on the app rather than as an empty measurement.
+ *
+ * ⚠️ THIS REVERSES THE FIRST ROUND OF THIS PR, WHICH RENDERED "0 plays" FOR AN
+ * ON-SITE ZERO AND ARGUED AT LENGTH THAT IT MUST. That argument was about TRUTH —
+ * a zero is a measurement, not an absence — and it is still correct about the data
+ * model; it was simply not the call to make about the pixels. Recorded here rather
+ * than deleted, because the next reader will otherwise meet the zero case, think it
+ * is a truthiness accident, and "restore" it.
+ *
+ * 🔴 SO THE ZERO CASE IS SPELLED EXPLICITLY (`openCount === 0`) RATHER THAN LEFT TO
+ * `if (!openCount)`. The two are behaviourally identical here and that is exactly
+ * the problem: a bare falsy check reads as an oversight and carries none of the
+ * decision above. The explicit form is a signpost — anyone changing it has to
+ * notice they are changing something someone chose.
+ *
+ * ⚠️ AND BECAUSE IT IS A SIGNPOST, NO TEST CAN DEFEND IT — SAID PLAINLY RATHER THAN
+ * IMPLIED. `if (!openCount) return null` was MEASURED to survive the whole node
+ * suite (it is an equivalent mutant over `number | null`), so the spelling here is
+ * legibility, not a guarded invariant. Do not read the test file as pinning it. What
+ * the tests DO pin is the boundary either spelling produces: `null` → nothing, `0` →
+ * nothing, `1` → "1 play".
+ *
+ * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
+ * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
+ * only covered by the browser `component` project, which is REPORT-ONLY; the node
+ * `unit` project is the one that reddens a `main` push. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the only tier that ever goes
+ * red on its own. Expressed as this function's return type it is pinned in
+ * `__tests__/appListingCardView.test.ts` — with `null`, `0` and `>0` as three
+ * separately-named cases — and the component is left with a branch that has nothing
+ * to get wrong.
+ *
+ * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
+ * `getRecommendLabel` above rather than an inconsistency. A review count is an
+ * exactness claim inside a parenthetical; a play count is a magnitude on a dense
+ * grid tile, where "12.4k" reads at a glance and "12,431" does not.
+ * `abbreviateNumber` is the repo-wide helper for that (`~/utils/number-helpers`) —
+ * what every other public count on the platform renders through — so this is reuse,
+ * not a second formatter.
+ *
+ * Pluralisation reads the RAW value, not the abbreviated string: exactly 1 is
+ * "1 play"; everything else — including 1000, which abbreviates to "1k" — is
+ * "plays". (0 no longer reaches the plural at all, but the branch is written for
+ * the value rather than for the reachable set, so it stays correct if the zero
+ * decision is ever reversed back.)
+ */
+export function getPlayCountLabel(openCount: number | null): string | null {
+  // Both arms are absence-on-screen; they are NOT the same fact. See above.
+  if (openCount == null || openCount === 0) return null;
+  return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
 }
 
 /**
@@ -219,3 +292,44 @@ export function getOwnerEditHref(
   }
   return `/apps/submit?edit=${encodeURIComponent(listingId)}`;
 }
+
+// ── Action-row geometry (S7) — RETIRED, and this note is the tombstone ──────
+//
+// 🔴 FIVE EXPORTS LIVED HERE. FOUR ARE DELETED; ONE MOVED. The distinction is the
+// whole point of writing this down, and an earlier draft of this note got it wrong
+// — it said "all five are deleted" and then listed four names plus a TEST, which is
+// not an export at all.
+//
+//   DELETED, no replacement anywhere:
+//     `LISTING_ROLLUP_MIN_WIDTH_PX` (70) — the rollup's enforced min-width floor
+//     `LISTING_ACTIONS_WIDEST_PX`   (184) — the measured widest action cluster
+//     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
+//     `listingRollupHideThreshold()`      — the function that derived it
+//
+//   MOVED, same name, new home:
+//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
+//     where the card reads it as the action row's `gap`. It is still live geometry;
+//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
+//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
+//     which is exactly the two-copies drift the geometry module exists to remove.
+//
+// Also deleted, though it was never an export: the spelling guard in
+// `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`
+// Tailwind class agreed with the JS constant.
+//
+// Every one of them existed to let the recommend rollup and the CTA share the
+// action row: a floor so a growing CTA could not starve the rollup, a container
+// query hiding the rollup where even the floor did not fit, a measured
+// action-cluster width to derive that threshold from, and a drift guard because a
+// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup up into
+// the card's meta block removed the competition, and with it the entire
+// apparatus. Deleting a derived number and its guard TOGETHER is the point — a
+// surviving constant with no consumer is the shape that gets "fixed" back into
+// use later.
+//
+// The geometry this card DOES still have — cover ratio, icon size, reserved title
+// lines, action-row height / padding / gap / control size — lives in
+// `~/components/Apps/appListingCardGeometry.ts`, which exists so the (later)
+// `AppListingCardSkeleton` reserves the same numbers by import rather than by
+// copy. This module is back to being the pure kind/CTA/label view-model its
+// header describes.

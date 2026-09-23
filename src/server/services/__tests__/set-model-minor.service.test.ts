@@ -103,6 +103,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+import type { Tracker } from '~/server/clickhouse/client';
 import { MINOR_LOCKED_PROPERTIES, setModelMinor } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -115,8 +116,10 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 
 const MODERATOR_ID = 7;
 const MODEL_ID = 42;
+const OWNER_ID = 555;
 
 const baseModelRow = {
+  userId: OWNER_ID,
   poi: false,
   minor: false,
   sfwOnly: false,
@@ -127,6 +130,25 @@ const baseModelRow = {
 
 function mockBefore(overrides: Partial<typeof baseModelRow>) {
   mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+}
+
+function mockTracker() {
+  return { entityChanges: vi.fn().mockResolvedValue(undefined) };
+}
+
+function changeRowsFrom(tracker: ReturnType<typeof mockTracker>) {
+  // Assert here so a stopped emit fails as 0-calls, not a TypeError on the line below.
+  expect(tracker.entityChanges).toHaveBeenCalledTimes(1);
+  return tracker.entityChanges.mock.calls[0][0] as {
+    entityType: string;
+    entityId: number;
+    ownerId: number;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    actorRole: string;
+    reason: string;
+  }[];
 }
 
 function mockUpdateReturns(overrides: Record<string, unknown> = {}) {
@@ -459,5 +481,124 @@ describe('setModelMinor — activity override', () => {
       entityId: MODEL_ID,
       activity: 'setMinor',
     });
+  });
+});
+
+describe('setModelMinor — change history', () => {
+  it('emits a field-level change row per watched field the flag moved', async () => {
+    mockBefore({ lockedProperties: ['poi'] });
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    const rows = changeRowsFrom(tracker);
+    expect(rows.map((r) => r.field).sort()).toEqual([
+      'lockedProperties',
+      'minor',
+      'sfwOnly',
+    ]);
+    expect(rows.every((r) => r.entityType === 'Model' && r.entityId === MODEL_ID)).toBe(true);
+    expect(rows.every((r) => r.ownerId === OWNER_ID)).toBe(true);
+    expect(rows.every((r) => r.actorRole === 'moderator')).toBe(true);
+    expect(rows.every((r) => r.reason === 'setMinor')).toBe(true);
+
+    const minorRow = rows.find((r) => r.field === 'minor');
+    expect(minorRow).toMatchObject({ oldValue: 'false', newValue: 'true' });
+  });
+
+  it('emits an nsfw row when the flag actually turns nsfw off', async () => {
+    mockBefore({ nsfw: true });
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(changeRowsFrom(tracker).find((r) => r.field === 'nsfw')).toMatchObject({
+      oldValue: 'true',
+      newValue: 'false',
+    });
+  });
+
+  it('does not claim nsfw/sfwOnly changed on unset', async () => {
+    mockBefore({ minor: true, sfwOnly: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: false,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    const rows = changeRowsFrom(tracker);
+    expect(rows.map((r) => r.field).sort()).toEqual(['lockedProperties', 'minor']);
+    expect(rows.every((r) => r.reason === 'unsetMinor')).toBe(true);
+  });
+
+  it('attributes the change to the owner when a moderator flags their own model', async () => {
+    mockBefore({ userId: MODERATOR_ID });
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(changeRowsFrom(tracker).every((r) => r.actorRole === 'owner')).toBe(true);
+  });
+
+  it('carries the supplied activity through as the row reason', async () => {
+    mockBefore({});
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(changeRowsFrom(tracker).every((r) => r.reason === 'setMinorAutoHash')).toBe(true);
+  });
+
+  // minor-hash.service and /api/mod/minor-flag/set-minor call this with no tracker.
+  it('flags without a tracker', async () => {
+    mockBefore({});
+
+    await expect(setModelMinor({ id: MODEL_ID, minor: true, userId: -1 })).resolves.toBeDefined();
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+  });
+
+  it('runs the fan-out even when the change-history write rejects', async () => {
+    mockBefore({});
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
+    const tracker = { entityChanges: vi.fn().mockRejectedValue(new Error('clickhouse down')) };
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
   });
 });

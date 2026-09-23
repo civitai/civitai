@@ -2,7 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Marketplace / Installed apps / My apps / Review). "Review" is gated on
+// (Marketplace / App activity / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -88,13 +88,17 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
     expect(home.getAttribute('href')).toBe('/apps');
 
-    const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();
-    expect(installed.getAttribute('href')).toBe('/apps/installed');
+    const installed = page.getByRole('menuitem', { name: 'App activity' }).element();
+    expect(installed.getAttribute('href')).toBe('/apps/activity');
 
-    // Was "My submissions" → `/apps/my-submissions`; that page merged into `/apps/mine`
+    // Was "My submissions" → `/apps/my-submissions`, then `/apps/mine`; that table is now
+    // state C of the consolidated `/apps/build`, and this item was REPOINTED rather than
+    // removed (removing it would delete a door out of a running app for the app's own
+    // owner; leaving the old href would make every press a 301 hop). The LABEL is
+    // deliberately still "My apps" — it names what an owner arrives at.
     // and 301s there, so the in-app link points at the surviving route directly.
     const mine = page.getByRole('menuitem', { name: 'My apps' }).element();
-    expect(mine.getAttribute('href')).toBe('/apps/mine');
+    expect(mine.getAttribute('href')).toBe('/apps/build');
   });
 
   test('"Review" is HIDDEN for a non-moderator viewer', async () => {

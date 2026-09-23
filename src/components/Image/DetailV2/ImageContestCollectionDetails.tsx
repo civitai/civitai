@@ -4,6 +4,7 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useState } from 'react';
+import { useOnCollectionItemsReviewed } from '~/components/Collections/collection.utils';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import {
@@ -290,6 +291,7 @@ function ReviewActions({
   imageId: number;
 }) {
   const queryUtils = trpc.useUtils();
+  const onReviewed = useOnCollectionItemsReviewed();
 
   const [acceptableMinor, setAcceptableMinor] = useState(false);
 
@@ -347,7 +349,8 @@ function ReviewActions({
 
         return { prevQueues };
       },
-      onSuccess(_, { status }) {
+      onSuccess(_, { status, collectionItemIds, collectionId }) {
+        onReviewed({ collectionId, reviewed: collectionItemIds.length });
         showSuccessNotification({ message: `The items have been ${status.toLowerCase()}` });
       },
       onError(error, _variables, context) {

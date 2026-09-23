@@ -29,7 +29,7 @@ export function InlineMembershipUpsell({ selectedUnitAmount, className }: Props)
   const canUpgrade = useCanUpgrade();
   const { subscription } = useActiveSubscription();
   const dialog = useDialogContext();
-  const enabled = !!currentUser && canUpgrade && features.membershipsV2;
+  const enabled = !!currentUser && canUpgrade && !!features.membershipsV2;
 
   const { data: products = [] } = trpc.subscriptions.getPlans.useQuery(
     { paymentProvider },

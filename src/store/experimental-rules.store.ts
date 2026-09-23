@@ -7,9 +7,10 @@
  * dependency of its own, and throws outright wherever no tRPC provider is
  * mounted — which is every component suite that renders one.
  *
- * So `ExperimentalRulesSync`, mounted once by `GenerationFormProvider`, mirrors
- * the rules here and every marker reads the store. Empty until synced, which
- * renders no marker rather than failing.
+ * So `ExperimentalRulesSync`, mounted once by each generator root
+ * (`GenerationFormProvider`, form-graph's `BaseGenerationForm`), mirrors the
+ * rules here and every marker reads the store. Empty until synced, so a root
+ * that forgets the sync silently renders nothing.
  */
 
 import { create } from 'zustand';

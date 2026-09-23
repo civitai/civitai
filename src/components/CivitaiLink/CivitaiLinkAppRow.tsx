@@ -1,5 +1,5 @@
 import { Center, Group, Stack, Text } from '@mantine/core';
-import { IconBoxMultiple } from '@tabler/icons-react';
+import { IconPackages } from '@tabler/icons-react';
 import clsx from 'clsx';
 import classes from './civitai-link.module.scss';
 
@@ -56,7 +56,7 @@ export function AppRow({
         className={classes.surfaceRaised}
         style={{ borderRadius: 'var(--mantine-radius-sm)', flexShrink: 0 }}
       >
-        <IconBoxMultiple size={18} className={classes.neutralIcon} />
+        <IconPackages size={18} className={classes.neutralIcon} />
       </Center>
       <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
         <Text fz="sm" fw={500} c="var(--mantine-color-bright)" lineClamp={1}>

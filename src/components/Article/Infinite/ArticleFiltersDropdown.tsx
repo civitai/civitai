@@ -1,5 +1,5 @@
 import type { ButtonProps } from '@mantine/core';
-import { Divider, Drawer, Indicator, Popover, Stack, useMantineTheme } from '@mantine/core';
+import { Chip, Divider, Drawer, Indicator, Popover, Stack, useMantineTheme } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
@@ -32,20 +32,32 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
   );
 
   const handleClear = useCallback(() => {
+    // `isOfficial` is deliberately absent rather than `false`: the schema treats only
+    // `true` as a filter, so clearing means dropping the key.
     const reset = { period: MetricTimeframe.AllTime };
     if (onChange) onChange(reset);
     else setFilters(reset);
   }, [onChange, setFilters]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: handleApply,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: handleApply,
+    onClear: handleClear,
+  });
 
   const filterLength =
-    mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0;
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (mergedFilters.isOfficial ? 1 : 0);
 
   const target = (
     <Indicator
@@ -81,6 +93,26 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
           value={mergedFilters.period ?? MetricTimeframe.AllTime}
           onChange={(period) => patchPending({ period })}
         />
+      </Stack>
+      <Stack gap="md">
+        <Divider
+          label="Source"
+          styles={{
+            label: {
+              fontSize: theme.fontSizes.sm,
+              fontWeight: 700,
+            },
+          }}
+        />
+        {/* Off sends `undefined`, not `false` — see the schema. There is no "community
+            only" filter here because nobody browses for that, and a `false` that filtered
+            would let a stale url hide every official article. */}
+        <Chip
+          checked={!!mergedFilters.isOfficial}
+          onChange={(checked) => patchPending({ isOfficial: checked ? true : undefined })}
+        >
+          Civitai Official
+        </Chip>
       </Stack>
     </Stack>
   );

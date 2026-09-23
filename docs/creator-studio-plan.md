@@ -56,7 +56,7 @@ main app's React/Mantine components — these apps are **Svelte 5 / SvelteKit / 
 - [`docs/auth/spoke-integration-guide.md`](auth/spoke-integration-guide.md) + [`docs/auth/auth-hub-spoke-overview.md`](auth/auth-hub-spoke-overview.md)
   — the hub↔spoke auth contract (`civ-token`, `@civitai/auth`, `createSpokeGuard`).
 - [`packages/civitai-ui/README.md`](../packages/civitai-ui/README.md) — **`@civitai/ui`**, the shared shadcn-svelte
-  component package (24 primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
+  component package (shadcn-svelte primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
   into the app.
 
 **Scaffolding:** use the **`scaffold-civitai-app`** skill to stand up `apps/creator-studio`. It cherry-picks only the
@@ -191,7 +191,7 @@ are **not** the analytics path.)*
 | CP cash / banked / pool | `creatorProgram.getCash` / `getBanked` / `getCompensationPool` (`creator-program.router.ts`) |
 | Set a licensing fee (single) | `modelVersion` upsert — `licensingFee*` fields (`model-version.schema.ts:418`), flag `licensing-fee` |
 | Early/paid access config + purchase | `modelVersion.earlyAccessPurchase`, `earlyAccessModelVersionsOnTimeframe` (`model-version.router.ts`) |
-| Cosmetic purchase + 70/30 split | `cosmeticShop.purchaseShopItem`; split via `meta.paidToUserIds` → `TransactionType.Sell` (`cosmetic-shop.service.ts:619`) |
+| Cosmetic purchase + 70/30 split | `cosmeticShop.purchaseShopItem`; split via `computeCreatorShopSplit` (`creator-shop.schema.ts`) paying `Cosmetic.createdById` → `TransactionType.Sell` (`cosmetic-shop.service.ts`, `purchaseCosmeticShopItem`) |
 
 ### 5.3 New monetization operations (creator-studio module; extract to a package at consolidation)
 

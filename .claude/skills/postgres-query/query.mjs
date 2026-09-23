@@ -210,8 +210,19 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// `sslmode=require` in a connection string makes pg verify the certificate chain, and
+// it WINS over the `ssl` option below - so `--notifications` failed outright with
+// `self-signed certificate in certificate chain` against the bastion, while every other
+// target worked because their URLs say `sslmode=no-verify`, which already agrees with
+// the policy this script sets explicitly two lines down. Drop just that one value so the
+// client's own `rejectUnauthorized: false` applies uniformly. `no-verify` is left alone:
+// it already means what we want, and rewriting it would be a change with no effect.
+const effectiveConnectionString = connectionString
+  .replace(/([?&])sslmode=require(?=&|$)/i, '$1')
+  .replace(/[?&]$/, '');
+
 const client = new Client({
-  connectionString,
+  connectionString: effectiveConnectionString,
   ssl: { rejectUnauthorized: false },
   statement_timeout: timeoutSeconds * 1000,
   query_timeout: timeoutSeconds * 1000,

@@ -112,6 +112,14 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // owner's own view, and every `owner-*` label above shows the map is already read
   // second-person there. Blue, matching `claim` — informational, not a takedown.
   'message-owner': { label: 'Message from moderation', color: 'blue' },
+  // App Blocks per-user STORAGE takedown — a moderator removed one USER's stored
+  // rows from this app. 🔴 MOD-VIEW ONLY in practice: unlike every other entry
+  // here, this action is withheld from the owner's own history
+  // (`OWNER_HIDDEN_MODERATION_ACTIONS` in offsite-moderation.service.ts), because
+  // it is an act against a third party whose `reason` is not the owner's to read.
+  // The label is therefore written for the MOD queue and names whose data moved —
+  // "User storage purged", not the second-person voice the `owner-*` labels use.
+  'purge-user-storage': { label: 'User storage purged', color: 'red' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

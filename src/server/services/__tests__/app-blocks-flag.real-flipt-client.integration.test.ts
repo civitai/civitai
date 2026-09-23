@@ -1,7 +1,10 @@
-import { createServer, type Server } from 'http';
-import type { AddressInfo } from 'net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import snapshot from './fixtures/flipt-store-scope.snapshot.json';
+import {
+  startFliptFixtureServer,
+  SNAPSHOT_PATH,
+  type FliptFixtureServer,
+} from './fixtures/flipt-fixture-server';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -55,62 +58,26 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
 });
 
-const SNAPSHOT_PATH = '/internal/v1/evaluation/snapshot/namespace/default';
-
-/** Requests the fake Flipt actually received — used as the positive control. */
-const received: { url: string; environment?: string; auth?: string }[] = [];
-
-let server: Server;
-let baseUrl = '';
-
 /**
- * Substitutes ONLY the app's env plumbing (`~/env/server` is not loadable in a unit
- * run): the exported `isFlipt` is a REAL `createFliptClient` instance pointed at the
- * fixture server. Everything the defect could live in — the client factory, its cache,
- * the wasm engine, the segment matcher — is the production code.
+ * The server + client-mock plumbing is shared with
+ * `app-blocks-flag.base-enabled-flip.test.ts` via `fixtures/flipt-fixture-server`.
+ * Only the SNAPSHOT differs between the two suites — this one serves the captured
+ * production shapes (base OFF), that one serves the same shapes re-keyed base ON.
  */
+let server: FliptFixtureServer;
+
 vi.mock('~/server/flipt/client', async () => {
-  const { createFliptClient } = await import('@civitai/flipt');
-  const flipt = createFliptClient({
-    url: process.env.__TEST_FLIPT_URL as string,
-    clientToken: 'test-token',
-    environment: 'civitai-app',
-    log: () => undefined,
-    onInitError: (e) => {
-      throw e;
-    },
-  });
-  return {
-    isFlipt: flipt.isEnabled,
-    isFliptSync: flipt.isEnabledSync,
-    getFliptVariant: flipt.getVariant,
-    getFliptBoolean: flipt.getBoolean,
-    ensureFliptInitialized: flipt.ensureInitialized,
-  };
+  const { buildRealFliptClientMock } = await import('./fixtures/flipt-fixture-server');
+  return buildRealFliptClientMock('__TEST_FLIPT_URL');
 });
 
 beforeAll(async () => {
-  server = createServer((req, res) => {
-    received.push({
-      url: req.url ?? '',
-      environment: req.headers['x-flipt-environment'] as string | undefined,
-      auth: req.headers.authorization as string | undefined,
-    });
-    if (!req.url?.startsWith(SNAPSHOT_PATH)) {
-      res.writeHead(404).end('{}');
-      return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(snapshot));
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  baseUrl = `http://127.0.0.1:${port}`;
-  process.env.__TEST_FLIPT_URL = baseUrl;
+  server = await startFliptFixtureServer(snapshot);
+  process.env.__TEST_FLIPT_URL = server.url;
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await server.close();
 });
 
 /** Minimal SessionUser — only the fields `buildFliptContext` reads. */
@@ -130,10 +97,10 @@ describe('resolveStoreVisibilityScope over the REAL Flipt client (civitai#3983)'
     // A flag key that is NOT in the fixture: proves an unknown flag fails CLOSED
     // rather than the client answering `true` for everything.
     await expect(isFlipt('a-flag-that-does-not-exist')).resolves.toBe(false);
-    expect(received.length).toBeGreaterThan(0);
-    expect(received[0].url).toContain(SNAPSHOT_PATH);
-    expect(received[0].environment).toBe('civitai-app');
-    expect(received[0].auth).toBe('Bearer test-token');
+    expect(server.received.length).toBeGreaterThan(0);
+    expect(server.received[0].url).toContain(SNAPSHOT_PATH);
+    expect(server.received[0].environment).toBe('civitai-app');
+    expect(server.received[0].auth).toBe('Bearer test-token');
   });
 
   it('POSITIVE CONTROL: the wasm engine really does match a segment (not a suite wired to nothing)', async () => {

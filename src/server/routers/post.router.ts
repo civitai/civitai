@@ -38,7 +38,7 @@ import {
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
 } from './../schema/post.schema';
-import { addPostImage, getPostEditDetail } from './../services/post.service';
+import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
 import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -105,6 +105,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ ctx, input }) => getPostEditDetail({ ...input, user: ctx.user })),
+  getImageIds: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getByIdSchema)
+    .query(({ ctx, input }) => getPostImageIds({ ...input, user: ctx.user })),
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)

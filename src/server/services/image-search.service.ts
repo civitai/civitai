@@ -3,15 +3,10 @@ import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import {
-  getAllImages,
-  getAllImagesIndex,
-  getImagesFromFeedSearch,
-} from '~/server/services/image.service';
+import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
 import { imageMetaCache } from '~/server/redis/caches';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
@@ -22,7 +17,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
  * Shared image-search + response-shaping body extracted verbatim from
  * `/api/v1/images/index.ts` so the public endpoint AND the block-scoped catalog
  * endpoint (`/api/v1/blocks/images.ts`) build the SAME response from the SAME
- * query path (legacy `getAllImages` / BitDex `getAllImagesIndex` / feed
+ * query path (legacy `getAllImages` / feed
  * `getImagesFromFeedSearch`, the `withMeta` enrichment, and the JSON shaping).
  *
  * The ONLY maturity lever is `browsingLevel`, supplied by the caller. The public
@@ -67,7 +62,7 @@ export type RunImageSearchContext = {
   browsingLevel: number;
   /** The viewer (session user) — undefined for anon. */
   user?: SessionUser;
-  /** Used for feature flags, region read by the caller, and the BitDex/search actor. */
+  /** Used for feature flags, region read by the caller, and the search actor. */
   req: NextApiRequest;
 };
 
@@ -113,17 +108,31 @@ export async function runImageSearch(
 
   const features = getFeatureFlags({ user, req });
 
-  // Check BitDex mode — if active, route through getAllImagesIndex
-  const bitdexMode = await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    user?.id?.toString() || 'anonymous',
-    buildFliptContext(user)
-  );
-  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-
-  // Always route modelId/imageId lookups through legacy getAllImages — BitDex
-  // and Meili feed search don't support filtering by modelId/imageId (they index
-  // postedToId/modelVersionId only), so they'd silently return the global feed.
+  // Always route modelId/imageId/ids lookups through legacy getAllImages — the
+  // Meili feed query builder does not filter on any of them, so they'd silently
+  // return the global feed.
+  //
+  // 🔴 The mechanism is the QUERY BUILDER, not the index schema, and an earlier
+  // version of this comment had that wrong ("it indexes postedToId/
+  // modelVersionId only"). Image `id` IS a filterable attribute — on the metrics
+  // index (`metrics-images.search-index.ts` filterableAttributes) and on the
+  // images index (`imagesFilterableAttributes`), where the note reads "`id` is
+  // filterable on every index because the keyset cleanup scan pages on it". What
+  // is missing is the CLAUSE: `ImagesFeed.queryDocuments`
+  // (event-engine-common/feeds/images.feed.ts) never destructures `ids` and
+  // never pushes an `id IN [...]` filter, while its sibling `models.feed.ts`
+  // does (line 558). So an `ids` key reaching the feed is dropped on the floor
+  // and the caller gets a 200 full of the global feed — measured on a dev server
+  // 2026-08-27: `ids: [140383933]` returned image `12097475`. Anyone "fixing"
+  // this by adding the filter to the feed must delete the `ids` arm below in the
+  // same change, not leave both.
+  //
+  // `.length > 0`, not truthiness: an empty array is not a batch, and forcing
+  // the DB path for it would run getAllImages with no id clause at all (see the
+  // `if (ids && ids.length > 0)` guard at image.service.ts:1798) — i.e. the same
+  // global-feed answer, just from Postgres. The REST schemas reject `ids` with
+  // fewer than one entry for the same reason.
+  //
   // When both modelId and modelVersionId are passed, modelId is redundant
   // (getAllImages also silently ignores it via an `else if` chain) — let those
   // requests flow through the search index so engagement sorts
@@ -138,9 +147,12 @@ export async function runImageSearch(
   // queries. Callers that need engagement-sorted galleries should also pass a
   // specific `modelVersionId`, which routes through the search index where
   // those sorts are honored.
-  const useLegacyMethod = (data as { imageId?: unknown }).imageId
-    ? true
-    : !!(data as { modelId?: unknown }).modelId && !(data as { modelVersionId?: unknown }).modelVersionId;
+  const batchIds = (data as { ids?: unknown }).ids;
+  const useLegacyMethod =
+    (Array.isArray(batchIds) && batchIds.length > 0) || (data as { imageId?: unknown }).imageId
+      ? true
+      : !!(data as { modelId?: unknown }).modelId &&
+        !(data as { modelVersionId?: unknown }).modelVersionId;
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -212,25 +224,6 @@ export async function runImageSearch(
         includeBaseModel: true,
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       } as unknown as Parameters<typeof getAllImages>[0])
-    : useBitdex
-    ? await getAllImagesIndex({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        browsingLevel,
-        withMeta: false,
-        user,
-        useCombinedNsfwLevel: !features.canViewNsfw,
-        disableMinor: true,
-        disablePoi: true,
-        headers: { src: '/api/v1/images' },
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        actor,
-      } as unknown as Parameters<typeof getAllImagesIndex>[0])
     : await getImagesFromFeedSearch({
         ...data,
         types: type ? [type] : undefined,
@@ -243,7 +236,6 @@ export async function runImageSearch(
         withMeta: false,
         currentUserId: user?.id,
         isModerator: user?.isModerator,
-        useCombinedNsfwLevel: !features.canViewNsfw,
         disableMinor: true,
         disablePoi: true,
         actor,
@@ -283,10 +275,27 @@ export async function runImageSearch(
         const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
         return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
       })(),
-      username: image.user.username,
+      // `/api/v1/images` publishes `username` as a STRING, and a typed client
+      // fails to decode the whole 200 when it is not one — which is how #4768
+      // was reported (civitai/cli#513: "cannot unmarshal number into Go struct
+      // field .items.username of type string").
+      //
+      // The real repair is upstream, in the feed's entity cache, which used to
+      // infer a field's type from its stored text and so read the all-digit
+      // username `0222` back as the number `222`
+      // (`event-engine-common/caches/value-codec.ts`). This is a belt on the
+      // published contract, nothing more: it can keep a number from reaching the
+      // wire, but it CANNOT recover a name the cache already lost — `222` casts
+      // to `'222'`, which is still not `'0222'`. Do not read it as the fix.
+      //
+      // Only a `number` is coerced. `String()` on its own would be a regression:
+      // the legacy DB branch can carry a null username for a deleted account,
+      // and `String(null)` is the four-character string `'null'`.
+      username:
+        typeof image.user.username === 'number' ? String(image.user.username) : image.user.username,
       baseModel: image.baseModel,
       modelVersionIds: image.modelVersionIds,
-      tags: withTags ? (image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? []) : undefined,
+      tags: withTags ? image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? [] : undefined,
     };
   });
 

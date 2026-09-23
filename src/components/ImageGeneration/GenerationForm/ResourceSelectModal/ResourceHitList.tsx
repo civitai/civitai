@@ -1,9 +1,20 @@
 import { Button, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import cardClasses from '~/components/Cards/Cards.module.css';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import {
+  filterPreferences,
+  useApplyHiddenPreferences,
+} from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { useDebouncer } from '~/utils/debouncer';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -14,6 +25,60 @@ import { ResourceSelectCard } from './ResourceSelectCard';
 import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
+
+const GRID_GAP = 16;
+/** Below this a column stops being worth showing, so the count drops instead. */
+const MIN_COLUMN_WIDTH = 240;
+const MAX_COLUMN_COUNT = 4;
+
+/**
+ * The catalog grid, sized to FILL its pane.
+ *
+ * `MasonryProvider` holds `columnWidth` fixed and centres whatever it can fit,
+ * which is right for the page feeds — they sit in an open page and the leftover
+ * becomes margin. In a modal pane that leftover reads as broken padding: at
+ * three columns of 278px it is ~150px of dead space. So the column width is
+ * derived from the measured pane instead — the count comes from a minimum
+ * width, and the columns then divide the space exactly.
+ */
+function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
+  const [width, setWidth] = useState(0);
+  // Debounced to match MasonryProvider's own 100ms observer. `columnWidth`
+  // arrives there as a prop and bypasses that debounce, so an undebounced
+  // update here re-lays the grid once per animation frame for the length of a
+  // window drag — and the two observers settling at different times briefly
+  // disagree about the column count.
+  const debounce = useDebouncer(100);
+  const ref = useResizeObserver<HTMLDivElement>((entry) => {
+    const next = entry.contentRect.width;
+    debounce(() => setWidth(next));
+  });
+
+  // Measure before paint, as MasonryProvider does. Without this the first paint
+  // lays every result into a single MIN_COLUMN_WIDTH column and then relayouts.
+  useIsomorphicLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const style = getComputedStyle(node);
+    const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    setWidth(node.clientWidth - paddingX);
+  }, []);
+
+  const [columnCount, columnWidth] = useMemo(() => {
+    if (!width) return [1, MIN_COLUMN_WIDTH];
+    const fits = Math.floor((width + GRID_GAP) / (MIN_COLUMN_WIDTH + GRID_GAP));
+    const count = Math.min(Math.max(fits, 1), MAX_COLUMN_COUNT);
+    return [count, Math.floor((width - (count - 1) * GRID_GAP) / count)];
+  }, [width]);
+
+  return (
+    <div ref={ref}>
+      <MasonryProvider columnWidth={columnWidth} maxColumnCount={columnCount} gap={GRID_GAP}>
+        {children}
+      </MasonryProvider>
+    </div>
+  );
+}
 
 export function ResourceHitList({ query }: { query: string }) {
   const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
@@ -68,8 +133,15 @@ export function ResourceHitList({ query }: { query: string }) {
     [canGenerate, resources, excludedIds, tab, selectSource]
   );
 
-  // Build podium items from raw items (bypassing hidden preferences) so
-  // auction winners at positions 1-3 always show regardless of user preferences.
+  const browsingLevel = useBrowsingLevelDebounced();
+  const currentUser = useCurrentUser();
+  const { canViewNsfw } = useFeatureFlags();
+  const { settings: browsingAddons } = useBrowsingSettingsAddons();
+  const hiddenPreferences = useHiddenPreferencesContext();
+
+  // Auction winners at positions 1-3 bypass the viewer's own hidden users/tags/models/images,
+  // and nothing else: blocks, browsing level, system-hidden tags and the POI/minor rules still
+  // apply, through the same filter as the grid below.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
   const resourceBaseModels = useMemo(
@@ -90,20 +162,49 @@ export function ResourceHitList({ query }: { query: string }) {
     const podiumEntries = relevantFeatured.filter((fm) => fm.position >= 1 && fm.position <= 3);
     const podiumIds = new Set(podiumEntries.map((fm) => fm.modelId));
 
-    return items
+    const candidates = items
       .filter((model) => podiumIds.has(model.id))
       .map((model) => {
         const versions = filterVersions(model);
-        if (!versions.length) return null;
-        return { ...model, versions };
+        return versions.length ? { ...model, versions } : null;
       })
-      .filter(isDefined)
-      .sort((a, b) => {
-        const aPos = relevantFeatured.find((fm) => fm.modelId === a.id)!.position;
-        const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
-        return aPos - bPos;
-      });
-  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels]);
+      .filter(isDefined);
+
+    const { items: visible } = filterPreferences({
+      type: 'models',
+      data: candidates,
+      hiddenPreferences: {
+        ...hiddenPreferences,
+        hiddenUsers: hiddenPreferences.blockRelations,
+        hiddenTags: new Map(),
+        hiddenModels: new Map(),
+        hiddenImages: new Map(),
+      },
+      browsingLevel,
+      currentUser,
+      canViewNsfw,
+      poiDisabled: browsingAddons.disablePoi,
+      minorDisabled: browsingAddons.disableMinor,
+    });
+
+    return (visible as typeof candidates).sort((a, b) => {
+      const aPos = relevantFeatured.find((fm) => fm.modelId === a.id)!.position;
+      const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
+      return aPos - bPos;
+    });
+  }, [
+    tab,
+    featured,
+    items,
+    filterVersions,
+    resourceTypes,
+    resourceBaseModels,
+    browsingLevel,
+    currentUser,
+    canViewNsfw,
+    browsingAddons,
+    hiddenPreferences,
+  ]);
 
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
@@ -208,7 +309,9 @@ export function ResourceHitList({ query }: { query: string }) {
       {topItems.length > 0 && (
         <div
           className={clsx(
-            '!grid grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6 p-3'
+            // `minmax(0,350px)`, not a fixed 350px track: a fixed one is wider
+            // than a phone and overflows the pane.
+            '!grid grid-cols-[repeat(auto-fit,minmax(0,350px))] justify-center justify-items-center gap-6 p-3'
           )}
         >
           <div className={cardClasses.winnerFirst}>
@@ -227,7 +330,7 @@ export function ResourceHitList({ query }: { query: string }) {
         </div>
       )}
 
-      <MasonryProvider columnWidth={278} maxColumnCount={4}>
+      <FillingMasonryGrid>
         <MasonryColumnsVirtual
           data={restItems}
           render={renderCard}
@@ -235,7 +338,7 @@ export function ResourceHitList({ query }: { query: string }) {
           adjustHeight={({ height }) => height + 82}
           itemId={(x) => x.id}
         />
-      </MasonryProvider>
+      </FillingMasonryGrid>
 
       {items.length > 0 && hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>

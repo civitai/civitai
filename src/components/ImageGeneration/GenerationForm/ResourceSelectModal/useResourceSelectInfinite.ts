@@ -5,7 +5,7 @@ import { useResourceSelectContext } from '~/components/ImageGeneration/Generatio
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { trpc } from '~/utils/trpc';
+import { queryRetry, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const limit = 50;
@@ -56,6 +56,11 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       enabled,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       placeholderData: keepPreviousData,
+      // A batched request can't abort one operation, so the abort needs skipBatch.
+      trpc: { abortOnUnmount: true, context: { skipBatch: true } },
+      // A 503 here is the server's Meili timeout; a retry queues a second search behind the first.
+      retry: (failureCount, error) =>
+        error.data?.code !== 'SERVICE_UNAVAILABLE' && queryRetry(failureCount, error),
     }
   );
 

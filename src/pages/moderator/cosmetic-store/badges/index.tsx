@@ -157,6 +157,7 @@ function BadgeHistoryRow({
                           type={MediaType.image}
                           width={30}
                           style={{ width: 30, height: 30, objectFit: 'contain' }}
+                          optimized
                         />
                       </div>
                     ) : (
@@ -402,6 +403,7 @@ function BadgeForm({
                         type={MediaType.image}
                         width={28}
                         style={{ width: 28, height: 28, objectFit: 'contain' }}
+                        optimized
                       />
                     </div>
                     <Text size="xs" c="dimmed">
@@ -732,6 +734,7 @@ export default function BadgeManagement() {
                                 type={MediaType.image}
                                 width={40}
                                 style={{ width: 40, height: 40, objectFit: 'contain' }}
+                                optimized
                               />
                             </div>
                             <Stack gap={0}>

@@ -4,8 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * A WHOLESALE `vi.mock('~/providers/FeatureFlagsProvider', …)` factory must name
- * BOTH flag hooks. Node `unit` project — the GATING tier, which matters here
- * because the failure this prevents is invisible in the report-only browser tier.
+ * BOTH flag hooks. Node `unit` project — the tier that EXECUTES this assertion,
+ * which matters here because the failure this prevents is invisible in the browser
+ * tier. Both tiers are report-only on a pull request (the node one via
+ * `continue-on-error`, the browser one always, as `preview / component-tests`);
+ * the node tier renders an honest verdict on a push to `main`. NEITHER TIER BLOCKS
+ * A MERGE: `main` requires no status check at all in this repo, so this is a signal
+ * a reviewer must read, not a door that stays shut.
  *
  * WHAT BROKE (F2). `IframeHost.tsx` began importing a component that reads
  * `useOptionalFeatureFlags` — the non-throwing variant, correct for a chrome that

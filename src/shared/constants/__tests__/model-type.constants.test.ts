@@ -7,13 +7,17 @@ import {
   modelTypeGroups,
   resolveModelTypeDefaults,
   retiredModelTypes,
+  leadingUngroupedModelTypes,
   selectableModelTypes,
-  ungroupedModelTypes,
+  trailingUngroupedModelTypes,
 } from '~/shared/constants/model-type.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 describe('model type picker data', () => {
+  const groupOf = (type: ModelType) =>
+    modelTypeGroups.find(({ types }) => types.includes(type))?.group;
+
   it('covers every ModelType exactly once, as selectable or retired', () => {
     const all = [...selectableModelTypes, ...retiredModelTypes].sort();
 
@@ -21,12 +25,14 @@ describe('model type picker data', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('offers only the types the 2026-08-31 cleanup kept', () => {
+  // The list is what the 2026-08-31 cleanup kept, plus Embedding, restored 2026-09-07.
+  it('offers exactly the post-cleanup picker list, in order', () => {
     expect(selectableModelTypes).toStrictEqual([
       ModelType.Checkpoint,
       ModelType.LORA,
       ModelType.LoCon,
       ModelType.DoRA,
+      ModelType.TextualInversion,
       ModelType.VAE,
       ModelType.TextEncoder,
       ModelType.UNet,
@@ -39,11 +45,19 @@ describe('model type picker data', () => {
   });
 
   it('groups Controlnet with the workflow additives, not the adapters', () => {
-    const groupOf = (type: ModelType) =>
-      modelTypeGroups.find(({ types }) => types.includes(type))?.group;
-
     expect(groupOf(ModelType.Controlnet)).toBe('Workflow additives');
     expect(groupOf(ModelType.LORA)).toBe('Adapters');
+  });
+
+  // Deliberate, and the reason is not visible from the value: an embedding is not a weight-delta
+  // adapter. It sits under Adapters because the alternative is a group of one whose heading repeats
+  // its only option -- the thing the ungrouped lists exist to avoid. Moving it to its own group is a
+  // product call, not a tidy-up.
+  it('groups Embedding with the adapters rather than in a group of its own', () => {
+    expect(groupOf(ModelType.TextualInversion)).toBe('Adapters');
+    expect(
+      modelTypeGroups.filter(({ types }) => types.length < 2).map(({ group }) => group)
+    ).toStrictEqual([]);
   });
 
   it('keeps a retired type selectable while it is the current value', () => {
@@ -79,7 +93,6 @@ describe('model type picker data', () => {
     // retiredModelTypes is written out rather than derived as the complement of the selectable set.
     // Derived, a ModelType added later would land in it and this file would stay green.
     expect([...retiredModelTypes]).toStrictEqual([
-      ModelType.TextualInversion,
       ModelType.Hypernetwork,
       ModelType.AestheticGradient,
       ModelType.MotionModule,
@@ -115,34 +128,35 @@ describe('model type picker data', () => {
       expect(item.label.length).toBeGreaterThan(0);
     }
 
-    // Only the trailing ungrouped types have no heading; a group of one would repeat its own name.
+    // Only the ungrouped types have no heading; a group of one would repeat its own name.
     expect(data.filter(({ group }) => !group).map(({ value }) => value)).toStrictEqual([
-      ...ungroupedModelTypes,
+      ...leadingUngroupedModelTypes,
+      ...trailingUngroupedModelTypes,
     ]);
   });
 
   it('grandfathers a saved model, and offers a template only what is still offered', () => {
     // A saved model keeps a retired type and the picker re-offers it.
-    const saved = resolveModelTypeDefaults({ id: 7, type: ModelType.TextualInversion });
+    const saved = resolveModelTypeDefaults({ id: 7, type: ModelType.Hypernetwork });
     expect(saved).toStrictEqual({
-      grandfatheredType: ModelType.TextualInversion,
-      initialType: ModelType.TextualInversion,
+      grandfatheredType: ModelType.Hypernetwork,
+      initialType: ModelType.Hypernetwork,
       replacedType: null,
     });
     expect(getModelTypeSelectData(saved.grandfatheredType).map(({ value }) => value)).toContain(
-      ModelType.TextualInversion
+      ModelType.Hypernetwork
     );
 
     // A template seeds `type` with no `id`, so it is a NEW model. Dropping the option alone is not
     // enough: the form would still hold the retired value behind a blank required field, and the
     // submit would create a model on it.
     // Falling back to Checkpoint would file it as a fine-tune; Other claims nothing.
-    const fromTemplate = resolveModelTypeDefaults({ type: ModelType.TextualInversion });
+    const fromTemplate = resolveModelTypeDefaults({ type: ModelType.Hypernetwork });
     expect(fromTemplate).toStrictEqual({
       grandfatheredType: null,
       initialType: ModelType.Other,
       // Named so the form can say what it dropped instead of substituting silently.
-      replacedType: ModelType.TextualInversion,
+      replacedType: ModelType.Hypernetwork,
     });
 
     // A template on a type that is still offered is untouched.
@@ -198,7 +212,42 @@ describe('model type picker data', () => {
     expect(source).not.toContain('resolveModelTypeDefaults(model)');
   });
 
-  it('labels Checkpoint as Fine-tune', () => {
-    expect(getDisplayName(ModelType.Checkpoint)).toBe('Fine-tune');
+  // Retiring the type left this label reachable only on already-saved models; it is now on the
+  // default path for every new model, and getDisplayName is the only thing producing it.
+  it('labels TextualInversion as Embedding, the word the picker actually offers', () => {
+    expect(getDisplayName(ModelType.TextualInversion)).toBe('Embedding');
+  });
+
+  // Reverted from "Fine-tune" (#4521) after tester complaints that it replaced a term people
+  // already knew. If you are here to rename it again, that is a product call, not a cleanup.
+  it('labels Checkpoint as Checkpoint, not Fine-tune', () => {
+    expect(getDisplayName(ModelType.Checkpoint)).toBe('Checkpoint');
+  });
+
+  // App settings keeps its own hand-written label map instead of calling getDisplayName, so the
+  // test above does not reach it: #4521 renamed Checkpoint in both files and so did the revert,
+  // both times found by grep. Derived rather than hardcoded, so it reddens whichever side moves.
+  it('keeps the App settings label in step with getDisplayName for Checkpoint', () => {
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../components/Apps/AppSettingsModal.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain(
+      `{ value: ModelType.Checkpoint, label: '${getDisplayName(ModelType.Checkpoint)}' }`
+    );
+  });
+
+  // Same revert: Checkpoint is offered with no heading rather than under a "Fine-tunes" group of
+  // one. Restoring a heading here reintroduces the word the revert removed.
+  it('offers Checkpoint ungrouped and first, under no heading', () => {
+    const data = getModelTypeSelectData(null);
+
+    expect(data[0]).toStrictEqual({ value: ModelType.Checkpoint, label: 'Checkpoint' });
+    expect(modelTypeGroups.map(({ group }) => group)).toStrictEqual([
+      'Adapters',
+      'Component replacements',
+      'Workflow additives',
+    ]);
   });
 });

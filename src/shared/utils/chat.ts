@@ -111,6 +111,20 @@ export function upsertChatInList<T extends { id: number }>(list: T[] | undefined
     : [chat, ...list];
 }
 
+/**
+ * Drop messages authored by a blocked user. Blocking hides someone's content
+ * everywhere else on the site; a group conversation was the one surface that
+ * still rendered their messages.
+ */
+export function filterBlockedChatMessages<T extends { userId: number }>(
+  messages: T[],
+  blockedUserIds: number[]
+): T[] {
+  if (!blockedUserIds.length) return messages;
+  const blocked = new Set(blockedUserIds);
+  return messages.filter((m) => !blocked.has(m.userId));
+}
+
 const youVerb: Record<string, string> = { is: 'are', was: 'were', has: 'have' };
 
 /**

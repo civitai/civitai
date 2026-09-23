@@ -7,6 +7,12 @@ export type CategoryMeta = {
   subtitle: string;
   countLabel: string;
   entityLabel: string;
+  /**
+   * Whether `minCount` reaches this category's query at all. False on collections: that pass takes no
+   * floor, so rendering the control and the "over N" suffix there told a moderator who set Min to 50
+   * that the unchanged rows below — several of them 1 — had each cleared 50.
+   */
+  hasFloor: boolean;
 };
 
 export const CATEGORIES: CategoryMeta[] = [
@@ -17,6 +23,7 @@ export const CATEGORIES: CategoryMeta[] = [
     subtitle: 'Concentration is the signal, not the count.',
     countLabel: 'Reactions',
     entityLabel: 'Items',
+    hasFloor: true,
   },
   {
     value: 'stickers',
@@ -25,6 +32,7 @@ export const CATEGORIES: CategoryMeta[] = [
     subtitle: 'Includes declined and removed placements.',
     countLabel: 'Stickers',
     entityLabel: 'Items',
+    hasFloor: true,
   },
   {
     value: 'collections',
@@ -33,6 +41,7 @@ export const CATEGORIES: CategoryMeta[] = [
     subtitle: 'Who has been adding this creator to collections.',
     countLabel: 'Items added',
     entityLabel: 'Collections',
+    hasFloor: false,
   },
 ];
 

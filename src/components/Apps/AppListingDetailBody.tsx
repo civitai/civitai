@@ -10,27 +10,20 @@ import {
   Divider,
   Group,
   Image,
-  Menu,
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
 import {
   IconApps,
   IconArrowLeft,
-  IconDotsVertical,
   IconDownload,
-  IconEyeOff,
-  IconFlag,
   IconFlask,
   IconInfoCircle,
-  IconMail,
-  IconPencil,
   IconPlugConnected,
-  IconRefresh,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -44,27 +37,17 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
-  canOwnerEditListing,
   type DetailActionMode,
   getDetailPrimaryAction,
-  getOwnerEditHref,
   shouldShowConnectCapability,
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
-import {
-  DETAIL_TAKEDOWN_ACTIONS,
-  REVIEW_QUEUE_MANAGE_HREF,
-  TAKEDOWN_TESTID_STEM,
-  appListingDetailModActions,
-  detailModActionLabel,
-  type DetailTakedownAction,
-} from '~/components/Apps/appListingDetailModActions';
-import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
-import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
-import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
@@ -78,20 +61,14 @@ import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
-import {
-  ReportListingModal,
-  useCanReportListing,
-  useReportListingAffordance,
-} from '~/components/Apps/ReportListingModal';
-import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
+import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import {
   isMarketplaceCategory,
@@ -379,7 +356,9 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
  */
 function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
   if (!creator || !creator.username) return null;
-  const avatarSrc = creator.image ? getEdgeUrl(creator.image, { width: 64 }) : undefined;
+  const avatarSrc = creator.image
+    ? getEdgeUrl(creator.image, { width: 64, optimized: true })
+    : undefined;
   return (
     <Anchor
       component={Link}
@@ -790,17 +769,45 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                   // look-alike. The href is already host-allowlisted and normalised
                   // server-side (`validateRepositoryUrl`); this is the second control, and
                   // `appListingDetailRows.ts` documents the contract on `href`.
-                  <Text
+                  // 🔴 `Anchor`, NOT `Text component="a"` — this is an AFFORDANCE fix,
+                  // not a component preference. As a `Text` the value rendered in the
+                  // body colour with no underline, so it was visually identical to the
+                  // non-link values sitting directly above and below it in the same
+                  // rail. Reported by a tester 2026-09-10: "I see that 'Source' is
+                  // clickable, but there is no indication." `Anchor` is the repo's
+                  // inline-link idiom (used throughout this file and the sibling Apps
+                  // components) and carries the link colour; `underline="always"` is
+                  // explicit because a colour difference alone is not an accessible
+                  // affordance — it fails for a viewer who cannot separate the two hues.
+                  <Anchor
                     size="sm"
-                    component="a"
                     href={row.href}
                     target="_blank"
                     rel="noopener noreferrer"
+                    underline="always"
                     data-listing-detail-link={row.key}
                     style={{ wordBreak: 'break-all' }}
                   >
                     {row.value}
-                  </Text>
+                  </Anchor>
+                ) : row.anchorId ? (
+                  // SAME-PAGE jump — deliberately NOT `target="_blank"`/`noopener`.
+                  // Those belong to `row.href` (an outbound third-party URL) and would
+                  // open this page's own reviews section in a new tab. See the two
+                  // fields' docstrings in `appListingDetailRows.ts`.
+                  // A real fragment link rather than a scroll handler: it works with
+                  // the keyboard, with middle-click, before hydration, and it can be
+                  // copied.
+                  <Anchor
+                    size="sm"
+                    href={`#${row.anchorId}`}
+                    underline="always"
+                    c={row.color}
+                    tt={row.key === 'reviews' ? 'capitalize' : undefined}
+                    data-listing-detail-anchor={row.key}
+                  >
+                    {row.value}
+                  </Anchor>
                 ) : (
                   <Text
                     size="sm"
@@ -829,6 +836,15 @@ export interface AppListingDetailBodyProps {
    * rail, screenshot gallery, description markdown — and OMIT every LIVE/interactive
    * or AGGREGATE surface. The full omission ledger, each item a deliberate decision:
    *
+   *   - the PERMISSION DISCLOSURE is KEPT, not omitted — a decision on this ledger
+   *     rather than an omission that was missed. It renders under a DIFFERENT HEADING
+   *     here ("Currently granted permissions", not "This app can…") because the review
+   *     modal shows it beside the pending version's REQUESTED scopes, and mislabelling
+   *     the currently-approved set is how a moderator under-reads an escalation.
+   *     🔴 It DOES render here: the owner-republish re-review produces a
+   *     `kind: 'onsite'` request against a LIVE listing with a non-null `appBlockId`.
+   *     An intermediate revision of this ledger claimed it rendered nothing — that was
+   *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
@@ -884,72 +900,18 @@ export function AppListingDetailBody({
   canOpenPage = false,
   preview = false,
 }: AppListingDetailBodyProps) {
-  const currentUser = useCurrentUser();
-
-  // Owner "Edit" deep-link (Item 2) — owner + editable status (approved-only read
-  // path carries no status → editable); the href builder returns null when there
-  // is no editable target (on-site listing with no backing appBlockId).
-  const isOwner = !!currentUser?.id && currentUser.id === detail.creator?.id;
-  const editHref = getOwnerEditHref(detail.kindData, detail.id);
-  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
-
-  // 🔴 The review / report modals are owned HERE, not by their trigger. A Mantine
-  // `Menu.Dropdown` is unmounted when the menu closes, so a modal rendered as a
-  // sibling of its `Menu.Item` would be destroyed by the click that opens it. The
-  // gates are the SAME predicates each affordance defines (`useCanReviewListing` /
-  // `useCanReportListing`), imported rather than re-derived, so the menu cannot
-  // disagree with them about who may act.
+  // 🔴 THE `⋮` MENU — ITEM SET, ORDER, LABELS, GATING AND MODALS — LIVES IN THE
+  // SHARED `AppListingActionsMenu`, NOT HERE. It used to be written out inline in
+  // this file; the store CARD now renders the same menu, and a second copy is
+  // exactly how these two surfaces drifted over the CTA glyph mapping (which had
+  // to be pulled out into `appListingActionGlyph.ts` after the fact). Everything
+  // the old block explained — why the modals are siblings of the `Menu` rather
+  // than of a `Menu.Item`, why the report affordance's two prop bags must both be
+  // spread, why the mod set is an intersection rather than a hand-rolled list —
+  // moved with the code and is documented there.
   //
-  // 🔴 The report affordance's STATE comes from `useReportListingAffordance` rather
-  // than a bare `useDisclosure` here, and that is the fix for a shipped defect: the
-  // server allows one open report per reporter, so once a report lands the trigger
-  // has to go spent ("Reported", disabled) or the next click returns a CONFLICT the
-  // user reads as a failure. That rule used to live in a standalone `ReportListingButton`
-  // nothing rendered, while this — the live path — mounted the modal with no
-  // `onReported` and kept its menu item live. Spread BOTH bags; do not hand-roll
-  // either half.
-  // `detail.kind` is threaded in so the affordance obeys the SAME store-scope kind
-  // rule the write gate applies — an external-only viewer is not offered a review
-  // control on an onsite listing the server would NOT_FOUND.
-  const canReview = useCanReviewListing({
-    ownerUserId: detail.creator?.id ?? null,
-    listingKind: detail.kind,
-  });
-  const canReport = useCanReportListing();
-  const report = useReportListingAffordance();
-  const [reviewOpened, reviewModal] = useDisclosure(false);
-
-  // MODERATOR section of the same menu. The action SET is derived, never hand-rolled:
-  // `appListingDetailModActions` intersects the shared lifecycle state machine
-  // (`listingModActions`, which the /apps/review mgmt table also depends on) with the
-  // subset this surface implements, and answers empty for a non-moderator and in
-  // preview. See that module for why `relist` can never appear here.
-  //
-  // 🔴 The gate is `isAppReviewer` — the existing named predicate the /apps/review page
-  // and `IframeHost` already use — NOT an inlined `isModerator`. It is COSMETIC: every
-  // proc behind these items is `moderatorProcedure` plus an inner `isModerator` recheck,
-  // which is the actual boundary.
-  const isModerator = isAppReviewer(currentUser);
-  const modActions = appListingDetailModActions({
-    isModerator,
-    preview,
-    kind: detail.kind,
-  });
-
-  // 🔴 Both mod modals are owned HERE for the same structural reason the review/report
-  // pair above is: a Mantine `Menu.Dropdown` UNMOUNTS when the menu closes, so a modal
-  // rendered as a sibling of its `Menu.Item` is destroyed by the click that opens it.
-  // Each holds the LISTING (nullable) rather than a boolean, matching the contract
-  // `MessageAppOwnerModal` already defines for its one other call site.
-  //
-  // 🔴 The TAKEDOWN pair shares ONE piece of state holding WHICH action is open, rather
-  // than a boolean each. Two booleans can both be true; this cannot, so "the hide confirm
-  // and the unpublish confirm are open at once" is unrepresentable instead of merely
-  // unlikely — and the two confirms differ only in which mutation they fire, so a viewer
-  // seeing both would have no way to tell which one they were about to submit.
-  const modListing = { appListingId: detail.id, slug: detail.slug, kind: detail.kind };
-  const [messageOpened, messageModal] = useDisclosure(false);
-  const [takedown, setTakedown] = useState<DetailTakedownAction | null>(null);
+  // What stays here is only what is TRUE OF THIS SURFACE: the trigger's geometry
+  // (Mantine's default size + a 20px glyph, `variant="light"`), and `preview`.
 
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
@@ -973,11 +935,6 @@ export function AppListingDetailBody({
     !preview && primaryAction.mode === 'open' && !primaryAction.external && primaryAction.href
       ? primaryAction.href
       : null;
-
-  // `modActions` is already empty in preview, so the leading `!preview` is not what
-  // suppresses the mod section — it is the pre-existing clause that suppresses the whole
-  // menu, kept verbatim.
-  const showMenu = !preview && (showEdit || canReview || canReport || modActions.length > 0);
 
   return (
     <Stack gap="lg">
@@ -1070,138 +1027,28 @@ export function AppListingDetailBody({
 
           {/* Overflow menu — the secondary actions, collapsed. Replaces the stacked
               full-width button column; the PRIMARY action stays a real button in the
-              right-rail action card, never buried in here. */}
-          {showMenu && (
-            <Box style={{ flexShrink: 0 }}>
-              <Menu
-                position="bottom-end"
-                transitionProps={{ transition: 'pop-top-right' }}
-                withinPortal
-              >
-                <Menu.Target>
-                  <LegacyActionIcon
-                    variant="light"
-                    aria-label="App options"
-                    data-testid="apps-listing-actions-menu"
-                  >
-                    <IconDotsVertical size={20} />
-                  </LegacyActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {/* Owner-only "Edit" deep-link, gated by owner + editable status
-                      (mod-removed listings hide it). Routes by kind (manifest editor
-                      for on-site, submit editor for off-site). */}
-                  {showEdit && editHref && (
-                    <Menu.Item
-                      component={Link}
-                      href={editHref}
-                      leftSection={<IconPencil size={14} stroke={1.5} />}
-                      data-testid="apps-listing-owner-edit"
-                    >
-                      Edit
-                    </Menu.Item>
-                  )}
-                  {/* Review affordance (thumbs/recommend) — hidden for the owner, signed-out
-                      viewers, AND viewers whose resolved store scope does not admit this
-                      listing's kind, all by `useCanReviewListing`. The write proc is
-                      protected + STORE-SCOPE-gated (not flag-gated — that spelling was the
-                      defect) + self-review-blocked server-side. */}
-                  {canReview && (
-                    <Menu.Item
-                      leftSection={<IconThumbUp size={14} stroke={1.5} />}
-                      onClick={reviewModal.open}
-                      data-testid="apps-listing-review-action"
-                    >
-                      Leave a review
-                    </Menu.Item>
-                  )}
-                  {/* Report affordance — dark behind the mod-only store surface; the
-                      proc is protected + rate-limited + reporter-bound server-side.
-                      🔴 `triggerProps` carries BOTH the click and the spent `disabled`
-                      state; the modal below carries its `onReported` counterpart. The
-                      pair is what stops a second report from returning the server's
-                      one-open-report-per-reporter CONFLICT as an error toast. */}
-                  {canReport && (
-                    <Menu.Item
-                      color="red"
-                      leftSection={<IconFlag size={14} stroke={1.5} />}
-                      {...report.triggerProps}
-                      data-testid="apps-listing-report-action"
-                    >
-                      {report.label}
-                    </Menu.Item>
-                  )}
-                  {/* MODERATOR section — divided and labelled so a mod action is never
-                      one slot away from a reader's "Leave a review". The set comes from
-                      `appListingDetailModActions`; the ORDER is that function's
-                      (Contact before the lifecycle action), and the review-queue link
-                      is last because it navigates away rather than acting. */}
-                  {modActions.length > 0 && (
-                    <>
-                      <Menu.Divider />
-                      <Menu.Label>Moderator</Menu.Label>
-                      {modActions.includes('message-owner') && (
-                        <Menu.Item
-                          leftSection={<IconMail size={14} stroke={1.5} />}
-                          onClick={messageModal.open}
-                          data-testid="apps-listing-mod-message-owner"
-                        >
-                          {detailModActionLabel('message-owner')}
-                        </Menu.Item>
-                      )}
-                      {/* The TAKEDOWN pair, rendered by mapping the canonical order
-                          rather than as two hand-written branches: the two items differ
-                          only in which action they carry, so writing them out twice is
-                          how one of them ends up wired to the other's label or testid.
-                          Each still renders only if `modActions` admits it. */}
-                      {DETAIL_TAKEDOWN_ACTIONS.filter((a) => modActions.includes(a)).map(
-                        (action) => (
-                          <Menu.Item
-                            key={action}
-                            color="red"
-                            leftSection={
-                              action === 'hide' ? (
-                                <IconEyeOff size={14} stroke={1.5} />
-                              ) : (
-                                <IconRefresh size={14} stroke={1.5} />
-                              )
-                            }
-                            onClick={() => setTakedown(action)}
-                            data-testid={`${TAKEDOWN_TESTID_STEM[action]}-menu-item`}
-                          >
-                            {detailModActionLabel(action)}
-                          </Menu.Item>
-                        )
-                      )}
-                      {/* 🔴 THE INVERSE AFFORDANCE, AND IT IS A LINK RATHER THAN A
-                          BUTTON ON PURPOSE. There is no relist/republish control here
-                          because there cannot be one: `relistListing` acts on a
-                          `removed` listing, this page's read is approved-only, and a
-                          removed listing 404s before the body mounts. So the honest way
-                          back is the surface that CAN see a removed listing — the
-                          /apps/review mgmt table, which already carries Relist (and
-                          Claim/Purge) for exactly that state. See
-                          `appListingDetailModActions.detailListingStatus`.
+              right-rail action card, never buried in here.
 
-                          🔴 THE `?tab=manage` IS LOAD-BEARING — a bare `/apps/review`
-                          resolves to the PENDING tab, and Relist is on the manage tab.
-                          The href is a named constant so the destination this menu
-                          promises is pinned in the blocking tier rather than typed
-                          inline. */}
-                      <Menu.Item
-                        component={Link}
-                        href={REVIEW_QUEUE_MANAGE_HREF}
-                        leftSection={<IconShieldCheck size={14} stroke={1.5} />}
-                        data-testid="apps-listing-mod-manage"
-                      >
-                        Manage in review queue
-                      </Menu.Item>
-                    </>
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-            </Box>
-          )}
+              🔴 SHARED WITH THE STORE CARD. This renders `AppListingActionsMenu`; the
+              item set, order, labels, eligibility gates and modal ownership all live
+              there. This surface's own are the trigger's geometry and `surface`.
+
+              🔴 `surface="detail"` IS WHAT KEEPS "Leave a review" AND "Report" HERE.
+              They are offered to any eligible signed-in viewer on this page and to
+              nobody on the store card — see `appListingMenuSurface.ts`. Changing this
+              string silently removes both items from the one surface whose job is to
+              offer them. */}
+          <AppListingActionsMenu
+            listing={{
+              id: detail.id,
+              slug: detail.slug,
+              kind: detail.kind,
+              kindData: detail.kindData,
+              creatorUserId: detail.creator?.id ?? null,
+            }}
+            surface="detail"
+            preview={preview}
+          />
         </Group>
 
         {/* META LINE — `Updated: <date>` │ category, exactly as the model page renders
@@ -1385,6 +1232,109 @@ export function AppListingDetailBody({
                 asked to sign in and approve access.
               </Alert>
             )}
+
+            {/* WHAT that connect will actually ASK FOR — the enumeration behind the
+                sentence immediately above.
+                🔴 A FOURTH permission surface, and like the on-site `scopes` section
+                below it does NOT belong to the mutually-exclusive off-site pair. Those
+                two answer "does this leave the platform, and can it reach my account at
+                all?"; this one enumerates the ask. Do not fold it into either predicate
+                — they are exact complements over one domain and a third condition there
+                breaks the invariant pinned in `__tests__/appListingDetailView.test.ts`.
+                🔴 IT IS GATED ON THE DATA, NOT ON `shouldShowConnectCapability`, AND
+                THAT IS NOT AN OVERSIGHT. Reusing the predicate would couple the
+                enumeration to the sentence and reintroduce exactly the third-condition
+                pressure the pair's docstring warns about. Same `length > 0` reasoning as
+                the on-site section: on a store page, "no permissions" is better said by
+                the absence of the section than by an empty box.
+                ⚠ THE DATA GATE IS NARROWER THAN THE PREDICATE ONLY BECAUSE THE
+                PROJECTION MAKES IT SO — an earlier draft of this comment asserted
+                `connectScopes` is "[] for every listing that is not an off-site connect
+                listing" as though it were free, and it was FALSE: a deleted OAuth client
+                strands the mask (`onDelete: SetNull` nulls only `connectClientId`), and
+                the projection then published scopes while the mutually-exclusive pair
+                flipped to the "no account access, or permissions" sentence — two
+                contradictory security claims stacked on one public page. The projection
+                now gates on the client's presence too; read its comment before
+                loosening either side.
+                🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
+                emphasis reads identically here and on the moderator review surface. It
+                cannot render `connectScopeJustifications` — see its docblock; that is
+                structural, not a convention. */}
+            {detail.connectScopes.length > 0 && (
+              <ConnectScopesDisclosure scopes={detail.connectScopes} preview={preview} />
+            )}
+
+            {/* PRE-LAUNCH PERMISSION DISCLOSURE — what this app is permitted to do,
+                shown BEFORE the viewer opens it.
+                🔴 This is the third permission surface on this page and it does NOT
+                belong to the mutually-exclusive off-site pair above. Those two answer
+                "does this leave the platform, and can it reach my account at all?" for
+                an OFF-SITE listing; this one enumerates the granted capabilities of an
+                ON-SITE app, which the pair is silent about by construction. Do not fold
+                it into either predicate — `shouldShowOffsiteDisclosure` and
+                `shouldShowConnectCapability` are exact complements over one domain and a
+                third condition there would break the invariant pinned in
+                `__tests__/appListingDetailView.test.ts`.
+                🔴 Rendered ONLY when there is something to disclose: an app approved with
+                no scopes gets no section at all, rather than a reassuring empty box. That
+                is why the guard is `length > 0` and not `BlockScopeList`'s own
+                `emptyLabel` path — on a store listing, "no permissions" is better said by
+                the absence of a permissions section than by a sentence nobody reads.
+                Ported from the disclosure on the retired `/apps/<appBlockId>` route,
+                which `blocks.getAppDetail` still serves.
+                🔴 THE `preview` HEADING IS A CORRECTNESS FIX ON A REACHABLE PATH, NOT
+                COPY AND NOT AN INVARIANT GUARD. `detail.scopes` is what is CURRENTLY
+                approved; the review modal shows it beside `ManifestScopes`, the scopes
+                the pending version is REQUESTING. Those differ exactly when a version
+                escalates, and the confident natural-language heading was on the wrong
+                one — so a moderator could read "This app can…" as the set they are
+                approving and under-read the escalation, on the one surface where that
+                call is made.
+                🔴 REACHED VIA THE OWNER-REPUBLISH RE-REVIEW, which is why a
+                "preview means an off-site shadow" reading is wrong. There are FOUR
+                writers of `AppListingPublishRequest.appListingId`, and two copy the
+                kind from the target rather than hardcoding `'offsite'`:
+                `offsite-moderation.service.ts`'s `routeRepublishToReviewInTx` writes
+                `kind: listing.kind` against the LIVE listing id — so an approved
+                ON-SITE app that is self-unpublished and republished with a changed
+                asset produces a `kind: 'onsite'`, non-shadow request whose
+                `appListingId` is a live on-site listing WITH a non-null `appBlockId`.
+                `getListingPreviewForReview` is deliberately not status-filtered and
+                runs `projectListingDetail` verbatim, so `scopes` is non-empty and this
+                section renders. `OffsiteReviewQueue` renders `ListingPreviewSection`
+                with no kind gate, and already carries its own 🔴 comment that
+                "`kind === 'onsite'` NO LONGER IMPLIES 'a media revision'" for exactly
+                this producer; its `ONSITE_REPUBLISH_ROW` fixture is that shape.
+                ⚠ An intermediate version of this comment claimed the branch was
+                UNREACHABLE and that the heading was therefore an invariant guard. That
+                was wrong, and wrong in the dangerous direction — it licensed deleting a
+                heading and a test that both guard a live moderator-facing path. It
+                counted two of the four writers.
+                🔴 DO NOT RESTATE THE WRITER COUNT HERE — an earlier draft said "four",
+                and nothing asserted it. The set is pinned as `LISTING_REQUEST_PRODUCERS`
+                in `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`,
+                which fails on GROWTH and SHRINK. What matters for THIS branch is not the
+                number but that AT LEAST ONE writer copies the kind from a LIVE listing —
+                that is what makes it reachable, and it stays true however many exist.
+                ✅ The contradiction this comment used to flag is RESOLVED (2026-09-12).
+                `app-listing-history.service.ts` no longer asserts "exactly THREE create
+                sites" / "the ONLY writer that can emit `onsite`" / "every on-site row is
+                a shadow"; it now points at the same ledger. The two files no longer
+                disagree, so there is nothing left to reconcile by hand. */}
+            {detail.scopes.length > 0 && (
+              <Stack gap="xs" data-testid="apps-listing-permissions">
+                <Group gap="xs">
+                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                    <IconShieldCheck size={14} />
+                  </ThemeIcon>
+                  <Title order={4}>
+                    {preview ? 'Currently granted permissions' : 'This app can…'}
+                  </Title>
+                </Group>
+                <BlockScopeList scopes={detail.scopes} />
+              </Stack>
+            )}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
@@ -1407,7 +1357,14 @@ export function AppListingDetailBody({
           heading. Omitted in preview: a shadow listing has no review rows and we must
           not query them. */}
       {!preview && (
-        <Stack gap="md">
+        // 🔴 `id` is the jump TARGET for the Details rail's "Reviews" row, which is a
+        // link a viewer can follow (a tester found the rail's reviews line and
+        // reasonably expected it to take them somewhere). Renaming or removing this id
+        // silently breaks that link — an `href="#…"` to a missing id is inert with no
+        // error — so it is pinned by `appListingReviewsAnchor.test.ts`.
+        // Not a `scrollIntoView` handler: a real fragment link works with the keyboard,
+        // with middle-click, and before hydration, and it survives being copied.
+        <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
           <Title order={2}>Reviews</Title>
           <AppListingReviews appListingId={detail.id} />
@@ -1421,54 +1378,6 @@ export function AppListingDetailBody({
           preview (a shadow listing has no thread; loading it would 404/N+1). */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
-      )}
-
-      {/* The two action modals, mounted OUTSIDE the menu — see the note where their
-          state is declared. Each is gated by the same predicate as its menu item, so
-          an ineligible viewer mounts neither the trigger nor the form.
-          🔴 THE `!preview` CLAUSE ON THESE TWO IS DEFENCE-IN-DEPTH, AND IS THE ONLY
-          `preview` GUARD IN THIS FILE THAT NO TEST CAN KILL — measured, not assumed:
-          deleting it leaves the mutation battery fully green, because a Mantine `Modal`
-          with `opened={false}` renders NO DOM at all and its `getMyReview` query is
-          `enabled: false`, so a mounted-but-closed modal is unobservable from the
-          rendered output and issues no request. Removing the clause would therefore be
-          inert TODAY. It stays because "mount no live-action component against an
-          unapproved shadow listing" is the posture, and the day either modal grows a
-          mount effect the clause is what stops it firing. Do not delete it on the
-          grounds that nothing goes red. */}
-      {!preview && canReview && (
-        <ReviewListingModal
-          appListingId={detail.id}
-          opened={reviewOpened}
-          onClose={reviewModal.close}
-        />
-      )}
-      {!preview && canReport && (
-        <ReportListingModal appListingId={detail.id} {...report.modalProps} />
-      )}
-      {/* The two MODERATOR modals, mounted outside the menu for the same reason. Gated
-          on the same derived set as their menu items — `modActions` is empty for a
-          non-moderator and in preview, so neither form is mounted for a viewer who
-          cannot act. `MessageAppOwnerModal` is REUSED, not forked: it names no
-          recipient by design (the owner is resolved server-side, and for an on-site
-          listing that resolution can disagree with the listing's own `userId` column),
-          and its call-site ledger in `__tests__/appModeratorMessageForm.callSites.test.ts`
-          now enumerates this file. */}
-      {modActions.includes('message-owner') && (
-        <MessageAppOwnerModal
-          listing={messageOpened ? modListing : null}
-          onClose={messageModal.close}
-        />
-      )}
-      {/* ONE takedown confirm, for whichever of the pair is open. It is mounted only when
-          `modActions` still admits that action, so the state alone cannot open a confirm
-          for something this viewer or this listing state does not offer. */}
-      {takedown && modActions.includes(takedown) && (
-        <ListingTakedownModal
-          action={takedown}
-          listing={modListing}
-          onClose={() => setTakedown(null)}
-        />
       )}
     </Stack>
   );

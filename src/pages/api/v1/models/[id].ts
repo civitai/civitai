@@ -122,7 +122,12 @@ async function buildPublicModelResponse(
                   ...file,
                   metadata: removeEmpty(metadata),
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
                   // Pin the URL to THIS file. Passing `type`/`meta`/`primary`
@@ -190,10 +195,27 @@ const baseHandler = PublicEndpoint(async function handler(
 
   // Bypass the origin cache when this request is taking the block-scoped path
   // (a valid block JWT was verified and bound by withBlockScope, which sets
-  // req.blockClaims and marks the response `private, no-store`). Block-scoped
-  // responses may be identity-bearing / differ from the pure-public body, so we
-  // must never serve them a cached public body nor populate the public cache
-  // from a block call. Only the anonymous PublicEndpoint path is cached.
+  // req.blockClaims and marks the response `private, no-store`). Never serve a
+  // block call a cached public body, and never populate the public cache from
+  // one. Only the anonymous PublicEndpoint path is cached.
+  //
+  // 🔴 WHY, PRECISELY — this comment used to say block-scoped responses "may be
+  // identity-bearing / differ from the pure-public body", which reads as a claim that
+  // they DO differ today and contradicts the `onApprovalLookupFailure` rationale at the
+  // export below. They do NOT differ today: `browsingLevel` above is derived from the
+  // REGION alone, `isBlockScoped` is read at exactly one place (the `shouldCache`
+  // condition), and both branches call `buildPublicModelResponse(id, browsingLevel)` with
+  // the same arguments. The bypass is a STANDING invariant, not a description of a
+  // current divergence — it keeps a token-bearing call and the shared public cache
+  // decoupled so that a future change making this branch identity-bearing cannot
+  // retroactively poison entries already written by anonymous callers.
+  //
+  // 🔴 SO THE TWO ARE COUPLED, AND THE COUPLING IS THE THING TO REMEMBER: the opt-out at
+  // the export below rests on the bodies being identical. The day this branch is made to
+  // differ from the anonymous one — an identity-bearing field, a claims-derived
+  // browsingLevel, anything — that rationale dies with it, and
+  // `onApprovalLookupFailure: 'serve'` must be removed in the SAME change. The exposure
+  // ledger's classification of this route as READ_PUBLIC goes with it.
   const isBlockScoped = !!(req as BlockScopedNextApiRequest).blockClaims;
 
   try {
@@ -277,4 +299,10 @@ async function fetchModelResponseCached(
 export default withBlockScope(baseHandler, {
   endpoint: 'model_detail',
   requiredScope: 'models:read:self',
+  // DUAL-AUTH: with no block JWT this is a plain PublicEndpoint, and the block-JWT branch
+  // differs only in skipping the origin cache — same builder, same arguments, same body.
+  // So the body a block receives here is byte-for-byte what an anonymous caller already
+  // gets at 200, and refusing on an unreachable replica would turn that into a 503 while
+  // removing no exposure at all. The clearest no-exposure entry in the ledger.
+  onApprovalLookupFailure: 'serve',
 });

@@ -6,7 +6,11 @@
   // reports it unused — deleting it is a build error, not a cleanup.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   import type { MediaType } from '$lib/media/edge-url';
-  import type { SvelteSet } from 'svelte/reactivity';
+  import {
+    suppressShiftSelection,
+    type SelectionSet,
+  } from '@civitai/ui/hooks/selection-set.svelte.js';
+  import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
   import { IconExternalLink } from '@tabler/icons-svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -53,9 +57,9 @@
     keyOf?: (item: T) => string | number;
     itemClass?: (item: T) => string;
     card: Snippet<[T]>;
-    /** Pass a set to enable multiselect: the image becomes the select target and the corner arrow
-     *  is the way out to the site. */
-    selected?: SvelteSet<string | number>;
+    /** Pass a selection to enable multiselect: the image becomes the select target and the corner
+     *  arrow is the way out to the site. */
+    selected?: SelectionSet<string | number>;
     empty?: string;
     /** `null` suppresses the terminator where a capped batch would contradict the truncation warning. */
     endLabel?: string | null;
@@ -64,12 +68,10 @@
   } = $props();
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
+  const itemKeys = $derived(items.map(key));
 
-  function toggle(item: T) {
-    if (!selected) return;
-    const k = key(item);
-    if (selected.has(k)) selected.delete(k);
-    else selected.add(k);
+  function toggle(item: T, event: MouseEvent) {
+    selected?.toggle(key(item), itemKeys, event.shiftKey);
   }
 
   const numbered = $derived(total != null && perPage != null && pageProp != null);
@@ -122,7 +124,8 @@
           {#if selected}
             <button
               type="button"
-              onclick={() => toggle(item)}
+              onclick={(e) => toggle(item, e)}
+              onmousedown={suppressShiftSelection}
               aria-pressed={isSelected}
               aria-label={isSelected ? 'Deselect image' : 'Select image'}
               class="flex h-full w-full cursor-pointer items-center justify-center"
@@ -168,12 +171,12 @@
             </Badge>
           {/if}
           {#if selected}
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onchange={() => toggle(item)}
+            <SelectionCheckbox
+              selection={selected}
+              key={key(item)}
+              order={itemKeys}
               aria-label="Select image"
-              class="absolute right-2 top-2 z-10 size-5 cursor-pointer accent-primary"
+              class="absolute right-2 top-2 z-10 size-6 rounded-md border-2 border-white bg-black/60 shadow-md shadow-black/60 dark:bg-black/60 [&_svg]:size-4"
             />
           {/if}
         </div>

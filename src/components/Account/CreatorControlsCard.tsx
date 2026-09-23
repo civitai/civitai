@@ -1,27 +1,17 @@
+import { Alert, Button, Card, Divider, Group, Stack, Switch, Text, Title } from '@mantine/core';
 import {
-  Alert,
-  Button,
-  Card,
-  Divider,
-  Group,
-  Stack,
-  Switch,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
-import {
-  IconCircleCheck,
   IconInfoCircle,
   IconLock,
   IconRefresh,
   IconUserPlus,
   IconUsers,
 } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
 import { RemixGallerySettings } from '~/components/RemixGallery/RemixGallerySettings';
+import { SettingRow, SettingsSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -34,11 +24,14 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
  * user holds a valid Creator Program membership (enforced read-side); non/lapsed
  * members see an upsell and disabled toggles.
  *
- * Renting out space on your own images — stickers, and remix galleries — sits
- * above that gate and is NOT a membership benefit. The alert says "below this
- * point" for that reason; it is a boundary in the card, not a description of it.
+ * Renting out space on your own images — stickers and remix galleries — is NOT a
+ * membership benefit. In the legacy card that boundary is positional: the alert says
+ * "below this point", so nothing ungated may be moved beneath it.
  */
-export function CreatorControlsCard() {
+export function CreatorControlsCard({
+  flat,
+  stickerFooter,
+}: { flat?: boolean; stickerFooter?: ReactNode } = {}) {
   const user = useCurrentUser();
   const flags = useFeatureFlags();
   const serverDomains = useServerDomains();
@@ -49,13 +42,115 @@ export function CreatorControlsCard() {
   const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
-  // Renting out your own images is not a Creator Program benefit, so the two
-  // halves are gated apart. With neither, the card would be a bare heading.
-  if (!flags.creatorControls && !flags.stickerPlacement && !flags.remixGallery) return null;
+  // With neither half, the card would be a bare heading.
+  if (!flags.creatorControls && !flags.stickerPlacement && !flags.remixGallery)
+    return <>{stickerFooter}</>;
 
   const isActiveMember = !!requirements?.validMembership;
   const membershipLapsed = !!requirements?.membershipLapsed;
   const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);
+
+  const metricSwitches = [
+    {
+      name: 'hideModelBuzz',
+      label: 'Hide tipped / earned Buzz',
+      description: "Others won't see Buzz earned on your models.",
+      checked: hideModelBuzz ?? false,
+      onChange: (checked: boolean) => mutateSetting({ hideModelBuzz: checked }),
+    },
+    {
+      name: 'hideModelDownloads',
+      label: 'Hide download count',
+      description: "Others won't see your download counts.",
+      checked: hideModelDownloads ?? false,
+      onChange: (checked: boolean) => mutateSetting({ hideModelDownloads: checked }),
+    },
+    {
+      name: 'hideModelGenerations',
+      label: 'Hide generation count',
+      description: "Others won't see your generation counts.",
+      checked: hideModelGenerations ?? false,
+      onChange: (checked: boolean) => mutateSetting({ hideModelGenerations: checked }),
+    },
+    ...(flags.donationGoals
+      ? [
+          {
+            name: 'hideDonationGoals',
+            label: 'Hide my donation goals from public view',
+            description: "Others won't see the progress or amount. The goal still works.",
+            checked: hideDonationGoals ?? false,
+            onChange: (checked: boolean) => mutateSetting({ hideDonationGoals: checked }),
+          },
+        ]
+      : []),
+  ];
+
+  const membershipUpsell = (
+    <UpsellPanel
+      icon={membershipLapsed ? <IconLock size={24} /> : <IconUsers size={24} />}
+      title={membershipLapsed ? 'Membership lapsed' : 'Creator Program members only'}
+      description={
+        membershipLapsed
+          ? 'Renew your Creator Program membership to restore the controls below and the rest of your perks:'
+          : 'Gain more control over how your models are presented, plus the rest of the Creator Program:'
+      }
+      perks={['Hide your model metrics and donation goals', 'Earn real cash from your creations']}
+      action={
+        <Button
+          component="a"
+          href={membershipLapsed ? renewUrl : '/creator-program'}
+          variant="filled"
+          size="sm"
+          leftSection={membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />}
+          className="w-fit"
+        >
+          {membershipLapsed ? 'Renew membership' : 'Join the Creator Program'}
+        </Button>
+      }
+    />
+  );
+
+  if (flat)
+    return (
+      <div id="creator-controls" className="flex flex-col gap-8">
+        {flags.creatorControls && (
+          <SettingsSection
+            title={
+              <Group gap={4} wrap="nowrap">
+                Metric visibility
+                <InfoPopover size="xs" iconProps={{ size: 14 }} width={300}>
+                  <Text size="sm" maw={280} style={{ whiteSpace: 'normal' }}>
+                    You and moderators still see your real stats on model pages and cards. On search
+                    results you see the hidden state, same as the public.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            description="Creator Program members only. Reverts if your membership lapses."
+          >
+            {!isActiveMember && <SettingRow block>{membershipUpsell}</SettingRow>}
+            {metricSwitches.map((setting) => (
+              <SettingRow
+                key={setting.name}
+                label={setting.label}
+                description={setting.description}
+                control={
+                  <Switch
+                    name={setting.name}
+                    aria-label={setting.label}
+                    checked={setting.checked}
+                    onChange={(e) => setting.onChange(e.target.checked)}
+                    disabled={isLoadingSetting || !isActiveMember}
+                  />
+                }
+              />
+            ))}
+          </SettingsSection>
+        )}
+        <PlacementSpaceSection flat footer={stickerFooter} />
+        <RemixGallerySettings flat />
+      </div>
+    );
 
   return (
     <Card withBorder id="creator-controls">
@@ -94,90 +189,21 @@ export function CreatorControlsCard() {
                 </Text>
               </Alert>
             ) : (
-              <div className="flex flex-col items-center gap-3 rounded-lg border border-gray-2 bg-gray-0 p-6 text-center dark:border-dark-4 dark:bg-dark-5">
-                <ThemeIcon size={48} variant="light" color="gray" radius="xl">
-                  {membershipLapsed ? <IconLock size={24} /> : <IconUsers size={24} />}
-                </ThemeIcon>
-                <Text fw={700} size="lg">
-                  {membershipLapsed ? 'Membership lapsed' : 'Creator Program members only'}
-                </Text>
-                <Text size="sm" c="dimmed" maw={380}>
-                  {membershipLapsed
-                    ? 'Renew your Creator Program membership to restore the controls below and the rest of your perks:'
-                    : 'Gain more control over how your models are presented, plus the rest of the Creator Program:'}
-                </Text>
-                <Stack gap={6} align="flex-start" ta="left">
-                  {[
-                    'Hide your model metrics and donation goals',
-                    'Earn real cash from your creations',
-                  ].map((perk) => (
-                    <Group key={perk} gap={8} wrap="nowrap">
-                      <IconCircleCheck
-                        size={16}
-                        className="shrink-0"
-                        style={{ color: 'var(--mantine-color-green-6)' }}
-                      />
-                      <Text size="sm">{perk}</Text>
-                    </Group>
-                  ))}
-                </Stack>
-                <Button
-                  component="a"
-                  href={membershipLapsed ? renewUrl : '/creator-program'}
-                  variant="filled"
-                  size="sm"
-                  leftSection={
-                    membershipLapsed ? <IconRefresh size={16} /> : <IconUserPlus size={16} />
-                  }
-                  className="w-fit"
-                >
-                  {membershipLapsed ? 'Renew membership' : 'Join the Creator Program'}
-                </Button>
-              </div>
+              membershipUpsell
             )}
 
-            <Switch
-              name="hideModelBuzz"
-              label="Hide tipped / earned Buzz"
-              description="Others won't see the Buzz earned on your models."
-              checked={hideModelBuzz ?? false}
-              onChange={(e) => mutateSetting({ hideModelBuzz: e.target.checked })}
-              disabled={isLoadingSetting || !isActiveMember}
-              styles={{ track: { flex: '0 0 1em' } }}
-            />
-            <Switch
-              name="hideModelDownloads"
-              label="Hide download count"
-              description="Others won't see how many times your models were downloaded."
-              checked={hideModelDownloads ?? false}
-              onChange={(e) => mutateSetting({ hideModelDownloads: e.target.checked })}
-              disabled={isLoadingSetting || !isActiveMember}
-              styles={{ track: { flex: '0 0 1em' } }}
-            />
-            <Switch
-              name="hideModelGenerations"
-              label="Hide generation count"
-              description="Others won't see how many images were generated with your models."
-              checked={hideModelGenerations ?? false}
-              onChange={(e) => mutateSetting({ hideModelGenerations: e.target.checked })}
-              disabled={isLoadingSetting || !isActiveMember}
-              styles={{ track: { flex: '0 0 1em' } }}
-            />
-
-            {flags.donationGoals && (
-              <>
-                <Divider label="Donation goals" />
-                <Switch
-                  name="hideDonationGoals"
-                  label="Hide my donation goals from public view"
-                  description="Others won't see the progress bar or collected amount. The goal still works."
-                  checked={hideDonationGoals ?? false}
-                  onChange={(e) => mutateSetting({ hideDonationGoals: e.target.checked })}
-                  disabled={isLoadingSetting || !isActiveMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-              </>
-            )}
+            {metricSwitches.map((setting) => (
+              <Switch
+                key={setting.name}
+                name={setting.name}
+                label={setting.label}
+                description={setting.description}
+                checked={setting.checked}
+                onChange={(e) => setting.onChange(e.target.checked)}
+                disabled={isLoadingSetting || !isActiveMember}
+                styles={{ track: { flex: '0 0 1em' } }}
+              />
+            ))}
           </>
         )}
       </Stack>

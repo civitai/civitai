@@ -13,6 +13,8 @@ import { IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
+import { readListingIconBySlugForRender } from '~/server/services/blocks/app-listing-icon.service';
+import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
@@ -42,6 +44,8 @@ interface PageProps {
   appName: string;
   pageTitle: string;
   iframeSrc: string;
+  /** manifest.bootSkeleton — the app paints its own boot state; the host stands back. */
+  bootSkeleton: boolean;
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   slug: string;
@@ -58,11 +62,27 @@ interface PageProps {
    */
   isBeta: boolean;
   betaMessage: string | null;
+  /**
+   * The store listing's icon, for the "recently opened apps" entry this page writes.
+   *
+   * 🔴 THE LISTING'S ICON, NOT THE MANIFEST'S — and that is a TRUST choice, not a
+   * convenience one. The chrome that renders this is the spoof-proof surface: it exists
+   * to tell a viewer which app they are actually inside, and it already launders the
+   * app NAME through `sanitizeAppChromeName` for exactly that reason. A manifest-supplied
+   * image is publisher-controlled with no review step, so putting one in the trust chrome
+   * would hand a publisher a picture next to a name we deliberately sanitize. The listing
+   * icon is a moderator-approved asset, and it is the same one `toRecentAppFromListing`
+   * already writes from the store — so both writers now agree.
+   *
+   * `null` for a listing with no icon, and for any read that failed — see
+   * `readListingIconBySlugForRender`, which fails open rather than 500ing the launch path.
+   */
+  iconUrl: string | null;
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
-  resolver: async ({ features, ctx }) => {
+  resolver: async ({ features, ctx, session }) => {
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
     // `app-blocks-pages-enabled` segment.
@@ -97,9 +117,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // names this call site as the reason it exists. A listing row that does not exist
     // resolves to `isBeta: false` the same way, and a degraded read is logged rather than
     // silently swallowed.
-    const [page, beta] = await Promise.all([
+    // 🔴 THE ICON READ JOINS THIS `Promise.all` RATHER THAN FOLLOWING IT, for the reason
+    // the beta read is already here: this is the app-LAUNCH critical path, so the page
+    // must wait for the SLOWEST of these, never their sum. It is keyed on the SLUG — the
+    // value we already hold — so like the beta read it depends on nothing the block
+    // resolve returns and can be issued in the same tick. Both `app_listings` reads fail
+    // open; see `readListingIconBySlugForRender` for why a rejection here must never
+    // become a 500 on the page that runs the app.
+    const [page, beta, iconUrl] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
+      readListingIconBySlugForRender(slug, dbRead),
     ]);
     if (!page || !page.iframeSrc) return { notFound: true };
 
@@ -114,6 +142,24 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       return { notFound: true };
     }
 
+    // ── RECORD THE PLAY ────────────────────────────────────────────────────────
+    // 🔴 AFTER EVERY FAIL-CLOSED GATE, DELIBERATELY. A launch that 404s — flags off,
+    // no such approved page app, or a mature app on a non-red host — is not a play,
+    // and recording before these returns would make the count include requests that
+    // never rendered an app. This is the first line that can only be reached by a
+    // launch that actually succeeds.
+    //
+    // 🔴 NOT AWAITED, and the `void` is load-bearing rather than stylistic: this is the
+    // app-launch critical path that the whole `Promise.all` above exists to keep short,
+    // so a ClickHouse insert must never sit in front of the page. `recordAppListingOpen`
+    // swallows its own errors for the same reason — see its docstring.
+    // `?? null` is an assertion, not a shrug: this route is `useSession: true`, so
+    // `createServerSideProps` has already resolved the session before calling this
+    // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
+    // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
+    // anonymous case its constructor note calls out.
+    void recordAppListingOpen({ appBlockId: page.appBlockId, session: session ?? null, ctx });
+
     return {
       props: {
         appBlockId: page.appBlockId,
@@ -122,6 +168,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         appName: page.name,
         pageTitle: page.pageTitle,
         iframeSrc: page.iframeSrc,
+        bootSkeleton: page.bootSkeleton,
         sandbox: page.sandbox,
         trustTier: page.trustTier,
         slug: page.blockId,
@@ -130,6 +177,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // Only carried when the flag is set — the same rule every other projection of these
         // columns applies, so a stale note cannot reach a page through this one.
         betaMessage: beta.isBeta ? beta.betaMessage : null,
+        iconUrl,
       },
     };
   },
@@ -142,12 +190,14 @@ function AppPage(props: PageProps) {
     appId,
     appName,
     iframeSrc,
+    bootSkeleton,
     sandbox,
     trustTier,
     slug,
     scopes,
     isBeta,
     betaMessage,
+    iconUrl,
   } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -168,10 +218,18 @@ function AppPage(props: PageProps) {
   //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
   //    surface, so `hasPage` is true by construction; the rail uses it to decide
   //    between re-opening the run route and the detail page.
-  // No icon URL is plumbed to this SSR page (PageProps carries none), so
-  // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
-  // generic app icon. Fires once per mount; the store dedups, so revisiting just
-  // moves the entry to the front.
+  //  - `iconUrl` — the store listing's moderator-approved icon, resolved in
+  //    `getServerSideProps`. 🔴 THIS USED TO BE OMITTED, AND ITS ABSENCE WAS THE
+  //    DEFECT, not a default: this is the ONE writer that means "the viewer actually
+  //    RAN this app", so the apps a viewer uses most were precisely the ones whose
+  //    chrome entry fell back to a generic glyph, while apps merely OPENED from the
+  //    store (via `toRecentAppFromListing`, which has always carried an icon) showed
+  //    the real one. `undefined` when the listing has no icon or the read failed —
+  //    `recordRecentlyOpenedApp` stores the field only when truthy, so a null must not
+  //    be passed through as one; consumers keep their generic-icon fallback for that
+  //    case exactly as before.
+  // Fires once per mount; the store dedups, so revisiting just moves the entry to the
+  // front.
   //
   // 🔴 STAMPED WITH THE VIEWER'S ACCOUNT (#4048). localStorage is per browser
   // PROFILE, so without an owner the next account to use this browser inherits
@@ -187,10 +245,31 @@ function AppPage(props: PageProps) {
         kind: 'onsite',
         hasPage: true,
         name: appName,
+        // Spread-when-truthy, matching the shape the store's own writers use
+        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so an absent icon leaves
+        // the key off the persisted object. `RecentApp.iconUrl` is an OPTIONAL string.
+        //
+        // ⚠️ CONSISTENCY, NOT SAFETY — do not restate this as a hazard it is not. Writing
+        // `iconUrl: undefined` here would be harmless: `coerce` in the store keeps the field
+        // only when `typeof === 'string'`, and `JSON.stringify` drops an undefined value
+        // anyway. An earlier version of this comment claimed the explicit-undefined form
+        // would defeat an upgrade in `resolveRecentApp`; it would not, and `resolveRecentApp`
+        // does no such upgrade — the icon preference lives in `upgradeRecentFromCard`, which
+        // is reached only through `reconcileRecentApps` on the store page.
+        //
+        // 🔴 THE REAL SECOND-ORDER, WHICH IS THE OPPOSITE OF WHAT THAT CLAIMED:
+        // `recordRecentlyOpenedApp` REPLACES the entry wholesale and has no icon ratchet, so
+        // a run while the icon read is degraded (`null` → key omitted) DROPS an icon a store
+        // visit had previously recorded, until the next successful run or reconcile. Net this
+        // is still a large improvement — before this change EVERY run cleared a store-written
+        // icon, because the run page never sent one — so it is a residual, not a regression,
+        // and it is recorded here rather than fixed because adding a ratchet would change
+        // `recordRecentlyOpenedApp`'s semantics for all five of its callers.
+        ...(iconUrl ? { iconUrl } : {}),
       },
       recentsOwnerId
     );
-  }, [appBlockId, blockId, appName, recentsOwnerId]);
+  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
@@ -248,6 +327,7 @@ function AppPage(props: PageProps) {
     missingScopes,
     domain,
     maxBrowsingLevel,
+    effectiveBrowsingLevel,
     error,
     // `terminal` = the mint failed, nothing usable is left, AND the hook's
     // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
@@ -343,6 +423,7 @@ function AppPage(props: PageProps) {
           blockInstanceId={blockInstanceId}
           appName={appName}
           iframeSrc={iframeSrc}
+          bootSkeleton={bootSkeleton}
           // The public full-page run surface.
           surface="page-run"
           // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
@@ -378,6 +459,7 @@ function AppPage(props: PageProps) {
           needsConsent={needsConsent}
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
+          effectiveBrowsingLevel={effectiveBrowsingLevel}
           tokenError={error != null}
           tokenTerminal={terminal}
           viewer={viewer}
@@ -446,8 +528,11 @@ function AppPage(props: PageProps) {
  *      named two files. That was a SAMPLE generalised into an enumeration: it
  *      missed a third supporting case and all three counter-examples. Enumerate
  *      before claiming a convention.
- *   3. It is ~52px (h-8 pills + `py-1` + `mb-3`) of the vertical budget this
- *      route is tightest on; a 375×667 phone leaves the page ~386px total.
+ *   3. It costs ~52px of vertical budget (measured 2026-09-15: a 32px row plus
+ *      `SubNav2`'s `py-1` and `SubNav`'s `mb-3`; 4px more on routes whose feed filters are
+ *      `h-9`, such as `/comics`), on the route the site is tightest on.
+ *      `subNav: null` means the band never renders here, so that is a cost
+ *      avoided rather than one already counted against this page's height.
  *   4. Two chrome bars over a THIRD-PARTY app reads badly — the route already
  *      renders `AppBlockChrome` (the "Apps / <name>" breadcrumb).
  *

@@ -102,6 +102,15 @@ vi.mock('@civitai/client', () => ({
   Air: class Air {
     static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
     static stringify = vi.fn(() => '');
+    // Copied VERBATIM from node_modules/@civitai/client/dist/utils/Air.js (ESM-only,
+    // so not importable here). An approximation lets AIR tests pass against a parser
+    // production does not run.
+    static parseSafe = vi.fn(
+      (identifier: string) =>
+        identifier.match(
+          /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
+        )?.groups
+    );
   },
 }));
 
@@ -219,6 +228,14 @@ vi.mock('~/server/prom/client', () => ({
   // neighbours use, so the first test to drive either fail-soft path dies here
   // rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
+  // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the
+  // `?.inc?.()` guard. Do not read that chaining as making this entry optional. `?.`
+  // guards the RESULT of the property access, not the module-namespace access that
+  // produces it, so the throw lands either way. Measured by deleting this line: four
+  // cases in `src/server/rewards/__tests__/reward-config.test.ts` go red with
+  // `[vitest] No "rewardConfigReadFailedCounter" export is defined on the
+  // "~/server/prom/client" mock`, pointing at the optional-chained call itself.
   rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
@@ -236,6 +253,7 @@ vi.mock('~/server/prom/client', () => ({
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageUserQuotaUntrackedCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),
   // sysRedis sentinel observability counters (PR #2331 round-3).
   sysredisSentinelTopologyChangesCounter: promMetricStub(),

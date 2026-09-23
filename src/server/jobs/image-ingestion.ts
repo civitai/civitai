@@ -9,17 +9,21 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
-// Hard per-image backstop for a single submit. The orchestrator submit is already
-// bounded per-attempt (createImageIngestionRequest, ~15s AbortSignal), but this also
-// covers any other external await inside ingestImage (Redis flag read, prompt lookup,
-// the scanJobs UPDATE) so one hung submit ties up a single concurrency slot rather
-// than the whole run. A fired timeout just fails that image → it stays queued and is
-// retried on a later run.
+// Minutes a just-created image counts as "submit in flight" (see the double-submit
+// note below). Must stay above the upload-path submit's own ceiling or the window it
+// closes reopens; overshooting costs one cron tick of delay for an image whose submit
+// died without writing the row at all.
+const SUBMIT_IN_FLIGHT_GRACE = 2;
+
+// Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
+// Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
+// image to one concurrency slot. A timed-out image stays queued for a later run.
 const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
 
 // Per-run wall-clock budget. Once exceeded we stop STARTING new submits so the run
@@ -150,9 +154,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
 
+  // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
+  // trigger queues a new image immediately, but `ingestImage` stamps
+  // `scanRequestedAt` only once its upload-path submit returns — up to ~50s later
+  // (3 attempts x the 15s per-attempt abort). A run landing inside that window reads
+  // the NULL as eligible and submits a SECOND workflow for the same image. Measured
+  // 2026-09-18: of 41,865 images scanned in 12h, 166 had two workflows, and 161 of
+  // those were created within 30s of a cron tick (uniform baseline: 9.8%).
+  const submitInFlightDate = decreaseDate(now, SUBMIT_IN_FLIGHT_GRACE, 'minutes');
+  const isSubmitInFlight = (img: IngestImageRow) =>
+    img.ingestion === 'Pending' && !img.scanRequestedAt && img.createdAt > submitInFlightDate;
+
   const pendingImages = images.filter(
     (img) =>
-      img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
+      img.ingestion === 'Pending' &&
+      !isSubmitInFlight(img) &&
+      (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
 
   // Age-out safety net for never-returning Pending scans.
@@ -246,6 +263,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         ) {
           return true;
         }
+        // Skipped this run only because its first submit may still be in flight. It is
+        // neither processed nor waiting on a cooldown, so without this it prunes as
+        // stale — and if that submit died silently, nothing would ever re-drive it.
+        if (isSubmitInFlight(img)) return true;
         // Rescan waiting for the retry delay (and still under the retry cap) - KEEP.
         // Must mirror the rescanImages cooldown above, otherwise a cooled-down
         // Rescan image is neither processed nor waiting and gets wrongly pruned.
@@ -281,8 +302,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     return true;
   });
 
+  const submitInFlightCount = images.filter(isSubmitInFlight).length;
+
   console.log({
     pendingImages: pendingImages.length,
+    submitInFlight: submitInFlightCount,
     pendingUserUploads: pendingUserUploads.length,
     pendingBackfill: pendingBackfill.length,
     agedOutPending: agedOutPendingIds.length,
@@ -379,6 +403,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -402,6 +427,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       rescan: rescanImages.length,
       error: errorImages.length,
       agedOutPending: agedOutPendingIds.length,
+      submitInFlight: submitInFlightCount,
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
@@ -429,6 +455,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     sentRescan: sentRescanIds.length,
     sentError: sentErrorIds.length,
     agedOutPending: agedOutPendingIds.length,
+    submitInFlight: submitInFlightCount,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
@@ -474,12 +501,55 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-const BLOCKED_IMAGE_RETENTION_DAYS = 7;
 // Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
 // send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
 // would otherwise hold a user's blocked media forever. Clocking it from the block instead
 // would silently shrink each report's budget by however old the block already was.
 const CSAM_HOLD_MAX_DAYS = 30;
+
+/**
+ * 🔴 The POSITIVE signal that a human moderator took THIS ONE IMAGE down. It is the only thing
+ * that unlocks blob retraction in `remove-blocked-images` — see the long note at the split for why
+ * the discriminator has to be positive rather than an opt-out.
+ *
+ * Both values are `ModActivity.activity` rows written against `entityType = 'image'`. Enumerated
+ * over every `trackModActivity`/`recordModActivity` call in `src` and `apps` that carries
+ * `entityType: 'image'`, the complete vocabulary is:
+ *   'review'        — `handleUnblockImages` and `handleBlockImages` (image.service),
+ *                     `setTosViolationHandler` (image.controller), `acceptImage` and `blockImage`
+ *                     (moderator app), `/api/mod/unblock-images`. Every one of them writes one row
+ *                     per NAMED image id — several of them take a list, but none of them stands in
+ *                     for a set it was never handed. Three of the six are the un-block direction,
+ *                     which is why the timestamp comparison at the call site is load-bearing and
+ *                     not decoration — and it is worth being exact about what that comparison
+ *                     does, because the obvious reading of it is wrong. It compares the activity
+ *                     against the QUEUE ROW's `createdAt`, not against the re-block, and
+ *                     `create_job_queue_record` is `ON CONFLICT DO NOTHING`: a queue row that
+ *                     survives an un-block keeps the FIRST block's timestamp, so an un-block dated
+ *                     after it reads as a takedown. What actually closes that for most of the
+ *                     un-block direction is the writers dropping the queue row —
+ *                     `handleUnblockImages` and `/api/mod/unblock-images` both call
+ *                     `dropBlockedImageDeleteQueue`, leaving nothing to compare against. The
+ *                     moderator app's `acceptImage` does not — so an accept followed by an
+ *                     automated re-block, BOTH landing between two consecutive runs of this
+ *                     hourly job, is a real window in which an un-block licenses retraction. It
+ *                     is bounded to that gap and no wider: any run in between evicts the queue
+ *                     row as stale (`staleIds` takes everything no longer `ingestion = 'Blocked'`,
+ *                     and the delete at the end of the job removes it), and the re-block then
+ *                     writes a fresh row that post-dates the accept. Listed as accepted
+ *                     imprecision in the ── WHERE THIS IS DELIBERATELY IMPRECISE ── note below.
+ *   'bulkRemove'    — the moderator app's `removeImages`, one row per image from an explicit id
+ *                     list. Its sibling `removeAllImagesForUser` (the whole-account nuke) writes
+ *                     NO per-image row, by its own design; that is what keeps a library-wide block
+ *                     out of this set.
+ * DELIBERATELY EXCLUDED — the rest of that enumeration, every one of them moderator-written and
+ * none of them a decision to destroy the bytes: 'bulkRestore', 'resolveAppeal', 'setNsfwLevel',
+ * 'setNsfwLevelKono' and 'moderateTag', plus the flag activities the moderator app spells
+ * dynamically as `poi:<bool>` / `minor:<bool>`.
+ *
+ * Adding a value here widens a cross-account destructive capability. Say why, in the same commit.
+ */
+export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
 
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
@@ -601,9 +671,145 @@ export const removeBlockedImages = createJob(
       });
     }
 
-    // Delete images that are past retention period
-    if (imagesToDelete.length > 0) {
-      await deleteImages(imagesToDelete.map((x) => x.id));
+    // Delete images that are past retention period.
+    //
+    // 🔴 THE ONE FLOW THAT RETRACTS — but NOT every image it deletes. `retractPublicBlobs` asks
+    // the image-cache service to destroy the shared stored object, not just this image's derived
+    // variants: the full-resolution original stops existing.
+    //
+    // 🔴 KNOWN AND ACCEPTED COLLATERAL, documented here because it is not discoverable later.
+    // The stored object is content-addressed, so it is shared by every BYTE-IDENTICAL image of
+    // EVERY owner. Retracting it removes their original too, while their database rows survive
+    // and go on serving a broken image — the orphaned-row symptom, deliberately reintroduced.
+    // Accepted because a bit-identical copy of content that must not exist is the same content,
+    // and a takedown that leaves copies serving is not a takedown. It is NOT fixed here: the app
+    // stores no content-hash key per image, and `pHash` is a PERCEPTUAL hash — a similarity
+    // signal, not a byte-identity key — so those rows cannot be enumerated from this codebase at
+    // all. Building that fan-out is separate work; do not infer from this comment that it exists.
+    // The `image-blob-retraction-requested` log line in `deleteImageFromS3` is the only trail.
+    //
+    // ── WHY THE DISCRIMINATOR IS POSITIVE ────────────────────────────────────────────────────
+    // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not
+    // by this job's own callers. `trg_blocked_image_delete_queue` enqueues EVERY row that ends up
+    // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
+    // there — including an INSERT that arrives already Blocked. That writer set is open: it grows
+    // whenever anyone adds a block path, and it already contains automated scanners.
+    //
+    // So the split must not be "retract unless X", which opts every new and every automated
+    // writer in by default and silently. It is "retract only where a human takedown decision on
+    // THIS SPECIFIC IMAGE is affirmatively on record", and the record is `ModActivity`.
+    //
+    // `ModActivity` has three writers, all server-side and none reachable from a request body:
+    // `trackModActivity` here, `recordModActivity` in the moderator app, and the auth hub's own
+    // copy, which only ever writes `entityType: 'impersonate'`. Nothing a client submits reaches
+    // it — which is the second reason it is used here rather than an `Image.metadata` marker:
+    // `Image.metadata` is a `z.record(z.string(), z.any())` that `createImage` spreads verbatim
+    // into the row, so a marker stored there is writable by the image's own uploader, in EITHER
+    // polarity. Under a positive discriminator the forgeable direction would be worse than the
+    // one this replaces: it would let an uploader destroy the shared object behind any
+    // byte-identical image by getting their own copy blocked.
+    //
+    // The activity kinds counted are `MODERATOR_TAKEDOWN_ACTIVITIES`, and the row must be dated
+    // at or after the queue row (i.e. at or after the block). Both halves matter — see the
+    // constant for the enumeration behind each.
+    //
+    // ── WHAT EACH BLOCKED-IMAGE WRITER GETS, ENUMERATED OVER EVERY WRITE OF `ingestion` IN
+    //    `src`, `apps` AND `packages` ─────────────────────────────────────────────────────────
+    // RETRACTS — a moderator acted on one named image, and a per-image `review`/`bulkRemove` row
+    //   is written in the same request:
+    //     • `handleBlockImages` (image.service) WHEN CALLED WITH AN ID LIST — the `/api/mod/
+    //       remove-images` bulk removal and the moderator app's own bulk remove, which also
+    //       writes its own `bulkRemove` row per image.
+    //     • `blockImage` in the moderator app (`apps/moderator/.../image-moderation.service.ts`).
+    //     • `setTosViolationHandler` (image.controller) — the main app's single-image TOS
+    //       takedown. Its `trackModActivity` call was added alongside this split; it is a
+    //       moderator-gated per-image decision that previously left no row in the mod audit log
+    //       at all.
+    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
+    //   object is left alone:
+    //     • the scan pipeline's three block outcomes — the orchestrator content rating
+    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
+    //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
+    //       `ModActivity`.
+    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
+    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
+    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
+    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
+    //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
+    //       with an id but NO `moderatorId`, so no activity row is written. A community rating
+    //       consensus is not a staff takedown decision.
+    //     • `handleBlockImages` CALLED WITH A `userId` AND NO ID LIST, and `toggleBan`'s
+    //       "remove all media" branch, and `softDeleteUser` — each blocks a whole library in one
+    //       statement. The moderator decided about an ACCOUNT, not about each image's bytes, and
+    //       the ids never reach a per-image record; `removeAllImagesForUser` says so in its own
+    //       docstring. Consistent with `api/mod/delete-user-images`, which never retracted.
+    //     • `remove-deleted-user-images` — a user deleting their OWN account with the 7-day grace
+    //       option. Nothing was moderated; it must not reach another owner's bytes.
+    //     • anything else that lands in the queue, now or later, including a writer added after
+    //       this comment was written. That is the property being bought.
+    //
+    // ── WHERE THIS IS DELIBERATELY IMPRECISE, BOTH DIRECTIONS ────────────────────────────────
+    // Toward KEEPING the bytes (a takedown that does not retract):
+    //   • `recordModActivity` in the moderator app is best-effort and swallows its own failures,
+    //     and `trackModActivity` is `ON CONFLICT DO NOTHING`. A block whose activity row failed
+    //     to land is deleted without retraction.
+    //     🔴 That second clause is a claim about a database that still carries ModActivity's
+    //     (activity, entityType, entityId) unique index, and PRODUCTION no longer does — the
+    //     `20260805120000_mod_activity_append_only` migration has been applied there, so the
+    //     targetless `ON CONFLICT DO NOTHING` suppresses nothing and a repeat takedown always
+    //     gets its own row. `containers/db/docker-init/02_all_dll.sql` still CREATES that index,
+    //     so a database built from the local dump diverges from production on exactly this
+    //     behaviour: reproducing a "the second takedown did not retract" report locally can show
+    //     a suppression that cannot happen in production. The comment on `trackModActivity` in
+    //     `src/server/services/moderator.service.ts` says the same thing about the clause itself.
+    //   • Rows queued before this shipped keep their old queue `createdAt`. For anything the
+    //     2026-08-06 completeness migration backfilled, that timestamp is the migration's own and
+    //     is therefore later than any moderator activity on those images, so none of them retract.
+    // Toward RETRACTING (a non-takedown that does): an image blocked by automation, unblocked by
+    //   a moderator (a `review` row), then re-blocked by automation — the surviving queue row
+    //   still carries the FIRST block's timestamp, so the moderator's unblock dates after it and
+    //   reads as a takedown. It needs a queue row to survive the un-block, which narrows it twice.
+    //   By WRITER: the moderator app's `acceptImage` is the only un-block path that does not call
+    //   `dropBlockedImageDeleteQueue` (`handleUnblockImages` and `/api/mod/unblock-images` both
+    //   do, and a dropped row cannot be compared against). And by TIME: both the accept and the
+    //   re-block have to land between two consecutive runs of this job, because any run in
+    //   between takes the un-blocked image into `staleIds` and deletes its queue row below.
+    //   Closing it properly needs `review` split into distinct block/unblock activities, which is
+    //   a change to the mod audit vocabulary the account-history panel buckets on; not done here.
+    //
+    // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
+    // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
+    // the moderator bulk endpoint all keep today's variant-only invalidation.
+    const takedownCandidateIds = imagesToDelete.map((x) => x.id);
+    // MAX rather than an EXISTS correlated per row: one grouped read for the whole batch, and the
+    // comparison against each image's own block time then happens in memory.
+    const moderatorActivity = takedownCandidateIds.length
+      ? await dbRead.$queryRaw<{ entityId: number; lastActedAt: Date }[]>`
+      SELECT "entityId", MAX("createdAt") AS "lastActedAt"
+      FROM "ModActivity"
+      WHERE "entityId" = ANY(${takedownCandidateIds})
+        AND "entityType" = 'image'
+        AND activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      GROUP BY "entityId"
+    `
+      : [];
+    const lastActedAt = new Map(moderatorActivity.map((r) => [r.entityId, r.lastActedAt]));
+
+    // A moderator acted on this image at or after it was blocked. `queuedAt` is non-null for
+    // everything in `imagesToDelete` — that is what put it there — but it is re-read rather than
+    // asserted, so a future change to that filter degrades to NOT retracting.
+    const isTakedown = (id: number) => {
+      const queuedAt = blockedAt.get(id);
+      const actedAt = lastActedAt.get(id);
+      return !!queuedAt && !!actedAt && actedAt.getTime() >= queuedAt.getTime();
+    };
+    const takedowns = takedownCandidateIds.filter(isTakedown);
+    const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
+    if (takedowns.length > 0) {
+      await deleteImages(takedowns, true, { retractPublicBlobs: true });
+    }
+    if (deletedWithoutRetraction.length > 0) {
+      await deleteImages(deletedWithoutRetraction, true);
     }
 
     // Remove processed and stale entries from queue
@@ -619,6 +825,12 @@ export const removeBlockedImages = createJob(
 
     return {
       deleted: imagesToDelete.length,
+      // Reported separately so the two populations are legible in the job's own output: the
+      // second number is deletions that deliberately left the shared stored object alone. It is
+      // NOT "account deletions" — it is everything with no moderator takedown on record, which is
+      // account deletions plus every automated block plus every whole-library block.
+      retracted: takedowns.length,
+      deletedWithoutRetraction: deletedWithoutRetraction.length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,

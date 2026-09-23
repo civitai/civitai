@@ -86,18 +86,28 @@ export type BulkBatch = {
 const imageBase = () => dbRead.selectFrom('Image as i');
 type ImageBase = ReturnType<typeof imageBase>;
 
+export type BatchWindow = { limit?: number; offset?: number; removed?: 'only' | 'hide' };
+
 /**
  * Rows and count derived from ONE already-filtered builder. A predicate added to the rows but not the
  * count renders "150 of 300" next to "The whole set."
+ *
+ * `order: 'index'` is the author's own ordering within a post — what the site shows, and what a report
+ * about "the third image" refers to. Everywhere else newest-first is the useful order.
  */
-/** `order: 'index'` is the author's own ordering within a post — what the site shows, and what a report
- *  about "the third image" refers to. Everywhere else newest-first is the useful order. */
 async function batchFrom(
-  base: ImageBase,
-  limit: number,
-  order: 'newest' | 'index' = 'newest',
-  offset = 0
+  source: ImageBase,
+  { limit = 200, offset = 0, removed }: BatchWindow,
+  order: 'newest' | 'index' = 'newest'
 ): Promise<BulkBatch> {
+  // In the query, not over the loaded page: an account's few removed images can sit thousands of
+  // rows deep in newest-first order, past any window.
+  const base =
+    removed === 'only'
+      ? source.where('i.ingestion', '=', 'Blocked')
+      : removed === 'hide'
+      ? source.where('i.ingestion', '!=', 'Blocked')
+      : source;
   const ordered =
     order === 'index'
       ? base.orderBy(sql`"index" asc nulls last`).orderBy('i.id', 'asc')
@@ -122,11 +132,10 @@ async function batchFrom(
 
 export async function getImagesForPost(
   postId: number,
-  limit = 200,
-  order: 'newest' | 'index' = 'newest',
-  offset = 0
+  window: BatchWindow = {},
+  order: 'newest' | 'index' = 'newest'
 ): Promise<BulkBatch> {
-  return batchFrom(imageBase().where('i.postId', '=', postId), limit, order, offset);
+  return batchFrom(imageBase().where('i.postId', '=', postId), window, order);
 }
 
 /**
@@ -158,35 +167,25 @@ const imagesOfVersions = (versionIds: RawBuilder<unknown>) =>
 /** Every image across every VERSION of a model — Retool's three chained queries as one join. */
 export async function getImagesForModel(
   modelId: number,
-  limit = 200,
-  offset = 0
+  window: BatchWindow = {}
 ): Promise<BulkBatch> {
   const versions = sql`SELECT mv."id" FROM "ModelVersion" mv WHERE mv."modelId" = ${modelId}`;
-  return batchFrom(
-    imageBase().where('i.id', 'in', imagesOfVersions(versions)),
-    limit,
-    'newest',
-    offset
-  );
+  return batchFrom(imageBase().where('i.id', 'in', imagesOfVersions(versions)), window);
 }
 
 export async function getImagesForModelVersion(
   modelVersionId: number,
-  limit = 200,
-  offset = 0
+  window: BatchWindow = {}
 ): Promise<BulkBatch> {
   return batchFrom(
     imageBase().where('i.id', 'in', imagesOfVersions(sql`${modelVersionId}`)),
-    limit,
-    'newest',
-    offset
+    window
   );
 }
 
 export async function getImagesForCollection(
   collectionId: number,
-  limit = 200,
-  offset = 0
+  window: BatchWindow = {}
 ): Promise<BulkBatch> {
   // IN over the collection's image ids rather than a join: a collection holding two items for one
   // image would otherwise emit it twice, and a duplicate key takes the grid out at runtime.
@@ -196,26 +195,23 @@ export async function getImagesForCollection(
     .where('collectionId', '=', collectionId)
     .where('imageId', 'is not', null);
 
-  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit, 'newest', offset);
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), window);
 }
 
 /**
- * `removedOnly` is Retool's `UserQuery5000` — `nsfwLevel = 32` is what `handleBlockImages` sets, so it
+ * `nsfwBlockedOnly` is Retool's `UserQuery5000` — `nsfwLevel = 32` is what `handleBlockImages` sets, so it
  * lists what has ALREADY been removed from an account. That is the restore path: confirm a purge
  * landed, or pull back one that went too wide.
  */
 export async function getImagesForUser(
   userId: number,
-  limit = 200,
-  removedOnly = false,
-  offset = 0
+  window: BatchWindow = {},
+  nsfwBlockedOnly = false
 ): Promise<BulkBatch> {
   const base = imageBase().where('i.userId', '=', userId);
   return batchFrom(
-    removedOnly ? base.where('i.nsfwLevel', '=', NsfwLevel.Blocked) : base,
-    limit,
-    'newest',
-    offset
+    nsfwBlockedOnly ? base.where('i.nsfwLevel', '=', NsfwLevel.Blocked) : base,
+    window
   );
 }
 
@@ -226,11 +222,11 @@ export async function getImagesForUser(
  */
 export async function getImagesByIds(
   imageIds: number[],
-  limit = 200,
-  offset = 0
+  window: BatchWindow = {}
 ): Promise<BulkBatch> {
-  if (!imageIds.length) return { items: [], total: 0, truncated: false, offset };
-  return batchFrom(imageBase().where('i.id', 'in', imageIds), limit, 'newest', offset);
+  if (!imageIds.length)
+    return { items: [], total: 0, truncated: false, offset: window.offset ?? 0 };
+  return batchFrom(imageBase().where('i.id', 'in', imageIds), window);
 }
 
 /**

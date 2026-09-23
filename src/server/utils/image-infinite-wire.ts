@@ -4,7 +4,7 @@
  * `image.getInfinite` is a `heavyProcedure` and the #1 procedure by server time.
  * Its response is serialized SYNCHRONOUSLY with superjson on the Node event loop —
  * walking every field of every image (a page can carry ~100 images). Both server
- * paths that back it — the DB path (`getAllImages`) and the Meili/BitDex path
+ * paths that back it — the DB path (`getAllImages`) and the Meili path
  * (`getAllImagesIndex`) — return the SAME `ImagesInfiniteModel` per-item shape.
  * Cutting per-image fields that no consumer reads reduces both the byte size on
  * the wire (~5–7% / ~11–14 KB per page) and the serialize walk (dropping the

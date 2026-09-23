@@ -38,7 +38,6 @@ export const imagesFilterableAttributes = [
   'baseModel',
   'aspectRatio',
   'nsfwLevel',
-  'combinedNsfwLevel',
   'type',
   'toolNames',
   'techniqueNames',
@@ -50,6 +49,7 @@ export const imagesFilterableAttributes = [
 export const modelsFilterableAttributes = [
   'availability',
   'canGenerate',
+  'canGenerateNext',
   'category.name',
   'checkpointType',
   'fileFormats',
@@ -64,11 +64,15 @@ export const modelsFilterableAttributes = [
   'user.username',
   'version.baseModel',
   'versions.baseModel',
+  'versions.canGenerateNext',
+  'versions.generatorLoaded',
   'versions.hashes',
   'versions.id',
+  'versions.pricing',
   'cannotPromote',
   'poi',
   'minor',
+  'hasActivePaidAccess',
 ];
 
 export const toolsFilterableAttributes = ['id', 'type', 'company'];

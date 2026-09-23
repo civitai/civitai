@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import React from 'react';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import classes from './ShowcaseGrid.module.scss';
 import clsx from 'clsx';
 
@@ -37,13 +38,18 @@ export function ShowcaseGrid({
     '--default-width': `${defaultWidth}px`,
   } as CSSProperties;
 
+  // A shelf is a fixed row count inside `overflow: hidden`, so a flyout leaving
+  // a card downward is cut off by whatever sits under the section. Home-block
+  // shelves are the same shape and declare the same layout.
+  const content = <RemixFlyoutLayoutProvider layout="side">{children}</RemixFlyoutLayoutProvider>;
+
   if (props.carousel) {
     // Return a wrapped version:
     return (
       <div style={styleVars} className={classes.container}>
         <div className={classes.scrollArea}>
           <div ref={ref} className={clsx(classes.grid, classes.gridCarousel, className)}>
-            {children}
+            {content}
           </div>
         </div>
       </div>
@@ -52,7 +58,7 @@ export function ShowcaseGrid({
 
   return (
     <div style={styleVars} ref={ref} className={clsx(classes.grid, className)}>
-      {children}
+      {content}
     </div>
   );
 }

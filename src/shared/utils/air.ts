@@ -1,5 +1,6 @@
 import { Air } from '@civitai/client';
-import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -34,14 +35,42 @@ export function parseAIRSafe(identifier: string | undefined) {
   return { ...value, model: Number(id), version: Number(version) };
 }
 
+/**
+ * The model version an AIR names, or undefined. Only a civitai AIR names one: another source's
+ * version segment can be a bare integer too (a HuggingFace revision, an orchestrator blob key), and
+ * would resolve to an unrelated ModelVersion — the same trap `getCivitaiAirModelLink` guards.
+ */
+export function versionIdFromAir(air: string) {
+  const parsed = parseAIRSafe(air);
+  if (!parsed || parsed.source !== 'civitai') return undefined;
+  const { version } = parsed;
+  return Number.isSafeInteger(version) && version > 0 ? version : undefined;
+}
+
 export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }
 
-export function getAirModelLink(identifier: string) {
+/**
+ * Link to a civitai model page for an AIR, or `null` when the AIR points
+ * elsewhere. Only civitai AIRs carry numeric model/version ids; a HuggingFace
+ * AIR (e.g. the video base models' training URNs) parses fine but its id
+ * segments are strings, so `model`/`version` come out `NaN`.
+ */
+export function getCivitaiAirModelLink(identifier: string) {
   const parsed = parseAIRSafe(identifier);
-  if (!parsed) return '/';
+  if (
+    !parsed ||
+    parsed.source !== 'civitai' ||
+    !Number.isFinite(parsed.model) ||
+    !Number.isFinite(parsed.version)
+  )
+    return null;
   return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
+}
+
+export function getAirModelLink(identifier: string) {
+  return getCivitaiAirModelLink(identifier) ?? '/';
 }
 
 const typeUrnMap: Partial<Record<ModelType, string>> = {
@@ -102,6 +131,93 @@ export function getAirEcosystem(baseModelOrKey: string) {
   // Upscaler models use 'Other' in AIR for backwards compatibility
   if (ecosystem === 'Upscaler') ecosystem = 'Other';
   return ecosystem.toLowerCase();
+}
+
+/**
+ * A raw orchestrator blob AIR — a training epoch's weights addressed directly
+ * (`urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>`), with no ModelVersion
+ * row behind it. Built by the Training Studio (see its `loraBlobAir`) for the
+ * "generate with this epoch" handoff. In generation form/graph data these travel
+ * as resources with a synthetic NEGATIVE id plus `air` + `workflowId`; the
+ * workflowId is required server-side to prove the caller owns the training run.
+ */
+export type RawAirResource = {
+  id: number;
+  air: string;
+  /** Training workflow the blob came from — the ownership proof. */
+  workflowId?: string;
+  strength?: number;
+  name?: string;
+};
+
+export function parseRawAirResourceUrn(identifier: string) {
+  const parsed = Air.parseSafe(identifier);
+  if (!parsed) return null;
+  if (parsed.source !== 'orchestrator' || parsed.type !== 'lora' || parsed.id !== 'blob')
+    return null;
+  const blobKey = String(parsed.version ?? '');
+  if (!blobKey) return null;
+  return { ecosystem: parsed.ecosystem, blobKey };
+}
+
+/**
+ * The ecosystem record whose key matches an AIR `<ecosystem>` segment
+ * (case-insensitive — AIR segments are lowercased keys, root or child).
+ */
+export function getEcosystemByAirSegment(segment: string) {
+  const lower = segment.toLowerCase();
+  return ecosystems.find((e) => e.key.toLowerCase() === lower);
+}
+
+export function isRawAirResource<T extends { id?: unknown; air?: unknown }>(
+  resource: T
+): resource is T & { id: number; air: string } {
+  return typeof resource.id === 'number' && resource.id < 0 && typeof resource.air === 'string';
+}
+
+/**
+ * Deterministic negative id for a raw AIR resource (FNV-1a over the urn).
+ * Negative so it can never collide with a ModelVersion id, and stable so the
+ * same epoch dedupes in the form and keys the server's AIR map consistently.
+ */
+export function rawAirResourceId(air: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < air.length; i++) {
+    hash ^= air.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return -((hash >>> 0) % 0x7fffffff || 1);
+}
+
+/**
+ * Full display/remix shape for a raw AIR resource, built entirely from its
+ * stored fields — there is no ModelVersion row to hydrate from. Used by the
+ * Training Studio handoff seed and by the workflow read path (so queue items
+ * keep the epoch in their resource list instead of dropping it at hydration).
+ */
+export function rawAirGenerationResource(stored: {
+  id: number;
+  air: string;
+  workflowId?: string;
+  name?: string | null;
+  strength?: number;
+  baseModel?: string;
+}): GenerationResource & { air: string; workflowId?: string } {
+  const label = stored.name?.trim() || 'Training epoch';
+  return {
+    id: stored.id,
+    name: label,
+    trainedWords: [],
+    baseModel: stored.baseModel ?? '',
+    canGenerate: true,
+    hasAccess: true,
+    strength: stored.strength ?? 1,
+    minStrength: -1,
+    maxStrength: 2,
+    air: stored.air,
+    workflowId: stored.workflowId,
+    model: { id: stored.id, name: label, type: ModelType.LORA },
+  };
 }
 
 export function stringifyAIR({

@@ -113,6 +113,35 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // via the host consent gate before a token carries it (contrast read:self,
   // which is exempt and always mints). See scope-grant.service.ts.
   'collections:read:private': SKIP_OAUTH_CHECK,
+  // posts:write:self — create a REAL Post on the VIEWER'S OWN profile from the
+  // app's own generation outputs (`blocks.createPostFromApp` →
+  // `CREATE_POST_FROM_APP`). This is the first block scope that writes PUBLIC,
+  // feed-visible, reward-earning content under the viewer's name, so it is
+  // deliberately the strictest-wired scope in the vocabulary:
+  //
+  //   - A REAL OAuth BIT, not SKIP_OAUTH_CHECK. `TokenScope.MediaWrite` is
+  //     labelled "Upload media & create posts" and already backs the native
+  //     `post.create` route, so the capability has a pre-existing bit and there
+  //     is no reason to opt out of the ceiling. ⚠️ That ceiling is only a real
+  //     gate for an OauthClient whose `allowedScopes` was DERIVED at approve
+  //     (`deriveOauthBitmaskFromBlockScopes`); a client still carrying the DB
+  //     default `33554431` (= TokenScope.Full) satisfies MediaWrite trivially.
+  //     The load-bearing gates are the per-op server checks + the consent grant,
+  //     exactly as for the SKIP_OAUTH_CHECK scopes — the bit is defence in depth.
+  //   - SENSITIVE (see SENSITIVE_BLOCK_SCOPES) ⇒ a manifest declaring it MUST
+  //     carry a non-empty `scopeJustifications` entry or submit is rejected.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES
+  //     (scope-grant.service.ts), so the user must grant it through the host
+  //     consent modal before a token can carry it — same posture as
+  //     `collections:read:private`, for a strictly more consequential capability.
+  //   - :self ⇒ a non-anon subject is required in `enforceContextBinding`.
+  //     There is no anonymous profile to post to.
+  //
+  // The scope is NOT the whole consent story: the host ALSO opens a per-post
+  // chrome confirm rendering the host-resolved title / detail / tags / images /
+  // gallery target, because the content differs every time and a blanket grant
+  // cannot inform. See `createPostFromAppGate.ts`.
+  'posts:write:self': TokenScope.MediaWrite,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -132,6 +161,128 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * cumulative ceiling is what actually bounds a run-for-real session.
  */
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
+/**
+ * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
+ * a viewer has installed. The abuse ceiling nobody consents to — a per-call
+ * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is
+ * the aggregate that actually binds. Enforced in `blocks.router.ts`
+ * (`reserveBlockBuzzSpend`, keyed WITHOUT appBlockId so N installed apps share
+ * ONE ceiling rather than multiplying it).
+ *
+ * Lives HERE, in the client-safe shared module, because it is now read by three
+ * places that must agree: the server enforcement, the `blocks.grantScopes` zod
+ * bound on a user-set consent budget, and the consent dialog that shows the user
+ * what the ceiling is. It is also the upper bound on
+ * `app_user_scope_grants.buzz_budget_per_day` — a consent budget ABOVE the
+ * platform cap could never bind, so storing one would be storing a number that
+ * means nothing.
+ */
+export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
+
+/**
+ * Bounds for a user-set per-app consent budget
+ * (`app_user_scope_grants.buzz_budget_per_day`). MIN is 1 rather than 0: a
+ * budget of zero would be a way to consent to `ai:write:budgeted` and
+ * simultaneously make it unusable, which is what DECLINING the scope already
+ * expresses — so zero is rejected at the input rather than stored as a
+ * confusing dead grant. Mirrored by the `app_user_scope_grants_buzz_budget_bounds`
+ * CHECK constraint (migration 20260910120000).
+ *
+ * 🔴 MIN = 1 WAS RE-EXAMINED (audit round 1) AND DELIBERATELY KEPT. The objection
+ * was that a floor of 1 lets a user store a budget that refuses every generation.
+ * That is TRUE — 1 is below every registered per-engine ceiling — but it stopped
+ * being a TRAP once the limit became editable: the budget is now rendered and
+ * raise/lower/clearable on /apps/activity (`AppBudgetControl`), so a too-low value
+ * is one click from recoverable IN the product, and the editor shows an explicit
+ * warning below `BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY` saying what a low number
+ * does. Raising the floor instead would silently overrule a user who deliberately
+ * wants a tiny allowance for a step-priced app (`convert-image` costs 1 Buzz), which
+ * is a real and legitimate setting. Recoverability + a warning beats a floor that
+ * decides for them.
+ */
+export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
+export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+
+/**
+ * Pre-filled suggestion when a user turns a limit ON (consent modal + the editor on
+ * /apps/activity). Deliberately far below the platform ceiling: the default should be
+ * a limit, not a formality.
+ */
+export const BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY = 1000;
+
+/**
+ * Below this, the UI warns that the limit is low enough to refuse ordinary
+ * generations. NOT a validation bound — anything from MIN up is storable and
+ * enforced exactly as given.
+ *
+ * The number is the LOWEST per-engine post-paid ceiling any registered recipe
+ * declares today: `STARTER_BUDGET.maxBuzz` = 90 and `seamless-pano`'s cheapest engine
+ * (`zimage-turbo`) = 90. A budget under it cannot fund a single customComfy
+ * generation, so an app using one will appear broken. Registry steps can be far
+ * cheaper (`convert-image` = 1 Buzz), which is why this warns instead of blocking.
+ * If a cheaper recipe engine is ever registered this number is free to drop — it
+ * changes copy, never enforcement.
+ */
+export const BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY = 90;
+
+/**
+ * The HIGHEST per-engine post-paid ceiling any registered recipe declares
+ * (`seamless-pano`'s `qwen-image` = 180). Pinned to the registry alongside LOW
+ * by `recipes/__tests__/budget-bounds-parity.test.ts`; read by no enforcement
+ * path.
+ *
+ * 🔴 NOT RENDERED, AND NEITHER IS ITS LOW SIBLING. See
+ * `BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY` below for why the warning quotes no
+ * figure at all. This constant exists solely so the parity test notices a
+ * widening of the RECIPE range.
+ */
+export const BLOCK_CONSENT_BUDGET_HIGH_CEILING_PER_DAY = 180;
+
+/**
+ * The body of the low-budget warning, shared by the consent modal and the editor
+ * on /apps/activity so the two cannot drift. The caller supplies the amount
+ * before it and its own "you can change it" tail after it.
+ *
+ * 🔴 FIVE SUCCESSIVE WORDINGS OF THIS SENTENCE SHIPPED FALSE, EACH INTRODUCED BY
+ * THE FIX FOR THE PREVIOUS ONE. In order: "this app will refuse to generate"
+ * (false for step-priced apps) → "can cost up to 90 per run" (inverted the bound
+ * over the engine set) → "the cheapest engine costs 90 per run" (quoted a
+ * RESERVATION as a PRICE, 4.5–22.5× over) → "up to 180 on the priciest" (a CLOSED
+ * bound the inline arm exceeds) → "and more on the other engines … step-based
+ * actions still run" (two engines tie at 90, and steps do NOT always run).
+ *
+ * 🔴 SO THE RULE IS NOW STRUCTURAL, NOT A BETTER FORM OF WORDS: **this sentence
+ * asserts no figure, and no claim about which actions still run.** Every such
+ * claim was falsifiable because the reservation space has no short true
+ * description —
+ *   · recipe ceilings are 90, 90, 150, 180 (note the TIE — it falsified
+ *     "more on the other engines", and the parity test cannot see it because
+ *     `LOW === min(...)` holds for any number of ties);
+ *   · the INLINE customComfy arm reserves an app-declared ceiling up to
+ *     `INLINE_MAX_BUZZ` = 250, verbatim, un-dev-gated;
+ *   · `textToImage` reserves its live whatIf quote, which can be far LOWER (the
+ *     platform's own default per-generation budget is 10);
+ *   · a STEP reserves `max(declaredBuzz, quotedBuzz)`, and `chat-completion`'s
+ *     declared 1 is documented in `blocks.router.ts` as "that floor, not a
+ *     price" — measured several times the constant, rising with `maxTokens`.
+ *
+ * ⚠️ A closed upper bound DOES exist, contrary to what an earlier revision of
+ * this docblock asserted: every path gates the reservation against the token's
+ * per-call budget, which `resolveBuzzBudget` clamps at `BUZZ_BUDGET_CAP` = 1000.
+ * It is simply not renderable — it is per-app, ~4× the largest reservation any
+ * path can actually take (INLINE_MAX_BUZZ = 250; 180 for recipes), and alarming
+ * rather than informative. Do not "correct" the copy by naming it.
+ *
+ * What IS true on every consent-bearing path, and all this sentence claims:
+ * the reservation is taken up front, before the run, and the request is refused
+ * when the running per-UTC-day total exceeds the user's cap
+ * (`consentBudgetExceeded`: `consent.total > consent.cap`).
+ */
+export const BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY =
+  'Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that ' +
+  'reservation exceeds your remaining limit for the day — so a low limit can make an app look ' +
+  'broken.';
 
 /**
  * Membership test against the authoritative scope vocabulary.
@@ -172,7 +323,8 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - spend the viewer's Buzz          (`ai:write:budgeted`, `social:tip:self`)
  *   - read the viewer's Buzz balance   (`buzz:read:self`)
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
- *   - write data OTHER users see       (`apps:storage:shared:write`)
+ *   - write data OTHER users see       (`apps:storage:shared:write`,
+ *                                       `posts:write:self`)
  *
  * This set does two things. (1) PRESENTATION — it drives the distinct,
  * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
@@ -195,6 +347,11 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'buzz:read:self',
   'collections:read:private',
   'apps:storage:shared:write',
+  // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+  // The most consequential entry in this set: `apps:storage:shared:write` is
+  // visible to other viewers OF THAT APP, this one is visible to the whole site
+  // and carries the viewer's byline.
+  'posts:write:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

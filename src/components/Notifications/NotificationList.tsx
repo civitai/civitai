@@ -106,7 +106,13 @@ export function NotificationList({
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
           e.preventDefault();
-          onItemClick(notification, false);
+          // The url is derived here by `getNotificationMessage`; the raw `notification.details`
+          // carries one for announcements only, so a consumer reading it off there sees
+          // `undefined` for every other type.
+          onItemClick(notification, {
+            keepOpened: details.target === '_blank',
+            url: details.url,
+          });
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const toModal = details.url.includes('?dialog=');
@@ -130,7 +136,7 @@ export function NotificationList({
         };
 
         const handleMiddleClick = () => {
-          onItemClick(notification, true);
+          onItemClick(notification, { keepOpened: true, url: details.url });
         };
 
         return (
@@ -191,7 +197,10 @@ export function NotificationList({
 
 type Props = {
   items: NotificationGetAll['items'];
-  onItemClick: (notification: NotificationGetAll['items'][number], keepOpened: boolean) => void;
+  onItemClick: (
+    notification: NotificationGetAll['items'][number],
+    options: { keepOpened: boolean; url?: string }
+  ) => void;
   textSize?: MantineSize;
   truncate?: boolean;
   searchText: string;

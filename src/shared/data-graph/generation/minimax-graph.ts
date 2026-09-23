@@ -19,6 +19,7 @@ import type { GenerationCtx } from './context';
 import type { ResourceData } from './common';
 import {
   aspectRatioNode,
+  controlVideoNode,
   createCheckpointGraph,
   createResourcesGraph,
   createTextEditorGraph,
@@ -29,15 +30,16 @@ import {
   triggerWordsGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
+import { minimaxVersionIds } from './version-ids';
+import { minimaxH3ControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 
-export const minimaxVersionIds = {
-  'v1.0': 3183239,
-  comfy: 3216500,
-} as const;
+// minimaxVersionIds moved to ./version-ids (leaf module), where the other video
+// ecosystems keep theirs; re-exported here for existing importers.
+export { minimaxVersionIds };
 
 export type MinimaxVariant = 'api' | 'comfy';
 
@@ -100,6 +102,14 @@ const comfyGraph = new DataGraph<{ ecosystem: string; workflow: string }, Genera
         ? sliderNode({ min: 1, max: 20, defaultValue: 8 })
         : sliderNode({ min: 10, max: 60, defaultValue: 30 }),
     ['turbo']
+  )
+  .node(
+    'controlVideo',
+    (ctx) => ({
+      ...controlVideoNode({ preprocessors: minimaxH3ControlNetPreprocessors }),
+      when: ctx.workflow === 'txt2vid',
+    }),
+    ['workflow']
   );
 
 export const minimaxGraph = new DataGraph<

@@ -54,6 +54,7 @@ const QUERY_STRING_BOOLEANS = [
   'needsReview',
   'earlyAccess',
   'paidAccess',
+  'hidePaid',
   'supportsGeneration',
   'fromPlatform',
   'followed',

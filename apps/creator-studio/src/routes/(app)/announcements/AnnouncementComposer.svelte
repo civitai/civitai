@@ -64,7 +64,8 @@
       ? (toDomainArray(seed.domain) as AnnouncementDomain[])
       : [...DEFAULT_DOMAINS]
   );
-  let profileOnly = $state(seed?.profileOnly ?? false);
+  let broadcast = $state(!(seed?.profileOnly ?? false));
+  const profileOnly = $derived(!broadcast);
   let startsLocal = $state(toLocalInput(seed?.startsAt));
   let endsLocal = $state(toLocalInput(seed?.endsAt));
   let linkUrl = $state(seed?.link ?? '');
@@ -302,12 +303,15 @@
       </div>
     </div>
 
+    <!-- The stored column is `profileOnly`; the control is its inverse, because broadcasting is the
+         thing a creator decides to do. The hidden input above still posts `profileOnly`. -->
     <div class="flex items-start gap-3 rounded-lg border border-dark-4 p-3">
-      <Switch id="announcement-profile-only" bind:checked={profileOnly} />
+      <Switch id="announcement-broadcast" bind:checked={broadcast} />
       <div>
-        <Label for="announcement-profile-only">Profile only</Label>
+        <Label for="announcement-broadcast">Broadcast to followers</Label>
         <p class="text-sm text-dark-2">
-          Shows on your profile, stays out of the feed, notifies nobody, and does not use a slot.
+          Sends it to your followers via their notifications panel. Turned off, it only appears on
+          your profile.
         </p>
       </div>
     </div>
@@ -315,8 +319,8 @@
     {#if blocked}
       <p class="text-sm text-dark-2">
         {allowState === 'ineligible'
-          ? 'Your creator score is not high enough to notify followers yet — turn on Profile only to post this.'
-          : 'No announcement slots left for this period — turn on Profile only to post this.'}
+          ? 'Your creator score is not high enough to broadcast yet — turn Broadcast to followers off to post it on your profile.'
+          : 'No broadcasts left for this period — turn Broadcast to followers off to post it on your profile.'}
       </p>
     {/if}
     {#if error}<p class="text-sm text-red-300">{error}</p>{/if}

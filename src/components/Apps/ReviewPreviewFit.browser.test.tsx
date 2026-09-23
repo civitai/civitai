@@ -88,6 +88,13 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       // The mint the review host fires on mount. Resolves synchronously to a
@@ -112,6 +119,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -160,6 +173,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   blockInstanceId: 'page_pubreq_FIT',
   appName: 'Review Fit App',
   sandbox: 'allow-scripts',
+  bootSkeleton: false,
   runForReal: false,
   buzzCap: null,
 };
@@ -205,6 +219,9 @@ const directHostProps = {
   appName: RENDER_ONLY_MINT.appName,
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'review-preview' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: RENDER_ONLY_MINT.sandbox,
   trustTier: 'unverified' as const,
   slug: RENDER_ONLY_MINT.blockId,

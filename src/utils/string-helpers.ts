@@ -42,7 +42,6 @@ export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
 }
 
 const nameOverrides: Record<string, string> = {
-  Checkpoint: 'Fine-tune',
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
   DoRA: 'DoRA',
@@ -166,6 +165,41 @@ export function filenamize(value: string, length = 20) {
   return camelCase(truncate(value, { length, separator: '_', omission: '' }));
 }
 
+/**
+ * Replace the middle of a string with a FIXED run of characters — never one per hidden character,
+ * which leaks the original's length to anyone reading a shared screen or a stream.
+ *
+ * Keeps `start` characters from the front and `end` from the back. When the kept ends already
+ * cover the whole string there is nothing left to hide, so it returns the mask alone rather than
+ * handing back the input untouched.
+ */
+export function maskString(
+  value: string,
+  { start = 0, end = 0, mask = '•••••' }: { start?: number; end?: number; mask?: string } = {}
+) {
+  if (!value) return '';
+
+  const head = Math.max(0, start);
+  const tail = Math.max(0, end);
+  if (head + tail >= value.length) return mask;
+
+  return `${value.slice(0, head)}${mask}${tail > 0 ? value.slice(value.length - tail) : ''}`;
+}
+
+/**
+ * Hides the local part but keeps the domain, so the account stays recognisable to its owner.
+ *
+ * A local part short enough that keeping its first character would reveal the whole address falls
+ * back to masking everything: showing `a•••••@example.com` conceals nothing while looking as if it
+ * does, which is worse than an obviously-hidden value.
+ */
+export function maskEmail(email: string) {
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return maskString(email);
+
+  return maskString(email, { start: 1, end: email.length - at });
+}
+
 export function replaceInsensitive(value: string, search: string, replace: string) {
   const escaped = search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
   return value.replace(new RegExp(escaped, 'gi'), replace);
@@ -210,6 +244,12 @@ export function getModelUrl({
 export function getModel3DUrl({ id, name }: { id: number; name?: string | null }): string {
   const slug = name ? slugit(name) : null;
   return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
+}
+
+/** Canonical article URL. A title with no slug-able characters gets the bare id path. */
+export function getArticleUrl({ id, title }: { id: number; title?: string | null }): string {
+  const slug = title ? slugit(title) : null;
+  return slug ? `/articles/${id}/${slug}` : `/articles/${id}`;
 }
 
 /**
@@ -311,12 +351,6 @@ export function parseAIRSafe(identifier: string | undefined) {
 
 export function isAir(identifier: string) {
   return Air.isAir(identifier);
-}
-
-export function getAirModelLink(identifier: string) {
-  const parsed = parseAIRSafe(identifier);
-  if (!parsed) return '/';
-  return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
 }
 
 export function safeDecodeURIComponent(str: string) {

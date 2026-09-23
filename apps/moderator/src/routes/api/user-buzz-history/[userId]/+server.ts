@@ -13,12 +13,17 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // window, not remove it.
   const raw = Number(url.searchParams.get('days'));
   const days = Number.isFinite(raw) && raw >= 1 && raw <= 730 ? Math.floor(raw) : 90;
+  // Per SIDE, not across both — see `getBuzzHistory`.
+  const rawLimit = Number(url.searchParams.get('limit'));
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit >= 1 && rawLimit <= 2000 ? Math.floor(rawLimit) : 200;
   // Retool hid `type = 'bank'` rows from everyone except admins and two hardcoded names — a restriction
   // that lived in the TABLE'S DATA BINDING, not in a query or a pane gate, which is why the port
   // widened it without anyone noticing. Ported as a grant: hardcoding names is what left this app's
   // moderator list stale in three other places.
   return json(
     await getBuzzHistory(userId, days, {
+      limit,
       includeBank: !!locals.grants['user.buzz.bank'],
     })
   );

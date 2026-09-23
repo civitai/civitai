@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * The app-block host chrome's platform-nav dropdown must draw the store's
- * destinations the way the STORE draws them. Node `unit` project — the GATING
- * tier (the Vitest browser-mode `component` project is report-only in CI, so the
- * behavioural companion in `AppBlockChromePlatformNav.browser.test.tsx` cannot
- * block a merge).
+ * destinations the way the STORE draws them. Node `unit` project — the tier that
+ * EXECUTES this assertion (report-only on a pull request, an honest verdict on a
+ * push to `main`). The behavioural companion in
+ * `AppBlockChromePlatformNav.browser.test.tsx` is in the REPORT-ONLY browser tier.
+ * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this
+ * repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHAT BROKE. `AppBlockChrome`'s dropdown and `AppsSubNav`'s tab bar are two
  * renderings of ONE platform navigation — a user who opens an app from the store
@@ -19,23 +21,38 @@ import { describe, expect, it } from 'vitest';
  * each was drawn from scratch.
  *
  * 🔴 THIS PINS A RELATIONSHIP BETWEEN TWO FILES, NOT A LIST OF ICON NAMES. It reads
- * the icon out of `SUB_NAV_LINKS` at run time and requires the chrome to match
+ * the icon out of `appsSections` at run time and requires the chrome to match
  * whatever it finds. So it fails in BOTH directions: re-icon the chrome and it
  * fails, and — the case a hardcoded list would sail past — re-icon the SUBNAV and
  * it fails there too, which is the drift that actually happens. The subnav is the
  * source of truth; when this goes red, change the chrome.
  *
- * 🔴 WHY A SOURCE SCAN RATHER THAN AN IMPORT. `SUB_NAV_LINKS` is module-private,
- * and both modules are `.tsx` that pull React, Mantine and tRPC — importing either
- * into the node project to read a table would drag a browser-shaped dependency
- * graph in for no gain. The cost of scanning text is that the scanner can silently
+ * 🔴 WHY A SOURCE SCAN RATHER THAN AN IMPORT. `appsSections` is exported, but the
+ * chrome half is a `.tsx` that pulls React, Mantine and tRPC and the registry itself
+ * pulls `@tabler/icons-react` — importing either into the node project to read a table
+ * would drag a browser-shaped dependency graph in for no gain. The cost of scanning text is that the scanner can silently
  * match nothing, so every extraction step below is fed a fixture it MUST parse
  * before any count it returns from the real files is believed.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const CHROME = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
-const SUBNAV = path.join(REPO_ROOT, 'src/components/Apps/AppsSubNav.tsx');
+/**
+ * 🔴 RE-POINTED: THE STORE'S NAV TABLE MOVED FILE AND SHAPE, AND THE GUARD FOLLOWED IT
+ * RATHER THAN BEING DELETED — which is what its own failure message instructs.
+ * `SUB_NAV_LINKS` in `Apps/AppsSubNav.tsx` became `appsSections` in
+ * `Apps/apps-sections.ts` when the horizontal tab strip became a left rail. The rule is
+ * unchanged in force: the chrome and the store draw a shared route with a shared glyph.
+ *
+ * ⚠️ ONE PARSE DETAIL CHANGED WITH IT. The old table carried a literal `href:`; the
+ * registry carries a `path:` SEGMENT (empty string for the marketplace index), because
+ * that is the `account-sections` shape it is modelled on. So the extractor below derives
+ * the href the way `getAppsSectionHref` does. That derivation is duplicated here on
+ * purpose — this is a node-tier SOURCE scan and importing the module would drag in
+ * `@tabler/icons-react`; the fixture in the positive control is what keeps the two
+ * spellings honest.
+ */
+const SUBNAV = path.join(REPO_ROOT, 'src/components/Apps/apps-sections.ts');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent file
@@ -65,32 +82,35 @@ function code(src: string): string {
 type NavEntry = { href: string; label: string; icon: string };
 
 /**
- * The `SUB_NAV_LINKS` table as `{href, label, icon}` rows.
+ * The `appsSections` registry as `{href, label, icon}` rows.
  *
- * Entries are split on `href:` rather than on braces: the table's rows are a mix of
- * one-liners and multi-line objects, and several carry nested arrow functions
- * (`visible: (s, c) => ...`), so brace-counting would need a real parser to be
- * correct and a wrong one would silently drop rows.
+ * Entries are split on `id:` rather than on braces: the table's rows are multi-line
+ * objects carrying nested arrow functions (`visible: (s, c) => ...`), so brace-counting
+ * would need a real parser to be correct and a wrong one would silently drop rows.
+ *
+ * `href` is DERIVED from `path`, mirroring `getAppsSectionHref`: the empty segment is
+ * the marketplace index (`/apps`), anything else is `/apps/<path>`.
  */
 function parseSubNav(src: string): NavEntry[] {
-  const start = src.indexOf('SUB_NAV_LINKS');
+  const start = src.indexOf('export const appsSections');
   expect(
     start,
-    '`SUB_NAV_LINKS` was not found in AppsSubNav.tsx — if the table moved or was renamed, ' +
-      're-point this guard rather than deleting it: it is the only BLOCKING check that the ' +
-      'app-block chrome and the store subnav agree on their shared destinations.'
+    '`appsSections` was not found in apps-sections.ts — if the registry moved or was ' +
+      'renamed, re-point this guard rather than deleting it: it is the only BLOCKING check ' +
+      'that the app-block chrome and the store nav agree on their shared destinations.'
   ).toBeGreaterThan(-1);
   const body = src.slice(start);
   const end = body.indexOf('\n];');
   const table = end === -1 ? body : body.slice(0, end);
 
-  const chunks = table.split(/\bhref:\s*/).slice(1);
+  const chunks = table.split(/\bid:\s*/).slice(1);
   return chunks
     .map((chunk) => {
-      const href = /^'([^']+)'/.exec(chunk)?.[1];
+      const segment = /\bpath:\s*'([^']*)'/.exec(chunk)?.[1];
       const label = /\blabel:\s*'([^']+)'/.exec(chunk)?.[1];
       const icon = /\bicon:\s*(Icon\w+)/.exec(chunk)?.[1];
-      return href && label && icon ? { href, label, icon } : null;
+      if (segment === undefined || !label || !icon) return null;
+      return { href: segment ? `/apps/${segment}` : '/apps', label, icon };
     })
     .filter((e): e is NavEntry => e !== null);
 }
@@ -100,7 +120,7 @@ function parseSubNav(src: string): NavEntry[] {
  *
  * 🔴 SCOPED TO THE PLATFORM-NAV SECTION, WHICH IS NOT COSMETIC. The chrome also
  * renders the ⋮ overflow's "Manage apps", which points at the SAME
- * `/apps/installed` with a different, deliberate label. A whole-file scan would key
+ * `/apps/activity` with a different, deliberate label. A whole-file scan would key
  * both onto one href and either compare the wrong row or clobber it. The slice is
  * anchored on the `Civitai Apps` label, which is the section's own heading.
  *
@@ -172,7 +192,7 @@ function parsePlatformNav(src: string): NavEntry[] {
  * 🔴 THIS IS THE REPO-WIDE HALF, AND IT EXISTS BECAUSE THE SCOPED HALF MISSED A
  * SITE. The platform-nav-scoped parser above deliberately ignores the ⋮ overflow
  * menu so that two items pointing at one route cannot be keyed onto each other —
- * but that same scoping meant the ⋮ menu's "Manage apps" (`/apps/installed`) was
+ * but that same scoping meant the ⋮ menu's "Manage apps" (`/apps/activity`) was
  * invisible to the icon rule, and re-iconing only the platform nav left ONE route
  * wearing TWO glyphs a few pixels apart in one bar. The same-route rule has to be
  * enforced over the whole component or it just relocates the drift.
@@ -198,29 +218,112 @@ function chromeBody(): string {
   return nextExport === -1 ? rest : rest.slice(0, nextExport);
 }
 
-function parseAllChromeLinks(src: string): NavEntry[] {
-  return [...src.matchAll(/<ChromeSurfaceItem\b([\s\S]*?)<\/ChromeSurfaceItem>/g)]
-    .map((m) => {
-      const block = m[1];
-      const href = /href="([^"]+)"/.exec(block)?.[1];
-      const icon = /leftSection=\{<(Icon\w+)/.exec(block)?.[1];
-      if (!href || !icon) return null;
-      let depth = 0;
-      let tagEnd = -1;
-      for (let i = 0; i < block.length; i += 1) {
-        const ch = block[i];
-        if (ch === '{') depth += 1;
-        else if (ch === '}') depth -= 1;
-        else if (ch === '>' && depth === 0) {
-          tagEnd = i;
-          break;
-        }
+/** A link site in the chrome. `label` and `icon` are OPTIONAL because a real link in
+ *  this file may carry neither — see `parseAllChromeLinks`. */
+type ChromeLink = { tag: string; href: string; label: string | null; icon: string | null };
+
+/** Drop every `{…}` expression from an attribute list, so `href="…"` is matched only
+ *  when it is a LITERAL attribute of this tag. Two things this rules out: a
+ *  `href={`/apps/run/${r.blockId}`}` template (not a platform route), and a nested
+ *  `someProp={<Foo href="…"/>}` being attributed to the OUTER element. */
+function stripAttrExpressions(attrs: string): string {
+  let out = '';
+  let depth = 0;
+  for (const ch of attrs) {
+    if (ch === '{') depth += 1;
+    else if (ch === '}') depth -= 1;
+    else if (depth === 0) out += ch;
+  }
+  return out;
+}
+
+/**
+ * EVERY element in the chrome that carries a LITERAL `href="…"` — whatever tag it is
+ * written as, and whether or not it carries a `leftSection` glyph.
+ *
+ * 🔴 ROUND 4 WIDENED THIS, BECAUSE (d)'s MESSAGE CLAIMED A SET THIS PARSER DID NOT OWN.
+ * The previous version matched `<ChromeSurfaceItem …>text</ChromeSurfaceItem>` and then
+ * dropped anything without BOTH a literal href AND a `leftSection={<IconX`. Two ordinary
+ * shapes walked straight through it, both measured surviving as mutants:
+ *
+ *   • `<ActionIcon component={Link} href="/apps/invites" …>` in the ⋮ overflow — and
+ *     that is not an exotic shape, it is the one the chrome ALREADY uses for its `/apps`
+ *     back-link (the compact-mode chevron);
+ *   • `<ChromeSurfaceItem href="/apps/invites">Invites</ChromeSurfaceItem>` with no
+ *     `leftSection` — which compiles, because `ChromeSurface.tsx` types that prop
+ *     `leftSection?: ReactNode`, and which is the very element (d) claims to enumerate.
+ *
+ * Either one is a door out of a running app into a flag-gated route, offered
+ * unconditionally, with all 8 tests green. So the parser now scans TAGS rather than one
+ * tag name, and treats the glyph as optional metadata rather than a condition of
+ * inclusion. What that costs is stated where it is paid: rule (b) below can only compare
+ * a glyph an element actually HAS, so it now skips the icon-less links that (d) still
+ * counts.
+ *
+ * 🔴 `icon` IS THE `leftSection` GLYPH ONLY — deliberately not "any Icon inside the
+ * element". The back chevron renders `<IconChevronLeft/>` as its CHILD; that is a
+ * directional affordance, not this route's glyph, and scoring it as one would make the
+ * same-route rule red on correct code. The rule (b) enforces is about the picture in a
+ * menu ROW, which is what `leftSection` is.
+ *
+ * Mechanics: an opening tag ends at the first `>` at brace depth 0 (`leftSection={<Icon
+ * … />}` contains a `>` that is not the end of the tag), and scanning resumes AFTER that
+ * `>` — so a nested `<Icon…>` inside the attribute region is never itself opened as an
+ * element. The label is the element's text with nested tags removed, falling back to
+ * `aria-label` (the back chevron has no text at all, and a null label would make (a)/(b)'s
+ * failure messages name nothing). `</tag>` is matched by name, which is exact here because
+ * none of these tags nest inside themselves; if one ever does, the LABEL is what goes
+ * wrong, never the href set (d) owns.
+ */
+function parseAllChromeLinks(src: string): ChromeLink[] {
+  const out: ChromeLink[] = [];
+  let i = 0;
+  while (i < src.length) {
+    if (src[i] !== '<' || !/[A-Za-z]/.test(src[i + 1] ?? '')) {
+      i += 1;
+      continue;
+    }
+    const tag = /^[A-Za-z][\w.]*/.exec(src.slice(i + 1))?.[0];
+    if (!tag) {
+      i += 1;
+      continue;
+    }
+    let depth = 0;
+    let tagEnd = -1;
+    for (let j = i + 1 + tag.length; j < src.length; j += 1) {
+      const ch = src[j];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      else if (ch === '>' && depth === 0) {
+        tagEnd = j;
+        break;
       }
-      if (tagEnd === -1) return null;
-      const label = block.slice(tagEnd + 1).trim();
-      return label ? { href, label, icon } : null;
-    })
-    .filter((e): e is NavEntry => e !== null);
+    }
+    if (tagEnd === -1) break;
+    const attrs = src.slice(i + 1 + tag.length, tagEnd);
+    const selfClosing = src[tagEnd - 1] === '/';
+    i = tagEnd + 1;
+
+    const href = /\bhref="([^"]+)"/.exec(stripAttrExpressions(attrs))?.[1];
+    if (!href) continue;
+    const icon = /\bleftSection=\{<(Icon\w+)/.exec(attrs)?.[1] ?? null;
+
+    let label: string | null = null;
+    if (!selfClosing) {
+      const close = src.indexOf(`</${tag}>`, tagEnd);
+      if (close !== -1) {
+        label =
+          src
+            .slice(tagEnd + 1, close)
+            .replace(/<[^>]*>/g, '')
+            .trim() || null;
+      }
+    }
+    if (!label) label = /\baria-label="([^"]+)"/.exec(attrs)?.[1] ?? null;
+
+    out.push({ tag, href, label, icon });
+  }
+  return out;
 }
 
 describe('the app-block chrome platform nav agrees with the store subnav', () => {
@@ -230,12 +333,21 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // shapes that broke naive versions of them: a multi-line row with a nested
     // arrow function, and a `leftSection` whose JSX contains a `>` of its own.
     const subnav = parseSubNav(`
-      const SUB_NAV_LINKS: SubNavLink[] = [
-        { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
+      export const appsSections: AppsSection[] = [
         {
-          href: '/apps/review',
+          id: 'marketplace',
+          path: '',
+          label: 'Marketplace',
+          icon: IconBuildingStore,
+          group: 'discover',
+          visible: () => true,
+        },
+        {
+          id: 'review',
+          path: 'review',
           label: 'Review',
           icon: IconGavel,
+          group: 'moderate',
           visible: (s, c) => c.isAuthor && s.isReviewer,
         },
       ];
@@ -266,14 +378,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // …and the scope control: an item in a LATER section must not be picked up. This
     // is the fixture that would catch the F3 bound going wrong — the ⋮ overflow's own
-    // `/apps/installed` sits after its own `<ChromeSurfaceLabel>App</…>`, and if the
+    // `/apps/activity` sits after its own `<ChromeSurfaceLabel>App</…>`, and if the
     // slice ran past that label the two entries for one route would be keyed onto
     // each other and the icon comparison would be against the wrong row.
     const scoped = parsePlatformNav(`
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
       <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore />}>Marketplace</ChromeSurfaceItem>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(scoped.map((e) => e.href)).toEqual(['/apps']);
   });
@@ -282,10 +394,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
 
-    // Both tables were actually read. A zero here is indistinguishable from a
-    // parser wired to nothing, so it must never be the thing that makes this pass.
-    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(7);
-    expect(nav.length, 'parsed no items out of the chrome platform nav').toBe(4);
+    // 🔴 PARSE CONTROLS ONLY — deliberately far below the live counts. A zero is
+    // indistinguishable from a parser wired to nothing, so it must never be the thing
+    // that makes this pass; but a control pinned ON the live count STEALS the failure
+    // from the rule below, reporting a parse problem for what is really a nav change.
+    // The exact chrome set is owned by the `expected glyphs` test; the exact excluded
+    // set by the ledger.
+    expect(subnav.length, 'parsed no rows out of appsSections').toBeGreaterThanOrEqual(1);
+    expect(nav.length, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(1);
 
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
@@ -294,7 +410,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       expect(
         store,
         `the chrome platform nav offers \`${item.href}\`, which the store subnav does not list. ` +
-          'Either the destination belongs in `SUB_NAV_LINKS` too, or this menu is inventing a ' +
+          'Either the destination belongs in `appsSections` too, or this menu is inventing a ' +
           'route the store has no tab for — decide deliberately.'
       ).toBeDefined();
       expect(
@@ -305,6 +421,79 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     }
   });
 
+  /**
+   * 🔴 THE EXCLUSION LEDGER — the half this guard could not previously express.
+   *
+   * The rule above is ONE-DIRECTIONAL: every chrome destination must exist in the
+   * subnav, never the reverse. That is correct — the chrome is deliberately a strict
+   * SUBSET (Invites / Revenue have always been subnav-only) — but it means a new
+   * `appsSections` row is scored identically whether its absence from the chrome was a
+   * decision or an oversight. Both readings pass, silently, which is the exact shape of
+   * an unpinned decision.
+   *
+   * 🔴 THE SET SHRANK FROM FOUR TO TWO, AND NOT BY ADDING ANYTHING TO THE CHROME. The
+   * store consolidated three subnav rows — "Build apps" (`/apps/get-started`), "Create"
+   * (`/apps/submit`) and "My apps" (`/apps/mine`) — into ONE state-aware `/apps/build`.
+   * Two of the three excluded routes therefore stopped being subnav rows at all, and the
+   * chrome's `/apps/mine` item was REPOINTED to `/apps/build` rather than deleted (the
+   * ledger's own message argues against deleting a door out of a running app, and
+   * `/apps/mine` 301s there anyway, so leaving it would have made every press a redirect
+   * hop). What survives is the pre-existing pair: authoring/owner-management surfaces
+   * that do not belong in a menu opening over a RUNNING app.
+   *
+   * ⚠️ THE OLD RATIONALE'S SECOND LIMB IS RETIRED, AND IT IS WORTH SAYING WHY RATHER THAN
+   * DELETING IT SILENTLY. It ran: `/apps/get-started` sits behind the
+   * `appBlocksGetStarted` KILL SWITCH, this section reads no flags, so mirroring the entry
+   * would keep offering a page that has been switched off. That argument was about a route
+   * the chrome did not carry. Its successor `/apps/build` IS carried — but the chrome
+   * already carried `/apps/mine`, which was itself flag-gated (`appBlocksAuthor` +
+   * `isAppDeveloper`, a hard `notFound`), so an ungated link to a gated destination is the
+   * STATUS QUO here and not something the repoint introduced. The behaviour change is
+   * strictly in the harmless direction: a non-author pressing that item used to get a 404
+   * and, if they hold `appBlocksGetStarted`, now gets a public pitch with no private data
+   * on it. The PAGE decides, not the link.
+   *
+   * So this asserts the excluded SET, and fails when it GROWS (a new subnav row nobody
+   * decided about) or SHRINKS (an entry added to the chrome without updating the note).
+   * It is the deliberate alternative to loosening the guard.
+   */
+  it('🔴 the subnav rows deliberately ABSENT from the chrome are exactly these', () => {
+    const subnav = parseSubNav(code(read(SUBNAV)));
+    const nav = parsePlatformNav(code(read(CHROME)));
+    const inChrome = new Set(nav.map((e) => e.href));
+
+    // 🔴 PARSE CONTROLS, NOT LEDGERS — and the floors are deliberately far below the
+    // live counts (8 and 4). Pinned ON those counts they MASK the ledger they were
+    // meant to protect: adding a chrome item made `toBe(4)` fail first, with the
+    // message "parsed no items out of the chrome platform nav: expected 5 to be 4" —
+    // which states the opposite of what happened — and the `toEqual` below never ran,
+    // leaving the ledger's SHRINK direction unproven. A zero on either side would make
+    // the difference below trivially "everything" or "nothing", and that is all these
+    // two are here to rule out; the SET is the `toEqual`'s to own, in both directions.
+    expect(subnav.length, 'parsed no rows out of appsSections').toBeGreaterThanOrEqual(1);
+    expect(inChrome.size, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(
+      1
+    );
+
+    expect(
+      subnav.map((e) => e.href).filter((h) => !inChrome.has(h)),
+      'a store subnav destination is missing from the app-block chrome. If that is ' +
+        'deliberate, add it here WITH the reason; if it is not, add it to the chrome ' +
+        '(the subnav is the source of truth, so the chrome follows).'
+    ).toEqual([
+      // Owner-management surfaces. Pre-existing exclusions: the chrome is navigation for
+      // someone RUNNING an app, not managing one.
+      //
+      // 🔴 `/apps/invites` AND `/apps/submit` LEFT THIS LIST BY BEING DELETED FROM THE
+      // SUBNAV, NOT BY BEING ADDED TO THE CHROME. Both routes were consolidated into
+      // `/apps/build`, which the chrome DOES carry (repointed from `/apps/mine`) — so the
+      // set shrank from four to two because the registry shrank, which is exactly the
+      // direction this ledger is meant to make visible.
+      '/apps/invites',
+      '/apps/revenue',
+    ]);
+  });
+
   it('the four shared destinations are the expected ones, drawn with the expected glyphs', () => {
     // The relationship test above is the real guard; this one names the resolved
     // values so a failure reads as a diff rather than sending you to two files.
@@ -313,8 +502,8 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const nav = parsePlatformNav(code(read(CHROME)));
     expect(nav).toEqual([
       { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
-      { href: '/apps/installed', label: 'Installed apps', icon: 'IconPlugConnected' },
-      { href: '/apps/mine', label: 'My apps', icon: 'IconApps' },
+      { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
+      { href: '/apps/build', label: 'My apps', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
   });
@@ -335,19 +524,19 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // 🔴 THE OTHER THREE DELIBERATELY DIFFER, so this pins the chrome's own copy
     // rather than asserting equality. The subnav's tabs sit under an "Apps"
-    // heading and can afford one-word labels ("Installed", "Review"); these items
+    // heading and can afford one-word labels ("Activity", "Review"); these items
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
-    expect(navByHref.get('/apps/installed')?.label).toBe('Installed apps');
-    expect(navByHref.get('/apps/mine')?.label).toBe('My apps');
+    expect(navByHref.get('/apps/activity')?.label).toBe('App activity');
+    expect(navByHref.get('/apps/build')?.label).toBe('My apps');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
-    expect(subByHref.get('/apps/installed')?.label).toBe('Installed');
+    expect(subByHref.get('/apps/activity')?.label).toBe('Activity');
   });
 
   it('ONE ROUTE, ONE ICON — every literal-href item in the chrome, both dropdowns', () => {
     // 🔴 THE RULE THIS PR EXISTS TO ENFORCE, APPLIED TO THE WHOLE COMPONENT. Two
     // items may legitimately carry different LABELS for one destination ("Manage
-    // apps" from inside a running app vs "Installed apps" as a destination); they
+    // apps" from inside a running app vs "App activity" as a destination); they
     // may not carry different PICTURES, because the two dropdowns open a few pixels
     // apart in the same bar. Fixing only the platform nav would have relocated the
     // drift rather than removed it, which is what this test is here to prevent.
@@ -355,20 +544,37 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const links = parseAllChromeLinks(chromeBody());
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
-    expect(links.length, 'parsed no literal-href items out of the chrome').toBe(5);
+    // 🔴 PARSE CONTROL ONLY — AND, UNLIKE THE OTHER TWO FLOORS IN THIS FILE, IT HAS NO
+    // SIBLING `toEqual` ELSEWHERE TO INHERIT ITS SET FROM. The floors in the two tests
+    // above are safe to relax because something else owns their sets outright (the exact
+    // 4-item platform nav; the exact excluded set). Nothing owned THIS parser's set, so
+    // relaxing this one alone deleted a live detection — see (d), which was added to
+    // restore it. A zero here is still indistinguishable from a regex wired to nothing,
+    // and ruling that out is all this floor does; pinned on the live count it would
+    // instead steal the failure from the rules below and report a nav change as a parse
+    // error.
+    expect(links.length, 'parsed no literal-href items out of the chrome').toBeGreaterThanOrEqual(
+      1
+    );
 
     // (a) Every route the chrome links to is a route the store actually has.
     for (const link of links) {
       expect(
         bySubNavHref.get(link.href),
         `the chrome links to \`${link.href}\` ("${link.label}"), which the store subnav does ` +
-          'not list. Either it belongs in `SUB_NAV_LINKS`, or the chrome is inventing a ' +
+          'not list. Either it belongs in `appsSections`, or the chrome is inventing a ' +
           'destination the store has no tab for — decide deliberately.'
       ).toBeDefined();
     }
 
     // (b) …and draws it with the store's glyph, wherever in the chrome it appears.
-    for (const link of links) {
+    //
+    // 🔴 SCOPED TO THE LINKS THAT HAVE A `leftSection` GLYPH, which since round 4 is a
+    // SUBSET of `links` rather than all of it. An element with no glyph cannot be drawing
+    // the route with the WRONG one, so there is nothing here to compare; its presence in
+    // the chrome is still owned outright by (d). The two live examples are the compact
+    // back chevron and the breadcrumb crumb, neither of which is a menu row.
+    for (const link of links.filter((l) => l.icon !== null)) {
       expect(
         link.icon,
         `same-route icon drift: "${link.label}" links to \`${link.href}\` with \`${link.icon}\`, ` +
@@ -379,13 +585,95 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
 
     // (c) The pair that actually collided, named explicitly so the regression is
     // legible: two items, one route, and now one icon.
-    const installed = links.filter((l) => l.href === '/apps/installed');
+    const installed = links.filter((l) => l.href === '/apps/activity');
     expect(
       installed.map((l) => l.label).sort(),
-      'the chrome should still offer BOTH `/apps/installed` entries — this rule is about ' +
+      'the chrome should still offer BOTH `/apps/activity` entries — this rule is about ' +
         'their icons, not about removing one of them (that would be a behaviour change).'
-    ).toEqual(['Installed apps', 'Manage apps']);
+    ).toEqual(['App activity', 'Manage apps']);
     expect(new Set(installed.map((l) => l.icon)).size).toBe(1);
+
+    // (d) 🔴 THE LEDGER — the SET of routes the chrome links to, owned outright, so this
+    // fails when it GROWS or SHRINKS.
+    //
+    // (a) and (b) are PER-LINK, so they catch an addition only when the added link is
+    // itself wrong — an invented route, or the store's route under the wrong glyph. A new
+    // item pointing at a route `appsSections` already carries, wearing that row's own
+    // glyph, satisfies both and is invisible to them. Nor does anything else here close
+    // the gap — the `expected glyphs` test enumerates the PLATFORM-NAV slice only, and (c)
+    // enumerates the two `/apps/activity` LABELS only. So an item added to the ⋮ overflow
+    // was invisible to every assertion in this file. Measured on the PRE-(d) tree: adding
+    // `<ChromeSurfaceItem href="/apps/invites" leftSection={<IconMail …/>}>Invites
+    // </ChromeSurfaceItem>` to the overflow passed all 8 tests. (d) kills that one now.
+    //
+    // 🔴 AND (d) ALONE WAS STILL NOT ENOUGH, WHICH IS WHY THIS COMMENT IS NOT THE END OF
+    // THE STORY. Round 4 measured two FURTHER shapes surviving with (d) in place, because
+    // the PARSER feeding it required both a literal `href` and a `leftSection` glyph — an
+    // `<ActionIcon component={Link} href>` and a `leftSection`-less `<ChromeSurfaceItem>`.
+    // Both are ordinary; the first is the shape the chrome already uses for its `/apps`
+    // back-link. The ledger is only ever as wide as `parseAllChromeLinks` — read its
+    // header before trusting the sentence below. (The fixture route in those two controls
+    // is `/apps/invites`; it was `/apps/get-started` until that route was consolidated
+    // away. The shapes are what the controls pin — the route is arbitrary, and must simply
+    // be one the repo-wide retired-link sweep in `__tests__/pages/apps-build-redirects`
+    // does not report.)
+    //
+    // That is not bookkeeping. `/apps/invites` is gated on `appBlocksAuthor`, and NO
+    // literal-href item in this chrome is gated by a FEATURE FLAG except the
+    // moderator-gated `/apps/review` — no flag decides whether a LINK here is offered.
+    // (Two ARE conditional, on LAYOUT rather than a flag: the compact back chevron renders
+    // only under `compact`, the breadcrumb crumb only under `isPage`. Neither can be
+    // switched off in Flipt, which is what this argument turns on — so say "gated by no
+    // flag", never "rendered unconditionally". Four earlier drafts of this sentence
+    // overstated it in exactly that way.)
+    //
+    // 🔴 `/apps/build` IS IN THIS SET AND IS ITSELF FLAG-GATED (`canAccessAppsBuild`), SO
+    // READ THE SENTENCE ABOVE PRECISELY: it is about whether a flag decides the LINK, not
+    // the destination. That has been true here since before the consolidation — the item
+    // this one replaced pointed at `/apps/mine`, gated on `appBlocksAuthor` — so the
+    // repoint changed the route, not the property. The DELIBERATE SUBSET note above the
+    // platform nav in `IframeHost.tsx` carries the full argument, including why the
+    // repoint is a strict improvement (a refused viewer now gets a public pitch instead
+    // of a 404) rather than a widening.
+    //
+    // 🔴 THAT IS NOT "THIS SURFACE CANNOT READ FLAGS" — it can, and the repo demonstrates
+    // it a few lines away. `<ChromeReviewMenuItem>` (`IframeHost.tsx`) calls
+    // `useOptionalFeatureFlags()` and returns null without `hasAppsStoreAccess(features)`,
+    // and its `useCanReviewListing` narrows again through `resolveClientStoreScope`. It
+    // carries no `href`, which is why it is not in this set — and it is exactly the shape a
+    // gated door WOULD take. So a maintainer this ledger stops has two honest options, not
+    // one: exclude the route, or add it gated the way that item is. What is not an option
+    // is adding it as a plain link.
+    //
+    // SORTED, so a re-ORDER cannot report a route change that did not happen — this rule
+    // is about the SET, and the platform-nav slice's own `toEqual` is what governs order
+    // there. DUPLICATES KEPT: `/apps` and `/apps/activity` each legitimately appear more
+    // than once, and collapsing to a Set would hide an extra item hung on a listed route.
+    expect(
+      links.map((l) => l.href).sort(),
+      'the set of routes the app-block chrome links to has changed. Adding one is a ' +
+        'product decision rather than a detail: NO literal-href item in this chrome is ' +
+        'gated by a FEATURE FLAG except the moderator-gated `/apps/review`, so a ' +
+        'flag-gated destination added here as a plain link keeps being offered after its ' +
+        'flag goes down (that is why `/apps/invites` is excluded; see the DELIBERATE ' +
+        'SUBSET note in `IframeHost.tsx`). The surface CAN read flags — ' +
+        '`ChromeReviewMenuItem` gates itself on `hasAppsStoreAccess(useOptionalFeatureFlags())` ' +
+        '— so "add it GATED, the way that item is" is a real third option alongside ' +
+        'excluding it; adding it ungated is not. Removing one deletes a door out of a ' +
+        'running app. Update this list deliberately, WITH the reason.'
+    ).toEqual([
+      '/apps', // Marketplace — platform nav
+      '/apps', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
+      '/apps', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
+      // 🔴 REPOINTED TWICE, AND THE SORT POSITION MOVED BOTH TIMES — the list is
+      // `.sort()`ed, so neither move is a second change to review. `/apps/mine` →
+      // `/apps/build` (301) sorted it before `/apps/installed`; `/apps/installed` →
+      // `/apps/activity` (301) then sorted the pair back before it ('a' < 'b').
+      '/apps/activity', // App activity — platform nav
+      '/apps/activity', // Manage apps — ⋮ overflow; the pair (c) governs their labels
+      '/apps/build', // My apps — platform nav; the store calls this row "Build"
+      '/apps/review', // Review — platform nav, moderator-gated
+    ]);
   });
 
   it('the whole-chrome parser sees BOTH sections — positive control', () => {
@@ -394,18 +682,49 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // absent and the rule above would pass over exactly the site it was written for.
     const found = parseAllChromeLinks(`
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconPlugConnected />}>Installed apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconPlugConnected />}>App activity</ChromeSurfaceItem>
       <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
-      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/activity" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(found).toHaveLength(2);
-    expect(found.map((f) => f.label)).toEqual(['Installed apps', 'Manage apps']);
+    expect(found.map((f) => f.label)).toEqual(['App activity', 'Manage apps']);
     // …and it skips a template-literal href (the "Recently run" shape).
     expect(
       parseAllChromeLinks(
         '<ChromeSurfaceItem href={`/apps/run/${r.blockId}`} leftSection={<IconApps />}>x</ChromeSurfaceItem>'
       )
     ).toHaveLength(0);
+
+    // 🔴 THE TWO SHAPES ROUND 4 ADDED, AS FIXTURES. Both were measured SURVIVING as
+    // mutants against the pre-round-4 parser (8 passed, the fixture route invisible to
+    // every assertion in this file). A widened parser that silently stopped matching them
+    // again would restore that hole while looking exactly like this — so the shapes are
+    // pinned here, not merely described in the comment above.
+    //
+    // P1: the `<ActionIcon component={Link} href>` shape, which the chrome ALREADY uses
+    // for its `/apps` back-link. No text child and no `leftSection`, so the label comes
+    // from `aria-label` and the icon is null.
+    expect(
+      parseAllChromeLinks(
+        '<ActionIcon component={Link} href="/apps/invites" aria-label="Invites">' +
+          '<IconCode size={16} stroke={1.5} /></ActionIcon>'
+      )
+    ).toEqual([{ tag: 'ActionIcon', href: '/apps/invites', label: 'Invites', icon: null }]);
+
+    // P2: a `ChromeSurfaceItem` with NO `leftSection` — legal, because the primitive types
+    // it `leftSection?: ReactNode`. The old parser required the glyph for INCLUSION.
+    expect(
+      parseAllChromeLinks('<ChromeSurfaceItem href="/apps/invites">Invites</ChromeSurfaceItem>')
+    ).toEqual([{ tag: 'ChromeSurfaceItem', href: '/apps/invites', label: 'Invites', icon: null }]);
+
+    // …and the negative control for `stripAttrExpressions`: an href nested inside ANOTHER
+    // element in the attribute region is that element's, not this one's. Without the
+    // strip, the outer tag would be reported as linking to `/apps/invites`.
+    expect(
+      parseAllChromeLinks(
+        '<ChromeSurfaceItem leftSection={<Foo href="/apps/invites" />}>x</ChromeSurfaceItem>'
+      )
+    ).toEqual([]);
   });
 
   it('the breadcrumb’s first crumb reads "Marketplace" and still links to /apps', () => {
@@ -414,8 +733,17 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const at = src.indexOf(anchor);
     expect(at, `${anchor} was not found in IframeHost.tsx`).toBeGreaterThan(-1);
 
-    // The crumb element: from the testid forward to the closing </Text>.
-    const region = src.slice(at, src.indexOf('</Text>', at));
+    // The crumb element: from the testid forward to the closing </Anchor>.
+    //
+    // 🔴 THE CLOSING TAG IS PART OF THIS ASSERTION'S CORRECTNESS, NOT AN INCIDENTAL
+    // DETAIL. This crumb is rendered with the site's `Anchor`; it used to be a
+    // hand-styled `Text component={Link}`. A stale `</Text>` here does NOT fail
+    // loudly — `indexOf` simply runs on to the NEXT `</Text>` in the file, which is
+    // the dimmed `/` separator a few lines below, and `label` then picks up the
+    // whole span between them. The failure message would talk about the crumb's
+    // COPY while the real cause was the tag. If this crumb is ever re-homed onto a
+    // different element, this string moves with it.
+    const region = src.slice(at, src.indexOf('</Anchor>', at));
     const label = region.slice(region.indexOf('>') + 1).trim();
     expect(
       label,

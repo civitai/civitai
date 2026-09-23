@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,8 +27,13 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
-const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
+
+// The daemon runs from the primary checkout, never from the worktree this console was launched in
+// — see resolveDaemonHome. The console spawns it too, so it has to agree with cli.mjs about where
+// the daemon lives, or the two put different daemons' pids in different pid files.
+const daemonHome = resolveDaemonHome(__dirname, projectRoot);
+const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
+const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
 
 // The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the
 // daemon reads, so this file does no arithmetic on a port and cannot drift from it.
@@ -88,7 +94,7 @@ async function isDaemonRunning() {
 async function startDaemon() {
   // No shell — see cli.mjs startDaemon.
   const child = spawn(process.execPath, [serverScript], {
-    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true,
+    detached: true, stdio: 'ignore', cwd: daemonHome.home, windowsHide: true,
   });
   child.unref();
   writeFileSync(pidFile, String(child.pid));
@@ -156,7 +162,6 @@ async function stopSessionCli(sessionId) {
 // Preset text filters — number keys toggle these
 const PRESETS = [
   { key: '1', label: 'errors', match: (entry) => entry.level === 'error' || entry.level === 'warn' || /error|Error|ERR|WARN/i.test(entry.message) },
-  { key: '2', label: 'bitdex', match: (entry) => /bitdex|BitDex|BITDEX/i.test(entry.message) },
   { key: '3', label: 'trpc', match: (entry) => /trpc|tRPC/i.test(entry.message) },
   { key: '4', label: 'api', match: (entry) => /\bapi\b|\/api\//i.test(entry.message) },
   { key: '5', label: 'prisma', match: (entry) => /prisma|Prisma/i.test(entry.message) },
@@ -777,7 +782,7 @@ Usage:
   npm run dev:daemon -- --kill          ${C.dim}Shutdown daemon${C.r}
 
 ${C.b}Dashboard Keys:${C.r}
-  ${C.b}1${C.r} errors   ${C.b}2${C.r} bitdex   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
+  ${C.b}1${C.r} errors   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
   ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}R${C.r} RGB toggle   ${C.b}A${C.r} auth toggle   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
 `);
 } else {

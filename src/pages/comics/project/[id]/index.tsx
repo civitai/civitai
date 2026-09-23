@@ -144,6 +144,8 @@ function ProjectWorkspace() {
     | 'SeedreamLite'
     | 'OpenAI'
     | 'OpenAI2'
+    | 'OpenAI25Flare'
+    | 'OpenAI25Sunburst'
     | 'Qwen'
     | 'Grok'
     | null
@@ -1327,7 +1329,7 @@ function ProjectWorkspace() {
             {heroImage?.url ? (
               <>
                 <img
-                  src={getEdgeUrl(heroImage.url, { width: 1200 })}
+                  src={getEdgeUrl(heroImage.url, { width: 1200, optimized: true })}
                   alt={`${project.name} hero banner`}
                   className={styles.heroBannerImg}
                   style={{ objectPosition: `center ${heroImagePosition}%` }}
@@ -1354,7 +1356,10 @@ function ProjectWorkspace() {
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
             <div className={styles.headerImage} onClick={() => openSettings()}>
               {project.coverImage?.url ? (
-                <img src={getEdgeUrl(project.coverImage.url, { width: 160 })} alt={project.name} />
+                <img
+                  src={getEdgeUrl(project.coverImage.url, { width: 160, optimized: true })}
+                  alt={project.name}
+                />
               ) : (
                 <IconPhoto size={24} style={{ color: '#909296' }} />
               )}

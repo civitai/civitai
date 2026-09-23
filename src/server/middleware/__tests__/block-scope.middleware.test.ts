@@ -55,24 +55,24 @@ describe('parseSubjectUserId', () => {
 describe('enforceContextBinding', () => {
   it('models:read:self requires matching modelId in query', () => {
     const claims = fakeClaims({ scopes: ['models:read:self'], ctx: { modelId: 12345 } });
-    expect(() => enforceContextBinding(claims, fakeReq({ id: '12345' }))).not.toThrow();
-    expect(() => enforceContextBinding(claims, fakeReq({ id: '99999' }))).toThrow();
+    expect(() => enforceContextBinding(claims, fakeReq({ id: '12345' }), 'models:read:self')).not.toThrow();
+    expect(() => enforceContextBinding(claims, fakeReq({ id: '99999' }), 'models:read:self')).toThrow();
   });
 
   it('ai:write:budgeted requires positive buzzBudget', () => {
     const noBudget = fakeClaims({ scopes: ['ai:write:budgeted'] });
-    expect(() => enforceContextBinding(noBudget, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(noBudget, fakeReq({}), 'ai:write:budgeted')).toThrow();
     const zero = fakeClaims({ scopes: ['ai:write:budgeted'], buzzBudget: 0 });
-    expect(() => enforceContextBinding(zero, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(zero, fakeReq({}), 'ai:write:budgeted')).toThrow();
     const ok = fakeClaims({ scopes: ['ai:write:budgeted'], buzzBudget: 100 });
-    expect(() => enforceContextBinding(ok, fakeReq({}))).not.toThrow();
+    expect(() => enforceContextBinding(ok, fakeReq({}), 'ai:write:budgeted')).not.toThrow();
   });
 
   it('buzz:read:self / social:tip:self block anon subjects', () => {
     const anon = fakeClaims({ sub: 'anon', scopes: ['buzz:read:self'] });
-    expect(() => enforceContextBinding(anon, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(anon, fakeReq({}), 'buzz:read:self')).toThrow();
     const tipAnon = fakeClaims({ sub: 'anon', scopes: ['social:tip:self'] });
-    expect(() => enforceContextBinding(tipAnon, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(tipAnon, fakeReq({}), 'social:tip:self')).toThrow();
   });
 
   it('apps:storage:* block anon subjects (fix 3 / L-M6 no-fail-open)', () => {
@@ -80,11 +80,11 @@ describe('enforceContextBinding', () => {
     // matching enforceContextBinding case, else the unknown-scope reject is
     // bypassed and the scope is accepted with no binding (fail-open).
     const anonRead = fakeClaims({ sub: 'anon', scopes: ['apps:storage:read'] });
-    expect(() => enforceContextBinding(anonRead, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(anonRead, fakeReq({}), 'apps:storage:read')).toThrow();
     const anonWrite = fakeClaims({ sub: 'anon', scopes: ['apps:storage:write'] });
-    expect(() => enforceContextBinding(anonWrite, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(anonWrite, fakeReq({}), 'apps:storage:write')).toThrow();
     const authed = fakeClaims({ sub: 'user:42', scopes: ['apps:storage:write'] });
-    expect(() => enforceContextBinding(authed, fakeReq({}))).not.toThrow();
+    expect(() => enforceContextBinding(authed, fakeReq({}), 'apps:storage:write')).not.toThrow();
   });
 
   it('rejects the removed decorative scopes (no longer known → deny-by-default)', () => {
@@ -100,7 +100,7 @@ describe('enforceContextBinding', () => {
         blockInstanceId: 'bki_A',
       });
       expect(() =>
-        enforceContextBinding(claims, fakeReq({ blockInstanceId: 'bki_A' }))
+        enforceContextBinding(claims, fakeReq({ blockInstanceId: 'bki_A' }), removed)
       ).toThrow();
     }
   });
@@ -110,9 +110,9 @@ describe('enforceContextBinding', () => {
     // Flipped to deny so a malicious-but-approved manifest with a typo'd or
     // future scope can't carry it past the runtime gate.
     const claims = fakeClaims({ scopes: ['weird:scope:value'] });
-    expect(() => enforceContextBinding(claims, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(claims, fakeReq({}), 'weird:scope:value')).toThrow();
     const claimsAdminish = fakeClaims({ scopes: ['admin:write:all'] });
-    expect(() => enforceContextBinding(claimsAdminish, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(claimsAdminish, fakeReq({}), 'admin:write:all')).toThrow();
   });
 
   it('rejects array-form query params on context-bound scopes', () => {
@@ -120,7 +120,11 @@ describe('enforceContextBinding', () => {
     // wrapped handler can't process a different value than the bound one.
     const claims = fakeClaims({ scopes: ['models:read:self'], ctx: { modelId: 12345 } });
     expect(() =>
-      enforceContextBinding(claims, fakeReq({ id: ['12345', '99999'] as unknown as string }))
+      enforceContextBinding(
+        claims,
+        fakeReq({ id: ['12345', '99999'] as unknown as string }),
+        'models:read:self'
+      )
     ).toThrow();
   });
 
@@ -130,7 +134,7 @@ describe('enforceContextBinding', () => {
     // block-scope.anytoken-mode.test.ts. A token still carrying the dead scope
     // is now an UNKNOWN scope → deny-by-default at runtime.
     const authed = fakeClaims({ scopes: ['catalog:read'] });
-    expect(() => enforceContextBinding(authed, fakeReq({}))).toThrow();
+    expect(() => enforceContextBinding(authed, fakeReq({}), 'catalog:read')).toThrow();
   });
 });
 

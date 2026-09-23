@@ -25,9 +25,56 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * sysRedis is a stateful in-memory fake so the atomic INCRBY accumulation (the
  * whole point of the TOCTOU-safe design) is exercised for real. The limit
  * resolver is mocked so each case can pin the ceilings it is testing.
+ *
+ * 🔴 THE WHOLE FILE RUNS ON A FROZEN CLOCK, and that is load-bearing, not
+ * tidiness. Both key shapes under test are derived from the WALL CLOCK — the
+ * velocity key is `floor(Date.now()/1000/60)`, a FIXED 60s window (the service's
+ * own `spendCapVelocityKey`), and the daily key is a UTC-day string. Meanwhile
+ * most velocity cases loop to a ceiling (up to 3,000 iterations for `platform`)
+ * and then assert an EXACT denial count. Those assertions are only sound while
+ * the bucket is constant for the whole case: if a boundary falls inside the
+ * loop the counter restarts mid-run, the expected denials never happen, and the
+ * case fails for a reason that has nothing to do with the code.
+ *
+ * ⚠️ The originating report — `Unit tests (1)` red on civitai#4668, then green
+ * on a re-run of the identical commit — is REPEATED FROM THE RECORD, not
+ * measured here: that PR's rollup now shows only its latest run, so the red is
+ * no longer readable. What IS measured is everything below.
+ *
+ * MEASURED, not assumed. 🔴 NAME THE PROBE OR THE NUMBER IS NOT RE-DERIVABLE:
+ * with **`Date.now()` alone** advanced 100ms per CALL, starting 30s into a
+ * bucket (a slow CI run, made deterministic), these cases go red at
+ * `origin/main` — count them, do not trust a total:
+ *   - `DENIES + REFUNDS the daily reserve when the short-window gen ceiling is exceeded`
+ *   - `enforces velocity even for 0-cost gens (a burst of cache-hits is bounded)`
+ *   - `enforces the \`trusted\` tier ceilings, not a global constant`
+ *   - `enforces the \`platform\` tier ceilings, not a global constant`
+ *   - `…and would have been throttled at the 120 ceiling (still the \`standard\` tier)`
+ * Freezing the clock takes that to zero. A probe that ALSO ticks `new Date()`
+ * reddens one more (`standard`), so the set is a property of the probe as well
+ * as of the file — which is why the probe is specified rather than described.
+ * `runs on a FROZEN clock` below is the guard that keeps it frozen.
+ *
+ * ⚠️ WHAT THE FREEZE DOES NOT BUY, disclosed because the position below reads
+ * like an unqualified virtue: parking mid-UTC-day means this file CANNOT catch
+ * a daily key that derives a LOCAL date instead of a UTC one. Measured —
+ * mutating `spendCapWindowKey` to `toLocaleDateString('en-CA')` survives the
+ * whole file under a UTC-negative TZ (America/Chicago) and kills 11 cases under
+ * `TZ=Pacific/Auckland`. That is PRE-EXISTING (the base file survives it too)
+ * and no TZ is pinned in `vitest.config.mts`, so it is a gap this change
+ * neither creates nor closes. Closing it would mean running the midnight
+ * straddle at BOTH `23:30Z` and `00:30Z`, which is TZ-independent.
  */
 
 const SPEND_CAP_PREFIX = 'system:blocks:app-spend-cap';
+
+/**
+ * Mid-bucket AND mid-day on purpose: 30s into a 60s velocity window and 12
+ * hours from either UTC midnight, so neither boundary is anywhere near, and a
+ * case that sets its own time (the rollover and midnight-straddle cases below)
+ * is moving away from a known-quiet position rather than off an edge.
+ */
+const FROZEN_CLOCK = new Date('2026-07-31T12:00:30Z');
 
 const { store, ttls, mockSysRedis, mockResolveAppCapLimits } = vi.hoisted(() => {
   const store = new Map<string, number>();
@@ -102,6 +149,12 @@ function velocityKey(app = APP_BLOCK_ID): string {
 }
 
 beforeEach(() => {
+  // 🔴 FIRST, before anything derives a key: freeze the clock so every case is
+  // judged against ONE velocity bucket and ONE UTC day. See the file header.
+  // Cases that need time to move (the window rollover, the midnight straddle)
+  // call `vi.setSystemTime` themselves and step off this position deliberately.
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_CLOCK);
   store.clear();
   ttls.clear();
   mockSysRedis.incrBy.mockClear();
@@ -118,7 +171,9 @@ beforeEach(() => {
     store.set(key, next);
     return next;
   });
-  mockSysRedis.ttl.mockImplementation(async (key: string) => (ttls.has(key) ? ttls.get(key)! : 1000));
+  mockSysRedis.ttl.mockImplementation(async (key: string) =>
+    ttls.has(key) ? ttls.get(key)! : 1000
+  );
   // 🔴 `expire` needs its implementation RE-ESTABLISHED, not just `mockClear()`ed:
   // mockClear wipes call history but leaves any `mockRejectedValue` in place, so a
   // fault-injection case would leak its failure into every later test in the file.
@@ -134,6 +189,53 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('the harness itself', () => {
+  /**
+   * 🔴 This pins the PRECONDITION every velocity case below relies on, because
+   * a case cannot assert it about itself: they loop to a ceiling and then
+   * assert an exact denial count, which is only sound while `floor(now/60s)`
+   * holds still for the whole loop.
+   *
+   * It asserts the two things that can independently break that, and nothing
+   * else: (1) the clock is frozen at all, and (2) it is frozen somewhere with
+   * room on both sides — a freeze parked 200ms before a bucket rollover is
+   * still a freeze, and would still be sound here, but it is one careless
+   * `setSystemTime` edit away from not being, and the margin is free.
+   *
+   * ⚠️ Do NOT rewrite it as the obvious busy-wait — a spin proving real time
+   * moved while `Date.now()` did not. Measured in this repo (vitest 4.1.11):
+   * under `vi.useFakeTimers()` **`performance.now()`, `process.hrtime()` and
+   * `process.hrtime.bigint()` are frozen too**, not just `Date`, so a spin keyed
+   * on any of those never terminates — one ran 32s to its iteration cap.
+   *
+   * 🔴 An earlier version of this comment concluded from that "there is no
+   * real-time source in scope to compare against". **That was FALSE and is
+   * retracted**: `process.uptime()` is NOT faked, so such a test IS writable.
+   * Measured — across one busy spin it advances by tens of milliseconds while
+   * `Date.now()` and `performance.now()` both move exactly **0**. (Per this
+   * file's own rule above, the magnitude is not quoted as a bare figure: it is
+   * a property of the spin's LENGTH, which nothing here pins. The ZERO is the
+   * re-derivable part, and it is the part that matters.)
+   *
+   * The reason not to write it is narrower than the retracted one: it would pin
+   * a deterministic precondition on a spin whose TERMINATION TIME depends on
+   * the wall clock, in the one file whose purpose is removing wall-clock
+   * dependence. Keep the assertion on STATE, not on elapsed time.
+   */
+  it('runs on a FROZEN clock, parked clear of both the bucket and UTC-day edges', () => {
+    expect(vi.isFakeTimers()).toBe(true);
+
+    const now = Date.now();
+    const secondsIntoBucket = (now / 1000) % BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS;
+    expect(secondsIntoBucket).toBeGreaterThan(5);
+    expect(secondsIntoBucket).toBeLessThan(BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS - 5);
+
+    const msIntoUtcDay = now % 86_400_000;
+    expect(msIntoUtcDay).toBeGreaterThan(60_000);
+    expect(msIntoUtcDay).toBeLessThan(86_400_000 - 60_000);
+  });
 });
 
 describe('cap constants (the GLOBAL CEILINGS that clamp every tier)', () => {
@@ -376,7 +478,9 @@ describe('THE REGRESSION THIS PR FIXES — a legitimately busy app is no longer 
     for (let i = 0; i < BUSY_APP_GENS_PER_WINDOW; i++) {
       if (!(await reserveAppSpend(APP_BLOCK_ID, 100)).allowed) denied++;
     }
-    expect(denied).toBe(BUSY_APP_GENS_PER_WINDOW - APP_SPEND_TIER_CAP_LIMITS.standard.velocityMaxGens);
+    expect(denied).toBe(
+      BUSY_APP_GENS_PER_WINDOW - APP_SPEND_TIER_CAP_LIMITS.standard.velocityMaxGens
+    );
     expect(denied).toBe(180);
   });
 
@@ -492,9 +596,9 @@ describe('refundAppSpend', () => {
     // including keys written by an earlier deploy. Per-app limits must not have
     // moved the key shape.
     const res = await reserveAppSpend(APP_BLOCK_ID, 42);
-    expect(res.dailyKey).toBe(`${SPEND_CAP_PREFIX}:${APP_BLOCK_ID}:${new Date()
-      .toISOString()
-      .slice(0, 10)}`);
+    expect(res.dailyKey).toBe(
+      `${SPEND_CAP_PREFIX}:${APP_BLOCK_ID}:${new Date().toISOString().slice(0, 10)}`
+    );
   });
 
   it('refunds the PINNED key even when the request straddles midnight UTC', async () => {

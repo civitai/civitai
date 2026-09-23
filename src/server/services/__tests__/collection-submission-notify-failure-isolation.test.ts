@@ -122,4 +122,15 @@ describe('saveItemInCollections — submission-notify failure isolation', () => 
     const call = mockCreateNotification.mock.calls[0][0] as { userIds: number[] };
     expect(call.userIds).not.toContain(SUBMITTER_ID);
   });
+
+  it('does not notify a re-save of an item already in the collection under the same tag', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 1, collectionId: COLLECTION_ID, tagId: null, addedById: SUBMITTER_ID, note: null },
+    ]);
+    mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
+
+    await expect(submit()).resolves.toBe('added');
+
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
 });

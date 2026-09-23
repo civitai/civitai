@@ -26,7 +26,7 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * `isAppListingsEnabled`, which ORs both flags), which is why this query DOES
  * widen with the store — in deliberate contrast to `blocks.getNavSummary`, whose
  * `enabled` stays on `appBlocks` alone because ITS proc gates on
- * `enforceAppBlocksFlag`. See `AppsSubNav.storeGate.browser.test.tsx`.
+ * `enforceAppBlocksFlag`. See `AppsRailNav.storeGate.browser.test.tsx`.
  */
 
 function makeCard(id: string, name: string): ListingCard {
@@ -44,6 +44,7 @@ function makeCard(id: string, name: string): ListingCard {
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
     kindData: {
       kind: 'onsite',
       appBlockId: `blk-${id}`,
@@ -61,9 +62,32 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => mocks.flags }));
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => mocks.flags,
+  useOptionalFeatureFlags: () => mocks.flags,
+}));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-
 // mock): a hand-written replacement silently breaks every importer the day

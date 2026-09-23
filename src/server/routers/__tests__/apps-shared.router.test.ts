@@ -22,6 +22,7 @@ const {
   mockCheckAppendRl,
   mockCheckVoteRl,
   mockCheckReportRl,
+  mockCheckWithdrawRl,
   mockThrowOnBlockedUserContent,
   mockAuditPromptServer,
   mockIsRevoked,
@@ -46,6 +47,7 @@ const {
     mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
     mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
+    mockCheckWithdrawRl: vi.fn(async () => ({ allowed: true })),
     mockThrowOnBlockedUserContent: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
     mockIsRevoked: vi.fn(async () => false),
@@ -69,6 +71,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
   checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
+  checkSharedWithdrawRateLimit: (...a: unknown[]) => mockCheckWithdrawRl(...a),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -83,12 +86,23 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
-// NOTE: the report op's Discord notify does a dynamic `import('~/env/server')`; we
-// deliberately do NOT mock env (mocking it clobbers env.LOGGING and breaks the trpc
-// import chain). In the test env DISCORD_WEBHOOK_MOD_ALERTS is unset, so the notify
-// short-circuits to a no-op before any fetch — exactly the fire-and-forget path.
+// NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
+// Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
+// are gone. Nothing else renders the reporter's `reason`: it is stored raw in the
+// `shared_kv_reports` row and logged raw as a structured Axiom field, and its length is
+// bounded by the input schema (`z.string().max(500)`), not by that helper. What this op
+// still owes is the row plus the Axiom emit, and both are asserted below.
 
-import { appsSharedRouter, appsModRouter, sanitizeDiscordText } from '../apps-shared.router';
+import {
+  appendSharedRow,
+  appsModRouter,
+  appsSharedRouter,
+  reportSharedRow,
+  unvoteSharedRow,
+  updateSharedRow,
+  voteSharedRow,
+  withdrawSharedRow,
+} from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -159,6 +173,7 @@ beforeEach(() => {
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockCheckReportRl.mockResolvedValue({ allowed: true });
+  mockCheckWithdrawRl.mockResolvedValue({ allowed: true });
   mockThrowOnBlockedUserContent.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -269,6 +284,38 @@ describe('H3 min-trust gate (write + vote)', () => {
 
   it('anon may READ list/counts', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items).toEqual([]);
+  });
+
+  it('🔴 a VANISHED subject is refused on a READ even with the flag base-`enabled: true`', async () => {
+    // The READ ops have no second belt: `append`/`vote` catch a vanished subject on
+    // the min-trust gate above, `list`/`get` never reach it, so the shared-storage
+    // flag was the only thing standing there — and its no-user branch is a GLOBAL
+    // eval, which returns the flag's BASE value rather than a guaranteed `false`.
+    // `mockIsSharedEnabled` is forced TRUE here to model the GA base flip; before the
+    // fix, `list` resolved and served shared rows to a token whose subject is gone.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'user:999' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
+    await expect(caller().list({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+    await expect(caller().get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+  });
+
+  it('POSITIVE CONTROL: an ANON token still READS under the same base-true flag', async () => {
+    // The anon path must NOT be swept up by the refusal above — `sub:'anon'` has no
+    // subject to vanish, and a global eval of a base-enabled flag is precisely the
+    // intended GA widening. Without this, the previous test is indistinguishable from
+    // a change that simply closed shared reads.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
     const out = await caller().list({ blockToken: 't' });
     expect(out.items).toEqual([]);
   });
@@ -712,44 +759,6 @@ describe('FIX 1 abuse observability (alert emits)', () => {
   });
 });
 
-// FIX 1 (Discord phishing vector): the reporter-supplied `reason` is embedded in
-// the mod-alerts Discord message. A hostile reporter must not be able to plant a
-// masked/phishing link or other markdown. `sanitizeDiscordText` neutralizes it and
-// the embed field wraps the result in an inline code span.
-describe('sanitizeDiscordText (mod-alert reason hardening)', () => {
-  it('neutralizes a masked link + backticks (no live markdown survives)', () => {
-    const hostile = 'click [here](https://phish.example) `rm -rf` **bold** ~~s~~ ||spoiler|| > q';
-    const out = sanitizeDiscordText(hostile);
-    // structural markdown / masked-link characters are gone
-    for (const ch of ['[', ']', '(', ')', '`', '*', '_', '~', '|', '>']) {
-      expect(out).not.toContain(ch);
-    }
-    expect(out).not.toMatch(/\]\(/); // the masked-link `](` sequence specifically
-    // the human-readable words survive as inert plain text
-    expect(out).toContain('here');
-    expect(out).toContain('https://phish.example');
-  });
-
-  it('the embed field value (code-span wrapped) contains no live masked link', () => {
-    // mirror the exact construction used in notifyModsOfSharedReport
-    const fieldValue = `\`${sanitizeDiscordText('[x](http://evil) `boom`') || 'user-report'}\``;
-    expect(fieldValue).not.toMatch(/\]\(/); // no masked link
-    // exactly two backticks (the wrapping span) — none survived from the input
-    expect((fieldValue.match(/`/g) ?? []).length).toBe(2);
-    expect(fieldValue.startsWith('`')).toBe(true);
-    expect(fieldValue.endsWith('`')).toBe(true);
-  });
-
-  it('an all-markdown reason collapses to empty → falls back to user-report', () => {
-    const fieldValue = `\`${sanitizeDiscordText('[]()``') || 'user-report'}\``;
-    expect(fieldValue).toBe('`user-report`');
-  });
-
-  it('caps the sanitized output at 500 chars', () => {
-    expect(sanitizeDiscordText('a'.repeat(1000)).length).toBe(500);
-  });
-});
-
 describe('H4 rate limits', () => {
   it('append over the daily cap → TOO_MANY_REQUESTS', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
@@ -766,6 +775,46 @@ describe('H4 rate limits', () => {
     await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
+  });
+
+  // `withdraw` was the ONE write op on this surface with NO bucket at all. These
+  // pin the fix from the three directions that can each be wrong independently:
+  // that it refuses over the cap, that it refuses BEFORE taking a connection, and
+  // — the one a bare "it 429s" test would not catch — that it spends its OWN
+  // bucket. Without the last, wiring it to the append or vote limiter would pass
+  // the first two while silently coupling a user's ability to delete their own
+  // rows to their submitting or voting budget.
+  it('withdraw over the per-minute cap → TOO_MANY_REQUESTS (before any DB work)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckWithdrawRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 17 });
+    await expect(caller().withdraw({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      // 17 is pairwise-distinct from every other retryAfter in this file, so a
+      // handler that echoed a sibling bucket's value (or a constant) fails here.
+      message: 'Too many withdrawals — retry in 17s',
+    });
+    // Refused before a pooled connection is taken — the point of placing the
+    // limiter ahead of the transaction rather than inside it.
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('withdraw spends its OWN bucket — not the append or vote one', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await caller().withdraw({ blockToken: 't', key: 'k' });
+    // Keyed on (subject user, appBlockId) exactly like every sibling bucket.
+    expect(mockCheckWithdrawRl).toHaveBeenCalledWith(42, 'apb_test');
+    expect(mockCheckAppendRl).not.toHaveBeenCalled();
+    expect(mockCheckVoteRl).not.toHaveBeenCalled();
+  });
+
+  it('withdraw under the cap proceeds to the DELETE', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) =>
+      sql.startsWith('DELETE') ? { rows: [], rowCount: 1 } : { rows: [], rowCount: 0 }
+    );
+    const out = await caller().withdraw({ blockToken: 't', key: 'k' });
+    expect(out).toEqual({ ok: true, deleted: true });
+    expect(mockCheckWithdrawRl).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1108,7 +1157,7 @@ describe('M4 mod-purge (session moderatorProcedure)', () => {
 // payload stored alongside the MODERATED {title, body}. The belt runs on
 // title/body ONLY; `data` is contained by the opaque-origin sandbox (same trust
 // boundary as the rest of shared storage). Bytes count toward the whole-value cap
-// + the per-app quota. See the appendValueInput note in apps-shared.router.ts.
+// + the per-app quota. See the sharedValueInput note in apps-shared.router.ts.
 describe('append `data` blob (opaque, unmoderated app payload)', () => {
   function findInsert() {
     return (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
@@ -1566,5 +1615,188 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
         caller().update({ blockToken: 't', key: 'k', value: { title: 'x' } })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });
+  });
+});
+
+// ── THE SEAM: the six exported write functions ARE the REST surface ───────────
+//
+// 🔴 EVERY test above this line drives the tRPC caller. That proves the six write
+// bodies behave when reached through `appsSharedRouter` — and it proves NOTHING
+// about the path `/api/v1/blocks/shared-storage/*` actually takes, which is a
+// bare bearer STRING handed straight to the exported function. Those are two
+// entry points into one body, and "verified in isolation" is exactly how a seam
+// nobody owns ships broken: the route tests mock the function away, and the tests
+// above never call it with a bearer.
+//
+// So call the exported functions DIRECTLY, with the argument shape the REST
+// adapters pass, and re-assert the three security behaviours that a happy-path
+// route test cannot see. Table-driven over all six, because a gate wired on five
+// of six is the realistic failure, not a gate wired on none.
+describe('REST entry shape — the six exported write functions carry the full ladder', () => {
+  // Pairwise-distinct, non-zero fixture values so a transposition (key passed as
+  // reason, uid passed as appBlockId) and a hardcoded constant both die.
+  const KEY = 'k-seam-771';
+  const REASON = 'seam-reason-883';
+  const VALUE = { title: 'seam title 559', body: 'seam body 661', data: { n: 997 } };
+
+  const OPS: Array<{
+    name: string;
+    call: () => Promise<unknown>;
+    /** The bucket this op MUST spend, and the two it must not. */
+    bucket: () => typeof mockCheckAppendRl;
+    otherBuckets: () => Array<typeof mockCheckAppendRl>;
+    retryAfter: number;
+    tooManyMessage: string;
+  }> = [
+    {
+      name: 'appendSharedRow',
+      call: () => appendSharedRow('tok_seam', VALUE),
+      bucket: () => mockCheckAppendRl,
+      otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
+      retryAfter: 11,
+      tooManyMessage: 'Too many submissions — retry in 11s',
+    },
+    {
+      name: 'updateSharedRow',
+      call: () => updateSharedRow('tok_seam', KEY, VALUE),
+      bucket: () => mockCheckAppendRl,
+      otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
+      retryAfter: 13,
+      tooManyMessage: 'Too many submissions — retry in 13s',
+    },
+    {
+      name: 'voteSharedRow',
+      call: () => voteSharedRow('tok_seam', KEY),
+      bucket: () => mockCheckVoteRl,
+      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      retryAfter: 19,
+      tooManyMessage: 'Too many votes — retry in 19s',
+    },
+    {
+      name: 'unvoteSharedRow',
+      call: () => unvoteSharedRow('tok_seam', KEY),
+      bucket: () => mockCheckVoteRl,
+      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      retryAfter: 23,
+      tooManyMessage: 'Too many votes — retry in 23s',
+    },
+    {
+      name: 'withdrawSharedRow',
+      call: () => withdrawSharedRow('tok_seam', KEY),
+      bucket: () => mockCheckWithdrawRl,
+      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckReportRl],
+      retryAfter: 29,
+      tooManyMessage: 'Too many withdrawals — retry in 29s',
+    },
+    {
+      name: 'reportSharedRow',
+      call: () => reportSharedRow('tok_seam', KEY, REASON),
+      bucket: () => mockCheckReportRl,
+      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckWithdrawRl],
+      retryAfter: 31,
+      tooManyMessage: 'Too many reports — retry in 31s',
+    },
+  ];
+
+  it.each(OPS)('$name: the bearer token is VERIFIED, not trusted', async ({ call }) => {
+    mockVerifyBlockToken.mockResolvedValueOnce(null);
+    await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    // The token string this surface receives is the ONLY credential, so a body
+    // that reached the DB before verifying it would be an unauthenticated write.
+    expect(mockVerifyBlockToken).toHaveBeenCalledWith('tok_seam');
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it.each(OPS)(
+    '$name: an ANON token is refused UNAUTHORIZED, before any DB work',
+    async ({ call }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+      await expect(call()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(OPS)(
+    '$name: a subject BELOW min-trust is refused, before any DB work',
+    async ({ call }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      // 2 days old: fails the account-age leg of assertSharedWriteTrust while every
+      // other signal passes, so the refusal can only come from the trust gate.
+      mockGetSessionUser.mockResolvedValueOnce(
+        trustedUser({ createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) })
+      );
+      await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(OPS)(
+    '$name: a token WITHOUT apps:storage:shared:write is refused FORBIDDEN',
+    async ({ call }) => {
+      // The read scope alone must not reach a write body — the routes all declare
+      // the write scope in `withBlockScope`, but that middleware is mocked out of
+      // every route test, so this is the only place the claim is actually checked.
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: [READ] }));
+      await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockPool.query).not.toHaveBeenCalled();
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(OPS)(
+    '$name: over its rate-limit cap → TOO_MANY_REQUESTS, refused BEFORE a connection is taken',
+    async ({ call, bucket, retryAfter, tooManyMessage }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      bucket().mockResolvedValueOnce({ allowed: false, retryAfterSeconds: retryAfter });
+      await expect(call()).rejects.toMatchObject({
+        code: 'TOO_MANY_REQUESTS',
+        // Every retryAfter in this table is distinct and non-zero, so a body that
+        // echoed a sibling bucket's result — or a constant — fails here rather
+        // than passing on a shared value.
+        message: tooManyMessage,
+      });
+      // 🔴 The limiter's POSITION is the claim, not its presence: refused before a
+      // pooled connection AND before the first query, so a flood costs neither.
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(mockPool.query).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(OPS)(
+    '$name: spends its OWN bucket, keyed on (subject user, appBlockId)',
+    async ({ call, bucket, otherBuckets }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockAppendDataPath();
+      await call().catch(() => undefined);
+      expect(bucket()).toHaveBeenCalledWith(42, 'apb_test');
+      for (const other of otherBuckets()) expect(other).not.toHaveBeenCalled();
+    }
+  );
+
+  // POSITIVE CONTROL for the five refusal cases above. Without it, a harness that
+  // rejected everything (a broken `validClaims`, a mock left rejecting) would make
+  // all of them pass while proving nothing — a reassuring red is as blind as a
+  // reassuring zero.
+  it('POSITIVE CONTROL: a trusted, in-scope, under-cap subject reaches the data path', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    const out = await appendSharedRow('tok_seam', VALUE);
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(mockPool.connect).toHaveBeenCalled();
+  });
+
+  it('reportSharedRow forwards the REASON it was given, not a default', async () => {
+    // Guards the one write whose third argument is free text: a body that dropped
+    // it would still return { ok: true } and look fine.
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValue({ rows: [{ id: 1 }], rowCount: 1 });
+    await reportSharedRow('tok_seam', KEY, REASON);
+    const reportInsert = mockPool.query.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes('shared_kv_reports')
+    );
+    expect(reportInsert?.[1]).toEqual(expect.arrayContaining([KEY, 42, REASON]));
   });
 });

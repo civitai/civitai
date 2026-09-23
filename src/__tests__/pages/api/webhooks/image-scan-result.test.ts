@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import handler from '~/pages/api/webhooks/image-scan-result';
+import { processImageScanWorkflow } from '~/server/services/image-scan-result.service';
+import { processImageScanningWorkflow } from '~/server/services/image-scanning-result.service';
+import { clickhouse } from '~/server/clickhouse/client';
+import { signalClient } from '~/utils/signal-client';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import { TagSource, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { NsfwLevel } from '~/server/common/enums';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 
 const {
@@ -269,7 +270,6 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesModRules: vi.fn().mockResolvedValue([]),
   queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
   enqueueImageIngestion: vi.fn().mockResolvedValue(undefined),
-  imageScanTypes: [3, 9], // ImageScanType.WD14, ImageScanType.SpineRating
 }));
 
 // Render a Prisma tagged-template call the way the driver does: nested `Prisma.sql` fragments
@@ -401,360 +401,393 @@ describe('image-scan-result webhook - pipeline tests', () => {
     });
   });
 
-  const runWebhook = (body: any) => {
-    const req = {
-      method: 'POST',
-      query: { token: 'mock-webhook-token' },
-      headers: { host: 'localhost:3000' },
-      body,
-    } as unknown as NextApiRequest;
+  it('creates a never-before-seen tag with the columns the Tag table requires', async () => {
+    const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+    let tagInsert: { text: string; params: any[] } | undefined;
 
-    const res = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn().mockImplementation((val) => res),
-      send: vi.fn().mockImplementation((val) => res),
-    } as unknown as NextApiResponse;
+    mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (!strings.join('').includes('INSERT INTO "Tag"')) return passthrough(query, ...values);
 
-    return { promise: handler(req, res), res };
-  };
-
-  it('should prevent tag-bleed between Clavata (ignored) and WD14 (not ignored) concurrently', async () => {
-    const reqA = runWebhook({
-      id: 1,
-      status: 0,
-      source: TagSource.Clavata,
-      tags: [{ tag: 'hate symbols', confidence: 95 }],
+      tagInsert = renderSql(strings, values);
+      // Model the real 23502: both columns are NOT NULL with no DB default.
+      for (const column of ['"updatedAt"', 'target']) {
+        if (!tagInsert.text.includes(column))
+          throw new Error(`Raw query failed. Code: \`23502\`. "Tag" insert omits ${column}`);
+      }
+      return [{ id: 999, name: 'never seen tag', nsfwLevel: 1, type: 'UserGenerated' }];
     });
 
-    const reqB = runWebhook({
-      id: 2,
-      status: 0,
-      source: TagSource.WD14,
-      tags: [{ tag: 'hate symbols', confidence: 95 }],
+    await processImageScanWorkflow({
+      workflowId: 'workflow-with-an-unseen-tag',
+      status: 'succeeded',
+      imageId: 9,
+      steps: [
+        {
+          $type: 'wdTagging',
+          output: { tags: { 'never seen tag': 0.9 }, rating: { general: 0.9 } },
+        },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        { $type: 'mediaHash', output: { hashes: { perceptual: '6F51B11C49611E0E' } } },
+      ] as any,
     });
 
-    await Promise.all([reqA.promise, reqB.promise]);
+    expect(tagInsert?.text).toContain('"updatedAt"');
+    expect(tagInsert?.text).toContain('target');
+    expect(tagInsert?.params.some((param) => param instanceof Date)).toBe(true);
 
-    expect(reqA.res.status).toHaveBeenCalledWith(200);
-    expect(reqB.res.status).toHaveBeenCalledWith(200);
-
-    const dbUpdates = mockDbWrite.image.update.mock.calls;
-    const updateForImage2 = dbUpdates.find((call: any) => call[0].where.id === 2);
-
-    expect(updateForImage2).toBeDefined();
-    expect(updateForImage2[0].data.nsfwLevel).toBe(32); // Blocked
-    expect(updateForImage2[0].data.ingestion).toBe(ImageIngestionStatus.Scanned);
-
-    const insertedTags = [
-      ...mockInsertTagsOnImageNew.mock.calls.flatMap((call) => call[0]),
-      ...mockUpsertTagsOnImageNew.mock.calls.flatMap((call) => call[0]),
-    ];
-    const tagForImage1 = insertedTags.find((t) => t.imageId === 1 && t.tagId === 100);
-    const tagForImage2 = insertedTags.find((t) => t.imageId === 2 && t.tagId === 100);
-
-    expect(tagForImage1).toBeDefined();
-    expect(tagForImage1.disabled).toBe(true); // Clavata ignores hate symbols
-
-    expect(tagForImage2).toBeDefined();
-    expect(tagForImage2.disabled).toBe(false); // WD14 does not ignore hate symbols
+    const written = mockInsertTagsOnImageNew.mock.calls.flatMap((call) => call[0]);
+    expect(written.some((tag: any) => tag.imageId === 9 && tag.tagId === 999)).toBe(true);
   });
 
-  it('should set ingestion to NotFound when status is NotFound', async () => {
-    const req = runWebhook({
-      id: 3,
-      status: 1, // NotFound
-      source: TagSource.WD14,
-      tags: [],
-    });
+  describe('a throw while the image is still Pending', () => {
+    const scanSteps = (tag: string) =>
+      [
+        { $type: 'wdTagging', output: { tags: { [tag]: 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        { $type: 'mediaHash', output: { hashes: { perceptual: '6F51B11C49611E0E' } } },
+      ] as any;
 
-    await req.promise;
+    it('terminalizes to Error with a bumped retryCount instead of leaving it Pending', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      let markedError: { text: string; params: any[] } | undefined;
 
-    expect(req.res.status).toHaveBeenCalledWith(200);
-    expect(mockDbWrite.image.updateMany).toHaveBeenCalledWith({
-      where: { id: 3, ingestion: { in: ['Pending', 'Error'] } },
-      data: { ingestion: ImageIngestionStatus.NotFound },
-    });
-  });
-
-  it('should increment retryCount when status is Unscannable', async () => {
-    const req = runWebhook({
-      id: 4,
-      status: 2, // Unscannable
-      source: TagSource.WD14,
-      tags: [],
-    });
-
-    await req.promise;
-
-    expect(req.res.status).toHaveBeenCalledWith(200);
-    const queryCall = imageUpdates.find(
-      (update) => update.text.includes('retryCount') && update.params.includes(4)
-    );
-    expect(queryCall).toBeDefined();
-  });
-
-  it('should set needsReview: minor when minor tag is present and image is NSFW', async () => {
-    const req = runWebhook({
-      id: 5,
-      status: 0,
-      source: TagSource.WD14,
-      tags: [
-        { tag: 'teen', confidence: 95 },
-        { tag: 'r', confidence: 95 },
-      ],
-    });
-
-    await req.promise;
-
-    expect(req.res.status).toHaveBeenCalledWith(200);
-    const dbUpdates = mockDbWrite.image.update.mock.calls;
-    const updateForImage5 = dbUpdates.find((call: any) => call[0].where.id === 5);
-    expect(updateForImage5).toBeDefined();
-    expect(updateForImage5[0].data.needsReview).toBe('minor');
-  });
-
-  it('should set needsReview: poi when POI tag is present', async () => {
-    const req = runWebhook({
-      id: 6,
-      status: 0,
-      source: TagSource.WD14,
-      tags: [
-        { tag: 'potential celebrity', confidence: 95 },
-        { tag: 'pg', confidence: 95 },
-      ],
-    });
-
-    await req.promise;
-
-    expect(req.res.status).toHaveBeenCalledWith(200);
-    const dbUpdates = mockDbWrite.image.update.mock.calls;
-    const updateForImage6 = dbUpdates.find((call: any) => call[0].where.id === 6);
-    expect(updateForImage6).toBeDefined();
-    expect(updateForImage6[0].data.needsReview).toBe('poi');
-  });
-
-  it('should not update nsfwLevel if nsfwLevelLocked is true', async () => {
-    const req = runWebhook({
-      id: 7,
-      status: 0,
-      source: TagSource.WD14,
-      tags: [
-        { tag: 'some-tag', confidence: 95 },
-        { tag: 'x', confidence: 95 },
-      ],
-    });
-
-    await req.promise;
-
-    expect(req.res.status).toHaveBeenCalledWith(200);
-    const dbUpdates = mockDbWrite.image.update.mock.calls;
-    const updateForImage7 = dbUpdates.find((call: any) => call[0].where.id === 7);
-    expect(updateForImage7).toBeDefined();
-    expect(updateForImage7[0].data.nsfwLevel).toBeUndefined(); // locked, so undefined (not updated)
-  });
-
-  describe('webhook body strings never reach SQL text', () => {
-    const INJECTED = `1 OR 1=1) < 5 AND disabled = false -- `;
-
-    it('rejects a non-numeric hash before it can reach the ClickHouse query', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-
-      const req = runWebhook({
-        id: 8,
-        status: 0,
-        source: TagSource.ImageHash,
-        hash: INJECTED,
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        const text = strings.join('');
+        if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
+        if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'")) {
+          markedError = renderSql(strings, values);
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+        }
+        return passthrough(query, ...values);
       });
-      await req.promise;
 
-      expect(mockClickhouseQuery).not.toHaveBeenCalled();
-      expect(req.res.status).toHaveBeenCalledWith(400);
-    });
+      // Must resolve: rejecting 400s the webhook, and the orchestrator redelivers a
+      // workflow that is already terminal.
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-whose-processing-fails',
+          status: 'succeeded',
+          imageId: 10,
+          steps: scanSteps('a tag that cannot be created'),
+        })
+      ).resolves.toBeUndefined();
 
-    it('logs a match against the parsed hash, not the string the scanner sent', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-      mockClickhouseQuery.mockResolvedValue([{ count: 1 }]);
-
-      const req = runWebhook({ id: 16, status: 0, source: TagSource.ImageHash, hash: ' 42 ' });
-      await req.promise;
-
-      const match = mockLogToAxiom.mock.calls.find(
-        (call) => call[0]?.message === 'Image pHash matched a blocked image'
+      expect(markedError?.text).toContain(`'{retryCount}'`);
+      expect(markedError?.params).toContain(ImageIngestionStatus.Error);
+      expect(markedError?.params).toContain(10);
+      const stamped = markedError?.params.find(
+        (param) => typeof param === 'string' && param.includes('processing-failed')
       );
-      expect(match).toBeDefined();
-      expect(match![0].pHash).toBe('42');
+      expect(stamped).toBeDefined();
     });
 
-    it('passes a valid hash to ClickHouse as digits only', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-
-      const req = runWebhook({
-        id: 9,
-        status: 0,
-        source: TagSource.ImageHash,
-        hash: '-1234567890123456789',
+    it('leaves a hard-blocked image Blocked rather than flipping it back to Error', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        if (strings.join('').includes('INSERT INTO "Tag"'))
+          throw new Error('Raw query failed. Code: `23502`.');
+        return passthrough(query, ...values);
       });
-      await req.promise;
 
-      expect(mockClickhouseQuery).toHaveBeenCalled();
-      const [strings, ...values] = mockClickhouseQuery.mock.calls[0];
-      expect(strings.join('?')).toContain('bitXor(hash, ?)');
-      expect(values).toEqual([-1234567890123456789n]);
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-blocked-then-failing',
+          status: 'succeeded',
+          imageId: 13,
+          steps: [
+            {
+              $type: 'wdTagging',
+              output: { tags: { 'a tag that cannot be created': 0.9 }, rating: { general: 0.9 } },
+            },
+            {
+              $type: 'mediaRating',
+              output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+            },
+          ] as any,
+        })
+      ).resolves.toBeUndefined();
+
+      // blockImageFromRating already persisted Blocked. markImageScanError is
+      // unconditional, so running it here would un-block the image.
+      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
+        (call: any) => call[0].where.id === 13
+      );
+      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+
+      const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
+        const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
+        return strings.join('').includes("'{retryCount}'");
+      });
+      expect(errorFlips).toHaveLength(0);
     });
 
-    it('sends the scanner-supplied model id as a parameter, not as SQL text', async () => {
-      const req = runWebhook({
-        id: 10,
-        status: 0,
-        source: TagSource.WD14,
-        tags: [],
-        context: { movie_rating: 'PG', movie_rating_model_id: `x'; DROP TABLE "Image"; --` },
+    it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
+      const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+      mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const strings = Array.isArray(query) ? query : query.strings;
+        const text = strings.join('');
+        if (text.includes('INSERT INTO "Tag"')) throw new Error('Raw query failed. Code: `23502`.');
+        if (text.includes('UPDATE "Image"') && text.includes("'{retryCount}'"))
+          return [{ retryCount: 1, mediaType: 'image', userId: 55 }];
+        return passthrough(query, ...values);
       });
-      await req.promise;
 
-      const update = imageUpdates.find((u) => u.text.includes('"aiModel"'));
-      expect(update).toBeDefined();
-      expect(update!.text).not.toContain('DROP TABLE');
-      expect(update!.params).toContain(`x'; DROP TABLE "Image"; --`);
+      await processImageScanWorkflow({
+        workflowId: 'workflow-whose-processing-fails',
+        status: 'succeeded',
+        imageId: 14,
+        steps: scanSteps('another tag that cannot be created'),
+      });
+
+      // Without this the editor keeps rendering Pending until the page is reloaded.
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 55,
+          data: expect.objectContaining({ imageId: 14, ingestion: ImageIngestionStatus.Error }),
+        })
+      );
+    });
+
+    it('still surfaces a deleted image so the webhook can ACK it as skipped', async () => {
+      mockDbWrite.image.findUnique.mockResolvedValue(null);
+
+      await expect(
+        processImageScanWorkflow({
+          workflowId: 'workflow-for-a-deleted-image',
+          status: 'succeeded',
+          imageId: 11,
+          steps: scanSteps('some tag'),
+        })
+      ).rejects.toThrow(/^image not found/);
     });
   });
 
-  describe('perceptual hash handling', () => {
-    it('records the scan without a lookup when the hash is blank', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-
-      const req = runWebhook({ id: 11, status: 0, source: TagSource.ImageHash, hash: '   ' });
-      await req.promise;
-
-      expect(mockClickhouseQuery).not.toHaveBeenCalled();
-      expect(req.res.status).toHaveBeenCalledWith(200);
-      const update = imageUpdates.find((u) => u.text.includes('jsonb_build_object'));
-      expect(update).toBeDefined();
-      expect(update!.text).not.toContain('"pHash"');
-      expect(
-        mockLogToAxiom.mock.calls.some(
-          (call) => call[0]?.message === 'blank hash from ImageHash scan'
-        )
-      ).toBe(true);
+  it('keeps a persisted verdict when a post-verdict side effect throws', async () => {
+    mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('DELETE FROM "JobQueue"'))
+        throw new Error('job queue delete failed');
+      return 0;
     });
 
-    it('stores a zero hash but does not look it up', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
+    await expect(
+      processImageScanWorkflow({
+        workflowId: 'workflow-with-a-failing-side-effect',
+        status: 'succeeded',
+        imageId: 12,
+        steps: [
+          { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+          { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+        ] as any,
+      })
+    ).resolves.toBeUndefined();
 
-      const req = runWebhook({ id: 15, status: 0, source: TagSource.ImageHash, hash: '0' });
-      await req.promise;
-
-      const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
-      expect(update).toBeDefined();
-      expect(update!.params).toContain(0n);
-      expect(mockClickhouseQuery).not.toHaveBeenCalled();
+    const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
+      const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
+      return strings.join('').includes("'{retryCount}'");
     });
-
-    it('completes the scan when the blocklist lookup fails', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-      mockClickhouseQuery.mockRejectedValue(new Error('socket hang up'));
-
-      const req = runWebhook({ id: 14, status: 0, source: TagSource.ImageHash, hash: '42' });
-      await req.promise;
-
-      expect(mockClickhouseQuery).toHaveBeenCalled();
-      expect(req.res.status).toHaveBeenCalledWith(200);
-      const update = imageUpdates.find((u) => u.params.includes(42n));
-      expect(update).toBeDefined();
-    });
-
-    it('rejects a hash wider than Int64 rather than letting ClickHouse reject it', async () => {
-      envOverrides.BLOCKED_IMAGE_HASH_CHECK = true;
-
-      const req = runWebhook({
-        id: 12,
-        status: 0,
-        source: TagSource.ImageHash,
-        hash: '99999999999999999999',
-      });
-      await req.promise;
-
-      expect(mockClickhouseQuery).not.toHaveBeenCalled();
-      expect(req.res.status).toHaveBeenCalledWith(400);
-    });
-
-    it('binds a hash as a bigint parameter, not as SQL text', async () => {
-      const req = runWebhook({
-        id: 13,
-        status: 0,
-        source: TagSource.ImageHash,
-        hash: '4611686018427387904',
-      });
-      await req.promise;
-
-      const update = imageUpdates.find((u) => u.text.includes('"pHash"'));
-      expect(update).toBeDefined();
-      expect(update!.params).toContain(4611686018427387904n);
-      expect(update!.text).not.toContain('4611686018427387904');
-    });
+    expect(errorFlips).toHaveLength(0);
   });
 
-  describe('moderator benign phrases reach the POI tagger', () => {
-    // The file's own `beforeEach` is `vi.clearAllMocks()`, which clears calls but NOT
-    // implementations — so the one a test below installs would leak into anything appended
-    // after this describe. Harmless while this is the last block, which is exactly the kind
-    // of "harmless" that stops being true without anyone noticing.
-    beforeEach(() => {
-      mockStripBenignPhrases.mockImplementation(async (text?: string) => text ?? '');
+  // The imageScanning pipeline through the real shared stages; only the database, ClickHouse
+  // and signals are faked. Scan outputs follow the shape the orchestrator returned on 2026-09-17.
+  describe('imageScanning workflows through the shared pipeline', () => {
+    const scanOutput = (overrides: Record<string, unknown> = {}) => ({
+      nsfwLevel: 'x',
+      score: 0.91,
+      topK: [{ label: 'X', score: 0.91 }],
+      aiRecognition: { label: 'AI', score: 0.86, topK: [] },
+      animeRecognition: { label: 'anime', score: 0.9, scores: {} },
+      humanRecognition: {
+        status: 'ok',
+        ran: true,
+        label: 'human',
+        score: 0.7,
+        humanScore: 0.7,
+        noHumanScore: 0.3,
+        scores: {},
+        evidence: [],
+      },
+      tagging: {
+        status: 'ran',
+        ran: true,
+        threshold: 0.55,
+        tagCount: 3,
+        totalAboveThreshold: 3,
+        truncated: false,
+        tags: [
+          { tag: 'teen', category: 'general', score: 0.9 },
+          { tag: 'hate symbols', category: 'copyright', score: 0.8 },
+          { tag: 'some-tag', category: 'meta', score: 0.8 },
+        ],
+      },
+      jointAgeClassification: {
+        status: 'ran',
+        ran: true,
+        detections: [{ ageBand: '21-24', under18Probability: 0.06, isMinor: false }],
+        minorDetected: false,
+      },
+      csam: false,
+      ...overrides,
     });
-
-    const seedImageWithPrompt = (id: number, prompt: string) => {
-      imageDbState.set(id, {
-        id,
-        createdAt: new Date(),
-        scannedAt: null,
-        type: 'image',
-        userId: 1,
-        meta: { prompt },
-        metadata: {},
-        postId: null,
-        nsfwLevelLocked: false,
-        nsfwLevel: null,
-        scanJobs: { scans: {} },
-        ingestion: ImageIngestionStatus.Pending,
-      });
+    const scanStep = (output: unknown, status = 'succeeded') => ({
+      $type: 'imageScanning',
+      name: 'scan',
+      status,
+      output,
+    });
+    const hashStep = {
+      $type: 'mediaHash',
+      name: 'hash',
+      status: 'succeeded',
+      output: { hashes: { perceptual: '6F51B11C49611E0E' } },
     };
+    const deliver = (imageId: number, steps: unknown[], status = 'succeeded') =>
+      processImageScanningWorkflow({ workflowId: `wf-${imageId}`, status, steps, imageId });
 
-    const requestedTagNames = () =>
-      mockDbWrite.tag.findMany.mock.calls.flatMap((call: any) => call[0]?.where?.name?.in ?? []);
+    const sqlOf = (call: any[]) =>
+      renderSql(Array.isArray(call[0]) ? call[0] : call[0].strings, call.slice(1));
+    // The verdict row written by resolveScanOutcome.
+    const verdictFor = (imageId: number) => {
+      const update = mockDbWrite.$executeRaw.mock.calls
+        .map(sqlOf)
+        .find(
+          (sql: any) =>
+            sql.text.includes('UPDATE "Image"') &&
+            sql.text.includes('"needsReview"') &&
+            sql.params.at(-1) === imageId
+        );
+      if (!update) return undefined;
+      const param = (column: string) => {
+        const match = update.text.match(new RegExp(`"${column}" = \\$(\\d+)`));
+        return match ? update.params[Number(match[1]) - 1] : undefined;
+      };
+      return {
+        ingestion: param('ingestion'),
+        nsfwLevel: param('nsfwLevel'),
+        needsReview: param('needsReview'),
+        minor: param('minor'),
+        pHash: param('pHash'),
+      };
+    };
+    const tagsWritten = (imageId: number) =>
+      mockInsertTagsOnImageNew.mock.calls
+        .flatMap((call) => call[0])
+        .filter((tag: any) => tag.imageId === imageId);
+    const errorFlipsFor = (imageId: number) =>
+      mockDbWrite.$queryRaw.mock.calls
+        .map(sqlOf)
+        .filter((sql: any) => sql.text.includes("'{retryCount}'") && sql.params.includes(imageId));
+    const auditRows = () =>
+      vi
+        .mocked(clickhouse!.insert)
+        .mock.calls.filter((call: any) => call[0].table === 'scanner_label_results')
+        .flatMap((call: any) => call[0].values);
 
-    it('CONTROL: a POI name that is not whitelisted is still tagged', async () => {
-      seedImageWithPrompt(30, 'emma stone');
-
-      const req = runWebhook({ id: 30, status: 0, source: TagSource.WD14, tags: [] });
-      await req.promise;
-
-      // Deliberately asserts only the tag, with the strip passing the text through: it
-      // stays green with the fix reverted, so a failure below is the strip and not a
-      // broken fixture.
-      expect(requestedTagNames()).toContain('emma stone');
+    beforeEach(() => {
+      // An earlier test leaves $executeRaw throwing, which would skip the verdict write.
+      mockDbWrite.$executeRaw.mockResolvedValue(0);
+      vi.mocked(clickhouse!.insert).mockClear();
     });
 
-    it('a whitelisted phrase is stripped before the POI check, so no POI tag is written', async () => {
-      mockStripBenignPhrases.mockImplementation(async (text?: string) =>
-        (text ?? '').replace('emma stone', '')
-      );
-      // Two real POI names, only one whitelisted. `tom hanks` survives the strip and must
-      // still be tagged, which proves this run reached the tag write at all — otherwise an
-      // early throw would satisfy the negative assertion below with an empty array.
-      seedImageWithPrompt(31, 'emma stone and tom hanks');
+    it('writes general tags, the rating and a Scanned verdict for an image', async () => {
+      await deliver(40, [scanStep(scanOutput()), hashStep]);
 
-      const req = runWebhook({ id: 31, status: 0, source: TagSource.WD14, tags: [] });
-      await req.promise;
-
-      // Pins WHICH list is consulted. Pointing the strip at ProfanityBenignWord instead
-      // leaves the whole fix inert in production and every other assertion here green.
-      expect(mockStripBenignPhrases).toHaveBeenCalledWith(
-        'emma stone and tom hanks',
-        'PromptBenignPhrase'
+      const written = tagsWritten(40);
+      expect(written).toContainEqual(
+        expect.objectContaining({ tagId: 200, source: TagSource.WD14, confidence: 90 })
       );
-      expect(requestedTagNames()).not.toContain('emma stone');
-      expect(requestedTagNames()).toContain('tom hanks');
+      expect(written).toContainEqual(
+        expect.objectContaining({ tagId: 1004, source: TagSource.SpineRating })
+      );
+      // Other tagger categories are not ingested, even when the tag exists.
+      expect(written.some((tag: any) => tag.tagId === 100 || tag.tagId === 400)).toBe(false);
+
+      expect(verdictFor(40)).toMatchObject({
+        ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: 8,
+        pHash: BigInt('0x6F51B11C49611E0E'),
+      });
+      expect(errorFlipsFor(40)).toHaveLength(0);
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 40, ingestion: ImageIngestionStatus.Scanned }),
+        })
+      );
+    });
+
+    it('queues an NSFW image with a minor tag for review', async () => {
+      await deliver(41, [scanStep(scanOutput())]);
+      expect(verdictFor(41)).toMatchObject({ needsReview: 'minor', minor: true });
+    });
+
+    it('leaves a moderator-locked NSFW level alone', async () => {
+      await deliver(7, [scanStep(scanOutput())]);
+      expect(verdictFor(7)).toMatchObject({
+        ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: 1,
+      });
+    });
+
+    it('writes version 2 scanner-audit rows, csam included', async () => {
+      await deliver(42, [scanStep(scanOutput({ csam: true })), hashStep]);
+
+      const rows = auditRows();
+      expect(rows.map((row: any) => [row.label, row.labelValue, row.triggered])).toEqual([
+        ['x', 'nsfw_level', 1],
+        ['csam', '', 1],
+        ['minor', '21-24', 0],
+        ['ai', 'ai_recognition', 1],
+        ['anime', 'anime_recognition', 1],
+      ]);
+      expect(rows.every((row: any) => row.version === '2' && row.entityIds[0] === '42')).toBe(true);
+    });
+
+    it('rates a video by its riskiest frame', async () => {
+      await deliver(43, [
+        { $type: 'videoFrameExtraction', name: 'videoFrames', status: 'succeeded', output: {} },
+        {
+          $type: 'repeat',
+          status: 'succeeded',
+          input: { template: { $type: 'imageScanning' } },
+          output: {
+            steps: [
+              scanStep(scanOutput({ nsfwLevel: 'pg' })),
+              scanStep(scanOutput({ nsfwLevel: 'x' })),
+              scanStep(scanOutput({ nsfwLevel: 'pg13' })),
+            ],
+          },
+        },
+      ]);
+
+      expect(tagsWritten(43)).toContainEqual(
+        expect.objectContaining({ tagId: 1004, source: TagSource.SpineRating })
+      );
+      expect(verdictFor(43)).toMatchObject({
+        ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: 8,
+      });
+    });
+
+    it.each([
+      ['a failed workflow', [scanStep(undefined, 'failed')], 'failed', 'workflow-failed'],
+      [
+        'a scan whose tagging did not run',
+        [scanStep(scanOutput({ tagging: { status: 'skipped', ran: false, tags: [] } }))],
+        'succeeded',
+        'unusable-result',
+      ],
+    ])('marks %s as one Error without a verdict', async (_, steps, status, failureType) => {
+      await deliver(44, steps, status);
+
+      const flips = errorFlipsFor(44);
+      expect(flips).toHaveLength(1);
+      expect(flips[0].params.join(' ')).toContain(failureType);
+      expect(verdictFor(44)).toBeUndefined();
+      expect(tagsWritten(44)).toHaveLength(0);
     });
   });
 });

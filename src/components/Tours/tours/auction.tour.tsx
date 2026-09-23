@@ -27,7 +27,7 @@ export const auctionTour: StepWithData[] = [
           You can bid ⚡ Buzz to feature models on the homepage and resource selection areas of the
           site. Higher bids = better spots!
         </Text>
-        <Text>Fine-tunes will also be enabled for generation until the auction cycle ends.</Text>
+        <Text>Checkpoints will also be enabled for generation until the auction cycle ends.</Text>
       </Stack>
     ),
     disableBeacon: true,

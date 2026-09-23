@@ -19,8 +19,37 @@ export type JobOptions = {
   shouldWait: boolean;
   lockExpiration: number;
   queue?: string;
-  /** restrict job to only run on a single pod */
+  /**
+   * Declared intent that the job run on a single pod.
+   *
+   * 🔴 INERT. Nothing in this tree reads `options.dedicated` — it is set on a handful of jobs,
+   * serialised out by `/api/internal/get-jobs`, and dropped by the scheduler's DTO. Setting it
+   * changes no behaviour. Left in place as the declaration it is; do not cite it as a
+   * duplicate-run mitigation.
+   */
   dedicated?: boolean;
+  /**
+   * Opt-in: when the HTTP client that triggered this run hangs up, cancel the job context but
+   * LEAVE THE REDIS LOCK HELD.
+   *
+   * Absent or `false` — the default for every job — is the historical behaviour: a disconnect
+   * cancels AND releases.
+   *
+   * Why an opt-in exists at all: the external scheduler holds the trigger request open and gives
+   * it a client-side timeout. A run that outlives that timeout loses the socket, and releasing on
+   * that close throws away the whole `lockExpiration` budget precisely in the case it was sized
+   * for — the scheduler's automatic retry then acquires the freed lock and starts a competing
+   * second run of the same work. Set this only on jobs that (a) legitimately run longer than the
+   * scheduler's client timeout and (b) are harmful to run twice concurrently, and set
+   * `lockExpiration` deliberately, because with this on it is the only thing bounding the hold.
+   *
+   * The cost it buys, stated plainly: a run that is ALIVE BUT WEDGED now holds the lock for the
+   * full `lockExpiration` instead of losing it at the disconnect, so the job does not run again
+   * until that expires. A pod that DIES does not pay this — the redis key carries a ~10s TTL
+   * refreshed by an in-process interval (see `acquireLock` in the run-jobs route), so a dead
+   * pod's lock lapses within seconds regardless of this option.
+   */
+  keepLockOnDisconnect?: boolean;
 };
 
 export type JobStatus = 'running' | 'canceled' | 'finished';
@@ -130,6 +159,33 @@ export function createJob(
       ...options,
     },
   } as Job;
+}
+
+/**
+ * Builds the handler the run-jobs route installs on `res.on('close')` — i.e. what happens when the
+ * client that triggered a run hangs up mid-run.
+ *
+ * It lives here, not inline in the route, for one reason: the route imports every job in the
+ * application, so nothing about it can be exercised in a unit test. This is the one decision in
+ * that handler that has a behavioural contract worth pinning, so it is extracted to where a test
+ * can drive it with a real job's own `options`. The route must keep calling this rather than
+ * re-inlining the two awaits — `job-disconnect-lock.test.ts` reads the route source to check that.
+ *
+ * `cancel()` runs in BOTH branches on purpose. It is what flips the job context to `canceled`, and
+ * jobs that poll `checkIfCanceled` must still stop when the caller goes away; `keepLockOnDisconnect`
+ * is about the LOCK, not about whether the job is told to stop.
+ */
+export function createDisconnectHandler(
+  options: Pick<JobOptions, 'keepLockOnDisconnect'>,
+  jobRunner: { cancel: () => Promise<void> },
+  lock: { release: () => Promise<void> }
+): () => Promise<void> {
+  return async () => {
+    await jobRunner.cancel();
+    // Default (absent/false): release, exactly as before this option existed.
+    if (options.keepLockOnDisconnect) return;
+    await lock.release();
+  };
 }
 
 export async function getJobDate(key: string, defaultValue?: Date) {

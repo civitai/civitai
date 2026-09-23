@@ -9,11 +9,24 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
+  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
+  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
+  FEED_SERVICE_PRIMARY = 'feed-service-primary',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
   GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
+  // The stop button for `delete-old-training-data`'s S3 deletes. Default-OFF by
+  // construction: isFlipt returns false for an unknown flag or an unreachable Flipt,
+  // so the purge stays dormant until someone turns it on deliberately.
+  TRAINING_DATA_PURGE = 'training-data-purge',
+  // Resolve every row and log what WOULD be deleted, without deleting it. Also default-off, which
+  // means it cannot make the purge safer on its own — the operator procedure is to turn this ON
+  // FIRST, then the purge, read a night's output, and only then turn this off. Written down on
+  // DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS because a two-flag order that nobody records is a
+  // trap rather than a safeguard.
+  TRAINING_DATA_PURGE_DRY_RUN = 'training-data-purge-dry-run',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
@@ -37,6 +50,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Streams the two large evidence archives straight to object storage instead of staging them
+  // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
+  // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
+  // charge. Evaluated ONCE per report, never per archive, so a mid-report flip cannot produce a
+  // bundle assembled two different ways. Flip OFF to roll back without a deploy; the disk path
+  // is kept intact and reachable for exactly that reason.
+  CSAM_ARCHIVE_STREAM_UPLOAD = 'csam-archive-stream-upload',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -45,15 +65,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
-  BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
-  // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
-  // job is registered but no-ops until this flag is flipped on.
-  BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
-  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
-  // Separate from the re-emitter flag on purpose: the audit is read-only and the
-  // healer is write-side, so switching one off must not blind or unblind the other.
-  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
-  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -124,7 +135,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
   // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
-  // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
+  // off". Nothing checks that automatically.
   TEXT_BLURBS = 'text-blurbs',
 
   // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
@@ -137,6 +148,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // OFF is the shipped default and means the pattern list is recorded but not enforced on these
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
+
+  // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
+  // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
+  // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
+  IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
+
+  // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
+  // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
+  SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
@@ -160,6 +180,25 @@ export enum FLIPT_FEATURE_FLAGS {
 // per-request wasm eval on the hot path. If its propagation latency ever
 // matters during an incident, lower FLIPT_EVAL_CACHE_TTL_MS globally rather
 // than bypassing this one flag.
+// ⚠ DELIBERATELY NOT HERE: TRAINING_DATA_PURGE. It is a stop button for irreversible deletes, so
+// it looks like it belongs — a draft of it was added on exactly that reasoning and then removed.
+// The entry would be INERT: that flag is evaluated exactly once per NIGHTLY run against a
+// ten-second TTL, so a cached entry has always expired before the next evaluation and bypassing
+// can never change what that job sees.
+//
+// 🔴 NO GENERAL CRITERION IS STATED HERE, AND THAT IS DELIBERATE — THREE DRAFTS OF ONE HAVE NOW
+// BEEN WRONG. The first said the entries below are each "evaluated far more often than the TTL";
+// at least three of them say otherwise in their own comments. The second offered "caching buys
+// nothing AND staleness costs something", which is satisfied by the purge flag it was written to
+// exclude — that flag is the clearest case of caching buying nothing. Each attempt was a rule
+// invented to justify a membership list that was decided case by case.
+//
+// So: the list is case by case, and the only thing recorded here is the one case that was
+// examined and rejected. TRAINING_DATA_PURGE is read exactly ONCE per nightly run, so a cached
+// entry has always expired before the next read and bypassing cannot change what that job sees —
+// inert, whatever the rule would have been. If the job is ever changed to re-read it inside its
+// loop, that fact stops holding and the question is open again. Do not derive a fourth rule from
+// this paragraph; read the entries' own comments.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
@@ -240,7 +279,11 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // It returns the flag's base `enabled` value instead, which is indistinguishable
 // from an honest "this user is not in the segment" — no error, no log line. Pass
 // `buildFliptContext(user)`, or at minimum the properties you actually know.
-// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
+// `buildFliptContext`’s output is pinned by `flipt-eval-context.test.ts`, against a HAND-COPIED
+// model of the segment constraints — nothing reads flipt-state, so a segment changing shape
+// upstream is caught by review only. No call site is SCANNED — though a few high-cost sites
+// have their own seam tests asserting the evaluation arguments by name: `resolveTestingAccess`,
+// the feedback gate, and the app-blocks store pair.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

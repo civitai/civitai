@@ -340,7 +340,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // flag, so a client can't force the expensive un-indexed path on a broad query.
 // Correctness-critical filters (wrong results if the index ignored them):
 // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-//   unique cache keys in BitDex that hurt cache hit rate)
+//   unique cache keys in the index that hurt cache hit rate)
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
@@ -384,18 +384,6 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 //   months-old draft, then submit it" they do not, and the draft lands at its
 //   upload rank rather than first.
 //
-//   🔴 One difference goes the OTHER way, and it is an accepted widening rather
-//   than an oversight. The index filters on `combinedNsfwLevel` whenever
-//   `useCombinedNsfwLevel` is set (i.e. for anyone without NSFW access), and that
-//   is `nsfwLevelLocked ? nsfwLevel : max(nsfwLevel, aiNsfwLevel)`. `getAllImages`
-//   has no equivalent — it filters bare `i."nsfwLevel"`. So an image the AI scored
-//   higher than its assigned level is hidden by the index and returned by the DB.
-//   In these pickers that is the caller's own image shown back to the caller, and
-//   the handler's caller check keeps it that way. Justin accepted it knowingly on
-//   2026-08-27 rather than widen this change into the shared feed query. Do not
-//   "fix" it here by reverting the routing: the fix is to teach `getAllImages`
-//   about `aiNsfwLevel`, which is a feed change and wants its own review.
-//
 //   Cost, measured on the prod replica 2026-08-27: 0.83-1.03 ms at a wide
 //   browsing level, 14-82 ms at browsingLevel=1, where the backward index walk
 //   discards thousands of rows before 51 survive. Plan is an index scan backward
@@ -415,8 +403,10 @@ export function requiresImageDbPath(input: {
   prioritizedUserIds?: number[] | null;
   publishedOnly?: boolean | null;
   userId?: number | null;
+  hidden?: boolean | null;
 }) {
   return (
+    !!input.hidden ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||

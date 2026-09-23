@@ -59,7 +59,23 @@ describe('scopeLabels', () => {
       expect(label.length).toBeGreaterThan(0);
     }
     // Positive control on the loop above — it must have iterated.
-    expect(scopeLabels(ALL_SCOPES).length).toBeGreaterThanOrEqual(27);
+    expect(scopeLabels(ALL_SCOPES).length).toBeGreaterThanOrEqual(28);
+  });
+
+  it('renders the Civitai Link pairing label for bit 27', () => {
+    expect(scopeLabels(TokenScope.LinkConnect)).toEqual([
+      'Connect the Civitai Link app to your account',
+    ]);
+  });
+
+  it('renders every label for the civitai-link-desktop consent screen, in bit order', () => {
+    // UserRead|VaultRead|VaultWrite|LinkConnect — the mask the desktop client requests.
+    expect(scopeLabels(159383553)).toEqual([
+      'Read profile, settings & email',
+      'View vault',
+      'Manage vault',
+      'Connect the Civitai Link app to your account',
+    ]);
   });
 });
 
@@ -91,5 +107,12 @@ describe('stringToScope / scopeToString', () => {
     expect(stringToScope('-1')).toBe(0);
     expect(stringToScope('not-a-number')).toBe(0);
     expect(stringToScope(undefined)).toBe(0);
+  });
+
+  it('accepts the Civitai Link desktop mask, which exceeds Full', () => {
+    // RED before the bit exists: 159383553 > the old ALL_SCOPES (134217727), so the
+    // out-of-range clamp returned 0 and the hub would answer invalid_scope.
+    expect(stringToScope('159383553')).toBe(159383553);
+    expect(scopeToString(159383553)).toEqual(['159383553']);
   });
 });

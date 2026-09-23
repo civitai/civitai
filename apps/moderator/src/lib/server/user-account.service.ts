@@ -8,6 +8,7 @@ import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
 import { usersByIds } from './users.service';
 import { RATING_ACTIVITIES } from '$lib/mod-activity';
+import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
@@ -295,43 +296,195 @@ export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<
 }
 
 // REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).
-// The concentration is the signal — a normal account spreads reactions over hundreds of creators, a
-// vote-ring account puts most of them on one.
 //
-// `ReactionsAll` (every raw reaction row) is not ported: it is unbounded, and the top of this list
-// answers the question the raw rows were being scanned to answer.
+// Two lists in one query: the top `limit` by volume, plus up to `flagLimit` whose mix is majority
+// Laugh/Cry/Dislike over `MIN_FLAGGED`. Volume alone misses harassment — on the account this was
+// built for, the reported target sat at 64 of 21,840 reactions, outside the top ten.
 //
-// Reads a 744M-row table, so it stays off the page load. Bounded by the ImageReaction_userId index:
-// ~47ms at 49K reactions, ~605ms for the heaviest account on the site (6M).
-// `UserStat.reactionCountAllTime` is NOT this number — it counts reactions the user RECEIVED (measured:
-// 51,775 received against 312 given for the same account). The window function totals every group
-// before LIMIT trims them, so the total costs no extra round trip and stays honest.
-export type ReactionTarget = { userId: number; username: string | null; count: number };
-export type ReactionSummary = { total: number; creators: number; targets: ReactionTarget[] };
+// A per-minute burst count was tried and dropped: it does not discriminate (152 of 3,307 targets had
+// a 20+/minute burst — what thumbing through a gallery looks like) and cost 22s against 4.4s.
+// `ClickHouse.reactions.time` is NOT an alternative source for cadence: it is batch-flushed, so 43
+// reactions 1.4s apart here share five timestamps there and read as a bot.
+//
+// `ReactionsAll` (every raw reaction row) is not ported: unbounded, and the top of this list answers
+// what the raw rows were being scanned for.
+//
+// Reads a 744M-row table, so it stays off the page load — ~150ms at 22K reactions, 4.4s on the
+// heaviest account sampled, bounded by the ImageReaction_userId index; the FILTERs and min/max ride
+// the scan the count already pays for. `UserStat.reactionCountAllTime` is NOT this number: it counts
+// reactions RECEIVED (51,775 received against 312 given, same account). The window functions total
+// every group before the outer WHERE trims them, so the totals cost no extra round trip.
 
-export async function getReactionTargets(userId: number, limit = 10): Promise<ReactionSummary> {
-  const rows = await dbRead
-    .selectFrom('ImageReaction as ir')
-    .innerJoin('Image as i', 'i.id', 'ir.imageId')
-    .leftJoin('User as u', 'u.id', 'i.userId')
-    .select((eb) => [
-      'i.userId',
-      'u.username',
-      eb.fn.countAll<string>().as('count'),
-      sql<string>`sum(count(*)) over ()`.as('total'),
-      sql<string>`count(*) over ()`.as('creators'),
-    ])
-    .where('ir.userId', '=', userId)
-    .groupBy(['i.userId', 'u.username'])
-    .orderBy('count', 'desc')
-    .limit(limit)
-    .execute();
+export type ReactionTarget = {
+  userId: number;
+  username: string | null;
+  count: number;
+  like: number;
+  heart: number;
+  laugh: number;
+  cry: number;
+  dislike: number;
+  first: Date;
+  last: Date;
+  /** Laugh+Cry+Dislike as a fraction of `count`, 0..1. Computed here because the ranking needs it,
+   *  and returned so the panel cannot arrive at a second answer to "which reactions are negative". */
+  negativeShare: number;
+  /** Majority Laugh/Cry/Dislike over `MIN_FLAGGED`. The PATTERN, not how the row was selected — a
+   *  creator in the volume top-N carrying the same mix is flagged too. */
+  flagged: boolean;
+};
+export type ReactionSummary = {
+  total: number;
+  creators: number;
+  targets: ReactionTarget[];
+  /** Every creator matching `flagged`, not just the `flagLimit` returned — rendering the cap as the
+   *  total would read as the whole victim list. */
+  flaggedTotal: number;
+  /** Reactions this account GAVE AND TOOK BACK. `ImageReaction` is the live set, so an un-reacted row
+   *  is simply gone from it — an account that reacted 350 times and removed all 350 is indistinguishable
+   *  in Postgres from one that never reacted, and the panel rendered both as "None." Null when the
+   *  event log could not be read, which must not read as zero. */
+  removed: RemovedReactions | null;
+};
+
+/** From the ClickHouse `reactions` event log, which keeps the Create and the Delete. */
+export type RemovedReactions = {
+  days: number;
+  given: number;
+  removed: number;
+  creators: number;
+  /** Create→Delete pairs, and how many of those were undone inside a minute. Buzz is awarded on the
+   *  Create and not clawed back, so a pair held for seconds is the earning pattern rather than a change
+   *  of mind — the distinction the raw counts cannot make. */
+  pairs: number;
+  removedWithinAMinute: number;
+  medianHeldSeconds: number | null;
+};
+
+type ReactionRow = ReactionTarget & { total: number; creators: number; flaggedTotal: number };
+
+// flagLimit is generous because on a harassment account this half of the list IS the finding: the
+// example that prompted it had 22 qualifying creators, the reported one fifteenth by share.
+export async function getReactionTargets(
+  userId: number,
+  limit = 10,
+  flagLimit = 20
+): Promise<ReactionSummary> {
+  const { rows } = await sql<ReactionRow>`
+    WITH agg AS (
+      SELECT i."userId" AS "targetId",
+        count(*)::int AS count,
+        count(*) FILTER (WHERE ir.reaction = 'Like')::int AS "like",
+        count(*) FILTER (WHERE ir.reaction = 'Heart')::int AS heart,
+        count(*) FILTER (WHERE ir.reaction = 'Laugh')::int AS laugh,
+        count(*) FILTER (WHERE ir.reaction = 'Cry')::int AS cry,
+        count(*) FILTER (WHERE ir.reaction = 'Dislike')::int AS dislike,
+        min(ir."createdAt") AS first,
+        max(ir."createdAt") AS last,
+        (sum(count(*)) OVER ())::int AS total,
+        (count(*) OVER ())::int AS creators
+      FROM "ImageReaction" ir
+      JOIN "Image" i ON i.id = ir."imageId"
+      WHERE ir."userId" = ${userId}
+      GROUP BY 1
+    ), scored AS (
+      SELECT a.*,
+        (a.count >= ${MIN_FLAGGED} AND (a.laugh + a.cry + a.dislike) * 2 > a.count) AS flagged,
+        ((a.laugh + a.cry + a.dislike)::float8 / a.count) AS "negativeShare"
+      FROM agg a
+    ), ranked AS (
+      SELECT s.*,
+        -- PARTITION BY flagged keeps the mix ranking inside the qualifying set; over every group,
+        -- browse-heavy creators with a few hundred incidental Laughs take the slots and the
+        -- 38-of-40 target never appears. Share, not absolute, for the same reason: 100% of 25
+        -- outranks 55% of 400.
+        (row_number() OVER (
+           PARTITION BY s.flagged
+           ORDER BY s."negativeShare" DESC, s.count DESC, s."targetId"
+         ))::int AS by_negative,
+        -- Ties are broken on targetId so a reload cannot silently swap which creators are shown.
+        (row_number() OVER (ORDER BY s.count DESC, s."targetId"))::int AS by_count,
+        (count(*) FILTER (WHERE s.flagged) OVER ())::int AS "flaggedTotal"
+      FROM scored s
+    )
+    SELECT k."targetId" AS "userId", u.username, k.count, k."like", k.heart, k.laugh, k.cry,
+           k.dislike, k.first, k.last, k."negativeShare", k.total, k.creators, k.flagged,
+           k."flaggedTotal"
+    FROM ranked k
+    LEFT JOIN "User" u ON u.id = k."targetId"
+    WHERE k.by_count <= ${limit}
+       OR (k.flagged AND k.by_negative <= ${flagLimit})
+    ORDER BY k.count DESC
+  `.execute(dbRead);
 
   return {
-    total: Number(rows[0]?.total ?? 0),
-    creators: Number(rows[0]?.creators ?? 0),
-    targets: rows.map((r) => ({ userId: r.userId, username: r.username, count: Number(r.count) })),
+    total: rows[0]?.total ?? 0,
+    creators: rows[0]?.creators ?? 0,
+    flaggedTotal: rows[0]?.flaggedTotal ?? 0,
+    targets: rows.map(({ total: _t, creators: _c, flaggedTotal: _f, ...target }) => target),
+    removed: await getRemovedReactions(userId),
   };
+}
+
+const REMOVED_REACTION_DAYS = 90;
+
+/**
+ * Did this account react and then take it back? `ImageReaction` keeps only live rows, so an account
+ * that reacted 350 times and removed all 350 reads identically to one that never reacted — the case
+ * this was reported for. Best-effort: ClickHouse being down annotates the panel, it does not blank it.
+ */
+async function getRemovedReactions(userId: number): Promise<RemovedReactions | null> {
+  try {
+    // Bounded on `time`, the table's sort key — `userId` is not indexed, so an unbounded read is all
+    // 825M rows.
+    const scope = `
+      FROM default.reactions
+      WHERE userId = ${userId}
+        AND time > now() - INTERVAL ${REMOVED_REACTION_DAYS} DAY
+        AND type IN ('Image_Create', 'Image_Delete')
+    `;
+
+    const ch = getClickhouse();
+    // Two queries because the counts are over EVENTS and the hold times are over IMAGES — one row per
+    // entityId, which the counts must not be collapsed to.
+    const [[totals], [held]] = await Promise.all([
+      ch.$query<{ given: string; removed: string; creators: string }>(`
+        SELECT
+          countIf(type = 'Image_Create') AS given,
+          countIf(type = 'Image_Delete') AS removed,
+          uniqExactIf(ownerId, type = 'Image_Create') AS creators
+        ${scope}
+      `),
+      ch.$query<{ pairs: string; within: string; median: number | null }>(`
+        SELECT count() AS pairs, countIf(seconds <= 60) AS within, median(seconds) AS median
+        FROM (
+          SELECT dateDiff(
+            'second',
+            minIf(time, type = 'Image_Create'),
+            minIf(time, type = 'Image_Delete')
+          ) AS seconds
+          ${scope}
+          GROUP BY entityId
+          -- Both halves, so a still-live reaction contributes no pair.
+          HAVING countIf(type = 'Image_Create') > 0 AND countIf(type = 'Image_Delete') > 0
+        )
+      `),
+    ]);
+    if (!totals) return null;
+    return {
+      days: REMOVED_REACTION_DAYS,
+      given: Number(totals.given),
+      removed: Number(totals.removed),
+      creators: Number(totals.creators),
+      pairs: Number(held?.pairs ?? 0),
+      removedWithinAMinute: Number(held?.within ?? 0),
+      medianHeldSeconds:
+        held?.median === null || held?.median === undefined ? null : Math.round(held.median),
+    };
+  } catch (e) {
+    console.error('[user-lookup] removed reactions unavailable', e);
+    return null;
+  }
 }
 
 export type UserCosmeticRow = {
@@ -389,42 +542,36 @@ export type UserBuzz = {
 } | null;
 
 export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
-  try {
-    // Typed read: untyped `/account/{id}` returns Yellow + Blue summed, overstating Yellow by the
-    // user's generation balance.
-    const account = await getBuzz().getUserBuzzByAccountType(userId, 'yellow');
-    // Colour balances are a second call and a softer failure — yellow is the one a moderator acts on,
-    // so it must not be lost when the multi-account read fails.
-    let blue: number | null = null;
-    let green: number | null = null;
-    let blueLifetime: number | null = null;
-    let greenLifetime: number | null = null;
-    try {
-      // Per-type reads rather than `getUserAccounts`, which returns balances only — Retool showed a
-      // lifetime for every colour, and lifetime is what says whether a balance was earned or granted.
-      const [blueAcct, greenAcct] = await Promise.all([
-        getBuzz().getUserBuzzByAccountType(userId, 'blue'),
-        getBuzz().getUserBuzzByAccountType(userId, 'green'),
-      ]);
-      blue = blueAcct?.balance ?? null;
-      green = greenAcct?.balance ?? null;
-      blueLifetime = blueAcct?.lifetimeBalance ?? null;
-      greenLifetime = greenAcct?.lifetimeBalance ?? null;
-    } catch (e) {
-      console.error('[user-lookup] buzz colour balances unavailable', e);
-    }
-    return {
-      balance: account.balance,
-      lifetimeBalance: account.lifetimeBalance,
-      blue,
-      green,
-      blueLifetime,
-      greenLifetime,
-    };
-  } catch (e) {
-    console.error('[user-lookup] buzz balance unavailable', e);
+  // `allSettled`, not `all`, because the failures are not equivalent: yellow is the balance a moderator
+  // acts on and its loss blanks the panel, while a missing colour renders as `—` beside a yellow figure
+  // that is still true. Typed reads throughout: untyped `/account/{id}` returns Yellow + Blue summed,
+  // overstating Yellow by the user's generation balance.
+  const [yellow, blue, green] = await Promise.allSettled([
+    getBuzz().getUserBuzzByAccountType(userId, 'yellow'),
+    getBuzz().getUserBuzzByAccountType(userId, 'blue'),
+    getBuzz().getUserBuzzByAccountType(userId, 'green'),
+  ]);
+
+  if (yellow.status === 'rejected') {
+    console.error('[user-lookup] buzz balance unavailable', yellow.reason);
     return null;
   }
+  for (const colour of [blue, green]) {
+    if (colour.status === 'rejected')
+      console.error('[user-lookup] buzz colour balances unavailable', colour.reason);
+  }
+
+  const blueAcct = blue.status === 'fulfilled' ? blue.value : null;
+  const greenAcct = green.status === 'fulfilled' ? green.value : null;
+
+  return {
+    balance: yellow.value.balance,
+    lifetimeBalance: yellow.value.lifetimeBalance,
+    blue: blueAcct?.balance ?? null,
+    green: greenAcct?.balance ?? null,
+    blueLifetime: blueAcct?.lifetimeBalance ?? null,
+    greenLifetime: greenAcct?.lifetimeBalance ?? null,
+  };
 }
 
 // COSMETIC SHOP PURCHASES (Retool's GetPurchases). Read from `UserCosmeticShopPurchases` rather than
@@ -970,8 +1117,6 @@ async function getTrainingCharges(
 }
 
 // BUZZ HISTORY (Retool's Receipts + Payments, which were two queries and two tables on the page).
-// Merged: a moderator wants this account's Buzz movement in one timeline, and the two queries differ
-// only in which side of the transaction the account is on.
 //
 // `buzzTransactions` is 1.5B rows partitioned by month, so the window bound prunes partitions as well as
 // rows — Retool bounded it too (`buzzDateTime`). Even bounded to 90 days this measures ~2.5s: the table
@@ -991,6 +1136,52 @@ const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'gre
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;
 
+type BuzzRow = {
+  transactionId: string;
+  date: string;
+  amount: string;
+  accountType: string;
+  type: string;
+  description: string;
+  externalTransactionId: string;
+  counterpartyId: string;
+  counterpartyType: string;
+};
+
+/**
+ * Two queries, each with its own cap, because the sides are wildly asymmetric: an account earning
+ * reaction rewards takes thousands of receipts a week against a handful of payments. Selecting both
+ * sides under ONE cap lets the busy side consume the whole of it — measured on user 2557503, all 200
+ * rows of a 90-day window were receipts spanning the most recent two days, so every one of its 128
+ * payments was invisible and the 10k Buzz Creator Shop fee that prompted this was unfindable.
+ */
+const buzzSideQuery = (userId: number, direction: 'in' | 'out', days: number, limit: number) => {
+  const mine = direction === 'in' ? 'toAccount' : 'fromAccount';
+  const theirs = direction === 'in' ? 'fromAccount' : 'toAccount';
+  return `
+    SELECT
+      transactionId,
+      date,
+      amount,
+      -- OUR side, not the counterparty's. Which colour of Buzz this account received or spent is the
+      -- point; the other side's type is a different fact. Reading the wrong side mislabels the most
+      -- common row on the table (a yellow-to-blue reward reads as Yellow when Blue was received), and
+      -- Yellow vs Blue is exactly the distinction a farming investigation turns on. Matches the main
+      -- app's buzz.service.ts.
+      ${mine}Type AS accountType,
+      ${theirs}Type AS counterpartyType,
+      type,
+      description,
+      externalTransactionId,
+      ${theirs}Id AS counterpartyId
+    FROM default.buzzTransactions
+    WHERE date > now() - INTERVAL ${days} DAY
+      AND ${mine}Id = ${userId}
+    ORDER BY date DESC
+    LIMIT ${limit + 1}
+  `;
+};
+
 /**
  * Retool ran this as two queries — `Payments` (`fromAccountId = user`, money OUT) and `Receipts`
  * (`toAccountId = user`, money IN) — shown side by side, each with its own filters. One merged list
@@ -1006,85 +1197,62 @@ export async function getBuzzHistory(
   payments: BuzzTransaction[];
   receipts: BuzzTransaction[];
   days: number;
-  truncated: boolean;
+  limit: number;
+  truncated: { payments: boolean; receipts: boolean };
 }> {
-  const rows = await getClickhouse().$query<{
-    transactionId: string;
-    date: string;
-    direction: string;
-    amount: string;
-    accountType: string;
-    type: string;
-    description: string;
-    externalTransactionId: string;
-    counterpartyId: string;
-    counterpartyType: string;
-  }>(`
-    SELECT
-      transactionId,
-      date,
-      if(toAccountId = ${userId}, 'in', 'out') AS direction,
-      amount,
-      -- OUR side, not the counterparty's. Which colour of Buzz this account received or spent is the
-      -- point; the other side's type is a different fact. Reading the wrong side mislabels the most
-      -- common row on the table (a yellow-to-blue reward reads as Yellow when Blue was received), and
-      -- Yellow vs Blue is exactly the distinction a farming investigation turns on. Matches the main
-      -- app's buzz.service.ts.
-      if(toAccountId = ${userId}, toAccountType, fromAccountType) AS accountType,
-      if(toAccountId = ${userId}, fromAccountType, toAccountType) AS counterpartyType,
-      type,
-      description,
-      externalTransactionId,
-      if(toAccountId = ${userId}, fromAccountId, toAccountId) AS counterpartyId
-    FROM default.buzzTransactions
-    WHERE date > now() - INTERVAL ${days} DAY
-      AND (fromAccountId = ${userId} OR toAccountId = ${userId})
-    ORDER BY date DESC
-    LIMIT ${limit + 1}
-  `);
+  const ch = getClickhouse();
+  const [outRows, inRows] = await Promise.all([
+    ch.$query<BuzzRow>(buzzSideQuery(userId, 'out', days, limit)),
+    ch.$query<BuzzRow>(buzzSideQuery(userId, 'in', days, limit)),
+  ]);
 
-  const truncated = rows.length > limit;
-  const page = rows.slice(0, limit);
+  const truncated = { payments: outRows.length > limit, receipts: inRows.length > limit };
+  const outPage = outRows.slice(0, limit);
+  const inPage = inRows.slice(0, limit);
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
   // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
   // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
   // creator as the counterparty of every Creator Program transfer.
-  const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
+  const both = [...outPage, ...inPage];
+  const resolvable = both.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
   const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
-  const mapped: BuzzTransaction[] = page.map((r) => {
-    const id = Number(r.counterpartyId);
-    const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
-    return {
-      transactionId: r.transactionId,
-      // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
-      // time and shift every row by the viewer's offset, putting it on a different day from the IP and
-      // prompt timestamps it is meant to line up with.
-      date: clickhouseDate(r.date),
-      direction: r.direction === 'in' ? 'in' : 'out',
-      amount: Number(r.amount),
-      color: BUZZ_COLORS[r.accountType] ?? r.accountType,
-      type: r.type,
-      description: r.description,
-      counterpartyId: id,
-      counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
-      counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
-      externalTransactionId: r.externalTransactionId || null,
-    };
-  });
+  const map = (rows: BuzzRow[], direction: 'in' | 'out'): BuzzTransaction[] =>
+    rows.map((r) => {
+      const id = Number(r.counterpartyId);
+      const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
+      return {
+        transactionId: r.transactionId,
+        // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
+        // time and shift every row by the viewer's offset, putting it on a different day from the IP and
+        // prompt timestamps it is meant to line up with.
+        date: clickhouseDate(r.date),
+        direction,
+        amount: Number(r.amount),
+        color: BUZZ_COLORS[r.accountType] ?? r.accountType,
+        type: r.type,
+        description: r.description,
+        counterpartyId: id,
+        counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
+        counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
+        externalTransactionId: r.externalTransactionId || null,
+      };
+    });
 
   // Retool restricted `bank` rows to admins. Filtered after mapping rather than in the ClickHouse
   // WHERE so `truncated` still describes the real window — a moderator who cannot see bank rows must
   // not also be told the window was shorter than it was.
-  const visible = includeBank ? mapped : mapped.filter((t) => t.type !== 'bank');
+  const hide = (rows: BuzzTransaction[]) =>
+    includeBank ? rows : rows.filter((t) => t.type !== 'bank');
 
   return {
     days,
+    limit,
     truncated,
-    payments: visible.filter((t) => t.direction === 'out'),
-    receipts: visible.filter((t) => t.direction === 'in'),
+    payments: hide(map(outPage, 'out')),
+    receipts: hide(map(inPage, 'in')),
   };
 }
 

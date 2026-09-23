@@ -9,10 +9,9 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
 
 /**
  * Per-APP aggregate generation-SPEND + VELOCITY cap (G8 — generic per-app
- * safety). The HARD PREREQUISITE, called out in-code at
- * `blocks.router.ts` (the spend-attribution "SYBIL CAP NOTE") and in the
- * `app-bounty-cap.service.ts` header, before shareable, spend-driving block
- * apps open to non-moderators.
+ * safety). The HARD PREREQUISITE, called out in-code at `blocks.router.ts`
+ * (the spend-attribution "SYBIL CAP NOTE"), before shareable, spend-driving
+ * block apps open to non-moderators.
  *
  * WHY THIS EXISTS — the aggregate-spend leak the per-user cap can't see.
  * The only live spend ceiling today is the per-(USER, UTC-day)
@@ -31,12 +30,10 @@ import { resolveAppCapLimits } from '~/server/services/blocks/app-cap-limits.ser
  * `appBlockId`.
  *
  * SAME atomic INCRBY-with-TTL reserve/refund pattern as the per-user
- * `reserveBlockBuzzSpend` (blocks.router.ts) and the per-app
- * `reserveAppBountyAccrual` (app-bounty-cap.service.ts): INCRBY is atomic, so
- * concurrent submits across many viewers accumulate correctly with NO
- * read→check→record TOCTOU. The daily key is a full RESERVE-AND-REFUND (a spend
- * is all-or-nothing — you cannot partially run a generation), unlike the bounty
- * cap which CLAMPS an accrual.
+ * `reserveBlockBuzzSpend` (blocks.router.ts): INCRBY is atomic, so concurrent
+ * submits across many viewers accumulate correctly with NO read→check→record
+ * TOCTOU. The daily key is a full RESERVE-AND-REFUND — a spend is
+ * all-or-nothing, you cannot partially run a generation.
  *
  * EXCLUSIONS (matches the existing caps' posture): the caller (submitWorkflow)
  * skips this cap entirely for DEV/live-harness tokens (`claims.dev === true`),

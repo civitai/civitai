@@ -2,10 +2,12 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
-import { auditBitdexConsistency } from '~/server/jobs/audit-bitdex-consistency';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
+import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -42,6 +44,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
+import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
@@ -52,6 +55,7 @@ import {
 } from '~/server/jobs/referral-program-jobs';
 import { prepaidMembershipJobs } from '~/server/jobs/prepaid-membership-jobs';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
+import { settleBlockAuthorFeesJob } from '~/server/jobs/settle-block-author-fees';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { dummyJob } from '~/server/jobs/dummy-job';
@@ -66,6 +70,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
+import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
@@ -76,13 +81,15 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
-import { processImportsJob } from '~/server/jobs/process-imports';
+import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
+import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
+import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -90,14 +97,12 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
-import { reemitBitdexOps } from '~/server/jobs/reemit-bitdex-ops';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
-import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
@@ -127,8 +132,9 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
+  gdprStripeScrubJob,
   scanFilesFallbackJob,
-  processImportsJob,
+  processHuggingFaceImportsJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,
@@ -136,8 +142,6 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
-  reemitBitdexOps,
-  auditBitdexConsistency,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
@@ -174,7 +178,6 @@ export const jobs: Job[] = [
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
-  rewardsAbusePrevention,
   nextauthCleanup,
   syncEmailBlocklist,
   applyTagRules,
@@ -188,14 +191,19 @@ export const jobs: Job[] = [
   auditWildcardSetCategoriesJob,
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
+  userActivityRollupJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
+  syncGeneratorLoadedResources,
   updateUserScore,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
+  settleBlockAuthorFeesJob,
   confirmMutes,
+  botAccountDetection,
+  reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
@@ -242,6 +250,7 @@ export const jobs: Job[] = [
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
+  announcementDismissalCleanupJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
 ];
@@ -277,10 +286,12 @@ export default WebhookEndpoint(async (req, res) => {
 
     const jobRunner = run({ req });
 
-    const cancelHandler = async () => {
-      await jobRunner.cancel();
-      await lock.release();
-    };
+    // Cancel the context, and release the lock UNLESS the job opted out of that release. See
+    // `createDisconnectHandler` and `JobOptions.keepLockOnDisconnect`: for a job that legitimately
+    // runs longer than the caller's client timeout, releasing here hands the freed lock straight
+    // to the caller's retry and produces two concurrent runs of the same work. Default is
+    // unchanged — cancel then release.
+    const cancelHandler = createDisconnectHandler(options, jobRunner, lock);
 
     res.on('close', cancelHandler);
     result = await jobRunner.result;

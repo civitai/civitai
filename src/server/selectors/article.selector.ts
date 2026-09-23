@@ -24,6 +24,10 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   title: true,
   publishedAt: true,
   status: true,
+  // Deliberately exposed to the webhook and search-index consumers that spread this
+  // select: "published by Civitai" is the kind of provenance an external consumer wants,
+  // and it is already public on the page.
+  isOfficial: true,
   // `tag` is a required relation on TagsOnArticle, but orphaned join rows
   // exist in prod (tagId pointing at a hard-deleted Tag). Selecting the
   // required relation on such a row makes Prisma throw "Inconsistent query

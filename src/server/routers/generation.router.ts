@@ -14,16 +14,21 @@ import {
   getGenerationData,
   getGenerationStatus,
   getGateRules,
+  getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
-  setGateRules,
+  saveGateRule,
+  deleteGateRule,
+  saveGeneratorMessage,
+  deleteGeneratorMessage,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
 } from '~/server/services/generation/generation.service';
+import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -34,6 +39,7 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -56,7 +62,11 @@ export const generationRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
     .query(({ input, ctx }) =>
-      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      getGenerationData({
+        query: input,
+        user: ctx.user,
+        browsingLevel: getRequestBrowsingLevel(ctx),
+      })
     ),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -114,9 +124,19 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  setGateRules: moderatorProcedure
-    .input(z.array(gateRuleSchema))
-    .mutation(({ input }) => setGateRules(input)),
+  saveGateRule: moderatorProcedure
+    .input(gateRuleSchema)
+    .mutation(({ input }) => saveGateRule(input)),
+  deleteGateRule: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGateRule(input.id)),
+  getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
+  saveGeneratorMessage: moderatorProcedure
+    .input(generatorMessageSchema)
+    .mutation(({ input }) => saveGeneratorMessage(input)),
+  deleteGeneratorMessage: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGeneratorMessage(input.id)),
   toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
@@ -129,14 +149,14 @@ export const generationRouter = router({
       getResourceData(input.ids, {
         user: ctx.user,
         withPreview: true,
-        sfwOnly: ctx.features.isGreen,
+        browsingLevel: getRequestBrowsingLevel(ctx),
       })
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>
-      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      resolveImageMeta({ input, user: ctx.user, browsingLevel: getRequestBrowsingLevel(ctx) })
     ),
   // App Blocks wildcard-pack import (W13) — the SESSION-authed resolve step for
   // the page-host message bridge. A page block posts GET_WILDCARD_PACK to the

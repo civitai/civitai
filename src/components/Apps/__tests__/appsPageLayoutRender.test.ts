@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { Window } from 'happy-dom';
 import { describe, expect, it, vi } from 'vitest';
+import type { AppsMeasure } from '~/components/Apps/appsPageWidths';
 
 /**
  * `/apps` chrome — the measure box, asserted on the RENDERED TREE, in the tier that
@@ -41,20 +42,47 @@ import { describe, expect, it, vi } from 'vitest';
  * files are deliberately complementary: structure here, geometry there.
  */
 
-// The real sub-nav needs a router, a session, feature flags and a tRPC query. None of
-// that is what this file is about: it only has to be an element with the nav's identity
-// so "the chrome is NOT inside the measure box" is a checkable claim.
-vi.mock('~/components/Apps/AppsSubNav', () => ({
-  AppsSubNav: () => createElement('nav', { 'aria-label': 'App sections' }, 'nav'),
+// The real nav needs a router, a session, feature flags and a tRPC query. None of that is
+// what this file is about — only that the chrome renders and is NOT inside the measure
+// box. Stubbing the DATA HOOK (rather than the rail component) keeps the real rail, the
+// real `< 2` collapse and the real sticky wrapper in the tree, which is what the
+// containment claims below are actually about.
+//
+// 🔴 TWO SECTIONS, NOT ONE. The layout hides the rail entirely below two
+// (`APPS_NAV_MIN_SECTIONS`), so a one-section stub would render no `<nav>` at all and
+// every "the measure box does not contain the chrome" assertion would pass vacuously.
+vi.mock('~/components/Apps/useAppsNavSections', async () => {
+  const registry = await import('~/components/Apps/apps-sections');
+  return { useAppsNavSections: () => registry.appsSections.slice(0, 2) };
+});
+
+// `next/router` is not mocked globally in the node tier, and the rail reads
+// `router.pathname` to decide which entry is current.
+vi.mock('next/router', () => ({
+  __esModule: true,
+  useRouter: () => ({ pathname: '/apps' }),
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
-const { APPS_PAGE_MEASURES, APPS_PAGE_CONTAINER_WIDTH } = await import(
+const { APPS_PAGE_MEASURES, APPS_PAGE_CONTAINER_WIDTH, appsMeasureCss } = await import(
   '~/components/Apps/appsPageWidths'
 );
 
 /** Mantine emits `max-width:calc(<n/16>rem * var(--mantine-scale))` for `maw={n}`. */
 const remOf = (px: number) => `${px / 16}rem`;
+
+/**
+ * The substring the rendered `max-width` must contain for a given measure.
+ *
+ * 🔴 TWO SHAPES, ONE ASSERTION. A numeric measure is converted to `rem` by Mantine; a
+ * BAND is a `clamp(…)` string, which Mantine's `rem()` early-returns untouched. Reading
+ * both through the module's own `appsMeasureCss` is deliberate — a second hand-written
+ * copy of the formatter here would agree with itself while disagreeing with the layout.
+ */
+const expectedMaxWidth = (measure: AppsMeasure): string => {
+  const css = appsMeasureCss(measure);
+  return typeof css === 'number' ? remOf(css) : css;
+};
 
 type Tree = {
   /**
@@ -79,7 +107,7 @@ type Tree = {
   band: Element;
 };
 
-function renderLayout(measure?: number, withHeader = false): Tree {
+function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -108,10 +136,15 @@ function renderLayout(measure?: number, withHeader = false): Tree {
   const body = doc.querySelector('[data-testid="body"]');
   const nav = doc.querySelector('nav[aria-label="App sections"]');
   if (!body || !nav) throw new Error('layout did not render its body and chrome');
-  // The band is the nav's parent; the root stack is the band's parent. Derived from the
-  // tree rather than hardcoded as an index, so a change in the band's own structure
-  // surfaces as a failure here instead of silently re-pointing the assertions.
-  const band = nav.parentElement;
+  // 🔴 RESOLVED BY THE LAYOUT'S OWN `data-apps-chrome` MARKERS SINCE THE RAIL LANDED, NOT
+  // BY WALKING UP FROM THE NAV. The nav used to be the band's first child, so `band =
+  // nav.parentElement` and `rootStack = band.parentElement` worked. The nav is in a
+  // SIBLING COLUMN now, so that walk would resolve the band to the rail's sticky wrapper
+  // and the root stack to the `<aside>` — every assertion below would then be about the
+  // wrong elements while still passing its own shape check, which is the worst failure
+  // mode a structural test can have. The markers are read from the rendered tree, so a
+  // renamed/removed one throws here rather than silently re-pointing.
+  const band = doc.querySelector('[data-apps-chrome="band"]');
   const rootStack = band?.parentElement;
   if (!band || !rootStack) throw new Error('could not resolve the layout band / root stack');
 
@@ -141,8 +174,25 @@ describe('the measure box, on the rendered tree', () => {
     expect(t.nav).toBeTruthy();
     expect(t.rootStack).toBeTruthy();
     expect(t.rootStack.contains(t.body)).toBe(true);
-    expect(t.rootStack.contains(t.nav)).toBe(true);
     expect(t.body).not.toBe(t.nav);
+  });
+
+  it('🔴 the chrome is in a DIFFERENT COLUMN from the page body — the rail change, structurally', () => {
+    // ⚠️ INVERTED, AND THE INVERSION IS THE CHANGE. The line above used to read
+    // `expect(t.rootStack.contains(t.nav)).toBe(true)`: the tab strip was the band's first
+    // child, so the nav lived INSIDE the same stack as the body. The rail is a sibling
+    // `<aside>`, so the nav must now be OUTSIDE that stack entirely — which is the
+    // strongest form the original "the chrome is not inside a per-page width box" fix can
+    // take, because there is no longer any box the body could grow that would reach it.
+    const t = renderLayout(1068);
+    expect(t.rootStack.contains(t.nav)).toBe(false);
+    // …and both are still inside the ONE Container, so "different column" does not mean
+    // "escaped the layout".
+    const railRow = t.rootStack.parentElement?.parentElement;
+    expect(railRow, 'the rail row was not found above the body column').toBeTruthy();
+    expect(railRow!.getAttribute('data-apps-chrome')).toBe('row');
+    expect(railRow!.contains(t.nav)).toBe(true);
+    expect(railRow!.contains(t.body)).toBe(true);
   });
 
   it('🔴 M2 — a measure actually reaches the DOM as a max-width', () => {
@@ -236,19 +286,31 @@ describe('the measure box, on the rendered tree', () => {
   });
 
   it('every route measure renders its own distinct max-width', () => {
-    const entries = Object.entries(APPS_PAGE_MEASURES);
-    // Guard-the-guard: an empty map would make the loop pass vacuously.
-    expect(entries.length).toBeGreaterThanOrEqual(8);
+    const entries = Object.entries(APPS_PAGE_MEASURES) as [string, AppsMeasure][];
+    // Guard-the-guard: an empty map would make the loop pass vacuously. Seven since
+    // `/apps/review` gave up its cap and joined the full-container list.
+    expect(entries.length).toBeGreaterThanOrEqual(6);
     const rendered = new Set<string>();
     for (const [route, measure] of entries) {
       const t = renderLayout(measure);
       expect(t.measureBox, `${route} rendered no measure box`).not.toBeNull();
-      expect(t.measureBox!.getAttribute('style'), route).toContain(remOf(measure));
+      expect(t.measureBox!.getAttribute('style'), route).toContain(expectedMaxWidth(measure));
       rendered.add(t.measureBox!.getAttribute('style') ?? '');
     }
-    // Three measure CLASSES, so three distinct rendered widths — proof the fixture
-    // varies the dimension rather than feeding one value eight times.
-    expect(rendered.size).toBe(3);
+    // Two measure CLASSES, so two distinct rendered widths — proof the fixture varies
+    // the dimension rather than feeding one value seven times.
+    expect(rendered.size).toBe(2);
+  });
+
+  it('🔴 a BAND reaches the DOM as a clamp, not as a rem floor', () => {
+    // The failure this catches is a measure that renders its `min` and stops growing —
+    // which looks completely correct at 1440 and silently un-does the whole band on a
+    // wide screen. `remOf(min)` must NOT be what lands in the attribute.
+    const band = { min: 1068, max: 1368, grow: 55 } as const;
+    const t = renderLayout(band);
+    const style = t.measureBox!.getAttribute('style') ?? '';
+    expect(style).toContain('clamp(1068px, 55%, 1368px)');
+    expect(style).not.toContain(remOf(1068));
   });
 
   it('🔴 the HEADER is bounded by the same measure as the body', () => {
@@ -276,9 +338,13 @@ describe('the measure box, on the rendered tree', () => {
     // original defect, re-introduced one level down.
     const t = renderLayout(1068, true);
     expect(t.headerBox!.contains(t.nav)).toBe(false);
-    // The nav and the header box are siblings inside the band.
+    // The header box is a direct child of the band…
     expect(t.headerBox!.parentElement).toBe(t.band);
-    expect(t.nav.parentElement).toBe(t.band);
+    // …and the nav is not in the band at all any more. It was a SIBLING of the header box
+    // inside the band while the chrome was a tab strip; as a rail it is in the other
+    // column, so the containment claim strengthens from "not inside the box" to "not
+    // inside the band".
+    expect(t.band.contains(t.nav)).toBe(false);
   });
 
   it('🔴 neither measure box can shift the band vertically', () => {
@@ -315,9 +381,16 @@ describe('the measure box, on the rendered tree', () => {
     // `--container-size` is what Mantine emits for `<Container size={n}>`. Asserted here
     // on the RENDERED tree so a per-page container cannot come back via a code path the
     // source regexes do not read.
+    // 🔴 THE WALK IS TWO LEVELS LONGER SINCE THE RAIL LANDED: root stack → body column →
+    // rail row → Container. Resolved by climbing to the `data-apps-chrome="row"` marker
+    // and taking its parent, rather than by a fixed number of `.parentElement` hops, so a
+    // future wrapper fails loudly here instead of silently reading an inner div's style.
     for (const measure of [undefined, 1068, 1368]) {
       const t = renderLayout(measure);
-      const container = t.rootStack.parentElement;
+      let node: Element | null = t.rootStack;
+      while (node && node.getAttribute('data-apps-chrome') !== 'row') node = node.parentElement;
+      expect(node, 'the rail row was not found above the root stack').not.toBeNull();
+      const container = node!.parentElement;
       expect(container?.getAttribute('style') ?? '').toContain(remOf(APPS_PAGE_CONTAINER_WIDTH));
     }
   });

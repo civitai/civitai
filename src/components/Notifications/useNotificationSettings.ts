@@ -36,7 +36,10 @@ export const useNotificationSettings = (enabled = true) => {
 };
 
 /**
- * Shared so the two callers can't drift apart on polarity. They previously hand-rolled the same
+ * Shared so the two settings-page callers can't drift apart on polarity. A third caller,
+ * `PlacementSpaceSection`, deliberately does NOT use this: importing it pulls the whole processor
+ * registry into a page chunk, so it calls the mutation directly and is pinned separately in
+ * `notification-settings-polarity.test.ts`. They previously hand-rolled the same
  * optimistic update, and updating one of them left the /shop bell writing correctly to the server
  * while its own cache patch no-opped — the control looked inert in both directions.
  */

@@ -186,3 +186,155 @@ describe('createMiniMaxInput — hosted API variant', () => {
     expect(result.height).toBeUndefined();
   });
 });
+
+const CONTROL_VIDEO_URL = 'https://x/source.mp4';
+
+const comfyControlTxt2Vid = (controlVideo?: Record<string, unknown>) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.comfy },
+  minimaxVariant: 'comfy',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  aspectRatio: entry(MINIMAX_DEFAULT_ASPECT_RATIO),
+  controlVideo,
+});
+
+const control = (overrides: Record<string, unknown> = {}) => ({
+  preprocessor: 'depthAnythingV2',
+  mode: 'auto',
+  video: { url: CONTROL_VIDEO_URL },
+  strength: 1,
+  startPercent: 0,
+  endPercent: 1,
+  ...overrides,
+});
+
+/** All steps, so the preprocess step prepended in auto mode is visible. */
+async function steps(data: Record<string, unknown>, ctxOverrides: Record<string, unknown> = {}) {
+  return createMiniMaxInput({ ...data } as any, { ...ctx, ...ctxOverrides } as any);
+}
+
+describe('createMiniMaxInput — comfy control video', () => {
+  it('prepends a preprocessVideo step and refs its output in auto mode', async () => {
+    const result = await steps(comfyControlTxt2Vid(control()));
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      $type: 'preprocessVideo',
+      input: { kind: 'depth-anything-v2', video: CONTROL_VIDEO_URL },
+    });
+    expect(result[1].$type).toBe('videoGen');
+    expect((result[1].input as any).operation).toBe('controlVideo');
+    // The gen step must consume the preprocessed map, not the raw upload.
+    expect((result[1].input as any).video).toEqual({
+      $ref: '$0',
+      path: 'output.blob.url',
+    });
+  });
+
+  it('maps each supported preprocessor to its preprocessVideo kind', async () => {
+    const expected = {
+      canny: 'canny',
+      depthAnythingV2: 'depth-anything-v2',
+      hed: 'hed',
+      mlsd: 'mlsd',
+      dwpose: 'dwpose',
+    };
+
+    for (const [preprocessor, kind] of Object.entries(expected)) {
+      const result = await steps(comfyControlTxt2Vid(control({ preprocessor })));
+      expect((result[0].input as any).kind).toBe(kind);
+    }
+  });
+
+  it('builds the ref against baseStepIndex, not a per-variant index', async () => {
+    const result = await steps(comfyControlTxt2Vid(control()), { baseStepIndex: 3 });
+
+    expect((result[1].input as any).video).toEqual({ $ref: '$3', path: 'output.blob.url' });
+  });
+
+  it('passes the raw url through with no preprocess step when already preprocessed', async () => {
+    const result = await steps(comfyControlTxt2Vid(control({ mode: 'preprocessed' })));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].$type).toBe('videoGen');
+    expect(result[0].input as any).toMatchObject({
+      operation: 'controlVideo',
+      video: CONTROL_VIDEO_URL,
+    });
+  });
+
+  it('forwards the control strength and active range', async () => {
+    const result = await steps(
+      comfyControlTxt2Vid(control({ strength: 0.6, startPercent: 0.1, endPercent: 0.8 }))
+    );
+
+    expect(result[1].input as any).toMatchObject({
+      strength: 0.6,
+      startPercent: 0.1,
+      endPercent: 0.8,
+    });
+  });
+
+  it('falls back to imageToVideo when the entry has no video attached', async () => {
+    const result = await steps(comfyControlTxt2Vid(control({ video: undefined })));
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('imageToVideo');
+  });
+
+  it('falls back to imageToVideo when no control video is staged at all', async () => {
+    const result = await steps(comfyControlTxt2Vid(undefined));
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('imageToVideo');
+  });
+
+  it('never emits controlVideo on the hosted API variant', async () => {
+    const result = await steps({
+      ...comfyControlTxt2Vid(control()),
+      model: { id: minimaxVersionIds['v1.0'] },
+      minimaxVariant: 'api',
+      aspectRatio: { value: MINIMAX_DEFAULT_ASPECT_RATIO },
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).engine).toBe('minimax-h3');
+    expect((result[0].input as any).operation).toBeUndefined();
+  });
+
+  it('keeps referenceToVideo when ref2vid also carries a staged control video', async () => {
+    const result = await steps({
+      ...comfyControlTxt2Vid(control()),
+      workflow: 'img2vid:ref2vid',
+      images: [{ url: 'https://x/ref.png' }],
+    });
+
+    expect(result).toHaveLength(1);
+    expect((result[0].input as any).operation).toBe('referenceToVideo');
+  });
+});
+
+describe('createMiniMaxInput — control video cannot displace user images', () => {
+  // The graph gates the node to txt2vid, but a stale value reaching the handler
+  // would fail as silently-dropped frames rather than as an error, so the
+  // handler re-checks. A revert reads as `expected 'controlVideo' to be
+  // 'imageToVideo'` with the first frame missing from the input.
+  it.each(['img2vid', 'img2vid:first-last'])(
+    'keeps imageToVideo and the first frame on %s',
+    async (workflow) => {
+      const result = await steps({
+        ...comfyControlTxt2Vid(control()),
+        workflow,
+        images: [{ url: 'https://x/first.png', width: 1280, height: 720 }],
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].input as any).toMatchObject({
+        operation: 'imageToVideo',
+        firstFrame: 'https://x/first.png',
+      });
+    }
+  );
+});

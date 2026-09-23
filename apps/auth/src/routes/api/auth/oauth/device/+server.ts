@@ -3,6 +3,7 @@ import { randomBytes, randomInt } from 'crypto';
 import { REDIS_KEYS } from '@civitai/redis';
 import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
+import { getClientIp } from '$lib/server/auth/request';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '$lib/server/oauth/constants';
@@ -49,7 +50,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
     return json({ error: 'invalid_client', error_description: 'This client cannot be used for the device flow' }, { status: 400, headers });
   }
 
-  if (!(await checkOAuthRateLimit('token', client_id))) {
+  if (!(await checkOAuthRateLimit('device', getClientIp(request)))) {
     return json({ error: 'rate_limited' }, { status: 429, headers });
   }
 

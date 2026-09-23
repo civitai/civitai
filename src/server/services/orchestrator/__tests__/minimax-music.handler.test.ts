@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { createEcosystemStepInput } from '../ecosystems';
 import { minimaxMusicVersionIds } from '~/shared/data-graph/generation/minimax-music-graph';
-import type { GenerationHandlerCtx } from '../orchestration-new.service';
+import { formatStepOutputs, type GenerationHandlerCtx } from '../orchestration-new.service';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 
 const ctx = {
   airs: { getOrThrow: (id: number) => `air:${id}` },
@@ -92,5 +93,30 @@ describe('minimax music step input', () => {
     expect(input.diffusionModel).toBeUndefined();
     expect(input.textEncoder).toBeUndefined();
     expect(input.vae).toBeUndefined();
+  });
+});
+
+// The handler emits `$type: 'miniMaxMusic3'`, but the output formatter and the
+// client's `mediaType` both switch on that string with an image-shaped default —
+// so an unhandled case renders an empty queue card with no error anywhere.
+describe('minimax music output rendering', () => {
+  const step = {
+    $type: 'miniMaxMusic3',
+    name: 'music',
+    output: { blob: { id: 'blob-1', type: 'audio', url: 'https://x/song.mp3', available: true } },
+  };
+
+  it('formats the audio blob into a renderable output', () => {
+    const { output } = formatStepOutputs(step as any);
+    expect(output).toHaveLength(1);
+    expect(output[0].type).toBe('audio');
+  });
+
+  it('reports the step as audio to the client', () => {
+    const workflow = new WorkflowData(
+      { id: 'wf-1', status: 'succeeded', steps: [{ ...step, output: [] }] } as any,
+      { domain: { green: false }, nsfwEnabled: true } as any
+    );
+    expect(workflow.steps[0].mediaType).toBe('audio');
   });
 });

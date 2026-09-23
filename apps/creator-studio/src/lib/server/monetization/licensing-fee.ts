@@ -80,12 +80,26 @@ function normalizeFee(raw: number | null): number | null | undefined {
 
 type OwnedVersion = {
   id: number;
+  label: string;
   baseModel: string;
   modelType: string;
   currentFee: number;
   affirmed: boolean;
   poi: boolean;
 };
+
+// A bulk selection spans pages, so a refusal that only counts the offenders leaves nothing to act
+// on — "1 of them" is unfindable (868m15nnc).
+const NAMED_IN_ERROR = 5;
+// Names are unbounded, so five unabridged labels is a toast nobody reads.
+const LABEL_MAX = 60;
+function nameList(versions: OwnedVersion[]): string {
+  const shown = versions
+    .slice(0, NAMED_IN_ERROR)
+    .map((v) => (v.label.length > LABEL_MAX ? `${v.label.slice(0, LABEL_MAX - 1)}…` : v.label));
+  const rest = versions.length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+}
 
 // The user's own (non-deleted) versions among the given ids, with the fields the fee ops need: base model for
 // the non-commercial guard, model type for default-by-type. Doubles as the ownership check.
@@ -96,6 +110,8 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     .innerJoin('Model', 'Model.id', 'ModelVersion.modelId')
     .select([
       'ModelVersion.id as id',
+      'ModelVersion.name as versionName',
+      'Model.name as modelName',
       'ModelVersion.baseModel as baseModel',
       'Model.type as modelType',
       'ModelVersion.licensingFee as currentFee',
@@ -108,6 +124,7 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     .execute();
   return rows.map((r) => ({
     id: r.id,
+    label: `${r.modelName} — ${r.versionName}`,
     baseModel: r.baseModel,
     modelType: r.modelType,
     currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
@@ -328,7 +345,11 @@ export async function bulkSetLicensingFee(
       return {
         ok: false,
         status: 400,
-        error: `${nonCommercial.length} selected version(s) use a non-commercial base model and can't be monetized — deselect them and try again.`,
+        error: `${
+          nonCommercial.length
+        } selected version(s) use a non-commercial base model and can't be monetized: ${nameList(
+          nonCommercial
+        )}. Deselect them and try again.`,
       };
 
     const poi = owned.filter((v) => licensingFeeBlockedFor({ poi: v.poi }));
@@ -336,7 +357,9 @@ export async function bulkSetLicensingFee(
       return {
         ok: false,
         status: 400,
-        error: `${poi.length} selected version(s) depict a real person and can't be monetized — deselect them and try again.`,
+        error: `${poi.length} selected version(s) depict a real person and can't be monetized: ${nameList(
+          poi
+        )}. Deselect them and try again.`,
       };
 
     // Increase-only, per version: the batch is rejected only if it would RAISE some version past the

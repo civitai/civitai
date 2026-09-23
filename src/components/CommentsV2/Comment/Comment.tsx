@@ -54,7 +54,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { type Comment } from '~/server/services/commentsv2.service';
+import { type Comment as CommentModel } from '~/server/services/commentsv2.service';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -77,7 +77,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: Comment;
+  comment: CommentModel;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
@@ -138,9 +138,10 @@ export function CommentContent({
   );
 
   const handleCopyLink = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('highlight', String(comment.id));
-    clipboard.copy(url.toString());
+    // Resolve through /comments/v2/<id> rather than patching the current URL: the latter keeps
+    // whatever deep-link params (commentParentId, threadId) the page arrived with, so a link copied
+    // from a notification thread stays rooted on the notification's comment instead of this one.
+    clipboard.copy(`${window.location.origin}/comments/v2/${comment.id}`);
     showSuccessNotification({ message: 'Comment link copied to clipboard' });
   };
 

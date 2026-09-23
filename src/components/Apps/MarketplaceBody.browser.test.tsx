@@ -33,7 +33,12 @@ function makeBlock(id: string, name: string): AvailableBlock {
     blockId: `block-${id}`,
     appId: id,
     appName: name,
-    manifest: { name, description: 'desc', targets: [{ slotId: 'model.sidebar_top' }], hasPage: false },
+    manifest: {
+      name,
+      description: 'desc',
+      targets: [{ slotId: 'model.sidebar_top' }],
+      hasPage: false,
+    },
     installCount: 0,
     category: null,
     externalUrl: null,
@@ -84,7 +89,9 @@ vi.mock('~/utils/trpc', () => {
           useInfiniteQuery: (input: Record<string, unknown>) => {
             mocks.lastListArgs = input;
             return {
-              data: { pages: [{ items: mocks.listAvailableItems.map(block), nextCursor: undefined }] },
+              data: {
+                pages: [{ items: mocks.listAvailableItems.map(block), nextCursor: undefined }],
+              },
               isLoading: false,
               isFetchingNextPage: false,
               fetchNextPage: vi.fn(),
@@ -109,8 +116,23 @@ vi.mock('~/utils/trpc', () => {
   };
 });
 
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.appBlocksPages }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.appBlocksPages }),
 }));
 
 /**
@@ -189,14 +211,14 @@ describe('/apps marketplace body (explore-all CTA clears filters)', () => {
     await expect.element(page.getByRole('button', { name: 'Generation' })).toBeInTheDocument();
     // Pick a category → filter active → the query receives it.
     await userEvent.click(page.getByRole('button', { name: 'Generation' }).element());
-    await expect.element(page.getByRole('button', { name: 'Explore all apps' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Explore all apps' }))
+      .toBeInTheDocument();
     expect(mocks.lastListArgs?.category).toBe('generation');
 
     // Click "Explore all apps" → filters cleared → query no longer filtered.
     await userEvent.click(page.getByRole('button', { name: 'Explore all apps' }).element());
-    await expect
-      .element(page.getByRole('button', { name: 'All categories' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'All categories' })).toBeInTheDocument();
     expect(mocks.lastListArgs?.category).toBeUndefined();
     // The explore-all CTA hides once there are no active filters.
     expect(page.getByRole('button', { name: 'Explore all apps' }).elements()).toHaveLength(0);
@@ -209,7 +231,9 @@ describe('/apps marketplace body (explore-all CTA clears filters)', () => {
     await userEvent.fill(search.element() as HTMLInputElement, 'alpha');
     // A non-empty search activates the filters → the CTA appears (debounced, so
     // wait for it rather than asserting synchronously).
-    await expect.element(page.getByRole('button', { name: 'Explore all apps' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Explore all apps' }))
+      .toBeInTheDocument();
     await userEvent.click(page.getByRole('button', { name: 'Explore all apps' }).element());
     // The search input is emptied (clearFilters reset searchInput state).
     await expect.element(page.getByRole('textbox', { name: 'Search' })).toHaveValue('');
@@ -247,7 +271,9 @@ describe('/apps marketplace body (opening an app records it to recents)', () => 
     expect(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeTruthy();
 
     // The "Recently opened" section now renders (resolved against the listing).
-    await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('heading', { name: 'Recently opened' }))
+      .toBeInTheDocument();
   });
 });
 
@@ -287,7 +313,9 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     expect(recents.map((r) => r.id)).toContain('p');
     expect(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeTruthy();
     // The "Recently opened" section renders for the page app.
-    await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('heading', { name: 'Recently opened' }))
+      .toBeInTheDocument();
   });
 
   test('clicking the title link on a PAGE app also records it to recents (flag off)', async () => {
@@ -318,9 +346,9 @@ describe('/apps marketplace body — sort default + fallback (M3)', () => {
     // the test is the AGREEMENT between the two — a label showing one sort while
     // the query asks for another is the bug this pins.
     await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
-    expect(
-      (page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value
-    ).toBe('Most popular');
+    expect((page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value).toBe(
+      'Most popular'
+    );
     expect(mocks.lastListArgs?.sort).toBe('popular');
     // Negative control: the removed 5-star sort must not come back through here.
     expect(mocks.lastListArgs?.sort).not.toBe('rating');

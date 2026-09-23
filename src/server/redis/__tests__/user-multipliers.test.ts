@@ -112,6 +112,88 @@ describe('foldUserMultipliers', () => {
   it('returns nothing for no rows', () => {
     expect(foldUserMultipliers([])).toEqual({});
   });
+
+  // `Math.max` here is a max ACROSS ROWS, not a floor, and the values come from operator-authored
+  // `Product.metadata` via `(...)::float` — a column that accepts a negative, `Infinity` and `NaN`.
+  // These reach the award computation and the Redis Lua cap script (ClickUp 868m06pn5).
+  it('floors a negative multiplier at 0 rather than carrying it', () => {
+    const typo: UserMultiplierRow = {
+      userId: 10,
+      rewardsIneligible: false,
+      rewardsMultiplier: -1,
+      purchasesMultiplier: -3,
+    };
+
+    const result = foldUserMultipliers([typo]);
+
+    // 0, not 1: a zero already means "earns nothing" everywhere downstream, and flooring to 1 would
+    // invent a payout out of a typo.
+    expect(result[10].rewardsMultiplier).toBe(0);
+    // 🔴 And purchases is NOT floored, asserted at the producer where the symmetry edit is tempting
+    // — the comment forbidding it is two lines from the code, and the only other test covering this
+    // decision lives in a file that mocks this function away entirely. A 0 here credits a completed
+    // Buzz purchase with nothing; see buzz.service.multiplier-floor.test.ts for the mechanism.
+    expect(result[10].purchasesMultiplier).toBe(-3);
+  });
+
+  // The floor is applied at TWO places, both on the rewards side: the first-row assignment and the
+  // `Math.max` merge arm. Every other test here gives a user ONE row, so only the first branch ran
+  // — reverting the merge arm alone left the whole file green. A multi-row user is the reason this
+  // fold exists. (`purchasesMultiplier` is deliberately NOT floored; see the buzz.service test.)
+  it('floors a bad SECOND row, not only the first one it sees', () => {
+    const bad = (rewardsMultiplier: number): UserMultiplierRow => ({
+      userId: 14,
+      rewardsIneligible: false,
+      rewardsMultiplier,
+      purchasesMultiplier: 1,
+    });
+
+    // Negative control: the second row must actually reach the merge arm. A row that never merges
+    // would make the assertions below pass against an untouched first-row value.
+    expect(foldUserMultipliers([paidBronze(14), bad(9)])[14].rewardsMultiplier).toBe(9);
+
+    // `Math.max(1.5, NaN)` is NaN and `Math.max(1.5, Infinity)` is Infinity, so an unfloored merge
+    // arm lets one bad row poison a membership the user is paying for.
+    expect(foldUserMultipliers([paidBronze(14), bad(NaN)])[14].rewardsMultiplier).toBe(1.5);
+    expect(foldUserMultipliers([paidBronze(14), bad(Infinity)])[14].rewardsMultiplier).toBe(1.5);
+
+    // And the purchases MERGE arm is not floored either — pinned here because the first-row
+    // assertion above cannot see it: flooring only this arm passed all 19 tests in this file.
+    // `Math.max(1.05, NaN)` is NaN, which is what a paying member with one bad row gets today.
+    const badPurchases: UserMultiplierRow = {
+      userId: 15,
+      rewardsIneligible: false,
+      rewardsMultiplier: 1,
+      purchasesMultiplier: NaN,
+    };
+    expect(foldUserMultipliers([paidBronze(15), badPurchases])[15].purchasesMultiplier).toBeNaN();
+    // No negative case here on purpose: `Math.max(1.5, -1)` is 1.5 floored or not, so the merge arm
+    // cannot be caught with one. The first-row arm covers negatives, in the test above.
+  });
+
+  it('replaces a non-finite multiplier by sign', () => {
+    const rows: UserMultiplierRow[] = [
+      {
+        userId: 12,
+        rewardsIneligible: false,
+        rewardsMultiplier: Infinity,
+        purchasesMultiplier: 1,
+      },
+      {
+        userId: 13,
+        rewardsIneligible: false,
+        rewardsMultiplier: -Infinity,
+        purchasesMultiplier: 1,
+      },
+    ];
+
+    const result = foldUserMultipliers(rows);
+
+    // Infinity and NaN take the base multiplier; a negative infinity is still a negative and must
+    // not come out worth more than -5 does.
+    expect(result[12].rewardsMultiplier).toBe(1);
+    expect(result[13].rewardsMultiplier).toBe(0);
+  });
 });
 
 describe('userMultipliersCache wiring', () => {

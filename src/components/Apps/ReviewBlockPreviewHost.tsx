@@ -143,8 +143,8 @@ export function ReviewBlockPreviewHost({
         >
           <Group justify="space-between" wrap="nowrap" gap="sm">
             <Text size="sm" fw={600}>
-              RUN FOR REAL is active — this UNAPPROVED app is running for real against YOUR
-              account and spending YOUR Buzz (capped at {buzzCap}). SFW enforced.
+              RUN FOR REAL is active — this UNAPPROVED app is running for real against YOUR account
+              and spending YOUR Buzz (capped at {buzzCap}). SFW enforced.
             </Text>
             <Button
               size="xs"
@@ -174,9 +174,9 @@ export function ReviewBlockPreviewHost({
         >
           <Stack gap="xs">
             <Text size="sm">
-              This runs an UNAPPROVED app for real against YOUR account and spends YOUR Buzz,
-              capped at {buzzCap}. SFW enforced. Generation, your own Buzz balance, and per-user
-              storage will use your real account; cross-user actions and money-out stay disabled.
+              This runs an UNAPPROVED app for real against YOUR account and spends YOUR Buzz, capped
+              at {buzzCap}. SFW enforced. Generation, your own Buzz balance, and per-user storage
+              will use your real account; cross-user actions and money-out stay disabled.
             </Text>
             <Group gap="xs">
               <Button
@@ -229,6 +229,9 @@ export function ReviewBlockPreviewHost({
         // Remount on a mode flip so the new (render-only ↔ run-for-real) token
         // re-handshakes the iframe cleanly instead of swapping a token mid-session.
         key={runForRealActive ? 'run-for-real' : 'render-only'}
+        // The app's own declaration, from the manifest under review — so the
+        // moderator sees the presentation the approved app will actually have.
+        bootSkeleton={mintData.bootSkeleton === true}
         appBlockId={mintData.appBlockId}
         blockId={mintData.blockId}
         appId={mintData.appId}

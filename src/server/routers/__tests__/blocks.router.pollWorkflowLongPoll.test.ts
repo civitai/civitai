@@ -109,6 +109,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket, not the catalog one — so this file,
+  // which is entirely about poll, must declare it or every case throws on the missing export.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -116,6 +119,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
@@ -138,10 +148,31 @@ const mockDbRead = dbMock.dbRead;
 // 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. Every workflow below differs in id,
 // status AND cost, so a wiring bug that returns the wrong workflow — or a stub
 // that returns a constant — cannot pass by coincidence.
-const RUNNING = { id: 'wf_running', status: 'processing', cost: { total: 11 }, steps: [] };
-const SUCCEEDED = { id: 'wf_succeeded', status: 'succeeded', cost: { total: 22 }, steps: [] };
-const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [] };
-const CANCELED = { id: 'wf_canceled', status: 'canceled', cost: { total: 44 }, steps: [] };
+// The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it, and these
+// fixtures are about the long poll rather than about scoping.
+const TAGS = ['app-block:oac_01JQ8XG7YV2K4M6P8R0T2W4Y6B'];
+const RUNNING = {
+  id: 'wf_running',
+  status: 'processing',
+  cost: { total: 11 },
+  steps: [],
+  tags: TAGS,
+};
+const SUCCEEDED = {
+  id: 'wf_succeeded',
+  status: 'succeeded',
+  cost: { total: 22 },
+  steps: [],
+  tags: TAGS,
+};
+const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [], tags: TAGS };
+const CANCELED = {
+  id: 'wf_canceled',
+  status: 'canceled',
+  cost: { total: 44 },
+  steps: [],
+  tags: TAGS,
+};
 
 /** The `query` argument of the Nth `getWorkflow` call (undefined if none). */
 function queryArg(n = 0): { wait?: number } | undefined {
@@ -211,6 +242,12 @@ beforeEach(() => {
   mockUpdateBlockWorkflowStatus.mockResolvedValue(undefined);
   mockSettleCustomComfySpend.mockResolvedValue(undefined);
   mockCancelWorkflow.mockResolvedValue(undefined);
+});
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
 });
 
 describe('blocks.pollWorkflow — long poll wiring', () => {

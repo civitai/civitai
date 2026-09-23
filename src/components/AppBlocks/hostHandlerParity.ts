@@ -86,8 +86,7 @@ export interface MessageSpec {
 // InlineHost is a v1 STUB that throws on render and wires NO message bridge
 // (BlockHost never routes inline installs in v1 — `canUseInline` is always
 // false). So EVERY message is N/A for it today; the shared reason is below.
-export const INLINE_STUB =
-  'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
+export const INLINE_STUB = 'InlineHost is a v1 stub (throws on render, no message bridge in v1)';
 
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
@@ -120,6 +119,28 @@ export const INVENTORY = {
     reply: '',
     IframeHost: 'required',
     PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // 🔴 N/A FOR EVERY HOST ON PURPOSE, AND IT IS THE ONLY ENTRY WHOSE `N/A` DOES
+  // NOT MEAN "UNHANDLED". `usePostMessage` consumes it in the SHARED DISPATCHER,
+  // above the subscriber lookup, because the message is TELEMETRY about the bridge
+  // rather than a feature either host implements: it carries no `requestId`, awaits
+  // no reply, and reaches no `onMessage` subscriber by design. Registering it
+  // per-host would be the same predicate written twice, which is how one of the two
+  // copies ends up wrong.
+  //
+  // The parity test greps each host for `onMessage('<TYPE>'`, so marking it
+  // `'required'` would demand a handler that must not exist. Fire-and-forget, so an
+  // ignored one can never hang the block — on an OLD host (this entry absent) the
+  // dispatcher records one `no_handler` against `'other'` and sends no NACK, since
+  // there is no `requestId` for `buildBridgeNackReply` to answer.
+  BLOCK_MESSAGE_REJECTED: {
+    request: false,
+    reply: '',
+    IframeHost:
+      'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
+    PageBlockHost:
+      'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
     InlineHost: INLINE_STUB,
   },
   RESIZE_IFRAME: {
@@ -296,8 +317,11 @@ export const INVENTORY = {
   },
   // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
   // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
-  // successor to GET /blocks/me (which stays live until the hook publishes +
-  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // TWIN of GET /blocks/me and not its successor — a viewer read is data
+  // movement, so the REST route is the DEFAULT surface and both stay (see the
+  // "Direction" note under Routes in docs/features/app-blocks.md, and
+  // civitai/civitai-app-starters#437).
+  // AHEAD of the published SDK dist union (SDK co-requisite
   // — forward-looking coverage, allowed by the one-directional compile-time
   // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
   // slot apps are deferred + will get page-host too), so N/A for the model host
@@ -568,6 +592,82 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Collection follow/unfollow (host bridge) ───────────────────────────────
+  // A block asks the HOST to follow/unfollow a collection as the logged-in
+  // viewer. Replaces the block's own `POST /api/v1/blocks/collections/[id]/follow`
+  // call (which stays live — this bridge does NOT retire it), so an app no longer
+  // needs the `collections:write:self` write scope for an on-site bookmark.
+  //
+  // 🔴 THIS IS A TIGHTENING, NOT A LOOSENING. ⚠️ An earlier copy of this comment
+  // said the dropped scope "was the viewer's consent step" — RETRACTED, it is
+  // false: `collections:write:self` is in `CONSENT_EXEMPT_SCOPES`
+  // (`src/server/services/blocks/scope-grant.service.ts`), so it mints without any
+  // prompt and no grant row is ever recorded. The HTTP path had ZERO prompts;
+  // both hosts now open a HOST-CHROME CONSENT CONFIRM and write only on the
+  // viewer's explicit click — the same boundary PUBLISH_GENERATION_OUTPUTS uses.
+  // What the bridge actually gives up is the manifest `scopes` DECLARATION, i.e.
+  // ex-ante reviewability (moderator review + the post-install permissions panel),
+  // traded for consent at the moment of action. Full reasoning, and why the
+  // confirm must not be "restored" into a scope gate, is in
+  // `collectionFollowGate.ts`, which both hosts share.
+  //
+  // BOTH real hosts: unlike the page-only affordances above, a collection follow
+  // is a plain on-site bookmark with no page-sized surface behind it — a model-
+  // slot block showing a collection has exactly the same reason to offer it.
+  // REQUEST-style ⇒ an unhandled one HANGS the block. Ahead of the published SDK
+  // dist union (the SDK's `useCollectionFollow` hook is a co-requisite landing in
+  // civitai-app-starters) — forward-looking coverage, allowed by the one-
+  // directional compile-time gate.
+  SET_COLLECTION_FOLLOW: {
+    request: true,
+    reply: 'COLLECTION_FOLLOW_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // ── Create a REAL Post from the app's own outputs (two-phase) ──────────────
+  // The strictly-more-consequential SIBLING of PUBLISH_GENERATION_OUTPUTS: that
+  // one makes a bare Image row (no post, no feed, no reward, no notification);
+  // this one makes PUBLIC, feed-visible, reward-earning content under the
+  // VIEWER'S byline, optionally attached to a model version's gallery.
+  //
+  // 🔴 IT IS A SIBLING, NOT A FLAG ON THAT MESSAGE, FOR TWO DECISIVE REASONS.
+  // (1) SHAPE: `PUBLISH_GENERATION_OUTPUTS.payload.workflowId` is a SINGLE
+  // REQUIRED STRING and cannot express a post built from several workflows plus
+  // previously-published images. (2) COPY: the publish confirm says the images
+  // "become visible to other viewers of this app", which is FALSE for a profile
+  // post — and that sentence is the security control, not decoration. One handler
+  // branching on payload shape means one of the two dialogs is always wrong.
+  //
+  // THE HANDLER IS TWO SERVER CALLS, NOT ONE. `blocks.previewPostFromApp`
+  // resolves the consent payload server-side (exact copy, the tag names that will
+  // ACTUALLY apply, host-fetched model/version names, real thumbnails), the
+  // viewer confirms, and only then does `blocks.createPostFromApp` write. The
+  // preview exists because the block is sandboxed: a confirm rendering
+  // block-supplied text or thumbnails could show one thing and publish another.
+  // The preview confers NOTHING — the write re-runs every guard.
+  //
+  // REQUEST-style ⇒ an unhandled one HANGS the block to its 10-minute human
+  // timeout. Ahead of the published SDK dist union (the SDK message pair +
+  // `usePostFromApp` hook are co-requisites landing in civitai-app-starters) —
+  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  CREATE_POST_FROM_APP: {
+    request: true,
+    reply: 'CREATE_POST_RESULT',
+    // N/A, and for the SAME structural reason as PUBLISH_GENERATION_OUTPUTS /
+    // QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW above — not a smaller version of
+    // the same reason. Every image this message can post comes from the app
+    // SUBQUEUE (the app's own workflows) or from what the app previously
+    // published THROUGH that subqueue, and the subqueue is a page-only
+    // affordance: the model slot has no composition surface, so a model-slot
+    // block has no eligible images to post in the first place. Registering a
+    // handler here would add a consent dialog over an empty source set. If a slot
+    // app ever gains a subqueue, this entry becomes `required` in the same change.
+    IframeHost:
+      'every eligible image comes from the app subqueue, which is a page-only affordance; a model-slot block has no source images to post',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**
@@ -594,6 +694,9 @@ type SdkBlockToParentType = BlockToParentMessageType;
 // ─────────────────────────────────────────────────────────────────────────────
 type _SdkCovered = SdkBlockToParentType extends keyof typeof INVENTORY
   ? true
-  : ['INVENTORY missing published SDK message(s):', Exclude<SdkBlockToParentType, keyof typeof INVENTORY>];
+  : [
+      'INVENTORY missing published SDK message(s):',
+      Exclude<SdkBlockToParentType, keyof typeof INVENTORY>
+    ];
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _sdkCovered: _SdkCovered = true;

@@ -297,9 +297,9 @@ export const serverSchema = z
     REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
 
     // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
-    // hot path (getImageMetricsObject). The @clickhouse/client default
-    // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would
-    // otherwise park ~30s and blow the SSR deadline (the surrounding try/catch
+    // hot path (getImageMetricsObject). The client's own `request_timeout` is
+    // 300000ms, so a saturated/cold-cache-miss metric read would otherwise park for
+    // MINUTES and blow the SSR deadline (the surrounding try/catch
     // CANNOT catch a hang). The CH metric query (entityMetricDailyAgg_v2) is
     // genuinely slow — ~4.6s p50 / ~11s p99 — so on a cold cache miss the timeout
     // fires and we fail SOFT to empty metrics, yielding TRANSIENT zeros. That
@@ -309,7 +309,7 @@ export const serverSchema = z
     // Default 3000ms — snappy SSR over correctness on the first cold render.
     // .int().positive() so a misconfigured 0 / negative fails fast at BOOT instead
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
-    // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
+    // when ms<=0 → the exact multi-minute hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
     // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
     // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
@@ -389,10 +389,8 @@ export const serverSchema = z
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
-    IMAGE_SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
     IMAGE_SCANNING_CALLBACK: z.string().optional(),
     TEXT_MODERATION_CALLBACK: z.string().optional(),
-    IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
     // Age-out threshold (minutes) for never-returning image scans. A scan verdict
     // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
@@ -419,7 +417,6 @@ export const serverSchema = z
     // newest-first (starving the oldest backlog) — a bad hand-tune must fail
     // loudly at boot instead.
     IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
-    IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
@@ -454,6 +451,12 @@ export const serverSchema = z
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+    // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
+    // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
+    ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),
+    // Optional. Without it only public, ungated Hugging Face repos can be imported; with it, repos
+    // this token's account has accepted the terms for.
+    HUGGING_FACE_TOKEN: z.string().optional(),
     AXIOM_TOKEN: z.string().optional(),
     AXIOM_ORG_ID: z.string().optional(),
     AXIOM_DATASTREAM: z.string().optional(),
@@ -461,6 +464,8 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
+    FEED_SERVICE_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
     // model search-index update queue. The model metric processor runs every
     // minute and accumulates every model whose ModelVersionMetric.updatedAt
@@ -607,6 +612,101 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
+    // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
+    // visible as the instant its series appear — which is the only thing that distinguishes "no
+    // repeats" from "probe never ran". It never changes the verdict, never skips the classifier,
+    // and never adds latency to the request (the Redis round trip is fire-and-forget).
+    //
+    // 🔴 IT IS A NAMESPACE, NOT A BOOLEAN, AND THAT IS THE WHOLE POINT. Set it to a short label for
+    // the deployment being measured. The accepted set is the allowlist in
+    // moderation-cache-probe.ts and is deliberately NOT restated here — restating it is exactly how
+    // this sentence went stale once already. The value becomes a segment of the
+    // probe's Redis key. Several civitai-web deployments SHARE ONE sysRedis, and unlike cache keys
+    // — which get an environment prefix via CACHE_KEY_NAMESPACE — sys keys carry no environment
+    // segment at all (see cache-key-prefix.ts: "This is CACHE-ONLY"). So two armed deployments
+    // would write the same probe keyspace and each would score HITS on the other's prompts, biasing
+    // the result toward "caching pays" — the direction that gets a cache built that does not pay.
+    //
+    // Making the namespace the ARMING SWITCH is what stops that being a thing to remember: there is
+    // no way to turn the probe on without naming a keyspace for it.
+    //
+    // ⚠️ WHY NOT REUSE CACHE_KEY_NAMESPACE — corrected 2026-09-03, because the first version of this
+    // comment asserted a measurement that was FALSE. It claimed that variable is "ABSENT on all of
+    // civitai-dp-prod, civitai-next and civitai-next-stage". It is not: `CACHE_KEY_NAMESPACE=next`
+    // is set on civitai-next (in the deployment env, which the original check never read — it
+    // looked only at ConfigMaps and generalised one source into a claim about all of them).
+    //
+    // The real reason it cannot serve here is the opposite of "nobody sets it": it is set EXACTLY
+    // as designed, and its design is wrong for this purpose. cache-key-prefix.ts requires
+    // production to be the EMPTY prefix, so civitai-dp-prod and civitai-next-stage BOTH resolve to
+    // `''` — routing the probe through it would put production and stage in one shared probe
+    // keyspace, which is precisely the collision this namespace exists to prevent.
+    //
+    // The accepted values are a CLOSED ALLOWLIST of deployment labels, defined in
+    // moderation-cache-probe.ts and deliberately not restated here (one rule, one place). Anything
+    // else — including every on/off spelling — is treated as OFF and logged once, so a typo yields
+    // NO SERIES (already documented as "not armed") plus a line saying why, rather than a second
+    // silent keyspace. An allowlist rather than a charset plus a denylist because a denylist is a
+    // guard SPELLED rather than STRUCTURAL: the charset alone accepts `false`, `n` and `disabled`
+    // as perfectly good namespaces, so the likeliest spelling of "turn this off" would ARM the
+    // probe. See src/server/integrations/moderation-cache-probe.ts.
+    EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
+    //
+    // 🔴 THE VERDICT CACHE NEEDS BOTH OF THE NEXT TWO VARIABLES. Neither alone arms it: this one
+    // says WHERE entries live, the TTL below says HOW LONG. Setting only one leaves the cache inert
+    // and emitting no metric series, which looks identical to "not configured" — so if you set a
+    // TTL and see no `civitai_app_external_moderation_cache_total` (PROM_PREFIX is prepended at
+    // registration, so the bare name in the counter's help text is NOT queryable), check this
+    // variable before concluding the
+    // metric is broken.
+    //
+    // ⚠️ An earlier revision of this block said the TTL was "THE ARMING SWITCH" with "deliberately
+    // no separate boolean". That was retracted across the module, the counter help text, the redis
+    // key registry and the PR body — and survived HERE, five lines above the comment contradicting
+    // it, which is the surface an operator actually reads. Stated once, in full, at both fields.
+    //
+    // The deployment this cache writes under. Several civitai-web deployments share one sysRedis
+    // and sys keys carry no environment segment, and the PR-preview task copies civitai-cfg
+    // WHOLESALE, so the TTL below is inherited by every open preview. A closed allowlist lives in
+    // moderation-verdict-cache.ts (one rule, one place); anything outside it is OFF and logged
+    // once. See that module for why the policy digest cannot substitute for this.
+    EXTERNAL_MODERATION_CACHE_NAMESPACE: z.string().trim().optional().default(''),
+    // Seconds to hold a cached external-moderation verdict — the second of the two required inputs
+    // described above. Capped at 3600 because a cached verdict is a STALE verdict and the TTL is
+    // the only bound on a classifier whose model can change behind a stable name; the measured
+    // value of a longer window is small anyway (12x the TTL bought ~7 points of hit rate).
+    // See src/server/integrations/moderation-verdict-cache.ts.
+    //
+    // ⚠️ This descriptive comment was ORPHANED for two commits — it sat above the NAMESPACE
+    // declaration, so a reader of that field was told it is measured in seconds and capped at 3600.
+    // Introduced by inserting the namespace field between this text and the field it describes.
+    //
+    // 🔴 `.catch(0)`, NOT `.default(0)` — the same rule TRPC_MAX_BATCH_SIZE and
+    // EXTERNAL_MODERATION_TIMEOUT_MS carry above. `src/env/server.ts` THROWS on any invalid field,
+    // and env is parsed only at container start, so a typo here (`=off`, `=false`, `=3600s`,
+    // `=7200` over the cap) does nothing visible at the time and then CrashLoops the whole fleet at
+    // the next rollout, hours detached from the change — during the very incident this lever exists
+    // to end. `.catch(0)` degrades an unparseable value to OFF, which is the safe direction for a
+    // cache in front of a moderation gate.
+    EXTERNAL_MODERATION_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(3600).catch(0),
+
+    // DARK SHADOW PROBE — compare a CANDIDATE classifier model against the incumbent on a sampled
+    // share of calls, to produce the disagreement rate the "cheaper model?" decision needs. Both
+    // fields are required to arm and neither defaults on; see
+    // src/server/integrations/moderation-shadow-probe.ts.
+    //
+    // 🔴 SAMPLE IS THE SPEND CONTROL, NOT A CONVENIENCE. Every sampled call issues a SECOND billable
+    // classifier request against the production credential, so 1.0 doubles the moderation bill for
+    // as long as it is armed. It is a fraction in [0,1], not a percentage.
+    //
+    // Both use `.catch(...)` rather than `.default(...)`, the same rule the TTL above carries:
+    // `src/env/server.ts` THROWS on an invalid field and env is parsed only at container start, so a
+    // typo would do nothing visible now and CrashLoop the fleet at the next rollout. Degrading to
+    // OFF is the safe direction for a probe that spends money. A non-numeric SAMPLE coerces to NaN,
+    // fails `.min(0)` and lands on 0 = off.
+    EXTERNAL_MODERATION_SHADOW_MODEL: z.string().default('').catch(''),
+    EXTERNAL_MODERATION_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).catch(0),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
@@ -655,7 +755,6 @@ export const serverSchema = z
     FRESHDESK_DOMAIN: z.string().optional(),
     FRESHDESK_TOKEN: z.string().optional(),
     FRESHDESK_AGENT_ID: z.coerce.number().optional(),
-    UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
     // Enforce the post-completion object-existence check in /api/upload/complete.
     // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
     // logged, but a missing object does NOT fail the request. That ordering is
@@ -798,9 +897,6 @@ export const serverSchema = z
     // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
-
-    // BitDex
-    BITDEX_URL: z.string().optional().default(''),
 
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.

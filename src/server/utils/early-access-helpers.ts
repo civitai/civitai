@@ -5,6 +5,7 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { increaseDate, maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 // DEPRECATED: Use the `earlyAccessEndsAt` field on the model version instead
 export function getEarlyAccessDeadline({
@@ -54,7 +55,7 @@ export function getMaxEarlyAccessDays({
         return score({ features }) ? (days as number) : null;
       }
 
-      return (userMeta?.scores?.models ?? 0) >= score ? (days as number) : null;
+      return creatorScoreFromMeta(userMeta) >= score ? (days as number) : null;
     })
     .filter(isDefined);
 
@@ -76,7 +77,7 @@ export function getMaxEarlyAccessModels({
         return score({ features }) ? (days as number) : null;
       }
 
-      return (userMeta?.scores?.models ?? 0) >= score ? (days as number) : null;
+      return creatorScoreFromMeta(userMeta) >= score ? (days as number) : null;
     })
     .filter(isDefined);
 

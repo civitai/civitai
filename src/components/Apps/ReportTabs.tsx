@@ -26,6 +26,10 @@ import {
   type ScopeVerdictsView,
   type SecurityAuditView,
 } from '~/components/Apps/agentReviewReport';
+import {
+  AppsTableColgroup,
+  APPS_AGENT_REPORT_SCOPE_COLUMNS,
+} from '~/components/Apps/appsWideLayout';
 
 /**
  * App Blocks — AGENTIC MOD CODE-REVIEW report renderer (P2, Phase-2 redesign).
@@ -534,6 +538,10 @@ export function ScopesTab({
             fz="xs"
             data-testid="scope-verdicts-table"
           >
+            {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. Reachable on
+                `/apps/review/[publishRequestId]` (OnsiteReviewModalBody → AgentReviewPanel),
+                which takes the full container. Inert in the modal, load-bearing on the page. */}
+            <AppsTableColgroup columns={APPS_AGENT_REPORT_SCOPE_COLUMNS} />
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Scope</Table.Th>

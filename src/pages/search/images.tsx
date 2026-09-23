@@ -76,11 +76,7 @@ function RenderFilters() {
 
   return (
     <>
-      <BrowsingLevelFilter
-        indexKey="images"
-        filters={filters}
-        attributeOverride={features.canViewNsfw ? undefined : 'combinedNsfwLevel'}
-      />
+      <BrowsingLevelFilter indexKey="images" filters={filters} />
       <SortBy
         title="Sort images by"
         items={!features.canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
@@ -264,6 +260,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.imageSearch) return { notFound: true };
+    if (!features?.imageSearch)
+      return { redirect: { destination: '/search/models', permanent: false } };
   },
 });

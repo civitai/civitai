@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { includesInappropriate, includesMinor, includesMinorAge } from '~/utils/metadata/audit';
+import {
+  includesInappropriate,
+  includesMinor,
+  includesMinorAge,
+  includesPoi,
+} from '~/utils/metadata/audit';
 
 describe('includesMinorAge', () => {
   describe('danbooru/pony tag false positives', () => {
@@ -118,6 +123,54 @@ describe('young-word anchoring (minor-review queue)', () => {
       '1girl is child, nude, and wearing school swimsuit',
     ]) {
       expect(includesInappropriate({ prompt }, true), prompt).toBe('minor');
+    }
+  });
+});
+
+// Do not delete these entries or this test without checking with a maintainer first.
+describe('POI — Diddl character names', () => {
+  const diddlNames = [
+    'diddl',
+    'diddlina',
+    'pimboli',
+    'loupsily',
+    'galupy',
+    'wollywell',
+    'simsaly',
+    'lollilovebear',
+    'mimihopps',
+    'ackaturbo',
+    'vanillivi',
+    'bibombl',
+    'milimits',
+    'tiplitaps',
+    'diddldaddl',
+    'blubberpeng',
+    // Not redundant with `diddl`: the poi preprocessor DELETES `-` rather than splitting on
+    // it, so `diddl-maus` arrives as one token that `diddl` cannot match.
+    'diddlmaus',
+  ];
+
+  it('blocks each name', () => {
+    for (const name of diddlNames) {
+      expect(includesPoi(`a drawing of ${name}, pastel colours`), name).toBe(name);
+    }
+  });
+
+  it('blocks the hyphenated spelling, which the preprocessor fuses into one token', () => {
+    expect(includesPoi('a drawing of diddl-maus')).toBe('diddlmaus');
+  });
+
+  // POI is a hard block with no user override, so a name matching inside a longer word is an
+  // unappealable false positive. Every control below really does contain `diddl`; only that
+  // entry is short enough to occur inside English words, so the others would assert nothing.
+  it('does not block longer real words that contain a name', () => {
+    for (const prompt of [
+      'diddley bow, blues guitar',
+      'diddling with the exposure slider',
+      'a paradiddle drum pattern',
+    ]) {
+      expect(includesPoi(prompt), prompt).toBe(false);
     }
   });
 });

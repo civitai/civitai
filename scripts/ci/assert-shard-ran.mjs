@@ -62,26 +62,46 @@ if (shard < 1 || shard > total) {
  * confident and WRONG "`--shard` is probably not reaching vitest".
  *
  * BASE_TESTS is the whole suite's executed count, and it is the one number here that goes
- * stale. Measured 2026-08-25 from this job's own output across a green sharded run:
- * 5794 + 5142 + 5774 + 5447 = 22,157 executed (+25 skipped) across 1,417 files. The
- * previous figure, 16,784 across 1,065 files, was ten days older and 32% low.
+ * stale. Re-measured 2026-09-04 from this job's own output on `main`:
+ * 7177 + 5769 + 14724 + 10187 = 37,857 executed across 1,626 files (run 33900980756).
+ * The previous figure, 22,157 across 1,417 files, was ten days older and 41% low — it had
+ * already tripped the ceiling on shards 3 and 4, turning this gate red on `main` for every
+ * PR until it was re-pinned.
+ *
+ * ⚠️ Re-measured from a run whose shards 3 and 4 were RED on this very assertion, because at
+ * that point no green sharded run existed to read. That is sound here and the reason is
+ * worth keeping: the counts are printed before the band is applied, so a tripped ceiling
+ * does not corrupt the number it reports. Cause (1) below was ruled out separately — the
+ * four counts are unequal proportionate shares (2.55x spread) and each shard took ~4 min
+ * against a ~10.4 min full suite, whereas "`--shard` is not reaching vitest" produces four
+ * near-identical full-suite counts at full-suite runtime.
  *
  * 🔴 So the ceiling message below names BOTH causes, and must keep doing so. "The suite
  * grew" and "sharding broke" are indistinguishable from inside one shard, and a gate that
  * asserts the wrong one of the two is worse than no gate — it sends the next person hunting
  * a bug that is not there.
  */
-const BASE_TESTS = 22157;
+const BASE_TESTS = 37857;
 const expected = BASE_TESTS / total;
 
 /** Generous: catches a shard that collapsed, not one that is merely light. Observed
- *  imbalance on a real run was ~5% off the mean (5794 vs 5539 expected). */
+ *  imbalance 2026-09-04 was the LIGHTEST shard at 39% below the mean (5769 vs 9464
+ *  expected) — so the floor's real headroom is ~2.0x, not the ~5% imbalance this comment
+ *  described when the shards were still even. */
 const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
 
 /**
  * Catches "this shard ran the whole suite", which is `total` x expected. At 1.8x it
- * separates that from real imbalance for every N >= 2, with ~1.7x headroom over the worst
- * shard actually observed.
+ * separates that from real imbalance for every N >= 2.
+ *
+ * 🔴 THE HEADROOM HAS COLLAPSED AND THIS IS NOW THE BINDING CONSTRAINT. When these
+ * multipliers were chosen the worst shard sat ~5% off the mean, giving ~1.7x headroom.
+ * On 2026-09-04 the heaviest shard is 14,724 against a mean of 9,464 — **+55% off the
+ * mean**, leaving only ~1.16x under the ceiling. vitest shards by FILE, so a few
+ * test-dense files skew a shard badly, and the next such file trips this ceiling long
+ * before the suite grows enough to matter. Re-pinning BASE_TESTS buys much less time than
+ * it did last round; if this reds again on a green suite, the fix is to balance the shards
+ * (or shard by test count), not to keep raising this number.
  */
 const MAX_TESTS = Math.round(expected * 1.8);
 

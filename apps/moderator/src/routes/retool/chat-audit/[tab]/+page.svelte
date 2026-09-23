@@ -19,6 +19,18 @@
 </script>
 
 {#if data.tab === 'chats'}
+  <!-- Transcript first: below the results list, a chat opened from a 50-result search scrolls off the page. -->
+  {#if data.chatMissing}
+    <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <p class="text-sm text-dark-2">
+        No chat <code>{data.chatId}</code> exists. A real conversation with no messages would still
+        list its members — this id was never a chat.
+      </p>
+    </section>
+  {:else if data.chatId && data.transcript && data.members}
+    <TranscriptPanel chatId={data.chatId} transcript={data.transcript} members={data.members} />
+  {/if}
+
   {#if data.search}
     {#if data.search.slow}
       <p class="mb-3 text-xs text-amber-300">
@@ -32,17 +44,6 @@
     {#key data.q}
       <UserMessagesPanel messages={data.userMessages} />
     {/key}
-  {/if}
-
-  {#if data.chatMissing}
-    <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-      <p class="text-sm text-dark-2">
-        No chat <code>{data.chatId}</code> exists. A real conversation with no messages would still
-        list its members — this id was never a chat.
-      </p>
-    </section>
-  {:else if data.chatId && data.transcript && data.members}
-    <TranscriptPanel chatId={data.chatId} transcript={data.transcript} members={data.members} />
   {/if}
 
   {#if !data.q && !data.chatId}

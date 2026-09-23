@@ -9,11 +9,11 @@ export const MIN_GENERATION_PRICE = 50;
 export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
 export const MAX_GENERATION_TRIAL_LIMIT = 1000;
 
-// Max early-access days unlock by the creator's *models* score — mirrors the main app's
+// Max early-access days unlock by the creator score (`scores.total`) — mirrors the main app's
 // EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock (enforced by /api/v1/model-versions/early-access).
 // The 30-day feature-flag tier is intentionally omitted here.
 export const EARLY_ACCESS_SCORE_UNLOCK: ReadonlyArray<readonly [number, number]> = [
-  [40000, 3],
+  [10000, 3],
   [65000, 5],
   [90000, 7],
   [125000, 9],
@@ -21,11 +21,11 @@ export const EARLY_ACCESS_SCORE_UNLOCK: ReadonlyArray<readonly [number, number]>
   [250000, 15],
 ];
 
-// Highest early-access duration (days) the given models score unlocks. 0 = early access unavailable.
-export function earlyAccessDaysForScore(modelsScore: number): number {
+// Highest early-access duration (days) the given creator score unlocks. 0 = early access unavailable.
+export function earlyAccessDaysForScore(creatorScore: number): number {
   let days = 0;
   for (const [score, unlocked] of EARLY_ACCESS_SCORE_UNLOCK) {
-    if (modelsScore >= score) days = unlocked;
+    if (creatorScore >= score) days = unlocked;
   }
   return days;
 }
@@ -33,7 +33,7 @@ export function earlyAccessDaysForScore(modelsScore: number): number {
 // How many versions can be in early access *at the same time* — mirrors EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
 // Separate from the duration unlock above: score gates both how long and how many. 30-day flag tier omitted.
 export const EARLY_ACCESS_QUANTITY_UNLOCK: ReadonlyArray<readonly [number, number]> = [
-  [40000, 1],
+  [10000, 1],
   [65000, 2],
   [90000, 4],
   [125000, 6],
@@ -41,11 +41,11 @@ export const EARLY_ACCESS_QUANTITY_UNLOCK: ReadonlyArray<readonly [number, numbe
   [250000, 20],
 ];
 
-// Concurrent early-access slots the given models score unlocks. 0 = early access unavailable.
-export function earlyAccessQuantityForScore(modelsScore: number): number {
+// Concurrent early-access slots the given creator score unlocks. 0 = early access unavailable.
+export function earlyAccessQuantityForScore(creatorScore: number): number {
   let quantity = 0;
   for (const [score, unlocked] of EARLY_ACCESS_QUANTITY_UNLOCK) {
-    if (modelsScore >= score) quantity = unlocked;
+    if (creatorScore >= score) quantity = unlocked;
   }
   return quantity;
 }

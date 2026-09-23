@@ -219,7 +219,11 @@ const ENROLLED: Record<string, string> = {
   'components/Apps/unifiedReviewRow.ts': 'moderator queue kind-column badge',
   'components/Apps/AppListingsModerationTable.tsx': 'moderation table kind SegmentedControl',
   'components/Apps/appListingModerationTableView.ts': 'moderation table per-row kind chip',
-  'pages/apps/mine.tsx': '/apps/mine page subtitle naming both kinds',
+  // 🔴 MOVED, NOT DROPPED. This was `pages/apps/mine.tsx`; that route was consolidated
+  // into `/apps/build` (301) and its page deleted, so the subtitle now lives in the
+  // workbench branch of the body component. The WORDING and the reason for enrolling it
+  // are unchanged — only the file is.
+  'components/Apps/AppsBuildBody.tsx': '/apps/build workbench subtitle naming both kinds',
   'pages/apps/review.tsx': '/apps/review page subtitle naming both kinds',
 };
 
@@ -228,7 +232,8 @@ const ENROLLED: Record<string, string> = {
  * DELIBERATELY ABSENT FROM {@link ENROLLED}, and the absence is a decision, not an
  * oversight.
  *
- * `/apps/mine` no longer renders a kind AT ALL — the row's kind badge was deleted (the
+ * `/apps/build`'s workbench (the table `/apps/mine` used to be) no longer renders a kind
+ * per ROW at all — the row's kind badge was deleted (the
  * author knows what they built; the kind lives on the listing detail and edit pages).
  * Enrolling a surface asserts it RESOLVES the word from the one source, which is only a
  * meaningful claim about a surface that renders one; enrolling a page that renders none
@@ -240,7 +245,8 @@ const ENROLLED: Record<string, string> = {
  * DELETED (see that file's header); it is not re-pointed at the canonical module.
  */
 const DELIBERATELY_UNENROLLED: Record<string, string> = {
-  'components/Apps/MyAppsBody.tsx': '/apps/mine renders no kind label at all — badge deleted',
+  'components/Apps/MyAppsBody.tsx':
+    "/apps/build's workbench renders no kind label per row — badge deleted",
   'components/Apps/myAppsView.ts': 'the shadowing listingKindLabel was deleted, not re-pointed',
 };
 

@@ -21,7 +21,58 @@
  */
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
+
+/**
+ * True for the ONE Prisma failure that means "this deploy is running ahead of its
+ * migration": P2022 — the column named in the query does not exist in the database.
+ *
+ * Migrations in this project are applied BY HAND, per environment, so the image and
+ * the schema are not deployed atomically and `buzz_budget_per_day` can legitimately
+ * be absent from a database the current code is talking to. Every OTHER Prisma error
+ * — connection loss, timeout, constraint violation — must still propagate: a bare
+ * `catch` here would swallow real DB failures and silently return "no budget", which
+ * is the fail-OPEN this whole feature exists to prevent.
+ *
+ * Narrow by CODE, not by message text. The message is a human string that upstream
+ * is free to reword; the code is the contract.
+ */
+export function isMissingColumnError(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'P2022';
+}
+
+/**
+ * ONCE PER PROCESS, not once per deploy and not once globally — this is a
+ * module-level boolean in one Node process, so a fleet of N pods emits up to N
+ * lines and a restart re-arms it. That is deliberate and sufficient: the signal
+ * wanted is "somebody is running ahead of the migration", which one line per pod
+ * carries, and the alternative (a line per spend attempt) would bury it.
+ *
+ * `error` level on purpose. Reading past a missing column is CORRECT (see
+ * `getConsentBuzzBudget`) but it is never an intended steady state — it means a
+ * migration is outstanding, and the operator has to be told.
+ */
+let missingBudgetColumnLogged = false;
+export function logMissingBudgetColumn(site: string, err: unknown): void {
+  if (missingBudgetColumnLogged) return;
+  missingBudgetColumnLogged = true;
+  logToAxiom(
+    {
+      name: 'app-blocks-scope-grant',
+      type: 'error',
+      message:
+        `app_user_scope_grants.buzz_budget_per_day is MISSING from this database — ` +
+        `apply migration 20260910120000_app_user_scope_grant_buzz_budget. Consent budgets ` +
+        `read as "not set" until it lands; the platform per-user daily Buzz cap still applies.`,
+      site,
+      code: (err as { code?: unknown } | null)?.code,
+    },
+    'webhooks'
+  ).catch(() => {
+    /* logging must never break a spend path */
+  });
+}
 
 /**
  * Returns the set of block-scope strings the user currently has granted for
@@ -43,6 +94,152 @@ export async function getGrantedScopes(opts: {
 }
 
 /**
+ * Reads the per-(user, app) CONSENT BUDGET — the daily Buzz ceiling the viewer
+ * themselves set for this app when they consented. `null` means the user set no
+ * budget, in which case the app spends under the platform's own per-user daily
+ * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
+ * before the column existed.
+ *
+ * 🔴 A REVOKED GRANT RETURNS `null` — AND THAT **IS** A TRANSIENT LOOSENING. THIS
+ * PARAGRAPH PREVIOUSLY SAID THE OPPOSITE AND WAS WRONG; THE CORRECTION IS THE POINT.
+ *
+ * It used to read: *"a revoked user's token carries no `ai:write:budgeted` and can
+ * reach no spend path at all — there is nothing left for a budget to bound."* The
+ * first half is true only at the NEXT MINT. Block tokens are JWTs with no per-jti
+ * revocation and a 900s default lifetime (300s settings-scoped, 4h dev —
+ * `block-token-lifetimes.ts`), so an already-minted token keeps the scope for up to
+ * its remaining life.
+ *
+ * During that window this function returning `null` is what REMOVES the viewer's own
+ * cap: `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
+ * reservation" and falls back to the platform ceiling (`BLOCK_BUZZ_CAP_PER_DAY`)
+ * alone. So a user who set 500 Buzz/day on an app has that lifted, not enforced, for
+ * the remainder of their token's life. The ordering is counter-intuitive and worth
+ * stating plainly: **the revoke drops the user's own ceiling BEFORE it drops the
+ * scope.**
+ *
+ * `BlockRevocation` (`block-revocation.service.ts`) narrows that window — a
+ * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
+ * what actually sets it before relying on it:
+ *
+ *  - 🔴 EXACTLY ONE CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION, and it is new
+ *    — this paragraph has already been wrong twice about what writes a marker.
+ *    It first said `BlockRevocation` was "operator-invoked" (false), then that
+ *    "there is no admin router, no tRPC procedure and no script" (also false, on
+ *    the middle term), then that no call site's purpose was revocation (true
+ *    until clawgate #618). What the tree shows now:
+ *
+ *    The INSTALL writer `revokeInstance` has two production call sites, both in
+ *    `block-registry.service.ts` — `uninstallFromModel` and
+ *    `toggleEnabled(false)` — and in both the marker is a SIDE EFFECT of a
+ *    different operation. Both are reachable over tRPC (`blocks.router.ts`,
+ *    `protectedProcedure`), and `assertCanManageBlocks` early-returns for
+ *    moderators, so a moderator CAN cause a marker deliberately, against any
+ *    user's install on any model. A SEPARATE writer, `revokeInstanceForBan`, has
+ *    one call site — `revokeBlockInstancesForPublisher`
+ *    (`blocks/publisher-ban-revocation.service.ts`, called from `toggleBan`) — and
+ *    IS there to revoke: it marks every live instance of every block the banned
+ *    user canonically owns, and leaves the installs themselves alone. The two use
+ *    different Redis keyspaces so an install write can never overwrite a ban.
+ *
+ *    So: two routes to a marker carry a separate, user-visible outcome
+ *    (uninstall / disable); the third is a moderation action against the
+ *    publisher, not against the install.
+ *
+ *    🔴 HOW OFTEN THE MIDDLEWARE'S 403 BRANCH IS ACTUALLY EXERCISED IS NOT
+ *    ESTABLISHED, AND THIS COMMENT NO LONGER GUESSES. Two successive drafts
+ *    asserted it was HOT, each for a reason the next round refuted — first
+ *    "a marker appears because a USER acted" (drawn from the false
+ *    no-tRPC-procedure claim), then "ordinary users hit both paths routinely"
+ *    (false: both mutations carry `enforceAppBlocksFlag`, and the live
+ *    `app-blocks-enabled` flag is base-`false` with a moderators-only segment,
+ *    so an ordinary user cannot reach either one). The conclusion outlived two
+ *    dead justifications because each round replaced the reason and kept the
+ *    claim.
+ *
+ *    🔴 DO NOT WRITE A THIRD. Nothing in this tree establishes the rate in
+ *    either direction — it depends on live Flipt state and on install
+ *    behaviour, neither of which is readable from source. If you need the
+ *    number, measure it; do not derive it here.
+ *  - it is per-INSTANCE, not per-user and not per-scope;
+ *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
+ *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not
+ *    know about each other.
+ *
+ * ⚠️ THE REVOKED BRANCH IS NO LONGER UNREACHABLE. This paragraph used to say nothing
+ * in the codebase ever SETS `app_user_scope_grants.revoked_at`, which was true of
+ * application code and is still true of it — every Prisma write here is
+ * `revokedAt: null`, and re-granting un-revokes. But
+ * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` is a committed,
+ * hand-applied writer built specifically to produce that state, so "only if an
+ * operator writes one by hand" is now a description of a PLANNED operation rather
+ * than a hypothetical. Read that file before reasoning about this branch.
+ *
+ * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
+ * consent write that may have just LOWERED the budget: served off the replica, a
+ * lag window would spend against the OLD, looser ceiling — the one direction a
+ * money cap must never drift. The read is a single unique-index lookup.
+ *
+ * 🔴 A MISSING COLUMN (P2022) RETURNS `null`, AND THAT IS THE TRUE ANSWER, NOT A
+ * FALLBACK. Migrations here are applied by hand, so an image can legitimately run
+ * against a database that does not yet have `buzz_budget_per_day`. If the column
+ * does not exist then no user can ever have set a budget — "no budget set" is not a
+ * degraded guess, it is the only state the database can be in — and `null` routes to
+ * exactly the same behaviour every pre-column grant already had: the platform's own
+ * `BLOCK_BUZZ_CAP_PER_DAY` ceiling keeps enforcing, unchanged. Only P2022 is caught;
+ * any other Prisma failure still throws, because for those the budget is UNKNOWN
+ * rather than absent, and treating unknown as "no budget" would be a fail-open.
+ */
+export async function getConsentBuzzBudget(opts: {
+  userId: number;
+  appBlockId: string;
+  db?: 'read' | 'write';
+}): Promise<number | null> {
+  const client = opts.db === 'read' ? dbRead : dbWrite;
+  let row: { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  try {
+    row = (await client.appUserScopeGrant.findUnique({
+      where: { userId_appBlockId: { userId: opts.userId, appBlockId: opts.appBlockId } },
+      select: { buzzBudgetPerDay: true, revokedAt: true },
+    })) as { buzzBudgetPerDay: number | null; revokedAt: Date | null } | null;
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    logMissingBudgetColumn('getConsentBuzzBudget', err);
+    return null;
+  }
+  if (!row || row.revokedAt) return null;
+  const budget = row.buzzBudgetPerDay;
+  // Guard the VALUE, not just its presence: a non-positive or non-finite number
+  // read back from the DB would otherwise become a cap of 0 or NaN, and `total >
+  // NaN` is false — i.e. a corrupt row would silently DISABLE the cap. Treat any
+  // unusable value as "no budget set" (the platform cap still applies).
+  if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) return null;
+  return Math.floor(budget);
+}
+
+/**
+ * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
+ * "every scalar", so a `create`/`update` with no `select` emits
+ * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
+ * re-consent throw P2022 against a database that has not had the migration applied
+ * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
+ * this PR's own preview environment before this select existed.
+ *
+ * `id` is picked because it is the primary key: it predates this feature, it can
+ * never be the column a future migration is racing, and no caller uses the return
+ * value (both writers return `void`). Do NOT widen this to include a column added by
+ * a pending migration — the whole point is that these writes read nothing new.
+ *
+ * 🔴 KEEP THIS CONST ABOVE `recordScopeGrant`'s DOCBLOCK, NOT BETWEEN THEM. It was
+ * introduced between that docblock and its function, which silently orphaned it:
+ * TypeScript attaches a leading comment to the next DECLARATION, so the whole
+ * `buzzBudgetPerDay` three-state contract stopped appearing on hover at every call
+ * site. A docblock separated from its function by another declaration documents
+ * that declaration instead.
+ */
+const WRITE_RETURN_SELECT = { id: true } as const;
+
+/**
  * Records (or extends) a user's consent for an app block. ADDITIVE — scopes
  * the user already granted persist; the supplied scopes are unioned in. Writing
  * a grant also clears any prior `revoked_at` (re-granting un-revokes), and
@@ -56,16 +253,42 @@ export async function getGrantedScopes(opts: {
  * (install/subscribe already resolve the AppBlock manifest) — this service does
  * NOT re-derive the ceiling; it stores exactly what it is told the user
  * consented to. Unknown/garbage scopes simply never match at mint.
+ *
+ * ## `buzzBudgetPerDay` semantics — NOT additive, and deliberately not
+ *
+ * The scope set unions because "I already let you read my models" and "now also
+ * spend my Buzz" are both true at once. A budget is a single number and cannot
+ * union; it can only be kept or replaced. So:
+ *
+ *   - `buzzBudgetPerDay: <number>` → OVERWRITES the stored value. The user just
+ *     told us what they want; the newest statement wins.
+ *   - `buzzBudgetPerDay: null`     → OVERWRITES with "no budget" (an explicit
+ *     clear — the user removed their limit).
+ *   - key OMITTED (`undefined`)    → LEAVES the stored value untouched.
+ *
+ * That third case is the one that matters, and it is why this is `'buzzBudgetPerDay'
+ * in opts` rather than a `!== undefined` test on the value. A re-consent for a NEW
+ * scope (the host surfaces `needs_consent`, the user clicks Allow) sends only the
+ * scopes; if an omitted budget were written through as NULL, accepting one extra
+ * permission would silently wipe a spend limit the user had deliberately set —
+ * a widening, performed by a dialog that said nothing about money.
  */
 export async function recordScopeGrant(opts: {
   userId: number;
   appBlockId: string;
   version: string;
   scopes: string[];
+  /** Omit to leave any stored budget untouched; `null` explicitly clears it. */
+  buzzBudgetPerDay?: number | null;
 }): Promise<void> {
   const { userId, appBlockId, version } = opts;
+  // Presence of the KEY, not truthiness of the value — see the doc above.
+  const budgetSupplied = 'buzzBudgetPerDay' in opts;
+  const budgetData = budgetSupplied ? { buzzBudgetPerDay: opts.buzzBudgetPerDay ?? null } : {};
   // Dedup + drop empties so the stored array stays clean.
-  const incoming = Array.from(new Set(opts.scopes.filter((s) => typeof s === 'string' && s.length > 0)));
+  const incoming = Array.from(
+    new Set(opts.scopes.filter((s) => typeof s === 'string' && s.length > 0))
+  );
 
   const existing = (await dbWrite.appUserScopeGrant.findUnique({
     where: { userId_appBlockId: { userId, appBlockId } },
@@ -76,7 +299,8 @@ export async function recordScopeGrant(opts: {
     const merged = Array.from(new Set([...(existing.grantedScopes ?? []), ...incoming]));
     await dbWrite.appUserScopeGrant.update({
       where: { id: existing.id },
-      data: { grantedScopes: merged, version, revokedAt: null },
+      data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
+      select: WRITE_RETURN_SELECT,
     });
     return;
   }
@@ -89,7 +313,9 @@ export async function recordScopeGrant(opts: {
         appBlockId,
         version,
         grantedScopes: incoming,
+        ...budgetData,
       },
+      select: WRITE_RETURN_SELECT,
     });
   } catch (err) {
     // Concurrent first-write race on the (user, app_block) unique index →
@@ -104,7 +330,8 @@ export async function recordScopeGrant(opts: {
     const merged = Array.from(new Set([...(row.grantedScopes ?? []), ...incoming]));
     await dbWrite.appUserScopeGrant.update({
       where: { id: row.id },
-      data: { grantedScopes: merged, version, revokedAt: null },
+      data: { grantedScopes: merged, version, revokedAt: null, ...budgetData },
+      select: WRITE_RETURN_SELECT,
     });
   }
 }
@@ -163,6 +390,23 @@ export async function recordScopeGrant(opts: {
  * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
  * only then does a token carry it. (This is the deliberate contrast to the #3090
  * exemption above: read:self always mints; read:private mints only after consent.)
+ *
+ * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
+ * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
+ * of the `collections:read:private` reason. It is the first block scope that
+ * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+ * No server-side visibility/ownership check can substitute for it, because the
+ * app IS acting on the subject's own account — ownership is satisfied by
+ * construction, which is exactly what makes it dangerous rather than safe. So it
+ * flows through the gated branch: the host surfaces it as `needs_consent`, the
+ * user grants it, and only then does a token carry it.
+ *
+ * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
+ * content that differs on every call, so `blocks.createPostFromApp` is ALSO
+ * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
+ * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
+ * confirm away as redundant with this grant — they answer different questions
+ * ("may this app post as me at all" vs "may it post THIS").
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed

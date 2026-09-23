@@ -3,7 +3,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import { imagesQueryParamSchema } from '~/components/Image/image.utils';
+import { parseImageQueryParams } from '~/components/Image/image.utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 
@@ -40,7 +40,9 @@ export default Page(
   function () {
     const router = useBrowserRouter();
     const imageId = router.query.imageId;
-    const filters = imagesQueryParamSchema.parse(router.query);
+    // Not `imagesQueryParamSchema.parse` — a throw here is a 500, and this page is the
+    // destination of notification links carrying `?postId=null`. See parseImageQueryParams.
+    const filters = parseImageQueryParams(router.query);
 
     if (!imageId) return <NotFound />;
 

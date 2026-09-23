@@ -9,7 +9,7 @@ import { generationSamplers } from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 
-// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+// All valid samplers: UI samplers + the ZImageBase and Flux2Klein sampler names
 const allValidSamplers = [
   ...generationSamplers,
   ...zImageSampleMethods,

@@ -1,8 +1,18 @@
 import type { AlertProps } from '@mantine/core';
-import { List, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { Alert } from '@mantine/core';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
+
+export function BaseModelWarningPoints({ points }: { points: string[] }) {
+  return (
+    <ul className="m-0 flex min-w-0 list-disc flex-col gap-1 pl-4 text-sm">
+      {points.map((point) => (
+        <li key={point} className="break-words">
+          {point}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function BaseModelWarningAlert({
   baseModel,
@@ -12,21 +22,8 @@ export function BaseModelWarningAlert({
   if (!warning) return null;
 
   return (
-    <AlertWithIcon
-      icon={<IconAlertTriangle size={20} />}
-      iconColor="red"
-      color="red"
-      size="sm"
-      title={warning.title}
-      {...alertProps}
-    >
-      <List size="sm" spacing={4} mt={4}>
-        {warning.points.map((point) => (
-          <List.Item key={point}>
-            <Text size="sm">{point}</Text>
-          </List.Item>
-        ))}
-      </List>
-    </AlertWithIcon>
+    <Alert color="red" radius="sm" title={warning.title} {...alertProps}>
+      <BaseModelWarningPoints points={warning.points} />
+    </Alert>
   );
 }

@@ -59,6 +59,7 @@ import {
   useGraphSubscriptions,
   MultiController,
 } from '~/libs/data-graph/react';
+import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -80,6 +81,8 @@ import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import {
   workflowConfigByKey,
   getEcosystemsForWorkflow,
@@ -102,14 +105,15 @@ import {
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
+import { GeneratorMessageWarnings } from '~/components/generation_v2/GateRuleWarnings';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
-import { useRemixOfId } from './hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
@@ -208,6 +212,19 @@ export function useSelectedBuzzType() {
  * The dropdown shows all available buzz types with their balances.
  */
 const BUZZ_SELECTOR_SEEN_KEY = 'buzz-type-selector-seen';
+
+export function StepWarningsNotification({ warnings }: { warnings: { message: string }[] }) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      {warnings.map((warning) => warning.message).join('\n')}
+    </Notification>
+  );
+}
 
 export function BuzzTypeSelector({
   cost,
@@ -349,12 +366,10 @@ function ConnectedBuzzTypeSelector() {
  */
 export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
-  const graph = useGraph<GenerationGraphTypes>();
-  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
-  // edits (which fire the global watcher) don't needlessly re-render this.
-  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
-    ecosystem?: string;
-  };
+  // Subscribe to only `ecosystem` — not the whole form — so prompt/seed/etc.
+  // edits don't needlessly re-render this. Bridge-based: GenerationLayout
+  // renders in both form lanes.
+  const selectedEcosystem = useGenerationFormValue<string>('ecosystem');
   if (!selectedEcosystem)
     return { blockedEcosystem: undefined, state: undefined, message: undefined };
 
@@ -363,11 +378,12 @@ export function useSelfHostedBlock() {
     resolution = pickStrongerGate(resolution, {
       state: selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled',
     });
+  // Rule-`disabled` is deliberately absent: it must not take over the footer or
+  // hide the form controls. It reports itself in the form body instead, and
+  // blocks whatIf + submit through `useDisabledGates`.
   const ruleRes = rulesToStates(gateRules).ecosystems.get(selectedEcosystem);
-  if (ruleRes) resolution = pickStrongerGate(resolution, ruleRes);
+  if (ruleRes && ruleRes.state === 'memberOnly') resolution = pickStrongerGate(resolution, ruleRes);
 
-  // A selected ecosystem is never 'hidden' (filtered from the picker); fold any
-  // stray hidden into the disabled alert defensively.
   const state = resolution
     ? resolution.state === 'memberOnly'
       ? 'memberOnly'
@@ -483,18 +499,6 @@ interface PriorityAlertSpaceProps {
   onClearInsufficientBuzz?: () => void;
 }
 
-/**
- * Alert space with DailyBoostRewardClaim always on top, then priority-based alerts.
- *
- * Layout:
- * - DailyBoostRewardClaim (always shown if available)
- * - Priority alert (only one shows):
- *   1. Missing field guidance (validation helper)
- *   2. WhatIf error (cost estimation failed)
- *   3. Submit error
- *   4. Membership upsell
- *   5. Queue snackbar (fallback)
- */
 function PriorityAlertSpace({
   submitError,
   onClearSubmitError,
@@ -503,7 +507,7 @@ function PriorityAlertSpace({
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
-  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const { error: whatIfError, isError: hasWhatIfError, data: whatIfData } = useWhatIfContext();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -606,6 +610,10 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+    // Above the sdcpp branch because that one always assigns (its MultiController decides
+    // internally whether to draw), so anything after it never renders.
+  } else if (whatIfData?.warnings?.length) {
+    priorityAlert = <StepWarningsNotification warnings={whatIfData.warnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
@@ -650,16 +658,14 @@ function PriorityAlertSpace({
     );
   }
 
-  // Experimental warnings sit alongside the priority alert rather than inside the
-  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
-  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
-  // fires whenever a required field is blank. Joining it would hide the warning
-  // for anyone who hasn't written a prompt yet — the moment it's most worth
-  // reading, since nothing has been invested in the selection yet.
+  // Alongside the priority alert, not inside the chain: the chain is exclusive and
+  // its first branch (`missingFieldMessage`) fires whenever a required field is
+  // blank, which would hide these for anyone who hasn't written a prompt yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
-      <ExperimentalWarnings />
+      <GeneratorMessageWarnings />
+      <BaseModelWarnings />
       {priorityAlert}
     </>
   );
@@ -680,7 +686,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   const { color } = useBuzzCurrencyConfig(selectedType);
 
   // Get whatIf data from context (provided by WhatIfProvider)
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
   const totalCost = useTotalGenerationCost();
 
   // Check if user has enough of the selected buzz type
@@ -694,6 +700,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 
   const submitBlocked =
     !canGenerate ||
+    gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
@@ -1012,26 +1019,16 @@ function BlueBuzzMatureReminder() {
 }
 
 // =============================================================================
-// Experimental Warnings
+// Base-Model Warnings
 // =============================================================================
 
-/**
- * The experimental warnings for the current selection, rendered in the footer's
- * alert region above the submit row — the last thing read before Buzz is
- * committed. Several can show at once (an ecosystem and a version can both be
- * experimental), which is the other reason these stay out of the priority chain:
- * it resolves to a single node.
- */
-function ExperimentalWarnings() {
+function BaseModelWarnings() {
   const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
 
-  return (
-    <MultiController
-      graph={graph}
-      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-      render={({ values }) => <ExperimentalAlerts selection={values} />}
-    />
-  );
+  return <EcosystemBaseModelWarnings ecosystem={ecosystem} />;
 }
 
 // =============================================================================
@@ -1086,7 +1083,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -1168,6 +1164,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // Resolved against the form as it stands, not read from the store: this id
+    // is recorded against a blocked prompt and read back as evidence, so it has
+    // to describe THIS request. See `utils/remix-claim.ts`.
+    const remixOfId = resolveRemixOfId(graph.getSnapshot() as RemixClaimFormState);
 
     // Validation-fail branch. Pairs with the `isValid:true` emit below so the
     // data team has a complete attempt funnel. We deliberately do NOT also
@@ -1308,6 +1309,25 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       }
     }
 
+    // Provenance tokens for whichever sources are still in the form.
+    //
+    // Deliberately NOT inside the `needsSourceMetadata` branch above: that gate is
+    // `enhancement === true`, and the workflows this matters most for — img2vid
+    // and img2img:edit, the two the Remix menu drives — are not enhancements. A
+    // token only exists for a source the user reached through a remix entry
+    // point, so reading the store for every image costs nothing when there is
+    // none, and collecting by CURRENT url is what drops a token whose image the
+    // user has since swapped out.
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
+    ].filter(isDefined);
+
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -1332,6 +1352,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
       });

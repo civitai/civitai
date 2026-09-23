@@ -168,7 +168,7 @@ describe('blocks.listMySubscriptions (guarded)', () => {
 
   // GA-relax (gotcha #66): the manage-page reflection queries are now
   // protectedProcedure (not moderatorProcedure) — a logged-in non-mod reads
-  // their OWN subscriptions, since /apps/installed is reachable by any user the
+  // their OWN subscriptions, since /apps/activity is reachable by any user the
   // per-user appBlocks flag admits. Scoped to ctx.user.id, so no cross-user read.
   it('allows a non-mod authed viewer — returns their own subscriptions', async () => {
     mockListUserSubscriptions.mockResolvedValue([]);

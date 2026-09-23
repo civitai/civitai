@@ -317,6 +317,15 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     betaMessage: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
+    // No declared scopes: this file is not about the permission disclosure, and an
+    // empty array renders no section at all. `projectListingDetail` guarantees an
+    // array, so a fixture omitting it would not match any real payload.
+    scopes: [],
+    // Same contract as `scopes`: `projectListingDetail` guarantees an array, and
+    // the body reads `.length` — a fixture omitting it would not match any real
+    // payload. `[]` keeps these ON-SITE fixtures rendering no connect-permissions
+    // section, which is what an on-site listing produces.
+    connectScopes: [],
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
@@ -343,6 +352,7 @@ function relatedCard(id: string, name: string): ListingCard {
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: 0,
     kindData: {
       kind: 'onsite',
       appBlockId: `ab-${id}`,
@@ -504,6 +514,18 @@ describe('AppListingDetailBody', () => {
     ).toBe('/apps/submit?edit=l1');
   });
 
+  /**
+   * 🔴 THIS IS ALSO THE SURFACE GUARD, AND IT IS THE HALF THAT MUST NOT REGRESS.
+   *
+   * The store CARD stopped offering these two items — `surface="card"`, decided in
+   * `appListingMenuSurface.ts` — because on a grid of ~24 tiles they invite a viewer
+   * to review an app they have not opened. The DETAIL page is the surface those
+   * items are FOR, and the narrowing is only correct if it left this one alone. So
+   * this test is the other side of `AppListingCard.browser.test.tsx`'s "a signed-in
+   * NON-owner, NON-moderator gets NO menu on the CARD": the same viewer, the same
+   * two items, opposite expected answers. A change that tightened the gate globally
+   * — the obvious wrong implementation — passes the card test and fails this one.
+   */
   test('🔴 a signed-in NON-owner gets Review + Report, and NO Edit', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);

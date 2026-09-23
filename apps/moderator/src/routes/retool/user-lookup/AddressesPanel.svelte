@@ -18,8 +18,9 @@
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="mb-1 text-sm font-semibold text-white">Addresses &amp; linked accounts</h3>
   <p class="mb-3 text-xs text-dark-2">
-    Only the addresses this account registered or subscribed from are matched — a login IP is often a
-    shared carrier address. Internal traffic excluded.
+    The 100 most recently used addresses, internal traffic and ban events excluded. Linked accounts
+    are matched only on the addresses this account registered or subscribed from — a login IP is
+    often a shared carrier address.
   </p>
 
   {#await signals}
@@ -36,10 +37,17 @@
           {:else}
             <ul class="space-y-1 text-sm">
               {#each result.ips.addresses.slice(0, SHOWN) as row (`${row.ip}:${row.type}`)}
-                <li class="flex flex-wrap items-baseline gap-x-2">
-                  <code class="text-dark-0">{row.ip}</code>
-                  <Badge variant="secondary">{row.type}</Badge>
-                  <span class="text-xs text-dark-2">{row.events}× · last {dateTime(row.last)}</span>
+                <li>
+                  <div class="flex flex-wrap items-baseline gap-x-2">
+                    <code class="text-dark-0">{row.ip}</code>
+                    <Badge variant="secondary">{row.type}</Badge>
+                    <span class="text-xs text-dark-2">
+                      {num(row.events)} events from this address, all time
+                    </span>
+                  </div>
+                  <div class="text-xs text-dark-2">
+                    first {dateTime(row.first)} · last {dateTime(row.last)}
+                  </div>
                 </li>
               {/each}
             </ul>

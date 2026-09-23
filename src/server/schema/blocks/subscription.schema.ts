@@ -87,7 +87,7 @@ export type UpsertSubscriptionInput = z.infer<typeof upsertSubscriptionSchema>;
  * `availableVersions` is the list of approved publish_request versions
  * for the underlying app, newest-first. Empty when the app has no
  * recorded publish requests (pre-W1 hackathon rows). Powers the version
- * Select on /apps/installed for pinned subscriptions.
+ * Select on /apps/activity for pinned subscriptions.
  */
 export type SubscriptionRecord = {
   id: string;

@@ -37,9 +37,11 @@ const SRC = path.join(REPO_ROOT, 'src');
  */
 const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
   'src/server/routers/blocks.router.ts': {
-    unguarded: 7,
+    unguarded: 9,
     reason:
-      'App Blocks: 4 paid submits + 3 whatIf/quote estimates. The paid ones SHOULD be guarded, ' +
+      "App Blocks: 5 paid submits + 4 whatIf/quote estimates (the pass-through `kind:'step'` " +
+      'arm added one of each — it is the same block spend path, so it inherits this exemption ' +
+      'rather than getting a different answer to the same question). The paid ones SHOULD be guarded, ' +
       'but blocks record spend through reserveBlockBuzzSpend rather than a generation/training ' +
       'buzzTransaction, so their workflow-id shape is not confirmed against the ledger the way ' +
       'the other paths are (1.16M rows, prefix == payer). Guarding on an unconfirmed id shape ' +
@@ -57,6 +59,13 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
     reason:
       'whatIfFromGraph — a cost estimate. `query: { whatif: true }` produces no persisted ' +
       'workflow and no debit, so there is no attribution to check.',
+  },
+  'src/server/services/resource-load.service.ts': {
+    unguarded: 1,
+    reason:
+      'estimateResourceLoad — the paid-model-loading price quote at `query: { whatif: true }`. ' +
+      'No persisted workflow and no debit, so there is no attribution to check. The real load ' +
+      'submit beside it IS guarded.',
   },
   'src/server/services/orchestrator/promptEnhancement.ts': {
     unguarded: 1,

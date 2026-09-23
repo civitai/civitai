@@ -358,11 +358,11 @@
       <Table.Body>
         {#each pageRows as m (m.modelVersionId)}
           <Table.Row>
-            <Table.Cell class="max-w-55 align-top">
+            <Table.Cell class="align-top">
               {#if m.modelId}
                 <a
                   href="/analytics/models/{m.modelId}"
-                  class="group flex items-start gap-1 font-medium text-blue-4 hover:text-blue-3"
+                  class="group flex max-w-55 items-start gap-1 font-medium text-blue-4 hover:text-blue-3"
                   title={rowLabel(m)}
                 >
                   <span class="min-w-0 flex-1">

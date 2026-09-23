@@ -25,13 +25,6 @@ export const createSubscribeSessionSchema = z.object({
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
 export const createDonateSessionSchema = z.object({ returnUrl: z.string() });
 
-export type CreateBuzzSessionInput = z.infer<typeof createBuzzSessionSchema>;
-export const createBuzzSessionSchema = z.object({
-  priceId: z.string(),
-  returnUrl: z.string(),
-  customAmount: z.number().min(buzzConstants.minStripeChargeAmount).optional(),
-});
-
 export type BuzzPriceMetadata = z.infer<typeof buzzPriceMetadataSchema>;
 export const buzzPriceMetadataSchema = z.object({
   buzzAmount: z.coerce.number().positive().optional(),
@@ -78,6 +71,11 @@ export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSc
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z
     .number()
+    // Stripe amounts must be whole minor units: `1000.4` answers `Invalid integer: 1000.4`,
+    // which reached the client as a 500. The service-side tamper guard
+    // (`unitAmount === metadata.buzzAmount / 10`) compares two values from the same division, so
+    // a fractional pair passes it and nothing further down the Stripe path re-checks wholeness.
+    .int({ message: 'The transaction amount must be a whole number of cents' })
     .min(constants.buzz.minChargeAmount, {
       message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(
         2

@@ -1,4 +1,5 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
 import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
 import type { NextApiRequest } from 'next';
@@ -423,6 +424,23 @@ const isMuted = middleware(async ({ ctx, next }) => {
   });
 });
 
+const isEmailVerified = middleware(({ ctx, next }) => {
+  const { user } = ctx;
+  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+  if (requiresEmailVerification(user))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      // No `cause` flag: `errorFormatter` forwards only `softBlock` and `tosReacceptRequired` onto
+      // `shape.data`, so anything else set here reaches no client. The banner is the way out, and it
+      // reads the session rather than the error.
+      message: 'Verify your email address to do this',
+    });
+
+  return next({
+    ctx: { ...ctx, user },
+  });
+});
+
 const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
   if (!user.isModerator)
@@ -507,4 +525,17 @@ export const verifiedProcedure = protectedProcedure.use(isOnboarded);
  * Guarded procedure to prevent users from making actions
  * based on muted/banned properties
  */
-export const guardedProcedure = verifiedProcedure.use(isMuted);
+export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerified);
+
+/**
+ * `guardedProcedure` minus the email-verification requirement.
+ *
+ * The gate lives on `guardedProcedure` so every content mutation inherits it without a call site being
+ * edited, which means anything overlooked fails CLOSED. This is the deliberate way out, for the handful
+ * of procedures that would otherwise 403 something the refusal is not meant to reach: reporting abuse,
+ * appealing your own restriction, a browsing preference, and three queries a page needs to render.
+ *
+ * Reach for it only when a blocked procedure would break the user's ability to browse, to be judged, or
+ * to complain — not merely because blocking it seems harsh.
+ */
+export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);

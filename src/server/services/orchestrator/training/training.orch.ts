@@ -9,7 +9,12 @@ import type {
   AiToolkitTrainingInput,
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
+  AnimaAiToolkitTrainingInput,
 } from '@civitai/client';
+import {
+  isSafeTensorFormat,
+  NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
+} from '@civitai/shared/training-custom-model';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -56,7 +61,7 @@ async function isSafeTensor(modelVersionId: number) {
     LIMIT 1
   `;
 
-  return data?.fmt === 'SafeTensor';
+  return isSafeTensorFormat(data?.fmt);
 }
 
 const checkCustomModel = async (
@@ -78,7 +83,7 @@ const checkCustomModel = async (
     if (!isST)
       return {
         ok: false,
-        message: 'Custom model does not have a SafeTensor file. Please choose another model.',
+        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
       };
   }
 
@@ -227,6 +232,15 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
+  } else if (aiToolkitParams.ecosystem === 'anima') {
+    // The civitai Anima AIR is the sample-image diffusion model, not the trainer base; sending it
+    // here bills its per-image license fee once per epoch checkpoint.
+    if (model !== trainingModelInfo.anima.air) {
+      trainingInput = {
+        ...trainingInput,
+        model,
+      } as AnimaAiToolkitTrainingInput;
+    }
   }
 
   // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
@@ -271,6 +285,7 @@ export const createTrainingWorkflow = async ({
   token,
   user,
   features,
+  domain,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -322,6 +337,16 @@ export const createTrainingWorkflow = async ({
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
   const fileMetadata = modelVersion.fileMetadata ?? {};
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
+
+  // Content prepared under red's permissive policy (captions/images live in the training zip and
+  // aren't re-checked here) must be paid for and run on red, not laundered onto green by switching
+  // domains at the final step. Legacy datasets predate the stamp and fall through to post-run
+  // moderation. See createFileHandler for where uploadDomain is set.
+  if (domain === 'green' && fileMetadata.uploadDomain === 'red') {
+    throw throwBadRequestError(
+      'This training dataset was prepared on civitai.red and must be submitted there. Switch back to civitai.red to start this training.'
+    );
+  }
   // const trainingResults = (fileMetadata.trainingResults ?? {}) as TrainingResultsV2;
 
   if (isInvalidRapid(baseModelType, trainingParams.engine))
@@ -569,7 +594,7 @@ export const createTrainingWhatIfWorkflow = async ({
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
-  const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
+  const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
   return { cost, licenseFee, precedingJobs, eta };

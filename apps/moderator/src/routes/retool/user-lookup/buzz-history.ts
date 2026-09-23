@@ -24,11 +24,20 @@ export type BuzzHistory = {
   /** The window the server actually queried — 1.5B rows means this is always bounded, and the panel has
    *  to say so rather than implying it shows everything. */
   days: number;
-  truncated: boolean;
+  /** The per-side cap the server actually applied — clamped, so it can be lower than what was asked
+   *  for. The panel states this rather than its own request value. */
+  limit: number;
+  /** Per side: the two are capped independently, and a busy receipts column says nothing about whether
+   *  the payments column is complete. */
+  truncated: { payments: boolean; receipts: boolean };
 };
 
-export async function fetchBuzzHistory(userId: number, days: number): Promise<BuzzHistory> {
-  const r = await fetch(`/api/user-buzz-history/${userId}?days=${days}`);
+export async function fetchBuzzHistory(
+  userId: number,
+  days: number,
+  limit: number
+): Promise<BuzzHistory> {
+  const r = await fetch(`/api/user-buzz-history/${userId}?days=${days}&limit=${limit}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }

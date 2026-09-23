@@ -16,6 +16,7 @@ import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
+import type { Archiver } from 'archiver';
 import stream, { Readable } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import * as z from 'zod';
@@ -39,8 +40,20 @@ import {
   IPEventName,
 } from '@civitai/cybertipline-tools';
 import { Limiter } from '~/server/utils/concurrency-helpers';
+import type { BoundedArchive } from '~/server/utils/archive-helpers';
+import {
+  createBoundedArchive,
+  deriveUploadPartGeometry,
+  ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+  MEDIA_ARCHIVE_COMPRESSION_LEVEL,
+  zipEntryNameForUrl,
+} from '~/server/utils/archive-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
+import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
+import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 const cybertipClient = new Client({
@@ -199,6 +212,19 @@ export async function getCsamsToReport() {
 export async function getCsamsToArchive() {
   const data = await dbRead.csamReport.findMany({
     where: { reportSentAt: { not: null }, archivedAt: null },
+    // Deterministic batch order, for auditability: without an ORDER BY, Postgres may return
+    // these in any order, and it may return a DIFFERENT order run to run, so the sequence in
+    // which evidence bundles were built is unreproducible from the data alone.
+    //
+    // 🔴 This does NOT fix head-of-line blocking, and reads as if it does if you skim it. A
+    // report that fails on every attempt is by construction among the OLDEST rows still
+    // matching this filter, so `createdAt asc` pins it to the head of every run — the ordering
+    // makes the blocking deterministic rather than curing it. Per-report failure isolation is
+    // deliberately out of scope here: `process-csam` already wraps each report in its own
+    // try/catch, which is enough for a report that merely throws, and nothing short of a
+    // circuit breaker (skip a report after N consecutive failures) helps for one that kills
+    // the process. That has not been built.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
   return data as unknown as CsamReportProps[];
 }
@@ -1038,10 +1064,22 @@ function uploadStream({
   stream: readStream,
   userId,
   filename,
+  expectedBytes,
 }: {
-  stream: fs.ReadStream;
+  /**
+   * Widened from `fs.ReadStream`. The streaming archive path pipes a `PassThrough` in here, which
+   * is a `Readable` but not an `fs.ReadStream`; nothing in this function ever used a file-specific
+   * member of the narrower type.
+   */
+  stream: Readable;
   userId: number;
   filename: string;
+  /**
+   * Rough expected size of the object, used only to size multipart parts. Omit it for small
+   * objects — see `deriveUploadPartGeometry`, which then reproduces the geometry this function
+   * used before part sizing existed.
+   */
+  expectedBytes?: number;
 }) {
   if (
     !env.CSAM_UPLOAD_KEY ||
@@ -1067,6 +1105,16 @@ function uploadStream({
   const Bucket = env.CSAM_BUCKET_NAME;
   const Key = `${userId}/${date.getTime()}_${filename}`;
 
+  // 🔴 MEMORY: `Upload` holds up to `queueSize` parts of `partSize` bytes in flight. The pair is
+  // derived together from a single budget rather than chosen independently, so that PRODUCT is
+  // held AT OR BELOW `UPLOAD_BUFFER_BUDGET_BYTES` (256 MiB) however large the archive turns out
+  // to be. (At or below, not at: the realistic geometry here is 5 MiB x 4 = 20 MiB, well under
+  // it.) The actual peak is somewhat above the product — see `UPLOAD_BUFFER_BUDGET_BYTES`
+  // for what is and is not established about it. The previous fixed `partSize: 5 MiB` /
+  // `queueSize: 4` capped any object at 10,000 x 5 MiB = 48.8 GiB, which is the ceiling this
+  // replaces. With no estimate the derivation returns exactly that old pair.
+  const { partSize, queueSize } = deriveUploadPartGeometry({ expectedBytes });
+
   return new Promise<void>(async (resolve, reject) => {
     try {
       const parallelUploads3 = new Upload({
@@ -1076,8 +1124,8 @@ function uploadStream({
           Key,
           Body: passThroughStream,
         },
-        queueSize: 4,
-        partSize: 1024 * 1024 * 5, // 5 MB
+        queueSize,
+        partSize,
         leavePartsOnError: false,
       });
 
@@ -1085,23 +1133,359 @@ function uploadStream({
       //   console.log({ progress });
       // });
 
-      readStream.pipe(passThroughStream);
+      // 🔴 `pipeline`, NOT `readStream.pipe(passThroughStream)` — `.pipe()` DOES NOT FORWARD
+      // ERRORS. When the source failed, `.pipe()` merely unpiped: the destination was never
+      // ended and never errored, so `done()` below waited on a stream nothing would ever write
+      // to again and the upload hung FOREVER rather than rejecting. `pipeline` destroys the
+      // destination with the error, which is what makes `done()` reject.
+      //
+      // This is not only the streaming path's concern. The disk path's `fs.createReadStream` can
+      // fail mid-read too (the scratch directory is removed by the caller's error handler), and
+      // it had exactly the same latent hang.
+      //
+      // The callback is required — `pipeline` throws `ERR_MISSING_ARGS` without one, and an
+      // error it reports is already surfaced by `done()` rejecting, so there is nothing to do
+      // with it here beyond not crashing the process on an unhandled 'error' event.
+      stream.pipeline(readStream, passThroughStream, () => undefined);
       await parallelUploads3.done();
       // console.dir('upload finished', { depth: null });
       resolve();
     } catch (e) {
-      // console.log(e);
-      reject();
+      // Rejecting with a real Error, not the bare `reject()` this used to do. An `undefined`
+      // rejection value reaches the caller's `catch (e)` and then blows up on `e.message` with
+      // a TypeError raised INSIDE the catch block — which escapes the per-report try/catch in
+      // `process-csam` and abandons every remaining report in that batch. The original is kept
+      // as `cause` so nothing about the S3 failure is lost.
+      reject(
+        new Error(`failed to upload ${filename} for user ${userId}`, {
+          cause: e,
+        })
+      );
     }
   });
 }
+
+/**
+ * Rows fetched per round-trip by the cursor-paged scans that feed an evidence bundle.
+ *
+ * The number is a round-trip/latency trade, not a correctness one: any positive value produces
+ * the same rows in the same order. It only has to be small enough that one page of full `Image`
+ * rows is comfortably resident, which is the whole reason the scans are paged.
+ *
+ * Exported so the tests can size their fixtures to cross a real page boundary. A test that
+ * hardcodes 500 goes green-and-vacuous the day this number is raised — it would be measuring a
+ * single-page scan while claiming to measure a multi-page one.
+ */
+export const ARCHIVE_SCAN_PAGE_SIZE = 500;
+
+/**
+ * Keyset-pages a `findMany` over an ascending integer primary key, yielding one page at a time.
+ *
+ * Keyset rather than `skip`/`offset` because offset paging over a large table both degrades
+ * quadratically and can skip or duplicate rows if the underlying set shifts between pages. With
+ * `id > cursor ORDER BY id ASC` every row appears exactly once, and the pages concatenate to
+ * exactly the row set a single unpaged `findMany` with the same `where` would have returned.
+ *
+ * ⚠️ PRECONDITION, and it does not hold uniformly across the three tables this is used on:
+ * keyset paging is only *cheap* where an index can serve `WHERE <filter> AND id > $cursor
+ * ORDER BY id ASC`. Read off `packages/civitai-db-schema/prisma/schema.full.prisma`, `Image`
+ * carries `@@index([userId, id])`, so the one genuinely large scan here — every image the
+ * reported user owns — is served directly. `Model` has no `userId` index at all, and
+ * `ModelVersion`'s only `modelId` index is a HASH index, which can answer equality but cannot
+ * serve a range or an ordering. So the two are not in the same position: `Model` has nothing
+ * indexed for its filter at all, while `ModelVersion`'s hash index CAN serve its `modelId IN
+ * (…)` equality filter — what it cannot serve is the ordering. Both have the primary key
+ * available for the cursor and the ordering. That is accepted rather than fixed here,
+ * because a user's model and model-version counts are small next to their image count and the
+ * point of this change is the memory ceiling, not latency. It is NOT a claim about the plan the
+ * planner actually chooses — no `EXPLAIN` was run.
+ *
+ * Lazy: the first query is not issued until the generator is first pulled from. Callers below
+ * depend on that.
+ */
+async function* scanPagesById<T extends { id: number }>(
+  fetchPage: (args: { afterId: number | undefined; take: number }) => Promise<T[]>,
+  pageSize: number = ARCHIVE_SCAN_PAGE_SIZE
+): AsyncGenerator<T[], void, undefined> {
+  let afterId: number | undefined;
+  for (;;) {
+    const rows = await fetchPage({ afterId, take: pageSize });
+    if (!rows.length) return;
+    yield rows;
+    // A short page is the last page: there is no id greater than the one we just read.
+    if (rows.length < pageSize) return;
+    afterId = rows[rows.length - 1].id;
+  }
+}
+
+/** Flattens paged rows into a per-row async iterable. Also lazy. */
+async function* flattenPages<T>(pages: AsyncIterable<T[]>): AsyncGenerator<T, void, undefined> {
+  for await (const page of pages) for (const row of page) yield row;
+}
+
+/**
+ * Releases an archive and its sink after a failure that skipped `finalize()`.
+ *
+ * On the happy path `finalize()` ends the archive and waits for the sink to close, so nothing is
+ * left open. On a throw neither happens: the archiver keeps its queued source buffers and the
+ * write stream keeps its file descriptor, while the caller's error handler removes the directory
+ * that file lives in. Both calls are no-ops once the object has reached a terminal state
+ * (`Archiver#abort` returns early if already aborted or finalized, and `destroy()` on a destroyed
+ * stream does nothing), so this is safe from any failure point.
+ *
+ * ⚠️ The two calls have different evidence behind them, and the difference is worth keeping:
+ *
+ * - `output.destroy()` is the file descriptor, and it is what the tests observe. Both
+ *   "closes the archive and its file descriptor …" cases fail with `expected false to be true`
+ *   when it is removed.
+ * - `archive.abort()` is the queued source buffers, and NO test distinguishes it — removing it
+ *   leaves every test in `archive-helpers.test.ts`, `csam-archive-stream-upload.test.ts`,
+ *   `csam-archive-backpressure.test.ts` and `process-csam.test.ts` green, and that is expected
+ *   rather than a gap: the bounded appender caps the backlog at `MAX_PENDING_ARCHIVE_ENTRIES`,
+ *   which drains far too fast to observe without a timing-dependent assertion. Its effect was
+ *   measured separately on an UNBOUNDED queue, where it is unmissable: with the sink destroyed
+ *   and no `abort()`, the archiver went on to deflate all 60 of 60 queued entries; with `abort()`
+ *   it stopped dead — 0 further entries on node 26, 1 on node 24 (whichever was already in
+ *   flight). So it does real work; it is just bounded work here, recorded as untested rather
+ *   than as covered.
+ *
+ *   No test TOTAL is quoted here, deliberately. A hand-maintained count sitting next to the code
+ *   it counts has nothing asserting on it, and this one drifted twice before it was removed. Run
+ *   those four files if you need the number.
+ *
+ * ⚠️ `output.destroy()` takes no error argument, and it does not need one. Destroying the sink is
+ * NOT what settles an in-flight upload reading from it — `stream.pipeline` in `uploadStream` is,
+ * and it is the only thing that is. Passing the error in here as well was tried, and measured
+ * REDUNDANT: with `pipeline` in place the failure path settles either way, and with `.pipe()` in
+ * place it hangs either way. Recorded so nobody re-adds it believing it does work.
+ */
+function closeArchiveOnFailure(archive: Archiver, output: stream.Writable) {
+  archive.abort();
+  output.destroy();
+}
+
+/**
+ * Builds one media archive and uploads it, either by staging it on local disk first or by
+ * streaming it straight to object storage.
+ *
+ * WHY THIS EXISTS AS ONE FUNCTION: the two call sites (`images.zip`, `generated-images.zip`)
+ * previously duplicated the archiver/sink/bounded-appender/finalize/upload sequence verbatim, and
+ * this change would have duplicated a second variant of it on top. Both sites now run the SAME
+ * code, so the two paths cannot drift from each other and the equivalence proof covers both.
+ * Only the `append` callback differs between them.
+ *
+ * THE TWO PATHS, and what is identical across them:
+ *
+ * - `stream: false` (default, and what runs with the flag off) — the archive is written to
+ *   `diskPath` with `fs.createWriteStream`, then read back with `fs.createReadStream` and
+ *   uploaded. Unchanged from what shipped before, down to the ordering.
+ * - `stream: true` — the archiver is piped into a `PassThrough` that is handed directly to
+ *   `Upload`, so the bytes never touch the container's scratch volume. The archive is produced by
+ *   the same archiver, at the same compression level, through the same bounded appender, in the
+ *   same append order, so the two paths differ only in where the bytes land.
+ *
+ * 🔴 MEMORY: the streaming path does NOT buffer the archive. `PassThrough` applies normal stream
+ * backpressure, so the archiver stalls when the uploader is behind rather than accumulating. What
+ * IS held is the uploader's in-flight parts, sized by `deriveUploadPartGeometry` (plus the SDK
+ * chunker's own accumulating buffer on top — see `UPLOAD_BUFFER_BUDGET_BYTES`). The
+ * bounded appender's own guarantee is untouched — it is the same `createBoundedArchive` wrapper
+ * with the same ceiling, just handed a different sink.
+ */
+async function archiveAndUpload({
+  userId,
+  filename,
+  diskPath,
+  stream: streamToStorage,
+  expectedBytes,
+  append,
+}: {
+  userId: number;
+  filename: string;
+  /** Where the archive is staged when `stream` is false. Unused on the streaming path. */
+  diskPath: string;
+  stream: boolean;
+  /**
+   * Size estimate for multipart part sizing. STREAMING PATH ONLY — the disk branch drops it so
+   * that the flag-off path keeps the fixed geometry it had before this change.
+   */
+  expectedBytes?: number;
+  append: (archive: BoundedArchive) => Promise<void>;
+}) {
+  const archive = archiver('zip', { zlib: { level: MEDIA_ARCHIVE_COMPRESSION_LEVEL } });
+
+  if (!streamToStorage) {
+    const output = fs.createWriteStream(diskPath);
+    // 🔴 `pipeline`, NOT `archive.pipe(output)`. `.pipe()` forwards errors in NEITHER direction,
+    // and the direction that matters here is SINK → SOURCE: when the sink is destroyed, `.pipe()`
+    // merely UNPIPES the source. The archiver is left alive and un-errored, so
+    // `createBoundedArchive` never latches a `failure`, never releases the `append()` callers
+    // parked on the pending-entry ceiling, and never rejects. The archiver's readable side then
+    // fills its high-water mark, `'entry'` stops firing, and every subsequent `append()` parks
+    // forever. The report HANGS instead of failing — the outcome this whole change exists to end.
+    //
+    // Measured against this archiver, destroying the sink under each: with `.pipe()` the archive
+    // emits no `'error'` at all and `archive.destroyed` stays `false`; with `pipeline` it emits
+    // `'error'` carrying the sink's own error and is destroyed. That `'error'` is the ONLY thing
+    // `createBoundedArchive` latches on, which is why the difference is hang-vs-fail rather than
+    // a detail of cleanup.
+    //
+    // This branch is not exempt just because it is the pre-change path. Its sink is a
+    // `fs.createWriteStream` on the container's scratch volume, so it fails mid-archive exactly
+    // when that volume is full — this incident's own condition, and the state the flag rolls
+    // back to. A rollback target that hangs is not a rollback.
+    //
+    // The callback is required (`pipeline` throws `ERR_MISSING_ARGS` without one) and is
+    // deliberately a no-op: every error it can report is ALREADY surfaced on a path the caller
+    // observes — a sink error reaches `finalize()`'s `output.once('error', reject)`, and an
+    // archiver error reaches `append()`/`finalize()` through the latched `failure`. Rethrowing
+    // here would add nothing but an uncaught exception raised from inside stream internals.
+    stream.pipeline(archive, output, () => undefined);
+    const boundedArchive = createBoundedArchive({ archive, output });
+
+    try {
+      await append(boundedArchive);
+      // Awaited: the read stream below opens a truncated (or absent) file otherwise.
+      await boundedArchive.finalize();
+    } catch (e) {
+      // Nothing past this point runs, and the caller's `catch` then `rmSync`s the report's scratch
+      // directory out from under a write stream that is still open on a file inside it. Release
+      // the archiver's queued sources and the sink's fd before letting the error out.
+      closeArchiveOnFailure(archive, output);
+      throw e;
+    }
+
+    const readableStream = fs.createReadStream(diskPath);
+    // 🔴 NO `expectedBytes` ON THIS BRANCH, DELIBERATELY — and this is the ONE place the
+    // geometry is gated, so no caller has to remember to.
+    //
+    // Derived part geometry arrived with the streaming change, so it belongs behind the same
+    // flag; otherwise "the rollback is a flag flip" is false. Passing an estimate here would
+    // give the supposedly-unchanged path a part size derived from a row count instead of the
+    // fixed 5 MiB it has always used — up to `256 MiB x 1` of in-flight parts against the previous
+    // `5 MiB x 4` = 20 MiB. Memory is the exact dimension that caused the eviction this change
+    // exists to fix, so the rollback target must not move on it.
+    //
+    // The cost is that this path keeps the old `10,000 x 5 MiB` = 48.8 GiB object ceiling. That
+    // is what rolling back MEANS; removing that ceiling is the streaming path's job.
+    await uploadStream({ stream: readableStream, userId, filename });
+    return;
+  }
+
+  const passThrough = new stream.PassThrough();
+  // 🔴 `pipeline`, NOT `archive.pipe(passThrough)` — the full mechanism is on the disk branch
+  // above. This is the branch where a destroyed sink is the ROUTINE case rather than an edge
+  // one: the upload's rejection handler below destroys `passThrough` on any upload failure, and
+  // under `.pipe()` that destroy reaches the archiver as nothing whatsoever.
+  //
+  // Size-dependent, which is why it can ship green. `Upload` absorbs roughly
+  // `queueSize * partSize` (~20 MiB at the default geometry) out of the `PassThrough` before it
+  // stops reading, so an archive smaller than that is already finished appending by the time the
+  // upload fails and the report fails correctly. Every archive this change exists for is far
+  // above that line — and so is the anti-hang fixture in
+  // `src/server/services/__tests__/csam-archive-stream-upload.test.ts`, deliberately.
+  stream.pipeline(archive, passThrough, () => undefined);
+  const boundedArchive = createBoundedArchive({ archive, output: passThrough });
+
+  // 🔴 START THE UPLOAD BEFORE APPENDING ANYTHING. `PassThrough` has a small high-water mark, so
+  // with nothing draining it the first appends fill it and the archiver stalls forever. The
+  // consumer has to be attached first.
+  //
+  // 🔴 AND ATTACH A REJECTION HANDLER IMMEDIATELY. Between here and the `await` at the bottom,
+  // this promise is live and unobserved; an upload that fails mid-archive (credentials, network,
+  // the part limit) would otherwise be an unhandled rejection, which takes the whole job process
+  // down rather than failing this one report. Latch the error instead and re-surface it below.
+  let uploadError: unknown;
+  const uploadPromise = uploadStream({
+    stream: passThrough,
+    userId,
+    filename,
+    expectedBytes,
+  }).then(
+    () => undefined,
+    (e: unknown) => {
+      uploadError = e;
+      // Fail the sink. The `stream.pipeline` above is what turns that into a stop signal for the
+      // producer: it destroys the archiver WITH THIS ERROR, the archiver emits `'error'`, and
+      // `createBoundedArchive` latches it and releases every parked `append()`. `finalize()`'s
+      // wait for the sink to close then settles too, so the report fails instead of hanging.
+      //
+      // ⚠️ TWO CORRECTIONS TO EARLIER REVISIONS OF THIS COMMENT LIVE HERE, and the second one
+      // undoes an overreach in the first.
+      //
+      // (1) THE DESTROY ALONE DOES NOT STOP THE PRODUCER. Under `archive.pipe(passThrough)` a
+      // destroyed sink only UNPIPES the archiver: it is never destroyed, never emits `'error'`,
+      // the pending-entry ceiling is never released, and the report hangs forever. The
+      // `stream.pipeline` above is what makes a destroyed sink reach the archiver at all.
+      //
+      // (2) BUT THE DESTROY DOES NOT CARRY THE COMMON CASE EITHER — the revision that fixed (1)
+      // called these two lines one mechanism that needed both halves, and that half is false. For
+      // any failure raised inside `upload.done()` — every runtime S3 failure — the pipelines
+      // already do the whole job: `Upload.__doConcurrentUpload`'s `for await` calls
+      // `dataFeeder.return()` on an in-loop throw, destroying the `PassThrough` `uploadStream`
+      // handed to `Upload`; `uploadStream`'s own `stream.pipeline` propagates that back onto THIS
+      // `passThrough`, and the `pipeline` above propagates it on to the archiver. Measured on
+      // this file: delete this line and all 8 tests stay green, the mid-archive probe included —
+      // and that probe is not vacuous, it goes HUNG when the `pipeline` above is removed.
+      //
+      // So what IS this line for, and it is the only thing established here: a rejection raised
+      // BEFORE `uploadStream` attaches that inner `pipeline` — `new Upload()` throwing from
+      // `__validateInput` (bad `partSize`/`queueSize`/params). Nothing has linked this
+      // `passThrough` to anything that can fail it yet, so without this line the archiver fills
+      // the `PassThrough`, stalls, and every parked `append()` waits forever.
+      //
+      // ⚠️ THAT CASE IS NOT REACHABLE AT HEAD — this is a future-geometry guard, not a live path.
+      // `deriveUploadPartGeometry` floors `partSize` at exactly `Upload.MIN_PART_SIZE` (5 MiB), so
+      // `__validateInput`'s `partSize < MIN_PART_SIZE` is false; it floors `queueSize` at 1; and
+      // `params`/`client` are always supplied at the sole call site above. It becomes reachable
+      // only if the part-size floor is dropped below the SDK's minimum or the queue floor below 1
+      // — which is what not to break here. Measured by INJECTING a throw at the `new Upload()`
+      // call site, since no input produces one today: with this line the report rejects in ~0.1 s;
+      // with it removed the same run reports `HUNG` at the 30 s deadline.
+      passThrough.destroy(e instanceof Error ? e : new Error(String(e)));
+    }
+  );
+
+  try {
+    await append(boundedArchive);
+    // Same contract as the disk path: resolves once the archive has ended AND the sink has
+    // closed. Here "the sink has closed" means the uploader has drained every byte.
+    await boundedArchive.finalize();
+  } catch (e) {
+    // 🔴 READ THIS BEFORE `closeArchiveOnFailure`, because that call CREATES the other error.
+    // Two different things reach this catch and they need opposite attribution:
+    //
+    //  - the upload failed first → it destroyed the sink → `finalize()` rejected with the
+    //    destroy error, so `e` is the downstream symptom and `uploadError` is the cause;
+    //  - the append/finalize failed first → we are about to destroy the sink ourselves, which
+    //    will make the upload fail as a consequence, so `e` is the cause.
+    //
+    // Latching which came first is the only way to tell them apart afterwards. Reporting the
+    // upload error unconditionally would bury a fetch or DB failure behind "failed to upload".
+    const uploadFailedFirst = uploadError !== undefined;
+    closeArchiveOnFailure(archive, passThrough);
+    // Settle the upload before rethrowing so nothing is left in flight.
+    await uploadPromise;
+    if (uploadFailedFirst) throw uploadError;
+    throw e;
+  }
+
+  // The upload is what decides the object is complete — `finalize()` only tells us the archive
+  // ended and the sink drained. Awaiting it here is what makes this function's resolution mean
+  // "the object is in storage", matching what the disk path's `await uploadStream(...)` means.
+  await uploadPromise;
+  if (uploadError) throw uploadError;
+}
+
+/** Serialises `bigint` columns (e.g. `Image.pHash`) as strings — `JSON.stringify` throws on them. */
+const bigintReplacer: JsonReplacer = (_key, value) =>
+  typeof value === 'bigint' ? value.toString() : value;
 
 export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
   if (!userId) {
     // An internal report (userId === -1 is stored as NULL) has no user-scoped content to
-    // archive, and archiveBaseReportData bails on it too. Returning silently left report 236
-    // re-selected by getCsamsToArchive every hour since 2024. Stamp a terminal state, but
+    // archive, and archiveBaseReportData bails on it too. Returning silently left such a
+    // report re-selected by getCsamsToArchive every hour since 2024. Stamp a terminal state, but
     // record that nothing was stored — archivedAt alone would read as evidence-complete.
     await dbWrite.csamReport.update({
       where: { id: data.id },
@@ -1121,11 +1505,99 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     trainingData: `${baseDir}/training-data/${data.id}`,
   };
 
+  /**
+   * Whether the two large media archives are streamed straight to object storage instead of being
+   * staged on the container's scratch volume first.
+   *
+   * 🔴 EVALUATED ONCE PER REPORT, DELIBERATELY. Reading the flag inside each archive function
+   * would let a mid-report flip produce a bundle whose parts were assembled two different ways,
+   * for no benefit — a report is short-lived and the two archive types are mutually exclusive
+   * anyway. One read also means one Flipt failure mode rather than two.
+   *
+   * DEFAULT-OFF: `isFlipt` returns false for an unknown flag, an unreachable Flipt, or a flag
+   * pinned disabled — all of which leave the disk-staging path, which is unchanged and stays
+   * reachable, in charge. That is the rollback: flip the flag off, no deploy.
+   *
+   * `data.json` and `training-data.zip` are NOT affected by this flag. The first is small; the
+   * second is a file this code downloads rather than builds, and the NCMEC submission path reads
+   * it back off disk, so neither has the disk ceiling this removes.
+   */
+  const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
+
+  /**
+   * The media-archive path SELECTED for this report.
+   *
+   * 🔴 Not the same thing as the flag value: the flag governs
+   * `archiveImages`/`archiveGeneratedImages` only, so a `TrainingData` or `ExternalLink`
+   * report resolves to `none` however the flag is set. Derived in one place so the log
+   * line and the counter cannot disagree about which path this report was routed to.
+   */
+  const archivePath = csamArchivePathFor(report.type, streamArchivesToStorage);
+
+  /**
+   * 🔴 EMITTED AT THE DECISION, AND BEFORE `createDir` — both deliberately.
+   *
+   * At the decision, because an archive that dies partway never reaches either counter
+   * call, so a completion-only record would be silent for exactly the failures worth
+   * investigating. This line is the one that survives a killed container.
+   *
+   * Before `createDir`, because that loop writes to the scratch volume and sits OUTSIDE
+   * the try block below — so a failure there (the disk-pressure class this whole arc was
+   * about) throws past both counter calls.
+   *
+   * 🔴 IT WAS NOT INVISIBLE BEFORE, AND SAYING SO WOULD BE WRONG: the caller already
+   * catches and logs it — `process-csam.ts`'s per-report `catch` emits
+   * `subType: 'archive-data'` carrying `errorMessage(e)`, which for the `mkdirSync` throw
+   * is the real errno (`ENOSPC: … mkdir '<path>'`). What that record does NOT carry is any
+   * of `reportId`, `reportType` or `archivePath`. So what emitting first actually buys is
+   * ATTRIBUTION — which report, and which path it was routed to — not visibility. The
+   * counter still cannot see it either way, which the counter's own help text states.
+   *
+   * 🔴 Do NOT "fix" that by moving the `createDir` loop inside the try: `removeDir` is
+   * `fs.rmSync(dir, { recursive: true })` with no `force`, so it throws `ENOENT` on a
+   * directory that was never created — and the catch's cleanup loop would then throw from
+   * inside the catch. Documenting the blind spot is the cheaper correct answer.
+   */
+  logToAxiom({
+    name: 'csam-report',
+    type: 'info',
+    subType: 'archive-path',
+    message: `archiving report ${report.id} (${report.type}) via the ${archivePath} path`,
+    reportId: report.id,
+    reportType: report.type,
+    archivePath,
+    streamArchivesToStorage,
+  });
+
   for (const dir of Object.values(reportDirs)) {
     createDir(dir);
   }
 
-  const images = await dbRead.image.findMany({ where: { userId } });
+  /**
+   * A fresh keyset-paged scan of every image the reported user owns.
+   *
+   * This replaces a single `dbRead.image.findMany({ where: { userId } })` whose result array was
+   * shared by `archiveBaseReportData` and `archiveImages`. Two callers therefore now run two
+   * scans instead of sharing one snapshot. That is a deliberate trade and it does not weaken the
+   * bundle: the archive step already tolerates listing an image in `data.json` that is absent
+   * from `images.zip`, because `fetchBlob` returning null makes it skip the entry silently
+   * (`if (!blob) return;` below). What it buys is that neither caller ever holds more than one
+   * page of full `Image` rows.
+   *
+   * The `where`/column selection is unchanged — same filter, no `select`, so every column still
+   * lands in the bundle. Only the ORDER is new, and it was previously unspecified (i.e. whatever
+   * the query plan produced, not stable run to run), so nothing that was deterministic became
+   * less so.
+   */
+  const scanUserImages = () =>
+    scanPagesById(({ afterId, take }) =>
+      dbRead.image.findMany({
+        where: { userId, ...(afterId !== undefined ? { id: { gt: afterId } } : {}) },
+        orderBy: { id: 'asc' },
+        take,
+      })
+    );
+
   try {
     await archiveBaseReportData();
 
@@ -1152,6 +1624,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       },
     });
 
+    recordCsamArchive(archivePath, report.type, 'success');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
@@ -1166,87 +1640,198 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         });
       }
     }
+    // 🔴 TWO THINGS THIS ROW DOES NOT MEAN, both easy to misread:
+    //
+    // (a) `path` here is the path SELECTED, not the path that failed. `archivePath` was
+    //     resolved before any archiving began, so a failure upstream of the media archive
+    //     — the base bundle, an image count — still records it. `{path="stream",
+    //     outcome="error"}` does NOT establish that the streaming upload broke; use the
+    //     log line's report id to find where it actually died.
+    // (b) `error` means THIS CALL THREW, not that the report is unarchived: the
+    //     `training data not found` branch above stamps `archivedAt` and then rethrows,
+    //     so that benign case lands here while the row reads archived. Left as one
+    //     outcome rather than three — it is confined to a type the flag does not govern,
+    //     the `type` label makes it self-explanatory, and a third value would widen every
+    //     series in the counter to describe one known-benign branch.
+    recordCsamArchive(archivePath, report.type, 'error');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
     throw e;
   }
 
-  // writes a json file of user data to disk before uploading
+  /**
+   * Writes the base evidence bundle to disk, then uploads it.
+   *
+   * 🔴 WHAT EVIDENCE IS IN THE BUNDLE IS UNCHANGED: the same five properties in the same order,
+   * the same `where` clauses with no `select` so every column still lands in it, and the same
+   * bigint replacer. `json-stream-helpers.test.ts` pins the serialiser's byte-identity against
+   * `JSON.stringify` — note that is a claim about the SERIALISER, over one fixed row order.
+   *
+   * Two things ARE different, and neither adds or removes a row. The queries now also carry
+   * `orderBy: { id: 'asc' }`, `take` and an `id > cursor` predicate, because they are paged. And
+   * as a consequence of that ordering, array element order is now `id ASC` where it was
+   * previously whatever the query plan happened to produce — so against real data this writes a
+   * document that is set-identical to the old one but NOT byte-identical to it. Making the order
+   * deterministic is an improvement for an evidence artefact, but it is a change, and anything
+   * that diffs two bundles across this commit will see it.
+   *
+   * Why it had to change: the previous shape loaded every `Image`, `Model` and `ModelVersion`
+   * row the reported user owns into three arrays and rendered them with one `JSON.stringify`.
+   * That has two ceilings. The soft one is memory — rows and rendered string resident together.
+   * The hard one is that `JSON.stringify` returns a single JavaScript string, and a JS string
+   * cannot exceed V8's maximum length — 536,870,888 characters on 64-bit
+   * (`require('buffer').constants.MAX_STRING_LENGTH`). Past that it throws
+   * `RangeError: Invalid string length`, which no amount of memory or retrying fixes. A report
+   * whose bundle crosses that line can never be archived.
+   */
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
     const user = await getReportedUser(userId);
-    const models = await dbRead.model.findMany({ where: { userId } });
-    const modelVersions = await dbRead.modelVersion.findMany({
-      where: { modelId: { in: models.map((x) => x.id) } },
-    });
+
+    // Model IDs are accumulated because `modelVersions` is filtered by them, exactly as before.
+    // Only the 4-byte ids are kept; the model ROWS stream through without being retained.
+    const modelIds: number[] = [];
+    let modelScanComplete = false;
+
+    async function* streamModels() {
+      const pages = scanPagesById(({ afterId, take }) =>
+        dbRead.model.findMany({
+          where: { userId, ...(afterId !== undefined ? { id: { gt: afterId } } : {}) },
+          orderBy: { id: 'asc' },
+          take,
+        })
+      );
+      for await (const model of flattenPages(pages)) {
+        modelIds.push(model.id);
+        yield model;
+      }
+      modelScanComplete = true;
+    }
+
+    async function* streamModelVersions() {
+      // 🔴 ORDERING INVARIANT. `modelIds` is filled by `streamModels` above, so this generator
+      // must not issue its first query until that one has been drained. It does not, because
+      // `writeJsonObject` serialises entries strictly in order and fully drains each iterable
+      // before starting the next, and because an async generator body does not run until it is
+      // first pulled from. Both of those are load-bearing and neither is locally visible, so
+      // the invariant is asserted rather than assumed: silently reading a half-filled `modelIds`
+      // would drop model versions from a CSAM evidence bundle with nothing to indicate it.
+      if (!modelScanComplete)
+        throw new Error(
+          'archiveBaseReportData: model versions were streamed before the model scan finished — ' +
+            'modelIds is incomplete and the bundle would be missing evidence'
+        );
+      const pages = scanPagesById(({ afterId, take }) =>
+        dbRead.modelVersion.findMany({
+          where: {
+            // A COPY of `modelIds`, not the live array.
+            //
+            // NOT because of a production race. The ordering invariant asserted at the top of
+            // `streamModelVersions` means this closure is only ever built after `streamModels`
+            // has been drained,
+            // so `modelIds` is already complete and nothing appends to it while these pages are
+            // fetched. An earlier revision of this comment claimed the array was "still being
+            // appended to" here; that was wrong, and the invariant directly above it says so.
+            //
+            // What the copy does buy, measured rather than reasoned: it is what lets the
+            // "filters model versions by the COMPLETE set of model ids" test observe the hazard
+            // the invariant names. Against a live reference the recorded call argument keeps
+            // mutating after the call, so it reads back as complete even for a scan that ran on
+            // an empty id set. Removing the invariant and reversing the entry order — i.e. the
+            // hazard, made reachable — fails that test with `expected [] to have a length of
+            // 501` against this copy, and passes vacuously against a reference.
+            modelId: { in: [...modelIds] },
+            ...(afterId !== undefined ? { id: { gt: afterId } } : {}),
+          },
+          orderBy: { id: 'asc' },
+          take,
+        })
+      );
+      yield* flattenPages(pages);
+    }
 
     const outPath = `${reportDirs.base}/${userId}_data.json`;
-    await fsAsync.writeFile(
-      outPath,
-      JSON.stringify(
-        {
-          user,
-          reportId,
-          models,
-          modelVersions,
-          images,
-        },
-        (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString();
-          }
-          return value;
-        }
-      )
-    );
+    await writeJsonObject({
+      sink: fs.createWriteStream(outPath),
+      replacer: bigintReplacer,
+      entries: [
+        ['user', { value: user }],
+        ['reportId', { value: reportId }],
+        ['models', { items: streamModels() }],
+        ['modelVersions', { items: streamModelVersions() }],
+        ['images', { items: flattenPages(scanUserImages()) }],
+      ],
+    });
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
   }
 
-  // writes a zip file to disk before adding user images directly to the zip file
+  /**
+   * Archives every image the reported user owns.
+   *
+   * The archive is either staged on disk and then uploaded, or streamed straight to storage —
+   * see `archiveAndUpload`. The append loop below is identical either way; that is the point.
+   */
   async function archiveImages() {
     const { userId } = report;
 
-    const outPath = `${reportDirs.images}/${userId}_images.zip`;
+    // Feeds multipart part sizing ONLY. A `count` is a separate round trip from the paged scan
+    // because `partSize` has to be fixed before the first byte is uploaded, and the scan does not
+    // know its own total until it has finished. An inaccurate — or absent — answer degrades to
+    // the default geometry rather than breaking anything; see `deriveUploadPartGeometry`.
+    //
+    // 🔴 GATED ON THE FLAG, like the geometry it feeds. This query did not exist before this
+    // change, and `archiveAndUpload`'s disk branch discards the estimate anyway, so issuing it
+    // with the flag off would be a new round trip against the main database bought for nothing —
+    // on the path whose whole claim is that it is unchanged.
+    const imageCount = streamArchivesToStorage
+      ? await dbRead.image.count({ where: { userId } })
+      : undefined;
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const output = fs.createWriteStream(outPath);
+    await archiveAndUpload({
+      userId,
+      filename: 'images.zip',
+      diskPath: `${reportDirs.images}/${userId}_images.zip`,
+      stream: streamArchivesToStorage,
+      expectedBytes:
+        imageCount !== undefined ? imageCount * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE : undefined,
+      append: async (boundedArchive) => {
+        // concurrency limiter
+        const maxWidth = MAX_POST_IMAGES_WIDTH;
+        const limit = plimit(10);
+        // Paged rather than `images.map(...)` over one array of every row the user owns: the row
+        // set is unbounded, and materialising it was half of the memory problem this file exists
+        // to fix. Concurrency within a page is unchanged (10); pages are processed in order.
+        for await (const page of scanUserImages()) {
+          await Promise.all(
+            page.map((image) => {
+              return limit(async () => {
+                const width = image.width ?? maxWidth;
+                const blob = await fetchBlob(
+                  getEdgeUrl(image.url, {
+                    type: image.type,
+                    width: width < maxWidth ? width : maxWidth,
+                  })
+                );
+                if (!blob) return;
+                const arrayBuffer = await blob.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
 
-    archive.on('error', function (err) {
-      throw err;
-    });
+                const imageName = image.name
+                  ? image.name.substring(0, image.name.lastIndexOf('.'))
+                  : image.url;
+                const name = imageName.length ? imageName : image.url;
+                const filename = `${name}.${blob.type.split('/').pop() as string}`;
 
-    archive.pipe(output);
-
-    // concurrency limiter
-    const maxWidth = MAX_POST_IMAGES_WIDTH;
-    const limit = plimit(10);
-    await Promise.all(
-      images.map((image) => {
-        return limit(async () => {
-          const width = image.width ?? maxWidth;
-          const blob = await fetchBlob(
-            getEdgeUrl(image.url, { type: image.type, width: width < maxWidth ? width : maxWidth })
+                await boundedArchive.append(buffer, { name: filename });
+              });
+            })
           );
-          if (!blob) return;
-          const arrayBuffer = await blob.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-
-          const imageName = image.name
-            ? image.name.substring(0, image.name.lastIndexOf('.'))
-            : image.url;
-          const name = imageName.length ? imageName : image.url;
-          const filename = `${name}.${blob.type.split('/').pop() as string}`;
-
-          archive.append(buffer, { name: filename });
-        });
-      })
-    );
-    archive.finalize();
-
-    const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
+        }
+      },
+    });
   }
 
   async function archiveGeneratedImages() {
@@ -1258,41 +1843,37 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       .filter(isDefined)
       .map((x) => x.previewUrl);
 
-    const outPath = `${reportDirs.generatedImages}/${userId}_generated-images.zip`;
+    await archiveAndUpload({
+      userId,
+      filename: 'generated-images.zip',
+      diskPath: `${reportDirs.generatedImages}/${userId}_generated-images.zip`,
+      stream: streamArchivesToStorage,
+      // Known upfront here, unlike `archiveImages` — no extra round trip needed. This is an upper
+      // bound: a URL whose fetch returns nothing is skipped, so the real archive can be smaller.
+      expectedBytes: imageUrls.length * ESTIMATED_BYTES_PER_ARCHIVED_IMAGE,
+      append: async (boundedArchive) => {
+        // concurrency limiter
+        const limit = plimit(10);
+        await Promise.all(
+          imageUrls.map((url, index) => {
+            return limit(async () => {
+              const blob = await fetchBlob(url);
+              if (!blob) return;
+              try {
+                const arrayBuffer = await blob.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const output = fs.createWriteStream(outPath);
+                const imageName = zipEntryNameForUrl(url, index);
 
-    archive.on('error', function (err) {
-      throw err;
+                await boundedArchive.append(buffer, { name: imageName });
+              } catch (e) {
+                //
+              }
+            });
+          })
+        );
+      },
     });
-
-    archive.pipe(output);
-
-    // concurrency limiter
-    const limit = plimit(10);
-    await Promise.all(
-      imageUrls.map((url) => {
-        return limit(async () => {
-          const blob = await fetchBlob(url);
-          if (!blob) return;
-          try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-
-            const imageName = url.split('/').reverse()[0].split('?')[0];
-
-            archive.append(buffer, { name: imageName });
-          } catch (e) {
-            //
-          }
-        });
-      })
-    );
-    archive.finalize();
-
-    const readableStream = fs.createReadStream(outPath);
-    await uploadStream({ stream: readableStream, userId, filename: 'generated-images.zip' });
   }
 
   // downloads training data zip file, writes it to disk, and then uploads that zip

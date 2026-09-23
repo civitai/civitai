@@ -51,7 +51,7 @@ Nothing from that branch is being carried forward except two notes worth keeping
 Added by Justin 2026-08-20, not in the article. Gates **any** monetization, so it sits in front of
 everything below: no licensing fee, no paid access, without the score.
 
-- [x] Read `User.meta.scores.models`, the same score the early-access ladder uses
+- [x] Read `User.meta.scores.total`, the same score the early-access ladder uses
       (`EARLY_ACCESS_CONFIG` in [common/constants.ts](../src/server/common/constants.ts)). Note EA
       already gates 4× higher — its first rung is 40,000 — so this floor binds on fees and paid
       access, not on EA.
@@ -221,7 +221,7 @@ that have to happen, or be decided, before it reaches creators.
 - [x] **Push and open the PR** — [#4270](https://github.com/civitai/civitai/pull/4270), one PR for the
       whole revamp, reviewed 2026-08-24.
 - [ ] **Update Justin's article** to the monthly allowance — tracked in
-      [creator-studio/paid-access-followups](creator-studio/paid-access-followups.md), which warns that
+      [creator-studio/paid-access-followups](creator-studio/monetization/paid-access-followups.md), which warns that
       the old and new numbers look identical and mean different things.
 
 ### Should be decided

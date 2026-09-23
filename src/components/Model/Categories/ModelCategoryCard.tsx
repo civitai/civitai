@@ -21,7 +21,6 @@ import {
   IconMessageCircle2,
   IconTagOff,
 } from '@tabler/icons-react';
-import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 
@@ -41,7 +40,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
@@ -62,8 +60,7 @@ import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import classes from './ModelCategoryCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-
-const aDayAgo = dayjs().subtract(1, 'day').toDate();
+import { getModelRecency } from '~/components/Cards/model-card.utils';
 
 export function ModelCategoryCard(
   props: ElementDataAttributes & {
@@ -92,12 +89,7 @@ function ModelCategoryCardContent({
   const image = images[0];
 
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const { isNew, isUpdated } = getModelRecency(data);
 
   const { isEngaged } = useEngagedModelMembership(id);
   const hasReview = isEngaged('Recommended');

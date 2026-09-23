@@ -1,6 +1,7 @@
 import { Text, Title } from '@mantine/core';
 import type { ErrorInfo } from 'react';
 import React, { Component } from 'react';
+import { reportBoundaryError } from '~/components/ErrorBoundary/reportBoundaryError';
 
 type Props = { children: React.ReactNode };
 type State = { hasError: boolean; error?: Error; stack?: string };
@@ -11,10 +12,7 @@ export default class GameErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.log('Error Boundary:', { error, errorInfo });
     this.setState({ error, stack: errorInfo.componentStack, hasError: true });
-    fetch('/api/application-error', {
-      method: 'POST',
-      body: JSON.stringify({ message: error.message, stack: errorInfo.componentStack }),
-    });
+    reportBoundaryError(error, { boundary: 'game', componentStack: errorInfo.componentStack });
   }
 
   // TODO.newOrder: update error boundary to show a different message

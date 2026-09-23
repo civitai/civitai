@@ -19,6 +19,13 @@ export const config = {
     // makes the increment a no-op on replay. Redelivery from a rebalance lands
     // within seconds, so this only needs to cover the realistic replay gap.
     cacheDedupeTtlSeconds: parseInt(process.env.CACHE_DEDUPE_TTL_SECONDS ?? '3600'),
+    // How often the reaction-farm exclusion list is re-read from ClickHouse. The
+    // admin endpoint that writes it documents the effect as landing "within ~5
+    // min", so matching that keeps the increment path no staler than the promise
+    // already made about the aggregate. MetricExcludedUsers floors this at 1s —
+    // it drives a setInterval, so an unparseable value would otherwise become a
+    // 1ms query loop against ClickHouse from every pod.
+    metricExclusionRefreshMs: parseInt(process.env.METRIC_EXCLUSION_REFRESH_MS ?? '300000', 10),
   },
   kafka: {
     brokers: (process.env.KAFKA_BROKERS ?? 'localhost:9092').split(','),

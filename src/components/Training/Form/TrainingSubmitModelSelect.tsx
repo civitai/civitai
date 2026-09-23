@@ -62,7 +62,7 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
+import { getCivitaiAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
   AI_TOOLKIT_EPOCHS,
@@ -89,6 +89,7 @@ const ModelSelector = ({
   isCustom = false,
   isVideo = false,
   allowedKeys,
+  customBaseModels,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -100,6 +101,7 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
   allowedKeys?: string[];
+  customBaseModels?: string[];
 }) => {
   const baseTypes = Array.isArray(baseType) ? baseType : [baseType];
   const versions = Object.entries(trainingModelInfo).filter(
@@ -157,7 +159,13 @@ const ModelSelector = ({
                 {
                   type: ModelType.Checkpoint,
                   // nb: when adding here, make sure logic is added in castBase below
-                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Illustrious'],
+                  baseModels: customBaseModels ?? [
+                    'SD 1.4',
+                    'SD 1.5',
+                    'SDXL 1.0',
+                    'Pony',
+                    'Illustrious',
+                  ],
                 },
               ],
             }}
@@ -209,6 +217,8 @@ const ModelSelector = ({
                   ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
+                  : ([...getBaseModelsByGroup('Anima')] as string[]).includes(baseModel)
+                  ? 'anima'
                   : 'sd15';
 
                 const cLink = stringifyAIR({
@@ -405,6 +415,13 @@ export const ModelSelect = ({
 
   const formBaseModel = selectedRun.base;
   const isCustomModel = !!selectedRun.customModel;
+
+  const baseModelInfo = !isCustomModel
+    ? trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
+    : undefined;
+  const baseModelCivitaiLink = baseModelInfo?.air
+    ? getCivitaiAirModelLink(baseModelInfo.air)
+    : null;
 
   const baseModel15 =
     !!formBaseModel &&
@@ -828,6 +845,14 @@ export const ModelSelect = ({
                     baseType="sdxl" // unused
                     makeDefaultParams={makeDefaultParams}
                     isCustom
+                    customBaseModels={[
+                      'SD 1.4',
+                      'SD 1.5',
+                      'SDXL 1.0',
+                      'Pony',
+                      'Illustrious',
+                      ...(features.animaTraining ? getBaseModelsByGroup('Anima') : []),
+                    ]}
                   />
                 </>
               )}
@@ -842,19 +867,11 @@ export const ModelSelect = ({
                     : trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
                 </Text>
-                {!isCustomModel &&
-                  trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]?.air && (
-                    <Anchor
-                      href={getAirModelLink(
-                        trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList].air!
-                      )}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="sm"
-                    >
-                      View base model on Civitai
-                    </Anchor>
-                  )}
+                {baseModelCivitaiLink && (
+                  <Anchor href={baseModelCivitaiLink} target="_blank" rel="noreferrer" size="sm">
+                    View base model on Civitai
+                  </Anchor>
+                )}
                 {blockedModels.includes(formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}

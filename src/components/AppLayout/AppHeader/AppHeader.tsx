@@ -12,6 +12,7 @@ import { Logo } from '~/components/Logo/Logo';
 import { ImpersonateButton } from '~/components/Moderation/ImpersonateButton';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
+import { ResourceLoadDrain } from '~/components/ResourceLoad/resource-load.utils';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -105,6 +106,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
                 <CivitaiLinkPopover />
               </>
             )}
+            {currentUser && features.resourceLoad && <ResourceLoadDrain />}
             {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
             {currentUser && showChat && <ChatButton />}

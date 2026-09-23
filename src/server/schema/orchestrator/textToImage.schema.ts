@@ -12,7 +12,7 @@ import { defaultCatch } from '~/utils/zod-helpers';
 
 const schedulers = ['simple', 'discrete', 'karras', 'exponential', 'ays'] as const;
 
-// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+// All valid samplers: UI samplers + the ZImageBase and Flux2Klein sampler names
 const allValidSamplers = [
   ...generationSamplers,
   ...zImageSampleMethods,

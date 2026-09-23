@@ -24,8 +24,21 @@ import {
   toolsSearchIndex,
   comicsSearchIndex,
 } from '~/server/search-index';
+import type { SearchIndexUpdateSyncResult } from '~/server/search-index/base.search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedEnumArray, commaDelimitedNumberArray } from '~/utils/zod-helpers';
+
+const searchIndexes = {
+  [MODELS_SEARCH_INDEX]: modelsSearchIndex,
+  [USERS_SEARCH_INDEX]: usersSearchIndex,
+  [IMAGES_SEARCH_INDEX]: imagesSearchIndex,
+  [ARTICLES_SEARCH_INDEX]: articlesSearchIndex,
+  [METRICS_IMAGES_SEARCH_INDEX]: imagesMetricsSearchIndex,
+  [COLLECTIONS_SEARCH_INDEX]: collectionsSearchIndex,
+  [BOUNTIES_SEARCH_INDEX]: bountiesSearchIndex,
+  [TOOLS_SEARCH_INDEX]: toolsSearchIndex,
+  [COMICS_SEARCH_INDEX]: comicsSearchIndex,
+};
 
 export const schema = z.object({
   updateIds: commaDelimitedNumberArray().optional(),
@@ -41,7 +54,7 @@ export const schema = z.object({
     BOUNTIES_SEARCH_INDEX,
     TOOLS_SEARCH_INDEX,
     COMICS_SEARCH_INDEX,
-  ]),
+  ] as const satisfies ReadonlyArray<keyof typeof searchIndexes>),
 });
 export default ModEndpoint(async function updateIndexSync(
   req: NextApiRequest,
@@ -59,6 +72,8 @@ export default ModEndpoint(async function updateIndexSync(
       throw new Error('No ids provided');
     }
 
+    let syncResult: SearchIndexUpdateSyncResult | undefined;
+
     await inJobContext(res, async (jobContext) => {
       const processQueuesOpts =
         (input.processQueues?.length ?? 0) > 0
@@ -68,76 +83,55 @@ export default ModEndpoint(async function updateIndexSync(
             }
           : undefined;
 
-      switch (input.index) {
-        case USERS_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await usersSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await usersSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case MODELS_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await modelsSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await modelsSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case IMAGES_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await imagesSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await imagesSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case ARTICLES_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await articlesSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await articlesSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case METRICS_IMAGES_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await imagesMetricsSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await imagesMetricsSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case COLLECTIONS_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await collectionsSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await collectionsSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case BOUNTIES_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await bountiesSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await bountiesSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case TOOLS_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await toolsSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await toolsSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        case COMICS_SEARCH_INDEX:
-          if (processQueuesOpts) {
-            await comicsSearchIndex.processQueues(processQueuesOpts, jobContext);
-          } else {
-            await comicsSearchIndex.updateSync(data, jobContext);
-          }
-          break;
-        default:
-          break;
+      // `input.index` is constrained to the keys of `searchIndexes` by the zod enum above, which
+      // is itself checked against those keys — so this lookup cannot miss.
+      const searchIndex = searchIndexes[input.index];
+
+      if (processQueuesOpts) {
+        await searchIndex.processQueues(processQueuesOpts, jobContext);
+      } else {
+        syncResult = await searchIndex.updateSync(data, jobContext);
       }
     });
 
-    res.status(200).send({ status: 'ok' });
+    // A batch that exhausted its retries indexed nothing. Returning 200 here is what made a
+    // failed backfill indistinguishable from a successful one for the caller.
+    // One spelling of the accounting triple for both bodies: they differ in what else they carry,
+    // and a fourth field on the result would otherwise land in one of them only.
+    const accounting = syncResult && {
+      idsWithoutDocument: syncResult.idsWithoutDocument,
+      idsWithoutDocumentSample: syncResult.idsWithoutDocumentSample,
+      handledWithoutDocument: syncResult.handledWithoutDocument,
+    };
+
+    if (syncResult && syncResult.failedTasks > 0) {
+      res.status(500).send({
+        status: 'error',
+        index: syncResult.indexName,
+        failedTasks: syncResult.failedTasks,
+        totalTasks: syncResult.totalTasks,
+        failedIds: syncResult.failedIds,
+        ...accounting,
+        error: `${syncResult.failedIds} ids in ${syncResult.failedTasks} of ${syncResult.totalTasks} batches failed to index`,
+      });
+      return;
+    }
+
+    // Not a 500: an id with no document is a row the index legitimately does not want as often as it is a
+    // repair that did not land, and this endpoint cannot tell those apart. But a bare `ok` over a
+    // run that wrote nothing for the ids it was handed is the exact signal that let two documents
+    // survive a 280k-id repair, so the number goes in the success body where the operator reads
+    // it.
+    res.status(200).send(
+      syncResult
+        ? {
+            status: 'ok',
+            index: syncResult.indexName,
+            totalTasks: syncResult.totalTasks,
+            ...accounting,
+          }
+        : { status: 'ok' }
+    );
   } catch (error: unknown) {
     res.status(500).send(error);
   }

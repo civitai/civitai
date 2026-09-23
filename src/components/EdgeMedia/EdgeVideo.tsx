@@ -255,7 +255,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
       width: options?.width,
-      optimized: options?.optimized,
+      // A `thumbnailUrl` poster is an image uuid, so `useEdgeUrl`'s video rule misses it.
+      optimized: true,
       skip: thumbnailUrl ? undefined : options?.skip,
       anim: thumbnailUrl ? undefined : false,
       transcode: thumbnailUrl ? undefined : true,

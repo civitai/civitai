@@ -12,7 +12,8 @@
  * | useWorkflowPreferencesStore        | store/workflow-preferences.store.ts          | GenerationFormProvider, useCompatibilityInfo, useGeneratedItemWorkflows | localStorage   |
  * | useTipStore                        | store/tip.store.ts                           | FormFooter                                                       | localStorage   |
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
- * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
+ * | useRemixProvenanceStore            | store/remix-provenance.store.ts              | SourceImageUploadMultiple, FormFooter                            | sessionStorage |
+ * | useRemixStore                      | store/remix.store.ts                         | FormFooter, GenerationForm, useGeneratedItemWorkflows            | sessionStorage |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */
@@ -20,7 +21,6 @@
 import {
   Button,
   Checkbox,
-  Divider,
   Group,
   Input,
   Menu,
@@ -29,7 +29,6 @@ import {
   Radio,
   Select,
   Switch,
-  Text,
   Textarea,
   TextInput,
   Tooltip,
@@ -41,8 +40,7 @@ import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { TriggerWordsStrip } from '~/components/Generate/Input/PromptEditorShell';
 
 import {
   Controller,
@@ -99,6 +97,7 @@ import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
 import { ControlNetsInput, type ControlNetsInputProps } from './inputs/ControlNetsInput';
+import { ControlVideoInput, type ControlVideoInputProps } from './inputs/ControlVideoInput';
 import {
   Krea2StyleReferencesInput,
   type Krea2StyleReferencesInputProps,
@@ -109,11 +108,10 @@ import {
   ImageUploadMultipleInput,
   type ImageStatusAnnotation,
 } from './inputs/ImageUploadMultipleInput';
+import { useSourceImageAnnotations } from './inputs/useSourceImageAnnotations';
 import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
 import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { PriorityInput } from './inputs/PriorityInput';
@@ -131,6 +129,7 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
@@ -146,6 +145,7 @@ import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
+import { GateRuleWarnings } from './GateRuleWarnings';
 
 // =============================================================================
 // Component
@@ -203,48 +203,53 @@ export function GenerationForm() {
   // no-op (we just don't re-add the id).
   const loadFromModelVersion = trpc.wildcardSet.loadFromModelVersion.useMutation();
   const handleAddWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
+        // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
+        // empty here because we can't infer the active subgraph's target list
+        // from the form layer — if no snippets node was hydrated yet, the
+        // graph's defaultValue will replace this on the next evaluation.
+        const current = snap.snippets ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        graph.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        } as Parameters<typeof graph.set>[0]);
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       // Filter the modal to Wildcards-type models only. `baseModels`
       // omitted intentionally — wildcard packs are model-agnostic.
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
-          // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
-          // empty here because we can't infer the active subgraph's target list
-          // from the form layer — if no snippets node was hydrated yet, the
-          // graph's defaultValue will replace this on the next evaluation.
-          const current = snap.snippets ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          graph.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          } as Parameters<typeof graph.set>[0]);
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [graph, loadFromModelVersion]);
@@ -629,6 +634,8 @@ export function GenerationForm() {
                 )}
               />
             </div>
+
+            <GateRuleWarnings />
 
             {/* API version selector (e.g. Veo 3.1). Hidden while a single
                 version is offered — the value is still sent. */}
@@ -1025,6 +1032,21 @@ export function GenerationForm() {
               )}
             />
 
+            <Controller
+              graph={graph}
+              name="yue2MusicMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+
             {/* Snippet sources strip. Lives in its own Controller so it
                 auto-hides whenever the active graph doesn't include the
                 snippets node — i.e. the ecosystem subgraph didn't opt the
@@ -1139,51 +1161,12 @@ export function GenerationForm() {
                       minRows={2}
                       className="!border-0 !bg-transparent"
                     />
-                    {/* Nested trigger words controller — surfaces the active
-                        model/resources' trained words as copy-able chips
-                        below the editor. Auto-hides when the active
-                        subgraph didn't merge `triggerWordsGraph`. */}
                     <Controller
                       graph={graph}
                       name="triggerWords"
-                      render={({ value }) => {
-                        const triggerWords = value as string[] | undefined;
-                        if (!triggerWords || triggerWords.length === 0) return null;
-                        return (
-                          <div className="mb-1 flex flex-col gap-2 px-2">
-                            <Divider />
-                            <Text c="dimmed" className="text-xs font-semibold">
-                              Trigger words
-                            </Text>
-                            <div className="mb-2 flex items-center gap-1">
-                              <TrainedWords
-                                type="LORA"
-                                trainedWords={triggerWords}
-                                badgeProps={{
-                                  style: {
-                                    textTransform: 'none',
-                                    height: 'auto',
-                                    cursor: 'pointer',
-                                  },
-                                }}
-                              />
-                              <CopyButton value={triggerWords.join(', ')}>
-                                {({ copied, copy, Icon, color }) => (
-                                  <Button
-                                    variant="subtle"
-                                    color={color ?? 'blue.5'}
-                                    onClick={copy}
-                                    size="compact-xs"
-                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                  >
-                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                  </Button>
-                                )}
-                              </CopyButton>
-                            </div>
-                          </div>
-                        );
-                      }}
+                      render={({ value }) => (
+                        <TriggerWordsStrip triggerWords={value as string[] | undefined} />
+                      )}
                     />
                   </Paper>
                 </Input.Wrapper>
@@ -1230,7 +1213,7 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="lyrics"
-              render={({ value, onChange }) => (
+              render={({ value, onChange, error }) => (
                 <Textarea
                   label="Lyrics"
                   description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
@@ -1239,8 +1222,40 @@ export function GenerationForm() {
                   }
                   value={value as string}
                   onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
                   autosize
                   minRows={4}
+                />
+              )}
+            />
+
+            <Controller
+              graph={graph}
+              name="yue2Mode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+            <Controller
+              graph={graph}
+              name="yue2Abc"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="ABC score (optional)"
+                  description="Supply a score to skip automatic composition. Leave blank to compose from your style and lyrics."
+                  placeholder={'X:1\nM:4/4\nL:1/4\nQ:1/4=105\nK:C\nC D E G |'}
+                  value={value}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={3}
                 />
               )}
             />
@@ -1771,6 +1786,25 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Resolution */}
+            <Controller
+              graph={graph}
+              name="resolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Resolution</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
+
             {/* Aspect ratio */}
             <Controller
               graph={graph}
@@ -1812,7 +1846,11 @@ export function GenerationForm() {
                 if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
                   return (
                     <SliderInput
-                      label="Duration (seconds)"
+                      label={
+                        snapshot.ecosystem === 'YuE2'
+                          ? 'Maximum duration (seconds)'
+                          : 'Duration (seconds)'
+                      }
                       value={value as number}
                       onChange={onChange}
                       min={sliderMeta.min}
@@ -1854,25 +1892,6 @@ export function GenerationForm() {
                     ))}
                   </Group>
                 </Radio.Group>
-              )}
-            />
-
-            {/* Resolution (Wan/Sora video quality) */}
-            <Controller
-              graph={graph}
-              name="resolution"
-              render={({ value, meta, onChange }) => (
-                <div className="flex flex-col gap-1">
-                  <Input.Label>Resolution</Input.Label>
-                  <SegmentedControlWrapper
-                    value={value}
-                    onChange={(v) => onChange(v as typeof value)}
-                    data={meta.options.map((o: { label: string; value: string }) => ({
-                      label: o.label,
-                      value: o.value,
-                    }))}
-                  />
-                </div>
               )}
             />
 
@@ -2596,8 +2615,7 @@ export function GenerationForm() {
               )}
             /> */}
 
-              {/* ControlNets — disabled for now (the node is when:false in every
-                  ecosystem graph); renders only when a graph declares the node */}
+              {/* Image ControlNets — txt2img only, per ecosystem graph */}
               <Controller
                 graph={graph}
                 name="controlNets"
@@ -2606,6 +2624,20 @@ export function GenerationForm() {
                     value={value as ControlNetsInputProps['value']}
                     onChange={onChange as ControlNetsInputProps['onChange']}
                     meta={meta as ControlNetsInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
+
+              {/* Video ControlNet — MiniMax H3 comfy txt2vid declares this node */}
+              <Controller
+                graph={graph}
+                name="controlVideo"
+                render={({ value, meta, onChange, error }) => (
+                  <ControlVideoInput
+                    value={value as ControlVideoInputProps['value']}
+                    onChange={onChange as ControlVideoInputProps['onChange']}
+                    meta={meta as ControlVideoInputProps['meta']}
                     error={error?.message}
                   />
                 )}
@@ -2709,11 +2741,10 @@ function ImagesInput({
   workflow?: string;
 }) {
   const annotationsSnapshot = useGraphSubscription(graph, 'annotations');
-  const graphAnnotations = annotationsSnapshot?.value as
-    | ({ label: string; color: string; tooltip?: string } | null)[]
-    | undefined;
-  const aiMetaAnnotations = useAiMetadataAnnotations(value);
-  const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+  const annotations = useSourceImageAnnotations(
+    value,
+    annotationsSnapshot?.value as (ImageStatusAnnotation | null)[] | undefined
+  );
   // The active graph IS the applicability rule: a param is offered only when
   // there's a node to put it in, so a video workflow drops the image-only
   // settings on its own and no per-workflow list has to be maintained here.
@@ -2757,59 +2788,6 @@ function ImagesInput({
       metadataApply={metadataApply}
     />
   );
-}
-
-/**
- * For moderators, checks each image for valid AI metadata (EXIF).
- * Returns a parallel annotation array or undefined for non-moderators.
- */
-function useAiMetadataAnnotations(
-  images: { url: string }[] | null | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  const currentUser = useCurrentUser();
-  const [results, setResults] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    if (!currentUser?.isModerator || !images?.length) return;
-
-    for (const { url } of images) {
-      if (url in results) continue;
-      fetchBlobAsFile(url).then(async (file) => {
-        if (!file) return;
-        const parser = await ExifParser(file);
-        const meta = await parser.getMetadata();
-        const hasAiMeta = Object.keys(meta).length > 0 || parser.isMadeOnSite();
-        setResults((prev) => ({ ...prev, [url]: hasAiMeta }));
-      });
-    }
-  }, [currentUser?.isModerator, images]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!currentUser?.isModerator || !images?.length) return undefined;
-
-  return images.map(({ url }) => {
-    if (!(url in results)) return null;
-    return results[url]
-      ? { label: 'AI Meta', color: 'green', tooltip: 'Valid AI metadata detected' }
-      : { label: 'No AI Meta', color: 'yellow', tooltip: 'No AI metadata found in image' };
-  });
-}
-
-/** Merge two parallel annotation arrays, preferring graph annotations over AI meta. */
-function useMergedAnnotations(
-  graph: (ImageStatusAnnotation | null)[] | undefined,
-  aiMeta: (ImageStatusAnnotation | null)[] | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  return useMemo(() => {
-    if (!graph && !aiMeta) return undefined;
-    if (!graph) return aiMeta;
-    if (!aiMeta) return graph;
-    const len = Math.max(graph.length, aiMeta.length);
-    const merged: (ImageStatusAnnotation | null)[] = [];
-    for (let i = 0; i < len; i++) {
-      merged.push(graph[i] ?? aiMeta[i] ?? null);
-    }
-    return merged;
-  }, [graph, aiMeta]);
 }
 
 // =============================================================================

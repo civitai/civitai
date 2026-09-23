@@ -44,7 +44,7 @@ type AppProviderProps = {
   chatSettings?: UserSettingsChat;
   seed: number;
   canIndex: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
@@ -61,7 +61,7 @@ type AppProviderProps = {
 type AppContext = {
   seed: number;
   canIndex: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   allowMatureContent: boolean;
   domain: Record<ColorDomain, boolean>;
   host: string;
@@ -77,6 +77,15 @@ export function useAppContext() {
   const context = useContext(Context);
   if (!context) throw new Error('missing AppProvider in tree');
   return context;
+}
+
+/**
+ * 🔴 Non-throwing on purpose, and only for consumers with a correct answer without the
+ * provider: component tests mount no `AppProvider`, and a throw during render empties the tree
+ * into unexplained timeouts.
+ */
+export function useMaybeAppContext() {
+  return useContext(Context);
 }
 
 /**

@@ -17,6 +17,7 @@ describe('tokenScopeKeyByBit', () => {
     expect(tokenScopeKeyByBit(TokenScope.ModelsRead)).toBe('ModelsRead');
     expect(tokenScopeKeyByBit(TokenScope.UserRead)).toBe('UserRead');
     expect(tokenScopeKeyByBit(TokenScope.AppBlocksDevTunnel)).toBe('AppBlocksDevTunnel');
+    expect(tokenScopeKeyByBit(TokenScope.LinkConnect)).toBe('LinkConnect');
   });
 
   it('returns undefined for an unknown / non-single bit', () => {
@@ -206,7 +207,7 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     }
   });
 
-  it('EXCLUDES the public-read + opt-in App-Block scopes', () => {
+  it('EXCLUDES the public-read + opt-in scopes', () => {
     // NotificationsRead/VaultRead are NO LONGER here — they are private-data reads
     // and were promoted into SENSITIVE_TOKEN_SCOPES.
     for (const bit of [
@@ -218,6 +219,7 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       TokenScope.CollectionsRead,
       TokenScope.AppBlocksSubmit,
       TokenScope.AppBlocksDevTunnel,
+      TokenScope.LinkConnect,
     ]) {
       expect(SENSITIVE_TOKEN_SCOPES & bit).toBe(0);
     }
@@ -235,6 +237,7 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.ModelsRead)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.MediaRead)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.AppBlocksSubmit)).toBe(false);
+    expect(isSensitiveTokenScope(TokenScope.LinkConnect)).toBe(false);
     expect(isSensitiveTokenScope(0)).toBe(false);
   });
 
@@ -242,8 +245,6 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     // A read-only mask is not sensitive…
     expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.MediaRead)).toBe(false);
     // …but add one sensitive bit and it is.
-    expect(
-      isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.ModelsWrite)
-    ).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.ModelsWrite)).toBe(true);
   });
 });

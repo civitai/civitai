@@ -365,7 +365,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
           format: 'JSONEachRow',
         });
 
-        const scores = (await response?.json<(ImageScores & { metrics: string })[]>()).map((s) => ({
+        const scores = (await response?.json<ImageScores & { metrics: string }>()).map((s) => ({
           ...s,
           metrics: JSON.parse(s.metrics) as Record<string, number>,
         }));

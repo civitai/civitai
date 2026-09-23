@@ -136,4 +136,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 export default withBlockScope(baseHandler, {
   endpoint: 'generation_resources',
   allowOpaqueOrigin: true,
+  // Public, maturity-clamped resource data — the same argument as blocks/models.ts. No
+  // requiredScope, nothing viewer-scoped, nothing written.
+  onApprovalLookupFailure: 'serve',
 });

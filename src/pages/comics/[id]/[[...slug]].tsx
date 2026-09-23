@@ -139,6 +139,7 @@ function PublicComicReader() {
   } else if (isError || !project) {
     body = (
       <div className={styles.notFound}>
+        <Meta title="Comic not found | Civitai" deIndex />
         <IconPhotoOff size={48} />
         <p>{isError ? 'Failed to load comic' : 'Comic not found'}</p>
         <Link href="/comics" className={styles.notFoundLink}>
@@ -156,6 +157,7 @@ function PublicComicReader() {
   ) {
     body = (
       <div className="absolute inset-0 flex items-center justify-center">
+        <Meta title="Comic not available | Civitai" deIndex />
         <Text>This content is not available on this site</Text>
       </div>
     );
@@ -228,7 +230,7 @@ function ChapterListItem({
         {thumbUrl ? (
           <>
             <img
-              src={getEdgeUrl(thumbUrl, { width: 120 })}
+              src={getEdgeUrl(thumbUrl, { width: 120, optimized: true })}
               alt={ch.name}
               className={isBlurred ? styles.chapterThumbBlurred : undefined}
             />
@@ -328,6 +330,7 @@ function ChapterListItem({
 
 function ComicOverview({ project }: { project: Project }) {
   const router = useRouter();
+
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === project.user.id;
   const projectMeta = project.meta as ComicProjectMeta | null;
@@ -419,7 +422,7 @@ function ComicOverview({ project }: { project: Project }) {
                 safe ? (
                   <>
                     <img
-                      src={getEdgeUrl(heroUrl, { width: 1200 })}
+                      src={getEdgeUrl(heroUrl, { width: 1200, optimized: true })}
                       alt={project.name}
                       className={styles.overviewHeroImage}
                       style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
@@ -430,7 +433,7 @@ function ComicOverview({ project }: { project: Project }) {
                   <>
                     <div className="absolute inset-0 overflow-hidden">
                       <img
-                        src={getEdgeUrl(heroUrl, { width: 1200 })}
+                        src={getEdgeUrl(heroUrl, { width: 1200, optimized: true })}
                         alt={project.name}
                         className={styles.overviewHeroImage}
                         style={{
@@ -556,13 +559,16 @@ function ComicOverview({ project }: { project: Project }) {
                 )}
                 {isMod && (
                   <Menu position="bottom-end" withinPortal>
-                    <Menu.Target>
-                      <Tooltip label="Moderator actions">
+                    {/* Tooltip WRAPS Menu.Target, not the other way round — the inner
+                        nesting silently stops the menu opening. See
+                        AppListingActionsMenu.tsx. */}
+                    <Tooltip label="Moderator actions">
+                      <Menu.Target>
                         <ActionIcon variant="subtle" color="yellow">
                           <IconBan size={18} />
                         </ActionIcon>
-                      </Tooltip>
-                    </Menu.Target>
+                      </Menu.Target>
+                    </Tooltip>
                     <Menu.Dropdown>
                       <Menu.Label>Moderator</Menu.Label>
                       <Menu.Item
@@ -803,6 +809,7 @@ type ReaderMode = 'scroll' | 'pages';
 
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
+
   const currentUser = useCurrentUser();
   const availableBuzzTypes = useAvailableBuzz();
   const chapters = project.chapters;
@@ -1012,7 +1019,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
     if (!panel.imageUrl) return null;
-    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200 });
+    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200, optimized: true });
 
     if (panel.image) {
       const image = panel.image;
@@ -1275,13 +1282,16 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     )}
                     {isMod && activeChapter?.status === ComicChapterStatus.Published && (
                       <Menu position="bottom-end" withinPortal>
-                        <Menu.Target>
-                          <Tooltip label="Moderator actions">
+                        {/* Tooltip WRAPS Menu.Target, not the other way round — the
+                            inner nesting silently stops the menu opening. See
+                            AppListingActionsMenu.tsx. */}
+                        <Tooltip label="Moderator actions">
+                          <Menu.Target>
                             <ActionIcon variant="subtle" color="yellow">
                               <IconBan size={18} />
                             </ActionIcon>
-                          </Tooltip>
-                        </Menu.Target>
+                          </Menu.Target>
+                        </Tooltip>
                         <Menu.Dropdown>
                           <Menu.Label>Moderator</Menu.Label>
                           <Menu.Item

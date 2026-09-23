@@ -13,12 +13,19 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  *     the deploy callbacks) and by the suspend→re-queue clone in
  *     `offsite-moderation.service`. Carries `version`, `manifest`, `bundleSha256`,
  *     `deployState`.
- *   - `app_listing_publish_requests` — the STORE-LISTING stream. It has exactly THREE
- *     `create` sites in the tree, and only ONE of them can emit `kind: 'onsite'`:
- *     `submitListingRevision`, which passes `kind: shadow.kind`. So every on-site row in
- *     that table is a shadow-REVISION request (a change to the listing's name/media/
- *     category), never a code submission — `listMySubmissions` states the same invariant
- *     in prose: *"all onsite requests are shadow revisions"*.
+ *   - `app_listing_publish_requests` — the STORE-LISTING stream. A row is a change to the
+ *     listing's name/media/category, never a code submission.
+ *
+ *     🔴 The writer set is pinned as `LISTING_REQUEST_PRODUCERS` in
+ *     `offsite-listing.onsite-revision.service.test.ts` (fails on GROWTH and SHRINK) — do
+ *     not restate it here. And an on-site row does **not** imply a shadow revision:
+ *     `routeRepublishToReviewInTx` writes NON-shadow on-site rows. Discriminate on
+ *     `revisionOfId`, never on `kind`.
+ *
+ *     ⚠ This paragraph asserted the opposite until 2026-09-12 — "exactly THREE create
+ *     sites", "only ONE can emit `kind: 'onsite'`", "every on-site row is a shadow". All
+ *     three were falsified by #4440 and none of them was load-bearing for any assertion
+ *     below, which is why a fully green suite never noticed.
  *
  * A version bump and a listing edit are DIFFERENT EVENTS on the same app. Deduplicating
  * them would delete real history; ignoring one table would hide half of it.

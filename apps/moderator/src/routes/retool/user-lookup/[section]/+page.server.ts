@@ -24,6 +24,7 @@ import {
   sendBuzz,
   setRewardsEligibility,
   clearProfileText,
+  deleteAccount,
   purgeAllContent,
   removeSocial,
   resolveRestriction,
@@ -102,7 +103,7 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  // ENFORCEMENT. Every action below is gated on `/users` rather than this page: reaching User Lookup
+  // ENFORCEMENT. Every action below is gated on `/users` or on a named grant, never on this page: reaching User Lookup
   // is an investigation permission, acting on an account is a different one.
   setMuted: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
@@ -479,7 +480,18 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return buzzFail(result.error);
-    return { success: true };
+    // The parsed input, not the raw form: the confirmation the panel shows has to name what was
+    // actually filed. An echo of the typed fields would still read 'sent' for a request the server
+    // coerced differently.
+    return {
+      success: true,
+      filed: {
+        action: input.action,
+        amount: input.amount,
+        buzzType: input.buzzType,
+        transactionType: input.transactionType,
+      },
+    };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
@@ -530,8 +542,8 @@ export const actions: Actions = {
           input.op === 'delete'
             ? 'bulkDelete'
             : input.op === 'tos'
-              ? 'removeAsTos'
-              : 'restoreFromTos',
+            ? 'removeAsTos'
+            : 'restoreFromTos',
         commentIds,
         commentV2Ids,
         userId: input.userId,
@@ -574,6 +586,29 @@ export const actions: Actions = {
       return accountFail('Type the username exactly to confirm the purge.');
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
+    if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  }),
+
+  // No confirmation check here: the endpoint owns it, and a second copy would drift from it.
+  deleteAccount: requiresGrant('user.deleteAccount', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        username: z.string().optional(),
+        removeModels: z.enum(['true', 'false']).optional(),
+        removeImages: z.enum(['true', 'false']).optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return accountFail(input);
+
+    const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
+    const result = await deleteAccount({
+      userId: input.userId,
+      username: input.username,
+      removeModels: flag(input.removeModels),
+      removeImages: flag(input.removeImages),
+    });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
   }),

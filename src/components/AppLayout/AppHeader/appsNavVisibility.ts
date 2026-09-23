@@ -2,18 +2,23 @@ import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 
 /**
- * Pure visibility logic for the two App Blocks nav entries in the user menu.
+ * Pure visibility logic for the SINGLE App Blocks "Apps" entry in the user menu.
  *
  * Extracted out of `useGetMenuItems` (which is a heavy hook — router, session,
- * theme, tRPC) so the gating invariant is unit-testable in isolation:
+ * theme, tRPC) so the gating invariant is unit-testable in isolation.
  *
- *  - the PUBLIC "Build apps" → `/apps/get-started` entry is visible whenever the
- *    public `appBlocksGetStarted` flag is on (everyone by default; Flipt kill
- *    switch);
- *  - the "Apps" → `/apps` entry is visible exactly when the STORE is visible —
- *    {@link hasAppsStoreAccess}, i.e. `appListings || appBlocks ||
- *    appListingsPublicExternal`. Its visibility is INDEPENDENT of the
- *    get-started flag.
+ * 🔴 IT RETURNED TWO BOOLEANS UNTIL THE `/apps/build` CONSOLIDATION, AND THE SECOND
+ * ONE IS GONE RATHER THAN LEFT UNUSED. `getStarted` existed so the menu row could FALL
+ * BACK to `/apps/get-started` for a viewer holding `appBlocksGetStarted` without store
+ * access — a viewer who cannot load `/apps` at all. That page merged into `/apps/build`,
+ * whose gate (`canAccessAppsBuild`, `~/shared/utils/app-blocks-access`) requires
+ * `hasAppsStoreAccess` — so there is no longer ANY `/apps/*` route that cohort can load,
+ * and a fallback would have pointed at a second 404. Keeping the boolean with no reader
+ * would assert that a routing decision still hangs on it; it does not.
+ *
+ * `appBlocksGetStarted` has not stopped mattering — it still decides whether a
+ * store-visible NON-author is shown the pitch on `/apps/build`. It just no longer decides
+ * REACHABILITY of anything, which is the only question this helper answers.
  *
  * 🔴 THE MARKETPLACE ENTRY USED TO READ `appBlocks` ALONE, and that is what
  * issue #3907 was. Until the W13 decoupling, `appBlocks` WAS store visibility,
@@ -29,7 +34,7 @@ import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
  * A viewer admitted by the catalog flags alone lands on a page that renders
  * fine — the store, scoped server-side to whatever catalog they may see (the
  * external-only cohort gets `kind='offsite'` listings and nothing else). The
- * block-RUNTIME surfaces behind it (`/apps/installed`, `/apps/run/<slug>`, …)
+ * block-RUNTIME surfaces behind it (`/apps/activity`, `/apps/run/<slug>`, …)
  * keep their own `appBlocks` gates, so showing this entry widens discovery, not
  * capability.
  *
@@ -42,8 +47,6 @@ import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
  * This file imports no React/Mantine so it stays a pure unit.
  */
 export type AppsNavVisibility = {
-  /** PUBLIC get-started landing page (`/apps/get-started`). */
-  getStarted: boolean;
   /** Store hub (`/apps`) — visible exactly when the store is. */
   marketplace: boolean;
 };
@@ -54,11 +57,6 @@ export type AppsNavVisibility = {
  * `appListings` upstream is a compile error here instead of a silent
  * degradation to `appBlocks`-only. See that type's doc.
  */
-export function appsNavVisibility(
-  features: { appBlocksGetStarted?: boolean } & NonNullable<AppsStoreFeatureFlags>
-): AppsNavVisibility {
-  return {
-    getStarted: !!features.appBlocksGetStarted,
-    marketplace: hasAppsStoreAccess(features),
-  };
+export function appsNavVisibility(features: NonNullable<AppsStoreFeatureFlags>): AppsNavVisibility {
+  return { marketplace: hasAppsStoreAccess(features) };
 }

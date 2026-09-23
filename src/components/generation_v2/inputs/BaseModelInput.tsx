@@ -140,7 +140,7 @@ TriggerButton.displayName = 'TriggerButton';
 // List Content (shared between Popover and Modal)
 // =============================================================================
 
-interface BaseModelListContentProps {
+export interface BaseModelListContentProps {
   value?: string;
   recentItems: EcosystemDisplayItem[];
   groupedByFamily: FamilyGroup[];
@@ -166,7 +166,7 @@ interface BaseModelListContentProps {
   onSearchChange?: (value: string) => void;
 }
 
-function BaseModelListContent({
+export function BaseModelListContent({
   value,
   recentItems,
   groupedByFamily,
@@ -325,7 +325,8 @@ function BaseModelListContent({
         ? ecosystemById.get(item.defaultEcosystemId)?.key ?? item.key
         : item.key;
     const gateState = disabledStateMap?.get(disabledCheckKey);
-    const isDisabled = !!gateState;
+    // `disabled` stays selectable — the form explains it and blocks generation.
+    const isDisabled = gateState?.state === 'memberOnly';
     const badge = gateState ? GATE_BADGE[gateState.state] : undefined;
     const button = (
       <UnstyledButton
@@ -596,17 +597,24 @@ function groupItemsByFamily(items: EcosystemDisplayItem[]): FamilyGroup[] {
 // Component
 // =============================================================================
 
-export function BaseModelInput({
+/**
+ * Everything `BaseModelListContent` needs to render: the display items, their
+ * family grouping, recents, tab state and the group→ecosystem resolution that
+ * happens on select.
+ */
+function useBaseModelPickerState({
   value,
   onChange,
   compatibleEcosystems,
   excludeEcosystems,
   ecosystemStates,
-  disabled,
   isCompatible,
-  getTargetWorkflow,
   outputType,
-}: BaseModelInputProps) {
+  onSelected,
+}: Omit<BaseModelInputProps, 'disabled' | 'label' | 'getTargetWorkflow'> & {
+  /** Fired after a selection commits — the trigger uses it to close and reset. */
+  onSelected?: () => void;
+}) {
   const excludeSet = useMemo(
     () => (excludeEcosystems?.length ? new Set(excludeEcosystems) : null),
     [excludeEcosystems]
@@ -615,9 +623,6 @@ export function BaseModelInput({
     () => (ecosystemStates?.length ? new Map(ecosystemStates.map((e) => [e.key, e])) : undefined),
     [ecosystemStates]
   );
-  const isMobile = useMediaQuery('(max-width: 768px)');
-  const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
-  const [searchValue, setSearchValue] = useState('');
   const [recentEcosystems, setRecentEcosystems] = useLocalStorage<string[]>({
     key: RECENT_ECOSYSTEMS_KEY,
     defaultValue: [],
@@ -755,8 +760,7 @@ export function BaseModelInput({
         ) {
           onChange?.(lastUsed);
           trackRecentSelection(key);
-          closePopover();
-          setSearchValue('');
+          onSelected?.();
           return;
         }
       }
@@ -777,8 +781,7 @@ export function BaseModelInput({
     }
 
     trackRecentSelection(key);
-    closePopover();
-    setSearchValue('');
+    onSelected?.();
   };
 
   // Get recent items - resolve recent keys to current display items
@@ -806,6 +809,60 @@ export function BaseModelInput({
     },
     [setStoredTab]
   );
+
+  return {
+    readableName,
+    recentItems,
+    groupedByFamily,
+    allGroupedByFamily,
+    disabledStateMap,
+    hasIncompatibleItems,
+    activeTab,
+    handleTabChange,
+    handleSelect,
+    showRecentTab,
+  };
+}
+
+export function BaseModelInput({
+  value,
+  onChange,
+  compatibleEcosystems,
+  excludeEcosystems,
+  ecosystemStates,
+  disabled,
+  isCompatible,
+  getTargetWorkflow,
+  outputType,
+}: BaseModelInputProps) {
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
+  const [searchValue, setSearchValue] = useState('');
+
+  const {
+    readableName,
+    recentItems,
+    groupedByFamily,
+    allGroupedByFamily,
+    disabledStateMap,
+    hasIncompatibleItems,
+    activeTab,
+    handleTabChange,
+    handleSelect,
+    showRecentTab,
+  } = useBaseModelPickerState({
+    value,
+    onChange,
+    compatibleEcosystems,
+    excludeEcosystems,
+    ecosystemStates,
+    isCompatible,
+    outputType,
+    onSelected: () => {
+      closePopover();
+      setSearchValue('');
+    },
+  });
 
   const openMobileModal = () => {
     dialogStore.trigger({

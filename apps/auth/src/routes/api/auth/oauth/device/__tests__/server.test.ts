@@ -24,6 +24,8 @@ import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 const h = vi.hoisted(() => ({
   hSet: vi.fn(),
   hExpire: vi.fn(),
+  getClientIp: vi.fn<() => string | null>(),
+  checkRateLimit: vi.fn<(bucket: string, id: string | null) => Promise<boolean>>(),
   clientRow: undefined as unknown,
 }));
 
@@ -45,8 +47,10 @@ vi.mock('$lib/server/redis', () => ({
 }));
 
 vi.mock('$lib/server/oauth/rate-limit', () => ({
-  checkOAuthRateLimit: vi.fn().mockResolvedValue(true),
+  checkOAuthRateLimit: h.checkRateLimit,
 }));
+
+vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
 
 import { POST } from '../+server';
 
@@ -99,6 +103,8 @@ beforeEach(() => {
   h.clientRow = undefined;
   h.hSet.mockResolvedValue(1);
   h.hExpire.mockResolvedValue(1);
+  h.getClientIp.mockReturnValue('203.0.113.7');
+  h.checkRateLimit.mockResolvedValue(true);
 });
 
 describe('device authorization — requested-scope validation', () => {
@@ -226,5 +232,38 @@ describe('device authorization — requested-scope validation', () => {
           TokenScope.AppBlocksDevTunnel
       );
     });
+  });
+});
+
+describe('device +server — the authorization request is bounded per caller, not per fleet', () => {
+  // A device-flow client_id is public and identical across every install, so charging it here caps the
+  // entire fleet at one budget AND lets anyone who knows the id exhaust it for everyone. This fails if
+  // the identifier regresses to client_id.
+  it('charges the caller IP, never the client id', async () => {
+    h.clientRow = {
+      allowedScopes: CLI_ALLOWED_AFTER,
+      grants: ['urn:ietf:params:oauth:grant-type:device_code'],
+    };
+
+    await POST(makeEvent({ client_id: 'civitai-cli', scope: String(TokenScope.AIServicesRead) }));
+
+    expect(h.checkRateLimit).toHaveBeenCalledWith('device', '203.0.113.7');
+    const identifiers = h.checkRateLimit.mock.calls.map(([, id]) => id);
+    expect(identifiers).not.toContain('civitai-cli');
+  });
+
+  it('429s when that ceiling is spent, without reaching the client lookup', async () => {
+    h.checkRateLimit.mockResolvedValue(false);
+    h.clientRow = {
+      allowedScopes: CLI_ALLOWED_AFTER,
+      grants: ['urn:ietf:params:oauth:grant-type:device_code'],
+    };
+
+    const res = await POST(
+      makeEvent({ client_id: 'civitai-cli', scope: String(TokenScope.AIServicesRead) })
+    );
+
+    expect(res.status).toBe(429);
+    expect(h.hSet).not.toHaveBeenCalled();
   });
 });

@@ -87,7 +87,7 @@ describe.each([
   // that one instead, which would have read as the fix not working.
   const publicationClauseFor = async (input: Record<string, unknown>) => {
     await expect(fn(input as unknown as SearchArg)).rejects.toThrow('stop here');
-    // Not just "called": the BitDex path runs a parallel own-content pass whose
+    // Not just "called": an own-content pass runs in parallel, whose
     // whole job is to re-admit the caller's own excluded rows. If that shape ever
     // reaches a Meili builder, `calls[0]` becomes whichever fired first and both
     // cases below would move for the wrong reason.

@@ -9,7 +9,7 @@ import z from 'zod';
 import { videoValueSchema, videoMetadataSchema } from './media-schemas';
 import { snippetReferenceSchema, type SnippetReferenceValue } from '../schemas/snippet-schema';
 
-export const MAX_PROMPT_LENGTH = 6000;
+export { MAX_PROMPT_LENGTH };
 export const MAX_NEGATIVE_PROMPT_LENGTH = 6000;
 import {
   baseModelByName,
@@ -20,10 +20,10 @@ import {
   getGenerationSupport,
   filterCompatibleResources,
 } from '~/shared/constants/basemodel.constants';
-import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
+import { MAX_PROMPT_LENGTH, MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { rulesToStates } from './gates';
+import { unselectableVersionIds } from './gates';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
@@ -33,6 +33,7 @@ import {
   type ControlNetPreprocessorKey,
   type ControlNetCategory,
   type ControlNetPreprocessorInfo,
+  type VideoControlNetPreprocessorKey,
 } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
@@ -392,7 +393,7 @@ export function samplerNode({
 }
 
 /**
- * Creates a scheduler node (for SdCpp-based ecosystems like Flux2 Klein, ZImage).
+ * Creates a scheduler node.
  * Meta contains: options (dynamic - varies by ecosystem)
  */
 export function schedulerNode({
@@ -600,6 +601,11 @@ export const resourceSchema = z.object({
       epochNumber: z.number().optional(),
     })
     .optional(),
+  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion
+  // row) — negative id + air + workflowId. See RawAirResource in shared/utils/air.
+  air: z.string().optional(),
+  workflowId: z.string().optional(),
+  name: z.string().optional(),
 });
 
 /** Resource data type inferred from resourceSchema (minimal client-side data) */
@@ -952,11 +958,9 @@ export function createCheckpointGraph(
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
-        // Drop any version targeted by a gate rule from the version selector so
-        // users never see versions they can't use. Version pickers have no
-        // shown-but-disabled affordance, so every gated state hides. Server
-        // enforces the same gate in `getResourceCanGenerate` (hidden only).
-        const ruleVersionIds = [...rulesToStates(ext.gateRules ?? []).modelVersionIds.keys()];
+        // A `disabled` version stays in the selector and is refused at
+        // whatIf/submit instead; see `unselectableVersionIds`.
+        const ruleVersionIds = unselectableVersionIds(ext.gateRules ?? []);
         const visibleVersions =
           versions && ruleVersionIds.length
             ? filterVersionGroup(versions, ruleVersionIds)
@@ -1050,8 +1054,14 @@ export function createCheckpointGraph(
           },
         };
       },
-      // Include 'workflow' in deps so transform runs when workflow changes
-      options?.workflowVersions ? ['ecosystem', 'workflow'] : ['ecosystem']
+      // Include 'workflow' in deps so transform runs when workflow changes.
+      // 'ext:gateRules' because the version list is filtered from them here and
+      // captured in the meta closure: they arrive from getGenerationConfig AFTER
+      // init, and without the dep a gated version stays in the picker until the
+      // ecosystem changes.
+      options?.workflowVersions
+        ? ['ecosystem', 'workflow', 'ext:gateRules']
+        : ['ecosystem', 'ext:gateRules']
     )
     .effect(
       (ctx, _ext, set) => {
@@ -1670,6 +1680,149 @@ export function controlNetsNode({
       step: {
         min: CONTROLNET_STEP_MIN,
         max: CONTROLNET_STEP_MAX,
+        step: 0.05,
+      },
+    },
+  };
+}
+
+// =============================================================================
+// Control Video Node Builder
+// =============================================================================
+
+/**
+ * Control strength bounds. The H3 Fun ControlNet Union treats 1.0 as the
+ * strongest control and weakens below it, so 1 is a ceiling rather than the
+ * middle of a range — unlike the image ControlNet weight, which goes to 2.
+ */
+const CONTROL_VIDEO_STRENGTH_MIN = 0;
+const CONTROL_VIDEO_STRENGTH_MAX = 1;
+const CONTROL_VIDEO_STRENGTH_DEFAULT = 1;
+const CONTROL_VIDEO_PERCENT_MIN = 0;
+const CONTROL_VIDEO_PERCENT_MAX = 1;
+
+const controlVideoInputSchema = z.object({
+  preprocessor: z.string(),
+  mode: z.enum(controlNetModes).optional(),
+  // Optional on input so a preprocessor can be picked before the upload lands;
+  // the output transform drops the whole node until a video arrives.
+  video: z.union([z.string(), videoValueSchema]).optional(),
+  strength: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_STRENGTH_MIN)
+    .max(CONTROL_VIDEO_STRENGTH_MAX)
+    .optional(),
+  startPercent: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_PERCENT_MIN)
+    .max(CONTROL_VIDEO_PERCENT_MAX)
+    .optional(),
+  endPercent: z.coerce
+    .number()
+    .min(CONTROL_VIDEO_PERCENT_MIN)
+    .max(CONTROL_VIDEO_PERCENT_MAX)
+    .optional(),
+});
+
+const controlVideoOutputSchema = z.object({
+  preprocessor: z.string(),
+  mode: z.enum(controlNetModes),
+  video: videoValueSchema,
+  strength: z.number().min(CONTROL_VIDEO_STRENGTH_MIN).max(CONTROL_VIDEO_STRENGTH_MAX),
+  startPercent: z.number().min(CONTROL_VIDEO_PERCENT_MIN).max(CONTROL_VIDEO_PERCENT_MAX),
+  endPercent: z.number().min(CONTROL_VIDEO_PERCENT_MIN).max(CONTROL_VIDEO_PERCENT_MAX),
+});
+
+/** Runtime value type for the controlVideo node. */
+export type ControlVideoNodeValue = z.infer<typeof controlVideoOutputSchema>;
+
+/**
+ * Creates a controlVideo node — the video counterpart to `controlNetsNode`.
+ *
+ * Single entry rather than an array: the orchestrator's control-video input
+ * carries `video`/`strength`/`startPercent`/`endPercent` as flat fields, so
+ * there is nothing to stack.
+ *
+ * `preprocessor` selects which `preprocessVideo` kind runs upstream in `auto`
+ * mode; in `preprocessed` mode it does not reach the request at all.
+ */
+export function controlVideoNode({
+  preprocessors,
+}: {
+  preprocessors: readonly VideoControlNetPreprocessorKey[];
+}) {
+  const seen = new Set<VideoControlNetPreprocessorKey>();
+  const validKeys: VideoControlNetPreprocessorKey[] = [];
+  for (const key of preprocessors) {
+    if (seen.has(key)) continue;
+    if (!controlNetPreprocessors[key]) continue;
+    seen.add(key);
+    validKeys.push(key);
+  }
+
+  const options = validKeys.map((key) => toPreprocessorOption(key, controlNetPreprocessors[key]));
+
+  const groupMap = new Map<ControlNetCategory, ControlNetPreprocessorOption[]>();
+  for (const opt of options) {
+    const bucket = groupMap.get(opt.category);
+    if (bucket) bucket.push(opt);
+    else groupMap.set(opt.category, [opt]);
+  }
+  const groups: ControlNetPreprocessorGroup[] = [...groupMap.entries()].map(([category, opts]) => ({
+    category,
+    label: controlNetCategoryLabels[category],
+    options: opts,
+  }));
+
+  const allowedKeys = new Set<string>(validKeys);
+  const refinedInputSchema = controlVideoInputSchema.refine(
+    (e) => allowedKeys.has(e.preprocessor),
+    { message: 'Unsupported ControlNet preprocessor for this model', path: ['preprocessor'] }
+  );
+
+  return {
+    input: refinedInputSchema.optional().transform((entry) => {
+      if (!entry) return undefined;
+      const video = typeof entry.video === 'string' ? { url: entry.video } : entry.video;
+      const info = controlNetPreprocessors[entry.preprocessor as ControlNetPreprocessorKey];
+      const mode: ControlNetMode = info?.requiresPreprocessedImage
+        ? 'preprocessed'
+        : entry.mode ?? 'auto';
+      return {
+        preprocessor: entry.preprocessor,
+        mode,
+        video: video?.url ? video : undefined,
+        strength: entry.strength ?? CONTROL_VIDEO_STRENGTH_DEFAULT,
+        startPercent: entry.startPercent ?? CONTROL_VIDEO_PERCENT_MIN,
+        endPercent: entry.endPercent ?? CONTROL_VIDEO_PERCENT_MAX,
+      };
+    }),
+    // A staged entry with no video is dropped rather than failing validation —
+    // ControlNet is opt-in, so "not filled in" means "not used".
+    output: z
+      .unknown()
+      .optional()
+      .transform((entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        !!(entry as { video?: { url?: string } }).video?.url
+          ? entry
+          : undefined
+      )
+      .pipe(controlVideoOutputSchema.optional()),
+    defaultValue: undefined,
+    meta: {
+      options,
+      groups,
+      strength: {
+        min: CONTROL_VIDEO_STRENGTH_MIN,
+        max: CONTROL_VIDEO_STRENGTH_MAX,
+        default: CONTROL_VIDEO_STRENGTH_DEFAULT,
+        step: 0.05,
+      },
+      percent: {
+        min: CONTROL_VIDEO_PERCENT_MIN,
+        max: CONTROL_VIDEO_PERCENT_MAX,
         step: 0.05,
       },
     },
