@@ -1,3 +1,27 @@
+import { Prisma } from '@prisma/client';
+
+export const UNRESOLVED_THREAD_CHAIN_MESSAGE = 'comment thread is no longer available';
+
+/**
+ * Every owner-bearing FK on `Thread`. A thread with none of them and no parent comment is an
+ * ORPHAN — its parent comment was deleted, and `Thread.commentId` is `onDelete: SetNull`, so the
+ * link upward is gone while its replies remain. A column missing from this list turns that
+ * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
+ * `threadContentSelect` in `block-check.service.ts` lists the same owners, minus `clubPostId`, which
+ * has no owner lookup.
+ */
+export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
+  ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(
+  alias
+)}."imageId",
+  ${Prisma.raw(alias)}."postId", ${Prisma.raw(alias)}."reviewId", ${Prisma.raw(alias)}."modelId",
+  ${Prisma.raw(alias)}."articleId", ${Prisma.raw(alias)}."bountyId",
+  ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
+  ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",
+  ${Prisma.raw(alias)}."model3dId", ${Prisma.raw(alias)}."model3dReviewId",
+  ${Prisma.raw(alias)}."appListingId"
+) > 0`;
+
 /**
  * Both a cycle backstop and a ceiling on how deep a comment-thread chain any walker resolves.
  *
