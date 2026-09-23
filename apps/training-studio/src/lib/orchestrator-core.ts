@@ -196,11 +196,20 @@ const WHATIF_SAMPLE_PROMPTS = ['sample prompt', 'sample prompt', 'sample prompt'
 // so the estimated total is the same for any non-empty set; required on the workflow body regardless.
 const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
 
+/**
+ * Every field the ORCHESTRATOR prices must be expressible here, because Review's "this is what
+ * Start will charge" claim rests on the whatif and the submit describing the same config. Two
+ * submit-side fields are deliberately absent — sample-prompt COUNT and the chosen currency set —
+ * because both are price-neutral by PROBED orchestrator behavior (2026-09-22: identical quotes at
+ * 1/3/6 prompts and for ['green'] vs ['yellow','blue']), not by any contract. If the orchestrator
+ * ever starts pricing either, this type must grow the field or Review misquotes silently.
+ */
 export interface TrainingWhatIfInput {
   ecosystem: string;
   modelVariant?: string;
-  /** The base checkpoint AIR — required by the `flux2-dev` path; unused by ai-toolkit (its ecosystem
-   * resolves the base). */
+  /** The base checkpoint AIR. Required by the `flux2-dev` path; on ai-toolkit it pins the base the
+   * submit will pin (shared-ecosystem cards like Illustrious would otherwise quote/train the
+   * ecosystem default). Price-neutral, but the whatif and the real submit MUST stay identical. */
   model?: string;
   /** Non-default engine (e.g. `flux2-dev`); when set the whatif uses the `imageResourceTraining` shape. */
   engine?: string;
@@ -208,6 +217,8 @@ export interface TrainingWhatIfInput {
   version?: string;
   /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
   steps?: number;
+  /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
+  epochs?: number;
   imageCount?: number;
 }
 
@@ -247,11 +258,13 @@ export async function trainingWhatIf(
         input: {
           engine: 'ai-toolkit',
           ecosystem: input.ecosystem,
+          ...(input.model ? { model: input.model } : {}),
           ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
           ...(input.version ? { version: input.version } : {}),
           trainingData: { type: 'zip', sourceUrl: 'https://fake', count },
           samples: { prompts: WHATIF_SAMPLE_PROMPTS },
           ...(input.steps ? { steps: input.steps } : {}),
+          ...(input.epochs ? { epochs: input.epochs } : {}),
         },
       }) as unknown as WorkflowStepTemplate;
 

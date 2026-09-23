@@ -161,6 +161,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
 
+    quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
+
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
   };
 }

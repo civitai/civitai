@@ -1,5 +1,4 @@
 import {
-  CUSTOM_MODEL_SURCHARGE,
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
@@ -200,28 +199,24 @@ export interface LaunchedRun {
   params: RunParams;
 }
 
-/** Per-run Buzz cost, scaled from the model's real "from ⚡X" orchestrator quote by the chosen step count,
- * plus the flat custom-model surcharge. `fromPrice` is the live quote for the run's card (see `FromPrices`);
- * `null` when the orchestrator couldn't price it, so the caller shows "—" rather than a guessed number.
- * Interim: the Review step should eventually re-quote the exact run config via a real whatif. */
-export function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
+/** COARSE per-run Buzz estimate for the pre-Review steps, scaled from the model's "from ⚡X" quote
+ * by the chosen step count. `null` when the orchestrator couldn't price the card, so the caller
+ * shows "—" rather than a guessed number. The Review step does NOT use this — it re-quotes the
+ * exact config via a real whatif (`quoteRun`), because orchestrator pricing has a base fee and
+ * per-epoch terms this linear scale can't see (it over-read by 90-190⚡ before). No custom-model
+ * surcharge: whatif-verified that the orchestrator charges none. */
+function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
   if (fromPrice == null) return null;
-  const base = Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
-  return base + (isCustom(run) ? CUSTOM_MODEL_SURCHARGE : 0);
+  return Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
 }
 
 // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same cost,
 // so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
 const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
 
-/** Buzz spent per sample image generated during training. Matches the Review step's `SAMPLE_RATE`. */
-export const SAMPLE_RATE = 30;
-/** The Review step seeds this many sample prompts by default (before the user edits them). */
-export const DEFAULT_SAMPLE_PROMPTS = 3;
-
 /** The orchestrator's "from" quote for a card at the default step budget (Pony/Illustrious fall back to
- *  SDXL), WITHOUT the custom surcharge — the raw base `runCost` scales. `undefined` when unpriced. */
-export function cardBaseQuote(
+ *  SDXL). `undefined` when unpriced. */
+function cardBaseQuote(
   prices: Record<string, number>,
   cardType: string
 ): number | undefined {
@@ -229,16 +224,11 @@ export function cardBaseQuote(
   return prices[cardType] ?? (alias ? prices[alias] : undefined);
 }
 
-/** The "from" Buzz quote for one model card, plus the flat custom-model surcharge; null when unpriced
- *  (callers show a muted em-dash). Single source of truth for the "from" floor shown on Select. */
-export function cardFromPrice(
-  prices: Record<string, number>,
-  cardType: string,
-  custom: boolean
-): number | null {
-  const base = cardBaseQuote(prices, cardType);
-  if (base == null) return null;
-  return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
+/** The "from" Buzz quote for one model card; null when unpriced (callers show a muted em-dash).
+ *  Single source of truth for the "from" floor shown on Select. A custom base costs the same as the
+ *  card's own (whatif-verified — the orchestrator has no custom-model surcharge). */
+export function cardFromPrice(prices: Record<string, number>, cardType: string): number | null {
+  return cardBaseQuote(prices, cardType) ?? null;
 }
 
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced. Used on Select, where no
@@ -246,7 +236,7 @@ export function cardFromPrice(
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType, isCustom(run));
+    const runPrice = cardFromPrice(prices, run.cardType);
     if (runPrice == null) return null;
     sum += runPrice;
   }
@@ -259,14 +249,13 @@ export function defaultStepsFor(loraTypeId: string, media: Media, imageCount: nu
   return Math.max(MIN_STEPS, imageCount * seenFor(loraTypeId, media));
 }
 
-/** The dataset-aware price estimate for a selection — the same figure the Review step shows at its defaults:
- *  each run's cost scaled by the image-count-derived step budget, plus the sample images. `null` if any run
- *  is unpriced. This is what Data and Review both price against so the number doesn't jump between steps. */
+/** The dataset-aware price estimate for a selection: each run's cost scaled by the image-count-derived
+ *  step budget. `null` if any run is unpriced. COARSE — the Review step replaces this with real
+ *  per-config whatif quotes; sample images are not billed separately (the quote covers them). */
 export function estimatedTotal(
   prices: Record<string, number>,
   selection: Selection,
-  imageCount: number,
-  samplePrompts: number = DEFAULT_SAMPLE_PROMPTS
+  imageCount: number
 ): number | null {
   const steps = defaultStepsFor(selection.loraType, selection.media, imageCount);
   let sum = 0;
@@ -275,7 +264,7 @@ export function estimatedTotal(
     if (cost == null) return null;
     sum += cost;
   }
-  return sum + samplePrompts * SAMPLE_RATE;
+  return sum;
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption

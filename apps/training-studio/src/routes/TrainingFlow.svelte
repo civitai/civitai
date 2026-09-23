@@ -170,7 +170,6 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {prices}
       {trigger}
       imageCount={trainableCount}
       labels={datasetLabels}
