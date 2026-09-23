@@ -582,7 +582,14 @@ export async function deleteModelFileObject(
   }
 
   const quarantineBucket = getQuarantineBucket(target.backend);
-  if (!quarantineBucket) return { deleted: false, reason: 'quarantine-not-configured' };
+  // 🔴 A QUARANTINE BUCKET EQUAL TO THE SOURCE IS NOT A CONFIGURATION, IT IS A TYPO, AND IT IS
+  // THE ONE MISCONFIGURATION THAT CAUSES REAL HARM RATHER THAN A REFUSAL. The copy would land in
+  // the LIVE bucket under a doubled key, the original would then be deleted for real, and the
+  // retention rule this design depends on — written for a bucket that holds only condemned
+  // objects — would be expiring live ones. Refused for the same reason and with the same remedy
+  // as an unset value: there is no usable quarantine destination, so fix the configuration.
+  if (!quarantineBucket || quarantineBucket === target.bucket)
+    return { deleted: false, reason: 'quarantine-not-configured' };
 
   const copied = await copyToQuarantine({
     s3,

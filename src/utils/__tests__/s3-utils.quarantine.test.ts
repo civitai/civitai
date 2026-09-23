@@ -216,6 +216,20 @@ describe('deleteModelFileObject — quarantine enabled', () => {
     expect(mocks.copies).toHaveLength(0);
   });
 
+  it('🔴 refuses when the quarantine bucket is the SOURCE bucket', async () => {
+    // The one misconfiguration that does harm rather than refusing: the copy would land in the
+    // live bucket under a doubled key, the original would be deleted for real, and a retention
+    // rule written for a bucket of condemned objects would be expiring live ones.
+    envState.S3_UPLOAD_B2_QUARANTINE_BUCKET = SRC;
+    mocks.headSizes.set(`${SRC}/${KEY}`, 1024);
+
+    const out = await deleteModelFileObject(B2_URL, 1, { quarantine: true });
+
+    expect(out).toEqual({ deleted: false, reason: 'quarantine-not-configured' });
+    expect(mocks.copies).toHaveLength(0);
+    expect(mocks.deletes).toHaveLength(0);
+  });
+
   it('refuses and deletes NOTHING when the copy throws', async () => {
     mocks.headSizes.set(`${SRC}/${KEY}`, 1024);
     mocks.state.copyThrows = true;
