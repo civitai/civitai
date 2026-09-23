@@ -7,6 +7,7 @@ import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { getInitials } from '~/utils/string-helpers';
 
@@ -161,8 +162,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             </ContentClamp>
           )}
 
-          {/* Creator info with avatar */}
-          <div className="flex items-center gap-3">
+          <CrucibleUserLink user={user}>
             <Avatar
               src={user.image}
               radius="xl"
@@ -191,7 +191,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
                 </Text>
               )}
             </div>
-          </div>
+          </CrucibleUserLink>
 
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-white/10 pt-4">
             <div className="flex items-center gap-2">

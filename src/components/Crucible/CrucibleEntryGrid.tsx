@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import Link from 'next/link';
@@ -199,7 +200,10 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
 
           {/* Author */}
           <Text size="xs" c="gray.4" mt={2}>
-            by @{entry.user.username || 'anonymous'}
+            by{' '}
+            <CrucibleUserLink user={entry.user}>
+              @{entry.user.username || 'anonymous'}
+            </CrucibleUserLink>
           </Text>
 
           {/* Stats */}

@@ -195,6 +195,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       >
         {/* Hero Section */}
         <CrucibleHeader
+          className="-mt-3"
           crucible={{
             id: crucible.id,
             name: crucible.name,
@@ -285,24 +286,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Title>
 
                   <Button
-                    variant="filled"
+                    variant="light"
                     fullWidth
                     leftSection={<IconUpload size={16} />}
                     className="mb-4"
-                    styles={{
-                      root: {
-                        background: 'linear-gradient(135deg, #228be6 0%, #40c057 100%)',
-                        fontWeight: 600,
-                        transition: 'all 300ms',
-                        '&:hover': {
-                          background: 'linear-gradient(135deg, #1c7ec0 0%, #37b24d 100%)',
-                        },
-                        '&:disabled': {
-                          background: 'rgba(201, 203, 207, 0.1)',
-                          color: 'var(--mantine-color-dimmed)',
-                        },
-                      },
-                    }}
                     onClick={() => {
                       openCrucibleSubmitEntryModal({
                         crucibleId: crucible.id,

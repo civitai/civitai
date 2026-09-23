@@ -6,6 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PrizePosition } from '~/utils/crucible-helpers';
 import { useState } from 'react';
 import { getInitials } from '~/utils/string-helpers';
+import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 
 export type LeaderboardEntry = {
   id: number;
@@ -308,37 +309,38 @@ function LeaderboardEntryItem({
           {style.icon || rank}
         </div>
 
-        {/* User avatar */}
-        <Avatar
-          src={entry.user.image}
-          size={40}
-          radius="xl"
-          styles={{
-            root: {
-              flexShrink: 0,
-            },
-            placeholder: {
-              background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
-              color: 'white',
-              fontWeight: 600,
-              fontSize: '14px',
-            },
-          }}
-        >
-          {getInitials(entry.user.username || 'A')}
-        </Avatar>
+        <CrucibleUserLink user={entry.user} className="flex-1">
+          <Avatar
+            src={entry.user.image}
+            size={40}
+            radius="xl"
+            styles={{
+              root: {
+                flexShrink: 0,
+              },
+              placeholder: {
+                background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
+                color: 'white',
+                fontWeight: 600,
+                fontSize: '14px',
+              },
+            }}
+          >
+            {getInitials(entry.user.username || 'A')}
+          </Avatar>
 
-        {/* User info */}
-        <div className="min-w-0 flex-1">
-          <Text size="sm" fw={600} c="white" truncate>
-            @{entry.user.username || 'anonymous'}
-          </Text>
-          {isCurrentUser && (
-            <Text size="xs" c="blue">
-              Your entry
+          {/* User info */}
+          <div className="min-w-0 flex-1">
+            <Text size="sm" fw={600} c="white" truncate>
+              @{entry.user.username || 'anonymous'}
             </Text>
-          )}
-        </div>
+            {isCurrentUser && (
+              <Text size="xs" c="blue">
+                Your entry
+              </Text>
+            )}
+          </div>
+        </CrucibleUserLink>
 
         {/* Score */}
         <Text size="sm" fw={600} className="text-blue-400">
