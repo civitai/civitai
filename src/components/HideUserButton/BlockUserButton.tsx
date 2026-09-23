@@ -4,11 +4,12 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconUserCancel, IconUserCheck } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { MouseEventHandler } from 'react';
+import { blockToast } from '~/components/HideUserButton/block-toast';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
 
 export function BlockUserButton({
   userId,
@@ -59,25 +60,9 @@ export function BlockUserButton({
               hideComments: options.hideComments,
             })
             .then(({ commentsHidden }) => {
-              const message = 'Content from this user will not show up in your feed';
-              if (commentsHidden?.status === 'failed')
-                showErrorNotification({
-                  title: 'User blocked, but hiding their comments failed',
-                  error: new Error(
-                    `${message}. Some of their comments on your content may still be visible to others.`
-                  ),
-                });
-              else
-                showSuccessNotification({
-                  title: 'User blocked',
-                  message: !commentsHidden
-                    ? message
-                    : commentsHidden.count === 0
-                    ? `${message}. They had no visible comments on your content.`
-                    : `${message}. Hid ${commentsHidden.count.toLocaleString()} of their comments on your content${
-                        commentsHidden.capped ? ' (the most we hide at once)' : ''
-                      }.`,
-                });
+              const { kind, title, message } = blockToast(commentsHidden);
+              if (kind === 'warning') showWarningNotification({ title, message, autoClose: 10000 });
+              else showSuccessNotification({ title, message });
             }),
       });
     }

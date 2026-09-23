@@ -23,7 +23,10 @@ vi.mock('~/server/db/pgDb', () => ({
   },
 }));
 
-import { threadContentSelect } from '~/server/services/block-check.service';
+import {
+  getContentOwnerIdForComment,
+  threadContentSelect,
+} from '~/server/services/block-check.service';
 import {
   blockHideCandidatesSql,
   hideBlockedUserCommentsOnOwnContent,
@@ -151,5 +154,39 @@ describe('THREAD_CONTENT_OWNERS', () => {
     );
 
     expect(THREAD_CONTENT_OWNERS.map((o) => o.column)).toEqual(ownerColumns);
+  });
+});
+
+// The SQL map restates ownerOfThreadContent, so each entry is checked against what the TS resolver
+// actually reads for a thread carrying only that column: the same model, key and owner field.
+describe('THREAD_CONTENT_OWNERS agrees with getContentOwnerIdForComment', () => {
+  const unquote = (sql: string) => sql.replace(/"/g, '');
+  const camel = (sql: string) => unquote(sql).replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
+  const delegateOf = (table: string) =>
+    table === 'app_listings'
+      ? 'appListing'
+      : unquote(table)[0].toLowerCase() + unquote(table).slice(1);
+
+  it.each(THREAD_CONTENT_OWNERS.map((o) => [o.column, o] as const))('%s', async (column, entry) => {
+    const read = dbMock.dbRead as any;
+    const delegate = delegateOf(entry.table);
+    const ownerField = camel(entry.owner);
+    const keyField = camel(entry.key);
+
+    read.commentV2.findUnique.mockResolvedValue({ hidden: false, threadId: 1 });
+    read.$queryRaw.mockResolvedValue([{ id: 2 }]);
+    read.thread.findUnique.mockResolvedValue({
+      ...Object.fromEntries(Object.keys(threadContentSelect).map((key) => [key, null])),
+      [column]: 555,
+    });
+    read[delegate].findUnique.mockResolvedValue({ [ownerField]: 777 });
+
+    const { ownerId } = await getContentOwnerIdForComment(1);
+
+    expect(read[delegate].findUnique).toHaveBeenCalledWith({
+      where: { [keyField]: 555 },
+      select: { [ownerField]: true },
+    });
+    expect(ownerId).toBe(777);
   });
 });
