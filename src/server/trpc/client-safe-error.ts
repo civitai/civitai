@@ -6,9 +6,12 @@ import { genericErrorForDriverMessage } from '~/server/utils/rest-error-envelope
 
 export type ClientSafeError = { message: string; errorRef: string };
 
-// tRPC hands the same error object to `onError` and then to `errorFormatter`, so keying on it lets
-// the log line and the response carry one ref without either knowing the other's call order.
-const masked = new WeakMap<TRPCError, ClientSafeError | null>();
+// `onError` (via the API route) and `errorFormatter` (via trpc.ts) can resolve DIFFERENT bundled
+// copies of this module — see `logging/structured-log-sink.ts` — so the result is stored on the
+// error object both receive, under a `Symbol.for` key every copy shares, not in module state.
+const CLIENT_SAFE = Symbol.for('civitai.trpc.clientSafeError');
+
+type Stamped = TRPCError & { [CLIENT_SAFE]?: ClientSafeError | null };
 
 /**
  * The replacement for a tRPC error whose message was written by the database driver (Prisma
@@ -16,7 +19,8 @@ const masked = new WeakMap<TRPCError, ClientSafeError | null>();
  * when the message is ours and safe to show. Same rule as the REST surface's `handleEndpointError`.
  */
 export function getClientSafeError(error: TRPCError): ClientSafeError | undefined {
-  const cached = masked.get(error);
+  const stamped = error as Stamped;
+  const cached = stamped[CLIENT_SAFE];
   if (cached !== undefined) return cached ?? undefined;
 
   let result: ClientSafeError | null = null;
@@ -25,6 +29,10 @@ export function getClientSafeError(error: TRPCError): ClientSafeError | undefine
     const errorRef = randomBytes(6).toString('hex');
     result = { message: `${generic.message} (ref: ${errorRef})`, errorRef };
   }
-  masked.set(error, result);
+  try {
+    Object.defineProperty(stamped, CLIENT_SAFE, { value: result, enumerable: false });
+  } catch {
+    // A non-extensible error just gets a fresh ref per call.
+  }
   return result ?? undefined;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
@@ -151,5 +151,22 @@ describe('getClientSafeError', () => {
     const fromOnError = getClientSafeError(error)!.errorRef;
     expect(getClientSafeError(error)!.errorRef).toBe(fromOnError);
     expect(getClientSafeError(other)!.errorRef).not.toBe(fromOnError);
+  });
+
+  it('returns the same ref from two bundled copies of this module', async () => {
+    const driver = new Prisma.PrismaClientUnknownRequestError(READ_ONLY_TEXT, {
+      clientVersion: CLIENT_VERSION,
+    });
+    const error = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: driver });
+
+    vi.resetModules();
+    const copyA = await import('~/server/trpc/client-safe-error');
+    vi.resetModules();
+    const copyB = await import('~/server/trpc/client-safe-error');
+
+    expect(copyA.getClientSafeError).not.toBe(copyB.getClientSafeError);
+    expect(copyB.getClientSafeError(error)!.errorRef).toBe(
+      copyA.getClientSafeError(error)!.errorRef
+    );
   });
 });
