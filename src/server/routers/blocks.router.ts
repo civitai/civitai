@@ -6879,10 +6879,20 @@ export const blocksRouter = router({
    *   - THE PRE-BELTS ARE NOT THE SAME SET. Token validity, revocation and
    *     approved-status are common (this proc via `authorizeBlockBridgeToken`; the REST
    *     door inside `withBlockScope`, before its handler is entered). But `withBlockScope`
-   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of: it is
-   *     deny-by-default over every scope on the token, so a token carrying an unknown
-   *     scope, or `models:read:self` bound to a modelId the request does not name, is
-   *     refused on REST and admitted here. The REST door is the stricter one.
+   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of, so the
+   *     REST door is still the stricter one — on a NARROWER margin than this paragraph
+   *     claimed before #5063. That binding is TWO things, and only one is token-wide:
+   *       (a) deny-by-default over EVERY scope on the token, for UNKNOWN scopes. Still
+   *           token-wide and still asymmetric — an unknown scope string is refused on
+   *           REST and admitted here.
+   *       (b) the request-shape binding for the route's OWN `requiredScope` ONLY. Since
+   *           #5063 it is NOT run for the other scopes the token carries, so
+   *           `models:read:self` bound to a modelId the request does not name is refused
+   *           only on a route that REQUIRES `models:read:self`. It no longer 403s this
+   *           proc's REST twin (`/blocks/me`, `requiredScope: 'user:read:self'`) or any
+   *           other unrelated route. Before #5063 it did, and that was the defect.
+   *     So for `/blocks/me` specifically, what REST still adds over this proc is the
+   *     unknown-scope sweep plus `user:read:self`'s own non-anon binding.
    *   - THE CONSENT SCOPE REFUSAL differs in text: REST answers 403
    *     `missing required scope: user:read:self` (from the wrapper), this proc 403
    *     `block lacks user:read:self scope`. Same code, same decision.

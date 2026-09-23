@@ -63,9 +63,15 @@ wants a non-anon subject — so running all of them on every request 403'd
 unrelated routes: a manifest declaring `models:read:self` could not call
 `blocks/buzz`, and an anon token 403'd a shared-storage READ because the
 consent-exempt `apps:storage:shared:write` rode along on it. The one gate that
-is still swept across the WHOLE token is the unknown-scope deny-by-default. A
-handler that consults a SECOND scope off `claims.scopes` to widen its response
-owns that scope's own check; the set of such call sites is asserted in
+is still swept across the WHOLE token is the unknown-scope deny-by-default.
+
+A handler that consults a SECOND scope off `claims.scopes` to widen its response
+owns that scope's own check. Today that is exactly one scope,
+`collections:read:private`, at `blocks/collections/index.ts:614` and
+`blocks/collections/[id]/index.ts:132`. Both are safe structurally, without
+relying on a test: the scope is consent-GATED so the anon mint strips it, and
+both routes require `collections:read:self`, whose non-anon binding still runs.
+A third such site has to make its own argument — see the note at the foot of
 `src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
 
 | Scope                            | Bind                                              | Notes                                                                                                                                                                   |

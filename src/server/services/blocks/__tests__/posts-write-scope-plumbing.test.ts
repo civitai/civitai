@@ -137,24 +137,41 @@ describe('posts:write:self — runtime binding in enforceContextBinding', () => 
   });
 
   it('does NOT interfere with a route that requires a DIFFERENT scope', () => {
-    // 🔴 WHAT THIS ONCE GUARDED, AND WHY IT IS WEAKER NOW — say so rather than
-    // let it read as stronger coverage than it is. It used to be THE
+    // 🔴 WHAT THIS ONCE GUARDED, AND WHAT IT GUARDS NOW. It used to be THE
     // high-blast-radius case: the binding switch walked EVERY scope on the
     // token, so an unbound `posts:write:self` 403'd a models read too, and this
-    // assertion was the only thing standing between a wiring slip and a bricked
-    // app. #5063 narrowed the switch to the route's `requiredScope`, so the
-    // interference this rules out is now structurally impossible rather than
-    // merely absent, and the case that replaces it — every known scope HAS a
-    // binding case — is asserted statically in
+    // assertion was the only thing between a wiring slip and a bricked app.
+    // #5063 narrowed the switch to the route's `requiredScope`, and the property
+    // that replaced it — every known scope HAS a binding case — is asserted
+    // statically in
     // `src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
-    // Kept as the cross-scope no-interference assertion for THIS scope.
+    //
+    // ⚠️ THE OBVIOUS REWRITE OF THIS ASSERTION IS UNFAILABLE, so it is not the
+    // one used. Passing an AUTHENTICATED subject makes the `posts:write:self`
+    // case a no-op even if it WERE reached, so no change to that case could turn
+    // it red — it would read as coverage and provide none. An ANON subject is
+    // what makes it bite: `posts:write:self` REFUSES anon, `apps:storage:shared:read`
+    // ALLOWS it, so this passes only while the switch is fed the route's scope.
+    // Revert the narrowing and it goes red with `posts:write:self requires
+    // authenticated subject` — which is exactly the interference being ruled out.
     expect(() =>
       enforceContextBinding(
-        { scopes: ['user:read:self', SCOPE], sub: 'user:42' } as never,
+        { scopes: ['apps:storage:shared:read', SCOPE], sub: 'anon' } as never,
         req,
-        'user:read:self'
+        'apps:storage:shared:read'
       )
     ).not.toThrow();
+    // Positive control for the pairing above: the SAME anon token IS refused
+    // when the route actually requires this scope. Without it, the assertion
+    // above would also pass against a middleware that had stopped enforcing
+    // `posts:write:self` altogether.
+    expect(() =>
+      enforceContextBinding(
+        { scopes: ['apps:storage:shared:read', SCOPE], sub: 'anon' } as never,
+        req,
+        SCOPE
+      )
+    ).toThrow(`${SCOPE} requires authenticated subject`);
     // And the negative control proving that arm is reachable at all: an invented
     // scope is rejected as UNKNOWN (the token-wide gate before the switch, which
     // did NOT narrow).

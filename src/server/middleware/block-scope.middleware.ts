@@ -242,11 +242,16 @@ export interface WithBlockScopeOpts {
    *
    * 🔴 It is the binding for THIS scope only, not for every scope the token
    * carries (#5063). If a handler consults a SECOND scope off `claims.scopes`
-   * to widen what it returns — today only `collections:read:private` — that
-   * scope's own binding is NOT run by the middleware and the handler owns it.
-   * The set of such call sites is asserted in
-   * `block-scope.required-scope-binding.test.ts` so a new one cannot appear
-   * unnoticed.
+   * to widen what it returns — today only `collections:read:private`, in
+   * `blocks/collections/index.ts:614` and `blocks/collections/[id]/index.ts:132`
+   * — that scope's own binding is NOT run by the middleware and the handler
+   * owns it. Both of today's sites are safe for reasons that hold without any
+   * test: the scope is CONSENT-GATED (absent from `CONSENT_EXEMPT_SCOPES`) so
+   * the anon mint strips it, AND both routes require `collections:read:self`,
+   * whose non-anon binding does still run. A third such site must make its own
+   * argument rather than inherit theirs — see the note at the foot of
+   * `block-scope.required-scope-binding.test.ts`, which also records why the
+   * mechanical ledger that briefly lived there was deleted rather than patched.
    *
    * When OMITTED ("any valid block token" mode), the middleware STILL performs
    * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,

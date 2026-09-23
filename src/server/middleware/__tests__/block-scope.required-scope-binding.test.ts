@@ -307,40 +307,37 @@ describe('#5063 STRUCTURAL — what the narrowing shifted onto a static gate', (
     expect(wired).toEqual(known);
   });
 
-  it('pins the ONLY handler that reads a scope other than its own requiredScope', () => {
-    // 🔴 THE SEAM THIS CHANGE CREATES. The middleware now binds one scope; a
-    // handler that consults a SECOND scope off `claims.scopes` to widen what it
-    // returns owns that scope's binding itself. Today there is exactly one such
-    // scope and two call sites. Both routes require `collections:read:self`
-    // (non-anon), and `collections:read:private` is CONSENT-GATED so the anon
-    // mint strips it — so an anon token can neither reach these handlers nor
-    // carry the scope. That argument is specific to these entries, which is why
-    // the ledger is asserted in BOTH directions: a new entry must be reasoned
-    // about, not inherit this one's clearance.
-    const LEDGER = [
-      'pages/api/v1/blocks/collections/[id]/index.ts:collections:read:private',
-      'pages/api/v1/blocks/collections/index.ts:collections:read:private',
-    ];
-
-    const root = path.resolve(__dirname, '../../../pages/api/v1/blocks');
-    const found: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts')) continue;
-        const src = fs.readFileSync(full, 'utf8');
-        for (const m of src.matchAll(/\.scopes\.includes\(\s*'([^']+)'\s*\)/g)) {
-          const rel = path.relative(path.resolve(__dirname, '../../..'), full);
-          found.push(`${rel}:${m[1]}`);
-        }
-      }
-    };
-    walk(root);
-
-    expect(found.sort()).toEqual(LEDGER.sort());
-  });
+  // 🔴 THE SEAM THIS CHANGE CREATES — DOCUMENTED, DELIBERATELY NOT GUARDED.
+  //
+  // The middleware now binds one scope, so a handler that consults a SECOND
+  // scope off `claims.scopes` to widen what it returns owns that scope's check
+  // itself. Today that is exactly one scope, `collections:read:private`, at two
+  // call sites:
+  //
+  //   - `pages/api/v1/blocks/collections/index.ts:614`
+  //   - `pages/api/v1/blocks/collections/[id]/index.ts:132`
+  //
+  // WHY BOTH ARE SAFE, and note that none of it rests on a test: the scope is
+  // CONSENT-GATED — absent from `CONSENT_EXEMPT_SCOPES` in
+  // `scope-grant.service.ts` — so the anon mint strips it and an anon token
+  // cannot carry it at all; and both routes declare
+  // `requiredScope: 'collections:read:self'`, whose own binding (still run, it
+  // IS the required scope) refuses an anon subject, so an anon caller never
+  // reaches either handler. Two independent reasons, neither of which a test
+  // here would be establishing.
+  //
+  // AN EARLIER REVISION OF THIS FILE ASSERTED THAT LEDGER MECHANICALLY AND THE
+  // GUARD WAS WRONG — recorded because "a ledger exists" is exactly the kind of
+  // thing a later reader trusts without re-deriving. Its comment claimed to pin
+  // "the ONLY handler that reads a scope other than its own requiredScope"
+  // while the implementation was narrower on three axes: it walked only
+  // `pages/api/v1/blocks`, though `pages/api/v1/models/[id].ts:299` is also
+  // `withBlockScope`-wrapped and sits outside that root; its regex matched a
+  // single spelling of the call; and it did not strip comments, unlike
+  // `scoped-endpoints-cors-wiring.test.ts`, which does this same walk WITH a
+  // `stripComments()` for precisely that reason. A guard that reads as coverage
+  // while providing less than its sentence claims is worse than none, because
+  // it stops the next person looking. Deleted rather than patched: the safety
+  // above is structural, and a correct version of the walk would be a
+  // meaningfully larger piece of machinery than the seam warrants.
 });
