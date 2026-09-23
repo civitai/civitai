@@ -439,7 +439,7 @@ export function defaultStartRun({
     capture = createOutputCapture((line) => onLog('output', line));
   } catch (err) {
     queueMicrotask(() => onExit(-1, `could not open a capture file: ${err.message}`));
-    return Object.assign(emitter, { kill: () => {}, dispose: () => {} });
+    return Object.assign(emitter, { pid: undefined, kill: () => {}, dispose: () => {} });
   }
 
   let child;
@@ -469,7 +469,7 @@ export function defaultStartRun({
   } catch (err) {
     capture.close();
     queueMicrotask(() => onExit(-1, err.message));
-    return Object.assign(emitter, { kill: () => {}, dispose: () => {} });
+    return Object.assign(emitter, { pid: undefined, kill: () => {}, dispose: () => {} });
   }
 
   // Polled rather than watched: fs.watch's semantics differ per platform and it can miss an

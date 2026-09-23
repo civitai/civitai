@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Ships with the dev-server skill (plain .mjs, loaded by the daemon under node, never bundled),
 // so it is imported by path rather than moved into src/ — same arrangement as the port probe.
+import type { RunHandle } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 import { TestQueue, exitCodeFor } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
-type Kill = (sync?: boolean) => void;
+type Kill = RunHandle['kill'];
 
 type FakeRun = EventEmitter & {
   kill: Mock<Kill>;
@@ -36,7 +37,7 @@ function makeRunner() {
 
 // Through `get`, not `view`: reading a run is also the touch that keeps it from being swept, and
 // several tests depend on that side effect.
-function viewOf(queue: TestQueue, id: string) {
+function mustGet(queue: TestQueue, id: string) {
   const view = queue.get(id);
   if (!view) throw new Error(`the queue has no run ${id}`);
   return view;
@@ -83,10 +84,10 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(0);
 
-    expect(viewOf(queue, first.id).status).toBe('completed');
-    expect(viewOf(queue, first.id).exitCode).toBe(0);
-    expect(viewOf(queue, second.id).status).toBe('running');
-    expect(viewOf(queue, second.id).position).toBe(0);
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).exitCode).toBe(0);
+    expect(mustGet(queue, second.id).status).toBe('running');
+    expect(mustGet(queue, second.id).position).toBe(0);
     expect(runner.started).toHaveLength(2);
   });
 
@@ -97,9 +98,9 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(1);
 
-    expect(viewOf(queue, first.id).status).toBe('failed');
-    expect(viewOf(queue, first.id).exitCode).toBe(1);
-    expect(viewOf(queue, second.id).status).toBe('running');
+    expect(mustGet(queue, first.id).status).toBe('failed');
+    expect(mustGet(queue, first.id).exitCode).toBe(1);
+    expect(mustGet(queue, second.id).status).toBe('running');
   });
 
   it('honours a configured concurrency above one', () => {
@@ -165,8 +166,8 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(0);
 
-    expect(viewOf(queue, component.id).status).toBe('running');
-    expect(viewOf(queue, laterUnit.id).status).toBe('queued');
+    expect(mustGet(queue, component.id).status).toBe('running');
+    expect(mustGet(queue, laterUnit.id).status).toBe('queued');
   });
 
   /**
@@ -263,8 +264,8 @@ describe('dev-server test queue', () => {
 
     queue.setConcurrency(1);
 
-    expect(viewOf(queue, run.id).status).toBe('running');
-    expect(viewOf(queue, run.id).paused).toBe(false);
+    expect(mustGet(queue, run.id).status).toBe('running');
+    expect(mustGet(queue, run.id).paused).toBe(false);
   });
 
   it('rejects a negative concurrency instead of quietly clamping it', () => {
@@ -285,10 +286,10 @@ describe('dev-server test queue', () => {
     const swept = queue.sweep();
 
     expect(swept.abandoned).toEqual([abandoned.id]);
-    expect(viewOf(queue, abandoned.id).status).toBe('abandoned');
-    expect(viewOf(queue, behind.id).status).toBe('queued');
-    expect(viewOf(queue, behind.id).position).toBe(1);
-    expect(viewOf(queue, first.id).status).toBe('running');
+    expect(mustGet(queue, abandoned.id).status).toBe('abandoned');
+    expect(mustGet(queue, behind.id).status).toBe('queued');
+    expect(mustGet(queue, behind.id).position).toBe(1);
+    expect(mustGet(queue, first.id).status).toBe('running');
   });
 
   it('never abandons a run that is already executing — the daemon owns it, not the caller', () => {
@@ -305,7 +306,7 @@ describe('dev-server test queue', () => {
     // The queued sibling proves the sweep ran and was capable of abandoning something; without it
     // an empty `abandoned` list would be true no matter what the sweep did.
     expect(swept.abandoned).toEqual([waiting.id]);
-    expect(viewOf(queue, executing.id).status).toBe('running');
+    expect(mustGet(queue, executing.id).status).toBe('running');
   });
 
   it('kills a run that overruns the ceiling and hands the slot to the next caller', () => {
@@ -326,8 +327,8 @@ describe('dev-server test queue', () => {
 
     expect(swept.timedOut).toEqual([stuck.id]);
     expect(runner.started[0].kill).toHaveBeenCalledTimes(1);
-    expect(viewOf(queue, stuck.id).status).toBe('timeout');
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   it('frees the slot when a killed process never exits, rather than holding it forever', () => {
@@ -347,16 +348,16 @@ describe('dev-server test queue', () => {
     now += 60_001;
     queue.get(next.id);
     expect(queue.sweep().timedOut).toEqual([stuck.id]);
-    expect(viewOf(queue, stuck.id).status).toBe('running'); // kill issued, exit not seen yet
-    expect(viewOf(queue, next.id).status).toBe('queued');
+    expect(mustGet(queue, stuck.id).status).toBe('running'); // kill issued, exit not seen yet
+    expect(mustGet(queue, next.id).status).toBe('queued');
 
     now += 5_000;
     const swept = queue.sweep();
 
     expect(swept.forced).toEqual([stuck.id]);
-    expect(viewOf(queue, stuck.id).status).toBe('timeout');
-    expect(viewOf(queue, stuck.id).error).toMatch(/did not exit after kill/);
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).error).toMatch(/did not exit after kill/);
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   /**
@@ -436,8 +437,8 @@ describe('dev-server test queue', () => {
     // The SIGKILLed child's exit arrives after the dispose and is swallowed — as it is in reality.
     runner.started[0].finish(-1);
 
-    expect(viewOf(queue, run.id).status).toBe('cancelled');
-    expect(viewOf(queue, run.id).error).toMatch(/daemon-shutdown/);
+    expect(mustGet(queue, run.id).status).toBe('cancelled');
+    expect(mustGet(queue, run.id).error).toMatch(/daemon-shutdown/);
     // The slot, which is the thing that actually wedges: it must be free.
     expect(queue.running.size).toBe(0);
   });
@@ -483,7 +484,7 @@ describe('dev-server test queue', () => {
     // The exact status for THIS path, not either-of. `toContain` over both would pass with the
     // wrong terminal status — a shutdown reported as a timeout, or the reverse — which is the
     // shape of assertion that lets a real mix-up through.
-    expect(viewOf(queue, run.id).status).toBe(expected);
+    expect(mustGet(queue, run.id).status).toBe(expected);
     // And it must SAY so. Swallowing this silently hides a clipped log behind `logsDropped: 0`,
     // which is the one outcome the queue's log contract rules out — and nothing asserted the line
     // existed, so both call sites could revert to a silent catch with the suite still green.
@@ -510,7 +511,7 @@ describe('dev-server test queue', () => {
     queue.sweep();
     now += 5_000;
     expect(() => queue.sweep()).not.toThrow();
-    expect(viewOf(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
   });
 
   it('does not settle a forced run twice when its exit finally arrives', () => {
@@ -521,14 +522,14 @@ describe('dev-server test queue', () => {
     now += 60_001;
     queue.get(next.id);
     queue.sweep(); // kill requested; the fake's kill emits exit, settling it here
-    expect(viewOf(queue, stuck.id).status).toBe('timeout');
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, next.id).status).toBe('running');
 
     now += 10_000;
     const swept = queue.sweep();
 
     expect(swept.forced).toEqual([]);
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -538,14 +539,14 @@ describe('dev-server test queue', () => {
     const second = queue.request({ worktree: '/wt/b' });
 
     runner.started[0].finish(0);
-    expect(viewOf(queue, second.id).status).toBe('running');
+    expect(mustGet(queue, second.id).status).toBe('running');
 
     // A late exit from the first run's dead handle must not settle anything or free a second slot.
     runner.started[0].finish(1);
 
-    expect(viewOf(queue, first.id).status).toBe('completed');
-    expect(viewOf(queue, first.id).exitCode).toBe(0);
-    expect(viewOf(queue, second.id).status).toBe('running');
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).exitCode).toBe(0);
+    expect(mustGet(queue, second.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -557,9 +558,9 @@ describe('dev-server test queue', () => {
 
     queue.cancel(doomed.id);
 
-    expect(viewOf(queue, doomed.id).status).toBe('cancelled');
-    expect(viewOf(queue, behind.id).position).toBe(1);
-    expect(viewOf(queue, running.id).status).toBe('running');
+    expect(mustGet(queue, doomed.id).status).toBe('cancelled');
+    expect(mustGet(queue, behind.id).position).toBe(1);
+    expect(mustGet(queue, running.id).status).toBe('running');
     expect(runner.started).toHaveLength(1);
   });
 
@@ -600,7 +601,7 @@ describe('dev-server test queue', () => {
     now += 1_001;
 
     expect(queue.sweep().forced).toEqual([stuck.id]);
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
   });
 
   it('refuses to call a killed run a pass, even when its process exited 0', () => {
@@ -621,7 +622,7 @@ describe('dev-server test queue', () => {
     // The child exited cleanly in the window between the kill being issued and it landing.
     runner.started[0].finish(0);
 
-    const view = viewOf(queue, run.id);
+    const view = mustGet(queue, run.id);
     expect(view.status).toBe('cancelled');
     expect(view.exitCode).toBe(0);
     // What a waiter would exit with. 0 here would report a green suite that never finished.
@@ -647,8 +648,8 @@ describe('dev-server test queue', () => {
 
     runner.started[0].finish(-1); // node reports no code when a child dies by signal
 
-    expect(viewOf(queue, run.id).status).toBe('error');
-    expect(exitCodeFor(viewOf(queue, run.id))).toBe(1);
+    expect(mustGet(queue, run.id).status).toBe('error');
+    expect(exitCodeFor(mustGet(queue, run.id))).toBe(1);
   });
 
   it('keeps the verdict of a runner that reported an exit and then threw', () => {
@@ -665,8 +666,8 @@ describe('dev-server test queue', () => {
 
     const run = queue.request({ worktree: '/wt/a' });
 
-    expect(viewOf(queue, run.id).status).toBe('completed');
-    expect(viewOf(queue, run.id).exitCode).toBe(0);
+    expect(mustGet(queue, run.id).status).toBe('completed');
+    expect(mustGet(queue, run.id).exitCode).toBe(0);
   });
 
   it('ignores a late exit arriving after the slot was force-released', () => {
@@ -687,14 +688,14 @@ describe('dev-server test queue', () => {
     queue.sweep();
     now += 5_001;
     expect(queue.sweep().forced).toEqual([stuck.id]);
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, next.id).status).toBe('running');
 
     // The abandoned process finally exits, cleanly, long after its slot was given away.
     runner.started[0].finish(0);
 
-    expect(viewOf(queue, stuck.id).status).toBe('timeout');
-    expect(viewOf(queue, stuck.id).exitCode).toBeNull();
-    expect(viewOf(queue, next.id).status).toBe('running');
+    expect(mustGet(queue, stuck.id).status).toBe('timeout');
+    expect(mustGet(queue, stuck.id).exitCode).toBeNull();
+    expect(mustGet(queue, next.id).status).toBe('running');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -715,8 +716,8 @@ describe('dev-server test queue', () => {
 
     // Without this, the finished run holds the only slot until the run ceiling expires and
     // everything behind it is abandoned instead of run.
-    expect(viewOf(queue, first.id).status).toBe('completed');
-    expect(viewOf(queue, second.id).status).toBe('completed');
+    expect(mustGet(queue, first.id).status).toBe('completed');
+    expect(mustGet(queue, second.id).status).toBe('completed');
     expect(runner.started).toHaveLength(2);
   });
 
@@ -743,7 +744,7 @@ describe('a clipped log announces itself', () => {
     const view = queue.request({ worktree: '/repo' });
     const run = queue.runs.get(view.id);
     for (let i = 0; i < lines; i++) queue.addLog(run, 'stdout', `line ${i}`);
-    return viewOf(queue, view.id);
+    return mustGet(queue, view.id);
   };
 
   it('reports nothing dropped while the window still holds everything', () => {
