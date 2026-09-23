@@ -24,7 +24,7 @@ vi.mock('~/server/db/pgDb', () => ({
   },
 }));
 
-import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
+import { MAX_THREAD_CHAIN_DEPTH, threadIsRooted } from '~/server/common/thread-chain';
 import {
   getContentOwnerIdForComment,
   threadContentSelect,
@@ -101,7 +101,7 @@ beforeEach(async () => {
 
   // Translates exactly the call the service makes and refuses anything else, so a change to the
   // WHERE or the data cannot be absorbed by the fake.
-  dbMock.dbWrite.commentV2.updateMany.mockClear();
+  dbMock.dbWrite.commentV2.updateMany.mockReset();
   dbMock.dbWrite.commentV2.updateMany.mockImplementation((async ({ where, data, ...rest }: any) => {
     if (Object.keys(rest).length || Object.keys(where).sort().join() !== 'id,userId')
       throw new Error(`untranslated updateMany args: ${JSON.stringify({ where, rest })}`);
@@ -233,6 +233,12 @@ describe('THREAD_CONTENT_OWNERS', () => {
       .sort();
 
     expect(foreignKeys).toEqual(THREAD_CONTENT_OWNERS.map((o) => o.column).sort());
+  });
+
+  it('counts as a content root exactly what it maps to an owner, plus the ownerless clubPostId', () => {
+    const rooted = [...threadIsRooted('t').sql.matchAll(/t\."(\w+)"/g)].map((m) => m[1]).sort();
+
+    expect(rooted).toEqual([...THREAD_CONTENT_OWNERS.map((o) => o.column), 'clubPostId'].sort());
   });
 
   it.each(THREAD_CONTENT_OWNERS.map((o) => [o.column, o] as const))(

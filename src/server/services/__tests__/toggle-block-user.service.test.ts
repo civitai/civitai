@@ -430,15 +430,25 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
   });
 
   it('does not hide anything when the switch is off', async () => {
-    await block(true);
+    const result = await block(true);
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
+  });
+
+  it('says nothing about comments on a re-block with the switch off', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+
+    const result = await block(true);
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
   });
 
   it('ignores the switch on an unblock', async () => {
     engagement.findUnique.mockResolvedValue({ type: 'Block' });
 
-    await toggleHidden({
+    const result = await toggleHidden({
       kind: 'blockedUser',
       data: [{ id: targetUserId }],
       hidden: false,
@@ -447,5 +457,6 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
     });
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
   });
 });
