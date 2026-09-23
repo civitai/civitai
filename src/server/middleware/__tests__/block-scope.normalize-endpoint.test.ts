@@ -242,6 +242,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
     expect(staticSegmentsFromRoutes()).toEqual([
       'api',
       'blocks',
+      // `v1/blocks/buzz.ts` — the per-pool balance self-read, restored as a
+      // withBlockScope REST route (it had been retired in favour of the
+      // page-host bridge, which a non-page-hosted block cannot reach).
+      'buzz',
       'collections',
       'follow',
       'generation-resources',

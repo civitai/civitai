@@ -82,6 +82,8 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccount: vi.fn(),
+  // The restored `blocks/buzz.ts` imports this one (per-pool projection).
+  getUserBuzzAccounts: vi.fn(),
   getUserBuzzTransactions: vi.fn(),
   getDailyCompensationRewardByUser: vi.fn(),
 }));
@@ -105,9 +107,12 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string }> = [
     requiredScope: 'collections:write:self',
   },
   { module: '~/pages/api/v1/blocks/tip', requiredScope: 'social:tip:self' },
-  // NOTE: the buzz self-reads (balance/transactions/accounts/daily-compensation)
-  // are host-mediated tRPC MUTATIONS now (blocks.getMyBuzz*), not withBlockScope
-  // REST routes, so they have no CORS wiring to guard here.
+  // The BALANCE self-read is a withBlockScope REST route again — restored so a
+  // block can direct-fetch it without a page host in the middle — so it DOES
+  // have CORS wiring to guard here. The other three buzz self-reads
+  // (transactions / accounts / daily-compensation) remain host-mediated tRPC
+  // MUTATIONS (blocks.getMyBuzz*) with no REST route and nothing to guard.
+  { module: '~/pages/api/v1/blocks/buzz', requiredScope: 'buzz:read:self' },
   {
     module: '~/pages/api/v1/blocks/shared-storage/increment',
     requiredScope: 'apps:storage:shared:write',
