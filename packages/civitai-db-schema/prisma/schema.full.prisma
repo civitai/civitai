@@ -7205,7 +7205,10 @@ model GenerationCoverage {
   model          Model        @relation(fields: [modelId], references: [id])
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  /// The live rule. A row exists when EITHER column is true, so test the column, not existence.
   covered        Boolean
+  /// The staged rule: community checkpoints qualify on their own and load on demand.
+  coveredNext    Boolean
 
   @@id([modelId, modelVersionId])
 }
