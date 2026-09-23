@@ -161,9 +161,9 @@ export const getContentTotals = createCache({
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
-// Top reacted media over the range (images + videos, split by `type` on each page).
+// Top reacted media over the range: up to TOP_MEDIA_PER_TYPE of each type, split by `type` on each page.
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v4',
+  name: 'analytics:top-media:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -569,16 +569,17 @@ async function fetchReactionAudienceSplit(
   return bucketReactors(reactors, uid, followerIds);
 }
 
-// Top reacted media (images + videos) over the range — the /analytics/content tabs filter this by `type`. We rank
-// the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where the media type
-// lives), so both tabs share one fetch. 100 gives each type a reasonable list.
+export const TOP_MEDIA_PER_TYPE = 100;
+
+// The content tabs filter this by `type`, so the limit is per type: one shared LIMIT let a video-heavy creator's
+// videos take every slot. `reactions` has no media type; `images_created` (sorted by id) does.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
   }>(
-    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC LIMIT 100`
+    `WITH ranked AS (SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0) SELECT ranked.imageId AS imageId, ranked.reactions AS reactions, media.mediaType AS mediaType FROM ranked INNER JOIN (SELECT id, any(mediaType) AS mediaType FROM images_created WHERE id IN (SELECT imageId FROM ranked) GROUP BY id) AS media ON media.id = ranked.imageId ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_PER_TYPE} BY mediaType`
   );
   return enrichTopImages(raw, from, to);
 }
