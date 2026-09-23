@@ -90,7 +90,7 @@ run_commit() {
 # True when image ($1), tagged <timestamp>-<sha>, carries short sha ($2). Anchored to
 # the tag's sha: an all-digit short sha can occur inside another release's timestamp.
 # The image policy accepts any sha length, so longer shas still match.
-tag_has_sha() { [ -n "$2" ] && [[ "$1" =~ -${2}[0-9a-f]*$ ]]; }
+tag_has_sha() { [[ "$2" =~ ^[0-9a-f]{7}$ ]] && [[ "$1" =~ -"$2"[0-9a-f]*$ ]]; }
 
 # True when Flux's latest image ($2) was built from the run's commit ($1).
 image_ready() { [ -n "$1" ] && tag_has_sha "$2" "$(short "$1")"; }
