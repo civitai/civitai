@@ -23,7 +23,10 @@ import type {
   ResourceFilter,
   ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  resourceSort,
+  showsPricingFilter,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -47,6 +50,10 @@ export function ResourceSelectFiltersDropdown() {
   } = useResourceSelectContext();
   const features = useFeatureFlags();
   const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
+  // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the
+  // generator" — several non-generator callers pass it deliberately, and the generate-price question
+  // is still the right one for them.
+  const showPaidFilter = showsPricingFilter(selectSource);
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -80,13 +87,15 @@ export function ResourceSelectFiltersDropdown() {
   const filterLength =
     (selectFilters.types.length > 0 ? 1 : 0) +
     (selectFilters.baseModels.length > 0 ? 1 : 0) +
-    (selectFilters.loadedOnly ? 1 : 0);
+    (selectFilters.loadedOnly ? 1 : 0) +
+    (showPaidFilter && selectFilters.hidePaid ? 1 : 0);
 
   const clearFilters = () => {
     const reset: Required<ResourceFilter> = {
       types: [],
       baseModels: [],
       loadedOnly: false,
+      hidePaid: false,
     };
     setSelectFilters(reset);
   };
@@ -172,6 +181,20 @@ export function ResourceSelectFiltersDropdown() {
             )}
           </Group>
         </Chip.Group>
+        {showPaidFilter && (
+          <>
+            <Divider label="Cost" className="text-sm font-bold" />
+            <Group gap={8} my={4}>
+              <Chip
+                {...chipProps}
+                checked={!!selectFilters.hidePaid}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, hidePaid: checked }))}
+              >
+                <span>Hide paid</span>
+              </Chip>
+            </Group>
+          </>
+        )}
       </Stack>
 
       {canFilterLoaded && (

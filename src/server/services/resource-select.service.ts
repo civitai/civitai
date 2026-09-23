@@ -27,6 +27,10 @@ import {
   getModelSearchIndexRecords,
   type ModelSearchIndexRecord,
 } from '~/server/search-index/models.search-index';
+import {
+  modelPricingFilterClause,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { transformModelHits } from '~/shared/search/models-transform';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -136,6 +140,7 @@ export function buildFilter({
     filterBaseModels,
     filterLoaded,
     tagName,
+    hidePaid,
   } = input;
 
   // On the featured tab, determine which types have featured models so we can
@@ -191,6 +196,7 @@ export function buildFilter({
     // Any version resident, not the one the card happens to show — Meili matches a nested array.
     filterLoaded && eq('versions.generatorLoaded', true),
     tagName ? eq('tags.name', tagName) : null,
+    modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
     tab === 'official' ? eq('user.id', constants.system.officialUserId) : null,
@@ -344,6 +350,15 @@ export async function getResourceSelectModels(
     const officialItems = transformModelHits(
       await getModelSearchIndexRecords(officialIdsForType)
     ).filter((m) => {
+      // buildFilter never sees the pin, so anything it would have excluded is re-applied here —
+      // pricing and base model only. `canGenerate`, the private-availability split and the celebrity
+      // exclusion are NOT re-applied; `getOfficialModelIds` scopes on isOfficial + Published alone,
+      // so a mod flagging a private or non-generatable model official would pin it past all three.
+      if (
+        input.hidePaid &&
+        !m.versions.some((v) => versionSatisfiesPricingFilter(v.pricing, input))
+      )
+        return false;
       const baseModels = input.resources
         .filter((r) => r.type === m.type)
         .flatMap((r) => r.baseModels);

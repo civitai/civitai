@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { toResourceSelectFilterInput } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { queryRetry, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -45,9 +46,7 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       sort,
       limit,
       resources: resources.map((r) => ({ type: r.type as ModelType, baseModels: r.baseModels })),
-      filterTypes: filters.types,
-      filterBaseModels: filters.baseModels,
-      filterLoaded: filters.loadedOnly,
+      ...toResourceSelectFilterInput(filters),
       tagName: categoryTag,
       canGenerate,
       excludedVersionIds: excludedIds,

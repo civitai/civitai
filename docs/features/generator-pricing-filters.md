@@ -134,7 +134,7 @@ sparseness forces `NOT hasActivePaidAccess = true` — `HIDE_PAID_MODELS_FILTER`
 `src/components/Search/paid-model-search-filter.ts`, which carries the measurements behind that spelling.
 Two hide-paid clause builders, deliberately opposite. Do not let them be "unified".
 
-Two tests hold this: `toPricingSignals` never returns an empty array, and the emitted query for
+Two tests hold this: `toPricingSignals` never returns an empty array (deploy 1), and the emitted query for
 `hidePaid` is asserted to contain no negation of the field. The negation half scans only
 `model-pricing-filter.ts` plus the one query it produces — **it does not police other call sites**, so
 a second clause builder elsewhere would not be caught.
@@ -143,19 +143,22 @@ a second clause builder elsewhere would not be caught.
 
 ## What was built
 
-| Piece | Where |
-| ----- | ----- |
-| Pricing util + signal enum | `packages/civitai-buzz/src/model-version-pricing.ts` |
-| Per-version gate terms | `getModelVersionPaidAccessTerms` in `paid-access.service.ts` |
-| Document build | `models.search-index.ts` (`transformData`) |
-| `versions.pricing` filterable | `filterable-attributes.ts` |
-| Clause builder + version predicate | `src/shared/search/model-pricing-filter.ts` |
-| Server filter + input | `resource-select.service.ts`, `model.schema.ts` |
-| Filter state | `resource-select.types.ts`, `ResourceSelectProvider.tsx`, `useResourceSelectInfinite.ts` |
-| "Hide paid" chip | `ResourceSelectFilters.tsx` (generation-only) |
-| Card badge | `VersionPricingBadge.tsx`, `ResourceSelectCard.tsx` |
-| Version pre-selection | `pickInitialVersionIndex` in `resource-select.types.ts` |
-| Tests | `model-version-pricing.test.ts`, `model-pricing-filter.test.ts`, `models-index-pricing-signals.test.ts` (document build), `resource-select.pricing-filter.test.ts` (the clause reaches the query), `pick-initial-version-index.test.ts`, `ResourceSelectPersistence.test.ts` |
+| Piece | Where | Deploy |
+| ----- | ----- | ------ |
+| Pricing util + signal enum | `packages/civitai-buzz/src/model-version-pricing.ts` | 1 ✅ |
+| Per-version gate terms | `getModelVersionPaidAccessTerms` in `paid-access.service.ts` | 1 ✅ |
+| Document build | `models.search-index.ts` (`transformData`) | 1 ✅ |
+| `versions.pricing` filterable | `filterable-attributes.ts` | 1 ✅ |
+| Tests | `model-version-pricing.test.ts`, `models-index-pricing-signals.test.ts` | 1 ✅ |
+| Clause builder, version + badge predicates | `src/shared/search/model-pricing-filter.ts` | 2 |
+| Server filter + input | `resource-select.service.ts`, `model.schema.ts` | 2 |
+| Filter state + wire | `resource-select.types.ts`, `ResourceSelectProvider.tsx`, `useResourceSelectInfinite.ts` | 2 |
+| "Hide paid" chip | `ResourceSelectFilters.tsx` (generation sources only) | 2 |
+| Card badge | `VersionPricingBadge.tsx`, `ResourceSelectCard.tsx` | 2 |
+| Version pre-selection | `pickInitialVersionIndex` / `resolveSelectedIndex` in `resource-select.types.ts` | 2 |
+| Tests | `model-pricing-filter.test.ts`, `resource-select.pricing-filter.test.ts` (the clause reaches the query, and the official pin re-applies it), `pick-initial-version-index.test.ts`, `ResourceSelectPersistence.test.ts` | 2 |
+
+Rows marked 2 are not in `main` until deploy 2 merges.
 
 `getModelVersionPaidAccessTerms` is raw SQL sharing `paidAccessLiveSql` with the model-level rollup, so
 the two cannot disagree about which gates are live. Its JSDoc carries the rest (why not the cached
@@ -230,28 +233,53 @@ the two cannot disagree about which gates are live. Its JSDoc carries the rest (
 
 ## Rollout — TWO deploys, in this order
 
-The ordering is the enforcement; there is no feature flag. Shipping the client half first does not
-narrow results, it **breaks the whole resource picker**: filtering on an attribute Meilisearch does not
-have applied is a **400**, `isTransientMeiliError` does not classify it as transient, and `searchModels`
-rethrows. Between the settings write and the end of the backfill it degrades gracefully instead,
-matching only rewritten documents.
+The ordering is the enforcement; there is no feature flag. Shipping the client half first breaks the
+picker **for any user who turns the chip on** — filtering on an attribute Meilisearch does not have
+applied is a **400**, `isTransientMeiliError` does not classify it as transient, and `searchModels`
+rethrows. It is bounded and recoverable: the clause is emitted only when `hidePaid` is true, so an
+untouched chip changes nothing; `ResourceHitList` renders its "Couldn't load models" panel rather than
+an empty one; and the chip is unpersisted, so unticking or reopening clears it. Between the settings
+write and the end of the backfill it degrades gracefully instead, matching only rewritten documents.
 
-**Deploy 1 — `feat/model-version-pricing-signals`.** The util, `getModelVersionPaidAccessTerms`, the
-document build, and `versions.pricing` in the filterable list. Nothing reads the attribute yet, so this
-is inert on its own.
+⚠️ A rollback or a full rebuild of the models index **re-opens that window after the fact** —
+`onIndexSetup` is the only writer of the filterable list and it runs against a swap index, so nothing
+in an ordinary deploy re-applies it.
 
-Then, with an owner watching:
+**Deploy 1 — `feat/model-version-pricing-signals`. ✅ Merged 2026-09-23**, PR #5071, commit
+`a80b72f0fa`. The util, `getModelVersionPaidAccessTerms`, the document build, and `versions.pricing` in
+the filterable list. Nothing reads the attribute yet, so it is inert on its own.
 
-1. Apply the filterable-attributes settings write. **Three attributes were already pending before this
-   work** — `canGenerateNext`, `versions.canGenerateNext` and `versions.generatorLoaded` are in the
-   repo's list but not applied to the live index (they error as not filterable). With `versions.pricing`
-   that is four, and they must go in ONE write: each reindexes the filterable fields across every
-   document. Budget hours, not minutes.
-2. Backfill, and verify every document carries the field.
+Then, with an owner watching. **Both ran against production on 2026-09-23 and are complete** —
+`/api/testing/models-pricing-backfill?action=verify` reported `backfillComplete: true`:
 
-**Deploy 2 — `feat/generator-pricing-filters`.** The clause builder, the tRPC input, the chip, the card
-badge and the version pre-selection. 🔴 It must be branched off `main` **after deploy 1 has merged** —
-this repo squash-merges and `CLAUDE.md` forbids stacked PRs, so it cannot be based on deploy 1's branch.
+1. ✅ Apply the filterable-attributes settings write
+   (`/api/admin/temp/apply-models-index-filterable-attributes`). **Three attributes were already
+   pending before this work** — `canGenerateNext`, `versions.canGenerateNext` and
+   `versions.generatorLoaded` — so `versions.pricing` made four in one write.
+2. ✅ Backfill the **gated** models only (`/api/admin/temp/queue-paid-models-reindex`) — 3,464 of them,
+   0 still missing the attribute. Not every document: the clause's `NOT ... EXISTS` half covers the
+   ~697K that have not been rewritten yet, which is what turned a 713K sweep into a 3.5K one.
+
+**`NOT ... EXISTS` was probed live before shipping** — it is this repo's first use of `EXISTS` in a
+Meilisearch filter, and a rejected operator form would have 400'd every ticked-chip query with no 5xx
+recorded. Against `models_v9`: `NOT cannotPromote EXISTS` returns the sparse complement, and the real
+clause `canGenerate = true AND (versions.pricing = 3 OR NOT versions.pricing EXISTS)` runs in 26-27 ms
+against a 21 ms baseline.
+
+🔴 **The completeness check is "how many GATED models lack the attribute", and nothing else.** "How
+many documents lack it" is capped by the index's `maxTotalHits` *and* falls forever as the index
+rewrites, so it can neither reach zero nor prove anything. The gated set is the one that must be
+complete, because the clause fails open.
+
+Measured at completion: 3,464 gated models, of which **1,415 are gated for generation** — the other
+2,049 are download-only and remain visible under "Hide paid". That ratio is the feature.
+
+**Deploy 2 — `feat/generator-paid-filter-ui`.** The clause builder, the tRPC input, the chip, the card
+badge and the version pre-selection. Branched off `main` at `8463a16b77` — deploy 1's merge — because
+this repo squash-merges and `CLAUDE.md` forbids stacked PRs.
+
+⚠️ The abandoned pre-split branch `feat/generator-pricing-filters` may still exist locally and does
+**not** contain deploy 1. It is not this work.
 
 ## Known limitation: flattening pairs clauses across versions
 

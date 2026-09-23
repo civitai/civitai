@@ -134,14 +134,23 @@ export function ResourceSelectProvider({
   const setFilterTypes = persist ? setStoredTypes : setLocalTypes;
   const [filterBaseModels, setFilterBaseModels] = useState<BaseModel[]>([]);
   const [loadedOnly, setLoadedOnly] = useState(false);
+  // Not persisted: the chip renders only where `showsPricingFilter` allows, but `hidePaid` is sent
+  // on every select source — a remembered `true` would filter a picker with no chip to clear it.
+  const [hidePaid, setHidePaid] = useState(false);
   const setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>> = (action) => {
     const next =
       typeof action === 'function'
-        ? action({ types: filterTypes, baseModels: filterBaseModels, loadedOnly })
+        ? action({
+            types: filterTypes,
+            baseModels: filterBaseModels,
+            loadedOnly,
+            hidePaid,
+          })
         : action;
     setFilterTypes(next.types);
     setFilterBaseModels(next.baseModels);
     setLoadedOnly(next.loadedOnly);
+    setHidePaid(!!next.hidePaid);
   };
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const activeOptions = props.options;
@@ -181,6 +190,13 @@ export function ResourceSelectProvider({
   // list's version filter over every loaded model.
   const excludedIds = useMemo(() => activeOptions?.excludeIds ?? [], [activeOptions]);
 
+  // `types`/`baseModels` are fresh arrays each render; inlining this object re-runs every memo keyed
+  // on `filters`.
+  const filters = useMemo(
+    () => ({ types, baseModels, loadedOnly, hidePaid }),
+    [types.join(), baseModels.join(), loadedOnly, hidePaid] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   function handleSelect(value: GenerationResource) {
     props.onSelect(value);
     dialog.onClose();
@@ -217,11 +233,7 @@ export function ResourceSelectProvider({
         resources,
         tab,
         setTab,
-        filters: {
-          types,
-          baseModels,
-          loadedOnly,
-        },
+        filters,
         setFilters,
         sort,
         setSort,

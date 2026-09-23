@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -49,12 +49,21 @@ import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { versionCanGenerate } from '~/shared/generation/coverage-fields';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
+import {
+  pickInitialVersionIndex,
+  resolveSelectedIndex,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  pricingFilterKey,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { TopRightIcons } from './TopRightIcons';
 import {
   LoadedMark,
   useResidency,
   ResourceResidencyStatus,
 } from '~/components/ResourceLoad/ResourceResidency';
+import { VersionPricingBadge } from './VersionPricingBadge';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -79,6 +88,7 @@ export function ResourceSelectCard({
     resources,
     staged,
     limit,
+    filters,
   } = useResourceSelectContext();
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);
@@ -88,8 +98,26 @@ export function ResourceSelectCard({
   const colorScheme = useComputedColorScheme('dark');
 
   const versions = data.versions;
-  const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const _selectedIndex = selectedIndex < versions.length ? selectedIndex : 0;
+  const initialIndex = useMemo(
+    () =>
+      pickInitialVersionIndex(versions, {
+        filter: filters,
+        satisfiesFilter: (v) => versionSatisfiesPricingFilter(v.pricing, filters),
+        isCompatible: (v) =>
+          role !== 'resource' ||
+          getResourceCompatibility(v.baseModel, data.type, { resources }) !== null,
+      }),
+    [versions, filters, role, data.type, resources]
+  );
+  const filterKey = pricingFilterKey(filters);
+  const [override, setOverride] = useState<{ key: string; index: number } | null>(null);
+  const _selectedIndex = resolveSelectedIndex({
+    override,
+    filterKey,
+    versionCount: versions.length,
+    initialIndex,
+  });
+  const setSelectedIndex = (index: number) => setOverride({ key: filterKey, index });
   const selectedVersion = versions[_selectedIndex];
   const [flipped, setFlipped] = useState(false);
 
@@ -240,6 +268,7 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                        <VersionPricingBadge pricing={selectedVersion?.pricing} />
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
