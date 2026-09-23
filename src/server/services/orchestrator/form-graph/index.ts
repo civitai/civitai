@@ -240,6 +240,7 @@ function createStep(
 
     case 'Qwen':
     case 'Qwen2':
+    case 'Qwen21':
     case 'Qwen3':
       return createQwenInput(data, handlerCtx);
 
