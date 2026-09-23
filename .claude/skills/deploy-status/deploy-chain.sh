@@ -87,9 +87,10 @@ run_commit() {
     -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}'
 }
 
-# True when Flux's latest image ($2) was built from the run's commit ($1). An empty
-# commit must not pass: short "" is a substring of every image, the previous release's too.
-image_ready() { [ -n "$1" ] && [[ "$2" == *"$(short "$1")"* ]]; }
+# True when image ($2), tagged <timestamp>-<sha7>, was built from commit ($1). Anchored
+# to the tag suffix: an all-digit short sha can occur inside another release's timestamp,
+# and an empty commit would otherwise match every image.
+image_ready() { [ -n "$1" ] && [[ "$2" == *"-$(short "$1")" ]]; }
 
 # ---- phase 1: build -------------------------------------------------------------
 print_build() {
@@ -163,7 +164,7 @@ print_primaries() {
 app_rollout() {
   local tshort="$1"
   ROLLOUT_DONE=1; ROLLOUT_DETAIL=""; ROLLOUT_LAG=""
-  local name up des rdy img
+  local name up des rdy img checked=0 saw_ssr=0 saw_api=0
   while read -r name up des rdy img; do
     [ -z "$name" ] && continue
     case "$img" in "$IMAGE_REPO"*) ;; *) continue ;; esac   # app deployments only
@@ -171,8 +172,11 @@ app_rollout() {
     up=${up:-0}; des=${des:-0}; rdy=${rdy:-0}
     # Skip scaled-to-0 deployments (Flagger canary shells at rest) — not a serving pool.
     [ "$des" -eq 0 ] 2>/dev/null && continue
+    checked=$((checked + 1))
+    [ "$name" = "$PRIMARY_SSR" ] && saw_ssr=1
+    [ "$name" = "$PRIMARY_API" ] && saw_api=1
     ROLLOUT_DETAIL+="    $name: ${up}/${des} updated, ${rdy} ready, ${img##*:}"$'\n'
-    if [[ "$img" != *"$tshort"* ]]; then
+    if [[ "$img" != *"-$tshort" ]]; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(old image ${img##*:}) "
     elif [ "$up" != "$des" ] || [ "$rdy" != "$des" ]; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(${up}/${des} rolled, ${rdy} ready) "
@@ -180,6 +184,11 @@ app_rollout() {
   done < <(k -n "$NS_APP" get deploy \
     -o custom-columns='N:.metadata.name,U:.status.updatedReplicas,D:.spec.replicas,R:.status.readyReplicas,I:.spec.template.spec.containers[0].image' \
     --no-headers)
+  # k() swallows kubectl errors, so a failed list reads as zero rows, which would
+  # otherwise leave ROLLOUT_DONE=1 with nothing checked.
+  if [ "$checked" -eq 0 ] || [ "$saw_ssr" = 0 ] || [ "$saw_api" = 0 ]; then
+    ROLLOUT_DONE=0; ROLLOUT_LAG+="(deployment list incomplete: $checked serving, primaries ssr=$saw_ssr api=$saw_api) "
+  fi
 }
 
 # ---- overall summary ------------------------------------------------------------
