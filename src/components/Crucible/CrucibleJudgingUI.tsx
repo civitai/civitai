@@ -1,14 +1,4 @@
-import {
-  Button,
-  Kbd,
-  Paper,
-  Text,
-  Loader,
-  Box,
-  SimpleGrid,
-  Skeleton,
-  Tooltip,
-} from '@mantine/core';
+import { Button, Kbd, Paper, Text, Loader, Box, Skeleton, Tooltip } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { IconPlayerSkipForward, IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -138,9 +128,9 @@ export function CrucibleJudgingUI({
   }
 
   return (
-    <div className={clsx('flex flex-col gap-6', className)}>
-      {/* Voting Container - Two images side by side */}
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+    <div className={clsx('flex flex-col gap-4', className)}>
+      {/* On md+ the pair fills the height left over, so the vote buttons never need a scroll. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
         {/* Left Image */}
         <ImageCard
           entry={pair?.left ?? null}
@@ -170,47 +160,46 @@ export function CrucibleJudgingUI({
           onVote={() => handleVote('right')}
           hotkeyLabel="2"
         />
-      </SimpleGrid>
+      </div>
 
-      {/* Skip Button - matching mockup styling */}
-      <Tooltip
-        label="Skips this pair without voting. The pair may appear again later."
-        position="top"
-        withArrow
-      >
-        <Button
-          variant="default"
-          size="lg"
-          fullWidth
-          onClick={handleSkip}
-          disabled={isDisabled}
-          className="border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
-          styles={{
-            root: {
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-            },
-            inner: {
-              display: 'flex',
-              width: '100%',
-              alignItems: 'center',
-              justifyContent: 'center',
-            },
-          }}
-          leftSection={<IconPlayerSkipForward size={18} />}
-          rightSection={<Kbd>Space</Kbd>}
+      <div className="flex shrink-0 flex-col items-center gap-2 md:flex-row md:justify-center md:gap-4">
+        <Tooltip
+          label="Skips this pair without voting. The pair may appear again later."
+          position="top"
+          withArrow
         >
-          Skip Pair
-        </Button>
-      </Tooltip>
+          <Button
+            variant="default"
+            size="md"
+            onClick={handleSkip}
+            disabled={isDisabled}
+            className="border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+            styles={{
+              root: {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+              },
+              inner: {
+                display: 'flex',
+                width: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+              },
+            }}
+            leftSection={<IconPlayerSkipForward size={18} />}
+            rightSection={<Kbd>Space</Kbd>}
+          >
+            Skip Pair
+          </Button>
+        </Tooltip>
 
-      {/* Keyboard shortcut hint */}
-      <Text size="xs" c="dimmed" ta="center" className="hidden md:block">
-        Press <Kbd>1</Kbd> or <Kbd>←</Kbd> to vote left, <Kbd>2</Kbd> or <Kbd>→</Kbd> to vote right,{' '}
-        <Kbd>Space</Kbd> to skip
-      </Text>
+        <Text size="xs" c="dimmed" className="hidden whitespace-nowrap md:block">
+          Press <Kbd>1</Kbd> or <Kbd>←</Kbd> to vote left, <Kbd>2</Kbd> or <Kbd>→</Kbd> to vote
+          right, <Kbd>Space</Kbd> to skip
+        </Text>
+      </div>
     </div>
   );
 }
@@ -281,7 +270,7 @@ function ImageCard({
   const remainingSeconds = Math.ceil(Math.max(0, requiredMs - watchedMs) / 1000);
 
   if (!entry) {
-    return <Skeleton radius="lg" style={{ aspectRatio: '4 / 5' }} />;
+    return <Skeleton radius="lg" className="aspect-[4/5] md:aspect-auto md:h-full" />;
   }
 
   const isVideo = entry.image.type === MediaType.video;
@@ -289,7 +278,7 @@ function ImageCard({
   return (
     <Paper
       className={clsx(
-        'cursor-pointer overflow-hidden rounded-xl border-2 transition-all duration-200',
+        'flex min-h-0 cursor-pointer flex-col overflow-hidden rounded-xl border-2 transition-all duration-200',
         'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#1a1b1e]',
         isSelected
           ? 'border-green-500 shadow-[0_0_20px_rgba(64,192,87,0.3)]'
@@ -305,8 +294,7 @@ function ImageCard({
       onKeyDown={handleKeyDown}
     >
       <Box
-        className="relative bg-[#1a1b1e]"
-        style={{ aspectRatio: '4 / 5' }}
+        className="relative aspect-[4/5] bg-[#1a1b1e] md:aspect-auto md:min-h-0 md:flex-1"
         // A video owns its own clicks: scrubbing, play/pause and unmuting all land inside this
         // box, and the card votes on click, so without this every control press is a misvote.
         // Voting a video is therefore the Vote button or the hotkey. Images still vote on click.
@@ -331,8 +319,10 @@ function ImageCard({
             // means re-watching a moment, not just replaying it from the top.
             html5Controls
             width={600}
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            wrapperProps={{ className: 'size-full' }}
+            // EdgeImage caps maxWidth at the requested width, which pinned a narrower image
+            // to the left of its box instead of centring it.
+            style={{ width: '100%', height: '100%', objectFit: 'contain', maxWidth: '100%' }}
+            wrapperProps={{ className: 'flex size-full items-center justify-center' }}
             videoProps={{ onTimeUpdate: handleTimeUpdate }}
           />
         )}
@@ -348,7 +338,7 @@ function ImageCard({
       </Box>
 
       {/* Vote button section */}
-      <div className="flex items-center justify-center gap-3 p-4">
+      <div className="flex shrink-0 items-center justify-center gap-3 p-3">
         <Button
           className={clsx(
             'flex-1 font-semibold transition-all duration-200',
@@ -363,12 +353,12 @@ function ImageCard({
           }}
           disabled={disabled}
         >
-          <div className="flex flex-col items-center gap-1">
-            <span>{remainingSeconds > 0 ? `Watch ${remainingSeconds}s more` : 'Vote'}</span>
-            <div className="flex items-center gap-1 text-xs opacity-75">
-              <Kbd size="xs">{hotkeyLabel}</Kbd>
-            </div>
-          </div>
+          <span className="flex items-center gap-2">
+            {remainingSeconds > 0 ? `Watch ${remainingSeconds}s more` : 'Vote'}
+            <Kbd size="xs" className="opacity-75">
+              {hotkeyLabel}
+            </Kbd>
+          </span>
         </Button>
       </div>
     </Paper>
@@ -380,22 +370,18 @@ function ImageCard({
  */
 export function CrucibleJudgingUISkeleton() {
   return (
-    <div className="flex flex-col gap-6">
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-        <Paper className="overflow-hidden rounded-xl" bg="dark.7">
-          <Skeleton radius={0} style={{ aspectRatio: '4 / 5' }} />
-          <div className="p-4">
-            <Skeleton height={42} radius="md" />
-          </div>
-        </Paper>
-        <Paper className="overflow-hidden rounded-xl" bg="dark.7">
-          <Skeleton radius={0} style={{ aspectRatio: '4 / 5' }} />
-          <div className="p-4">
-            <Skeleton height={42} radius="md" />
-          </div>
-        </Paper>
-      </SimpleGrid>
-      <Skeleton height={50} radius="md" />
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+        {[0, 1].map((i) => (
+          <Paper key={i} className="flex min-h-0 flex-col overflow-hidden rounded-xl" bg="dark.7">
+            <Skeleton radius={0} className="aspect-[4/5] md:aspect-auto md:min-h-0 md:flex-1" />
+            <div className="p-3">
+              <Skeleton height={36} radius="md" />
+            </div>
+          </Paper>
+        ))}
+      </div>
+      <Skeleton height={42} width={220} radius="md" className="mx-auto" />
     </div>
   );
 }

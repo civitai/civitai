@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Container,
   Group,
@@ -26,6 +27,7 @@ import {
 } from '@tabler/icons-react';
 import { useState, useCallback, useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -211,27 +213,17 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   }, [lastVoteAttempt, isVoting, handleVote]);
 
-  // Handle skip - track skipped entries, then get next pair (pair may return after ~10 others)
-  const handleSkip = useCallback(async () => {
-    if (isVoting || !pair) return;
+  // Changing the excluded ids changes the query input, which fetches the next pair on its own.
+  // Awaiting a `refetch()` here instead resolved with the NEW input's still-empty result, which
+  // read as "no pairs left" and ended the session on every skip.
+  const handleSkip = useCallback(() => {
+    if (isVoting || isLoadingPair || !pair) return;
 
-    setIsVoting(true);
     setSessionSkips((prev) => prev + 1);
-    setCurrentStreak(0); // Reset streak on skip
-
-    // Track skipped entry IDs to exclude from next pair selection
-    // Keep only the last 20 entries (~10 pairs) so skipped pairs can eventually return
-    const newSkippedIds = [...skippedEntryIds, pair.left.id, pair.right.id].slice(-20);
-    setSkippedEntryIds(newSkippedIds);
-
-    // For skip, get the next pair immediately without recording a vote
-    // No artificial delay - skip should feel instant
-    const result = await refetchPair();
-    if (!result.data) {
-      setAllPairsJudged(true);
-    }
-    setIsVoting(false);
-  }, [isVoting, pair, refetchPair, skippedEntryIds]);
+    setCurrentStreak(0);
+    // The last 20 entries (~10 pairs), so a skipped pair can come back eventually.
+    setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
+  }, [isVoting, isLoadingPair, pair]);
 
   // Check if all pairs judged on initial load
   useEffect(() => {
@@ -329,132 +321,130 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         canonical={`${env.NEXT_PUBLIC_BASE_URL}/crucibles/${crucible.id}/judge`}
       />
 
-      {/* Header Section - Two-tier with dark background */}
-      <Box className="border-b border-[#373a40] bg-[#25262b]" py="md">
-        <Container size="xl">
-          {/* Back Link */}
-          <Link
-            href={`/crucibles/${id}/${slugit(crucible.name)}`}
-            className="mb-4 inline-flex items-center gap-2 font-medium text-[#228be6] transition-colors hover:text-[#4dabf7]"
-          >
-            <IconArrowLeft size={16} />
-            Back to Crucible
-          </Link>
+      <div className="-mt-3 flex h-[calc(100%+0.75rem)] flex-col overflow-y-auto md:overflow-hidden">
+        <Box className="shrink-0 border-b border-[#373a40] bg-[#25262b]" py="sm">
+          <Container size="xl">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <ActionIcon
+                  component={Link}
+                  href={`/crucibles/${id}/${slugit(crucible.name)}`}
+                  variant="subtle"
+                  color="gray"
+                  size="lg"
+                  aria-label="Back to crucible"
+                >
+                  <IconArrowLeft size={20} />
+                </ActionIcon>
+                <div className="min-w-0">
+                  <h1 className="truncate text-xl font-bold leading-tight text-white">
+                    Judging: {crucible.name}
+                  </h1>
+                  <Text size="xs" c="dimmed">
+                    Compare pairs and vote for your favorite
+                  </Text>
+                </div>
+              </div>
 
-          {/* Title Row */}
-          <div className="mt-4 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="text-[1.875rem] font-bold leading-tight text-white">
-                Judging: {crucible.name}
-              </h1>
-              <Text size="sm" c="dimmed" mt={4}>
-                Compare pairs and vote for your favorite
-              </Text>
+              {timeRemaining && (
+                <div
+                  className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-semibold"
+                  style={{
+                    background: 'rgba(250, 82, 82, 0.1)',
+                    border: '1px solid rgba(250, 82, 82, 0.3)',
+                    color: '#ff8787',
+                  }}
+                >
+                  <IconClock size={14} />
+                  <span>{timeRemaining} remaining</span>
+                </div>
+              )}
             </div>
 
-            {/* Time Remaining Badge - red/pink styling matching mockup */}
-            {timeRemaining && (
-              <div
-                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-semibold"
-                style={{
-                  background: 'rgba(250, 82, 82, 0.1)',
-                  border: '1px solid rgba(250, 82, 82, 0.3)',
-                  color: '#ff8787',
-                }}
-              >
-                <IconClock size={16} />
-                <span>{timeRemaining} remaining</span>
+            {!allPairsJudged && (
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+                <StatItem
+                  label="Pairs Rated This Session"
+                  value={sessionVotes.toString()}
+                  secondary={sessionSkips > 0 ? `${sessionSkips} skipped` : undefined}
+                />
+                <StatItem
+                  label="Total Pairs Rated"
+                  value={abbreviateNumber((judgeStats?.totalPairsRated ?? 0) + sessionVotes)}
+                  secondary={
+                    judgeStats?.percentileRank
+                      ? `Top ${judgeStats.percentileRank}% of judges`
+                      : 'Keep judging!'
+                  }
+                />
+                <StatItem
+                  label="Current Streak"
+                  value={currentStreak > 0 ? `${currentStreak} pairs` : '0'}
+                  secondary={currentStreak >= 5 ? '+2 influence score' : 'Vote to build streak'}
+                />
+                <StatItem
+                  label="Your Influence"
+                  value={(judgeStats?.influenceScore ?? 100).toString()}
+                  secondary={
+                    (judgeStats?.influenceScore ?? 100) >= 150
+                      ? "You're influential!"
+                      : 'Growing influence'
+                  }
+                />
               </div>
             )}
-          </div>
-        </Container>
-      </Box>
-
-      {/* Stats Bar */}
-      {!allPairsJudged && (
-        <Box className="border-b border-[#373a40] bg-[#25262b] py-6">
-          <Container size="xl">
-            <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-              <StatItem
-                label="Pairs Rated This Session"
-                value={sessionVotes.toString()}
-                secondary={sessionSkips > 0 ? `${sessionSkips} skipped` : undefined}
-              />
-              <StatItem
-                label="Total Pairs Rated"
-                value={abbreviateNumber((judgeStats?.totalPairsRated ?? 0) + sessionVotes)}
-                secondary={
-                  judgeStats?.percentileRank
-                    ? `Top ${judgeStats.percentileRank}% of judges`
-                    : 'Keep judging!'
-                }
-              />
-              <StatItem
-                label="Current Streak"
-                value={currentStreak > 0 ? `${currentStreak} pairs` : '0'}
-                secondary={currentStreak >= 5 ? '+2 influence score' : 'Vote to build streak'}
-              />
-              <StatItem
-                label="Your Influence"
-                value={(judgeStats?.influenceScore ?? 100).toString()}
-                secondary={
-                  (judgeStats?.influenceScore ?? 100) >= 150
-                    ? "You're influential!"
-                    : 'Growing influence'
-                }
-              />
-            </div>
           </Container>
         </Box>
-      )}
 
-      {/* Main Voting Area or End State */}
-      <Container size="xl" className="py-8">
-        {/* Network Error Banner with Retry */}
-        {voteError && (
-          <Alert
-            icon={<IconAlertCircle size={18} />}
-            title="Connection Error"
-            color="red"
-            mb="lg"
-            withCloseButton
-            onClose={() => setVoteError(null)}
-          >
-            <Group justify="space-between" align="center">
-              <Text size="sm">{voteError}</Text>
-              {lastVoteAttempt && (
-                <Button
-                  size="xs"
-                  variant="light"
-                  color="red"
-                  leftSection={<IconRefresh size={14} />}
-                  onClick={handleRetryVote}
-                  loading={isVoting}
-                >
-                  Retry Vote
-                </Button>
-              )}
-            </Group>
-          </Alert>
-        )}
+        <Container size="xl" className="flex min-h-0 w-full flex-1 flex-col py-4">
+          {voteError && (
+            <Alert
+              icon={<IconAlertCircle size={18} />}
+              title="Connection Error"
+              color="red"
+              mb="sm"
+              withCloseButton
+              onClose={() => setVoteError(null)}
+            >
+              <Group justify="space-between" align="center">
+                <Text size="sm">{voteError}</Text>
+                {lastVoteAttempt && (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="red"
+                    leftSection={<IconRefresh size={14} />}
+                    onClick={handleRetryVote}
+                    loading={isVoting}
+                  >
+                    Retry Vote
+                  </Button>
+                )}
+              </Group>
+            </Alert>
+          )}
 
-        {allPairsJudged ? (
-          <EndCrucibleState
-            crucibleId={id}
-            crucibleName={crucible.name}
-            sessionVotes={sessionVotes}
-          />
-        ) : (
-          <CrucibleJudgingUI
-            pair={pair}
-            isLoading={isLoadingPair || isVoting}
-            disabled={isVoting || !!voteError}
-            minViewSeconds={crucible.minViewSeconds}
-            onVote={handleVote}
-            onSkip={handleSkip}
-          />
-        )}
-      </Container>
+          {allPairsJudged ? (
+            <div className="overflow-y-auto">
+              <EndCrucibleState
+                crucibleId={id}
+                crucibleName={crucible.name}
+                sessionVotes={sessionVotes}
+              />
+            </div>
+          ) : (
+            <CrucibleJudgingUI
+              className="min-h-0 flex-1"
+              pair={pair}
+              isLoading={isLoadingPair || isVoting}
+              disabled={isVoting || !!voteError}
+              minViewSeconds={crucible.minViewSeconds}
+              onVote={handleVote}
+              onSkip={handleSkip}
+            />
+          )}
+        </Container>
+      </div>
     </>
   );
 }
@@ -469,17 +459,14 @@ type StatItemProps = {
 
 function StatItem({ label, value, secondary }: StatItemProps) {
   return (
-    <div className="flex flex-col gap-1">
-      {/* Matching mockup: 0.75rem, #909296, 600 weight, uppercase, 0.05em letter-spacing */}
+    <div className="flex flex-col gap-0.5">
       <div
         className="text-xs font-semibold uppercase"
         style={{ color: '#909296', letterSpacing: '0.05em' }}
       >
         {label}
       </div>
-      {/* Matching mockup: 1.5rem, 700 weight, #fff */}
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {/* Matching mockup: 0.75rem, #a6e3a1 */}
+      <div className="text-lg font-bold leading-tight text-white">{value}</div>
       {secondary && (
         <div className="text-xs" style={{ color: '#a6e3a1' }}>
           {secondary}
@@ -637,4 +624,10 @@ function getTimeRemaining(endAt: Date): string {
   return `${minutes} min`;
 }
 
-export default Page(CrucibleJudgePage);
+export default Page(CrucibleJudgePage, {
+  getLayout: (page) => (
+    <AppLayout scrollable={false} footer={false}>
+      {page}
+    </AppLayout>
+  ),
+});
