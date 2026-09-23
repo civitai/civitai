@@ -30,7 +30,8 @@ export default AuthedEndpoint(async function handler(
     status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
     isMember: user.tier ? user.tier !== 'free' : false,
     subscriptions: Object.keys(user.subscriptions ?? {}),
-    ...(canReadProfile ? { isModerator: !!user.isModerator } : {}),
+    // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.
+    ...(canReadProfile && user.isModerator ? { isModerator: true } : {}),
     ...(canReadProfile && user.email
       ? { email: user.email, emailVerified: !!user.emailVerified }
       : {}),

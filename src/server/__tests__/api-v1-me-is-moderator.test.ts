@@ -28,7 +28,7 @@ async function me(user: SessionUser, context: Record<string, unknown> = {}) {
     },
   } as unknown as NextApiResponse;
   await handler(req, res, user);
-  return body!;
+  return JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
 }
 
 const token = (tokenScope: number) => ({
@@ -47,13 +47,19 @@ describe('GET /api/v1/me isModerator', () => {
     expect(await me(noEmail as SessionUser)).toHaveProperty('isModerator', true);
   });
 
-  it('reports false, not absent, for a non-moderator on a session', async () => {
-    expect(await me(NORMIE)).toHaveProperty('isModerator', false);
+  // Deliberate: the key is never `false`. A non-moderator must be indistinguishable from a caller
+  // the gate withheld the field from. Do not "normalise" this into an always-boolean field.
+  it('omits isModerator for a non-moderator on a session rather than sending false', async () => {
+    expect(await me(NORMIE)).not.toHaveProperty('isModerator');
   });
 
-  it('reports false when the session user carries no isModerator at all', async () => {
+  it('omits isModerator when the session user carries no isModerator at all', async () => {
     const { isModerator: _, email: __, ...noFlag } = NORMIE;
-    expect(await me(noFlag as SessionUser)).toHaveProperty('isModerator', false);
+    expect(await me(noFlag as SessionUser)).not.toHaveProperty('isModerator');
+  });
+
+  it('omits isModerator for a non-moderator token holding UserRead', async () => {
+    expect(await me(NORMIE, token(TokenScope.UserRead))).not.toHaveProperty('isModerator');
   });
 
   it('reports a moderator to a token holding UserRead', async () => {
