@@ -22,6 +22,7 @@ const {
   mockCheckAppendRl,
   mockCheckVoteRl,
   mockCheckReportRl,
+  mockCheckWithdrawRl,
   mockThrowOnBlockedUserContent,
   mockAuditPromptServer,
   mockIsRevoked,
@@ -46,6 +47,7 @@ const {
     mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
     mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
+    mockCheckWithdrawRl: vi.fn(async () => ({ allowed: true })),
     mockThrowOnBlockedUserContent: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
     mockIsRevoked: vi.fn(async () => false),
@@ -69,6 +71,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
   checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
+  checkSharedWithdrawRateLimit: (...a: unknown[]) => mockCheckWithdrawRl(...a),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -161,6 +164,7 @@ beforeEach(() => {
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockCheckReportRl.mockResolvedValue({ allowed: true });
+  mockCheckWithdrawRl.mockResolvedValue({ allowed: true });
   mockThrowOnBlockedUserContent.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -762,6 +766,46 @@ describe('H4 rate limits', () => {
     await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
+  });
+
+  // `withdraw` was the ONE write op on this surface with NO bucket at all. These
+  // pin the fix from the three directions that can each be wrong independently:
+  // that it refuses over the cap, that it refuses BEFORE taking a connection, and
+  // — the one a bare "it 429s" test would not catch — that it spends its OWN
+  // bucket. Without the last, wiring it to the append or vote limiter would pass
+  // the first two while silently coupling a user's ability to delete their own
+  // rows to their submitting or voting budget.
+  it('withdraw over the per-minute cap → TOO_MANY_REQUESTS (before any DB work)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckWithdrawRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 17 });
+    await expect(caller().withdraw({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      // 17 is pairwise-distinct from every other retryAfter in this file, so a
+      // handler that echoed a sibling bucket's value (or a constant) fails here.
+      message: 'Too many withdrawals — retry in 17s',
+    });
+    // Refused before a pooled connection is taken — the point of placing the
+    // limiter ahead of the transaction rather than inside it.
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('withdraw spends its OWN bucket — not the append or vote one', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await caller().withdraw({ blockToken: 't', key: 'k' });
+    // Keyed on (subject user, appBlockId) exactly like every sibling bucket.
+    expect(mockCheckWithdrawRl).toHaveBeenCalledWith(42, 'apb_test');
+    expect(mockCheckAppendRl).not.toHaveBeenCalled();
+    expect(mockCheckVoteRl).not.toHaveBeenCalled();
+  });
+
+  it('withdraw under the cap proceeds to the DELETE', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) =>
+      sql.startsWith('DELETE') ? { rows: [], rowCount: 1 } : { rows: [], rowCount: 0 }
+    );
+    const out = await caller().withdraw({ blockToken: 't', key: 'k' });
+    expect(out).toEqual({ ok: true, deleted: true });
+    expect(mockCheckWithdrawRl).toHaveBeenCalledTimes(1);
   });
 });
 

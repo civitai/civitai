@@ -58,6 +58,7 @@ import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
+  checkSharedWithdrawRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
@@ -279,7 +280,20 @@ function pgQuoteLiteral(value: string): string {
 }
 
 const blockTokenInput = z.object({ blockToken: z.string().min(1) });
-const sharedKeyInput = z.string().min(1).max(64);
+
+// Bounds shared by the tRPC inputs below AND the block REST adapters
+// (`/api/v1/blocks/shared-storage/{list,item,counts}`). Exported so each surface
+// restates the NUMBER in exactly one place: both run the SAME resolver and the
+// SAME SQL, so a bound that silently disagreed between them is a difference only
+// a fuzzer would ever find.
+export const SHARED_KEY_MAX = 64;
+export const SHARED_PREFIX_MAX = 64;
+export const SHARED_CURSOR_MAX = 200;
+export const SHARED_LIST_LIMIT_MAX = 100;
+export const SHARED_LIST_LIMIT_DEFAULT = 50;
+export const SHARED_COUNTS_KEYS_MAX = 100;
+
+const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 
 // Structured append payload (design M3: title ≤200, body ≤ few KB).
 //
@@ -302,174 +316,207 @@ const appendValueInput = z.object({
   data: z.unknown().optional(),
 });
 
+// ── Shared READ surface (tRPC procedures + block REST adapters) ───────────────
+// The three functions below are the ONE implementation of every shared read.
+// They take a raw bearer block token (never a tRPC ctx), exactly like
+// `getTopSharedCounters` / `incrementSharedCounter` below, so the REST adapters
+// in `src/pages/api/v1/blocks/shared-storage/` and the tRPC procedures in
+// `appsSharedRouter` are the SAME code path — same `resolveSharedContext` op,
+// same SQL, same visibility gate. A read that behaved differently over REST than
+// over the bridge is precisely the divergence this shape exists to prevent, and
+// it is why the procedures below are one-liners rather than a second copy.
+//
+// 🔴 `schema` is derived inside `resolveSharedContext` from the VERIFIED token
+// (`sanitizeAppSlug(claims.blockId)`), never from anything a caller sends. No
+// argument on any of these functions can influence which app's schema is read.
+
+/** One row of the shared feed, as `list` and `get` both project it. */
+export interface SharedKvItem {
+  key: string;
+  authorUserId: number;
+  value: unknown;
+  count: number;
+  createdAt: Date;
+  updatedAt: Date;
+  viewerVoted: boolean;
+}
+
+interface SharedKvRow {
+  key: string;
+  author_user_id: number;
+  value: unknown;
+  count: string;
+  created_at: Date;
+  updated_at: Date;
+  viewer_voted: boolean;
+}
+
+function toSharedKvItem(r: SharedKvRow): SharedKvItem {
+  return {
+    key: r.key,
+    authorUserId: r.author_user_id,
+    value: r.value,
+    count: Number(r.count),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    viewerVoted: r.viewer_voted,
+  };
+}
+
+/**
+ * Cursor-paginated list of shared_kv rows (the "requests" feed). shared_kv +
+ * counter aggregate ONLY — NEVER the per-user kv, NEVER the raw vote rows.
+ * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
+ * (newest-first, DESC). `cursor` is an opaque base64 of the last key seen; a
+ * malformed one simply decodes to a key that matches nothing, never an error.
+ */
+export async function listSharedRows(
+  blockToken: string,
+  { prefix, limit, cursor }: { prefix?: string; limit: number; cursor?: string }
+): Promise<{ items: SharedKvItem[]; nextCursor?: string }> {
+  // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
+  // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+  const { schema, userId } = await resolveSharedContext(blockToken, 'list');
+  const pool = requireAppsDb();
+
+  const afterKey = cursor ? Buffer.from(cursor, 'base64').toString('utf8') : null;
+  const escapedPrefix = (prefix ?? '').replace(/([\\%_])/g, '\\$1');
+  const prefixPattern = `${escapedPrefix}%`;
+
+  // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
+  // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
+  // (never true) for a NULL param, so an anonymous viewer always reads
+  // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
+  // is index-covered and adds no scan to the hot list path. The raw vote rows
+  // are NEVER returned — only the boolean derived from the viewer's own row.
+  const rows = (
+    await pool.query<SharedKvRow>(
+      `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+              s.created_at, s.updated_at,
+              (v.user_id IS NOT NULL) AS viewer_voted
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+         LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
+        WHERE s.hidden_at IS NULL
+          AND s.key LIKE $1 ESCAPE '\\'
+          AND ($2::text IS NULL OR s.key < $2)
+        ORDER BY s.key DESC
+        LIMIT $3`,
+      [prefixPattern, afterKey, limit, userId]
+    )
+  ).rows;
+
+  const nextCursor =
+    rows.length === limit
+      ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
+      : undefined;
+
+  return { items: rows.map(toSharedKvItem), nextCursor };
+}
+
+/**
+ * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
+ * item shape as `listSharedRows`, or `null` when the key is missing OR hidden —
+ * applying the identical `hidden_at IS NULL` visibility gate as the list, so a
+ * direct key fetch can NOT leak a withdrawn / moderator-hidden row the paged
+ * list excludes.
+ */
+export async function getSharedRow(
+  blockToken: string,
+  key: string
+): Promise<{ item: SharedKvItem | null }> {
+  const { schema, userId } = await resolveSharedContext(blockToken, 'get');
+  const pool = requireAppsDb();
+  const row = (
+    await pool.query<SharedKvRow>(
+      `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+              s.created_at, s.updated_at,
+              (v.user_id IS NOT NULL) AS viewer_voted
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+         LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
+        WHERE s.key = $1 AND s.hidden_at IS NULL`,
+      [key, userId]
+    )
+  ).rows[0];
+  return { item: row ? toSharedKvItem(row) : null };
+}
+
+/**
+ * Batch aggregate vote counts. `counters` ONLY — the raw vote rows are never
+ * listable. Unknown/hidden keys resolve to 0, so the returned map always has one
+ * entry per requested key (the single-key `getCount` procedure is this function
+ * with a one-element array; there is no second query shape for it).
+ */
+export async function getSharedCounts(
+  blockToken: string,
+  keys: string[]
+): Promise<{ counts: Record<string, number> }> {
+  const { schema } = await resolveSharedContext(blockToken, 'getCount');
+  const pool = requireAppsDb();
+  const rows = (
+    await pool.query<{ key: string; count: string }>(
+      `SELECT s.key, COALESCE(c.count, 0)::text AS count
+         FROM ${schema}.shared_kv s
+         LEFT JOIN ${schema}.counters c ON c.key = s.key
+        WHERE s.key = ANY($1) AND s.hidden_at IS NULL`,
+      [keys]
+    )
+  ).rows;
+  const counts: Record<string, number> = {};
+  for (const k of keys) counts[k] = 0;
+  for (const r of rows) counts[r.key] = Number(r.count);
+  return { counts };
+}
+
 export const appsSharedRouter = router({
-  /**
-   * Cursor-paginated list of shared_kv rows (the "requests" feed). shared_kv +
-   * counter aggregate ONLY — NEVER the per-user kv, NEVER the raw vote rows.
-   * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
-   * (newest-first, DESC).
-   */
+  /** @see listSharedRows — the shared implementation, also behind GET /api/v1/blocks/shared-storage/list. */
   list: publicProcedure
     .input(
       blockTokenInput.extend({
-        prefix: z.string().max(64).optional(),
-        limit: z.number().int().min(1).max(100).default(50),
-        cursor: z.string().max(200).optional(),
+        prefix: z.string().max(SHARED_PREFIX_MAX).optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(SHARED_LIST_LIMIT_MAX)
+          .default(SHARED_LIST_LIMIT_DEFAULT),
+        cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
       })
     )
-    .query(async ({ input }) => {
-      // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
-      // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
-      const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
-      const pool = requireAppsDb();
+    .query(async ({ input }) =>
+      listSharedRows(input.blockToken, {
+        prefix: input.prefix,
+        limit: input.limit,
+        cursor: input.cursor,
+      })
+    ),
 
-      const afterKey = input.cursor ? Buffer.from(input.cursor, 'base64').toString('utf8') : null;
-      const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
-      const prefixPattern = `${escapedPrefix}%`;
-
-      // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
-      // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
-      // (never true) for a NULL param, so an anonymous viewer always reads
-      // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
-      // is index-covered and adds no scan to the hot list path. The raw vote rows
-      // are NEVER returned — only the boolean derived from the viewer's own row.
-      const rows = (
-        await pool.query<{
-          key: string;
-          author_user_id: number;
-          value: unknown;
-          count: string;
-          created_at: Date;
-          updated_at: Date;
-          viewer_voted: boolean;
-        }>(
-          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at,
-                  (v.user_id IS NOT NULL) AS viewer_voted
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
-            WHERE s.hidden_at IS NULL
-              AND s.key LIKE $1 ESCAPE '\\'
-              AND ($2::text IS NULL OR s.key < $2)
-            ORDER BY s.key DESC
-            LIMIT $3`,
-          [prefixPattern, afterKey, input.limit, userId]
-        )
-      ).rows;
-
-      const nextCursor =
-        rows.length === input.limit
-          ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
-          : undefined;
-
-      return {
-        items: rows.map((r) => ({
-          key: r.key,
-          authorUserId: r.author_user_id,
-          value: r.value,
-          count: Number(r.count),
-          createdAt: r.created_at,
-          updatedAt: r.updated_at,
-          viewerVoted: r.viewer_voted,
-        })),
-        nextCursor,
-      };
-    }),
-
-  /**
-   * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
-   * item shape as `list` (incl. `count` + the per-viewer `viewerVoted`), or
-   * `null` when the key is missing OR hidden — applying the identical
-   * `hidden_at IS NULL` visibility gate as `list`, so a direct key fetch can
-   * NOT leak a withdrawn / moderator-hidden row that the paged list excludes.
-   * READ op (anon-allowed like `list`/`getCount`). Reuses `resolveSharedContext`
-   * so per-app isolation, the approved-block + revocation checks, the read scope,
-   * and the fail-closed kill-switch all hold verbatim. The `votes`/`kv` rows are
-   * never returned — only the aggregate count + the viewer's own vote boolean.
-   */
+  /** @see getSharedRow — also behind GET /api/v1/blocks/shared-storage/item. */
   get: publicProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
-    .query(async ({ input }) => {
-      const { schema, userId } = await resolveSharedContext(input.blockToken, 'get');
-      const pool = requireAppsDb();
-      const row = (
-        await pool.query<{
-          key: string;
-          author_user_id: number;
-          value: unknown;
-          count: string;
-          created_at: Date;
-          updated_at: Date;
-          viewer_voted: boolean;
-        }>(
-          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at,
-                  (v.user_id IS NOT NULL) AS viewer_voted
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
-            WHERE s.key = $1 AND s.hidden_at IS NULL`,
-          [input.key, userId]
-        )
-      ).rows[0];
-      if (!row) return { item: null };
-      return {
-        item: {
-          key: row.key,
-          authorUserId: row.author_user_id,
-          value: row.value,
-          count: Number(row.count),
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          viewerVoted: row.viewer_voted,
-        },
-      };
-    }),
+    .query(async ({ input }) => getSharedRow(input.blockToken, input.key)),
 
   /**
-   * Aggregate vote count for a single key. counters only (never the vote rows).
-   * Returns 0 for a missing/hidden key.
+   * Aggregate vote count for a single key. Delegates to `getSharedCounts` with a
+   * one-element array — the batch query already returns 0 for a missing/hidden
+   * key, so there is no separate single-key SQL to keep in step.
    */
   getCount: publicProcedure
     .input(blockTokenInput.extend({ key: sharedKeyInput }))
     .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'getCount');
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ count: string }>(
-          `SELECT COALESCE(c.count, 0)::text AS count
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-            WHERE s.key = $1 AND s.hidden_at IS NULL`,
-          [input.key]
-        )
-      ).rows;
-      return { count: Number(rows[0]?.count ?? '0') };
+      const { counts } = await getSharedCounts(input.blockToken, [input.key]);
+      return { count: counts[input.key] ?? 0 };
     }),
 
-  /**
-   * Batch aggregate counts. counters only. Unknown/hidden keys resolve to 0.
-   */
+  /** @see getSharedCounts — also behind GET /api/v1/blocks/shared-storage/counts. */
   getCounts: publicProcedure
-    .input(blockTokenInput.extend({ keys: z.array(sharedKeyInput).min(1).max(100) }))
-    .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'getCount');
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ key: string; count: string }>(
-          `SELECT s.key, COALESCE(c.count, 0)::text AS count
-             FROM ${schema}.shared_kv s
-             LEFT JOIN ${schema}.counters c ON c.key = s.key
-            WHERE s.key = ANY($1) AND s.hidden_at IS NULL`,
-          [input.keys]
-        )
-      ).rows;
-      const counts: Record<string, number> = {};
-      for (const k of input.keys) counts[k] = 0;
-      for (const r of rows) counts[r.key] = Number(r.count);
-      return { counts };
-    }),
+    .input(
+      blockTokenInput.extend({
+        keys: z.array(sharedKeyInput).min(1).max(SHARED_COUNTS_KEYS_MAX),
+      })
+    )
+    .query(async ({ input }) => getSharedCounts(input.blockToken, input.keys)),
 
   /**
    * Create a shared row (a "request"). The server GENERATES a ULID key (C1: never
@@ -796,6 +843,20 @@ export const appsSharedRouter = router({
         'withdraw'
       );
       const uid = userId as number;
+
+      // This op had NO bucket while every other write on the surface had one — a
+      // gap worth closing on its own terms, and one a REST ingress would widen.
+      // Own per-minute bucket; the window/ceiling rationale (and why it is NOT the
+      // append daily bucket and NOT the shared vote bucket) lives beside the
+      // constants in shared-storage-rate-limit.ts.
+      const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`,
+        });
+      }
+
       const pool = requireAppsDb();
       const client = await pool.connect();
       try {

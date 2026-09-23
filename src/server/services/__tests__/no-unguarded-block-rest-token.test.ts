@@ -166,9 +166,21 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
   },
+  'src/pages/api/v1/blocks/shared-storage/counts.ts': {
+    exposure: 'READ_APP_SCOPED',
+    why: 'Batch vote tallies for up to 100 keys of this app’s shared KV. App-private state no caller outside the app can reach and no anonymous caller receives, so refusing it DOES remove exposure even though it names no viewer — a suspended app would otherwise keep reading how its community is voting. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts: it goes through resolveSharedContext, which reads app_blocks.status itself.',
+  },
   'src/pages/api/v1/blocks/shared-storage/increment.ts': {
     exposure: 'WRITE',
     why: 'A shared counter bump. ALREADY refused before this gate, incidentally: it delegates to resolveSharedContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/item.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'One shared row by key: its author id, its stored value and its tally — AND `viewerVoted`, the caller’s OWN vote on that row, hydrated from the verified token subject. That last field is the reason this is viewer-scoped and not merely app-scoped: a suspended app would otherwise keep reading a signed-in user’s voting record one key at a time, which no anonymous caller receives. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/list.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The paged shared feed — author ids, stored values and tallies for this app’s cross-user rows, each carrying `viewerVoted` for the token subject. Same viewer-scoped field as item.ts but in BULK: a suspended app would otherwise page the viewer’s entire voting record out of the app in 100-row batches, which is exactly the retained per-user activity signal a takedown is meant to stop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
   'src/pages/api/v1/blocks/shared-storage/top.ts': {
     exposure: 'READ_APP_SCOPED',
@@ -1222,7 +1234,10 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
     'src/pages/api/v1/blocks/me.ts',
+    'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',
+    'src/pages/api/v1/blocks/shared-storage/item.ts',
+    'src/pages/api/v1/blocks/shared-storage/list.ts',
     'src/pages/api/v1/blocks/shared-storage/top.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
