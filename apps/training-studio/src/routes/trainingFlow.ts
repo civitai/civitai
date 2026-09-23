@@ -216,10 +216,7 @@ const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' 
 
 /** The orchestrator's "from" quote for a card at the default step budget (Pony/Illustrious fall back to
  *  SDXL). `undefined` when unpriced. */
-function cardBaseQuote(
-  prices: Record<string, number>,
-  cardType: string
-): number | undefined {
+function cardBaseQuote(prices: Record<string, number>, cardType: string): number | undefined {
   const alias = PRICE_ALIAS[cardType];
   return prices[cardType] ?? (alias ? prices[alias] : undefined);
 }
@@ -277,7 +274,15 @@ export function labelString(img: Img, mode: LabelType): string {
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
   return mode === 'tag'
-    ? { tags: t ? t.split(',').map((s) => s.trim()).filter(Boolean) : [], caption: '' }
+    ? {
+        tags: t
+          ? t
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [],
+        caption: '',
+      }
     : { tags: [], caption: t };
 }
 

@@ -10,7 +10,10 @@ const optionalNumber = (v: unknown) =>
 
 // Price one run's exact config without submitting it (whatif) — the Review step's Final price.
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const token = await requireToken(locals, 'Pricing is unavailable right now — no orchestrator token.');
+  const token = await requireToken(
+    locals,
+    'Pricing is unavailable right now — no orchestrator token.'
+  );
 
   const body = (await request.json().catch(() => null)) as Partial<TrainingWhatIfInput> | null;
   if (
