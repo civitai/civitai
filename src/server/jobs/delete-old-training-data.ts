@@ -1,7 +1,11 @@
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteModelFileObject, resolveModelFileDeleteTarget } from '~/utils/s3-utils';
+import {
+  deleteModelFileObject,
+  getQuarantineBucket,
+  resolveModelFileDeleteTarget,
+} from '~/utils/s3-utils';
 import { createJob } from './job';
 
 const logJob = (data: MixedObject) => {
@@ -332,7 +336,28 @@ export const deleteOldTrainingData = createJob(
         // night says nothing about the S3 path itself: not the client, not the credential, not
         // whether that credential may delete. Only an armed night answers those.
         if (dryRun) {
-          const target = resolveModelFileDeleteTarget(url);
+          const resolved = resolveModelFileDeleteTarget(url);
+          // 🔴 THE PREVIEW HAS TO MODEL THE QUARANTINE REFUSAL TOO, OR IT REPEATS THE EXACT BUG
+          // THIS BLOCK WAS ALREADY FIXED FOR ONCE. `resolveModelFileDeleteTarget` answers
+          // "is this url deletable in principle" — it knows nothing about whether a quarantine
+          // destination exists. Reporting on it alone would label every row would-delete on a
+          // deployment where the quarantine bucket is unset and the real pass can delete
+          // NOTHING: a preview that is not merely optimistic but exactly inverted.
+          //
+          // ⚠ It still cannot model the refcount guard or a copy that fails at the wire, so
+          // would-delete remains an upper bound. This closes the one gap that is knowable
+          // without touching the database or the network.
+          //
+          // The verdict is its own local type rather than a `ModelFileDeleteTarget`: that type
+          // answers a narrower question and has no `quarantine-not-configured` member. Widening
+          // it to carry a reason the resolver cannot itself produce would make the shared type
+          // lie about what the resolver checks.
+          const target: { ok: true; backend: 'b2' | 'default' } | { ok: false; reason: string } =
+            resolved.ok
+              ? getQuarantineBucket(resolved.backend)
+                ? { ok: true, backend: resolved.backend }
+                : { ok: false, reason: 'quarantine-not-configured' }
+              : { ok: false, reason: resolved.reason };
           // 🔴 COUNTED SEPARATELY, AND THE SEPARATION HAS TO REACH THE SUMMARY. An earlier version
           // split would-delete from would-skip on the per-row lines and then reported ONE total,
           // which is the same misreading one level up: an operator dividing the eligible total by
@@ -354,7 +379,20 @@ export const deleteOldTrainingData = createJob(
           continue;
         }
 
-        const outcome = await deleteModelFileObject(url, mf_id);
+        // 🔴 `quarantine: true` IS THE DESTRUCTIVENESS OF THIS JOB, EXPRESSED IN ONE ARGUMENT.
+        // Without it the object is removed and the only recovery is a backup nobody has
+        // rehearsed. With it the object is copied to the quarantine bucket, verified, and only
+        // then removed from source — so the recovery window is that bucket's retention rule, and
+        // restoring is a copy back under the key the prefix names.
+        //
+        // 🔴 IT CAN REFUSE, AND A REFUSAL IS THE SAFE OUTCOME, NOT AN OUTAGE. If the quarantine
+        // bucket is unconfigured or the copy cannot be verified, nothing is deleted and the row
+        // stays eligible for the next pass. That is why this job may report a long run of skips
+        // rather than deletes after a configuration change — read the `reason`, which
+        // distinguishes an operator task (`quarantine-not-configured`) from a backend problem
+        // (`quarantine-copy-failed`) from the one that deserves attention
+        // (`quarantine-verify-failed`: the copy landed and did not match).
+        const outcome = await deleteModelFileObject(url, mf_id, { quarantine: true });
 
         // 🔴 Only a real delete may set `dataPurged`. A skip means THE OBJECT IS STILL THERE, and
         // marking it purged would drop the row out of this job's query permanently while the

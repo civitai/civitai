@@ -875,6 +875,23 @@ export const serverSchema = z
     S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
     S3_UPLOAD_B2_BUCKET: z.string().optional(),
     S3_UPLOAD_B2_REGION: z.string().optional(),
+    // Quarantine destination for model-file deletes that opt in (see
+    // `deleteModelFileObject`'s `quarantine` option). The object is copied here and
+    // only then removed from the source bucket, so this bucket's own retention rule
+    // — not the application — is what finally destroys the bytes.
+    //
+    // 🔴 UNSET IS A REFUSAL, NOT A FALLBACK. A caller that asked for quarantine and
+    // finds this unconfigured gets `quarantine-not-configured` and deletes nothing.
+    // Falling back to a plain delete would silently reinstate exactly the behaviour
+    // the option exists to replace, at the moment the operator is least likely to be
+    // watching for it.
+    //
+    // 🔴 THIS BUCKET MUST HAVE A RETENTION RULE AND MUST NOT HAVE VERSIONING. Nothing
+    // in this application ever deletes from it; if no lifecycle rule expires its
+    // contents, quarantine is an unbounded copy of everything ever deleted. And with
+    // versioning enabled, that rule would hide objects rather than remove them and the
+    // bucket would still grow without limit.
+    S3_UPLOAD_B2_QUARANTINE_BUCKET: z.string().optional(),
 
     // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
     S3_IMAGE_B2_ENDPOINT: z.string().optional(),
