@@ -85,8 +85,6 @@ describe('the queued run does not re-enter the queue', () => {
 describe("the queue caps each run's vitest pool", () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
 
-  // Typed here rather than at each call: the runner is a .mjs module, so TS infers a bare
-  // EventEmitter and does not see the `dispose` the handle actually carries.
   const start = (opts: Record<string, unknown>) => {
     const handle = defaultStartRun({
       worktree: '/repo',
@@ -94,7 +92,7 @@ describe("the queue caps each run's vitest pool", () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -139,14 +137,10 @@ describe("the queue caps each run's vitest pool", () => {
   // The cap is configured on the QUEUE and has to survive the hop into the runner. Asserting on
   // defaultStartRun alone would pass with that hop deleted.
   it("hands the queue's cap to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { maxWorkers: number | null }) => EventEmitter>(
-      () => new EventEmitter()
-    );
-    // Cast for the same reason as the handle above — TestQueue comes from a .mjs module, so TS
-    // infers `request`'s payload from nothing and lands on `{ args?: never[] }`.
-    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const startRun = vi.fn<
+      (opts: { maxWorkers: number | null }) => EventEmitter & { kill: () => void }
+    >(() => Object.assign(new EventEmitter(), { kill: vi.fn() }));
+    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun });
 
     queue.request({ worktree: '/repo', args: [] });
 
@@ -180,7 +174,7 @@ describe('result cache on queued runs', () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -256,7 +250,7 @@ describe('result cache on queued runs', () => {
    * `min(12, cpus - 1)` for itself. Originating from the ceiling put `--max-workers=12` on every
    * uncapped run, which on a box with 12 cores or fewer is MORE Chromium instances than before.
    */
-  it.each(['component', 'geometry'])('adds no width to an uncapped %s run', (kind) => {
+  it.each(['component', 'geometry'] as const)('adds no width to an uncapped %s run', (kind) => {
     start({ kind, maxWorkers: null });
     expect(argvOf(0)).toEqual(['run', RUN_KINDS[kind].script]);
   });
@@ -279,10 +273,10 @@ describe('result cache on queued runs', () => {
   });
 
   it("hands the queue's cache mode to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter>(() => new EventEmitter());
-    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter & { kill: () => void }>(
+      () => Object.assign(new EventEmitter(), { kill: vi.fn() })
+    );
+    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun });
     queue.request({ worktree: '/repo', args: [] });
     expect(startRun.mock.calls[0][0]).toMatchObject({ cacheMode: 'on' });
   });
