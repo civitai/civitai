@@ -18,6 +18,7 @@
   const PARAMS = ['reaction', 'after', 'before'] as const;
 
   let retry = $state(0);
+  let panel: HTMLElement | undefined = $state();
 
   const query = $derived.by(() => {
     const p = new URLSearchParams();
@@ -43,10 +44,11 @@
     for (const k of PARAMS) p.delete(k);
     for (const [k, v] of Object.entries(next)) if (v != null) p.set(k, String(v));
     const qs = p.toString();
+    // The tabs and pager unmount while the next page loads, so focus would fall to <body>.
     return goto(qs ? `${page.url.pathname}?${qs}` : page.url.pathname, {
       keepFocus: true,
       noScroll: true,
-    });
+    }).then(() => panel?.focus());
   }
 
   const num = (n: number) => n.toLocaleString();
@@ -59,10 +61,11 @@
 </script>
 
 {#snippet loading()}
-  <div class="mb-3 flex gap-1">
+  <span class="sr-only">Loading who reacted…</span>
+  <div class="mb-3 flex gap-1" aria-hidden="true">
     {#each REACTOR_TYPES as t (t)}<Skeleton class="h-8 w-20" />{/each}
   </div>
-  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
     {#each Array.from({ length: 9 }, (_, i) => i) as i (i)}
       <div class="flex items-center gap-2 p-1">
         <Skeleton class="size-8 rounded-full" />
@@ -75,13 +78,18 @@
   </div>
 {/snippet}
 
-<div class="cs-panel mt-4 p-4">
+<section
+  bind:this={panel}
+  tabindex="-1"
+  aria-label="Who reacted"
+  class="cs-panel mt-4 scroll-mt-4 p-4 outline-none"
+>
   <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
     <p class="text-sm font-medium text-white">
       Who reacted
-      <span class="text-xs text-dark-3">· only you can see this · all time</span>
+      <span class="text-xs text-dark-2">· only you can see this · all time</span>
     </p>
-    <p class="text-xs text-dark-3">Newest accounts first</p>
+    <p class="text-xs text-dark-2">Newest accounts first</p>
   </div>
 
   {#if result === null}
@@ -92,8 +100,8 @@
     {:then data}
       {@const total = REACTOR_TYPES.reduce((s, t) => s + data.counts[t], 0)}
       {#if total === 0 || !data.reaction}
-        <div class="flex h-32 items-center justify-center text-center text-sm text-dark-3">
-          Nobody has reacted to this {noun} yet.
+        <div class="flex h-32 items-center justify-center text-center text-sm text-dark-2">
+          No reactions to show on this {noun} yet.
         </div>
       {:else}
         <ToggleGroup.Root
@@ -106,7 +114,7 @@
           class="mb-3 flex-wrap"
         >
           {#each REACTOR_TYPES as t (t)}
-            <ToggleGroup.Item value={t} disabled={data.counts[t] === 0} aria-label={t}>
+            <ToggleGroup.Item value={t} disabled={data.counts[t] === 0}>
               <span aria-hidden="true">{EMOJI[t]}</span>
               {t}
               <span class="text-dark-2">{num(data.counts[t])}</span>
@@ -115,12 +123,16 @@
         </ToggleGroup.Root>
 
         {#if data.reactors.length === 0}
-          <div class="flex h-32 flex-col items-center justify-center gap-2 text-sm text-dark-3">
+          <div class="flex h-32 flex-col items-center justify-center gap-2 text-sm text-dark-2">
             No reactors on this page.
+            <!-- A tab nobody used has no first page of its own; let the server pick one that does. -->
             <Button
               variant="outline"
               size="sm"
-              onclick={() => navigate({ reaction: data.reaction ?? undefined })}
+              onclick={() =>
+                data.reaction && data.counts[data.reaction] > 0
+                  ? navigate({ reaction: data.reaction })
+                  : navigate({})}
             >
               Back to the first page
             </Button>
@@ -128,7 +140,7 @@
         {:else}
           <ul class="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
             {#each data.reactors as r (r.userId)}
-              <li class="flex min-w-0 items-center gap-2 rounded p-1 hover:bg-dark-6">
+              <li class="flex min-w-0 items-center gap-2 rounded p-1">
                 <Avatar class="size-8">
                   {#if r.image}<AvatarImage src={getEdgeUrl(r.image, { width: 96 })} alt="" />{/if}
                   <AvatarFallback>{(r.username ?? '?').slice(0, 1).toUpperCase()}</AvatarFallback>
@@ -150,14 +162,14 @@
                         >Banned</Badge
                       >{/if}
                   </div>
-                  <p class="text-xs text-dark-3">Reacted {date(r.reactedAt)}</p>
+                  <p class="text-xs text-dark-2">Reacted {date(r.reactedAt)}</p>
                 </div>
               </li>
             {/each}
           </ul>
         {/if}
 
-        <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-dark-3">
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-dark-2">
           <span>
             {num(data.counts[data.reaction])}
             {EMOJI[data.reaction]} reactions · {data.reactors.length} shown
@@ -175,7 +187,6 @@
             <Button
               variant="outline"
               size="sm"
-              aria-label="Previous page"
               disabled={data.prev === null}
               onclick={() =>
                 navigate({ reaction: data.reaction ?? undefined, before: data.prev ?? undefined })}
@@ -185,7 +196,6 @@
             <Button
               variant="outline"
               size="sm"
-              aria-label="Next page"
               disabled={data.next === null}
               onclick={() =>
                 navigate({ reaction: data.reaction ?? undefined, after: data.next ?? undefined })}
@@ -202,7 +212,7 @@
         </p>
         <div class="flex gap-2">
           <Button variant="outline" size="sm" onclick={() => retry++}>Try again</Button>
-          {#if page.url.searchParams.has('after') || page.url.searchParams.has('before')}
+          {#if PARAMS.some((k) => page.url.searchParams.has(k))}
             <Button variant="outline" size="sm" onclick={() => navigate({})}
               >Back to the first page</Button
             >
@@ -211,4 +221,4 @@
       </div>
     {/await}
   {/if}
-</div>
+</section>

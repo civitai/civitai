@@ -1,10 +1,12 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
+import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import { dbRead } from '$lib/server/db';
 import {
   assembleReactorPage,
   defaultReaction,
   emptyCounts,
+  parseInt4Id,
   parseReactorQuery,
   REACTOR_TYPES,
   REACTORS_PAGE_SIZE,
@@ -74,10 +76,10 @@ export async function getReactors(
     image: string | null;
   }>`
     SELECT r."userId", r."createdAt", u.username, u."deletedAt", u."bannedAt",
+      -- Only a scanned, safe-level profile picture; the legacy User.image is unmoderated. Otherwise initials.
       CASE
-        WHEN u."profilePictureId" IS NULL THEN u.image
-        -- PG | PG13, the main app's safe avatar level. Anything else falls back to initials.
-        WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0 AND (p."nsfwLevel" & ~3) = 0 THEN p.url
+        WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
+          AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 THEN p.url
       END AS image
     FROM (
       SELECT "userId", "createdAt" FROM ${sql.table(t.reactions)}
@@ -113,9 +115,8 @@ export function reactorsHandler(
   idParam: 'imageId' | 'articleId'
 ): RequestHandler {
   return async ({ locals, params, url }) => {
-    const entityId = Number(params[idParam]);
-    if (!Number.isInteger(entityId) || entityId <= 0 || entityId > 2_147_483_647)
-      throw error(400, 'Invalid id');
+    const entityId = parseInt4Id(params[idParam] ?? '');
+    if (entityId === null) throw error(400, 'Invalid id');
     const parsed = parseReactorQuery(url.searchParams);
     if (!parsed.ok) throw error(400, parsed.message);
 

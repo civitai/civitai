@@ -3,8 +3,8 @@ export const REACTOR_TYPES = ['Like', 'Heart', 'Laugh', 'Cry'] as const;
 export type ReactorType = (typeof REACTOR_TYPES)[number];
 
 export const REACTORS_PAGE_SIZE = 50;
-// userId is an Int4 column; a larger cursor would make Postgres reject the bind and surface as a 500.
-const MAX_USER_ID = 2_147_483_647;
+// Ids are Int4 columns; a larger value would make Postgres reject the bind and surface as a 500.
+const MAX_INT4 = 2_147_483_647;
 
 export type ReactorCursor = { dir: 'after' | 'before'; userId: number } | null;
 export type ReactorQuery = { reaction: ReactorType | null; cursor: ReactorCursor };
@@ -32,10 +32,10 @@ function isReactorType(v: string): v is ReactorType {
   return (REACTOR_TYPES as readonly string[]).includes(v);
 }
 
-function parseUserId(raw: string): number | null {
+export function parseInt4Id(raw: string): number | null {
   if (!/^[1-9]\d{0,9}$/.test(raw)) return null;
   const n = Number(raw);
-  return n <= MAX_USER_ID ? n : null;
+  return n <= MAX_INT4 ? n : null;
 }
 
 export function parseReactorQuery(
@@ -53,7 +53,7 @@ export function parseReactorQuery(
   let cursor: ReactorCursor = null;
   const raw = after ?? before;
   if (raw !== null) {
-    const userId = parseUserId(raw);
+    const userId = parseInt4Id(raw);
     if (userId === null) return { ok: false, message: 'Invalid cursor' };
     cursor = { dir: after !== null ? 'after' : 'before', userId };
   }

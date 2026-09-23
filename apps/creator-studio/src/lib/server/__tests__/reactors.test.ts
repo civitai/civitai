@@ -43,6 +43,7 @@ vi.mock('@civitai/db/kysely', () => {
   };
   sql.table = (name: string): Ident => ({ ident: `"${name}"` });
   sql.ref = (name: string): Ident => ({ ident: `"${name}"` });
+  sql.lit = (value: number): Ident => ({ ident: String(value) });
   return { sql };
 });
 
@@ -172,6 +173,21 @@ describe('getReactors page', () => {
     expect(page?.reactors.map((r) => r.userId)).toEqual([502, 501]);
   });
 
+  // The outer sort is what assembleReactorPage's slice relies on: the joins may return rows in any order, and
+  // without it the wrong row is dropped as the "+1".
+  it('orders the joined rows in the fetch direction, not only the inner scan', async () => {
+    for (const [cursor, dir] of [
+      [null, 'DESC'],
+      [{ dir: 'after', userId: 500 }, 'DESC'],
+      [{ dir: 'before', userId: 500 }, 'ASC'],
+    ] as const) {
+      await getReactors({} as never, OWNER, 'image', IMAGE, { reaction: 'Like', cursor });
+      expect(state.queries.at(-1)?.text).toMatch(
+        new RegExp(String.raw`\) r .* ORDER BY r\."userId" ${dir}$`)
+      );
+    }
+  });
+
   it('never pages with OFFSET', async () => {
     await getReactors({} as never, OWNER, 'image', IMAGE, {
       reaction: 'Like',
@@ -213,6 +229,20 @@ describe('parseReactorQuery', () => {
     });
     expect(parse('')).toEqual({ ok: true, value: { reaction: null, cursor: null } });
   });
+
+  it.each(['abc', '0', '-1', '2147483648', '1e400', ''])(
+    'answers route id %j with a 400 before any query',
+    async (imageId) => {
+      const GET = reactorsHandler('image', 'imageId');
+      const call = GET({
+        locals: { user: { id: OWNER } },
+        params: { imageId },
+        url: new URL('http://x/r'),
+      } as never);
+      await expect(call).rejects.toMatchObject({ status: 400 });
+      expect(state.queries).toHaveLength(0);
+    }
+  );
 
   it('answers a tampered cursor with a 400 from the route, not a 500', async () => {
     const GET = reactorsHandler('image', 'imageId');
