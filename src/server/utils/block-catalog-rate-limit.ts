@@ -202,15 +202,21 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
 //   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again. ⚠️ NO HOLD
-//     REACHES THE SERVER TODAY, BUT THE REASON IS NARROWER THAN AN EARLIER REVISION OF
-//     THIS COMMENT CLAIMED, and the difference matters to anyone sizing for GA.
+//     REACHES THE SERVER TODAY — still true as of #5068, see immediately below for why
+//     that is now a statement about ADOPTION rather than about a choke point — AND THE
+//     REASON IS NARROWER THAN AN EARLIER REVISION OF THIS COMMENT CLAIMED, a difference
+//     that matters to anyone sizing for GA.
 //
-//     🔴 SUPERSEDED BY #5068 — "the server sees no hold" IS NO LONGER TRUE, and the
-//     sentence below is kept only because the measurement behind it was correct when
-//     written. `/api/v1/blocks/workflows/poll` takes `waitSeconds` STRAIGHT OFF THE WIRE
-//     and forwards it, with no host in the path at all — so the choke point named below
-//     is gone for that transport, and `@civitai/blocks-react`'s `watch` defaults the
-//     field to 15, meaning a block adopting the REST twin holds from day one.
+//     🔴 #5068 REMOVES THE CHOKE POINT, WITHOUT (YET) CHANGING THE OBSERVATION.
+//     `/api/v1/blocks/workflows/poll` takes `waitSeconds` STRAIGHT OFF THE WIRE and
+//     forwards it, with no host in the path at all — so for that transport the host
+//     choke point named below is GONE, and `@civitai/blocks-react`'s `watch` defaults
+//     the field to 15, meaning the first block to adopt the REST twin holds from day
+//     one. Until one does, no hold reaches the server, which is why the line above
+//     still holds. ⚠️ An earlier revision of THIS paragraph said "the server sees no
+//     hold IS NO LONGER TRUE" — that was an overstatement in the other direction and
+//     contradicted both the line above it and the paragraph below it. The precise
+//     claim is: the barrier is gone, nothing is through it yet.
 //
 //     🔴 STATE THE STATUS PRECISELY — an earlier wording of THIS paragraph said the
 //     ~300-concurrent-hold figure below is "LIVE, not prospective", and that is not

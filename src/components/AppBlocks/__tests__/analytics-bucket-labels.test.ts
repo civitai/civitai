@@ -192,10 +192,19 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
    */
   it('every READ-shaped REST workflow twin on disk has its own label', () => {
     const base = '/api/v1/blocks/workflows';
-    const dir = path.join(process.cwd(), 'src/pages/api/v1/blocks/workflows');
+    // Rooted at `__dirname`, not `process.cwd()` — matching the sibling drift guard.
+    // cwd depends on who spawned the runner; `__dirname` does not.
+    const dir = path.resolve(__dirname, '../../../..', 'src/pages/api/v1/blocks/workflows');
+    // 🔴 `/\.(t|j)sx?$/`, NOT `.ts` only. Next's `pageExtensions` is unset, so the
+    // default ['tsx','ts','jsx','js'] applies and a `.tsx` API route is a real,
+    // shipped shape here (`src/pages/api/v1/vault/*.tsx`). An earlier revision of
+    // this guard filtered `.ts` alone: MEASURED, a `workflows/retry.tsx` twin left
+    // it GREEN while the same file as `.ts` turned it red — i.e. the guard was
+    // narrower than the sentence above it, which is the exact defect this test
+    // exists to prevent. `.d.ts` and `.test.` are excluded because neither is a route.
     const routes = readdirSync(dir)
-      .filter((f) => f.endsWith('.ts'))
-      .map((f) => f.replace(/\.ts$/, ''));
+      .filter((f) => /\.(t|j)sx?$/.test(f) && !f.includes('.test.') && !f.endsWith('.d.ts'))
+      .map((f) => f.replace(/\.(t|j)sx?$/, ''));
 
     // Positive control: the enumeration actually found the routes. Without this a
     // wrong `dir` yields an empty list and every assertion below passes vacuously.

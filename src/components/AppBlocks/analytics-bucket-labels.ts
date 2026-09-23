@@ -10,14 +10,16 @@ import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
  *
  * 🔴 WHY THESE ARE NOT `humaniseScopeInvocation` (AppActivityPanel).
  * That is the real near-duplicate — the Activity feed's Action-column labeller. It is
- * prefix-based, needs no `detail`, and already maps all four endpoint tokens, so it is
- * the function a reader will reach for. Two reasons it cannot serve these cards:
+ * endpoint-arm based, needs no `detail`, and maps the synthetic endpoint tokens, so it
+ * is the function a reader will reach for. Two reasons it cannot serve these cards:
  *   1. REGISTER. It names a single past event ("Generated an image"), which is wrong
  *      against a count — "Generated an image … 245" does not read. The WRITE labels here
  *      are plural nouns instead, so those strings differ BY DESIGN.
  *   2. PASS-THROUGH. A substantial share of `topEndpoints` is REST paths from
  *      `normalizeEndpoint(req.url)` (proportion not measured — it depends entirely on
- *      what the app does), which that function has no arm for: it would fall to its
+ *      what the app does), which that function has no arm for — with the exception,
+ *      since #5068, of three EXACT `/api/v1/blocks/workflows/*` paths that now have
+ *      their own arms. An arbitrary REST path is still unmapped and would fall to its
  *      scope→label map and, called with no meaningful scope, yield '' — a blank row. It
  *      also cannot distinguish the legacy per-id buckets below.
  * (`humaniseScopeEndpoint`, the Detail-column labeller, is unsuitable for a further
