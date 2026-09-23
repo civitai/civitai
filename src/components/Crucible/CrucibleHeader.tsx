@@ -1,5 +1,5 @@
 import { Avatar, Badge, Text, Title } from '@mantine/core';
-import { IconClock, IconUsers, IconTrophy } from '@tabler/icons-react';
+import { IconUsers, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -107,7 +107,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
   return (
     <div
-      className={clsx('relative h-[350px] overflow-hidden sm:h-[500px]', className)}
+      className={clsx('relative flex min-h-[350px] overflow-hidden sm:min-h-[500px]', className)}
       style={{
         background: !image ? 'linear-gradient(135deg, #1a1b1e 0%, #25262b 100%)' : undefined,
       }}
@@ -135,10 +135,10 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
       />
 
       {/* Content wrapper */}
-      <div className="relative z-10 mx-auto flex h-full max-w-7xl items-end px-4">
+      <div className="relative z-10 mx-auto flex w-full max-w-7xl items-end px-4 pt-8">
         {/* Overlay card */}
         <div
-          className="mb-8 max-w-xl rounded-xl border border-white/10 p-8"
+          className="mb-8 max-w-xl rounded-xl border border-white/10 p-5 sm:p-8"
           style={{
             background: 'rgba(37, 38, 43, 0.95)',
             backdropFilter: 'blur(10px)',
@@ -192,14 +192,8 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               )}
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Stats bar - positioned at bottom outside the card */}
-      <div className="absolute inset-x-0 bottom-0 z-10">
-        <div className="mx-auto max-w-7xl px-4 pb-4">
-          <div className="flex items-center gap-6">
-            {/* Prize Pool */}
+          <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-white/10 pt-4">
             <div className="flex items-center gap-2">
               <IconTrophy size={18} className="text-yellow-500" />
               <CurrencyBadge
@@ -211,7 +205,6 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               />
             </div>
 
-            {/* Entry count */}
             <div className="flex items-center gap-2">
               <IconUsers size={18} className="text-dimmed" />
               <Text size="sm" fw={600} c="white">
@@ -219,15 +212,8 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               </Text>
             </div>
 
-            {/* Timer */}
-            {!hasEnded && endAt && (
-              <div className="flex items-center gap-2">
-                <IconClock size={18} className="text-dimmed" />
-                <CrucibleTimer endAt={endAt} hasEnded={hasEnded} />
-              </div>
-            )}
+            {!hasEnded && endAt && <CrucibleTimer endAt={endAt} hasEnded={hasEnded} />}
 
-            {/* NSFW Level badge */}
             {nsfwLevel > 1 && (
               <Badge color="red" variant="filled" radius="xl" size="sm">
                 {getNsfwLabel(nsfwLevel)}

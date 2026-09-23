@@ -142,7 +142,7 @@ describe('crucible surfaces are all gated', () => {
   it.each([
     'src/pages/crucibles/index.tsx',
     'src/pages/crucibles/create.tsx',
-    'src/pages/crucibles/[id]/index.tsx',
+    'src/pages/crucibles/[id]/[[...slug]].tsx',
     'src/pages/crucibles/[id]/judge.tsx',
   ])('%s refuses to render when the flag is off', (page) => {
     const source = read(page);

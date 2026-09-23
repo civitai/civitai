@@ -82,28 +82,24 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
     switch (position) {
       case 1:
         return {
-          borderColor: '#fab005', // Gold
           bgColor: 'rgba(250, 176, 5, 0.2)',
           textColor: '#fab005',
           label: '1st',
         };
       case 2:
         return {
-          borderColor: '#868e96', // Silver
           bgColor: 'rgba(134, 142, 150, 0.2)',
           textColor: '#adb5bd',
           label: '2nd',
         };
       case 3:
         return {
-          borderColor: '#cd7f32', // Bronze
           bgColor: 'rgba(205, 127, 50, 0.2)',
           textColor: '#ffa94d',
           label: '3rd',
         };
       default:
         return {
-          borderColor: 'transparent',
           bgColor: 'rgba(201, 203, 207, 0.1)',
           textColor: '#909296',
           label: `${position}${getOrdinalSuffix(position)}`,
@@ -118,7 +114,6 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
       className="rounded-lg p-3"
       style={{
         background: '#25262b',
-        borderLeft: `3px solid ${style.borderColor}`,
       }}
     >
       <Group justify="space-between" align="center">
