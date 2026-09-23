@@ -1,3 +1,5 @@
+import { ECO, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
+
 /** Qwen 2.1 create dimensions must be multiples of 32 and at most 2048 per side. */
 export const qwen21ResolutionOptions = ['1K', '2K'] as const;
 export type Qwen21Resolution = (typeof qwen21ResolutionOptions)[number];
@@ -18,3 +20,20 @@ export const qwen21AspectRatios = {
     { label: '9:16', value: '9:16', width: 1152, height: 2048 },
   ],
 };
+
+/**
+ * The AIR to submit as `diffusionModel`, or `undefined` for the ecosystem default.
+ *
+ * The orchestrator already holds the weights behind `model: '2.1'`; naming the default version
+ * again would send it to fetch our copy of what it has. Both generation lanes derive this here
+ * so the two can't disagree about which checkpoint is "the hosted one".
+ */
+export function qwen21DiffusionModel(
+  model: { id: number } | null | undefined,
+  airs: { getOrThrow: (id: number) => string }
+) {
+  if (!model) return undefined;
+  return model.id === getEcosystemDefaults(ECO.Qwen21)?.model?.id
+    ? undefined
+    : airs.getOrThrow(model.id);
+}

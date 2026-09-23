@@ -24,6 +24,15 @@ const parse = (raw: Record<string, unknown>) => {
 };
 
 describe('Qwen Image 2.1 generator contract', () => {
+  it('loads the official checkpoint by default and keeps it locked', () => {
+    expect(parse({ workflow: 'txt2img' })).toMatchObject({ model: { id: 3352534 } });
+    // The picker is model-locked, so a checkpoint from another Qwen release substitutes back
+    // rather than reaching the handler — which now submits it as `diffusionModel`.
+    expect(parse({ workflow: 'txt2img', model: { id: 2552908 } })).toMatchObject({
+      model: { id: 3352534 },
+    });
+  });
+
   it('uses the unified model defaults without overwriting tuned settings', () => {
     expect(parse({ workflow: 'txt2img' })).toMatchObject({
       steps: 25,

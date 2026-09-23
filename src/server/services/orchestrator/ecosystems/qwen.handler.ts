@@ -23,6 +23,7 @@ import type {
   ComfyQwen20bEditImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
@@ -90,6 +91,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
       engine: 'comfy' as const,
       ecosystem: 'qwen' as const,
       model: '2.1' as const,
+      diffusionModel: qwen21DiffusionModel(data.model, ctx.airs),
       prompt: data.prompt,
       negativePrompt: data.negativePrompt,
       steps: data.steps,

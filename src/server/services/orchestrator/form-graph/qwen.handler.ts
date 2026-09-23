@@ -17,6 +17,7 @@ import type {
   ComfyQwen20bEditImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
@@ -59,6 +60,7 @@ export const createQwenInput = defineHandler<
       engine: 'comfy' as const,
       ecosystem: 'qwen' as const,
       model: '2.1' as const,
+      diffusionModel: qwen21DiffusionModel(data.model, ctx.airs),
       prompt: data.prompt,
       negativePrompt: data.negativePrompt,
       steps: data.steps,

@@ -1420,6 +1420,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.Qwen21,
+    defaults: {
+      model: { id: 3352534 },
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.Qwen3,
     defaults: {
       model: { id: 3207633 },

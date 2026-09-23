@@ -140,7 +140,7 @@
     "@civitai/generation-metadata": "^0.3.0",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
-    "@civitai/orchestration-client": "github:civitai/civitai-client-javascript#08c0071d992cce488c5779379820148cb3b65694",
+    "@civitai/orchestration-client": "0.2.0-beta.109",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^1.23.1",
@@ -434,7 +434,6 @@
       "ws@7": "^7.5.11"
     },
     "onlyBuiltDependencies": [
-      "@civitai/orchestration-client",
       "@parcel/watcher",
       "@prisma/client",
       "@prisma/engines",

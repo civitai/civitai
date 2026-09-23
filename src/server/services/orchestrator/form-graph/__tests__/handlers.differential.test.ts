@@ -861,6 +861,8 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
       });
       expect(steps[0].input).not.toHaveProperty('images');
       expect(steps[0].input).not.toHaveProperty('resolution');
+      // The hosted default is what `model: '2.1'` already means to the orchestrator.
+      expect(steps[0].input).not.toHaveProperty('diffusionModel');
     }
   });
 
@@ -892,6 +894,29 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
       });
       expect(steps[0].input).not.toHaveProperty('width');
       expect(steps[0].input).not.toHaveProperty('height');
+      expect(steps[0].input).not.toHaveProperty('diffusionModel');
+    }
+  });
+
+  // Fed straight to both dispatchers: the picker is model-locked, so the graph substitutes any
+  // other checkpoint back to the default and no parsed input can reach this branch. Without it
+  // the suite cannot tell "omitted for the default" from "never sent".
+  it('Qwen 2.1 names a non-default checkpoint as diffusionModel', async () => {
+    const data = {
+      workflow: 'txt2img',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '1K',
+      aspectRatio: { value: '1:1', width: 1024, height: 1024 },
+      model: { id: 424242, baseModel: 'Qwen 2.1', model: { type: 'Checkpoint' } },
+    } as unknown as GenerationData;
+
+    for (const steps of [
+      await createEcosystemStepInput(data, ctx),
+      await createFormGraphStepInput(data, ctx),
+    ]) {
+      expect(steps[0].input).toMatchObject({ diffusionModel: 'urn:air:test:424242' });
     }
   });
 
