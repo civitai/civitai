@@ -247,10 +247,19 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // page-host bridge, which a non-page-hosted block cannot reach).
       'buzz',
       'collections',
+      // `counts` / `item` / `list` — the shared-storage READ surface
+      // (`v1/blocks/shared-storage/{counts,item,list}.ts`), the v1 replacement for
+      // the postMessage SHARED_* bridge reads. Three new STATIC segments, so all
+      // three are pinned here: without the entry, normalizeEndpoint would collapse
+      // them to a placeholder and the audit log would stop distinguishing a feed
+      // scan from a point read.
+      'counts',
       'follow',
       'generation-resources',
       'images',
       'increment',
+      'item',
+      'list',
       'me',
       'models',
       'shared-storage',

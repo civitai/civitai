@@ -64,6 +64,17 @@ export type AppBlockEndpoint =
   | 'collection_follow'
   | 'shared_storage_top'
   | 'shared_storage_increment'
+  // The shared READ surface (`/api/v1/blocks/shared-storage/{list,item,counts}`) —
+  // the v1 replacement for the postMessage SHARED_* bridge reads. THREE labels for
+  // three genuinely different workloads over one datastore: `list` is the paged
+  // feed scan (the only one of the three that can be slow, and the only one that
+  // paginates), `item` is a primary-key point read, `counts` is a bounded
+  // `ANY($1)` batch. Merging them would drop a constant-time point read into the
+  // same series as the scan and leave the p95 unreadable — the same argument that
+  // split 'tools' from 'tools_call' below.
+  | 'shared_storage_list'
+  | 'shared_storage_item'
+  | 'shared_storage_counts'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
