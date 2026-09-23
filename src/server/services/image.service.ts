@@ -7950,6 +7950,7 @@ export const getMyImages = async ({
         createdAt: true,
         type: true,
         nsfwLevel: true,
+        ingestion: true,
       },
       where: {
         userId,
@@ -7957,7 +7958,10 @@ export const getMyImages = async ({
           in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
         },
         postId: { not: null },
-        ingestion: ImageIngestionStatus.Scanned,
+        // Published-only callers render still-scanning images as pending rather than hiding them.
+        ingestion: publishedOnly
+          ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
+          : ImageIngestionStatus.Scanned,
         ...(publishedOnly ? publishedImageWhere() : {}),
       },
       take: limit + 1,

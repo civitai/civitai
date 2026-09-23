@@ -6,6 +6,7 @@ import {
   Loader,
   Modal,
   Progress,
+  Tabs,
   Text,
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
@@ -20,21 +21,30 @@ import {
   IconPhoto,
   IconRefresh,
   IconSend,
+  IconSparkles,
   IconUpload,
   IconVideo,
   IconX,
 } from '@tabler/icons-react';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
+import {
+  GeneratorMediaPicker,
+  useGeneratorSelectionStore,
+} from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { formatDuration } from '~/utils/number-helpers';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { addPostImageSchema } from '~/server/schema/post.schema';
+import { downloadGeneratorImages } from '~/utils/generator-import';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -100,6 +110,7 @@ function ImageCard({
   validationCriteria,
   onClick,
   isAlreadySubmitted,
+  isScanning,
 }: {
   image: {
     id: number;
@@ -114,6 +125,7 @@ function ImageCard({
   validationCriteria: ValidationCriterion[];
   onClick: () => void;
   isAlreadySubmitted: boolean;
+  isScanning: boolean;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -123,10 +135,12 @@ function ImageCard({
         'group relative aspect-square cursor-pointer overflow-visible rounded-lg border-2 transition-all',
         isSelected
           ? 'border-green-500 shadow-[0_0_10px_rgba(81,207,102,0.4)]'
+          : isScanning
+          ? 'border-yellow-500/50'
           : isValid
           ? 'border-[#373a40] hover:border-[#535458]'
           : 'border-red-500/50',
-        disabled && 'cursor-not-allowed opacity-60'
+        disabled && (isScanning ? 'cursor-wait' : 'cursor-not-allowed opacity-60')
       )}
       onClick={disabled ? undefined : onClick}
     >
@@ -155,10 +169,18 @@ function ImageCard({
           <div
             className={clsx(
               'absolute right-1.5 top-1.5 z-10 flex size-6 cursor-pointer items-center justify-center rounded-full text-white shadow-md transition-transform hover:scale-110',
-              isAlreadySubmitted ? 'bg-gray-500' : isValid ? 'bg-green-500' : 'bg-red-500'
+              isAlreadySubmitted
+                ? 'bg-gray-500'
+                : isScanning
+                ? 'bg-yellow-500'
+                : isValid
+                ? 'bg-green-500'
+                : 'bg-red-500'
             )}
           >
-            {isAlreadySubmitted ? (
+            {isScanning ? (
+              <Loader size={12} color="white" />
+            ) : isAlreadySubmitted ? (
               <IconCheck size={14} />
             ) : isValid ? (
               <IconCheck size={14} />
@@ -176,10 +198,21 @@ function ImageCard({
           <div
             className={clsx(
               'mb-2 flex items-center gap-1.5 text-xs font-semibold',
-              isAlreadySubmitted ? 'text-gray-400' : isValid ? 'text-green-400' : 'text-red-400'
+              isAlreadySubmitted
+                ? 'text-gray-400'
+                : isScanning
+                ? 'text-yellow-400'
+                : isValid
+                ? 'text-green-400'
+                : 'text-red-400'
             )}
           >
-            {isAlreadySubmitted ? (
+            {isScanning ? (
+              <>
+                <IconAlertCircle size={14} />
+                Scanning…
+              </>
+            ) : isAlreadySubmitted ? (
               <>
                 <IconCheck size={14} />
                 Already Submitted
@@ -288,6 +321,25 @@ export default function CrucibleSubmitEntryModal({
   const [selectedImages, setSelectedImages] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<string | null>('library');
+  const [entryPostId, setEntryPostId] = useState<number | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  // Media added from this modal is selected for the user once its scan settles.
+  const [awaitingScan, setAwaitingScan] = useState<number[]>([]);
+
+  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
+  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+
+  const createEntryPostMutation = trpc.crucible.createEntryPost.useMutation();
+  const addImageMutation = trpc.post.addImage.useMutation({
+    onSuccess: (image) => {
+      setAwaitingScan((prev) => [...prev, image.id]);
+      queryUtils.image.getMyImages.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({ title: `Failed to add ${noun}`, error: new Error(error.message) });
+    },
+  });
 
   // Image upload handling
   const {
@@ -296,17 +348,22 @@ export default function CrucibleSubmitEntryModal({
     progress: uploadProgress,
     canAdd: canUpload,
     loading: isUploading,
-  } = useMediaUpload({
+  } = useMediaUpload<{ postId: number }>({
     count: uploadedCount,
-    onComplete: (props) => {
+    onComplete: (props, context) => {
       if (props.status === 'added') {
-        // Refresh the image list when an upload completes
-        queryUtils.image.getMyImages.invalidate();
+        if (!context?.postId) return;
         setUploadedCount((prev) => prev + 1);
-        showSuccessNotification({
-          title: `${isVideo ? 'Video' : 'Image'} uploaded`,
-          message: `Your ${noun} is now available for selection`,
-        });
+        addImageMutation.mutate(
+          addPostImageSchema.parse({
+            ...props,
+            postId: context.postId,
+            width: props.metadata.width,
+            height: props.metadata.height,
+            hash: props.metadata.hash,
+            generationWorkflowId: props.generationWorkflowId,
+          })
+        );
       } else if (props.status === 'error') {
         showErrorNotification({
           title: 'Upload failed',
@@ -325,10 +382,61 @@ export default function CrucibleSubmitEntryModal({
     },
   });
 
-  const handleDrop = (files: File[]) => {
-    if (!canUpload || currentUser?.muted) return;
-    uploadImages(files.map((file) => ({ file })));
+  const ensureEntryPost = async () => {
+    if (entryPostId) return entryPostId;
+    const post = await createEntryPostMutation.mutateAsync({ crucibleId });
+    setEntryPostId(post.id);
+    return post.id;
   };
+
+  const addToLibrary = async (
+    fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
+  ) => {
+    if (!fileData.length || currentUser?.muted) return;
+    try {
+      const postId = await ensureEntryPost();
+      uploadImages(fileData, { postId });
+      setActiveTab('library');
+    } catch (error) {
+      showErrorNotification({
+        title: `Unable to add ${nounPlural}`,
+        error: error instanceof Error ? error : new Error('Unknown error'),
+      });
+    }
+  };
+
+  const handleDrop = (files: File[]) => {
+    if (!canUpload) return;
+    addToLibrary(files.map((file) => ({ file })));
+  };
+
+  const handleImportGenerator = async () => {
+    setIsImporting(true);
+    try {
+      const files = await downloadGeneratorImages(generatorSelected);
+      if (!files.length) throw new Error('Failed to download generator media. Please try again.');
+      deselectAllGenerator();
+      await addToLibrary(files);
+    } catch (error) {
+      showErrorNotification({
+        title: 'Import failed',
+        error: error instanceof Error ? error : new Error('Unknown error'),
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const getGeneratorEligibility = useCallback(
+    ({ type, nsfwLevel: level }: GeneratorMediaCandidate) => {
+      const reasons: string[] = [];
+      if (type !== contentType) reasons.push(`${isVideo ? 'Videos' : 'Images'} only`);
+      if (level !== null && level !== 0 && !isNsfwLevelCompatible(level, nsfwLevel))
+        reasons.push(`${getNsfwLabel(nsfwLevel)} only`);
+      return { eligible: reasons.length === 0, reasons };
+    },
+    [contentType, isVideo, nsfwLevel]
+  );
 
   // Fetch user's images
   const {
@@ -342,6 +450,12 @@ export default function CrucibleSubmitEntryModal({
     {
       enabled: !!currentUser,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
+      refetchInterval: (query) =>
+        query.state.data?.pages.some((page) =>
+          page.items.some((item) => item.ingestion === ImageIngestionStatus.Pending)
+        )
+          ? 5000
+          : false,
     }
   );
 
@@ -370,6 +484,23 @@ export default function CrucibleSubmitEntryModal({
   // Validate image and check if it's selectable
   // Returns detailed validation criteria for hover card display
   const validateImage = (image: (typeof images)[0]) => {
+    if (image.ingestion === ImageIngestionStatus.Pending) {
+      return {
+        isValid: false,
+        isAlreadySubmitted: false,
+        isScanning: true,
+        criteria: [
+          {
+            label: 'Content scan',
+            passes: false,
+            pending: true,
+            failReason: 'Selectable once the content scan finishes',
+          },
+        ],
+        message: 'Scanning',
+      };
+    }
+
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
     const matchesContentType = image.type === contentType;
     const isAlreadySubmitted = submittedImageIds.has(image.id);
@@ -423,6 +554,7 @@ export default function CrucibleSubmitEntryModal({
     return {
       isValid: isCompatibleNsfw && matchesContentType && isShortEnough && !isAlreadySubmitted,
       isAlreadySubmitted,
+      isScanning: false,
       criteria,
       message: isAlreadySubmitted
         ? 'Already submitted'
@@ -449,7 +581,9 @@ export default function CrucibleSubmitEntryModal({
 
   // Total cost for selected images
   const totalCost = validSelectedCount * entryFee;
-  const submitLabel = `Submit ${validSelectedCount} ${validSelectedCount === 1 ? 'Entry' : 'Entries'}`;
+  const submitLabel = `Submit ${validSelectedCount} ${
+    validSelectedCount === 1 ? 'Entry' : 'Entries'
+  }`;
 
   // Can't select more than remaining entries
   const canSelectMore = selectedImages.length < remainingEntries;
@@ -470,6 +604,25 @@ export default function CrucibleSubmitEntryModal({
       return [...prev, imageId];
     });
   };
+
+  useEffect(() => {
+    if (!awaitingScan.length) return;
+    const settled = images.filter(
+      (image) => awaitingScan.includes(image.id) && !validateImage(image).isScanning
+    );
+    if (!settled.length) return;
+    setAwaitingScan((prev) => prev.filter((id) => !settled.some((image) => image.id === id)));
+    setSelectedImages((prev) => {
+      const next = [...prev];
+      for (const image of settled) {
+        if (next.length >= remainingEntries) break;
+        if (!next.includes(image.id) && validateImage(image).isValid) next.push(image.id);
+      }
+      return next;
+    });
+    // validateImage is recreated each render; images/awaitingScan are what change the outcome.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images, awaitingScan, remainingEntries]);
 
   // Submit entries mutation
   const submitEntryMutation = trpc.crucible.submitEntry.useMutation({
@@ -552,6 +705,7 @@ export default function CrucibleSubmitEntryModal({
   };
 
   const handleClose = () => {
+    deselectAllGenerator();
     dialog.onClose();
   };
 
@@ -670,116 +824,148 @@ export default function CrucibleSubmitEntryModal({
             </div>
           </div>
 
-          {/* Drop Zone */}
-          <Dropzone
-            onDrop={handleDrop}
-            accept={getMimeTypesFromMediaTypes([contentType])}
-            disabled={!canUpload || isUploading || currentUser?.muted}
-            loading={isUploading}
-            className={clsx(
-              'mb-6 rounded-xl border-2 border-dashed bg-[#2c2e33] p-8 text-center transition-all',
-              isUploading || !canUpload
-                ? 'cursor-not-allowed border-[#373a40] opacity-60'
-                : 'cursor-pointer border-[#373a40] hover:border-blue-500 hover:bg-[rgba(34,139,230,0.05)]'
-            )}
-          >
-            <div className="pointer-events-none flex flex-col items-center justify-center gap-2">
-              <Dropzone.Accept>
-                <IconUpload size={48} className="text-blue-500" stroke={1.5} />
-              </Dropzone.Accept>
-              <Dropzone.Reject>
-                <IconX size={48} className="text-red-500" stroke={1.5} />
-              </Dropzone.Reject>
-              <Dropzone.Idle>
-                <IconCloudUpload size={48} className="text-blue-500" stroke={1.5} />
-              </Dropzone.Idle>
-              <Text c="white" fw={600}>
-                Drag {nounPlural} here to add entries
-              </Text>
-              <Text size="sm" c="dimmed">
-                or{' '}
-                <Text component="span" c="blue" className="cursor-pointer underline">
-                  click to browse
-                </Text>
-              </Text>
-            </div>
-          </Dropzone>
+          <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
+            <Tabs.List>
+              <Tabs.Tab
+                value="library"
+                leftSection={isVideo ? <IconVideo size={16} /> : <IconPhoto size={16} />}
+              >
+                My {isVideo ? 'Videos' : 'Images'}
+              </Tabs.Tab>
+              <Tabs.Tab value="generator" leftSection={<IconSparkles size={16} />}>
+                From Generator
+              </Tabs.Tab>
+              <Tabs.Tab value="upload" leftSection={<IconUpload size={16} />}>
+                Upload New
+              </Tabs.Tab>
+            </Tabs.List>
 
-          {/* Upload Progress */}
-          {uploadingFiles.length > 0 && (
-            <div className="mb-4">
-              <Progress
-                value={uploadProgress}
-                size="sm"
-                radius="xl"
-                animated
-                styles={{
-                  root: { backgroundColor: '#373a40' },
-                  section: { background: 'linear-gradient(90deg, #228be6, #40c057)' },
-                }}
-              />
-              <Text size="xs" c="dimmed" ta="center" mt={4}>
-                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? noun : nounPlural}
-                ...
-              </Text>
-            </div>
-          )}
-
-          {/* Images Grid */}
-          {isLoadingImages ? (
-            <Center py="xl">
-              <Loader />
-            </Center>
-          ) : images.length === 0 ? (
-            <div className="rounded-lg border border-[#373a40] bg-[#2c2e33] p-8 text-center">
-              <Text c="white" fw={600} mb={4}>
-                No {nounPlural} found
-              </Text>
-              <Text size="sm" c="dimmed">
-                Upload {nounPlural} above or generate {nounPlural} to get started.
-              </Text>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
-                {images.map((image) => {
-                  const { isValid, isAlreadySubmitted, criteria } = validateImage(image);
-                  const isSelected = selectedImages.includes(image.id);
-
-                  return (
-                    <ImageCard
-                      key={image.id}
-                      image={{
-                        id: image.id,
-                        url: image.url,
-                        nsfwLevel: image.nsfwLevel ?? 1,
-                        type: image.type,
-                        meta: image.meta,
-                        createdAt: image.createdAt,
-                      }}
-                      isSelected={isSelected}
-                      isValid={isValid}
-                      validationCriteria={criteria}
-                      onClick={() => toggleImage(image.id)}
-                      isAlreadySubmitted={isAlreadySubmitted}
-                    />
-                  );
-                })}
-              </div>
-
-              {/* Load More */}
-              {hasNextPage && (
-                <InViewLoader
-                  loadFn={fetchNextPage}
-                  loadCondition={!isLoadingImages && !isFetchingNextPage}
-                >
-                  <Center py="md">
-                    <Loader size="sm" />
-                  </Center>
-                </InViewLoader>
+            <Tabs.Panel value="library">
+              {/* Upload Progress */}
+              {uploadingFiles.length > 0 && (
+                <div className="mb-4">
+                  <Progress
+                    value={uploadProgress}
+                    size="sm"
+                    radius="xl"
+                    animated
+                    styles={{
+                      root: { backgroundColor: '#373a40' },
+                      section: { background: 'linear-gradient(90deg, #228be6, #40c057)' },
+                    }}
+                  />
+                  <Text size="xs" c="dimmed" ta="center" mt={4}>
+                    Uploading {uploadingFiles.length}{' '}
+                    {uploadingFiles.length === 1 ? noun : nounPlural}
+                    ...
+                  </Text>
+                </div>
               )}
-            </>
-          )}
+              {/* Images Grid */}
+              {isLoadingImages ? (
+                <Center py="xl">
+                  <Loader />
+                </Center>
+              ) : images.length === 0 ? (
+                <div className="rounded-lg border border-[#373a40] bg-[#2c2e33] p-8 text-center">
+                  <Text c="white" fw={600} mb={4}>
+                    No {nounPlural} found
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    Upload {nounPlural} or pick some from the generator to get started.
+                  </Text>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
+                    {images.map((image) => {
+                      const { isValid, isAlreadySubmitted, isScanning, criteria } =
+                        validateImage(image);
+                      const isSelected = selectedImages.includes(image.id);
+
+                      return (
+                        <ImageCard
+                          key={image.id}
+                          image={{
+                            id: image.id,
+                            url: image.url,
+                            nsfwLevel: image.nsfwLevel ?? 1,
+                            type: image.type,
+                            meta: image.meta,
+                            createdAt: image.createdAt,
+                          }}
+                          isSelected={isSelected}
+                          isValid={isValid}
+                          validationCriteria={criteria}
+                          onClick={() => toggleImage(image.id)}
+                          isAlreadySubmitted={isAlreadySubmitted}
+                          isScanning={isScanning}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {/* Load More */}
+                  {hasNextPage && (
+                    <InViewLoader
+                      loadFn={fetchNextPage}
+                      loadCondition={!isLoadingImages && !isFetchingNextPage}
+                    >
+                      <Center py="md">
+                        <Loader size="sm" />
+                      </Center>
+                    </InViewLoader>
+                  )}
+                </>
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="generator">
+              <GeneratorMediaPicker
+                getEligibility={getGeneratorEligibility}
+                gridClassName="grid-cols-3"
+                maxHeight={420}
+                workflowTag={isVideo ? WORKFLOW_TAGS.VIDEO : WORKFLOW_TAGS.IMAGE}
+              />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="upload">
+              {/* Drop Zone */}
+              <Dropzone
+                onDrop={handleDrop}
+                accept={getMimeTypesFromMediaTypes([contentType])}
+                disabled={!canUpload || isUploading || currentUser?.muted}
+                loading={isUploading}
+                className={clsx(
+                  'rounded-xl border-2 border-dashed bg-[#2c2e33] p-8 text-center transition-all',
+                  isUploading || !canUpload
+                    ? 'cursor-not-allowed border-[#373a40] opacity-60'
+                    : 'cursor-pointer border-[#373a40] hover:border-blue-500 hover:bg-[rgba(34,139,230,0.05)]'
+                )}
+              >
+                <div className="pointer-events-none flex flex-col items-center justify-center gap-2">
+                  <Dropzone.Accept>
+                    <IconUpload size={48} className="text-blue-500" stroke={1.5} />
+                  </Dropzone.Accept>
+                  <Dropzone.Reject>
+                    <IconX size={48} className="text-red-500" stroke={1.5} />
+                  </Dropzone.Reject>
+                  <Dropzone.Idle>
+                    <IconCloudUpload size={48} className="text-blue-500" stroke={1.5} />
+                  </Dropzone.Idle>
+                  <Text c="white" fw={600}>
+                    Drag {nounPlural} here to add them to your library
+                  </Text>
+                  <Text size="sm" c="dimmed">
+                    or{' '}
+                    <Text component="span" c="blue" className="cursor-pointer underline">
+                      click to browse
+                    </Text>
+                  </Text>
+                </div>
+              </Dropzone>
+            </Tabs.Panel>
+          </Tabs>
         </div>
 
         {/* Footer */}
@@ -808,7 +994,17 @@ export default function CrucibleSubmitEntryModal({
               Cancel
             </Button>
 
-            {totalCost > 0 ? (
+            {activeTab === 'generator' ? (
+              <Button
+                className="flex-1"
+                onClick={handleImportGenerator}
+                loading={isImporting}
+                disabled={generatorSelected.length === 0}
+                leftSection={<IconSparkles size={16} />}
+              >
+                Add {generatorSelected.length} to library
+              </Button>
+            ) : totalCost > 0 ? (
               <BuzzTransactionButton
                 className="flex-1"
                 buzzAmount={totalCost}

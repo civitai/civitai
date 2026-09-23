@@ -1,5 +1,6 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
 import type {
+  CreateEntryPostSchema,
   CancelCrucibleSchema,
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
@@ -12,6 +13,7 @@ import type {
 } from '~/server/schema/crucible.schema';
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
+  createCrucibleEntryPost,
   cancelCrucible,
   createCrucible,
   getCrucibleDetail,
@@ -53,6 +55,16 @@ export const createCrucibleHandler = async ({
   ctx: ProtectedContext;
 }) => {
   return createCrucible({ ...input, userId: ctx.user.id });
+};
+
+export const createEntryPostHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CreateEntryPostSchema;
+  ctx: ProtectedContext;
+}) => {
+  return createCrucibleEntryPost({ ...input, userId: ctx.user.id });
 };
 
 export const submitEntryHandler = async ({

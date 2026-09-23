@@ -19,6 +19,7 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
+  CreateEntryPostSchema,
   GetCruciblesInfiniteSchema,
   GetCrucibleByIdSchema,
   CreateCrucibleInputSchema,
@@ -55,6 +56,7 @@ import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
 import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
+import { createPost } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
@@ -379,6 +381,26 @@ export const getCrucibleEntries = async <TSelect extends Prisma.CrucibleEntrySel
  * Generate a unique transaction prefix for crucible entry fees
  * This prefix is used to identify and refund transactions if needed
  */
+/**
+ * Entries must be published images, so media added from inside the submit modal goes into a
+ * published post first and becomes enterable once its scan settles.
+ */
+export const createCrucibleEntryPost = async ({
+  crucibleId,
+  userId,
+}: CreateEntryPostSchema & { userId: number }) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { name: true, status: true, endAt: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && new Date() > crucible.endAt))
+    throw throwBadRequestError('This crucible is not accepting entries');
+
+  const post = await createPost({ userId, title: crucible.name, publishedAt: new Date() });
+  return { id: post.id };
+};
+
 export const getCrucibleEntryTransactionPrefix = (crucibleId: number, userId: number): string => {
   return `crucible-entry-${crucibleId}-${userId}-${Date.now()}`;
 };

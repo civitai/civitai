@@ -1,10 +1,7 @@
 import {
   ActionIcon,
-  AspectRatio,
   Badge,
-  Box,
   Button,
-  Center,
   Checkbox,
   Group,
   Loader,
@@ -34,21 +31,21 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CooldownBanner } from '~/components/Challenge/CooldownBanner';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
+import {
+  GeneratorMediaPicker,
+  useGeneratorSelectionStore,
+} from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { ChallengeSelectableImageCardMemoized } from '~/components/Challenge/ChallengeSelectableImageCard';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ImageSort, NsfwLevel } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
+import { ImageSort } from '~/server/common/enums';
 import {
   ChallengeReviewCostType,
   ChallengeSource,
@@ -69,24 +66,14 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from '~/components/Collections/collection.utils';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   parseBitwiseBrowsingLevel,
   browsingLevelLabels,
   nsfwLevelColors,
-  orchestratorNsfwLevelMap,
 } from '~/shared/constants/browsingLevel.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { isDefined } from '~/utils/type-guards';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import type { NormalizedStepMetadata } from '~/server/services/orchestrator';
-import type {
-  AudioBlob,
-  BlobData,
-  ImageBlob,
-  VideoBlob,
-} from '~/shared/orchestrator/workflow-data';
-import clsx from 'clsx';
 import { ownContentPickerFilters } from '~/components/Image/image.utils';
 
 // ---------------------------------------------------------------------------
@@ -110,41 +97,6 @@ const useStore = create<StoreState>()(
     deselectAll: () => {
       set((state) => {
         state.selected = {};
-      });
-    },
-  }))
-);
-
-// ---------------------------------------------------------------------------
-// Generator selection store (separate since these aren't image IDs)
-// ---------------------------------------------------------------------------
-type GeneratorImage = {
-  url: string;
-  label: string;
-  type: 'image' | 'video';
-  meta?: Record<string, unknown>;
-  resources?: NormalizedStepMetadata['resources'];
-};
-
-type GeneratorStoreState = {
-  selected: GeneratorImage[];
-  toggleSelected: (img: GeneratorImage) => void;
-  deselectAll: () => void;
-};
-
-const useGeneratorStore = create<GeneratorStoreState>()(
-  immer((set) => ({
-    selected: [],
-    toggleSelected: (img) => {
-      set((state) => {
-        const idx = state.selected.findIndex((s) => s.url === img.url);
-        if (idx >= 0) state.selected.splice(idx, 1);
-        else state.selected.push({ ...img });
-      });
-    },
-    deselectAll: () => {
-      set((state) => {
-        state.selected = [];
       });
     },
   }))
@@ -175,8 +127,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // Selection state
   const selectedImageIds = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
-  const generatorSelected = useGeneratorStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
+  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
 
   // Upload state
   const { files: uploadedFiles, uploadToCF, resetFiles, removeImage } = useCFImageUpload();
@@ -207,6 +159,21 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
     if (!challenge) return [];
     return parseBitwiseBrowsingLevel(challenge.allowedNsfwLevel);
   }, [challenge]);
+
+  const getGeneratorEligibility = useCallback(
+    ({ nsfwLevel, resourceIds }: GeneratorMediaCandidate) => {
+      const reasons: string[] = [];
+      if (challenge && nsfwLevel !== null && nsfwLevel !== 0) {
+        if ((nsfwLevel & challenge.allowedNsfwLevel) === 0) reasons.push('NSFW restricted');
+      }
+      if (challenge && challenge.modelVersionIds.length > 0) {
+        if (!resourceIds.some((vid) => challenge.modelVersionIds.includes(vid)))
+          reasons.push('Wrong model');
+      }
+      return { eligible: reasons.length === 0, reasons };
+    },
+    [challenge]
+  );
 
   const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
@@ -561,7 +528,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
 
           {/* From Generator Tab */}
           <Tabs.Panel value="generator">
-            <GeneratorTab challenge={challenge ?? undefined} />
+            <GeneratorMediaPicker getEligibility={getGeneratorEligibility} />
           </Tabs.Panel>
 
           {/* Upload New Tab */}
@@ -760,171 +727,4 @@ const ChallengeContext = createContext<Pick<
 
 function useChallengeContext() {
   return useContext(ChallengeContext);
-}
-
-// ---------------------------------------------------------------------------
-// Generator Tab
-// ---------------------------------------------------------------------------
-function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
-  const currentUser = useCurrentUser();
-
-  const { data, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useGetTextToImageRequests(
-      { tags: [WORKFLOW_TAGS.IMAGE] },
-      { enabled: !!currentUser, ignoreFilters: true }
-    );
-
-  const generatedMedia = useMemo(
-    () =>
-      // Challenge submissions don't accept 3D models — strip PolyGen
-      // outputs here so the card grid stays 2D-only.
-      data.flatMap((wf) =>
-        wf.succeededOutput.filter(
-          (x): x is ImageBlob | VideoBlob | AudioBlob => x.available && x.type !== 'model3d'
-        )
-      ),
-    [data]
-  );
-
-  if (isFetching && !isFetchingNextPage) {
-    return (
-      <Center py="xl">
-        <Loader />
-      </Center>
-    );
-  }
-
-  if (generatedMedia.length === 0) {
-    return <NoContent message="No generated images found. Create some images first!" />;
-  }
-
-  return (
-    <Box mah={440} style={{ overflowY: 'auto' }}>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(275px,1fr))] gap-2 p-2">
-        {generatedMedia.map((img) => (
-          <GeneratorImageCard
-            key={`${img.workflowId}_${img.stepName}_${img.id}`}
-            image={img}
-            challenge={challenge}
-          />
-        ))}
-      </div>
-      {hasNextPage && (
-        <InViewLoader
-          loadFn={fetchNextPage}
-          loadCondition={!isFetching && !isFetchingNextPage && hasNextPage}
-        >
-          <Center p="xl" style={{ height: 36 }}>
-            <Loader />
-          </Center>
-        </InViewLoader>
-      )}
-    </Box>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Generator Image Card
-// ---------------------------------------------------------------------------
-function GeneratorImageCard({
-  image,
-  challenge,
-}: {
-  // Challenges accept 2D submissions only; PolyGen outputs are filtered
-  // out upstream so this card never has to render a 3D model.
-  image: ImageBlob | VideoBlob | AudioBlob;
-  challenge?: ChallengeDetail;
-}) {
-  const stepParams = image.step.params;
-  const stepResources = image.step.resources;
-  const toggleSelected = useGeneratorStore((state) => state.toggleSelected);
-  const isSelected = useGeneratorStore(
-    useCallback((state) => state.selected.some((s) => s.url === image.url), [image.url])
-  );
-
-  // Convert orchestrator nsfwLevel (string like 'pg', 'r') to numeric NsfwLevel
-  const numericNsfwLevel = useMemo(() => {
-    if (!image.nsfwLevel) return null;
-    // Handle both string and number types
-    if (typeof image.nsfwLevel === 'number') return image.nsfwLevel;
-    const levelStr = String(image.nsfwLevel).toLowerCase();
-    return orchestratorNsfwLevelMap[levelStr] ?? null;
-  }, [image.nsfwLevel]);
-
-  // Check eligibility client-side for generator images (model version + NSFW level)
-  const eligibility = useMemo(() => {
-    const reasons: string[] = [];
-
-    // Check NSFW level
-    if (challenge && numericNsfwLevel !== null && (numericNsfwLevel as number) !== 0) {
-      if ((numericNsfwLevel & challenge.allowedNsfwLevel) === 0) {
-        reasons.push('NSFW restricted');
-      }
-    }
-
-    // Check model version requirement
-    if (challenge && challenge.modelVersionIds.length > 0) {
-      const imageResourceIds = (stepResources ?? [])
-        .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
-        .filter(isDefined);
-
-      const hasEligibleModel = imageResourceIds.some((vid) =>
-        challenge.modelVersionIds.includes(vid)
-      );
-
-      if (!hasEligibleModel) {
-        reasons.push('Wrong model');
-      }
-    }
-
-    return { eligible: reasons.length === 0, reasons };
-  }, [challenge, stepResources, numericNsfwLevel]);
-
-  const handleClick = () => {
-    if (!eligibility.eligible) return;
-
-    const meta = getStepMeta(image.step);
-
-    toggleSelected({
-      url: image.url,
-      label: (stepParams as any)?.prompt ?? '',
-      type: image.type === 'video' ? 'video' : 'image',
-      meta,
-      resources: stepResources,
-    });
-  };
-
-  return (
-    <div
-      className={clsx(
-        'relative cursor-pointer overflow-hidden rounded-lg',
-        isSelected && 'ring-2 ring-blue-5',
-        !eligibility.eligible && 'cursor-not-allowed opacity-40 grayscale'
-      )}
-      onClick={handleClick}
-    >
-      <AspectRatio ratio={3 / 4}>
-        <EdgeMedia
-          alt="Generated image"
-          src={image.url}
-          type={image.type}
-          width={DEFAULT_EDGE_IMAGE_WIDTH}
-          className="size-full object-cover"
-          anim
-        />
-      </AspectRatio>
-      {eligibility.eligible ? (
-        <Checkbox checked={isSelected} readOnly size="lg" className="absolute right-1.5 top-1.5" />
-      ) : (
-        <Badge
-          color="red"
-          variant="filled"
-          size="sm"
-          className="absolute right-1.5 top-1.5 max-w-[calc(100%-12px)]"
-        >
-          {eligibility.reasons[0]}
-        </Badge>
-      )}
-    </div>
-  );
 }

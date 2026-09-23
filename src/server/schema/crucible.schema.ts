@@ -111,6 +111,11 @@ export const createCrucibleInputSchema = createCrucibleInputBaseSchema
   );
 
 // Schema for submitting an entry to a crucible
+export type CreateEntryPostSchema = z.infer<typeof createEntryPostSchema>;
+export const createEntryPostSchema = z.object({
+  crucibleId: z.number(),
+});
+
 export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
 export const submitEntrySchema = z.object({
   crucibleId: z.number(),

@@ -13,6 +13,7 @@ import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PostService from '~/server/services/post.service';
 import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_CLIP_SECONDS,
@@ -24,15 +25,21 @@ import {
 } from '~/shared/constants/crucible.constants';
 
 const createNotification = vi.fn();
+const createPost = vi.fn();
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification,
 }));
 
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  createPost,
+}));
+
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const { submitEntry } = await import('~/server/services/crucible.service');
+const { createCrucibleEntryPost, submitEntry } = await import('~/server/services/crucible.service');
 
 const validCoverImage = {
   url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900',
@@ -531,5 +538,50 @@ describe('submitEntry — maximum clip length', () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video, {}));
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('createCrucibleEntryPost', () => {
+  const create = () => createCrucibleEntryPost({ crucibleId: 1, userId: 42 });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createPost.mockResolvedValue({ id: 900 });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      name: 'Open Arena',
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() + 60_000),
+    });
+  });
+
+  it('creates a published post for the caller, so what they add can be entered', async () => {
+    await expect(create()).resolves.toEqual({ id: 900 });
+    expect(createPost).toHaveBeenCalledWith({
+      userId: 42,
+      title: 'Open Arena',
+      publishedAt: expect.any(Date),
+    });
+  });
+
+  it('refuses a crucible that is no longer active', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      name: 'Open Arena',
+      status: CrucibleStatus.Completed,
+      endAt: new Date(Date.now() - 60_000),
+    });
+
+    await expect(create()).rejects.toThrow(/not accepting entries/);
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active crucible whose end time has passed', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      name: 'Open Arena',
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() - 60_000),
+    });
+
+    await expect(create()).rejects.toThrow(/not accepting entries/);
+    expect(createPost).not.toHaveBeenCalled();
   });
 });
