@@ -364,7 +364,6 @@ export const userSettingsSchema = z.object({
   ).optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
@@ -534,7 +533,6 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
-  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;

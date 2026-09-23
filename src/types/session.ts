@@ -41,7 +41,6 @@ export interface SessionUser {
    */
   isEarlyAdopter?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
-  redBrowsingLevel?: number;
   deletedAt?: Date;
   subscriptions?: UserSubscriptionsByBuzzType; // multi-subscription support per buzzType
   name?: string | null; // from next-auth's DefaultSession['user']
