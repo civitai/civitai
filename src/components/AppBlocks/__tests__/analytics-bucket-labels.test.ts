@@ -212,16 +212,30 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     // filter one revision earlier, on a different axis. The sibling guard this predicate
     // comes from (`block-scope.normalize-endpoint.test.ts`) already recurses; not
     // recursing was the divergence, not the recursion.
-    const collect = (d: string): string[] =>
+    // 🔴 BUILDS THE FULL RELATIVE ROUTE PATH, not the directory's own name. An earlier
+    // revision returned the DIRECTORY NAME when its recursive call was non-empty, which
+    // swallowed every route nested under an already-labelled directory: MEASURED,
+    // `workflows/poll/history.ts` and `workflows/submit/retry.ts` both left the guard
+    // GREEN, and the `submit/` case was the worst — it collapsed to `submit`, which the
+    // loop below filters out, so the route was never checked at all. That is the same
+    // blind-spot class as the `.ts`-only filter and the flat listing before it, on a
+    // third axis. The sibling this predicate comes from builds the full relative path;
+    // copying half its shape is what left the gap each time.
+    // `__tests__` is excluded because both guards this is modelled on exclude it and a
+    // fixture there is not a route — without it, `workflows/__tests__/helpers.ts` turned
+    // the guard RED on a non-route.
+    const collect = (d: string, prefix = ''): string[] =>
       readdirSync(d, { withFileTypes: true }).flatMap((e) => {
         if (e.isDirectory()) {
-          // A route directory contributes its OWN name (`retry/index.ts` → `retry`),
-          // which is the segment `normalizeEndpoint` will see.
-          return collect(path.join(d, e.name)).length ? [e.name] : [];
+          if (e.name === '__tests__') return [];
+          return collect(path.join(d, e.name), prefix ? `${prefix}/${e.name}` : e.name);
         }
         if (!/\.(t|j)sx?$/.test(e.name)) return [];
-        if (e.name.includes('.test.') || e.name.endsWith('.d.ts')) return [];
-        return [e.name.replace(/\.(t|j)sx?$/, '')];
+        if (/\.test\.(t|j)sx?$/.test(e.name) || e.name.endsWith('.d.ts')) return [];
+        const stem = e.name.replace(/\.(t|j)sx?$/, '');
+        // `index` names the directory itself: `retry/index.ts` → `retry`.
+        const rel = stem === 'index' ? prefix : prefix ? `${prefix}/${stem}` : stem;
+        return rel ? [rel] : [];
       });
     const routes = collect(dir);
 
@@ -252,6 +266,33 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     // by adding a submit arm and silently relabel a real submission.
     expect(humaniseScopeInvocation('ai:write:budgeted', '/api/v1/blocks/workflows/submit')).toBe(
       'Submit AI workflow'
+    );
+  });
+
+  /**
+   * 🔴 PINS THE FOUR-OF-FIVE COUNT the docblock above and reason 3 in the source module
+   * both assert. Until now nothing did: the docblock said "These assertions call the REAL
+   * functions so the reasoning is verified, not restated" while `post:create` appeared in
+   * no assertion in either label file — so adding a `post:create` arm (plausible, since
+   * reason 3 reads like a TODO) would have falsified two comments with nothing going red.
+   * A sixth TOKEN is already guarded by `analytics-bucket-labels.drift.test.ts`; the ARM
+   * COUNT was the unguarded half.
+   */
+  it('post:create is the FIFTH synthetic token and has NO arm — it returns the raw scope', () => {
+    // `posts:write:self` is in neither label map, so the scope falls all the way through.
+    expect(humaniseScopeInvocation('posts:write:self', 'post:create')).toBe('posts:write:self');
+    // Contrast: the four that DO have arms, so this pins a count and not just one miss.
+    expect(humaniseScopeInvocation('ai:write:budgeted', 'workflow:submit')).toBe(
+      'Generated an image'
+    );
+    expect(humaniseScopeInvocation('block:settings:write', 'user-settings:write')).toBe(
+      'Saved your block settings'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', 'storage:set')).toBe(
+      'Wrote app-local storage'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', 'storage:delete')).toBe(
+      'Deleted app-local storage'
     );
   });
 
