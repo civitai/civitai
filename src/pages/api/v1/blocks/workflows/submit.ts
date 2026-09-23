@@ -15,7 +15,11 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 /**
- * POST /api/v1/blocks/workflows/submit  body `{ body, idempotencyKey? }` → `{ snapshot }`
+ * POST /api/v1/blocks/workflows/submit  body `{ body, idempotencyKey }` → `{ snapshot }`
+ *
+ * `idempotencyKey` is REQUIRED — no `?`. This line is the only place in the repo that
+ * spells the request shape (there is no OpenAPI doc for this surface), so it is what an
+ * integrator reads; an optional marker here means every submit they write 400s.
  * Scope `ai:write:budgeted`.
  *
  * Runs a generation that SPENDS THE VIEWER'S BUZZ — the REST twin of the
@@ -68,8 +72,20 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * route. Stashing a `workflow.submit` detail on that second row would make the
  * viewer's own activity feed render ONE generation as TWO "Generated an image"
  * entries. One money row, one access row. Suppressing the access row would need a
- * new `withBlockScope` option, i.e. a middleware change on every route's audit
- * path, which is not worth it for a technical duplicate nothing renders as money.
+ * new `withBlockScope` option, i.e. a middleware change on every route's audit path.
+ *
+ * ⚠ SAY WHAT THIS ACTUALLY COSTS, because an earlier wording under-sold it as "a
+ * technical duplicate nothing renders as money" and that is not what a viewer sees.
+ * The access row is NOT detail-less-and-technical: it renders through
+ * `SCOPE_ACTION_LABELS` as **'Submit AI workflow'**. So ONE REST generation writes TWO
+ * ACTION-LABELLED rows — `Generated an image · workflow <id>` and
+ * `Submit AI workflow · /api/v1/blocks/workflows/submit` — where the same generation
+ * over the bridge writes one. The decision above still stands, because the bar it was
+ * weighed against was two IDENTICAL "Generated an image" entries and that is avoided;
+ * but the cost is a second, differently-labelled row, not nothing. If that is judged
+ * too noisy, the fix is the `withBlockScope` suppression option named above, NOT an
+ * arm in `humaniseScopeInvocation` — for THIS route the label is true, and the three
+ * READ-shaped twins depend on submit staying arm-less.
  *
  * 🔴 A PREVIOUS VERSION OF THIS PARAGRAPH ARGUED THE POINT FROM A FALSE PREMISE,
  * recorded here so nobody re-derives it. It claimed the detail-less row "falls
@@ -78,8 +94,12 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * IRRELEVANT: `humaniseScopeInvocation` (`components/Apps/AppActivityPanel.tsx`)
  * checks its endpoint arms, then `READ_SCOPE_LABELS`, then falls THROUGH to
  * `SCOPE_ACTION_LABELS`, which maps `ai:write:budgeted` to 'Submit AI workflow'.
- * The reasoning was exactly one map short, and there is no technical-line
- * fallback at all. The decision above survives — it never depended on that
+ * The reasoning was exactly one map short: for a scope in `SCOPE_ACTION_LABELS`
+ * — which `ai:write:budgeted` is — the ACTION column never reaches a raw
+ * `scope` fallback. (The row is still rendered as three columns, action ·
+ * detail · status, and other files describing THAT layout are correct; what was
+ * wrong was expecting this scope's action column to show the bare scope string.)
+ * The decision above survives — it never depended on that
  * clause — but the three READ-shaped twins did NOT: poll/estimate/cancel each
  * rendered as 'Submit AI workflow', ~30x per generation at poll cadence. Fixed
  * by giving those three their own arms in `humaniseScopeInvocation`, pinned by
@@ -146,7 +166,12 @@ export const baseHandler = withAxiom(async function handler(
     const result = await caller.submitWorkflow({
       blockToken: blockWorkflowBearer(req),
       body: parsed.data.body,
-      ...(parsed.data.idempotencyKey ? { idempotencyKey: parsed.data.idempotencyKey } : {}),
+      // Unconditional: the schema now REQUIRES this field with a `{1,64}` charset
+      // bound, so it can be neither absent nor empty by the time we get here. The
+      // previous conditional spread was left over from when the field was optional
+      // and had become an always-true ternary, which reads as if absence were still
+      // a case this route handles.
+      idempotencyKey: parsed.data.idempotencyKey,
     });
     res.status(200).json(result);
     return;

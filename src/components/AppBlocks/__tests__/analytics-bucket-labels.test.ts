@@ -1,3 +1,5 @@
+import { readdirSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { humaniseScopeEndpoint, humaniseScopeInvocation } from '~/components/Apps/AppActivityPanel';
@@ -141,9 +143,14 @@ describe('scopeBucketLabel', () => {
 /**
  * 🔴 WHY THE ACTIVITY PANEL'S LABELLERS ARE NOT REUSED.
  *
- * `humaniseScopeInvocation` is the genuine near-duplicate — prefix-based, needs no
- * `detail`, already maps all four endpoint tokens — so it is what a reader will reach for.
+ * `humaniseScopeInvocation` is the genuine near-duplicate — endpoint-arm based, needs no
+ * `detail`, and maps the synthetic endpoint tokens — so it is what a reader will reach for.
  * These assertions call the REAL functions so the reasoning is verified, not restated.
+ *
+ * ⚠ It gained three `/api/v1/blocks/workflows/*` arms in #5068, so it is no longer true
+ * that it has NO arm for a REST path — see the twin tests further down. The reasoning
+ * below is unaffected: the arms it gained are exact-match, not a general REST fallback,
+ * so an arbitrary REST path still falls through to the scope map.
  */
 describe('the Activity panel labellers cannot serve an aggregate card', () => {
   it('humaniseScopeInvocation is the wrong REGISTER for a count column', () => {
@@ -154,7 +161,10 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     expect(endpointBucketLabel('workflow:submit')).toBe('Generations');
   });
 
-  it('humaniseScopeInvocation has NO arm for a REST path, a large share of this card', () => {
+  // Title says "an UNMAPPED REST path": #5068 gave three exact `/blocks/workflows/*`
+  // paths their own arms, so the blanket claim this test used to make is no longer true.
+  // The probe below is deliberately a path with no arm, which is still the common case.
+  it('humaniseScopeInvocation has no arm for an UNMAPPED REST path, a large share of this card', () => {
     // Falls through to its scope→label map; with no meaningful scope that is a blank cell,
     // which is strictly worse than showing the path.
     expect(humaniseScopeInvocation('', '/api/v1/blocks/submissions')).toBe('');
@@ -169,12 +179,28 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
    * surface, and ~30x per generation at the SDK's poll cadence.
    *
    * Red at the pre-change tree with `expected 'Submit AI workflow' to be
-   * 'Checked an AI workflow'`; green here. The negative assertion is the
-   * load-bearing half: asserting only the positive labels would not catch a
-   * fourth twin added later with no arm, which is how this bug arrives again.
+   * 'Checked an AI workflow'`; green here.
+   *
+   * 🔴 THE ROUTE LIST IS READ OFF DISK, NOT HARDCODED, and that is the whole point.
+   * An earlier revision of this test looped over a literal `['poll','estimate','cancel']`
+   * and its docblock claimed the loop would "catch a fourth twin added later with no
+   * arm". It could not: the literal named exactly the three routes the positive
+   * assertions already pinned, so it was redundant and structurally blind to the case
+   * it advertised — a guard reading as coverage while providing none, which is worse
+   * than no guard because it stops anyone looking. Enumerating the directory is what
+   * makes the claim true: add `workflows/retry.ts` with no arm and this goes red.
    */
-  it('the READ-shaped REST workflow twins do NOT render as a submit', () => {
+  it('every READ-shaped REST workflow twin on disk has its own label', () => {
     const base = '/api/v1/blocks/workflows';
+    const dir = path.join(process.cwd(), 'src/pages/api/v1/blocks/workflows');
+    const routes = readdirSync(dir)
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => f.replace(/\.ts$/, ''));
+
+    // Positive control: the enumeration actually found the routes. Without this a
+    // wrong `dir` yields an empty list and every assertion below passes vacuously.
+    expect(routes).toEqual(expect.arrayContaining(['submit', 'estimate', 'poll', 'cancel']));
+
     expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/poll`)).toBe(
       'Checked an AI workflow'
     );
@@ -184,7 +210,9 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/cancel`)).toBe(
       'Canceled an AI workflow'
     );
-    for (const route of ['poll', 'estimate', 'cancel']) {
+
+    // `submit` is the ONE route for which the label is true — see the next test.
+    for (const route of routes.filter((r) => r !== 'submit')) {
       expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/${route}`)).not.toBe(
         'Submit AI workflow'
       );

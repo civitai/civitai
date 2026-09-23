@@ -288,8 +288,14 @@ const TXT2IMG_BODY = {
 
 // `/workflows/submit` REQUIRES an idempotency key (round 1 F5) — a submit without
 // one is refused at the schema before reaching any control this file exercises, so
-// every submit below carries it. `estimate` has no key in its schema and must NOT
-// be given one; that asymmetry is pinned in workflows-endpoints.test.ts.
+// every submit below carries it.
+//
+// `estimate` takes no key. Stated precisely, because an earlier wording of this
+// comment overstated it twice: it said estimate "must NOT be given one", and that
+// the asymmetry was "pinned in workflows-endpoints.test.ts". Neither held —
+// `estimate.ts`'s `z.object` is NON-strict, so a key sent to estimate is silently
+// STRIPPED rather than refused, and that file carried only the same prose, no
+// assertion. Nothing pins it today. Do not cite this comment as a guard.
 const IDEMPOTENCY_KEY = 'c4e81b02-6d39-4f57-8a1e-90b7d2f46c3a';
 
 beforeEach(() => {

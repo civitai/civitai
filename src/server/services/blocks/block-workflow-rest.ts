@@ -87,7 +87,7 @@ export function blockWorkflowBearer(req: NextApiRequest): string {
  * the router's entire dependency set.
  */
 // 🔴 TYPED, not `(ctx: unknown) => unknown`. Everything is assignable to `unknown`,
-// so the previous signature checked the 20-field context literal below against
+// so the previous signature checked the context literal below against
 // NOTHING — unlike `publicApiContext2`, which hands its literal to a correctly-typed
 // `createCaller` and fails to build when `Context` gains a required field. This file
 // asserts it "mirrors publicApiContext2 field for field"; that claim needs a guard,

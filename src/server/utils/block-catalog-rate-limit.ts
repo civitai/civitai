@@ -210,10 +210,18 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     written. `/api/v1/blocks/workflows/poll` takes `waitSeconds` STRAIGHT OFF THE WIRE
 //     and forwards it, with no host in the path at all — so the choke point named below
 //     is gone for that transport, and `@civitai/blocks-react`'s `watch` defaults the
-//     field to 15, meaning a block adopting the REST twin holds from day one. The
-//     ~300-concurrent-hold figure below is therefore LIVE, not prospective, and the
-//     concurrency cap it calls for is still not implemented. Do not read the next
-//     sentence as current state.
+//     field to 15, meaning a block adopting the REST twin holds from day one.
+//
+//     🔴 STATE THE STATUS PRECISELY — an earlier wording of THIS paragraph said the
+//     ~300-concurrent-hold figure below is "LIVE, not prospective", and that is not
+//     established. What IS established: the hold is now REACHABLE and no longer
+//     choked by a host. What is NOT: that anything is holding today — at the time
+//     this route merges, NO shipped client calls it (a whole-tree sweep of
+//     `civitai-app-starters` finds zero references to `/api/v1/blocks/workflows/*`),
+//     and `pollOnce` sends `waitSeconds` over the BRIDGE, where the hosts still drop
+//     it. So the correct reading is: the choke point is gone, the first REST adopter
+//     starts holding at a 15 s default, and the concurrency cap this calls for is
+//     still not implemented. Size for it; do not claim it is already happening.
 //
 //     What WAS MEASURED here, and still holds for the BRIDGE only: neither host passes
 //     `waitSeconds` — zero occurrences of the identifier in `components/AppBlocks/` —
@@ -226,10 +234,14 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
 //     `watch` defaulting it to 15 — and the server already accepts the field. That
 //     package is not installed in this repo, so it is recorded here as the audit's
-//     finding rather than as something measured at this call site. If it holds, blocks
-//     are ALREADY asking and the hosts are dropping it: the ~300-concurrent-hold figure
-//     below is one line in each host away, not a hypothetical a future block might
-//     reach. Size for it rather than against it.
+//     finding rather than as something measured at this call site. ✅ IT HOLDS, and this
+//     hedge is now RESOLVED rather than left standing beside the paragraph above that
+//     asserts it: `DEFAULT_WATCH_WAIT_SECONDS = 15` in
+//     `packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts` (v0.57.1). So blocks
+//     ARE already asking and the bridge hosts ARE dropping it: over the BRIDGE the
+//     ~300-concurrent-hold figure below is one line in each host away. Over the REST
+//     twin the host is gone entirely and no line is needed — see the paragraph above
+//     for what that does and does not mean. Size for it rather than against it.
 //   - the pathological shape the resolver warns about — `setInterval(poll, 2000)` against
 //     a 15 s hold, stacking ~7 concurrent requests per workflow — fits at ~5 concurrent
 //     workflows for one viewer.
