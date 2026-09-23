@@ -18,10 +18,13 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser }));
 
 import {
   getBlockCheckOwnerIds,
+  getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForModelComment,
+  getBlockCheckOwnerIdsForReply,
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDb = dbMock.dbRead;
 
@@ -77,71 +80,6 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
   it('resolves nothing for a legacy comment that no longer exists', async () => {
     mockDb.comment.findUnique.mockResolvedValueOnce(null);
     expect(await getBlockCheckOwnerIds({ entityType: 'commentOld', entityId: 1 })).toEqual([]);
-  });
-
-  it('reply target (comment): resolves BOTH parent author and root content owner', async () => {
-    const PARENT_AUTHOR = 55;
-    mockDb.commentV2.findUnique.mockResolvedValueOnce({
-      userId: PARENT_AUTHOR,
-      thread: {
-        rootThreadId: 999,
-        imageId: null,
-        postId: null,
-        articleId: null,
-        modelId: null,
-        reviewId: null,
-        bountyId: null,
-        bountyEntryId: null,
-        questionId: null,
-        answerId: null,
-      },
-    });
-    // root thread hangs off an image owned by OWNER
-    mockDb.thread.findUnique.mockResolvedValueOnce({
-      rootThreadId: null,
-      imageId: 42,
-      postId: null,
-      articleId: null,
-      modelId: null,
-      reviewId: null,
-      bountyId: null,
-      bountyEntryId: null,
-      questionId: null,
-      answerId: null,
-    });
-    mockDb.image.findUnique.mockResolvedValueOnce({ userId: OWNER });
-
-    const owners = await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
-    expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
-  });
-
-  // A reply resolves its root owner from columns selected off `Thread`. Both halves
-  // matter: the column has to be SELECTED and the owner branch has to exist. The
-  // select assertion is the half a mocked db can't catch by return value alone.
-  it('resolves the root owner for a reply in an appListing thread', async () => {
-    const PARENT_AUTHOR = 55;
-    mockDb.commentV2.findUnique.mockResolvedValueOnce({
-      userId: PARENT_AUTHOR,
-      thread: { rootThreadId: null, appListingId: 42 },
-    });
-    mockDb.appListing.findUnique.mockResolvedValueOnce({ userId: OWNER });
-
-    const owners = await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
-    expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
-  });
-
-  it('selects every owner-bearing thread column when resolving a reply root', async () => {
-    mockDb.commentV2.findUnique.mockResolvedValueOnce({
-      userId: 55,
-      thread: { rootThreadId: 999 },
-    });
-    mockDb.thread.findUnique.mockResolvedValueOnce({ rootThreadId: null });
-
-    await getBlockCheckOwnerIds({ entityType: 'comment', entityId: 1 });
-
-    const select = mockDb.thread.findUnique.mock.calls[0]?.[0]?.select ?? {};
-    for (const column of ['challengeId', 'appListingId'])
-      expect(select).toHaveProperty(column, true);
   });
 
   it('resolves the model3d owner', async () => {
@@ -365,5 +303,184 @@ describe('throwIfBlockedByOwners — reply / legacy-comment helper', () => {
     await expect(
       throwIfBlockedByOwners({ userId: VIEWER, ownerIds: [OWNER, null, undefined] })
     ).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * `Thread.rootThreadId` and `Thread.parentThreadId` are written from the first replier's request, so
+ * every pointer below that disagrees with the stored `Thread.commentId -> CommentV2.threadId` chain
+ * is one a client chose. The block targets must come from the chain.
+ */
+describe('CommentV2 block targets — root owner from the stored thread chain', () => {
+  const OTHER_OWNER = 300;
+  const PARENT_AUTHOR = 55;
+  const REPLY_AUTHOR = 56;
+
+  const TOP_LEVEL = 10;
+  const REPLY = 11;
+  const ORPHANED = 13;
+  const APP_LISTING_COMMENT = 14;
+  const DEEP_TOP = 20_000;
+  const CHAIN_LENGTH = 105;
+  const DEEPEST = DEEP_TOP + CHAIN_LENGTH;
+
+  type FakeThread = Record<string, number | null | undefined>;
+  const threads: Record<number, FakeThread> = {
+    50: { imageId: 1 },
+    60: { imageId: 2 },
+    52: { commentId: TOP_LEVEL, rootThreadId: 60, parentThreadId: 60 },
+    70: { commentId: null, rootThreadId: 50, parentThreadId: 50 },
+    80: { appListingId: 42 },
+    10_000: { imageId: 1 },
+  };
+  const comments: Record<number, { userId: number; threadId: number }> = {
+    [TOP_LEVEL]: { userId: PARENT_AUTHOR, threadId: 50 },
+    [REPLY]: { userId: REPLY_AUTHOR, threadId: 52 },
+    [ORPHANED]: { userId: PARENT_AUTHOR, threadId: 70 },
+    [APP_LISTING_COMMENT]: { userId: PARENT_AUTHOR, threadId: 80 },
+  };
+  // A chain longer than the walk's cap, rooted on OWNER's image — so the cap, not the data, is what
+  // leaves it unresolved.
+  for (let i = 0; i <= CHAIN_LENGTH; i++) {
+    comments[DEEP_TOP + i] = { userId: PARENT_AUTHOR, threadId: 10_000 + i };
+    threads[10_000 + i + 1] = { commentId: DEEP_TOP + i, rootThreadId: 50 };
+  }
+  const imageOwners: Record<number, number> = { 1: OWNER, 2: OTHER_OWNER };
+  const contentColumns = ['imageId', 'appListingId'];
+
+  /**
+   * Stands in for Postgres on the walk: every row from the seed up, with its depth, honouring the
+   * query's own cap, ORDER BY and LIMIT, and a `rooted` column only when the query selects one.
+   */
+  function runChainWalk(sql: string) {
+    let id = Number(/SELECT (\d+) "id"/.exec(sql)?.[1]);
+    const cap = Number(/mt\."depth" < (\d+)/.exec(sql)?.[1]);
+    const rows = [{ id, depth: 0 }];
+    for (let depth = 1; depth <= cap; depth++) {
+      const parent = threads[id]?.commentId;
+      if (parent == null || !comments[parent]) break;
+      id = comments[parent].threadId;
+      rows.push({ id, depth });
+    }
+    const order = /ORDER BY mt\."depth" (ASC|DESC)/.exec(sql)?.[1];
+    if (!order) throw new Error(`owner walk has no depth ordering: ${sql}`);
+    rows.sort((x, y) => (order === 'DESC' ? y.depth - x.depth : x.depth - y.depth));
+    const selectsRooted = /num_nonnulls\([\s\S]*\) > 0 "rooted"/.test(sql);
+    return (/LIMIT 1/.test(sql) ? rows.slice(0, 1) : rows).map((row) =>
+      selectsRooted
+        ? { ...row, rooted: contentColumns.some((c) => threads[row.id]?.[c] != null) }
+        : row
+    );
+  }
+
+  const project = (row: FakeThread | undefined, select?: Record<string, unknown>) =>
+    row && select ? Object.fromEntries(Object.keys(select).map((k) => [k, row[k] ?? null])) : row;
+
+  beforeEach(() => {
+    // `clearAllMocks` keeps `…Once` values an earlier test queued and never consumed (the moderator
+    // test above leaves an image owner behind), and they would answer ahead of these fakes.
+    for (const fn of [
+      mockDb.$queryRaw,
+      mockDb.commentV2.findUnique,
+      mockDb.thread.findUnique,
+      mockDb.image.findUnique,
+      mockDb.appListing.findUnique,
+    ])
+      fn.mockReset();
+    mockDb.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => runChainWalk(Prisma.sql(strings, ...(values as never[])).sql)) as never);
+    mockDb.commentV2.findUnique.mockImplementation((async ({
+      where,
+      select,
+    }: {
+      where: { id: number };
+      select?: Record<string, unknown>;
+    }) => {
+      const c = comments[where.id];
+      if (!c) return null;
+      const thread = project(threads[c.threadId], (select?.thread as { select?: never })?.select);
+      return { ...c, thread };
+    }) as never);
+    mockDb.thread.findUnique.mockImplementation(
+      (async ({ where, select }: { where: { id: number }; select?: Record<string, unknown> }) =>
+        project(threads[where.id], select) ?? null) as never
+    );
+    mockDb.image.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+      imageOwners[where.id] ? { userId: imageOwners[where.id] } : null) as never);
+    mockDb.appListing.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { serialId: number };
+    }) => (where.serialId === 42 ? { userId: OWNER } : null)) as never);
+  });
+
+  it('creating a reply checks the real content owner, not the forged root pointer', async () => {
+    expect(await getBlockCheckOwnerIdsForReply(REPLY)).toEqual([REPLY_AUTHOR, OWNER]);
+  });
+
+  it('editing a reply checks the real content owner, not the forged root pointer', async () => {
+    expect(await getBlockCheckOwnerIdsForComment(REPLY)).toEqual([PARENT_AUTHOR, OWNER]);
+  });
+
+  it('reacting to a reply checks the real content owner, not the forged root pointer', async () => {
+    expect(await getBlockCheckOwnerIds({ entityType: 'comment', entityId: REPLY })).toEqual([
+      REPLY_AUTHOR,
+      OWNER,
+    ]);
+  });
+
+  it('refuses a reaction when only the real content owner blocks', async () => {
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OWNER
+    );
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'comment', entityId: REPLY })
+    ).rejects.toThrow();
+    expect(amIBlockedByUser).not.toHaveBeenCalledWith({
+      userId: VIEWER,
+      targetUserId: OTHER_OWNER,
+    });
+  });
+
+  it('resolves a top-level comment to its own thread content', async () => {
+    expect(await getBlockCheckOwnerIds({ entityType: 'comment', entityId: TOP_LEVEL })).toEqual([
+      PARENT_AUTHOR,
+      OWNER,
+    ]);
+  });
+
+  // The root thread is read with `threadContentSelect`; a column missing there resolves no owner.
+  it('resolves the owner of an appListing root', async () => {
+    expect(await getBlockCheckOwnerIdsForReply(APP_LISTING_COMMENT)).toEqual([
+      PARENT_AUTHOR,
+      OWNER,
+    ]);
+  });
+
+  describe.each([
+    ['an orphaned chain', ORPHANED],
+    ['a chain past the depth cap', DEEPEST],
+  ])('%s, which resolves no root', (_label, commentId) => {
+    it('refuses creating a reply', async () => {
+      await expect(getBlockCheckOwnerIdsForReply(commentId)).rejects.toThrow(
+        'comment thread is no longer available'
+      );
+    });
+
+    it('refuses an edit', async () => {
+      await expect(getBlockCheckOwnerIdsForComment(commentId)).rejects.toThrow(
+        'comment thread is no longer available'
+      );
+    });
+
+    // Reactions have no lock walk to refuse them, and orphaned chains are ordinary data: they fall
+    // back to the comment author alone rather than refusing every reaction there.
+    it('lets a reaction fall back to the comment author alone', async () => {
+      expect(await getBlockCheckOwnerIds({ entityType: 'comment', entityId: commentId })).toEqual([
+        PARENT_AUTHOR,
+      ]);
+    });
   });
 });

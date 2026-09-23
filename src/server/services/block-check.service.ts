@@ -1,10 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { muteableThreadsCte } from '~/server/common/thread-chain';
+import {
+  muteableThreadsCte,
+  threadIsRooted,
+  UNRESOLVED_THREAD_CHAIN_MESSAGE,
+} from '~/server/common/thread-chain';
 import { dbRead } from '~/server/db/client';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { amIBlockedByUser } from '~/server/services/user.service';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
  * Every entity type any write path can hand the owner resolver: comment surfaces
@@ -16,7 +20,6 @@ export type BlockCheckEntityType = CommentConnectorInput['entityType'] | Reactio
 // Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
 // root owner for replies in that kind of thread, silently skipping the block.
 const threadContentSelect = {
-  rootThreadId: true,
   imageId: true,
   postId: true,
   articleId: true,
@@ -35,7 +38,6 @@ const threadContentSelect = {
 } as const;
 
 type ThreadContent = {
-  rootThreadId: number | null;
   imageId: number | null;
   postId: number | null;
   articleId: number | null;
@@ -140,28 +142,34 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
   return undefined;
 }
 
+type RootOwner = { resolved: false } | { resolved: true; ownerId: number | undefined };
+
 /**
- * The owner of the content a thread ultimately hangs off — the root thread's entity for a reply,
- * the thread's own for a top-level comment.
+ * The owner of the content at the top of a thread's stored `Thread.commentId -> CommentV2.threadId`
+ * chain, never `Thread.rootThreadId`, which the first replier writes from client input.
+ *
+ * Unresolved when the chain ends anywhere but a content thread: an orphan left by a deleted
+ * comment, or the depth cap. What that means is the caller's decision.
  */
-async function rootOwnerOfThread(thread: ThreadContent): Promise<number | undefined> {
-  const rootContent = thread.rootThreadId
-    ? await dbRead.thread.findUnique({
-        where: { id: thread.rootThreadId },
-        select: threadContentSelect,
-      })
-    : thread;
-  return ownerOfThreadContent(rootContent);
+async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
+  const [top] = await dbRead.$queryRaw<{ id: number; rooted: boolean }[]>`
+    ${Prisma.raw(muteableThreadsCte(String(Number(threadId))))}
+    SELECT top."id", ${threadIsRooted('th')} "rooted"
+    FROM (SELECT mt."id" FROM muteable_threads mt ORDER BY mt."depth" DESC LIMIT 1) top
+    JOIN "Thread" th ON th.id = top."id"
+  `;
+  if (!top?.rooted) return { resolved: false };
+  const rootThread = await dbRead.thread.findUnique({
+    where: { id: top.id },
+    select: threadContentSelect,
+  });
+  return { resolved: true, ownerId: await ownerOfThreadContent(rootThread) };
 }
 
 /**
  * The owner of the content a stored comment ultimately belongs to — never the author of the
  * comment a reply answers, who is not the content owner and must not moderate replies to them.
- *
- * Climbs the stored `Thread.commentId -> CommentV2.threadId` chain rather than reading
- * `Thread.rootThreadId`: the first replier sets that column from client input, so trusting it lets
- * a commenter name themselves the owner of the replies to them. A chain that ends anywhere but a
- * content thread resolves no owner, which leaves the comment to moderators.
+ * An unresolved chain has no owner, which leaves the comment to moderators.
  */
 export async function getContentOwnerIdForComment(commentId: number) {
   const comment = await dbRead.commentV2.findUnique({
@@ -170,30 +178,36 @@ export async function getContentOwnerIdForComment(commentId: number) {
   });
   if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
 
-  const [top] = await dbRead.$queryRaw<{ id: number }[]>`
-    ${Prisma.raw(muteableThreadsCte(String(Number(comment.threadId))))}
-    SELECT mt."id" FROM muteable_threads mt ORDER BY mt."depth" DESC LIMIT 1
-  `;
-  const rootThread = top
-    ? await dbRead.thread.findUnique({ where: { id: top.id }, select: threadContentSelect })
-    : null;
-  return { hidden: comment.hidden ?? false, ownerId: await ownerOfThreadContent(rootThread) };
+  const root = await rootOwnerOfThread(comment.threadId);
+  return { hidden: comment.hidden ?? false, ownerId: root.resolved ? root.ownerId : undefined };
 }
 
-// For a CommentV2 reply target, block if blocked by the parent comment's author
-// OR by the owner of the root content the thread hangs off of.
-async function ownersForCommentV2(commentId: number): Promise<number[]> {
+/**
+ * Block targets for acting on CommentV2 `commentId`: its author and the root content owner.
+ *
+ * `authorOnly` suits reactions, which no lock walk guards and which legitimately land on comments
+ * in orphaned chains. Comment writes `refuse`, matching `throwIfThreadChainLocked`.
+ */
+async function ownersForCommentV2(
+  commentId: number,
+  onUnresolved: 'refuse' | 'authorOnly'
+): Promise<number[]> {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { userId: true, thread: { select: threadContentSelect } },
+    select: { userId: true, threadId: true },
   });
   if (!comment) return [];
   const ids = new Set<number>([comment.userId]);
-  if (comment.thread) {
-    const rootOwner = await rootOwnerOfThread(comment.thread);
-    if (rootOwner) ids.add(rootOwner);
-  }
+  const root = await rootOwnerOfThread(comment.threadId);
+  if (!root.resolved && onUnresolved === 'refuse')
+    throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
+  if (root.resolved && root.ownerId) ids.add(root.ownerId);
   return [...ids];
+}
+
+/** Owners to check when creating a reply to CommentV2 `parentCommentId`. */
+export async function getBlockCheckOwnerIdsForReply(parentCommentId: number): Promise<number[]> {
+  return ownersForCommentV2(parentCommentId, 'refuse');
 }
 
 /**
@@ -211,24 +225,23 @@ async function ownersForCommentV2(commentId: number): Promise<number[]> {
 export async function getBlockCheckOwnerIdsForComment(commentId: number): Promise<number[]> {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { thread: { select: { commentId: true, ...threadContentSelect } } },
+    select: { threadId: true, thread: { select: { commentId: true } } },
   });
-  const thread = comment?.thread;
-  if (!thread) return [];
+  if (!comment) return [];
+
+  const root = await rootOwnerOfThread(comment.threadId);
+  if (!root.resolved) throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
 
   const ids = new Set<number>();
-  // A reply's parent author is a target too, matching the create path. Only the author is needed —
-  // the parent hangs off the same root, resolved once below.
-  if (thread.commentId) {
+  const parentCommentId = comment.thread?.commentId;
+  if (parentCommentId) {
     const parent = await dbRead.commentV2.findUnique({
-      where: { id: thread.commentId },
+      where: { id: parentCommentId },
       select: { userId: true },
     });
     if (parent) ids.add(parent.userId);
   }
-
-  const rootOwner = await rootOwnerOfThread(thread);
-  if (rootOwner) ids.add(rootOwner);
+  if (root.ownerId) ids.add(root.ownerId);
 
   return [...ids];
 }
@@ -402,7 +415,7 @@ export async function getBlockCheckOwnerIds({
       return r ? [r.userId] : [];
     }
     case 'comment':
-      return ownersForCommentV2(entityId);
+      return ownersForCommentV2(entityId, 'authorOnly');
     default:
       // Compile-time exhaustiveness: a new comment/reaction entity type fails to
       // build here until it resolves an owner. Runtime still yields "no owner"

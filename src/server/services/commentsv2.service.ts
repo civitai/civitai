@@ -2,7 +2,12 @@ import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
-import { MAX_THREAD_CHAIN_DEPTH, muteableThreadsCte } from '~/server/common/thread-chain';
+import {
+  MAX_THREAD_CHAIN_DEPTH,
+  muteableThreadsCte,
+  threadIsRooted,
+  UNRESOLVED_THREAD_CHAIN_MESSAGE,
+} from '~/server/common/thread-chain';
 import {
   isPrismaForeignKeyViolation,
   throwBadRequestError,
@@ -20,6 +25,7 @@ import type {
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIdsForComment,
+  getBlockCheckOwnerIdsForReply,
   throwIfBlockedByEntityOwner,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
@@ -268,26 +274,6 @@ export async function isViewerContentOwner({
  */
 
 /**
- * Every owner-bearing FK on `Thread`. A thread with none of them and no parent comment is an
- * ORPHAN — its parent comment was deleted, and `Thread.commentId` is `onDelete: SetNull`, so the
- * link upward is gone while its replies remain. A column missing from this list turns that
- * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
- * Kept beside `threadContentSelect` in `block-check.service.ts`, which lists the same columns for
- * the same reason.
- */
-const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
-  ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(
-  alias
-)}."imageId",
-  ${Prisma.raw(alias)}."postId", ${Prisma.raw(alias)}."reviewId", ${Prisma.raw(alias)}."modelId",
-  ${Prisma.raw(alias)}."articleId", ${Prisma.raw(alias)}."bountyId",
-  ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
-  ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",
-  ${Prisma.raw(alias)}."model3dId", ${Prisma.raw(alias)}."model3dReviewId",
-  ${Prisma.raw(alias)}."appListingId"
-) > 0`;
-
-/**
  * Refuses a write into a locked thread, into any thread nested under one, or into a chain this
  * cannot resolve to a top-level thread.
  *
@@ -329,7 +315,7 @@ async function throwIfThreadChainLocked(threadId: number | null | undefined) {
     FROM chain;
   `;
   if (chain?.locked) throw throwBadRequestError('comment thread locked');
-  if (chain?.unresolved) throw throwBadRequestError('comment thread is no longer available');
+  if (chain?.unresolved) throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
 }
 
 export const upsertComment = async ({
@@ -354,6 +340,12 @@ export const upsertComment = async ({
     await throwIfBlockedByOwners({
       userId,
       ownerIds: await getBlockCheckOwnerIdsForComment(data.id),
+      isModerator,
+    });
+  else if (entityType === 'comment')
+    await throwIfBlockedByOwners({
+      userId,
+      ownerIds: await getBlockCheckOwnerIdsForReply(entityId),
       isModerator,
     });
   else await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
