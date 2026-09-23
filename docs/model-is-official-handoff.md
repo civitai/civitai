@@ -38,7 +38,7 @@ The original goal was "official models sort first in the generator resource pick
 **Unrelated refactor bundled on this branch** (quick-win #1 from the modal proposal — keep or split out as you prefer):
 - `src/components/Search/utils/meili-filter.ts` — new typed Meili filter builder (`and/or/eq/ne/inArray/not`).
 - `src/components/ImageGeneration/GenerationForm/ResourceSelectModal/useResourceSelectFilters.ts` — `useResourceSelectMeiliFilters` rewritten to use the builder; `getTabRestrictionIds` extracted. ⚠️ **Changes the generated filter string** (string values now quoted, insignificant whitespace/paren diffs, and a latent-bug cleanup that drops `undefined` ids). Behavior-equivalent in intent but **verify across all tabs (all/official/mine/recent/liked/featured) against real data before merging.**
-- `docs/resource-select-modal-refactor.md` — the broader modal-refactor proposal + checklist (Phase 1 filter-builder done; sort-hook, "split curated tabs off InstantSearch", and the single-server-contract phases are open).
+- `docs/resource-select-modal-refactor.md` — the broader modal-refactor proposal + checklist (Phases 1–3 landed; version-eligibility de-duplication still open).
 
 ---
 

@@ -68,6 +68,7 @@ export const modelsFilterableAttributes = [
   'versions.generatorLoaded',
   'versions.hashes',
   'versions.id',
+  'versions.pricing',
   'cannotPromote',
   'poi',
   'minor',
