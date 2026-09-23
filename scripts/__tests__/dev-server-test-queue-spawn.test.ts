@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import type * as ChildProcess from 'child_process';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { RunHandle } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
 const spawn = vi.fn();
 
@@ -72,6 +74,57 @@ describe('the queued run does not re-enter the queue', () => {
 });
 
 /**
+ * The queue suites all use fake runners, so nothing else reads the handle `defaultStartRun` builds.
+ * A member dropped from it - `kill` is the one that matters, since cancel, timeout and shutdown call
+ * it unguarded - otherwise passes every test in the repo.
+ */
+describe('the handle a real run hands back', () => {
+  const platform = process.platform;
+  const setPlatform = (value: NodeJS.Platform) =>
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+
+  afterEach(() => {
+    setPlatform(platform);
+    vi.restoreAllMocks();
+  });
+
+  const startOn = (value: NodeJS.Platform) => {
+    setPlatform(value);
+    return defaultStartRun({
+      worktree: '/repo',
+      args: [],
+      onLog: () => undefined,
+      onExit: () => undefined,
+    });
+  };
+
+  it('carries the child pid', () => {
+    const handle = startOn('linux');
+    handle.dispose();
+    expect(handle.pid).toBe(1234);
+  });
+
+  it('kills the whole process group off Windows', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handle = startOn('linux');
+    handle.dispose();
+    handle.kill();
+    expect(kill).toHaveBeenCalledWith(-1234, 'SIGKILL');
+  });
+
+  it('kills the process tree with taskkill on Windows', () => {
+    const handle = startOn('win32');
+    handle.dispose();
+    handle.kill();
+    expect(spawn).toHaveBeenLastCalledWith(
+      'taskkill',
+      ['/pid', '1234', '/f', '/t'],
+      expect.objectContaining({ shell: true })
+    );
+  });
+});
+
+/**
  * The worker cap only exists because concurrency > 1 is on the table: vitest sizes its own pool at
  * `cpus - 1`, so two uncapped runs ask for 62 workers on a 32-core box. `VITEST_MAX_WORKERS` cannot
  * carry it — the daemon spawns the child with the daemon's own environment — so the CLI flag is the
@@ -85,8 +138,6 @@ describe('the queued run does not re-enter the queue', () => {
 describe("the queue caps each run's vitest pool", () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
 
-  // Typed here rather than at each call: the runner is a .mjs module, so TS infers a bare
-  // EventEmitter and does not see the `dispose` the handle actually carries.
   const start = (opts: Record<string, unknown>) => {
     const handle = defaultStartRun({
       worktree: '/repo',
@@ -94,7 +145,7 @@ describe("the queue caps each run's vitest pool", () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -139,14 +190,10 @@ describe("the queue caps each run's vitest pool", () => {
   // The cap is configured on the QUEUE and has to survive the hop into the runner. Asserting on
   // defaultStartRun alone would pass with that hop deleted.
   it("hands the queue's cap to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { maxWorkers: number | null }) => EventEmitter>(
-      () => new EventEmitter()
+    const startRun = vi.fn<(opts: { maxWorkers: number | null }) => RunHandle>(() =>
+      Object.assign(new EventEmitter(), { kill: vi.fn<RunHandle['kill']>() })
     );
-    // Cast for the same reason as the handle above — TestQueue comes from a .mjs module, so TS
-    // infers `request`'s payload from nothing and lands on `{ args?: never[] }`.
-    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun });
 
     queue.request({ worktree: '/repo', args: [] });
 
@@ -180,7 +227,7 @@ describe('result cache on queued runs', () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -256,7 +303,7 @@ describe('result cache on queued runs', () => {
    * `min(12, cpus - 1)` for itself. Originating from the ceiling put `--max-workers=12` on every
    * uncapped run, which on a box with 12 cores or fewer is MORE Chromium instances than before.
    */
-  it.each(['component', 'geometry'])('adds no width to an uncapped %s run', (kind) => {
+  it.each(['component', 'geometry'] as const)('adds no width to an uncapped %s run', (kind) => {
     start({ kind, maxWorkers: null });
     expect(argvOf(0)).toEqual(['run', RUN_KINDS[kind].script]);
   });
@@ -279,10 +326,10 @@ describe('result cache on queued runs', () => {
   });
 
   it("hands the queue's cache mode to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter>(() => new EventEmitter());
-    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const startRun = vi.fn<(opts: { cacheMode: string }) => RunHandle>(() =>
+      Object.assign(new EventEmitter(), { kill: vi.fn<RunHandle['kill']>() })
+    );
+    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun });
     queue.request({ worktree: '/repo', args: [] });
     expect(startRun.mock.calls[0][0]).toMatchObject({ cacheMode: 'on' });
   });
