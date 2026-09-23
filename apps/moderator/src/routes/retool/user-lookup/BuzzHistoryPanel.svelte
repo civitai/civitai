@@ -5,7 +5,14 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
-  import { fetchBuzzLedgerSide, filterTransactions, type BuzzTransaction } from './buzz-history';
+  import { keepLast } from '$lib/keep-last.svelte';
+  import {
+    fetchBuzzLedgerSide,
+    fetchBuzzLedgerTypes,
+    filterTransactions,
+    type BuzzTransaction,
+    type BuzzLedgerSide,
+  } from './buzz-history';
 
   let { userId }: { userId: number } = $props();
 
@@ -37,16 +44,18 @@
   // description search stays client-side: `description` has no index on a 1.5B-row table.
   //
   // `days` is the one control that is deliberately shared — it reframes the question for both columns.
-  const payments = $derived(
-    browser
-      ? fetchBuzzLedgerSide(userId, 'payments', Number(days), paymentLimit, paymentType)
-      : null
+  // `keepLast`, not `{#await}`: paging or re-filtering must not replace rows already on screen with a
+  // spinner. See its own file for why this is the one place that shape is allowed.
+  const payments = keepLast(() =>
+    browser ? fetchBuzzLedgerSide(userId, 'payments', Number(days), paymentLimit, paymentType) : null
   );
-  const receipts = $derived(
-    browser
-      ? fetchBuzzLedgerSide(userId, 'receipts', Number(days), receiptLimit, receiptType)
-      : null
+  const receipts = keepLast(() =>
+    browser ? fetchBuzzLedgerSide(userId, 'receipts', Number(days), receiptLimit, receiptType) : null
   );
+
+  // Depends on the window alone — not the cap, not the selected type — so choosing a filter never
+  // reloads the list of filters, and the control keeps working while the rows it governs are in flight.
+  const ledgerTypes = keepLast(() => (browser ? fetchBuzzLedgerTypes(userId, Number(days)) : null));
 
   // Retool's second row: counterparty x total, per side. The transaction list answers "what happened";
   // this answers "who with, and how much in total" — which is the farming question, and the one a
@@ -115,98 +124,139 @@
   </div>
 {/snippet}
 
-{#snippet table(
-  title: string,
-  rows: BuzzTransaction[],
+{#snippet controls(
+  type: string,
+  search: string,
   /** Every type this side HAS, from the server — not the types on this page, which is what the cap
    *  left behind. Selecting one is what fetches it. */
+  offeredTypes: string[],
+  onType: (v: string) => void,
+  onSearch: (v: string) => void
+)}
+  <div class="mb-2 flex flex-wrap gap-2">
+    <Select.Root type="single" value={type} onValueChange={onType}>
+      <Select.Trigger class="w-44">{type === 'all' ? 'All types' : type}</Select.Trigger>
+      <Select.Content>
+        <Select.Item value="all">All types</Select.Item>
+        {#each offeredTypes as t (t)}
+          <Select.Item value={t}>{t}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+    <Input
+      value={search}
+      oninput={(e) => onSearch(e.currentTarget.value)}
+      placeholder="Description contains"
+      class="min-w-40 flex-1"
+    />
+  </div>
+{/snippet}
+
+{#snippet column(
+  title: string,
+  side: ReturnType<typeof keepLast<BuzzLedgerSide>>,
   offeredTypes: string[],
   type: string,
   search: string,
   onType: (v: string) => void,
   onSearch: (v: string) => void,
+  onLoadMore: (() => void) | null
+)}
+  <h4 class="mb-2 flex items-baseline gap-2 text-sm font-semibold text-white">
+    {title}
+    {#if side.value}
+      <span class="font-normal text-dark-2">
+        ({num(filterTransactions(side.value.rows, search).length)}{side.value.truncated ? '+' : ''})
+      </span>
+    {/if}
+    <!-- Beside the heading rather than in place of the rows: this says a request is in flight without
+         taking away what is already on screen. -->
+    {#if side.loading}<span class="text-xs font-normal text-dark-2">updating…</span>{/if}
+  </h4>
+
+  {@render controls(type, search, offeredTypes, onType, onSearch)}
+
+  {#if side.failed}
+    <p class="mb-2 text-sm text-red-300">
+      Could not load {title.toLowerCase()}.{side.value ? ' Showing the last result that loaded.' : ''}
+    </p>
+  {/if}
+
+  {#if side.value}
+    {@render rows(
+      filterTransactions(side.value.rows, search),
+      type,
+      search,
+      side.value.truncated,
+      side.value.limit,
+      onLoadMore
+    )}
+  {:else if side.loading}
+    <p class="text-sm text-dark-2">Loading {title.toLowerCase()}…</p>
+  {/if}
+{/snippet}
+
+{#snippet rows(
+  list: BuzzTransaction[],
+  type: string,
+  search: string,
   capped: boolean,
   /** The cap the SERVER applied, which is clamped — the local request value can exceed it. */
   appliedLimit: number,
   onLoadMore: (() => void) | null
 )}
-  <div class="min-w-0 flex-1">
-    <h4 class="mb-2 text-sm font-semibold text-white">
-      {title}
-      <span class="font-normal text-dark-2">({num(rows.length)}{capped ? '+' : ''})</span>
-    </h4>
+  {#if capped}
+    <p class="mb-2 text-xs text-amber-300">
+      Only the newest {num(appliedLimit)} are shown — this side has more, and the oldest were dropped.
+      {#if onLoadMore}
+        <button type="button" class="underline" onclick={onLoadMore}>
+          Load {num(LIMIT_STEP)} more
+        </button>
+      {:else}
+        Narrow the window to see further back.
+      {/if}
+    </p>
+  {/if}
 
-    {#if capped}
-      <p class="mb-2 text-xs text-amber-300">
-        Only the newest {num(appliedLimit)} are shown — this side has more, and the oldest were dropped.
-        {#if onLoadMore}
-          <button type="button" class="underline" onclick={onLoadMore}>
-            Load {num(LIMIT_STEP)} more
-          </button>
-        {:else}
-          Narrow the window to see further back.
-        {/if}
-      </p>
-    {/if}
-
-    <div class="mb-2 flex flex-wrap gap-2">
-      <Select.Root type="single" value={type} onValueChange={onType}>
-        <Select.Trigger class="w-44">{type === 'all' ? 'All types' : type}</Select.Trigger>
-        <Select.Content>
-          <Select.Item value="all">All types</Select.Item>
-          {#each offeredTypes as t (t)}
-            <Select.Item value={t}>{t}</Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-      <Input
-        value={search}
-        oninput={(e) => onSearch(e.currentTarget.value)}
-        placeholder="Description contains"
-        class="min-w-40 flex-1"
-      />
-    </div>
-
-    {#if rows.length === 0}
-      <p class="text-sm text-dark-2">
-        {#if search.trim()}
-          Nothing on this page matches that description.
-        {:else if type !== 'all'}
-          No <strong>{type}</strong> on this side in this window.
-        {:else}
-          None in this window.
-        {/if}
-      </p>
-    {:else}
-      <ul class="space-y-1 text-sm">
-        {#each rows as t (t.transactionId)}
-          <li class="flex flex-wrap items-baseline gap-x-2">
-            <span class="tabular-nums {t.direction === 'in' ? 'text-green-400' : 'text-dark-0'}">
-              {t.direction === 'in' ? '+' : '−'}{num(Math.abs(t.amount))}
+  {#if list.length === 0}
+    <p class="text-sm text-dark-2">
+      {#if search.trim()}
+        Nothing on this page matches that description.
+      {:else if type !== 'all'}
+        No <strong>{type}</strong> on this side in this window.
+      {:else}
+        None in this window.
+      {/if}
+    </p>
+  {:else}
+    <ul class="space-y-1 text-sm">
+      {#each list as t (t.transactionId)}
+        <li class="flex flex-wrap items-baseline gap-x-2">
+          <span class="tabular-nums {t.direction === 'in' ? 'text-green-400' : 'text-dark-0'}">
+            {t.direction === 'in' ? '+' : '−'}{num(Math.abs(t.amount))}
+          </span>
+          <span class="text-xs {COLOR_CLASS[t.color] ?? 'text-dark-2'}">{t.color}</span>
+          <Badge variant="secondary">{t.type}</Badge>
+          {#if t.counterpartyName}
+            <a href="?q={t.counterpartyId}" class={LINK_CLASS}>{t.counterpartyName}</a>
+          {:else}
+            <span class="text-xs text-dark-2">
+              {t.counterpartyLabel ?? `account ${t.counterpartyId}`}
             </span>
-            <span class="text-xs {COLOR_CLASS[t.color] ?? 'text-dark-2'}">{t.color}</span>
-            <Badge variant="secondary">{t.type}</Badge>
-            {#if t.counterpartyName}
-              <a href="?q={t.counterpartyId}" class={LINK_CLASS}>{t.counterpartyName}</a>
-            {:else}
-              <span class="text-xs text-dark-2">
-                {t.counterpartyLabel ?? `account ${t.counterpartyId}`}
-              </span>
-            {/if}
-            <span class="text-xs text-dark-2">{dateTime(t.date)}</span>
-            {#if t.description}
-              <span class="truncate text-xs text-dark-2" title={t.description}>{t.description}</span>
-            {/if}
-            {#if t.externalTransactionId}
-              <span class="text-xs text-dark-2" title="External transaction id">
-                {t.externalTransactionId}
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
+          {/if}
+          <span class="text-xs text-dark-2">{dateTime(t.date)}</span>
+          {#if t.description}
+            <span class="truncate text-xs text-dark-2" title={t.description}>{t.description}</span>
+          {/if}
+          {#if t.externalTransactionId}
+            <span class="text-xs text-dark-2" title="External transaction id">
+              {t.externalTransactionId}
+            </span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
 {/snippet}
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -233,78 +283,55 @@
     </label>
   </div>
 
-  <!-- One await per side, not one for the panel. A shared promise meant changing either column's
-       filter re-entered the pending branch for BOTH, blanking a column whose answer had not changed. -->
+  <!-- Nothing here is behind a pending branch. The heading and the controls always render, and the rows
+       that are already loaded stay on screen while the next page or filter is in flight — a moderator
+       who picked the wrong type, or is waiting on a slow side, must be able to act without the first
+       query finishing, and must not lose data they were reading to do it. -->
   <div class="flex flex-col gap-6 lg:flex-row">
-    {#await payments}
-      <p class="min-w-0 flex-1 text-sm text-dark-2">Loading payments…</p>
-    {:then side}
-      {#if side}
-        {@render table(
-          'Payments',
-          filterTransactions(side.rows, paymentSearch),
-          side.types,
-          paymentType,
-          paymentSearch,
-          (v) => (paymentType = v),
-          (v) => (paymentSearch = v),
-          side.truncated,
-          side.limit,
-          paymentLimit < LIMIT_MAX
-            ? () => (paymentLimit = Math.min(paymentLimit + LIMIT_STEP, LIMIT_MAX))
-            : null
-        )}
-      {/if}
-    {:catch}
-      <p class="min-w-0 flex-1 text-sm text-red-300">Could not load payments.</p>
-    {/await}
-
-    {#await receipts}
-      <p class="min-w-0 flex-1 text-sm text-dark-2">Loading receipts…</p>
-    {:then side}
-      {#if side}
-        {@render table(
-          'Receipts',
-          filterTransactions(side.rows, receiptSearch),
-          side.types,
-          receiptType,
-          receiptSearch,
-          (v) => (receiptType = v),
-          (v) => (receiptSearch = v),
-          side.truncated,
-          side.limit,
-          receiptLimit < LIMIT_MAX
-            ? () => (receiptLimit = Math.min(receiptLimit + LIMIT_STEP, LIMIT_MAX))
-            : null
-        )}
-      {/if}
-    {:catch}
-      <p class="min-w-0 flex-1 text-sm text-red-300">Could not load receipts.</p>
-    {/await}
+    <div class="min-w-0 flex-1">
+      {@render column(
+        'Payments',
+        payments,
+        ledgerTypes.value?.payments ?? [],
+        paymentType,
+        paymentSearch,
+        (v) => (paymentType = v),
+        (v) => (paymentSearch = v),
+        paymentLimit < LIMIT_MAX
+          ? () => (paymentLimit = Math.min(paymentLimit + LIMIT_STEP, LIMIT_MAX))
+          : null
+      )}
+    </div>
+    <div class="min-w-0 flex-1">
+      {@render column(
+        'Receipts',
+        receipts,
+        ledgerTypes.value?.receipts ?? [],
+        receiptType,
+        receiptSearch,
+        (v) => (receiptType = v),
+        (v) => (receiptSearch = v),
+        receiptLimit < LIMIT_MAX
+          ? () => (receiptLimit = Math.min(receiptLimit + LIMIT_STEP, LIMIT_MAX))
+          : null
+      )}
+    </div>
   </div>
 
   <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
-    {#await payments then side}
-      {#if side}
-        {@render totals(
-          'Paid to, by counterparty',
-          filterTransactions(side.rows, paymentSearch),
-          paymentTotalsOpen,
-          () => (paymentTotalsOpen = !paymentTotalsOpen),
-          side.truncated
-        )}
-      {/if}
-    {/await}
-    {#await receipts then side}
-      {#if side}
-        {@render totals(
-          'Received from, by counterparty',
-          filterTransactions(side.rows, receiptSearch),
-          receiptTotalsOpen,
-          () => (receiptTotalsOpen = !receiptTotalsOpen),
-          side.truncated
-        )}
-      {/if}
-    {/await}
+    {@render totals(
+      'Paid to, by counterparty',
+      filterTransactions(payments.value?.rows ?? [], paymentSearch),
+      paymentTotalsOpen,
+      () => (paymentTotalsOpen = !paymentTotalsOpen),
+      payments.value?.truncated ?? false
+    )}
+    {@render totals(
+      'Received from, by counterparty',
+      filterTransactions(receipts.value?.rows ?? [], receiptSearch),
+      receiptTotalsOpen,
+      () => (receiptTotalsOpen = !receiptTotalsOpen),
+      receipts.value?.truncated ?? false
+    )}
   </div>
 </section>

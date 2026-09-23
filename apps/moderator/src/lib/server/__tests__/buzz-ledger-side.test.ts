@@ -51,7 +51,7 @@ vi.mock('../buzz', () => ({ getBuzz: () => ({}) }));
 vi.mock('../notifications', () => ({ getNotifications: () => Promise.resolve([]) }));
 vi.mock('../moderator-db', () => ({ getModeratorDb: () => ({}) }));
 
-const { getBuzzLedgerSide } = await import('../user-account.service');
+const { getBuzzLedgerSide, getBuzzLedgerTypes } = await import('../user-account.service');
 
 const rowQuery = () => queries.find((q) => !isTypeQuery(q))!;
 
@@ -143,26 +143,6 @@ describe('the type filter', () => {
     expect(filterAt).toBeLessThan(limitAt);
   });
 
-  it('reads its options from the whole window, not the capped page', async () => {
-    typeList.types = ['purchase', 'reward'];
-    // Deliberately zero rows: the options must not be derived from them, or a type the cap pushed out
-    // could not be selected — and selecting it is the only thing that would fetch it.
-    const side = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
-
-    expect(side.types).toEqual(['purchase', 'reward']);
-    expect(queries.find(isTypeQuery)).not.toContain('LIMIT');
-  });
-
-  it('never offers a type whose rows the caller may not see', async () => {
-    typeList.types = ['bank', 'tip'];
-
-    const side = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200, includeBank: false });
-
-    // Offering `bank` would be a filter that always returns nothing, which reads as "no such
-    // transactions" rather than as a permission.
-    expect(side.types).toEqual(['tip']);
-  });
-
   it('refuses a type that is not a bare identifier rather than interpolating it', async () => {
     // `$query` does no escaping, so this value reaches the SQL as text. Dropping to "no filter" is the
     // safe failure; passing it through is an injection.
@@ -170,5 +150,47 @@ describe('the type filter', () => {
 
     expect(rowQuery()).not.toContain("OR '1'='1");
     expect(rowQuery()).not.toContain('AND type =');
+  });
+});
+
+/**
+ * The options are their own query, depending on the window alone — not on the cap, and not on the type
+ * currently selected. Folded into the row fetch they reloaded on every selection, and the control
+ * disappeared while they did, which is precisely when a moderator who picked the wrong type wants to
+ * pick another.
+ */
+describe('the filter options', () => {
+  it('are read across the whole window, never from a capped page', async () => {
+    typeList.types = ['purchase', 'reward'];
+
+    const types = await getBuzzLedgerTypes(7, 90);
+
+    expect(types).toEqual({ payments: ['purchase', 'reward'], receipts: ['purchase', 'reward'] });
+    // A cap here would make the list describe what survived it — and a type it dropped is exactly the
+    // one nobody could then select, when selecting it is the only thing that would fetch it.
+    for (const q of queries) expect(q).not.toContain('LIMIT');
+  });
+
+  it('do not depend on the selected type, so choosing one cannot reload them', async () => {
+    await getBuzzLedgerTypes(7, 90);
+
+    for (const q of queries) expect(q).not.toContain('AND type =');
+  });
+
+  it('cover both sides in one request', async () => {
+    await getBuzzLedgerTypes(7, 90);
+
+    expect(queries.some((q) => q.includes('fromAccountId = 7'))).toBe(true);
+    expect(queries.some((q) => q.includes('toAccountId = 7'))).toBe(true);
+  });
+
+  it('never offer a type whose rows the caller may not see', async () => {
+    typeList.types = ['bank', 'tip'];
+
+    const types = await getBuzzLedgerTypes(7, 90, { includeBank: false });
+
+    // Offering `bank` would be a filter that always returns nothing, which reads as "no such
+    // transactions" rather than as a permission.
+    expect(types).toEqual({ payments: ['tip'], receipts: ['tip'] });
   });
 });

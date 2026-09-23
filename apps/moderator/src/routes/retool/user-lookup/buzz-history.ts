@@ -26,10 +26,17 @@ export type BuzzLedgerSide = {
    *  panel states this rather than its own request value. */
   limit: number;
   truncated: boolean;
-  /** Every type on this side across the whole window, for the filter. Not derived from the rows: a type
-   *  the cap pushed off the page must still be selectable, since selecting it is what fetches it. */
-  types: string[];
 };
+
+/** Both sides' filter options. Depends on the window only, never on the cap or the selected type, so
+ *  the control stays populated while the rows it filters are loading. */
+export type BuzzLedgerTypes = { payments: string[]; receipts: string[] };
+
+export async function fetchBuzzLedgerTypes(userId: number, days: number): Promise<BuzzLedgerTypes> {
+  const r = await fetch(`/api/user-buzz-types/${userId}?days=${days}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
 
 /**
  * One side per request. The two columns filter independently, so a shared request made each of them

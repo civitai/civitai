@@ -1245,9 +1245,6 @@ export async function getBuzzLedgerSide(
   days: number;
   limit: number;
   truncated: boolean;
-  /** Every type this side has across the whole window — what the filter may offer, which is not the
-   *  same as what the current page happens to contain. */
-  types: string[];
 }> {
   const direction = side === 'receipts' ? 'in' : 'out';
   const ch = getClickhouse();
@@ -1255,10 +1252,7 @@ export async function getBuzzLedgerSide(
   // `limit` rows OF THAT TYPE rather than narrowing the mixed page already fetched. An account taking
   // thousands of rewards a week filled the cap inside two days, so every older purchase, tip or
   // chargeback was unreachable at any window — filtering could only ever shrink what was already there.
-  const [rows, typeRows] = await Promise.all([
-    ch.$query<BuzzRow>(buzzSideQuery(userId, direction, days, limit, type)),
-    ch.$query<{ type: string }>(buzzTypesQuery(userId, direction, days)),
-  ]);
+  const rows = await ch.$query<BuzzRow>(buzzSideQuery(userId, direction, days, limit, type));
 
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit);
@@ -1302,9 +1296,6 @@ export async function getBuzzLedgerSide(
     limit,
     truncated,
     rows: visible,
-    // Bank rows are withheld from the rows, so the filter must not offer a type whose every row it
-    // would then withhold — that reads as an empty result rather than as a permission.
-    types: typeRows.map((r) => r.type).filter((t) => includeBank || t !== 'bank'),
   };
 }
 
@@ -1446,4 +1437,33 @@ export async function getPayouts(userId: number, limit = 50): Promise<Capped<Pay
   ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
 
   return capped(rows, limit);
+}
+
+/**
+ * The transaction types this account has on each side of the ledger, across the whole window.
+ *
+ * Separate from the rows, and depending on neither the cap nor the selected type, so the filter stays
+ * populated and selectable while the rows it controls are still loading — a moderator who picked the
+ * wrong type should not have to wait out a query against 1.5B rows before picking another.
+ *
+ * Built from the loaded page instead, the list described what survived the cap: a type pushed out by
+ * reward volume could not be offered, and offering it is the only thing that would have fetched it.
+ */
+export async function getBuzzLedgerTypes(
+  userId: number,
+  days = 90,
+  { includeBank = true }: { includeBank?: boolean } = {}
+): Promise<{ payments: string[]; receipts: string[] }> {
+  const ch = getClickhouse();
+  const [out, inbound] = await Promise.all([
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'out', days)),
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'in', days)),
+  ]);
+
+  // Bank rows are withheld from the rows, so the filter must not offer a type whose every row it would
+  // then withhold — that reads as an empty result rather than as a permission.
+  const offerable = (rows: { type: string }[]) =>
+    rows.map((r) => r.type).filter((t) => includeBank || t !== 'bank');
+
+  return { payments: offerable(out), receipts: offerable(inbound) };
 }
