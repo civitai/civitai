@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   Center,
   CloseButton,
@@ -87,6 +88,14 @@ function getNsfwLabel(level: number): string {
   if (level <= 8) return 'X';
   return 'XXX';
 }
+
+const requirementBadgeProps = {
+  variant: 'light',
+  color: 'blue',
+  size: 'sm',
+  radius: 'sm',
+  tt: 'none',
+} as const;
 
 /**
  * Validation criteria type for hover card display
@@ -734,15 +743,33 @@ export default function CrucibleSubmitEntryModal({
             <Text size="sm" c="dimmed">
               {crucibleName}
             </Text>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Badge {...requirementBadgeProps} leftSection={<IconCube size={12} />}>
+                {allowedResourceNames && allowedResourceNames.length > 0
+                  ? allowedResourceNames.length === 1
+                    ? allowedResourceNames[0]
+                    : `${allowedResourceNames.length} models`
+                  : 'Any model'}
+              </Badge>
+              <Badge
+                {...requirementBadgeProps}
+                leftSection={isVideo ? <IconVideo size={12} /> : <IconPhoto size={12} />}
+              >
+                {isVideo ? 'Videos only' : 'Images only'}
+              </Badge>
+              <Badge {...requirementBadgeProps} leftSection={<IconEyeOff size={12} />}>
+                {getNsfwLabel(nsfwLevel)} only
+              </Badge>
+            </div>
           </div>
 
           {/* Entry Progress */}
           <div className="w-44">
             <div className="mb-1 flex justify-between text-xs">
+              <Text c="dimmed">Entries</Text>
               <Text c="white" fw={600}>
                 {currentEntryCount + validSelectedCount} of {entryLimit}
               </Text>
-              <Text c="dimmed">entries</Text>
             </div>
             <Progress
               value={entryProgress}
@@ -762,69 +789,6 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6">
-          {/* Entry Requirements */}
-          <div className="mb-4 rounded-lg border border-[#373a40] bg-[#2c2e33] px-4 py-3">
-            <Text
-              size="xs"
-              fw={600}
-              tt="uppercase"
-              className="mb-2 tracking-wide"
-              c="dimmed"
-              style={{ fontSize: '0.7rem', letterSpacing: '0.5px' }}
-            >
-              Entry Requirements
-            </Text>
-            <div className="flex flex-wrap gap-2">
-              {/* Model Requirements Badge */}
-              <div
-                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
-                style={{
-                  background: 'rgba(34, 139, 230, 0.1)',
-                  border: '1px solid rgba(34, 139, 230, 0.3)',
-                  color: '#74c0fc',
-                  fontSize: '0.75rem',
-                }}
-              >
-                <IconCube size={14} />
-                <span>
-                  {allowedResourceNames && allowedResourceNames.length > 0
-                    ? allowedResourceNames.length === 1
-                      ? allowedResourceNames[0]
-                      : `${allowedResourceNames.length} models`
-                    : 'Any model'}
-                </span>
-              </div>
-
-              {/* Image Type Badge */}
-              <div
-                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
-                style={{
-                  background: 'rgba(34, 139, 230, 0.1)',
-                  border: '1px solid rgba(34, 139, 230, 0.3)',
-                  color: '#74c0fc',
-                  fontSize: '0.75rem',
-                }}
-              >
-                {isVideo ? <IconVideo size={14} /> : <IconPhoto size={14} />}
-                <span>{isVideo ? 'Videos only' : 'Images only'}</span>
-              </div>
-
-              {/* Content Level Badge */}
-              <div
-                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5"
-                style={{
-                  background: 'rgba(34, 139, 230, 0.1)',
-                  border: '1px solid rgba(34, 139, 230, 0.3)',
-                  color: '#74c0fc',
-                  fontSize: '0.75rem',
-                }}
-              >
-                <IconEyeOff size={14} />
-                <span>{getNsfwLabel(nsfwLevel)} only</span>
-              </div>
-            </div>
-          </div>
-
           <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
             <Tabs.List>
               <Tabs.Tab
