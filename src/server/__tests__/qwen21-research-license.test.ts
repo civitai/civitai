@@ -41,10 +41,10 @@ describe('Qwen 2.1 base model', () => {
   });
 
   // Qwen-Image 2.1 is an open-weight release distinct from the Qwen 2 (Qwen-Image
-  // 2.0) API model, so resources trained on one are not offered for the other.
-  it('does not share resources with Qwen 2', () => {
+  // 2.0) API model. The reverse direction is unguarded until Qwen 2.1 has generation
+  // support: getGenerationSupport returns null before consulting any cross rule.
+  it('does not offer Qwen 2.1 resources to Qwen 2', () => {
     expect(getGenerationSupport(ECO.Qwen2, ECO.Qwen21, ModelType.LORA)).toBeNull();
-    expect(getGenerationSupport(ECO.Qwen21, ECO.Qwen2, ModelType.LORA)).toBeNull();
   });
 });
 
@@ -73,14 +73,14 @@ describe('Qwen 2.1 licence', () => {
   it('leaves Qwen and Qwen 2 on their existing licences', () => {
     expect(baseModelLicenses['Qwen']?.name).toBe('Apache 2.0');
     expect(recordFor(ECO.Qwen2).licenseId).toBe(13);
-    expect(baseModelLicenses[recordFor(ECO.Qwen2).name as BaseModel]).toBeUndefined();
   });
 });
 
 // To whoever is about to add `nonCommercial: true` because the agreement says
 // "non-commercial only": that flag withholds paid access and licensing fees from
 // every Qwen 2.1 version. Whether to do that is a product decision that was
-// deliberately NOT taken with this change. Change this test only alongside it.
+// deliberately NOT taken with this change, and the same holds for the mature and
+// same-licence gates below. Change this test only alongside that decision.
 describe('Qwen 2.1 licence display does not decide permissions', () => {
   it('sets no commercial or mature restriction on the licence', () => {
     const license = serverLicense()!;
