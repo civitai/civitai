@@ -1,13 +1,14 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Menu } from '@mantine/core';
+import { Button, Menu, Stack, Switch, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconUserCancel, IconUserCheck } from '@tabler/icons-react';
+import { useState } from 'react';
 import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export function BlockUserButton({
   userId,
@@ -41,9 +42,12 @@ export function BlockUserButton({
           });
         });
     } else {
+      const options = { hideComments: false };
       openConfirmModal({
         title: 'Block User',
-        children: `Are you sure you want to block this user? Once a user is blocked, you won't see their content again and they won't see yours.`,
+        children: (
+          <BlockUserModalBody onHideCommentsChange={(value) => (options.hideComments = value)} />
+        ),
         labels: { confirm: 'Yes, block the user', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
         onConfirm: () =>
@@ -51,15 +55,29 @@ export function BlockUserButton({
             .mutateAsync({
               kind: 'blockedUser',
               data: [{ id: userId }],
-              hidden: !isBlocked,
+              hidden: true,
+              hideComments: options.hideComments,
             })
-            .then(() => {
-              showSuccessNotification({
-                title: isBlocked ? 'User unblocked' : 'User blocked',
-                message: `Content from this user will${
-                  isBlocked ? ' ' : ' not'
-                } show up in your feed`,
-              });
+            .then(({ commentsHidden }) => {
+              const message = 'Content from this user will not show up in your feed';
+              if (commentsHidden?.status === 'failed')
+                showErrorNotification({
+                  title: 'User blocked, but hiding their comments failed',
+                  error: new Error(
+                    `${message}. Some of their comments on your content may still be visible to others.`
+                  ),
+                });
+              else
+                showSuccessNotification({
+                  title: 'User blocked',
+                  message: !commentsHidden
+                    ? message
+                    : commentsHidden.count === 0
+                    ? `${message}. They had no visible comments on your content.`
+                    : `${message}. Hid ${commentsHidden.count.toLocaleString()} of their comments on your content${
+                        commentsHidden.capped ? ' (the most we hide at once)' : ''
+                      }.`,
+                });
             }),
       });
     }
@@ -96,6 +114,32 @@ export function BlockUserButton({
         {isBlocked ? unblockLabel ?? 'Unblock this user' : label ?? 'Block this user'}
       </Menu.Item>
     </LoginRedirect>
+  );
+}
+
+function BlockUserModalBody({
+  onHideCommentsChange,
+}: {
+  onHideCommentsChange: (value: boolean) => void;
+}) {
+  const [hideComments, setHideComments] = useState(false);
+
+  return (
+    <Stack gap="md">
+      <Text size="sm">
+        Are you sure you want to block this user? Once a user is blocked, you won&apos;t see their
+        content again and they won&apos;t see yours.
+      </Text>
+      <Switch
+        checked={hideComments}
+        onChange={(e) => {
+          setHideComments(e.currentTarget.checked);
+          onHideCommentsChange(e.currentTarget.checked);
+        }}
+        label="Also hide their comments on my content"
+        description="Their comments stay hidden if you unblock them. You can show any one of them again."
+      />
+    </Stack>
   );
 }
 
