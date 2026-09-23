@@ -97,6 +97,15 @@ const requirementBadgeProps = {
   tt: 'none',
 } as const;
 
+function TabCount({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <Badge size="sm" variant="filled" circle>
+      {count}
+    </Badge>
+  );
+}
+
 /**
  * Validation criteria type for hover card display
  */
@@ -477,7 +486,7 @@ export default function CrucibleSubmitEntryModal({
 
   const submittedImageIds = useMemo(() => {
     return new Set(crucibleData?.viewerEntries.map((e) => e.imageId) ?? []);
-  }, [crucibleData, currentUser]);
+  }, [crucibleData]);
 
   // Flatten images from pages
   const images = useMemo(() => {
@@ -733,7 +742,7 @@ export default function CrucibleSubmitEntryModal({
     >
       <div className="flex max-h-[90vh] flex-col">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 border-b border-[#373a40] p-5">
+        <div className="flex items-start justify-between gap-4 p-5">
           <div className="flex-1">
             <Text fw={700} size="lg" c="white">
               Submit Entry
@@ -792,13 +801,22 @@ export default function CrucibleSubmitEntryModal({
               <Tabs.Tab
                 value="library"
                 leftSection={isVideo ? <IconVideo size={16} /> : <IconPhoto size={16} />}
+                rightSection={<TabCount count={selectedImages.length} />}
               >
                 My {isVideo ? 'Videos' : 'Images'}
               </Tabs.Tab>
-              <Tabs.Tab value="generator" leftSection={<IconSparkles size={16} />}>
+              <Tabs.Tab
+                value="generator"
+                leftSection={<IconSparkles size={16} />}
+                rightSection={<TabCount count={generatorSelected.length} />}
+              >
                 From Generator
               </Tabs.Tab>
-              <Tabs.Tab value="upload" leftSection={<IconUpload size={16} />}>
+              <Tabs.Tab
+                value="upload"
+                leftSection={<IconUpload size={16} />}
+                rightSection={<TabCount count={uploadingFiles.length} />}
+              >
                 Upload New
               </Tabs.Tab>
             </Tabs.List>
@@ -932,7 +950,7 @@ export default function CrucibleSubmitEntryModal({
         </div>
 
         {/* Footer */}
-        <div className="flex flex-col gap-3 border-t border-[#373a40] p-5">
+        <div className="flex flex-col gap-3 p-5">
           {/* Error with Retry */}
           {lastError && !isSubmitting && (
             <div className="flex items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 p-3">

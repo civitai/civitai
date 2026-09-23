@@ -116,9 +116,8 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
         background: '#25262b',
       }}
     >
-      <Group justify="space-between" align="center">
-        {/* Position badge and prize info */}
-        <Group gap="sm">
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap">
           {/* Medal badge */}
           <Box
             className="flex size-7 items-center justify-center rounded-md font-bold"
@@ -131,18 +130,14 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
             {isTopThree ? <IconCrown size={16} /> : style.label}
           </Box>
 
-          {/* Position info */}
-          <div>
-            <Text size="sm" fw={600} c="white">
-              {style.label} Place
-            </Text>
-            <Text size="xs" c="dimmed">
-              {percentage}% ({abbreviateNumber(prizeAmount)} Buzz)
-            </Text>
-          </div>
+          <Text size="sm" fw={600} c="white">
+            {style.label} Place
+          </Text>
+          <Text size="xs" c="dimmed">
+            {percentage}%
+          </Text>
         </Group>
 
-        {/* Currency badge */}
         <CurrencyBadge currency={Currency.BUZZ} unitAmount={prizeAmount} size="sm" />
       </Group>
     </Box>

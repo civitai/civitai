@@ -2,6 +2,8 @@ import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button, Avatar } from 
 import { IconChevronLeft, IconChevronRight, IconCrown, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PrizePosition } from '~/utils/crucible-helpers';
 import { useState } from 'react';
@@ -160,7 +162,6 @@ export function CrucibleLeaderboard({
               rank={entry.rank}
               prizeInfo={prizeMap.get(entry.rank)}
               totalPrizePool={totalPrizePool}
-              awarded={awarded}
               isCurrentUser={currentUser?.id === entry.userId}
             />
           ))
@@ -215,7 +216,6 @@ type LeaderboardEntryItemProps = {
   rank: number;
   prizeInfo?: PrizePosition;
   totalPrizePool: number;
-  awarded: boolean;
   isCurrentUser?: boolean;
 };
 
@@ -227,7 +227,6 @@ function LeaderboardEntryItem({
   rank,
   prizeInfo,
   totalPrizePool,
-  awarded,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
   const isTopThree = rank <= 3;
@@ -280,8 +279,8 @@ function LeaderboardEntryItem({
     >
       {/* Prize position header for top 3 */}
       {isTopThree && prizeInfo && (
-        <div className="mb-3 flex items-center justify-between">
-          <Group gap="sm">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <Group gap="sm" wrap="nowrap">
             {/* Medal badge */}
             <Box
               className="flex size-7 items-center justify-center rounded-md font-bold"
@@ -294,16 +293,14 @@ function LeaderboardEntryItem({
               <IconCrown size={16} />
             </Box>
 
-            {/* Position info */}
-            <div>
-              <Text size="sm" fw={600} c="white">
-                {style.label} Place
-              </Text>
-              <Text size="xs" c="dimmed">
-                {prizeInfo.percentage}% ({abbreviateNumber(prizeAmount)} Buzz)
-              </Text>
-            </div>
+            <Text size="sm" fw={600} c="white">
+              {style.label} Place
+            </Text>
+            <Text size="xs" c="dimmed">
+              {prizeInfo.percentage}%
+            </Text>
           </Group>
+          <CurrencyBadge currency={Currency.BUZZ} unitAmount={prizeAmount} size="sm" />
         </div>
       )}
 
@@ -358,13 +355,6 @@ function LeaderboardEntryItem({
           {Math.round(entry.score)} pts
         </Text>
       </div>
-
-      {/* Renders only after rankings are final, so this is a result, not a prediction. */}
-      {isTopThree && awarded && (
-        <Text size="xs" c="dimmed" mt={6}>
-          {rank === 1 ? 'Winner' : rank === 2 ? 'Runner-up' : 'Third place'}
-        </Text>
-      )}
     </Box>
   );
 }
