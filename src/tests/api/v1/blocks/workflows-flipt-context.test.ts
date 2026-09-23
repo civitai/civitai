@@ -40,7 +40,9 @@ vi.mock('~/server/utils/client-ip', () => ({ resolveClientIpOrNull: () => '10.0.
 vi.mock('~/server/utils/server-domain', () => ({ getRequestDomainColor: () => 'blue' }));
 
 const getUserById = vi.fn();
-vi.mock('~/server/services/user.service', () => ({ getUserById: (...a: unknown[]) => getUserById(...a) }));
+vi.mock('~/server/services/user.service', () => ({
+  getUserById: (...a: unknown[]) => getUserById(...a),
+}));
 
 // The real `parseSubjectUserId` is cheap and is the thing under test at the seam, so it is
 // NOT mocked — a mock here would pin our own idea of the subject format rather than the
@@ -52,7 +54,11 @@ vi.mock('~/server/services/feature-flags.service', () => ({
 const VIEWER = 4242;
 
 function reqWith(sub: string | undefined): NextApiRequest {
-  return { headers: {}, url: '/api/v1/blocks/workflows/estimate', blockClaims: sub ? { sub } : undefined } as unknown as NextApiRequest;
+  return {
+    headers: {},
+    url: '/api/v1/blocks/workflows/estimate',
+    blockClaims: sub ? { sub } : undefined,
+  } as unknown as NextApiRequest;
 }
 const res = {} as NextApiResponse;
 
