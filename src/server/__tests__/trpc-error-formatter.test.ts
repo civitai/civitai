@@ -1,34 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { initTRPC, TRPCError } from '@trpc/server';
+import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
+import { errorFormatter } from '~/server/trpc/error-formatter';
 
-/**
- * The generation gate marks an overridable block by throwing with
- * `cause: { softBlock: true }`; `trpc.ts`'s errorFormatter lifts that onto
- * `data.softBlock` so the client can offer "Generate Anyway".
- *
- * ⚠️ This pins the LOGIC, not the wiring. The formatter body is replicated below
- * because importing `~/server/trpc` pulls the whole router context (db, redis,
- * auth) in at module scope — so deleting the real branch in `trpc.ts` still
- * leaves the suite green, and the button would stop rendering with no test
- * failing. Fails closed, but silently. Keep the copy in step with the original.
- */
-function formatError(shape: Record<string, unknown>, error: { cause?: unknown }) {
-  const cause = error.cause as { softBlock?: boolean; tosReacceptRequired?: boolean } | undefined;
-  if (cause?.softBlock === true) {
-    return { ...shape, data: { ...(shape.data as object), softBlock: true } };
-  }
-  if (cause?.tosReacceptRequired === true) {
-    return { ...shape, data: { ...(shape.data as object), tosReacceptRequired: true } };
-  }
-  return shape;
+const shape = {
+  message: 'Your prompt was flagged: daughter',
+  code: -32600,
+  data: { code: 'BAD_REQUEST', httpStatus: 400 },
+} as Parameters<typeof errorFormatter>[0]['shape'];
+
+function format(cause: unknown) {
+  const error = new TRPCError({ code: 'BAD_REQUEST', message: shape.message, cause });
+  return errorFormatter({ shape, error }) as { data: Record<string, unknown> };
 }
-
-const shape = { message: 'Your prompt was flagged: daughter', data: { code: 'BAD_REQUEST' } };
 
 describe('trpc errorFormatter — softBlock lifting', () => {
   it('lifts cause.softBlock onto data', () => {
-    const result = formatError(shape, { cause: { softBlock: true } }) as {
-      data: { softBlock?: boolean; code?: string };
-    };
+    const result = format({ softBlock: true });
     expect(result.data.softBlock).toBe(true);
     // The spread must not drop what tRPC already put on `data`.
     expect(result.data.code).toBe('BAD_REQUEST');
@@ -42,7 +32,60 @@ describe('trpc errorFormatter — softBlock lifting', () => {
     ['softBlock false', { softBlock: false }],
     ['a truthy non-boolean softBlock', { softBlock: 'yes' }],
   ])('leaves the shape untouched for %s', (_label, cause) => {
-    const result = formatError(shape, { cause }) as { data: { softBlock?: boolean } };
-    expect(result.data.softBlock).toBeUndefined();
+    expect(format(cause).data.softBlock).toBeUndefined();
+  });
+});
+
+const READ_ONLY_TEXT =
+  'Invalid `prisma.apiKey.create()` invocation: QueryError(PostgresError { code: "25006", ' +
+  'message: "cannot execute INSERT in a read-only transaction" })';
+
+async function callThroughTrpc(thrown: unknown) {
+  const t = initTRPC.create({ errorFormatter });
+  const router = t.router({
+    create: t.procedure.mutation(() => {
+      throw thrown;
+    }),
+  });
+  const loggedRefs: (string | undefined)[] = [];
+  const res = await fetchRequestHandler({
+    endpoint: '/api/trpc',
+    req: new Request('http://localhost/api/trpc/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
+    router,
+    onError: ({ error }) => loggedRefs.push(getClientSafeError(error)?.errorRef),
+  });
+  const body = (await res.json()) as {
+    error: { message: string; data: { errorRef?: string; httpStatus: number } };
+  };
+  return { status: res.status, error: body.error, loggedRefs };
+}
+
+describe('trpc errorFormatter — driver-authored messages, through a real tRPC handler', () => {
+  it('masks the driver text and returns the same ref the onError log line records', async () => {
+    const { status, error, loggedRefs } = await callThroughTrpc(
+      new Prisma.PrismaClientUnknownRequestError(READ_ONLY_TEXT, { clientVersion: '6.13.0' })
+    );
+
+    expect(status).toBe(500);
+    expect(error.message).not.toContain('prisma');
+    expect(error.message).not.toContain('25006');
+    expect(error.data.errorRef).toMatch(/^[0-9a-f]{12}$/);
+    expect(error.message).toContain(`(ref: ${error.data.errorRef})`);
+    expect(loggedRefs).toEqual([error.data.errorRef]);
+  });
+
+  it('passes a message we wrote through unchanged, with no ref', async () => {
+    const { status, error, loggedRefs } = await callThroughTrpc(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'That slug is already taken' })
+    );
+
+    expect(status).toBe(400);
+    expect(error.message).toBe('That slug is already taken');
+    expect(error.data.errorRef).toBeUndefined();
+    expect(loggedRefs).toEqual([undefined]);
   });
 });

@@ -76,7 +76,29 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
-/** Is this specific object a database driver's own error? */
+// `pg`/`pg-pool` raise these as plain `Error`s, so no class identifies them.
+const PG_CONNECTION_ERROR_MESSAGES = new Set([
+  'timeout exceeded when trying to connect',
+  'Connection terminated due to connection timeout',
+  'Connection terminated unexpectedly',
+  'Connection terminated',
+  'Query read timeout',
+  'Client has encountered a connection error and is not queryable',
+  'Client was closed and is not queryable',
+]);
+
+/** Node's own socket/DNS errors — their message names the internal host and port. */
+function isNodeSystemError(e: unknown): boolean {
+  const err = e as { code?: unknown; errno?: unknown; syscall?: unknown };
+  return (
+    e instanceof Error &&
+    typeof err.code === 'string' &&
+    typeof err.errno === 'number' &&
+    typeof err.syscall === 'string'
+  );
+}
+
+/** Is this specific object a database driver's own error, or the connection layer beneath it? */
 function isDriverError(e: unknown): e is Error {
   return (
     e instanceof Prisma.PrismaClientKnownRequestError ||
@@ -84,7 +106,9 @@ function isDriverError(e: unknown): e is Error {
     e instanceof Prisma.PrismaClientValidationError ||
     e instanceof Prisma.PrismaClientInitializationError ||
     e instanceof Prisma.PrismaClientRustPanicError ||
-    e instanceof DatabaseError
+    e instanceof DatabaseError ||
+    (e instanceof Error && PG_CONNECTION_ERROR_MESSAGES.has(e.message)) ||
+    isNodeSystemError(e)
   );
 }
 
@@ -133,18 +157,13 @@ function isDriverError(e: unknown): e is Error {
  * *without* setting `cause` defeats this predicate** — the wire text is the
  * driver's, but nothing in the chain says so. There were 17 such sites (App
  * Blocks + referral routers); all now pass `cause`, and
- * `rest-error-envelope-ledger.test.ts` pins the set at ZERO, failing the moment
- * one reappears. The two bodies differ by that single word, and the difference is
- * demonstrated as a pair in `endpoint-helpers-driver-4xx.test.ts`.
+ * `rest-error-envelope-ledger.test.ts` fails when one reappears — but only for the
+ * spellings its regex knows, so a novel one can still slip by. The two bodies
+ * differ by that single word, and the difference is demonstrated as a pair in `endpoint-helpers-driver-4xx.test.ts`.
  *
- * 🔴 **Scope of that predicate, so nobody over-reads it:** this function is
- * consulted by `handleEndpointError` and by nothing else, and that helper serves
- * the REST `/api/*` surface. tRPC errors go through `trpc.ts`'s own
- * `errorFormatter`, which neither calls this nor puts `cause` on the wire. So
- * `cause` on a tRPC router site is latent correctness — it makes the site right
- * if its procedure is ever reached through the REST helper (several `/api/v1/*`
- * routes DO call procedures via `publicApiContext2`), not a change to any
- * response body emitted today.
+ * Two consumers: `handleEndpointError` (REST `/api/*`) and
+ * `getClientSafeError` (`server/trpc/client-safe-error.ts`, tRPC's
+ * `errorFormatter`), so the same site loses its `cause` on both surfaces at once.
  */
 export function isDriverAuthoredMessage(message: string, e: unknown): boolean {
   let cur = e as { cause?: unknown } | undefined;
@@ -473,9 +492,7 @@ export function isClickHouseConnectionError(e: unknown): boolean {
   // overload. Strings, because ClickHouseError.code is a string.
   const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
 
-  let cur = e as
-    | { name?: string; message?: string; code?: unknown; cause?: unknown }
-    | undefined;
+  let cur = e as { name?: string; message?: string; code?: unknown; cause?: unknown } | undefined;
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
     const code = cur.code;
     if (typeof code === 'string') {

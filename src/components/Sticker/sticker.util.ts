@@ -441,7 +441,7 @@ export function allocateDraftEntitlements({
  * becomes two. Unknown holds the key, always.
  *
  * `data.httpStatus` comes from tRPC's error shape, which this repo's
- * `errorFormatter` passes through untouched. A network failure has no `data` and
+ * `errorFormatter` never alters. A network failure has no `data` and
  * therefore holds, which is the point.
  */
 export function purchaseCanBeRetriedFresh(error: unknown): boolean {

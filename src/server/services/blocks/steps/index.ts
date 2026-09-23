@@ -1248,7 +1248,7 @@ export type BoundedStepVariant = string & { readonly __boundedStepVariant: 'boun
  * on.
  *
  * 🔴 THE MESSAGE IS ECHOED TO THE UNTRUSTED IFRAME. `trpc.ts`'s `errorFormatter`
- * is pass-through (`({ shape }) => shape`), and `getTRPCErrorFromUnknown`
+ * masks only driver-authored text, and `getTRPCErrorFromUnknown`
  * preserves an unrecognized throw's `message`, so everything below reaches the
  * block's own JS — INCLUDING `step.variants.join(', ')`, i.e. the entry's ENTIRE
  * declared allowlist. For `convert-image` that is the single word `default` and
