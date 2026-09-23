@@ -7,6 +7,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { SessionUser } from '~/types/session';
 
 /**
  * The delegation seam for `/api/v1/blocks/workflows/*` — the REST twins of the
@@ -111,20 +112,77 @@ async function getCallerFactory() {
 type BlocksCaller = ReturnType<typeof blocksRouter.createCaller>;
 
 /**
+ * The Flipt-targeting user for this request, built from the token's VERIFIED subject.
+ *
+ * 🔴 WHY THIS EXISTS, and it is a REPRODUCED defect rather than a theoretical one.
+ * `ctx.user` is `undefined` on this transport, so `getFeatureFlagsLazy({ req })` alone
+ * made `buildFliptContext` emit `{ isLoggedIn: 'false' }` — no `userId`, no
+ * `isModerator`. Flipt segments match on CONTEXT properties, so every segment missed and
+ * every segment-gated flag fell back to its `enabled` default, while the bridge — same
+ * viewer, same action — evaluated with a real context.
+ *
+ * MEASURED against production Flipt (namespace `default`, flag `wildcards`), four arms:
+ *   empty context                  -> enabled=false, DEFAULT, segments=[]
+ *   isModerator=true               -> enabled=true,  MATCH,   segments=["moderators"]
+ *   listed tester id, non-mod      -> enabled=true,  MATCH,   segments=["testers"]
+ *   ordinary viewer (the CONTROL)  -> enabled=false, DEFAULT, segments=[]
+ * The control is what bounds it: an ordinary viewer got the same answer on both
+ * transports, so the divergence was confined to moderators and listed testers — who are
+ * also the population most likely to try a new REST surface first. For `wildcards` the
+ * consequence was a REFUSED generation (`resolveCanGenerateForVersions` empties
+ * `wildcardVersionIds`, then `assertViewerCanGeneratePageResources` throws).
+ *
+ * 🔴 WHAT THIS FIXES, AND WHAT IT DOES NOT — stated as counts so it is checkable.
+ * Threading `userId` + `isModerator` covers the **96** flags gated on the `moderators`
+ * (46) and `testers` (50) segments, `wildcards` among them. It does NOT cover the **5**
+ * flags on `early-adopters` (4) and `members` (1, `anima-training`): `tier` and
+ * `isEarlyAdopter` are DERIVED, not columns on `User`, so supplying them means a
+ * subscription lookup this seam deliberately does not do. Those five still evaluate as
+ * `tier: 'free'` / `isMember: 'false'` / `isEarlyAdopter: 'false'` here. If one of them
+ * ever gates a block-reachable path, widen this — do not assume it is already covered.
+ *
+ * Cost: one `getUserById` per request. The two spend procedures hydrate the same user
+ * again internally, so on submit/estimate this is a second read of a row that is already
+ * being fetched; accepted rather than plumbed through, because the alternative couples
+ * this seam to the procedures' internals.
+ */
+async function blockFliptUser(req: NextApiRequest): Promise<SessionUser | undefined> {
+  const claims = (req as { blockClaims?: { sub?: string } }).blockClaims;
+  if (!claims?.sub) return undefined;
+  const [{ parseSubjectUserId }, { getUserById }] = await Promise.all([
+    import('~/server/middleware/block-scope.middleware'),
+    import('~/server/services/user.service'),
+  ]);
+  const userId = parseSubjectUserId(claims.sub);
+  // Anon subjects have no user id — `{ isLoggedIn: 'false' }` is then CORRECT, and is
+  // what the bridge produces for the same caller.
+  if (userId == null) return undefined;
+  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
+  return row ? (row as unknown as SessionUser) : undefined;
+}
+
+/**
  * A `blocksRouter` caller bound to this request. The context mirrors
  * `publicApiContext2` field for field — deliberately, so the one server-to-server
- * tRPC context shape in this repo stays one shape.
+ * tRPC context shape in this repo stays one shape — EXCEPT `user`, which this transport
+ * now populates from the verified token so Flipt targets the real viewer. See
+ * `blockFliptUser` for what that covers and what it does not.
  */
 export async function blockWorkflowCaller(
   req: NextApiRequest,
   res: NextApiResponse
 ): Promise<BlocksCaller> {
-  const factory = await getCallerFactory();
+  const [factory, fliptUser] = await Promise.all([getCallerFactory(), blockFliptUser(req)]);
   const domain = getRequestDomainColor(req) ?? 'blue';
   return factory({
-    user: undefined,
+    // 🔴 NOT a general `ctx.user`. This is the FLAG-TARGETING subject only: the four
+    // procedures never read `ctx.user` (every viewer binding is
+    // `parseSubjectUserId(claims.sub)` off the verified token), so populating it changes
+    // exactly one thing — what Flipt sees. If a procedure ever starts reading `ctx.user`,
+    // that is a NEW decision to make deliberately, not something this line granted.
+    user: fliptUser,
     acceptableOrigin: true,
-    features: getFeatureFlagsLazy({ req }),
+    features: getFeatureFlagsLazy({ req, user: fliptUser }),
     track: new Tracker(req, res),
     ip: resolveClientIpOrNull(req) ?? '',
     cache: {
