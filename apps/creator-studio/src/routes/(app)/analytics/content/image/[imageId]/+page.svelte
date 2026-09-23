@@ -10,6 +10,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import ReactorsPanel from '$lib/components/ReactorsPanel.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import { IconArrowLeft, IconExternalLink } from '@tabler/icons-svelte';
@@ -252,3 +253,8 @@
     </div>
   {/each}
 </div>
+
+<ReactorsPanel
+  endpoint="/analytics/content/image/{image.imageId}/reactors"
+  noun={image.type === 'video' ? 'video' : 'image'}
+/>
