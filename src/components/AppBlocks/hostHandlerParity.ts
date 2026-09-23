@@ -317,8 +317,11 @@ export const INVENTORY = {
   },
   // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
   // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
-  // successor to GET /blocks/me (which stays live until the hook publishes +
-  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // TWIN of GET /blocks/me and not its successor — a viewer read is data
+  // movement, so the REST route is the DEFAULT surface and both stay (see the
+  // "Direction" note under Routes in docs/features/app-blocks.md, and
+  // civitai/civitai-app-starters#437).
+  // AHEAD of the published SDK dist union (SDK co-requisite
   // — forward-looking coverage, allowed by the one-directional compile-time
   // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
   // slot apps are deferred + will get page-host too), so N/A for the model host

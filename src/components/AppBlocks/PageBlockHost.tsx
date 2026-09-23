@@ -1934,7 +1934,9 @@ export function PageBlockHost({
   const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
   const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
   // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
-  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // `useViewer()` hook and is the host-mediated TWIN of GET /blocks/me, not its
+  // successor — both stay; the REST route is the default surface for a viewer
+  // read (see "Direction" under Routes in docs/features/app-blocks.md). A
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
@@ -2489,9 +2491,11 @@ export function PageBlockHost({
   }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack, reportNoToken]);
 
   // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
-  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
-  // GET /blocks/me REST call, so a page block can render the viewer's name /
-  // gate write UI on their moderation status without holding the scope directly.
+  // that backs the SDK `useViewer()` hook — the host-mediated TWIN of the
+  // GET /blocks/me REST call (not its successor; both stay, and the REST route
+  // is the default surface for this read), so a page block can render the
+  // viewer's name / gate write UI on their moderation status without holding
+  // the scope directly.
   // Host-MEDIATED: the iframe never sees a session; the identity is derived from
   // the token's SELF-BOUND `sub` server-side (never client input), gated on the
   // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page

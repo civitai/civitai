@@ -6813,10 +6813,18 @@ export const blocksRouter = router({
   /**
    * HOST-MEDIATED viewer self-read for the token-bound viewer (a page block
    * reading "who am I"). Backs the SDK `useViewer()` hook via the GET_VIEWER
-   * page-host bridge, and is the host-mediated successor to the
-   * `GET /api/v1/blocks/me` REST endpoint (which STAYS LIVE for now — this
-   * bridge supersedes it once the SDK hook publishes + consumers migrate; a
-   * later follow-up retires /me).
+   * page-host bridge, and is the host-mediated TWIN of the
+   * `GET /api/v1/blocks/me` REST endpoint — NOT its successor. Both are
+   * supported and both stay: a viewer read is plain DATA MOVEMENT, and the
+   * current direction (decided 2026-09-21, confirmed 2026-09-23) is "default
+   * API; the bridge only for what only the HOST can do", so /me is the default
+   * surface and this bridge is the page-host affordance beside it. See
+   * `docs/features/app-blocks.md` → Routes → "Direction", and
+   * `civitai/civitai-app-starters#437`.
+   *
+   * ⚠️ RETRACTED: an earlier copy of this comment said this bridge would
+   * supersede /me "once the SDK hook publishes + consumers migrate" and that a
+   * later follow-up would retire /me. That plan is OFF — do not re-derive it.
    *
    * MUTATION (not query) DELIBERATELY, for the SAME reason as getMyBuzzBalance:
    * the block JWT is a bearer credential a `.query` would leak into the
