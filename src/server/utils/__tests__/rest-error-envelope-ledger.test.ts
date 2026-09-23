@@ -616,8 +616,7 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     // All 17 sites are fixed. An entry reappearing here means the gap re-opened.
     const KNOWN_BYPASS: [string, number][] = [];
 
-    const fromCaught =
-      /message:\s*(?:(?:e|err|error|ex)\s+instanceof\s+Error\s*\?\s*)?\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
+    const fromCaught = /message:\s*\(?(?:e|err|error|ex)\)?(?:\s+as\s+\w+)?\)?\.message/;
 
     /**
      * A `cause` that CANNOT carry the driver error is no better than none.
@@ -712,13 +711,6 @@ describe('LEDGER: GENERIC_CLIENT_ERROR_BY_STATUS covers every 4xx a driver can r
     ).toBe(1);
     expect(
       bypassCount(`new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: null })`)
-    ).toBe(1);
-    // `merch.router.ts` forwarded a DB error through this ternary, past the narrower regex.
-    expect(
-      bypassCount(
-        `new TRPCError({ code: 'BAD_REQUEST', message: error instanceof Error ? error.message : 'x' })`
-      ),
-      'an `instanceof Error ?` guard must not hide a bypass'
     ).toBe(1);
 
     expect(

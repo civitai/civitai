@@ -5,7 +5,6 @@ import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { router } from '~/server/trpc';
 import { errorFormatter } from '~/server/trpc/error-formatter';
-import { throwDbError } from '~/server/utils/errorHandling';
 
 const shape = {
   message: 'Your prompt was flagged: daughter',
@@ -70,8 +69,8 @@ async function callThroughTrpc(thrown: unknown) {
   return { status: res.status, error: body.error, loggedRefs };
 }
 
-describe('trpc errorFormatter — driver-authored messages, through a real tRPC handler', () => {
-  it('masks the driver text, and onError sees the same ref the response carries', async () => {
+describe('trpc errorFormatter — server faults, through a real tRPC handler', () => {
+  it('masks a 500, and onError sees the same ref the response carries', async () => {
     const { status, error, loggedRefs } = await callThroughTrpc(
       new Prisma.PrismaClientUnknownRequestError(READ_ONLY_TEXT, { clientVersion: '6.13.0' })
     );
@@ -84,24 +83,16 @@ describe('trpc errorFormatter — driver-authored messages, through a real tRPC 
     expect(loggedRefs).toEqual([error.data.errorRef]);
   });
 
-  it('keeps a masked 4xx status and the rest of `data`', async () => {
-    const driver = new Prisma.PrismaClientKnownRequestError(
-      'Invalid `prisma.model.update()` invocation: Record to update not found.',
-      { code: 'P2025', clientVersion: '6.13.0' }
-    );
-    const { status, error } = await callThroughTrpc(
-      (() => {
-        try {
-          throwDbError(driver);
-        } catch (e) {
-          return e;
-        }
-      })()
-    );
+  it('keeps the status and the rest of `data` on a masked error', async () => {
+    const { status, error } = await callThroughTrpc(new Error('Query read timeout'));
 
-    expect(status).toBe(404);
-    expect(error.data).toMatchObject({ httpStatus: 404, code: 'NOT_FOUND', path: 'create' });
-    expect(error.message).toBe(`Not found (ref: ${error.data.errorRef})`);
+    expect(status).toBe(500);
+    expect(error.data).toMatchObject({
+      httpStatus: 500,
+      code: 'INTERNAL_SERVER_ERROR',
+      path: 'create',
+    });
+    expect(error.message).toBe(`An unexpected error occurred (ref: ${error.data.errorRef})`);
   });
 
   it('passes a message we wrote through unchanged, with no ref', async () => {

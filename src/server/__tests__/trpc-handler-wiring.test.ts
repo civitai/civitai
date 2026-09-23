@@ -225,7 +225,7 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   });
 
   it('CONTROL: an unmasked error a router already logged is not logged again', async () => {
-    const error = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' });
+    const error = new TRPCError({ code: 'CONFLICT', message: 'boom' });
     markServerFaultLogged(error);
     await callOnError(request(2), error);
 

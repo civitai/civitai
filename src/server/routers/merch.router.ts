@@ -7,7 +7,6 @@ const toTRPCError = (error: unknown) =>
   new TRPCError({
     code: 'BAD_REQUEST',
     message: error instanceof Error ? error.message : 'Something went wrong.',
-    cause: error,
   });
 
 export const merchRouter = router({

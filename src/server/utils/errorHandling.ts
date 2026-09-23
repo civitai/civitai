@@ -76,31 +76,7 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
-const NETWORK_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'EPIPE',
-  'UND_ERR_CONNECT_TIMEOUT',
-  'UND_ERR_SOCKET',
-  'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_BODY_TIMEOUT',
-]);
-
-/** This object alone (no `cause` walk) carries a Node/undici socket or DNS error code. */
-function hasNetworkErrorCode(e: unknown): boolean {
-  const code = (e as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'string' && NETWORK_CODES.has(code);
-}
-
-/**
- * Is this specific object a database driver's own error, or a socket/DNS error beneath
- * any client — whose text (`connect ECONNREFUSED <host>:<port>`) names internal hosts?
- */
+/** Is this specific object a database driver's own error? */
 function isDriverError(e: unknown): e is Error {
   return (
     e instanceof Prisma.PrismaClientKnownRequestError ||
@@ -108,8 +84,7 @@ function isDriverError(e: unknown): e is Error {
     e instanceof Prisma.PrismaClientValidationError ||
     e instanceof Prisma.PrismaClientInitializationError ||
     e instanceof Prisma.PrismaClientRustPanicError ||
-    e instanceof DatabaseError ||
-    (e instanceof Error && hasNetworkErrorCode(e))
+    e instanceof DatabaseError
   );
 }
 
@@ -158,14 +133,18 @@ function isDriverError(e: unknown): e is Error {
  * *without* setting `cause` defeats this predicate** — the wire text is the
  * driver's, but nothing in the chain says so. There were 17 such sites (App
  * Blocks + referral routers); all now pass `cause`, and
- * `rest-error-envelope-ledger.test.ts` fails when one reappears — but only for the
- * spellings its regex knows, so a novel one can still slip by. The two bodies
- * differ by that single word, and the difference is demonstrated as a pair in
- * `endpoint-helpers-driver-4xx.test.ts`.
+ * `rest-error-envelope-ledger.test.ts` pins the set at ZERO, failing the moment
+ * one reappears. The two bodies differ by that single word, and the difference is
+ * demonstrated as a pair in `endpoint-helpers-driver-4xx.test.ts`.
  *
- * Two consumers: `handleEndpointError` (REST `/api/*`) and
- * `getClientSafeError` (`server/trpc/client-safe-error.ts`, tRPC's
- * `errorFormatter`), so the same site loses its `cause` on both surfaces at once.
+ * 🔴 **Scope of that predicate, so nobody over-reads it:** this function is
+ * consulted by `handleEndpointError` and by nothing else, and that helper serves
+ * the REST `/api/*` surface. tRPC errors go through `trpc.ts`'s own
+ * `errorFormatter`, which neither calls this nor puts `cause` on the wire. So
+ * `cause` on a tRPC router site is latent correctness — it makes the site right
+ * if its procedure is ever reached through the REST helper (several `/api/v1/*`
+ * routes DO call procedures via `publicApiContext2`), not a change to any
+ * response body emitted today.
  */
 export function isDriverAuthoredMessage(message: string, e: unknown): boolean {
   let cur = e as { cause?: unknown } | undefined;
@@ -374,10 +353,24 @@ export function throwServiceUnavailableError(message: string | null = null, erro
  * convert "any thrown error" to a network failure.
  */
 export function isUpstreamNetworkError(e: unknown): boolean {
+  const NETWORK_CODES = new Set([
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'EPIPE',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT',
+  ]);
   // Walk the `.cause` chain (undici nests the syscall error under TypeError.cause).
   let cur = e as { name?: string; message?: string; code?: string; cause?: unknown } | undefined;
   for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
-    if (hasNetworkErrorCode(cur)) return true;
+    if (typeof cur.code === 'string' && NETWORK_CODES.has(cur.code)) return true;
     const msg = typeof cur.message === 'string' ? cur.message : '';
     // The canonical undici/fetch network-failure signature.
     if (msg === 'fetch failed' || msg.includes('fetch failed')) return true;

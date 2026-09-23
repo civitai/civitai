@@ -300,8 +300,13 @@ describe('handleEndpointError — driver-authored text at a 4xx (civitai#3845 in
    * it on trust. `rest-error-envelope-ledger.test.ts` is the part that goes red
    * when a site regresses.
    *
-   * tRPC's `errorFormatter` consults the same predicate (via
-   * `getClientSafeError`), so a site without `cause` leaks on both surfaces.
+   * 🔴 SCOPE, stated plainly: `isDriverAuthoredMessage` is consulted by
+   * `handleEndpointError` and by NOTHING else, and `handleEndpointError` serves
+   * the REST `/api/*` surface. tRPC has its own `errorFormatter` (`trpc.ts`),
+   * which does not call it and does not put `cause` on the wire. So on today's
+   * wiring the sweep changes no observable tRPC response — it removes a latent
+   * gap and makes those sites correct the moment one of their procedures is
+   * reached through the REST helper. It is not a live leak being closed.
    */
   it('INVARIANT: WITHOUT `cause`, driver text at a 4xx survives — the reason for `cause: err`', () => {
     const driver = prismaError('P2000', 'Invalid `prisma.appListing.create()` invocation');

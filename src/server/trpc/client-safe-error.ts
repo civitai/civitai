@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import { isDriverAuthoredMessage } from '~/server/utils/errorHandling';
-import { genericErrorForDriverMessage } from '~/server/utils/rest-error-envelope';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 export type ClientSafeError = { message: string; errorRef: string };
 
@@ -14,20 +13,20 @@ const CLIENT_SAFE = Symbol.for('civitai.trpc.clientSafeError');
 type Stamped = TRPCError & { [CLIENT_SAFE]?: ClientSafeError | null };
 
 /**
- * The replacement for a tRPC error whose message was written by the database driver (Prisma
- * invocation text, Postgres SQLSTATEs, constraint/column names) or a socket error, or `undefined`
- * when the message is ours and safe to show. Same rule as the REST surface's `handleEndpointError`.
+ * A server fault's message is never shown to the user: it is replaced with a generic one carrying
+ * an `errorRef`, which `onError` writes to Axiom next to the full error. 503 keeps its message —
+ * those are always ours ("temporarily unavailable, try again"), same as REST's `isRestServerFault`.
  */
 export function getClientSafeError(error: TRPCError): ClientSafeError | undefined {
   const stamped = error as Stamped;
   const cached = stamped[CLIENT_SAFE];
   if (cached !== undefined) return cached ?? undefined;
 
+  const status = getHTTPStatusCodeFromError(error);
   let result: ClientSafeError | null = null;
-  const generic = genericErrorForDriverMessage(getHTTPStatusCodeFromError(error));
-  if (generic && isDriverAuthoredMessage(error.message, error)) {
+  if (status >= 500 && status !== 503) {
     const errorRef = randomBytes(6).toString('hex');
-    result = { message: `${generic.message} (ref: ${errorRef})`, errorRef };
+    result = { message: `${GENERIC_SERVER_ERROR_MESSAGE} (ref: ${errorRef})`, errorRef };
   }
   try {
     Object.defineProperty(stamped, CLIENT_SAFE, { value: result, enumerable: false });
