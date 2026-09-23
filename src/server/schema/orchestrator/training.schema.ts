@@ -1,5 +1,6 @@
 import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
@@ -283,6 +284,7 @@ const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
   features: FeatureAccess;
+  domain: ColorDomain;
 };
 
 // Can't extend a union, so we need to merge with an intersection

@@ -161,6 +161,12 @@ export const createModelFile = async ({
     // Extract B2-specific fields before passing to createFile (they aren't DB columns)
     const { backend, s3Path, ...createInput } = input;
 
+    // Stamp the domain the training data is uploaded under, server-side, so a paid submit can
+    // refuse an NSFW dataset prepared on red being paid for on green. Never trusted from the client.
+    if (createInput.type === 'Training Data') {
+      createInput.metadata = { ...createInput.metadata, uploadDomain: ctx.domain };
+    }
+
     const file = await createFile({
       ...createInput,
       userId: userId,
@@ -267,6 +273,17 @@ export const updateFileHandler = async ({
 }) => {
   try {
     const { backend, s3Path, ...updateInput } = input;
+
+    // Provenance is server-owned (see createFileHandler). A content re-upload re-stamps the current
+    // domain; a metadata-only update must not let the client change it, so we drop any client value
+    // and let updateFile's merge preserve the stored one.
+    if (updateInput.type === 'Training Data' && updateInput.url) {
+      updateInput.metadata = { ...updateInput.metadata, uploadDomain: ctx.domain };
+    } else if (updateInput.metadata?.uploadDomain != null) {
+      const nextMetadata = { ...updateInput.metadata };
+      delete nextMetadata.uploadDomain;
+      updateInput.metadata = nextMetadata;
+    }
 
     const result = await updateFile({
       ...updateInput,
