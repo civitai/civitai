@@ -15,7 +15,11 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SearchIndexContext } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
-import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
+import { modelVersionPricingSignals } from '@civitai/buzz';
+import {
+  getModelPaidAccessGates,
+  getModelVersionPaidAccessTerms,
+} from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -250,6 +254,9 @@ const transformData = async ({ models, tags, cosmetics, coveredNext, images }: P
   const modelIds = models.map((m) => m.id);
   const paidAccessGates = await getModelPaidAccessGates(modelIds);
 
+  const versionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
+  const paidAccessTerms = await getModelVersionPaidAccessTerms(versionIds);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -326,6 +333,7 @@ const transformData = async ({ models, tags, cosmetics, coveredNext, images }: P
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
+            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),

@@ -1,8 +1,8 @@
 # Resource Select Modal — refactor proposal
 
-Status: proposal / in progress
+Status: Phases 1-3 landed; one Phase 2 item open (version-eligibility de-duplication)
 Owner: (unassigned)
-Scope: `src/components/ImageGeneration/GenerationForm/ResourceSelectModal/**` + `ResourceSelectFilters.tsx`, `resource-select.types.ts`, `useResourceSelectFilters.ts`
+Scope: `src/components/ImageGeneration/GenerationForm/ResourceSelectModal/**` + `ResourceSelectFilters.tsx`, `resource-select.types.ts`, `ResourceSelectProvider.tsx`
 
 ## Problem
 
@@ -29,18 +29,18 @@ Do **not** rewrite in one pass. Land the low-risk wins first, re-measure, then d
 
 ### Phase 1 — quick wins (low risk, no behavior change)
 
-- [x] **Typed Meili filter builder.** Replace string concatenation in `useResourceSelectMeiliFilters` with a small composable `and()/or()/eq()/ne()/inArray()/not()` module that handles quoting/escaping. Pure refactor + unit-testable. → `src/components/Search/utils/meili-filter.ts`
+- [x] **Typed Meili filter builder.** Replace string concatenation in `useResourceSelectMeiliFilters` with a small composable `and()/or()/eq()/ne()/inArray()/not()` module that handles quoting/escaping. Pure refactor + unit-testable. → `src/shared/utils/meili-filter.ts` (moved there when the filter moved server-side)
 - [x] **Consolidate the sort.** Extract the tab→sort `indexUiState` nudge into a single `useResourceSortForTab(tab)` hook co-located with the sort constants, instead of the logic living across `index.tsx`, `resource-select.types.ts`, `ResourceSelectFilters.tsx`, and `ResourceSelectModalContent.tsx`.
 
 ### Phase 2 — separate the concerns (medium)
 
-- [ ] **Split "curated list" tabs off InstantSearch.** Render `recent`/`liked`/`featured`/`recommended`/`auction` directly from their tRPC data into the shared card grid; use InstantSearch **only** for the true search tabs (`all`/`official` + query/facets). Removes the `id IN [...]` injection, the `hitsPerPage=1000` hack, and lets the featured podium be an honest curated list.
-- [ ] **De-duplicate version eligibility.** Move `filterVersions` / base-model relaxation into one shared util (or server-side) so the Meili filter and the client filter can't drift.
-- [ ] **Remove the `key={...}` remounts** once the data sources are separated and no longer need forced resets.
+- [x] **Split "curated list" tabs off InstantSearch.** Superseded by Phase 3, which removed InstantSearch from the picker entirely rather than keeping it for the search tabs. Original plan: render `recent`/`liked`/`featured`/`recommended`/`auction` directly from their tRPC data into the shared card grid; use InstantSearch **only** for the true search tabs (`all`/`official` + query/facets). Removes the `id IN [...]` injection, the `hitsPerPage=1000` hack, and lets the featured podium be an honest curated list.
+- [ ] **De-duplicate version eligibility.** Move `filterVersions` / base-model relaxation into one shared util (or server-side) so the Meili filter and the client filter can't drift. **Now three copies**: `buildFilter`'s `typeClauses` (server), `filterVersions` in `ResourceHitList.tsx` (client list), and `getResourceCompatibility` via `pickInitialVersionIndex` (card).
+- [x] **Remove the `key={...}` remounts** — neither `key={selectedTab}` nor `key={totalFilters}` survives.
 
 ### Phase 3 — one server contract (bigger, optional)
 
-- [ ] `resource.pickerSearch({ query, tab, types, baseModels })` returning an already-ordered, already-eligibility-filtered page (Meili server-side for search tabs, Postgres/caches for curated tabs). The client renders + paginates only. Collapses all three concerns; deletes filter-string building, id-IN injection, client re-sort, dual sort keys, and version dedup.
+- [x] **Shipped as `trpc model.getResourceSelect`** → `getResourceSelectModels` in `src/server/services/resource-select.service.ts`, paginated by `useResourceSelectInfinite`. InstantSearch, the `id IN [...]` injection and the dual sort keys are gone. Original plan: `resource.pickerSearch({ query, tab, types, baseModels })` returning an already-ordered, already-eligibility-filtered page (Meili server-side for search tabs, Postgres/caches for curated tabs). The client renders + paginates only. Collapses all three concerns; deletes filter-string building, id-IN injection, client re-sort, dual sort keys, and version dedup.
 
 ## Non-goals / risks
 
