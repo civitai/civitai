@@ -37,6 +37,9 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
   // Imported by several endpoints; only referenced inside the (never-run)
   // handler bodies, but provide a stub so the named import resolves.
   parseSubjectUserId: () => null,
+  // Same: tip.ts, shared-storage/increment.ts and all six shared-storage WRITE
+  // routes take the audit-detail stash as a named import.
+  stashBlockActionDetail: () => undefined,
 }));
 
 // Mock the heavy service/db/router imports the endpoints pull at module load so
@@ -90,23 +93,42 @@ vi.mock('~/server/services/buzz.service', () => ({
   getDailyCompensationRewardByUser: vi.fn(),
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({ handleEndpointError: vi.fn() }));
-vi.mock('~/server/routers/apps-shared.router', () => ({
-  assertValidCounterKey: vi.fn(),
-  incrementSharedCounter: vi.fn(),
-  getTopSharedCounters: vi.fn(),
-  listSharedRows: vi.fn(),
-  getSharedRow: vi.fn(),
-  getSharedCounts: vi.fn(),
-  // The shared read routes import these BOUNDS at module scope to build their zod
-  // schemas, so the mock has to carry real numbers — `undefined` would make
-  // `z.string().max(undefined)` throw during the import under test.
-  SHARED_KEY_MAX: 64,
-  SHARED_PREFIX_MAX: 64,
-  SHARED_CURSOR_MAX: 200,
-  SHARED_LIST_LIMIT_MAX: 100,
-  SHARED_LIST_LIMIT_DEFAULT: 50,
-  SHARED_COUNTS_KEYS_MAX: 100,
-}));
+vi.mock('~/server/routers/apps-shared.router', async () => {
+  // ASYNC factory purely so the value schema below can be a REAL zod object.
+  // `append.ts` / `update.ts` do `z.object({ value: sharedValueInput })` at
+  // module scope, and a `vi.fn()` there throws during the import under test —
+  // the same failure mode the numeric bounds note below describes.
+  const z = await import('zod');
+  return {
+    assertValidCounterKey: vi.fn(),
+    incrementSharedCounter: vi.fn(),
+    getTopSharedCounters: vi.fn(),
+    listSharedRows: vi.fn(),
+    getSharedRow: vi.fn(),
+    getSharedCounts: vi.fn(),
+    appendSharedRow: vi.fn(),
+    updateSharedRow: vi.fn(),
+    voteSharedRow: vi.fn(),
+    unvoteSharedRow: vi.fn(),
+    withdrawSharedRow: vi.fn(),
+    reportSharedRow: vi.fn(),
+    // The shared read routes import these BOUNDS at module scope to build their zod
+    // schemas, so the mock has to carry real numbers — `undefined` would make
+    // `z.string().max(undefined)` throw during the import under test.
+    SHARED_KEY_MAX: 64,
+    SHARED_PREFIX_MAX: 64,
+    SHARED_CURSOR_MAX: 200,
+    SHARED_LIST_LIMIT_MAX: 100,
+    SHARED_LIST_LIMIT_DEFAULT: 50,
+    SHARED_COUNTS_KEYS_MAX: 100,
+    SHARED_REASON_MAX: 500,
+    sharedValueInput: z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().max(4096).optional(),
+      data: z.unknown().optional(),
+    }),
+  };
+});
 
 // The endpoint → expected requiredScope contract. Import order fixes the
 // `captured` index; asserting the scope proves the CORS change didn't drop it.
@@ -176,6 +198,43 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   {
     module: '~/pages/api/v1/blocks/shared-storage/counts',
     requiredScope: 'apps:storage:shared:read',
+    allowOpaqueOrigin: true,
+  },
+  // The shared WRITE surface. Same opaque-origin argument again, and it bites
+  // HARDER here than on the reads: a block whose feed renders but whose submit
+  // button 405s on the preflight reads as an app bug, so a missing opt-in would
+  // be diagnosed anywhere except here. The scope is the WRITE scope on all six —
+  // that half of each entry is the authorization claim, not a transport one, and
+  // a route that silently downgraded to `:read` would still pass a CORS-only
+  // check.
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/append',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/update',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/vote',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/unvote',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/withdraw',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/report',
+    requiredScope: 'apps:storage:shared:write',
     allowOpaqueOrigin: true,
   },
   // Added by the DERIVED check below, which found it ABSENT: tip-allowance has

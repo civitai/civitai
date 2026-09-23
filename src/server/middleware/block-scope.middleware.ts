@@ -1298,15 +1298,24 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
  * direct and indirect `withBlockScope(` wrap, rather than trusting this
  * comment.
  *
- * Not listed on purpose: `submissions`, `submit-version`, `withdraw`,
- * `dev-token`, `block-tokens`. Those routes live under `/api/v1/blocks` too but
- * authenticate with an API key, not a block JWT — they never call this
- * middleware, so listing them would be an unfalsifiable claim about a path this
- * function cannot see.
+ * Not listed on purpose: `submissions`, `submit-version`, `dev-token`,
+ * `block-tokens`. Those routes live under `/api/v1/blocks` too but authenticate
+ * with an API key, not a block JWT — they never call this middleware, so listing
+ * them would be an unfalsifiable claim about a path this function cannot see.
+ *
+ * ⚠️ `withdraw` USED TO BE on that not-listed line and no longer is, which is a
+ * collision worth naming rather than silently resolving. There are now TWO
+ * routes whose last segment is `withdraw`: the API-key `blocks/withdraw` (still
+ * invisible to this middleware, still not a reason for the entry) and the
+ * block-JWT `blocks/shared-storage/withdraw`, which IS wrapped and is what the
+ * entry is for. The allowlist is a flat set of SEGMENTS, not of paths, so it
+ * cannot distinguish them — and it does not need to: the full normalized path is
+ * what lands in the `endpoint` column, and those two differ.
  */
 export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'api',
   'v1',
+  'append',
   'blocks',
   'buzz',
   'collections',
@@ -1319,11 +1328,16 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'list',
   'me',
   'models',
+  'report',
   'shared-storage',
   'tip',
   'tip-allowance',
   'tools',
   'top',
+  'unvote',
+  'update',
+  'vote',
+  'withdraw',
 ]);
 
 /**
