@@ -76,29 +76,31 @@ export function isPrismaForeignKeyViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
 }
 
-// `pg`/`pg-pool` raise these as plain `Error`s, so no class identifies them.
-const PG_CONNECTION_ERROR_MESSAGES = new Set([
-  'timeout exceeded when trying to connect',
-  'Connection terminated due to connection timeout',
-  'Connection terminated unexpectedly',
-  'Connection terminated',
-  'Query read timeout',
-  'Client has encountered a connection error and is not queryable',
-  'Client was closed and is not queryable',
+const NETWORK_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
 ]);
 
-/** Node's own socket/DNS errors — their message names the internal host and port. */
-function isNodeSystemError(e: unknown): boolean {
-  const err = e as { code?: unknown; errno?: unknown; syscall?: unknown };
-  return (
-    e instanceof Error &&
-    typeof err.code === 'string' &&
-    typeof err.errno === 'number' &&
-    typeof err.syscall === 'string'
-  );
+/** This object alone (no `cause` walk) carries a Node/undici socket or DNS error code. */
+function hasNetworkErrorCode(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && NETWORK_CODES.has(code);
 }
 
-/** Is this specific object a database driver's own error, or the connection layer beneath it? */
+/**
+ * Is this specific object a database driver's own error, or a socket/DNS error beneath
+ * any client — whose text (`connect ECONNREFUSED <host>:<port>`) names internal hosts?
+ */
 function isDriverError(e: unknown): e is Error {
   return (
     e instanceof Prisma.PrismaClientKnownRequestError ||
@@ -107,8 +109,7 @@ function isDriverError(e: unknown): e is Error {
     e instanceof Prisma.PrismaClientInitializationError ||
     e instanceof Prisma.PrismaClientRustPanicError ||
     e instanceof DatabaseError ||
-    (e instanceof Error && PG_CONNECTION_ERROR_MESSAGES.has(e.message)) ||
-    isNodeSystemError(e)
+    (e instanceof Error && hasNetworkErrorCode(e))
   );
 }
 
@@ -159,7 +160,8 @@ function isDriverError(e: unknown): e is Error {
  * Blocks + referral routers); all now pass `cause`, and
  * `rest-error-envelope-ledger.test.ts` fails when one reappears — but only for the
  * spellings its regex knows, so a novel one can still slip by. The two bodies
- * differ by that single word, and the difference is demonstrated as a pair in `endpoint-helpers-driver-4xx.test.ts`.
+ * differ by that single word, and the difference is demonstrated as a pair in
+ * `endpoint-helpers-driver-4xx.test.ts`.
  *
  * Two consumers: `handleEndpointError` (REST `/api/*`) and
  * `getClientSafeError` (`server/trpc/client-safe-error.ts`, tRPC's
@@ -372,24 +374,10 @@ export function throwServiceUnavailableError(message: string | null = null, erro
  * convert "any thrown error" to a network failure.
  */
 export function isUpstreamNetworkError(e: unknown): boolean {
-  const NETWORK_CODES = new Set([
-    'ECONNREFUSED',
-    'ECONNRESET',
-    'ETIMEDOUT',
-    'ENOTFOUND',
-    'EAI_AGAIN',
-    'EHOSTUNREACH',
-    'ENETUNREACH',
-    'EPIPE',
-    'UND_ERR_CONNECT_TIMEOUT',
-    'UND_ERR_SOCKET',
-    'UND_ERR_HEADERS_TIMEOUT',
-    'UND_ERR_BODY_TIMEOUT',
-  ]);
   // Walk the `.cause` chain (undici nests the syscall error under TypeError.cause).
   let cur = e as { name?: string; message?: string; code?: string; cause?: unknown } | undefined;
   for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
-    if (typeof cur.code === 'string' && NETWORK_CODES.has(cur.code)) return true;
+    if (hasNetworkErrorCode(cur)) return true;
     const msg = typeof cur.message === 'string' ? cur.message : '';
     // The canonical undici/fetch network-failure signature.
     if (msg === 'fetch failed' || msg.includes('fetch failed')) return true;
@@ -492,7 +480,9 @@ export function isClickHouseConnectionError(e: unknown): boolean {
   // overload. Strings, because ClickHouseError.code is a string.
   const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
 
-  let cur = e as { name?: string; message?: string; code?: unknown; cause?: unknown } | undefined;
+  let cur = e as
+    | { name?: string; message?: string; code?: unknown; cause?: unknown }
+    | undefined;
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
     const code = cur.code;
     if (typeof code === 'string') {

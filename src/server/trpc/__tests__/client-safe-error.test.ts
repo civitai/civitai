@@ -41,7 +41,7 @@ describe('getClientSafeError', () => {
     expectMasked(
       error,
       ['prisma', '25006', 'read-only', 'apiKey', 'PostgresError'],
-      'An unexpected error occurred, please try again'
+      'An unexpected error occurred'
     );
   });
 
@@ -52,7 +52,7 @@ describe('getClientSafeError', () => {
     const error = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: driver });
 
     expect(error.message).toBe(READ_ONLY_TEXT);
-    expectMasked(error, ['prisma', '25006'], 'An unexpected error occurred, please try again');
+    expectMasked(error, ['prisma', '25006'], 'An unexpected error occurred');
   });
 
   it('keeps a 4xx status generic rather than turning it into a server-error message', () => {
@@ -83,29 +83,44 @@ describe('getClientSafeError', () => {
     );
   });
 
-  it('masks a Node socket error, whose message names the internal host and port', () => {
+  it('masks a socket error, whose message names the internal host and port', () => {
     const socket = Object.assign(new Error('connect ECONNREFUSED 10.1.2.3:5432'), {
       code: 'ECONNREFUSED',
-      errno: -61,
-      syscall: 'connect',
     });
     const error = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: socket });
 
-    expectMasked(
-      error,
-      ['10.1.2.3', 'ECONNREFUSED'],
-      'An unexpected error occurred, please try again'
-    );
+    expectMasked(error, ['10.1.2.3', 'ECONNREFUSED'], 'An unexpected error occurred');
   });
 
-  it('masks a pg-pool connection error, which is a plain Error', () => {
+  it('leaves our own message alone when a socket error is only its cause', () => {
+    const socket = Object.assign(new Error('connect ECONNREFUSED 10.1.2.3:5432'), {
+      code: 'ECONNREFUSED',
+    });
     const error = new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      cause: new Error('timeout exceeded when trying to connect'),
+      message: 'Generation is temporarily unavailable',
+      cause: socket,
     });
 
-    expectMasked(error, ['timeout exceeded'], 'An unexpected error occurred, please try again');
+    expect(getClientSafeError(error)).toBeUndefined();
   });
+
+  it.each([
+    ['UNAUTHORIZED', 401],
+    ['FORBIDDEN', 403],
+    ['TOO_MANY_REQUESTS', 429],
+    ['SERVICE_UNAVAILABLE', 503],
+  ] as const)(
+    'leaves %s alone, matching REST — onError never logs it, so a ref would be unfindable',
+    (code) => {
+      const driver = new Prisma.PrismaClientUnknownRequestError(READ_ONLY_TEXT, {
+        clientVersion: CLIENT_VERSION,
+      });
+      const error = new TRPCError({ code, message: driver.message, cause: driver });
+
+      expect(getClientSafeError(error)).toBeUndefined();
+    }
+  );
 
   it('leaves a message we wrote alone, even when a driver error is its cause', () => {
     const driver = new Prisma.PrismaClientKnownRequestError('Unique constraint failed on slug', {

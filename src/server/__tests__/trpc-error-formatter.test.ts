@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import { initTRPC, TRPCError } from '@trpc/server';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
+import { router } from '~/server/trpc';
 import { errorFormatter } from '~/server/trpc/error-formatter';
+import { throwDbError } from '~/server/utils/errorHandling';
 
 const shape = {
   message: 'Your prompt was flagged: daughter',
@@ -15,6 +17,10 @@ function format(cause: unknown) {
   const error = new TRPCError({ code: 'BAD_REQUEST', message: shape.message, cause });
   return errorFormatter({ shape, error }) as { data: Record<string, unknown> };
 }
+
+it('is the formatter the app router is built with', () => {
+  expect(router({})._def._config.errorFormatter).toBe(errorFormatter);
+});
 
 describe('trpc errorFormatter — softBlock lifting', () => {
   it('lifts cause.softBlock onto data', () => {
@@ -65,7 +71,7 @@ async function callThroughTrpc(thrown: unknown) {
 }
 
 describe('trpc errorFormatter — driver-authored messages, through a real tRPC handler', () => {
-  it('masks the driver text and returns the same ref the onError log line records', async () => {
+  it('masks the driver text, and onError sees the same ref the response carries', async () => {
     const { status, error, loggedRefs } = await callThroughTrpc(
       new Prisma.PrismaClientUnknownRequestError(READ_ONLY_TEXT, { clientVersion: '6.13.0' })
     );
@@ -76,6 +82,26 @@ describe('trpc errorFormatter — driver-authored messages, through a real tRPC 
     expect(error.data.errorRef).toMatch(/^[0-9a-f]{12}$/);
     expect(error.message).toContain(`(ref: ${error.data.errorRef})`);
     expect(loggedRefs).toEqual([error.data.errorRef]);
+  });
+
+  it('keeps a masked 4xx status and the rest of `data`', async () => {
+    const driver = new Prisma.PrismaClientKnownRequestError(
+      'Invalid `prisma.model.update()` invocation: Record to update not found.',
+      { code: 'P2025', clientVersion: '6.13.0' }
+    );
+    const { status, error } = await callThroughTrpc(
+      (() => {
+        try {
+          throwDbError(driver);
+        } catch (e) {
+          return e;
+        }
+      })()
+    );
+
+    expect(status).toBe(404);
+    expect(error.data).toMatchObject({ httpStatus: 404, code: 'NOT_FOUND', path: 'create' });
+    expect(error.message).toBe(`Not found (ref: ${error.data.errorRef})`);
   });
 
   it('passes a message we wrote through unchanged, with no ref', async () => {

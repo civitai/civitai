@@ -119,3 +119,65 @@ export function restErrorBody(
 ): RestErrorBody {
   return { error, message, code };
 }
+
+/**
+ * Is this REST status a SERVER FAULT — i.e. one whose error text is OURS, never a
+ * message written for the caller?
+ *
+ * 🔴 ONE predicate, deliberately governing BOTH sides of `handleEndpointError`:
+ * whether the fault is LOGGED in full, and whether the response body is
+ * GENERICIZED. Keeping them on one rule buys an invariant that is worth more than
+ * either half alone, and that `endpoint-helpers-error-envelope.test.ts` pins over
+ * every 5xx status:
+ *
+ *   the un-redacted text is dropped from the wire EXACTLY when it is preserved in
+ *   the log — so genericizing can never destroy the only copy of a message.
+ *
+ * Two exclusions, both load-bearing:
+ *   - **4xx** is *usually* client feedback the caller is meant to read (zod
+ *     issues, "not found", rate-limit hints), so it is not a server fault and is
+ *     not genericized HERE.
+ *
+ *     🔴 That used to be stated without the "usually", and as written it was
+ *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
+ *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
+ *     the column or the constraint name. Those are now caught by a SECOND
+ *     predicate, `isDriverAuthoredMessage`, applied inside the 4xx arm below: it
+ *     asks who WROTE the text rather than how severe the status is, keeps the
+ *     status, and — crucially — logs the un-redacted text on the way out, so the
+ *     "genericized exactly when logged" invariant holds for it too. A 4xx whose
+ *     message is ours is still passed through byte-identically.
+ *   - **503** is the retryable transient-upstream mapping
+ *     (`throwServiceUnavailableError`, the Meili/ClickHouse/orchestrator brownout
+ *     guards). It fires in high-volume waves, so it is excluded from the error
+ *     stream — which means the response is the ONLY copy of its message. Its
+ *     messages are hand-authored retry hints ("… is temporarily overloaded —
+ *     please retry."), and no Prisma code maps to SERVICE_UNAVAILABLE in
+ *     `prismaErrorToTrpcCode`, so the #3845 disclosure class cannot arrive as a
+ *     503. Genericizing it would therefore destroy an actionable hint (the
+ *     shipped Go CLI renders it verbatim on its 503 branch) to redact text that
+ *     is never driver-derived. Kept verbatim, on purpose.
+ *
+ * NB `TIMEOUT` maps to **408**, not a 5xx (`@trpc/server` JSONRPC2_TO_HTTP_CODE),
+ * so it takes the 4xx pass-through. The 5xx codes reachable here are
+ * INTERNAL_SERVER_ERROR (500), NOT_IMPLEMENTED (501), BAD_GATEWAY (502),
+ * SERVICE_UNAVAILABLE (503) and GATEWAY_TIMEOUT (504).
+ */
+export function isRestServerFault(status: number): boolean {
+  return status >= 500 && status !== 503;
+}
+
+/**
+ * What replaces a driver-authored message at `status`, shared by `handleEndpointError`
+ * and tRPC's `errorFormatter`. `undefined` leaves the message alone.
+ */
+export function genericErrorForDriverMessage(
+  status: number
+): { code: RestErrorCode; message: string } | undefined {
+  if (isRestServerFault(status)) {
+    return { code: REST_ERROR_CODE.INTERNAL_SERVER_ERROR, message: GENERIC_SERVER_ERROR_MESSAGE };
+  }
+  return GENERIC_CLIENT_ERROR_BY_STATUS[status];
+}
