@@ -72,15 +72,19 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 }));
 
 import AddFromImportsModal from '~/components/Moderation/HuggingFaceImport/AddFromImportsModal';
+import type { AddFromImportsModalProps } from '~/components/Moderation/HuggingFaceImport/AddFromImportsModal';
 
 /** Opened the way the button opens it — through the store, stacked above whatever is showing. */
-async function openPicker() {
+async function openPicker(
+  extra: Partial<AddFromImportsModalProps> = {},
+  heading = 'Add from Hugging Face imports'
+) {
   renderWithProviders(<DialogProvider />);
   dialogStore.trigger({
     component: AddFromImportsModal,
-    props: { modelVersionId: 42, modelType: 'Checkpoint', adoptFiles: mockAdoptFiles },
+    props: { modelVersionId: 42, modelType: 'Checkpoint', adoptFiles: mockAdoptFiles, ...extra },
   });
-  await expect.element(page.getByText('Add from Hugging Face imports')).toBeVisible();
+  await expect.element(page.getByText(heading)).toBeVisible();
 }
 
 async function pickType(filename: string, label: string) {
@@ -122,6 +126,26 @@ describe('AddFromImportsModal', () => {
     // Adopting before the refresh would read the cached version, which lacks the new files.
     expect(calls.indexOf('adopt:911,912')).toBeGreaterThan(
       calls.indexOf('invalidate:getByIdForEdit')
+    );
+  });
+
+  test('offers only the section its opener scoped it to', async () => {
+    await openPicker(
+      {
+        types: ['VAE', 'Text Encoder', 'Config'],
+        title: 'Add components from Hugging Face imports',
+      },
+      'Add components from Hugging Face imports'
+    );
+
+    const row = page.getByText('flux1-krea-dev.safetensors').element().parentElement as HTMLElement;
+    (row.querySelector('input') as HTMLInputElement).click();
+    await expect.element(page.getByRole('option', { name: 'VAE', exact: true })).toBeVisible();
+
+    // Read once the list is up: minting weights is the thing the components section must not do,
+    // and an unscoped picker offers 'Checkpoint' on this very row.
+    expect(page.getByRole('option', { name: 'Checkpoint', exact: true }).elements()).toHaveLength(
+      0
     );
   });
 
