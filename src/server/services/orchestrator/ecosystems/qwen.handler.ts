@@ -18,7 +18,7 @@ import type {
 import type {
   ImageGenStepTemplate,
   ComfyQwen21CreateImageGenInput,
-  ComfyQwen21EditImageGenInputWritable,
+  ComfyQwen21EditImageGenInput,
   ComfyQwen20bCreateImageGenInput,
   ComfyQwen20bEditImageGenInput,
 } from '@civitai/orchestration-client';
@@ -118,7 +118,7 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplat
       operation: 'editImage',
       resolution: data.resolution === '2K' ? 2048 : 1024,
       images: data.images?.map((image) => image.url) ?? [],
-    } satisfies ComfyQwen21EditImageGenInputWritable;
+    } satisfies Omit<ComfyQwen21EditImageGenInput, 'width' | 'height'>;
     return [{ $type: 'imageGen', input: removeEmpty(input) }];
   }
 
