@@ -1,5 +1,5 @@
 import { Avatar, Badge, Text, Title } from '@mantine/core';
-import { IconUsers, IconTrophy } from '@tabler/icons-react';
+import { IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -8,7 +8,8 @@ import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
-import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { getCrucibleRatingLabel, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { NsfwLevel } from '~/server/common/enums';
 import { getInitials } from '~/utils/string-helpers';
 
 export type CrucibleHeaderData = {
@@ -122,7 +123,8 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             type="image"
             width={1600}
             className="size-full object-cover opacity-50"
-            style={{ objectPosition: 'center' }}
+            // EdgeImage caps maxWidth at the requested width, which left a bare strip on wide screens.
+            style={{ objectPosition: 'center', maxWidth: 'none' }}
           />
         </div>
       )}
@@ -195,7 +197,6 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-white/10 pt-4">
             <div className="flex items-center gap-2">
-              <IconTrophy size={18} className="text-yellow-500" />
               <CurrencyBadge
                 currency={Currency.BUZZ}
                 unitAmount={prizePool}
@@ -214,9 +215,14 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
             {!hasEnded && endAt && <CrucibleTimer endAt={endAt} hasEnded={hasEnded} />}
 
-            {nsfwLevel > 1 && (
-              <Badge color="red" variant="filled" radius="xl" size="sm">
-                {getNsfwLabel(nsfwLevel)}
+            {nsfwLevel > NsfwLevel.PG && (
+              <Badge
+                color={nsfwLevel & ~(NsfwLevel.PG | NsfwLevel.PG13) ? 'red' : 'yellow'}
+                variant="filled"
+                radius="xl"
+                size="sm"
+              >
+                {getCrucibleRatingLabel(nsfwLevel)}
               </Badge>
             )}
           </div>
@@ -224,17 +230,4 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
       </div>
     </div>
   );
-}
-
-/**
- * Get NSFW label based on level
- * Based on browsingLevel.constants.ts patterns
- */
-function getNsfwLabel(level: number): string {
-  // Simplified NSFW labels based on common patterns
-  if (level <= 1) return 'PG';
-  if (level <= 2) return 'PG-13';
-  if (level <= 4) return 'R';
-  if (level <= 8) return 'X';
-  return 'XXX';
 }

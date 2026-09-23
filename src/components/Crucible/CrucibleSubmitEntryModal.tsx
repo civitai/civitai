@@ -49,6 +49,7 @@ import { downloadGeneratorImages } from '~/utils/generator-import';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
+import { getCrucibleRatingLabel } from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import clsx from 'clsx';
@@ -76,17 +77,6 @@ export interface CrucibleSubmitEntryModalProps {
  */
 function isNsfwLevelCompatible(imageNsfwLevel: number, crucibleNsfwLevel: number): boolean {
   return Flags.intersects(imageNsfwLevel, crucibleNsfwLevel);
-}
-
-/**
- * Get NSFW level badge text
- */
-function getNsfwLabel(level: number): string {
-  if (level <= 1) return 'SFW';
-  if (level <= 2) return 'PG-13';
-  if (level <= 4) return 'R';
-  if (level <= 8) return 'X';
-  return 'XXX';
 }
 
 const requirementBadgeProps = {
@@ -451,7 +441,7 @@ export default function CrucibleSubmitEntryModal({
       const reasons: string[] = [];
       if (type !== contentType) reasons.push(`${isVideo ? 'Videos' : 'Images'} only`);
       if (level !== null && level !== 0 && !isNsfwLevelCompatible(level, nsfwLevel))
-        reasons.push(`${getNsfwLabel(nsfwLevel)} only`);
+        reasons.push(`${getCrucibleRatingLabel(nsfwLevel)} only`);
       return { eligible: reasons.length === 0, reasons };
     },
     [contentType, isVideo, nsfwLevel]
@@ -522,8 +512,8 @@ export default function CrucibleSubmitEntryModal({
     const isAlreadySubmitted = submittedImageIds.has(image.id);
     const clipSeconds = (image.metadata as VideoMetadata | null)?.duration ?? null;
     const isShortEnough = clipLengthAllowed(clipSeconds, maxClipSeconds ?? null);
-    const imageNsfwLabel = getNsfwLabel(image.nsfwLevel ?? 1);
-    const requiredNsfwLabel = getNsfwLabel(nsfwLevel);
+    const imageNsfwLabel = getCrucibleRatingLabel(image.nsfwLevel ?? 1);
+    const requiredNsfwLabel = getCrucibleRatingLabel(nsfwLevel);
 
     // Build detailed validation criteria
     // Only include model requirement if there are restrictions (allowedResourceNames specified)
@@ -765,7 +755,7 @@ export default function CrucibleSubmitEntryModal({
                 {isVideo ? 'Videos only' : 'Images only'}
               </Badge>
               <Badge {...requirementBadgeProps} leftSection={<IconEyeOff size={12} />}>
-                {getNsfwLabel(nsfwLevel)} only
+                {getCrucibleRatingLabel(nsfwLevel)} only
               </Badge>
             </div>
           </div>

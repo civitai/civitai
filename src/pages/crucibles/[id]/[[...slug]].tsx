@@ -16,7 +16,11 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
+import {
+  getCrucibleRatings,
+  getCrucibleTotalPrizePool,
+  parsePrizePositions,
+} from '~/utils/crucible-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
@@ -346,9 +350,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         maxClipSeconds: crucible.maxClipSeconds,
                       });
                     }}
-                    disabled={!currentUser}
+                    disabled={!currentUser || userEntryCount >= maxUserEntries}
                   >
-                    Submit Entry
+                    {userEntryCount >= maxUserEntries ? 'All entries submitted' : 'Submit Entry'}
                   </Button>
 
                   <div className="mb-4 border-b border-[#373a40] pb-4">
@@ -588,15 +592,7 @@ function RuleItem({ label, content }: { label: string; content: React.ReactNode 
 }
 
 function ContentLevelBadges({ nsfwLevel }: { nsfwLevel: number }) {
-  const levels = [];
-  if (nsfwLevel >= 1) levels.push('PG');
-  if (nsfwLevel >= 2) levels.push('PG-13');
-  if (nsfwLevel >= 4) levels.push('R');
-  if (nsfwLevel >= 8) levels.push('X');
-  if (nsfwLevel >= 16) levels.push('XXX');
-
-  // If no restrictions or very low NSFW level, show PG
-  if (levels.length === 0) levels.push('PG');
+  const levels = getCrucibleRatings(nsfwLevel);
 
   return (
     <div className="mt-2 flex flex-wrap gap-2">

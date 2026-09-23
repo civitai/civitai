@@ -227,13 +227,8 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
 
         {/* Entry info overlay */}
         <div className="absolute inset-x-0 bottom-0 flex flex-col p-3 text-white">
-          {/* Entry name (fallback to image name or "Entry") */}
-          <Text size="sm" fw={600} lineClamp={1} lh={1.25}>
-            {entry.image.name || 'Entry'}
-          </Text>
-
           {/* Author */}
-          <Text size="xs" c="gray.4" mt={2}>
+          <Text size="xs" c="gray.4">
             by{' '}
             <CrucibleUserLink user={entry.user}>
               @{entry.user.username || 'anonymous'}
@@ -262,7 +257,7 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
 }
 
 // Gold, silver, bronze.
-const medalColors = ['#fab005', '#adb5bd', '#ffa94d'];
+const medalColors = ['#ffe066', '#adb5bd', '#ffa94d'];
 
 type CrucibleEntryGridEmptyProps = {
   message?: string;

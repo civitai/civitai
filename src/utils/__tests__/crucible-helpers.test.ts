@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePrizePositions } from '~/utils/crucible-helpers';
+import { getCrucibleRatingLabel, parsePrizePositions } from '~/utils/crucible-helpers';
 
 describe('parsePrizePositions', () => {
   it('parses the object map the database actually stores', () => {
@@ -47,5 +47,17 @@ describe('parsePrizePositions', () => {
         { position: 3 },
       ])
     ).toEqual([{ position: 1, percentage: 50 }]);
+  });
+});
+
+describe('getCrucibleRatingLabel', () => {
+  it('reads nsfwLevel as a bitmask of accepted ratings', () => {
+    // PG | PG-13 = 3. Treated as one ordered level, 3 fell under "<= 4" and read as "R".
+    expect(getCrucibleRatingLabel(1 | 2)).toBe('PG / PG-13');
+  });
+
+  it('labels a single rating on its own', () => {
+    expect(getCrucibleRatingLabel(1)).toBe('PG');
+    expect(getCrucibleRatingLabel(4)).toBe('R');
   });
 });

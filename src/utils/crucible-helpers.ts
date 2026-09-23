@@ -1,4 +1,8 @@
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import {
+  browsingLevelLabels,
+  parseBitwiseBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Check if a crucible is ending soon (within 3 days)
@@ -117,4 +121,16 @@ function isUsablePrizePosition({ position, percentage }: PrizePosition): boolean
   return (
     Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0
   );
+}
+
+/** A crucible's `nsfwLevel` is a bitmask of accepted ratings, not a single ordered level. */
+export function getCrucibleRatings(nsfwLevel: number): string[] {
+  const labels = parseBitwiseBrowsingLevel(nsfwLevel)
+    .map((level) => browsingLevelLabels[level as keyof typeof browsingLevelLabels])
+    .filter(Boolean);
+  return labels.length ? labels : [browsingLevelLabels[0]];
+}
+
+export function getCrucibleRatingLabel(nsfwLevel: number): string {
+  return getCrucibleRatings(nsfwLevel).join(' / ');
 }
