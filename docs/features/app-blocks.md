@@ -56,6 +56,18 @@ See `src/shared/constants/block-scope.constants.ts`. Each block scope maps
 to an OAuth bitmask bit (registration-time gate), plus a context-binding
 check at request time (`enforceContextBinding`).
 
+⚠️ **The binding runs for the route's `requiredScope` only, not for every scope
+the token carries** (#5063). A binding is a statement about a request's shape —
+`models:read:self` wants a `modelId` in the query, `apps:storage:shared:write`
+wants a non-anon subject — so running all of them on every request 403'd
+unrelated routes: a manifest declaring `models:read:self` could not call
+`blocks/buzz`, and an anon token 403'd a shared-storage READ because the
+consent-exempt `apps:storage:shared:write` rode along on it. The one gate that
+is still swept across the WHOLE token is the unknown-scope deny-by-default. A
+handler that consults a SECOND scope off `claims.scopes` to widen its response
+owns that scope's own check; the set of such call sites is asserted in
+`src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
+
 | Scope                            | Bind                                              | Notes                                                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |

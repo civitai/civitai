@@ -32,9 +32,13 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * reading the constant:
  *
  *   - MISSING MIDDLEWARE CASE → the scope is known but unbound, so
- *     `enforceContextBinding`'s `default:` arm 403s EVERY REST request the token
- *     makes, including ones with nothing to do with posting. The app is bricked
- *     and it reads as a bug in whatever endpoint the author happened to hit.
+ *     `enforceContextBinding`'s `default:` arm 403s every request to the route
+ *     that declares it as `requiredScope`: the posting route is simply dead, and
+ *     the error names an internal wiring state rather than anything the caller
+ *     did. (Before #5063 this was WIDER — the binding switch ran for every scope
+ *     on the token, so an unbound scope 403'd every REST request the token made,
+ *     bricking the whole app. `block-scope.required-scope-binding.test.ts` now
+ *     also pins the "every known scope has a case" property statically.)
  *   - NEITHER EXEMPT NOR PROMPTED → stripped at mint with a correct-looking
  *     runtime. (The end-to-end proof of the prompted half is in
  *     `src/tests/api/v1/block-tokens/page-mint.test.ts`, driven through the real
@@ -119,7 +123,7 @@ describe('posts:write:self — runtime binding in enforceContextBinding', () => 
 
   it('ACCEPTS a token with a real user subject', () => {
     expect(() =>
-      enforceContextBinding({ scopes: [SCOPE], sub: 'user:42' } as never, req)
+      enforceContextBinding({ scopes: [SCOPE], sub: 'user:42' } as never, req, SCOPE)
     ).not.toThrow();
   });
 
@@ -127,22 +131,39 @@ describe('posts:write:self — runtime binding in enforceContextBinding', () => 
     // The message must name THIS scope. A generic "forbidden" would pass while
     // the `default:` fail-closed arm was the thing that actually fired, which is
     // the exact mis-attribution this case exists to rule out.
-    expect(() => enforceContextBinding({ scopes: [SCOPE], sub: 'anon' } as never, req)).toThrow(
+    expect(() => enforceContextBinding({ scopes: [SCOPE], sub: 'anon' } as never, req, SCOPE)).toThrow(
       `${SCOPE} requires authenticated subject`
     );
   });
 
-  it('does NOT fall through to the unbound-scope arm', () => {
-    // 🔴 THE HIGH-BLAST-RADIUS CASE. The loop walks EVERY scope on the token, so
-    // an unbound `posts:write:self` 403s a models read too. This asserts the
-    // accompanying scope survives, which is the observable a bricked app shows.
+  it('does NOT interfere with a route that requires a DIFFERENT scope', () => {
+    // 🔴 WHAT THIS ONCE GUARDED, AND WHY IT IS WEAKER NOW — say so rather than
+    // let it read as stronger coverage than it is. It used to be THE
+    // high-blast-radius case: the binding switch walked EVERY scope on the
+    // token, so an unbound `posts:write:self` 403'd a models read too, and this
+    // assertion was the only thing standing between a wiring slip and a bricked
+    // app. #5063 narrowed the switch to the route's `requiredScope`, so the
+    // interference this rules out is now structurally impossible rather than
+    // merely absent, and the case that replaces it — every known scope HAS a
+    // binding case — is asserted statically in
+    // `src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
+    // Kept as the cross-scope no-interference assertion for THIS scope.
     expect(() =>
-      enforceContextBinding({ scopes: ['user:read:self', SCOPE], sub: 'user:42' } as never, req)
+      enforceContextBinding(
+        { scopes: ['user:read:self', SCOPE], sub: 'user:42' } as never,
+        req,
+        'user:read:self'
+      )
     ).not.toThrow();
     // And the negative control proving that arm is reachable at all: an invented
-    // scope is rejected as UNKNOWN (the gate before the switch).
+    // scope is rejected as UNKNOWN (the token-wide gate before the switch, which
+    // did NOT narrow).
     expect(() =>
-      enforceContextBinding({ scopes: ['posts:write:everyone'], sub: 'user:42' } as never, req)
+      enforceContextBinding(
+        { scopes: ['posts:write:everyone'], sub: 'user:42' } as never,
+        req,
+        'posts:write:everyone'
+      )
     ).toThrow('unknown scope: posts:write:everyone');
   });
 });
