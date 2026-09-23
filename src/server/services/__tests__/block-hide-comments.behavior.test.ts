@@ -188,6 +188,22 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     expect(hidden).not.toContain(50101);
   });
 
+  it('reports the rows already hidden when a later batch fails', async () => {
+    await holder.db.exec(`
+      INSERT INTO "CommentV2"
+      SELECT g, ${BLOCKED}, 100, false FROM generate_series(20000, 22999) g;
+    `);
+    const translate = dbMock.dbWrite.commentV2.updateMany.getMockImplementation()!;
+    dbMock.dbWrite.commentV2.updateMany
+      .mockImplementationOnce(translate)
+      .mockImplementationOnce(translate)
+      .mockRejectedValueOnce(new Error('canceling statement'));
+
+    await expect(
+      hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED })
+    ).resolves.toEqual({ status: 'failed', count: 2000 });
+  });
+
   it('reports failure instead of throwing when a write fails', async () => {
     dbMock.dbWrite.commentV2.updateMany.mockRejectedValue(new Error('canceling statement'));
 
@@ -206,12 +222,25 @@ describe('THREAD_CONTENT_OWNERS', () => {
     expect(THREAD_CONTENT_OWNERS.map((o) => o.column)).toEqual(ownerColumns);
   });
 
+  // A new owner-bearing FK on Thread must land here or be named as exempt. clubPostId has no
+  // owner lookup anywhere, so its threads resolve no owner and are never bulk-hidden.
+  it('covers every Thread foreign key that is not a chain link', () => {
+    const exempt = ['commentId', 'parentThreadId', 'rootThreadId', 'clubPostId'];
+    const thread = Prisma.dmmf.datamodel.models.find((m) => m.name === 'Thread');
+    const foreignKeys = thread?.fields
+      .filter((f) => f.kind === 'scalar' && f.name.endsWith('Id') && !exempt.includes(f.name))
+      .map((f) => f.name)
+      .sort();
+
+    expect(foreignKeys).toEqual(THREAD_CONTENT_OWNERS.map((o) => o.column).sort());
+  });
+
   it.each(THREAD_CONTENT_OWNERS.map((o) => [o.column, o] as const))(
     '%s names a real table, owner column and key',
     (_, { table, owner, key }) => {
       const dbName = (x: { name: string; dbName?: string | null }) => x.dbName ?? x.name;
       const model = Prisma.dmmf.datamodel.models.find((m) => dbName(m) === table.replace(/"/g, ''));
-      const columns = model?.fields.map(dbName);
+      const columns = model?.fields.filter((f) => f.kind === 'scalar').map(dbName);
 
       expect(columns).toContain(owner.replace(/"/g, ''));
       expect(columns).toContain(key.replace(/"/g, ''));

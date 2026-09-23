@@ -426,7 +426,7 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
     const result = await blockHiding();
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
-    expect(result.commentsHidden).toBeUndefined();
+    expect(result.commentsHidden).toEqual({ status: 'skipped' });
   });
 
   it('does not hide anything when the switch is off', async () => {

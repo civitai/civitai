@@ -12,6 +12,14 @@ export function blockToast(result: BlockHideCommentsResult | undefined): {
 } {
   if (!result) return { kind: 'success', title: 'User blocked', message: BLOCKED };
 
+  if (result.status === 'skipped')
+    return {
+      kind: 'warning',
+      title: 'User was already blocked',
+      message:
+        'Their comments were not hidden, because hiding runs when you first block someone. To hide them, unblock this user and block them again with the switch on.',
+    };
+
   if (result.status === 'failed')
     return {
       kind: 'warning',

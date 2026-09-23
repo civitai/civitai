@@ -55,7 +55,8 @@ LIMIT $3`;
 
 export type BlockHideCommentsResult =
   | { status: 'hidden'; count: number; capped: boolean }
-  | { status: 'failed'; count: number };
+  | { status: 'failed'; count: number }
+  | { status: 'skipped' };
 
 /**
  * Hides every CommentV2 by `blockedUserId` whose stored thread chain ends on content `ownerId`
