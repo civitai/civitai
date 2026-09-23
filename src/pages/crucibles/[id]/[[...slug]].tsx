@@ -36,6 +36,10 @@ import type { Prisma } from '@prisma/client';
 import type { RouterOutput } from '~/types/router';
 import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ImageSort } from '~/server/common/enums';
+import type { ImageGetInfinite } from '~/types/router';
+import { isDefined } from '~/utils/type-guards';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 
 const querySchema = z.object({
@@ -63,6 +67,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const router = useRouter();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
   const {
@@ -140,6 +145,37 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
   const userEntries = crucible.viewerEntries;
+
+  // The detail view pages through the list it is handed, so hand it the entries in grid
+  // order: the viewer's own first, then everyone else's as loaded.
+  const openEntry = async ({ imageId }: { imageId: number }) => {
+    const gridOrder = [
+      ...userEntries,
+      ...loadedEntries.filter((entry) => entry.userId !== currentUser?.id),
+    ].map((entry) => entry.imageId);
+    const at = Math.max(0, gridOrder.indexOf(imageId));
+    const nearby = gridOrder.slice(Math.max(0, at - 100), at + 100);
+
+    let images: ImageGetInfinite | undefined;
+    try {
+      const { items } = await queryUtils.client.image.getInfinite.query({
+        ids: nearby,
+        limit: nearby.length,
+        period: 'AllTime',
+        sort: ImageSort.Newest,
+        browsingLevel,
+      });
+      const byId = new Map(items.map((image) => [image.id, image]));
+      images = nearby.map((id) => byId.get(id)).filter(isDefined);
+    } catch {
+      // Opening the single image still works; only prev/next is lost.
+    }
+
+    triggerRoutedDialog({
+      name: 'imageDetail',
+      state: { imageId, images: images?.some((x) => x.id === imageId) ? images : undefined },
+    });
+  };
   const userEntryCount = userEntries.length;
   const maxUserEntries = crucible.entryLimit ?? 5;
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
@@ -271,9 +307,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 hasMore={!!hasMoreEntries}
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={loadMoreEntries}
-                onEntryClick={(entry) =>
-                  triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } })
-                }
+                onEntryClick={openEntry}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 showUserEntries={!!currentUser}

@@ -1,5 +1,5 @@
 import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button, Avatar } from '@mantine/core';
-import { IconTrophy, IconChevronRight, IconChevronLeft } from '@tabler/icons-react';
+import { IconChevronLeft, IconChevronRight, IconCrown, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -242,7 +242,6 @@ function LeaderboardEntryItem({
           bgColor: 'rgba(250, 176, 5, 0.2)',
           textColor: '#fab005',
           label: '1st',
-          icon: '👑',
         };
       case 2:
         return {
@@ -250,7 +249,6 @@ function LeaderboardEntryItem({
           bgColor: 'rgba(134, 142, 150, 0.2)',
           textColor: '#adb5bd',
           label: '2nd',
-          icon: null,
         };
       case 3:
         return {
@@ -258,7 +256,6 @@ function LeaderboardEntryItem({
           bgColor: 'rgba(205, 127, 50, 0.2)',
           textColor: '#ffa94d',
           label: '3rd',
-          icon: null,
         };
       default:
         return {
@@ -266,7 +263,6 @@ function LeaderboardEntryItem({
           bgColor: 'rgba(201, 203, 207, 0.1)',
           textColor: '#909296',
           label: `${rank}${getOrdinalSuffix(rank)}`,
-          icon: null,
         };
     }
   };
@@ -295,7 +291,7 @@ function LeaderboardEntryItem({
                 fontSize: '0.875rem',
               }}
             >
-              {style.label}
+              <IconCrown size={16} />
             </Box>
 
             {/* Position info */}
@@ -318,10 +314,10 @@ function LeaderboardEntryItem({
           className="flex size-6 items-center justify-center font-bold"
           style={{
             color: style.textColor,
-            fontSize: style.icon ? '1.125rem' : '0.875rem',
+            fontSize: '0.875rem',
           }}
         >
-          {style.icon || rank}
+          {rank}
         </div>
 
         <CrucibleUserLink user={entry.user} className="flex-1">

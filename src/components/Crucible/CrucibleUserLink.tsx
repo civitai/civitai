@@ -18,7 +18,7 @@ export function CrucibleUserLink({
         <UserLink username={user.username} deletedAt={user.deletedAt}>
           {/* Entry cards open on click; following the profile link must not open the entry too. */}
           <a
-            className="inline-flex min-w-0 items-center gap-3 hover:underline"
+            className="inline-flex min-w-0 items-center gap-3"
             onClick={(e) => e.stopPropagation()}
           >
             {children}

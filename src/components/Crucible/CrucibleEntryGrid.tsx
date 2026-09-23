@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Button,
   Center,
@@ -10,16 +9,13 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconPhoto, IconTrophy, IconChartLine, IconUsers, IconPlus } from '@tabler/icons-react';
+import { IconChartLine, IconCrown, IconPhoto, IconPlus, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import Link from 'next/link';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 export type CrucibleEntryData = {
@@ -225,7 +221,6 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
         </div>
 
         {/* Position badge */}
-        {rank !== null && <PositionBadge rank={rank} />}
 
         {/* Gradient overlay */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent from-50% to-black/80" />
@@ -252,7 +247,12 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
                 <IconChartLine size={12} />
                 <span>{Math.round(entry.score)} pts</span>
               </div>
-              <div className="flex items-center gap-1">#{rank}</div>
+              <div
+                className="flex items-center gap-1"
+                style={rank <= 3 ? { color: medalColors[rank - 1], fontWeight: 600 } : undefined}
+              >
+                {rank <= 3 && <IconCrown size={12} />}#{rank}
+              </div>
             </div>
           )}
         </div>
@@ -261,42 +261,8 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
   );
 }
 
-type PositionBadgeProps = {
-  rank: number;
-};
-
-/**
- * Position badge displayed in top-right corner of entry card
- */
-function PositionBadge({ rank }: PositionBadgeProps) {
-  if (rank <= 3) {
-    return (
-      <Badge
-        className="absolute right-2 top-2 z-10 flex items-center gap-1"
-        style={{
-          background: 'linear-gradient(135deg, #fab005 0%, #fd7e14 100%)',
-        }}
-        radius="sm"
-        px={8}
-        size="sm"
-      >
-        <IconTrophy size={12} />#{rank}
-      </Badge>
-    );
-  }
-
-  return (
-    <Badge
-      className="absolute right-2 top-2 z-10 flex items-center gap-1"
-      style={{ background: 'rgba(0, 0, 0, 0.7)' }}
-      radius="sm"
-      px={8}
-      size="sm"
-    >
-      <IconChartLine size={12} />#{rank}
-    </Badge>
-  );
-}
+// Gold, silver, bronze.
+const medalColors = ['#fab005', '#adb5bd', '#ffa94d'];
 
 type CrucibleEntryGridEmptyProps = {
   message?: string;
