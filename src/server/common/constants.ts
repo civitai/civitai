@@ -57,6 +57,31 @@ function getCommentAutoExpandDepth(entityType: string) {
   return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
 }
 
+/**
+ * Ceiling on a batch `?ids=` lookup for the image REST routes
+ * (`/api/v1/images` and `/api/v1/blocks/images`).
+ *
+ * NOT a new number. It is the ceiling the bridge message those routes replace
+ * already enforced: `blocks.getImagesByIds` (`GET_IMAGES_BY_IDS`) validates
+ * `imageIds: z.number().int().positive().array().min(1).max(100)` in
+ * `src/server/routers/blocks.router.ts`, and its service states the same bound
+ * as `BLOCK_GATED_IMAGES_MAX_IDS = 100` in
+ * `src/server/services/blocks/block-gated-images.service.ts` ("Bound the read —
+ * a grid page never needs more, and each id is a row lookup"). An app porting
+ * off the bridge therefore meets exactly the limit it already coded against.
+ *
+ * It also equals `constants.galleryFilterDefaults.limit` below, so a caller that
+ * sends a full batch and no `limit` gets every row in one page. Send fewer ids
+ * than `limit`, or the page truncates — `ids` is a filter, not a paging bypass.
+ *
+ * Lives here, not next to `runImageSearch`, so a test can read it without
+ * pulling in the image service (the same reason
+ * `search-index/filterable-attributes.ts` is a leaf). The agreement with the
+ * bridge is asserted, not merely described:
+ * `src/server/services/__tests__/image-ids-batch-cap-parity.test.ts`.
+ */
+export const IMAGE_IDS_BATCH_MAX = 100;
+
 export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
