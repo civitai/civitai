@@ -87,10 +87,13 @@ run_commit() {
     -o jsonpath='{.metadata.labels.pipeline\.jquad\.rocks/git\.repository\.branch\.commit}'
 }
 
-# True when image ($2), tagged <timestamp>-<sha7>, was built from commit ($1). Anchored
-# to the tag suffix: an all-digit short sha can occur inside another release's timestamp,
-# and an empty commit would otherwise match every image.
-image_ready() { [ -n "$1" ] && [[ "$2" == *"-$(short "$1")" ]]; }
+# True when image ($1), tagged <timestamp>-<sha>, carries short sha ($2). Anchored to
+# the tag's sha: an all-digit short sha can occur inside another release's timestamp.
+# The image policy accepts any sha length, so longer shas still match.
+tag_has_sha() { [ -n "$2" ] && [[ "$1" =~ -${2}[0-9a-f]*$ ]]; }
+
+# True when Flux's latest image ($2) was built from the run's commit ($1).
+image_ready() { [ -n "$1" ] && tag_has_sha "$2" "$(short "$1")"; }
 
 # ---- phase 1: build -------------------------------------------------------------
 print_build() {
@@ -176,7 +179,7 @@ app_rollout() {
     [ "$name" = "$PRIMARY_SSR" ] && saw_ssr=1
     [ "$name" = "$PRIMARY_API" ] && saw_api=1
     ROLLOUT_DETAIL+="    $name: ${up}/${des} updated, ${rdy} ready, ${img##*:}"$'\n'
-    if [[ "$img" != *"-$tshort" ]]; then
+    if ! tag_has_sha "$img" "$tshort"; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(old image ${img##*:}) "
     elif [ "$up" != "$des" ] || [ "$rdy" != "$des" ]; then
       ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(${up}/${des} rolled, ${rdy} ready) "
