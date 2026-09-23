@@ -1,5 +1,4 @@
 import { Stack, Group, Text, Loader, Center, Divider, Title, Button } from '@mantine/core';
-import { IconMessageCancel } from '@tabler/icons-react';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
@@ -7,8 +6,6 @@ import classes from '~/components/CommentsV2/Comment/Comment.module.css';
 import { SortFilter } from '~/components/Filters';
 import type { ThreadSort } from '~/server/common/enums';
 import { ReturnToRootThread } from '~/components/CommentsV2/ReturnToRootThread';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import HiddenCommentsModal from '~/components/CommentsV2/HiddenCommentsModal';
 
 type Model3DCommentsProps = {
   model3dId: number;
@@ -40,7 +37,6 @@ export function Model3DComments({ model3dId, userId }: Model3DCommentsProps) {
         isFetchingNextPage,
         isLocked,
         showMore,
-        hiddenCount,
         toggleShowMore,
         sort,
         setSort,
@@ -52,27 +48,6 @@ export function Model3DComments({ model3dId, userId }: Model3DCommentsProps) {
               <Group justify="space-between">
                 <Group gap="md">
                   <Title order={2}>Comments</Title>
-                  {hiddenCount > 0 && !isLoading && (
-                    <Button
-                      variant="subtle"
-                      onClick={() =>
-                        dialogStore.trigger({
-                          component: HiddenCommentsModal,
-                          props: { entityId: model3dId, entityType: 'model3d', userId },
-                        })
-                      }
-                      size="compact-xs"
-                    >
-                      <Group gap={4} justify="center">
-                        <IconMessageCancel size={16} />
-                        <Text inherit inline>
-                          {`See ${hiddenCount} more hidden ${
-                            hiddenCount > 1 ? 'comments' : 'comment'
-                          }`}
-                        </Text>
-                      </Group>
-                    </Button>
-                  )}
                 </Group>
                 <SortFilter
                   type="threads"
