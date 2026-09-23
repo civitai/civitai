@@ -201,42 +201,47 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again. ⚠️ NO HOLD
-//     REACHES THE SERVER TODAY — still true as of #5068, see immediately below for why
-//     that is now a statement about ADOPTION rather than about a choke point — AND THE
-//     REASON IS NARROWER THAN AN EARLIER REVISION OF THIS COMMENT CLAIMED, a difference
-//     that matters to anyone sizing for GA.
+//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again.
 //
-//     🔴 #5068 REMOVES THE CHOKE POINT, WITHOUT (YET) CHANGING THE OBSERVATION.
-//     `/api/v1/blocks/workflows/poll` takes `waitSeconds` STRAIGHT OFF THE WIRE and
-//     forwards it, with no host in the path at all — so for that transport the host
-//     choke point named below is GONE, and `@civitai/blocks-react`'s `watch` defaults
-//     the field to 15, meaning the first block to adopt the REST twin holds from day
-//     one. Until one does, no hold reaches the server, which is why the line above
-//     still holds. ⚠️ An earlier revision of THIS paragraph said "the server sees no
-//     hold IS NO LONGER TRUE" — that was an overstatement in the other direction and
-//     contradicted both the line above it and the paragraph below it. The precise
-//     claim is: the barrier is gone, nothing is through it yet.
+//     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
+//     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
+//     │
+//     │  THE BARRIER IS GONE. NOTHING IS THROUGH IT YET.
+//     │
+//     │  Gone: `/api/v1/blocks/workflows/poll` (#5068) takes `waitSeconds` off the wire
+//     │  and forwards it with no host in the path, so the host choke point does not
+//     │  apply to that transport.
+//     │  Not through: no shipped client calls that route yet, and over the BRIDGE the
+//     │  hosts still drop the field — so no hold reaches the server today.
+//     │  Therefore: the ~300-concurrent-hold figure below is what the FIRST REST
+//     │  adopter produces at the 15 s default, and the concurrency cap it calls for is
+//     │  still not implemented. Size for it; do not claim it is already happening.
+//     │
+//     │  ⚠️ THIS BLOCK EXISTS BECAUSE THE STATUS WAS PREVIOUSLY RESTATED SIX TIMES IN
+//     │  THIS COMMENT, IN SIX WORDINGS. Two successive rounds each corrected one copy
+//     │  and left the others, and the copies then contradicted each other ten lines
+//     │  apart ("NO HOLD REACHES THE SERVER TODAY" beside "IS NO LONGER TRUE", and
+//     │  "LIVE, not prospective" beside "nothing is holding today"). Both retracted.
+//     │  A status with six homes has six edit sites and no greppable anchor, which is
+//     │  how it re-arms. If you are about to restate it below, don't — amend this box.
+//     └─
 //
-//     🔴 STATE THE STATUS PRECISELY — an earlier wording of THIS paragraph said the
-//     ~300-concurrent-hold figure below is "LIVE, not prospective", and that is not
-//     established. What IS established: the hold is now REACHABLE and no longer
-//     choked by a host. What is NOT: that anything is holding today — at the time
-//     this route merges, NO shipped client calls it (a whole-tree sweep of
-//     `civitai-app-starters` finds zero references to `/api/v1/blocks/workflows/*`),
-//     and `pollOnce` sends `waitSeconds` over the BRIDGE, where the hosts still drop
-//     it. So the correct reading is: the choke point is gone, the first REST adopter
-//     starts holding at a 15 s default, and the concurrency cap this calls for is
-//     still not implemented. Size for it; do not claim it is already happening.
+//     EVIDENCE — for the BRIDGE arm: neither host passes `waitSeconds` (zero occurrences
+//     of the identifier in `components/AppBlocks/`), and `@civitai/app-sdk`'s
+//     `POLL_WORKFLOW` payload type (0.14.0, the version this repo installs) carries
+//     `requestId` and `workflowId` only. The hosts are the choke point.
 //
-//     What WAS MEASURED here, and still holds for the BRIDGE only: neither host passes
-//     `waitSeconds` — zero occurrences of the identifier in `components/AppBlocks/` —
-//     and `@civitai/app-sdk`'s `POLL_WORKFLOW` payload type (0.14.0, the version this
-//     repo installs) carries `requestId` and `workflowId` only. The hosts are the choke
-//     point, so the BRIDGE sees no hold.
+//     EVIDENCE — for the REST arm: `@civitai/blocks-react`'s `watch` defaults
+//     `waitSeconds` to 15 (`DEFAULT_WATCH_WAIT_SECONDS`, v0.57.1), and a whole-tree
+//     sweep of `civitai-app-starters` finds no reference to `/api/v1/blocks/workflows/*`
+//     outside prose.
 //
-//     What that earlier revision got WRONG: it generalised from the app-sdk payload to
-//     "no shipped client takes that path". The round-0 audit reports that
+//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the evidence lives in another repo, so nothing
+//     in this tree asserts on it and the "not through it yet" half will go stale
+//     SILENTLY the day a block adopts the route. Re-check it rather than trusting it.
+//
+//     An earlier revision also got this WRONG by generalising from the app-sdk payload
+//     to "no shipped client takes that path". The round-0 audit reports that
 //     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
 //     `watch` defaulting it to 15 — and the server already accepts the field. That
 //     package is not installed in this repo, so it is recorded here as the audit's

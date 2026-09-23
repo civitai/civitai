@@ -143,8 +143,10 @@ describe('scopeBucketLabel', () => {
 /**
  * 🔴 WHY THE ACTIVITY PANEL'S LABELLERS ARE NOT REUSED.
  *
- * `humaniseScopeInvocation` is the genuine near-duplicate — endpoint-arm based, needs no
- * `detail`, and maps the synthetic endpoint tokens — so it is what a reader will reach for.
+ * `humaniseScopeInvocation` is the genuine near-duplicate — endpoint-arm based and needs
+ * no `detail` — so it is what a reader will reach for. It maps FOUR of the FIVE synthetic
+ * tokens; `post:create` has no arm and returns the raw scope. See reason 3 in the source
+ * module's docblock for why that count is written as a count.
  * These assertions call the REAL functions so the reasoning is verified, not restated.
  *
  * ⚠ It gained three `/api/v1/blocks/workflows/*` arms in #5068, so it is no longer true
@@ -202,9 +204,26 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     // it GREEN while the same file as `.ts` turned it red — i.e. the guard was
     // narrower than the sentence above it, which is the exact defect this test
     // exists to prevent. `.d.ts` and `.test.` are excluded because neither is a route.
-    const routes = readdirSync(dir)
-      .filter((f) => /\.(t|j)sx?$/.test(f) && !f.includes('.test.') && !f.endsWith('.d.ts'))
-      .map((f) => f.replace(/\.(t|j)sx?$/, ''));
+    //
+    // 🔴 RECURSES, because `readdirSync` is FLAT and a DIRECTORY entry carries no
+    // extension. `workflows/retry/index.ts` is a real Next route at
+    // `/api/v1/blocks/workflows/retry`, and a flat listing filtered it out — MEASURED
+    // GREEN with that twin present, i.e. the same class of blind spot as the `.ts`-only
+    // filter one revision earlier, on a different axis. The sibling guard this predicate
+    // comes from (`block-scope.normalize-endpoint.test.ts`) already recurses; not
+    // recursing was the divergence, not the recursion.
+    const collect = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        if (e.isDirectory()) {
+          // A route directory contributes its OWN name (`retry/index.ts` → `retry`),
+          // which is the segment `normalizeEndpoint` will see.
+          return collect(path.join(d, e.name)).length ? [e.name] : [];
+        }
+        if (!/\.(t|j)sx?$/.test(e.name)) return [];
+        if (e.name.includes('.test.') || e.name.endsWith('.d.ts')) return [];
+        return [e.name.replace(/\.(t|j)sx?$/, '')];
+      });
+    const routes = collect(dir);
 
     // Positive control: the enumeration actually found the routes. Without this a
     // wrong `dir` yields an empty list and every assertion below passes vacuously.
