@@ -5,7 +5,7 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
-  import { fetchBuzzHistory, filterTransactions, typesIn, type BuzzTransaction } from './buzz-history';
+  import { fetchBuzzHistory, filterTransactions, type BuzzTransaction } from './buzz-history';
 
   let { userId }: { userId: number } = $props();
 
@@ -23,14 +23,18 @@
   const LIMIT_MAX = 2000;
   let limit = $state(LIMIT_STEP);
 
-  // Its own fetch rather than riding the account payload: ~800ms against a 1.5B-row table. Re-derives
-  // when the window changes, so there is no state to go stale.
-  const history = $derived(browser ? fetchBuzzHistory(userId, Number(days), limit) : null);
-
   let paymentType = $state('all');
   let receiptType = $state('all');
   let paymentSearch = $state('');
   let receiptSearch = $state('');
+
+  // Its own fetch rather than riding the account payload: ~800ms against a 1.5B-row table. The TYPE
+  // filters are part of the REQUEST, not applied to its result — selecting one re-queries that side
+  // for rows of that type, which is the only way past a cap a busy account fills in two days. The
+  // description search stays client-side: `description` has no index on a 1.5B-row table.
+  const history = $derived(
+    browser ? fetchBuzzHistory(userId, Number(days), limit, paymentType, receiptType) : null
+  );
 
   // Retool's second row: counterparty x total, per side. The transaction list answers "what happened";
   // this answers "who with, and how much in total" — which is the farming question, and the one a
@@ -102,7 +106,9 @@
 {#snippet table(
   title: string,
   rows: BuzzTransaction[],
-  all: BuzzTransaction[],
+  /** Every type this side HAS, from the server — not the types on this page, which is what the cap
+   *  left behind. Selecting one is what fetches it. */
+  offeredTypes: string[],
   type: string,
   search: string,
   onType: (v: string) => void,
@@ -135,7 +141,7 @@
         <Select.Trigger class="w-44">{type === 'all' ? 'All types' : type}</Select.Trigger>
         <Select.Content>
           <Select.Item value="all">All types</Select.Item>
-          {#each typesIn(all) as t (t)}
+          {#each offeredTypes as t (t)}
             <Select.Item value={t}>{t}</Select.Item>
           {/each}
         </Select.Content>
@@ -150,7 +156,13 @@
 
     {#if rows.length === 0}
       <p class="text-sm text-dark-2">
-        {all.length ? 'Nothing matches those filters.' : 'None in this window.'}
+        {#if search.trim()}
+          Nothing on this page matches that description.
+        {:else if type !== 'all'}
+          No <strong>{type}</strong> on this side in this window.
+        {:else}
+          None in this window.
+        {/if}
       </p>
     {:else}
       <ul class="space-y-1 text-sm">
@@ -217,8 +229,8 @@
       <div class="flex flex-col gap-6 lg:flex-row">
         {@render table(
           'Payments',
-          filterTransactions(result.payments, paymentType, paymentSearch),
-          result.payments,
+          filterTransactions(result.payments, paymentSearch),
+          result.types.payments,
           paymentType,
           paymentSearch,
           (v) => (paymentType = v),
@@ -228,8 +240,8 @@
         )}
         {@render table(
           'Receipts',
-          filterTransactions(result.receipts, receiptType, receiptSearch),
-          result.receipts,
+          filterTransactions(result.receipts, receiptSearch),
+          result.types.receipts,
           receiptType,
           receiptSearch,
           (v) => (receiptType = v),
@@ -242,14 +254,14 @@
       <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
         {@render totals(
           'Paid to, by counterparty',
-          filterTransactions(result.payments, paymentType, paymentSearch),
+          filterTransactions(result.payments, paymentSearch),
           paymentTotalsOpen,
           () => (paymentTotalsOpen = !paymentTotalsOpen),
           result.truncated.payments
         )}
         {@render totals(
           'Received from, by counterparty',
-          filterTransactions(result.receipts, receiptType, receiptSearch),
+          filterTransactions(result.receipts, receiptSearch),
           receiptTotalsOpen,
           () => (receiptTotalsOpen = !receiptTotalsOpen),
           result.truncated.receipts

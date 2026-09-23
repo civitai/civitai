@@ -30,32 +30,37 @@ export type BuzzHistory = {
   /** Per side: the two are capped independently, and a busy receipts column says nothing about whether
    *  the payments column is complete. */
   truncated: { payments: boolean; receipts: boolean };
+  /** Every type on each side across the whole window, for the filters. Not derived from the rows: a
+   *  type the cap pushed off the page must still be selectable, since selecting it is what fetches it. */
+  types: { payments: string[]; receipts: string[] };
 };
 
 export async function fetchBuzzHistory(
   userId: number,
   days: number,
-  limit: number
+  limit: number,
+  paymentType: string,
+  receiptType: string
 ): Promise<BuzzHistory> {
-  const r = await fetch(`/api/user-buzz-history/${userId}?days=${days}&limit=${limit}`);
+  const params = new URLSearchParams({
+    days: String(days),
+    limit: String(limit),
+    paymentType,
+    receiptType,
+  });
+  const r = await fetch(`/api/user-buzz-history/${userId}?${params}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }
 
-/** The distinct `type` values present, for the per-table filter. Retool's dropdowns were built the
- *  same way — from the loaded rows, not a fixed list. */
-export const typesIn = (rows: BuzzTransaction[]): string[] =>
-  [...new Set(rows.map((t) => t.type))].sort();
-
+/**
+ * Description only. The TYPE filter is the server's — narrowing here could only ever shrink the page
+ * already fetched, which is what made a purchase behind thousands of rewards unreachable at any window.
+ */
 export function filterTransactions(
   rows: BuzzTransaction[],
-  type: string,
   description: string
 ): BuzzTransaction[] {
   const needle = description.trim().toLowerCase();
-  return rows.filter(
-    (t) =>
-      (type === 'all' || t.type === type) &&
-      (!needle || (t.description ?? '').toLowerCase().includes(needle))
-  );
+  return needle ? rows.filter((t) => (t.description ?? '').toLowerCase().includes(needle)) : rows;
 }

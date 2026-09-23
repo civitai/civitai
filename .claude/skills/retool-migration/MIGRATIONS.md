@@ -422,6 +422,19 @@ slice); the four left are unbuilt rather than blocked.
       receipts spanning two days, so every one of its 128 payments was invisible. `truncated` is per
       side (`{ payments, receipts }`) for the same reason, and `/api/user-buzz-history/[userId]` takes
       `?limit=` (clamped 1..2000, default 200) behind a per-column "Load 200 more".
+
+      🔴 **The per-column TYPE filter is the SERVER's, and the cap applies after it.** Selecting a type
+      re-queries that side for `limit` rows OF that type; filtering the fetched page could only shrink
+      it, so on a reward-heavy account a purchase behind thousands of rewards was unreachable at any
+      window — measured across 300 crypto buyers, **52% of their Buzz purchases** sat outside the newest
+      200 receipts. The options come from a separate uncapped `SELECT DISTINCT type` per side for the
+      same reason: built from the loaded rows, the dropdown could not offer a type the cap had pushed
+      out, so the one thing that would have fetched it was the one thing not on the menu. `bank` is
+      withheld from both the rows and the options unless granted, or the filter would return nothing and
+      read as "no such transactions". The value reaches ClickHouse as text (`$query` does not escape),
+      so it is shape-validated — a bare identifier — and dropped to "no filter" otherwise.
+      The DESCRIPTION search stays client-side over the page: `description` has no index.
+
       Its own endpoint: `buzzTransactions` is **1.5B rows sorted by date ASC**, so even bounded to
       90 days a descending read measures ~2.5s. The window bound is mandatory, not tuning — Retool bounded
       it too. Account id 0 is Civitai itself (generation spend, purchases, rewards).

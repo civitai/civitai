@@ -21,10 +21,23 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // that lived in the TABLE'S DATA BINDING, not in a query or a pane gate, which is why the port
   // widened it without anyone noticing. Ported as a grant: hardcoding names is what left this app's
   // moderator list stale in three other places.
+  const includeBank = !!locals.grants['user.buzz.bank'];
+  // Narrowing to a type RE-QUERIES that side rather than filtering the page, so a purchase behind
+  // thousands of rewards becomes reachable. `getBuzzHistory` validates the value before it reaches the
+  // SQL; `bank` is refused here as well, or the filter would be a way to read rows the grant withholds.
+  const sideType = (param: string) => {
+    const value = url.searchParams.get(param)?.trim();
+    if (!value || value === 'all') return undefined;
+    if (value === 'bank' && !includeBank) return undefined;
+    return value;
+  };
+
   return json(
     await getBuzzHistory(userId, days, {
       limit,
-      includeBank: !!locals.grants['user.buzz.bank'],
+      includeBank,
+      paymentType: sideType('paymentType'),
+      receiptType: sideType('receiptType'),
     })
   );
 };

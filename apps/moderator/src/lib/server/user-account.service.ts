@@ -1155,7 +1155,22 @@ type BuzzRow = {
  * rows of a 90-day window were receipts spanning the most recent two days, so every one of its 128
  * payments was invisible and the 10k Buzz Creator Shop fee that prompted this was unfindable.
  */
-const buzzSideQuery = (userId: number, direction: 'in' | 'out', days: number, limit: number) => {
+/**
+ * 🔴 `$query` interpolates and does NOT escape, so a type reaching the SQL is validated here rather
+ * than trusted. A closed list would go stale as transaction types are added — every value this column
+ * holds is a bare identifier, so the shape is the check, and anything else is dropped to "no filter"
+ * rather than passed through.
+ */
+const buzzTypeFilter = (type?: string) =>
+  type && /^[A-Za-z]{1,32}$/.test(type) ? `AND type = '${type}'` : '';
+
+const buzzSideQuery = (
+  userId: number,
+  direction: 'in' | 'out',
+  days: number,
+  limit: number,
+  type?: string
+) => {
   const mine = direction === 'in' ? 'toAccount' : 'fromAccount';
   const theirs = direction === 'in' ? 'fromAccount' : 'toAccount';
   return `
@@ -1177,10 +1192,27 @@ const buzzSideQuery = (userId: number, direction: 'in' | 'out', days: number, li
     FROM default.buzzTransactions
     WHERE date > now() - INTERVAL ${days} DAY
       AND ${mine}Id = ${userId}
+      ${buzzTypeFilter(type)}
     ORDER BY date DESC
     LIMIT ${limit + 1}
   `;
 };
+
+/**
+ * The types this account actually has on this side of the ledger, over the whole window rather than
+ * the page.
+ *
+ * The dropdown used to be built from the loaded rows, which made it a list of what survived the cap —
+ * so a type pushed out by reward volume could not even be selected, let alone reached. An aggregate,
+ * so it costs nothing next to the row fetch: measured at tens of milliseconds on the heaviest account.
+ */
+const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) => `
+  SELECT DISTINCT type
+  FROM default.buzzTransactions
+  WHERE date > now() - INTERVAL ${days} DAY
+    AND ${direction === 'in' ? 'toAccount' : 'fromAccount'}Id = ${userId}
+  ORDER BY type
+`;
 
 /**
  * Retool ran this as two queries — `Payments` (`fromAccountId = user`, money OUT) and `Receipts`
@@ -1191,19 +1223,40 @@ const buzzSideQuery = (userId: number, direction: 'in' | 'out', days: number, li
 export async function getBuzzHistory(
   userId: number,
   days = 90,
-  /** `includeBank` is an access decision, not a filter — see the caller. */
-  { limit = 200, includeBank = true }: { limit?: number; includeBank?: boolean } = {}
+  {
+    limit = 200,
+    includeBank = true,
+    paymentType,
+    receiptType,
+  }: {
+    limit?: number;
+    /** `includeBank` is an access decision, not a filter — see the caller. */
+    includeBank?: boolean;
+    /** Narrow ONE side to a single transaction type, server-side. Per side because the two columns
+     *  carry independent filters and share a request. */
+    paymentType?: string;
+    receiptType?: string;
+  } = {}
 ): Promise<{
   payments: BuzzTransaction[];
   receipts: BuzzTransaction[];
   days: number;
   limit: number;
   truncated: { payments: boolean; receipts: boolean };
+  /** Every type present on each side across the whole window — what the filter may offer, which is not
+   *  the same as what the current page happens to contain. */
+  types: { payments: string[]; receipts: string[] };
 }> {
   const ch = getClickhouse();
-  const [outRows, inRows] = await Promise.all([
-    ch.$query<BuzzRow>(buzzSideQuery(userId, 'out', days, limit)),
-    ch.$query<BuzzRow>(buzzSideQuery(userId, 'in', days, limit)),
+  // The cap applies AFTER the type filter, which is the whole point: selecting a type re-queries for
+  // `limit` rows OF THAT TYPE rather than narrowing the mixed page already fetched. An account taking
+  // thousands of rewards a week filled the cap inside two days, so every older purchase, tip or
+  // chargeback was unreachable at any window — filtering could only ever shrink what was already there.
+  const [outRows, inRows, outTypes, inTypes] = await Promise.all([
+    ch.$query<BuzzRow>(buzzSideQuery(userId, 'out', days, limit, paymentType)),
+    ch.$query<BuzzRow>(buzzSideQuery(userId, 'in', days, limit, receiptType)),
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'out', days)),
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'in', days)),
   ]);
 
   const truncated = { payments: outRows.length > limit, receipts: inRows.length > limit };
@@ -1247,12 +1300,18 @@ export async function getBuzzHistory(
   const hide = (rows: BuzzTransaction[]) =>
     includeBank ? rows : rows.filter((t) => t.type !== 'bank');
 
+  const offerable = (rows: { type: string }[]) =>
+    rows.map((r) => r.type).filter((t) => includeBank || t !== 'bank');
+
   return {
     days,
     limit,
     truncated,
     payments: hide(map(outPage, 'out')),
     receipts: hide(map(inPage, 'in')),
+    // Bank rows are hidden from the rows, so the filter must not offer a type whose every row it would
+    // then withhold — that reads as an empty result rather than as a permission.
+    types: { payments: offerable(outTypes), receipts: offerable(inTypes) },
   };
 }
 
