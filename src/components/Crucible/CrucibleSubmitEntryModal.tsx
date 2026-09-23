@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
@@ -41,7 +42,7 @@ import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { formatDuration } from '~/utils/number-helpers';
-import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { Currency, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
@@ -988,49 +989,55 @@ export default function CrucibleSubmitEntryModal({
             </div>
           )}
 
-          <div className="flex gap-3">
-            {/* Cancel Button */}
-            <Button variant="default" onClick={handleClose} className="shrink-0">
-              Cancel
-            </Button>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex gap-3">
+              {/* Cancel Button */}
+              <Button variant="default" onClick={handleClose} className="shrink-0">
+                Cancel
+              </Button>
 
-            {activeTab === 'generator' ? (
-              <Button
-                className="flex-1"
-                onClick={handleImportGenerator}
-                loading={isImporting}
-                disabled={generatorSelected.length === 0}
-                leftSection={<IconSparkles size={16} />}
-              >
-                Add {generatorSelected.length} to library
-              </Button>
-            ) : totalCost > 0 ? (
-              <BuzzTransactionButton
-                className="flex-1"
-                buzzAmount={totalCost}
-                onPerformTransaction={handleSubmit}
-                loading={isSubmitting}
-                disabled={validSelectedCount === 0 || !canSubmitMore}
-                label={submitLabel}
-                showPurchaseModal
-              />
-            ) : (
-              <Button
-                className="flex-1"
-                onClick={handleSubmit}
-                loading={isSubmitting}
-                disabled={validSelectedCount === 0 || !canSubmitMore}
-                leftSection={<IconSend size={16} />}
-              >
-                {submitLabel}
-              </Button>
+              {activeTab === 'generator' ? (
+                <Button
+                  className="flex-1"
+                  onClick={handleImportGenerator}
+                  loading={isImporting}
+                  disabled={generatorSelected.length === 0}
+                  leftSection={<IconSparkles size={16} />}
+                >
+                  Add {generatorSelected.length} to library
+                </Button>
+              ) : totalCost > 0 ? (
+                <BuzzTransactionButton
+                  className="flex-1"
+                  buzzAmount={totalCost}
+                  onPerformTransaction={handleSubmit}
+                  loading={isSubmitting}
+                  disabled={validSelectedCount === 0 || !canSubmitMore}
+                  label={submitLabel}
+                  showPurchaseModal
+                />
+              ) : (
+                <Button
+                  className="flex-1"
+                  onClick={handleSubmit}
+                  loading={isSubmitting}
+                  disabled={validSelectedCount === 0 || !canSubmitMore}
+                  leftSection={<IconSend size={16} />}
+                >
+                  {submitLabel}
+                </Button>
+              )}
+            </div>
+
+            {entryFee > 0 && (
+              <div className="flex items-center justify-end gap-1">
+                <CurrencyIcon currency={Currency.BUZZ} size={14} />
+                <Text size="xs" c="dimmed">
+                  {entryFee.toLocaleString()} Buzz per entry
+                </Text>
+              </div>
             )}
           </div>
-
-          {/* Per Entry Cost */}
-          <Text size="xs" c="dimmed" ta="center">
-            {entryFee} Buzz per entry
-          </Text>
         </div>
       </div>
     </Modal>
