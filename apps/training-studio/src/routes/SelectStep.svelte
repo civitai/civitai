@@ -17,7 +17,6 @@
   import {
     CUSTOM_MODEL_SURCHARGE,
     MEDIA_OPTIONS,
-    cardByType,
     cardsForMedia,
     releasedLabel,
     typesForMedia,
@@ -46,14 +45,22 @@
   let {
     onContinue,
     prices,
+    enabledModelFlags = [],
     initial = null,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`), resolved server-side in `/new`'s
+     *  load. Cards whose gate isn't in this set are hidden from every offer surface below. */
+    enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
+
+  // The resolved gate set from the page load. Used by every card-offering surface (seed, recommendation,
+  // featured/other lists). Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  const enabledFlags = $derived(new Set(enabledModelFlags));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
@@ -66,7 +73,9 @@
   let media = $state<Media>(untrack(() => initial?.media ?? 'image'));
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
-    untrack(() => (initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image'))]))
+    untrack(() =>
+      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags))]
+    )
   );
   let focus = $state(0);
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
@@ -78,7 +87,13 @@
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
   const recommendedType = $derived(type.recommended[media]);
-  const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
+  // Undefined when the type has no recommendation for this media, or when the recommended model is gated
+  // off for this user — the banner then simply doesn't show.
+  const recommendedCard = $derived(
+    recommendedType
+      ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
+      : undefined
+  );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
@@ -87,7 +102,7 @@
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
-    const cards = cardsForMedia(media);
+    const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
     return featured
@@ -98,7 +113,7 @@
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
-    return cardsForMedia(media).filter((c) => !featuredSet.has(c.type));
+    return cardsForMedia(media, enabledFlags).filter((c) => !featuredSet.has(c.type));
   });
   let showAllModels = $state(false);
   // Keep the tail open when the chosen model lives there, so the selection is never hidden.
@@ -118,7 +133,7 @@
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m))];
+    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
     focus = 0;
     sweepOpen = false;
   }
@@ -126,7 +141,7 @@
   function pickType(id: string) {
     loraType = id;
     if (runs.length === 1) {
-      runs = [newRun(recommendedCardFor(id, media))];
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
       focus = 0;
     }
   }

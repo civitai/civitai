@@ -122,11 +122,19 @@ export function newRun(card: ModelCard): Run {
 }
 
 /** The recommended base-model card for a LoRA type + media (falls back defensively). */
-export function recommendedCardFor(loraTypeId: string, media: Media): ModelCard {
+export function recommendedCardFor(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags?: ReadonlySet<string>
+): ModelCard {
   const t = LORA_TYPES.find((x) => x.id === loraTypeId);
   const recommendedId = t?.recommended[media];
+  const cards = cardsForMedia(media, enabledFlags);
+  // Never seed a gated-off card: prefer the recommended one if visible, else the first visible card, and
+  // only fall back to the unfiltered catalog if a media somehow has no visible cards at all.
   return (
-    (recommendedId ? cardByType(recommendedId) : undefined) ??
+    (recommendedId ? cards.find((c) => c.type === recommendedId) : undefined) ??
+    cards[0] ??
     cardsForMedia(media)[0] ??
     MODEL_CARDS[0]!
   );

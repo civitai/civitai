@@ -45,3 +45,22 @@ export async function isTrainingStudioAllowed(user: SessionUser): Promise<boolea
     return user.isModerator === true;
   }
 }
+
+/** Which per-model catalog gates (`ModelCard.flagKey`) this user may see — the subset of `keys` that
+ *  evaluates enabled. Same fail-closed policy as the app gate: a flag that doesn't exist yet, or a Flipt
+ *  outage, falls back to moderators-only, so a newly-added model stays dark until its flag is created and
+ *  opened. Pass the catalog's `catalogFlagKeys()`; returns [] when nothing is gated. */
+export async function allowedModelFlags(user: SessionUser, keys: string[]): Promise<string[]> {
+  if (keys.length === 0) return [];
+  try {
+    const flipt = getFlipt();
+    await flipt.ensureInitialized();
+    const context = fliptContext(user);
+    return keys.filter(
+      (key) => (flipt.isEnabledSync(key, String(user.id), context) ?? user.isModerator === true)
+    );
+  } catch (error) {
+    console.warn('[training-studio] model flag eval failed', error);
+    return user.isModerator === true ? [...keys] : [];
+  }
+}
