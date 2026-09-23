@@ -7,7 +7,8 @@ export const UNRESOLVED_THREAD_CHAIN_MESSAGE = 'comment thread is no longer avai
  * ORPHAN — its parent comment was deleted, and `Thread.commentId` is `onDelete: SetNull`, so the
  * link upward is gone while its replies remain. A column missing from this list turns that
  * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
- * `threadContentSelect` in `block-check.service.ts` lists the same columns for the same reason.
+ * `threadContentSelect` in `block-check.service.ts` lists the same owners, minus `clubPostId`, which
+ * has no owner lookup.
  */
 export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
   ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(

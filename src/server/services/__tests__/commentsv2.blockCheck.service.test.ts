@@ -195,5 +195,8 @@ describe('upsertComment — block enforcement on a reply create', () => {
     await expect(upsertComment(reply)).rejects.toThrow('comment thread is no longer available');
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(db.tx.commentV2.create).not.toHaveBeenCalled();
+    // Queued only to make the lock walk reachable if the block check stops refusing; unconsumed here,
+    // and `clearAllMocks` would leave it for whatever test runs next.
+    db.thread.findUnique.mockReset();
   });
 });
