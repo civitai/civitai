@@ -15,7 +15,6 @@ import { Alert, List, Text } from '@mantine/core';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { useWhatIfContext } from './WhatIfProvider';
 
 // =============================================================================
 // Types
@@ -205,12 +204,13 @@ export function SeedanceImg2VidAlert({ ecosystem, workflow }: SeedanceImg2VidAle
 
 /**
  * Displays an alert when resources need to be downloaded before generation.
- * Must be used inside a WhatIfProvider.
+ *
+ * Takes the whatIf result as props rather than reading a context: the two form
+ * lanes have separate WhatIf contexts, and a component that reads one of them
+ * throws in the other.
  */
-export function ReadyAlert() {
-  const { data, isLoading } = useWhatIfContext();
-
-  if (data?.ready !== false || isLoading) {
+export function ReadyAlert({ ready, isLoading }: { ready?: boolean; isLoading?: boolean }) {
+  if (ready !== false || isLoading) {
     return null;
   }
 
