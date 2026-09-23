@@ -68,6 +68,8 @@ describe('GET /api/v1/me isModerator', () => {
     const asNonMod = await me({ ...MOD, isModerator: false }, withoutUserRead);
 
     expect(asMod).not.toHaveProperty('isModerator');
+    expect(asMod).not.toHaveProperty('email');
+    expect(asMod.id).toBe(MOD.id);
     expect(asMod).toEqual(asNonMod);
   });
 });
