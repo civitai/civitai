@@ -237,8 +237,21 @@ export interface WithBlockScopeOpts {
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
    * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
-   * `enforceContextBinding` for the token's scopes — the standard per-scope
+   * `enforceContextBinding` FOR THIS SCOPE — the standard per-scope
    * authorization path (me.ts, submit-version, settings, etc.).
+   *
+   * 🔴 It is the binding for THIS scope only, not for every scope the token
+   * carries (#5063). If a handler consults a SECOND scope off `claims.scopes`
+   * to widen what it returns — today only `collections:read:private`, in
+   * `blocks/collections/index.ts:614` and `blocks/collections/[id]/index.ts:132`
+   * — that scope's own binding is NOT run by the middleware and the handler
+   * owns it. Both of today's sites are safe for reasons that hold without any
+   * test: the scope is CONSENT-GATED (absent from `CONSENT_EXEMPT_SCOPES`) so
+   * the anon mint strips it, AND both routes require `collections:read:self`,
+   * whose non-anon binding does still run. A third such site must make its own
+   * argument rather than inherit theirs — see the note at the foot of
+   * `block-scope.required-scope-binding.test.ts`, which also records why the
+   * mechanical ledger that briefly lived there was deleted rather than patched.
    *
    * When OMITTED ("any valid block token" mode), the middleware STILL performs
    * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,
@@ -743,8 +756,8 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
 }
 
 /**
- * Enforces context binding per scope type. Each scope can require
- * additional request-shape checks beyond having-the-scope:
+ * Enforces context binding for THE SCOPE THE ROUTE REQUIRES. Each scope can
+ * require additional request-shape checks beyond having-the-scope:
  *   - models:read:self   → query.id ≡ claims.ctx.modelId (integer match)
  *   - buzz:read:self     → claims.sub != 'anon'
  *   - social:tip:self    → claims.sub != 'anon'
@@ -752,17 +765,59 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - ai:write:budgeted  → claims.buzzBudget > 0
  *   - posts:write:self   → claims.sub != 'anon'
  *
+ * 🔴 THE BINDING SWITCH IS SCOPED TO `requiredScope`, NOT TO EVERY SCOPE ON THE
+ * TOKEN (#5063), and that is deliberate. A binding answers "is THIS request
+ * shaped correctly for the capability it is exercising" — it is a statement
+ * about a route, not about a token. Running every scope's binding on every
+ * request made two cases on this very switch contradict each other: the
+ * `apps:storage:shared:read` case below says anon reads ARE allowed, while the
+ * `apps:storage:shared:write` case one below it 403s the same anon token on
+ * that same read. Likewise `models:read:self`'s query binding cannot be
+ * satisfied by a buzz request that has no model in it, so a manifest declaring
+ * it 403'd every non-models block REST route.
+ *
+ * WHAT DID NOT NARROW, and must not:
+ *   - The unknown-scope deny-by-default below still sweeps the WHOLE token. An
+ *     unknown scope is never legitimate on any route, so that gate is not
+ *     route-specific.
+ *   - The caller (`withBlockScope`) still enforces
+ *     `claims.scopes.includes(requiredScope)` BEFORE calling this — which is
+ *     also what guarantees `requiredScope` reaches the switch already proven
+ *     known, so the `default:` arm below only ever sees an under-wired scope.
+ *   - The "every known scope has a binding case" property that the `default:`
+ *     arm used to police incidentally (by 403ing every request a token carrying
+ *     an unwired scope made) is now pinned STATICALLY, and therefore earlier and
+ *     louder, by `block-scope.required-scope-binding.test.ts`.
+ *   - Each route's own authorization is untouched: `resolveSharedContext`'s
+ *     min-trust gate + per-op `READ_OPS` check, the collections
+ *     visibility/ownership checks, the tip gates, etc.
+ *
  * Throws ForbiddenError on mismatch.
  */
-export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequest): void {
+export function enforceContextBinding(
+  claims: BlockTokenClaims,
+  req: NextApiRequest,
+  requiredScope: string
+): void {
+  // Deny-by-default, TOKEN-WIDE: tokens carrying scopes we don't know about are
+  // rejected here. The manifest validator is the registration-time gate;
+  // this is the runtime gate. Together they bound the trust surface even
+  // if a future scope ships without all its plumbing.
   for (const scope of claims.scopes) {
-    // Deny-by-default: tokens carrying scopes we don't know about are
-    // rejected here. The manifest validator is the registration-time gate;
-    // this is the runtime gate. Together they bound the trust surface even
-    // if a future scope ships without all its plumbing.
     if (!isKnownBlockScope(scope)) {
       throw forbidden(`unknown scope: ${scope}`);
     }
+  }
+
+  // The bare block + the `scope` alias are deliberate: they hold the switch at
+  // its original indentation and keep every `${scope}` in the error messages
+  // spelled the same, so the diff shows ONE semantic change — what the switch is
+  // fed — rather than a reindent-and-rename of the 140 lines around it.
+  {
+    // `requiredScope` is guaranteed to be one of `claims.scopes` by the caller's
+    // presence check, and every member of `claims.scopes` was just proven known
+    // — so reaching `default:` means an under-wired scope, never an unknown one.
+    const scope = requiredScope;
     switch (scope) {
       case 'models:read:self': {
         const modelIdStr = readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
@@ -853,27 +908,31 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // `blocks.createPostFromApp` (approval + revocation + write-trust +
         // per-source ownership/provenance + the host-chrome consent confirm).
         //
-        // 🔴 THIS CASE IS NOT OPTIONAL AND ITS ABSENCE IS NOT SCOPED TO POSTING.
-        // The loop walks EVERY scope on the token, and the `default:` arm below
-        // throws. A known scope with no case here therefore 403s every REST
-        // request the token makes — a models read, a catalog read, anything — so
-        // omitting it bricks the whole app and reads as a bug in an unrelated
-        // endpoint. It must land in the same commit as the
-        // BLOCK_SCOPE_TO_OAUTH_BIT entry.
+        // 🔴 THIS CASE IS NOT OPTIONAL. The `default:` arm below throws, so a
+        // known scope with no case here 403s EVERY request to the route that
+        // declares it as `requiredScope` — the route is simply dead. It must
+        // land in the same commit as the BLOCK_SCOPE_TO_OAUTH_BIT entry, and
+        // `block-scope.required-scope-binding.test.ts` fails statically if it
+        // does not. (Before #5063 the damage was WIDER, not narrower: the switch
+        // ran for every scope on the token, so an unwired scope 403'd a models
+        // read and a catalog read too. That blast radius is gone; the
+        // requirement to wire the case is not.)
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
       }
       default:
-        // Fail closed (L-M6). Reaching here means a scope passed the
-        // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
-        // but has no explicit binding case in this switch — i.e. someone
-        // added a scope to the constant without wiring its runtime binding.
-        // Rather than accept it with no contextual binding (the prior
-        // implicit fall-through), reject it. Every scope currently in
-        // BLOCK_SCOPE_TO_OAUTH_BIT has a case above, so this never fires for
-        // a valid token today; it only catches a future under-wired scope.
+        // Fail closed (L-M6). Reaching here means the ROUTE'S `requiredScope`
+        // passed the `isKnownBlockScope` gate above (it's in
+        // BLOCK_SCOPE_TO_OAUTH_BIT) but has no explicit binding case in this
+        // switch — i.e. someone added a scope to the constant, declared it on a
+        // route, and never wired its runtime binding. Rather than accept it with
+        // no contextual binding (the prior implicit fall-through), reject it.
+        // Every scope currently in BLOCK_SCOPE_TO_OAUTH_BIT has a case above —
+        // asserted statically in `block-scope.required-scope-binding.test.ts`,
+        // which is the gate that now catches an under-wired scope at CI time
+        // instead of leaving it to 403 in production.
         throw forbidden(`scope has no runtime binding: ${scope}`);
     }
   }
@@ -1155,7 +1214,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       }
 
       try {
-        enforceContextBinding(claims, req);
+        // #5063: the binding runs for THIS ROUTE'S scope only. An unrelated
+        // scope the token also happens to carry (a declared `models:read:self`
+        // on a buzz read; a consent-exempt `apps:storage:shared:write` on an
+        // anon shared READ) no longer 403s a request that never invoked it.
+        enforceContextBinding(claims, req, opts.requiredScope);
       } catch (err) {
         if (err instanceof ForbiddenError) {
           res.status(403).json({ error: err.message });
