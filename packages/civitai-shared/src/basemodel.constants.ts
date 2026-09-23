@@ -138,6 +138,7 @@ export const ECO = {
   Qwen: 10,
   Qwen2: 62,
   Qwen3: 80,
+  Qwen21: 88,
   Chroma: 11,
   HyDit1: 12,
   AuraFlow: 13,
@@ -608,6 +609,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Qwen 3',
     familyId: 10,
     sortOrder: 92,
+  },
+  {
+    id: ECO.Qwen21,
+    key: 'Qwen21',
+    displayName: 'Qwen 2.1',
+    familyId: 10,
+    sortOrder: 91,
   },
 
   // ZImage Family (familyId: 11)
@@ -2218,6 +2226,7 @@ export const BM = {
   Grok: 78,
   Qwen2: 79,
   Qwen3: 99,
+  Qwen21: 107,
   WanImage27: 86,
   WanVideo27: 81,
   WanVideo30: 101,
@@ -2558,6 +2567,13 @@ export const licenses: LicenseRecord[] = [
     id: 44,
     name: 'CC BY-NC 4.0',
     url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+  },
+  {
+    id: 45,
+    name: 'Qwen Research License Agreement',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/790c92633540aa0cb11d9abf19eb46d861714758/LICENSE',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
   },
 ];
 
@@ -3165,6 +3181,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen2,
     licenseId: 13,
+  },
+  {
+    id: BM.Qwen21,
+    name: 'Qwen 2.1',
+    description: "Alibaba's open-weight Qwen-Image 2.1 image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Qwen21,
+    licenseId: 45,
   },
   {
     id: BM.Qwen3,

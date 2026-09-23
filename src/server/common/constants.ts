@@ -814,6 +814,15 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'qwen research': {
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/790c92633540aa0cb11d9abf19eb46d861714758/LICENSE',
+    name: 'Qwen Research License Agreement',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
+    // The agreement is non-commercial, but `nonCommercial` would block paid access and
+    // licensing fees on Qwen 2.1 versions. That product decision is still open, so
+    // the flag is deliberately unset. See qwen21-research-license.test.ts.
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -887,6 +896,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
   'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
+  'Qwen 2.1': baseLicenses['qwen research'],
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
