@@ -5,7 +5,7 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
-  import { fetchBuzzHistory, filterTransactions, type BuzzTransaction } from './buzz-history';
+  import { fetchBuzzLedgerSide, filterTransactions, type BuzzTransaction } from './buzz-history';
 
   let { userId }: { userId: number } = $props();
 
@@ -21,19 +21,31 @@
 
   const LIMIT_STEP = 200;
   const LIMIT_MAX = 2000;
-  let limit = $state(LIMIT_STEP);
 
+  // Per side, all of it. The columns filter and page independently, so sharing any of this state made
+  // each of them refetch — and blank — the other for an answer that had not changed.
+  let paymentLimit = $state(LIMIT_STEP);
+  let receiptLimit = $state(LIMIT_STEP);
   let paymentType = $state('all');
   let receiptType = $state('all');
   let paymentSearch = $state('');
   let receiptSearch = $state('');
 
   // Its own fetch rather than riding the account payload: ~800ms against a 1.5B-row table. The TYPE
-  // filters are part of the REQUEST, not applied to its result — selecting one re-queries that side
-  // for rows of that type, which is the only way past a cap a busy account fills in two days. The
+  // filter is part of the REQUEST, not applied to its result — selecting one re-queries that side for
+  // rows of that type, which is the only way past a cap a busy account fills in two days. The
   // description search stays client-side: `description` has no index on a 1.5B-row table.
-  const history = $derived(
-    browser ? fetchBuzzHistory(userId, Number(days), limit, paymentType, receiptType) : null
+  //
+  // `days` is the one control that is deliberately shared — it reframes the question for both columns.
+  const payments = $derived(
+    browser
+      ? fetchBuzzLedgerSide(userId, 'payments', Number(days), paymentLimit, paymentType)
+      : null
+  );
+  const receipts = $derived(
+    browser
+      ? fetchBuzzLedgerSide(userId, 'receipts', Number(days), receiptLimit, receiptType)
+      : null
   );
 
   // Retool's second row: counterparty x total, per side. The transaction list answers "what happened";
@@ -115,7 +127,8 @@
   onSearch: (v: string) => void,
   capped: boolean,
   /** The cap the SERVER applied, which is clamped — the local request value can exceed it. */
-  appliedLimit: number
+  appliedLimit: number,
+  onLoadMore: (() => void) | null
 )}
   <div class="min-w-0 flex-1">
     <h4 class="mb-2 text-sm font-semibold text-white">
@@ -126,8 +139,8 @@
     {#if capped}
       <p class="mb-2 text-xs text-amber-300">
         Only the newest {num(appliedLimit)} are shown — this side has more, and the oldest were dropped.
-        {#if limit < LIMIT_MAX}
-          <button type="button" class="underline" onclick={() => (limit = Math.min(limit + LIMIT_STEP, LIMIT_MAX))}>
+        {#if onLoadMore}
+          <button type="button" class="underline" onclick={onLoadMore}>
             Load {num(LIMIT_STEP)} more
           </button>
         {:else}
@@ -220,55 +233,78 @@
     </label>
   </div>
 
-  {#await history}
-    <p class="text-sm text-dark-2">Loading Buzz movement…</p>
-  {:then result}
-    {#if !result}
-      <p class="text-sm text-dark-2">Loading Buzz movement…</p>
-    {:else}
-      <div class="flex flex-col gap-6 lg:flex-row">
+  <!-- One await per side, not one for the panel. A shared promise meant changing either column's
+       filter re-entered the pending branch for BOTH, blanking a column whose answer had not changed. -->
+  <div class="flex flex-col gap-6 lg:flex-row">
+    {#await payments}
+      <p class="min-w-0 flex-1 text-sm text-dark-2">Loading payments…</p>
+    {:then side}
+      {#if side}
         {@render table(
           'Payments',
-          filterTransactions(result.payments, paymentSearch),
-          result.types.payments,
+          filterTransactions(side.rows, paymentSearch),
+          side.types,
           paymentType,
           paymentSearch,
           (v) => (paymentType = v),
           (v) => (paymentSearch = v),
-          result.truncated.payments,
-          result.limit
+          side.truncated,
+          side.limit,
+          paymentLimit < LIMIT_MAX
+            ? () => (paymentLimit = Math.min(paymentLimit + LIMIT_STEP, LIMIT_MAX))
+            : null
         )}
+      {/if}
+    {:catch}
+      <p class="min-w-0 flex-1 text-sm text-red-300">Could not load payments.</p>
+    {/await}
+
+    {#await receipts}
+      <p class="min-w-0 flex-1 text-sm text-dark-2">Loading receipts…</p>
+    {:then side}
+      {#if side}
         {@render table(
           'Receipts',
-          filterTransactions(result.receipts, receiptSearch),
-          result.types.receipts,
+          filterTransactions(side.rows, receiptSearch),
+          side.types,
           receiptType,
           receiptSearch,
           (v) => (receiptType = v),
           (v) => (receiptSearch = v),
-          result.truncated.receipts,
-          result.limit
+          side.truncated,
+          side.limit,
+          receiptLimit < LIMIT_MAX
+            ? () => (receiptLimit = Math.min(receiptLimit + LIMIT_STEP, LIMIT_MAX))
+            : null
         )}
-      </div>
+      {/if}
+    {:catch}
+      <p class="min-w-0 flex-1 text-sm text-red-300">Could not load receipts.</p>
+    {/await}
+  </div>
 
-      <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
+  <div class="mt-6 flex flex-col gap-6 border-t border-dark-4 pt-4 lg:flex-row">
+    {#await payments then side}
+      {#if side}
         {@render totals(
           'Paid to, by counterparty',
-          filterTransactions(result.payments, paymentSearch),
+          filterTransactions(side.rows, paymentSearch),
           paymentTotalsOpen,
           () => (paymentTotalsOpen = !paymentTotalsOpen),
-          result.truncated.payments
+          side.truncated
         )}
+      {/if}
+    {/await}
+    {#await receipts then side}
+      {#if side}
         {@render totals(
           'Received from, by counterparty',
-          filterTransactions(result.receipts, receiptSearch),
+          filterTransactions(side.rows, receiptSearch),
           receiptTotalsOpen,
           () => (receiptTotalsOpen = !receiptTotalsOpen),
-          result.truncated.receipts
+          side.truncated
         )}
-      </div>
-    {/if}
-  {:catch}
-    <p class="text-sm text-red-300">Could not load Buzz history.</p>
-  {/await}
+      {/if}
+    {/await}
+  </div>
 </section>

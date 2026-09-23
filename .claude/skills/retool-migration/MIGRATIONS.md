@@ -416,12 +416,16 @@ slice); the four left are unbuilt rather than blocked.
       trained, base model, status, epoch progress, image count, Buzz cost, dataset-shared.
       Retool filtered `type = Training Data OR type IS NULL` in the WHERE, which drops a version whose
       only files are of another type; moved into the JOIN so the run stays visible.
-- [x] **Buzz history** — `Receipts` and `Payments` kept as **two queries**, one per ledger side, each
-      with its own cap, plus `ReceiptsUsers`/`PaymentsUsers` for counterparty names. One cap across both
-      sides lets the busy side eat it: measured on user 2557503, all 200 rows of a 90-day window were
-      receipts spanning two days, so every one of its 128 payments was invisible. `truncated` is per
-      side (`{ payments, receipts }`) for the same reason, and `/api/user-buzz-history/[userId]` takes
-      `?limit=` (clamped 1..2000, default 200) behind a per-column "Load 200 more".
+- [x] **Buzz history** — `Receipts` and `Payments` are **two columns that share nothing**: one request
+      each (`/api/user-buzz-history/[userId]?side=`), its own cap, its own type filter, its own paging,
+      plus `ReceiptsUsers`/`PaymentsUsers` for counterparty names. `getBuzzLedgerSide` serves one side;
+      there is deliberately no both-sides call, because every version that had one coupled them again.
+
+      Each separation fixed a defect the previous one left behind. **One cap** across both sides let the
+      busy side eat it — on user 2557503 all 200 rows of a 90-day window were receipts spanning two
+      days, so its 128 payments were invisible. **One request** made either column's filter reload the
+      other and blank it meanwhile, for an answer that had not changed. `?limit=` is clamped 1..2000
+      (default 200) behind a per-column "Load 200 more", and `truncated` is per side.
 
       🔴 **The per-column TYPE filter is the SERVER's, and the cap applies after it.** Selecting a type
       re-queries that side for `limit` rows OF that type; filtering the fetched page could only shrink

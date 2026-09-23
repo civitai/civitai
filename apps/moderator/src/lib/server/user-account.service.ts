@@ -1130,7 +1130,7 @@ const BUZZ_COLORS: Record<string, string> = {
 };
 
 /** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzHistory`. */
+ *  without being a user — see the collision note in `getBuzzLedgerSide`. */
 const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
 
 const counterpartyLabel = (accountType: string, id: number) =>
@@ -1215,103 +1215,96 @@ const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) =
 `;
 
 /**
- * Retool ran this as two queries — `Payments` (`fromAccountId = user`, money OUT) and `Receipts`
- * (`toAccountId = user`, money IN) — shown side by side, each with its own filters. One merged list
- * cannot answer "what did this account spend" without the reader sorting it by eye, which is the
- * question a farming or chargeback investigation actually asks.
+ * ONE side of the ledger — payments (money out) or receipts (money in).
+ *
+ * Per side, not per request, because the two columns carry independent filters and a shared request
+ * made every one of them reload the other: changing the receipts type blanked the payments column and
+ * re-ran its query for an answer that had not changed.
+ *
+ * Retool ran these as two queries too (`Payments` / `Receipts`), shown side by side with their own
+ * filters. One merged list cannot answer "what did this account spend" without the reader sorting it by
+ * eye, which is the question a farming or chargeback investigation actually asks.
  */
-export async function getBuzzHistory(
+export async function getBuzzLedgerSide(
   userId: number,
+  side: 'payments' | 'receipts',
   days = 90,
   {
     limit = 200,
     includeBank = true,
-    paymentType,
-    receiptType,
+    type,
   }: {
     limit?: number;
     /** `includeBank` is an access decision, not a filter — see the caller. */
     includeBank?: boolean;
-    /** Narrow ONE side to a single transaction type, server-side. Per side because the two columns
-     *  carry independent filters and share a request. */
-    paymentType?: string;
-    receiptType?: string;
+    /** Narrows server-side, ahead of the cap. */
+    type?: string;
   } = {}
 ): Promise<{
-  payments: BuzzTransaction[];
-  receipts: BuzzTransaction[];
+  rows: BuzzTransaction[];
   days: number;
   limit: number;
-  truncated: { payments: boolean; receipts: boolean };
-  /** Every type present on each side across the whole window — what the filter may offer, which is not
-   *  the same as what the current page happens to contain. */
-  types: { payments: string[]; receipts: string[] };
+  truncated: boolean;
+  /** Every type this side has across the whole window — what the filter may offer, which is not the
+   *  same as what the current page happens to contain. */
+  types: string[];
 }> {
+  const direction = side === 'receipts' ? 'in' : 'out';
   const ch = getClickhouse();
   // The cap applies AFTER the type filter, which is the whole point: selecting a type re-queries for
   // `limit` rows OF THAT TYPE rather than narrowing the mixed page already fetched. An account taking
   // thousands of rewards a week filled the cap inside two days, so every older purchase, tip or
   // chargeback was unreachable at any window — filtering could only ever shrink what was already there.
-  const [outRows, inRows, outTypes, inTypes] = await Promise.all([
-    ch.$query<BuzzRow>(buzzSideQuery(userId, 'out', days, limit, paymentType)),
-    ch.$query<BuzzRow>(buzzSideQuery(userId, 'in', days, limit, receiptType)),
-    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'out', days)),
-    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'in', days)),
+  const [rows, typeRows] = await Promise.all([
+    ch.$query<BuzzRow>(buzzSideQuery(userId, direction, days, limit, type)),
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, direction, days)),
   ]);
 
-  const truncated = { payments: outRows.length > limit, receipts: inRows.length > limit };
-  const outPage = outRows.slice(0, limit);
-  const inPage = inRows.slice(0, limit);
+  const truncated = rows.length > limit;
+  const page = rows.slice(0, limit);
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
   // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
   // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
   // creator as the counterparty of every Creator Program transfer.
-  const both = [...outPage, ...inPage];
-  const resolvable = both.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
+  const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
   const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
-  const map = (rows: BuzzRow[], direction: 'in' | 'out'): BuzzTransaction[] =>
-    rows.map((r) => {
-      const id = Number(r.counterpartyId);
-      const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
-      return {
-        transactionId: r.transactionId,
-        // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
-        // time and shift every row by the viewer's offset, putting it on a different day from the IP and
-        // prompt timestamps it is meant to line up with.
-        date: clickhouseDate(r.date),
-        direction,
-        amount: Number(r.amount),
-        color: BUZZ_COLORS[r.accountType] ?? r.accountType,
-        type: r.type,
-        description: r.description,
-        counterpartyId: id,
-        counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
-        counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
-        externalTransactionId: r.externalTransactionId || null,
-      };
-    });
+  const mapped: BuzzTransaction[] = page.map((r) => {
+    const id = Number(r.counterpartyId);
+    const isUser = USER_ACCOUNT_TYPES.has(r.counterpartyType) && id > 0;
+    return {
+      transactionId: r.transactionId,
+      // ClickHouse returns `YYYY-MM-DD HH:MM:SS` with no zone; `new Date()` would read that as LOCAL
+      // time and shift every row by the viewer's offset, putting it on a different day from the IP and
+      // prompt timestamps it is meant to line up with.
+      date: clickhouseDate(r.date),
+      direction,
+      amount: Number(r.amount),
+      color: BUZZ_COLORS[r.accountType] ?? r.accountType,
+      type: r.type,
+      description: r.description,
+      counterpartyId: id,
+      counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
+      counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
+      externalTransactionId: r.externalTransactionId || null,
+    };
+  });
 
   // Retool restricted `bank` rows to admins. Filtered after mapping rather than in the ClickHouse
   // WHERE so `truncated` still describes the real window — a moderator who cannot see bank rows must
   // not also be told the window was shorter than it was.
-  const hide = (rows: BuzzTransaction[]) =>
-    includeBank ? rows : rows.filter((t) => t.type !== 'bank');
-
-  const offerable = (rows: { type: string }[]) =>
-    rows.map((r) => r.type).filter((t) => includeBank || t !== 'bank');
+  const visible = includeBank ? mapped : mapped.filter((t) => t.type !== 'bank');
 
   return {
     days,
     limit,
     truncated,
-    payments: hide(map(outPage, 'out')),
-    receipts: hide(map(inPage, 'in')),
-    // Bank rows are hidden from the rows, so the filter must not offer a type whose every row it would
-    // then withhold — that reads as an empty result rather than as a permission.
-    types: { payments: offerable(outTypes), receipts: offerable(inTypes) },
+    rows: visible,
+    // Bank rows are withheld from the rows, so the filter must not offer a type whose every row it
+    // would then withhold — that reads as an empty result rather than as a permission.
+    types: typeRows.map((r) => r.type).filter((t) => includeBank || t !== 'bank'),
   };
 }
 

@@ -17,37 +17,32 @@ export type BuzzTransaction = {
   externalTransactionId: string | null;
 };
 
-export type BuzzHistory = {
-  /** Retool's split: payments are money OUT of this account, receipts money IN. */
-  payments: BuzzTransaction[];
-  receipts: BuzzTransaction[];
+export type BuzzLedgerSide = {
+  rows: BuzzTransaction[];
   /** The window the server actually queried — 1.5B rows means this is always bounded, and the panel has
    *  to say so rather than implying it shows everything. */
   days: number;
-  /** The per-side cap the server actually applied — clamped, so it can be lower than what was asked
-   *  for. The panel states this rather than its own request value. */
+  /** The cap the server actually applied — clamped, so it can be lower than what was asked for. The
+   *  panel states this rather than its own request value. */
   limit: number;
-  /** Per side: the two are capped independently, and a busy receipts column says nothing about whether
-   *  the payments column is complete. */
-  truncated: { payments: boolean; receipts: boolean };
-  /** Every type on each side across the whole window, for the filters. Not derived from the rows: a
-   *  type the cap pushed off the page must still be selectable, since selecting it is what fetches it. */
-  types: { payments: string[]; receipts: string[] };
+  truncated: boolean;
+  /** Every type on this side across the whole window, for the filter. Not derived from the rows: a type
+   *  the cap pushed off the page must still be selectable, since selecting it is what fetches it. */
+  types: string[];
 };
 
-export async function fetchBuzzHistory(
+/**
+ * One side per request. The two columns filter independently, so a shared request made each of them
+ * reload the other — and blank it meanwhile — for an answer that had not changed.
+ */
+export async function fetchBuzzLedgerSide(
   userId: number,
+  side: 'payments' | 'receipts',
   days: number,
   limit: number,
-  paymentType: string,
-  receiptType: string
-): Promise<BuzzHistory> {
-  const params = new URLSearchParams({
-    days: String(days),
-    limit: String(limit),
-    paymentType,
-    receiptType,
-  });
+  type: string
+): Promise<BuzzLedgerSide> {
+  const params = new URLSearchParams({ side, days: String(days), limit: String(limit), type });
   const r = await fetch(`/api/user-buzz-history/${userId}?${params}`);
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
