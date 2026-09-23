@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { Tracker } from '~/server/clickhouse/client';
+import type { Context } from '~/server/createContext';
 import type { blocksRouter } from '~/server/routers/blocks.router';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -85,7 +86,14 @@ export function blockWorkflowBearer(req: NextApiRequest): string {
  * every scoped route purely to capture its options literal, from having to mock
  * the router's entire dependency set.
  */
-let callerFactory: ((ctx: unknown) => unknown) | null = null;
+// 🔴 TYPED, not `(ctx: unknown) => unknown`. Everything is assignable to `unknown`,
+// so the previous signature checked the 20-field context literal below against
+// NOTHING — unlike `publicApiContext2`, which hands its literal to a correctly-typed
+// `createCaller` and fails to build when `Context` gains a required field. This file
+// asserts it "mirrors publicApiContext2 field for field"; that claim needs a guard,
+// and the type IS the guard. `Context` is type-only here, so naming it does not undo
+// the dynamic import below.
+let callerFactory: ((ctx: Context) => BlocksCaller) | null = null;
 
 async function getCallerFactory() {
   if (!callerFactory) {
@@ -93,7 +101,7 @@ async function getCallerFactory() {
       import('~/server/trpc'),
       import('~/server/routers/blocks.router'),
     ]);
-    callerFactory = createCallerFactory(blocksRouter) as unknown as (ctx: unknown) => unknown;
+    callerFactory = createCallerFactory(blocksRouter);
   }
   return callerFactory;
 }
@@ -134,5 +142,8 @@ export async function blockWorkflowCaller(
     tokenScope: TokenScope.Full,
     apiKeyId: undefined,
     subject: undefined,
-  }) as BlocksCaller;
+    // No `as BlocksCaller` here: with `callerFactory` typed, the literal above is
+    // checked against `Context` and the return type follows. Re-adding a cast would
+    // silently restore the hole this removed.
+  });
 }

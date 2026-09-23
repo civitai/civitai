@@ -205,10 +205,21 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //     REACHES THE SERVER TODAY, BUT THE REASON IS NARROWER THAN AN EARLIER REVISION OF
 //     THIS COMMENT CLAIMED, and the difference matters to anyone sizing for GA.
 //
-//     What is MEASURED here: neither host passes `waitSeconds` — zero occurrences of the
-//     identifier in `components/AppBlocks/` — and `@civitai/app-sdk`'s `POLL_WORKFLOW`
-//     payload type (0.14.0, the version this repo installs) carries `requestId` and
-//     `workflowId` only. The hosts are the choke point, so the server sees no hold.
+//     🔴 SUPERSEDED BY #5068 — "the server sees no hold" IS NO LONGER TRUE, and the
+//     sentence below is kept only because the measurement behind it was correct when
+//     written. `/api/v1/blocks/workflows/poll` takes `waitSeconds` STRAIGHT OFF THE WIRE
+//     and forwards it, with no host in the path at all — so the choke point named below
+//     is gone for that transport, and `@civitai/blocks-react`'s `watch` defaults the
+//     field to 15, meaning a block adopting the REST twin holds from day one. The
+//     ~300-concurrent-hold figure below is therefore LIVE, not prospective, and the
+//     concurrency cap it calls for is still not implemented. Do not read the next
+//     sentence as current state.
+//
+//     What WAS MEASURED here, and still holds for the BRIDGE only: neither host passes
+//     `waitSeconds` — zero occurrences of the identifier in `components/AppBlocks/` —
+//     and `@civitai/app-sdk`'s `POLL_WORKFLOW` payload type (0.14.0, the version this
+//     repo installs) carries `requestId` and `workflowId` only. The hosts are the choke
+//     point, so the BRIDGE sees no hold.
 //
 //     What that earlier revision got WRONG: it generalised from the app-sdk payload to
 //     "no shipped client takes that path". The round-0 audit reports that
@@ -242,6 +253,18 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // structurally empty for this path. `pollWorkflow` writes NO `block_scope_invocations`
 // row (that audit is written by the REST wrapper; the bridge has no equivalent), so the
 // per-instance poll distribution "that should replace this" would never accumulate.
+//
+// 🔴 #5068 CHANGES THE SHAPE OF THAT GAP RATHER THAN CLOSING IT, and the new problem is
+// the opposite one. The REST twin IS wrapped, so `/workflows/poll` writes one
+// `dbWrite.blockScopeInvocation.create` PER REQUEST — unbatched, unsampled — turning a
+// zero-write path into a primary-DB write stream bounded only by the 1200/60s ceiling
+// above. For scale: the whole block REST surface was ~1,037 requests over 15 days across
+// 4 apps; one viewer polling at 0.5 Hz matches that in ~35 minutes. So the poll
+// distribution this comment wanted will now accumulate — at a cost nobody has sized, and
+// on the primary rather than on a counter. **Open decision, deliberately not taken in
+// #5068: whether poll should write an audit row at all.** Dropping it is cheap and is
+// also a security-relevant removal on a spend-adjacent surface, which is why it is not
+// being done as a performance tweak.
 // **What would create it: a counter on bridge calls and on limiter refusals, labelled by
 // procedure and bucket. Closing condition for revisiting this ceiling: that counter
 // exists and has recorded a full GA week.**

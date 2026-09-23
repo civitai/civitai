@@ -161,7 +161,13 @@ beforeEach(() => {
 });
 
 const ROUTES = [
-  { name: 'submit', handler: submitHandler, body: { body: TXT2IMG_BODY } },
+  // submit carries an idempotencyKey because the route REQUIRES one (round 1 F5);
+  // estimate below deliberately does not — it has no key in its schema.
+  {
+    name: 'submit',
+    handler: submitHandler,
+    body: { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+  },
   { name: 'estimate', handler: estimateHandler, body: { body: TXT2IMG_BODY } },
   { name: 'poll', handler: pollHandler, body: { workflowId: POLL_WORKFLOW_ID } },
   { name: 'cancel', handler: cancelHandler, body: { workflowId: CANCEL_WORKFLOW_ID } },
@@ -220,13 +226,30 @@ describe('POST /api/v1/blocks/workflows/submit', () => {
     expect(res._json()).toEqual(reply);
   });
 
-  it('omits idempotencyKey entirely when the caller sent none', async () => {
+  /**
+   * 🔴 REGRESSION (#5068 round 1, F5). This case previously asserted the OPPOSITE —
+   * that a submit with no `idempotencyKey` was forwarded without one. The inversion
+   * IS the fix; the test was not loosened.
+   *
+   * Absent a client key the procedure mints `bls<uuid>` per request, which dedupes
+   * `submitWorkflow`'s own internal retry but NOT a client-level one — the redis
+   * SET-NX claim is gated on the CLIENT key. On the bridge that was tolerable: the
+   * caller is civitai's own host code. On a public HTTP surface, retry-on-timeout is
+   * the default in most HTTP client libraries, so the old behaviour meant a dropped
+   * connection after the orchestrator had already charged could produce a second
+   * workflow and a second debit of the viewer's Buzz.
+   *
+   * `mockSubmit` must NOT be called: the refusal belongs at the schema, before
+   * anything reaches the money path.
+   */
+  it('REFUSES a submit that sends no idempotencyKey, without delegating', async () => {
     mockSubmit.mockResolvedValue({
       snapshot: { workflowId: SUBMIT_WORKFLOW_ID, status: 'pending' },
     });
     const { req, res } = createMocks({ body: { body: TXT2IMG_BODY } });
     await (submitHandler as any)(req, res);
-    expect(mockSubmit).toHaveBeenCalledWith({ blockToken: BEARER, body: FORWARDED_BODY });
+    expect(res._status()).toBe(400);
+    expect(mockSubmit).not.toHaveBeenCalled();
   });
 
   it('rejects an idempotency key outside the bridge charset without delegating', async () => {
@@ -256,7 +279,9 @@ describe('POST /api/v1/blocks/workflows/submit', () => {
     };
     mockSubmit.mockResolvedValue(rejection);
 
-    const { req, res } = createMocks({ body: { body: TXT2IMG_BODY } });
+    const { req, res } = createMocks({
+      body: { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+    });
     await (submitHandler as any)(req, res);
 
     expect(res._status()).toBe(200);
@@ -267,7 +292,9 @@ describe('POST /api/v1/blocks/workflows/submit', () => {
   it('routes a THROWN failure through handleEndpointError, never a hand-rolled envelope', async () => {
     const boom = new Error('orchestrator unreachable');
     mockSubmit.mockRejectedValue(boom);
-    const { req, res } = createMocks({ body: { body: TXT2IMG_BODY } });
+    const { req, res } = createMocks({
+      body: { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+    });
     await (submitHandler as any)(req, res);
     expect(mockHandleEndpointError).toHaveBeenCalledTimes(1);
     expect(mockHandleEndpointError).toHaveBeenCalledWith(res, boom);

@@ -100,6 +100,20 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // covers both set and delete). The endpoint string is the source of
   // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
+  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All four routes are
+  // wrapped with `requiredScope: 'ai:write:budgeted'`, so WITHOUT an arm here
+  // their access rows fall past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and
+  // render as 'Submit AI workflow' — false for these three, and at the SDK's
+  // poll cadence roughly thirty times per generation.
+  // `===`, not a prefix: `normalizeEndpoint` strips the query string and leaves
+  // these segments literal (they are in KNOWN_STATIC_ENDPOINT_SEGMENTS), so the
+  // value is exact — and an exact match cannot silently swallow a future
+  // sibling route the way a `/workflows/` prefix would.
+  // `/workflows/submit` is deliberately ABSENT: for that one route the
+  // 'Submit AI workflow' label is TRUE, so it keeps falling through.
+  if (endpoint === '/api/v1/blocks/workflows/poll') return 'Checked an AI workflow';
+  if (endpoint === '/api/v1/blocks/workflows/estimate') return 'Priced an AI workflow';
+  if (endpoint === '/api/v1/blocks/workflows/cancel') return 'Canceled an AI workflow';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   // Prefix (not `===`) so BOTH the bounded template written today
   // (`storage:set`) and the historical per-key value (`storage:set:<key>`)

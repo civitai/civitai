@@ -286,6 +286,12 @@ const TXT2IMG_BODY = {
   params: { prompt: 'a brass astrolabe on slate', width: 512, height: 512 },
 };
 
+// `/workflows/submit` REQUIRES an idempotency key (round 1 F5) — a submit without
+// one is refused at the schema before reaching any control this file exercises, so
+// every submit below carries it. `estimate` has no key in its schema and must NOT
+// be given one; that asymmetry is pinned in workflows-endpoints.test.ts.
+const IDEMPOTENCY_KEY = 'c4e81b02-6d39-4f57-8a1e-90b7d2f46c3a';
+
 beforeEach(() => {
   for (const fn of [
     mockVerifyBlockToken,
@@ -366,7 +372,7 @@ const ALL_ROUTES = [
     name: 'submit',
     handler: submitHandler,
     url: '/api/v1/blocks/workflows/submit',
-    body: { body: TXT2IMG_BODY } as unknown,
+    body: { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY } as unknown,
   },
 ];
 
@@ -545,7 +551,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     // buzzBudget 50 (the default claims) against a 999 quote.
     const out = await call(
       submitHandler,
-      { body: TXT2IMG_BODY },
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
       '/api/v1/blocks/workflows/submit'
     );
 
@@ -570,7 +576,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     const out = await call(
       submitHandler,
-      { body: TXT2IMG_BODY },
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
       '/api/v1/blocks/workflows/submit'
     );
 
@@ -592,7 +598,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     const out = await call(
       submitHandler,
-      { body: TXT2IMG_BODY },
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
       '/api/v1/blocks/workflows/submit'
     );
 
@@ -613,7 +619,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     const out = await call(
       submitHandler,
-      { body: TXT2IMG_BODY },
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
       '/api/v1/blocks/workflows/submit'
     );
 
@@ -646,7 +652,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     const out = await call(
       submitHandler,
-      { body: TXT2IMG_BODY },
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
       '/api/v1/blocks/workflows/submit'
     );
 

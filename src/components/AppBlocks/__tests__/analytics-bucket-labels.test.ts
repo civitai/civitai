@@ -161,6 +161,44 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     expect(endpointBucketLabel('/api/v1/blocks/submissions')).toBe('/api/v1/blocks/submissions');
   });
 
+  /**
+   * 🔴 REGRESSION (#5068 round 1, F1). The REST workflow twins are wrapped with
+   * `requiredScope: 'ai:write:budgeted'`. Before the fix these three had no arm,
+   * so they fell past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and every row
+   * read 'Submit AI workflow' — false, on the viewer's own consent-and-spend
+   * surface, and ~30x per generation at the SDK's poll cadence.
+   *
+   * Red at the pre-change tree with `expected 'Submit AI workflow' to be
+   * 'Checked an AI workflow'`; green here. The negative assertion is the
+   * load-bearing half: asserting only the positive labels would not catch a
+   * fourth twin added later with no arm, which is how this bug arrives again.
+   */
+  it('the READ-shaped REST workflow twins do NOT render as a submit', () => {
+    const base = '/api/v1/blocks/workflows';
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/poll`)).toBe(
+      'Checked an AI workflow'
+    );
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/estimate`)).toBe(
+      'Priced an AI workflow'
+    );
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/cancel`)).toBe(
+      'Canceled an AI workflow'
+    );
+    for (const route of ['poll', 'estimate', 'cancel']) {
+      expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/${route}`)).not.toBe(
+        'Submit AI workflow'
+      );
+    }
+  });
+
+  it('but /workflows/submit still DOES — that label is true for that one route', () => {
+    // Pins the deliberate asymmetry so a later reader does not "complete the set"
+    // by adding a submit arm and silently relabel a real submission.
+    expect(humaniseScopeInvocation('ai:write:budgeted', '/api/v1/blocks/workflows/submit')).toBe(
+      'Submit AI workflow'
+    );
+  });
+
   it('humaniseScopeEndpoint resolves a per-ROW id an aggregate bucket does not have', () => {
     expect(humaniseScopeEndpoint('workflow:submit')).toBe('(no workflow id)');
     expect(humaniseScopeEndpoint('user-settings:write')).toBe('');

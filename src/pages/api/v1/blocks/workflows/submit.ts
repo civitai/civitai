@@ -67,12 +67,24 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * writes its own access-log row for this REST call, as it does for every wrapped
  * route. Stashing a `workflow.submit` detail on that second row would make the
  * viewer's own activity feed render ONE generation as TWO "Generated an image"
- * entries — worse than the technical `scope · endpoint · status` line it falls
- * back to without a stash (`ai:write:budgeted` is not in `READ_SCOPE_LABELS`, so
- * the detail-less row cannot be mistaken for a read either). One money row, one
- * access row. Suppressing the access row would need a new `withBlockScope`
- * option, i.e. a middleware change on every route's audit path, which is not worth
- * it for a technical duplicate nothing renders as money.
+ * entries. One money row, one access row. Suppressing the access row would need a
+ * new `withBlockScope` option, i.e. a middleware change on every route's audit
+ * path, which is not worth it for a technical duplicate nothing renders as money.
+ *
+ * 🔴 A PREVIOUS VERSION OF THIS PARAGRAPH ARGUED THE POINT FROM A FALSE PREMISE,
+ * recorded here so nobody re-derives it. It claimed the detail-less row "falls
+ * back to the technical `scope · endpoint · status` line" because
+ * "`ai:write:budgeted` is not in `READ_SCOPE_LABELS`". That is true and
+ * IRRELEVANT: `humaniseScopeInvocation` (`components/Apps/AppActivityPanel.tsx`)
+ * checks its endpoint arms, then `READ_SCOPE_LABELS`, then falls THROUGH to
+ * `SCOPE_ACTION_LABELS`, which maps `ai:write:budgeted` to 'Submit AI workflow'.
+ * The reasoning was exactly one map short, and there is no technical-line
+ * fallback at all. The decision above survives — it never depended on that
+ * clause — but the three READ-shaped twins did NOT: poll/estimate/cancel each
+ * rendered as 'Submit AI workflow', ~30x per generation at poll cadence. Fixed
+ * by giving those three their own arms in `humaniseScopeInvocation`, pinned by
+ * `analytics-bucket-labels.test.ts`. `/workflows/submit` has no arm because for
+ * THIS route the label is true.
  *
  * Response: `{ snapshot }` — a `BlockWorkflowSnapshot`, the same shape the bridge
  * delivers in `WORKFLOW_SUBMITTED`.
@@ -84,11 +96,23 @@ export const config = { api: { bodyParser: { sizeLimit: '256kb' } } };
 
 const bodySchema = z.object({
   body: blockWorkflowBodySchema,
-  // OPTIONAL client idempotency key, threaded through to the procedure unchanged.
+  // 🔴 REQUIRED on this route, unlike the bridge input it forwards to, and that
+  // asymmetry is the point rather than an oversight.
+  //
+  // Absent a CLIENT key the procedure mints `bls<uuid>` per request, which dedupes
+  // `submitWorkflow`'s own 3x internal retry of THIS call but — being unique per
+  // request — does NOT dedupe a client-level retry; the redis SET-NX claim stays
+  // gated on the client key. On the bridge that was tolerable because the caller is
+  // civitai's own host code. This is a public HTTP surface, where retry-on-timeout
+  // is the DEFAULT behaviour of most HTTP client libraries, so the same omission
+  // means: connection drops after the orchestrator accepted and charged, client
+  // retries, second `externalId`, second workflow, second debit of the viewer's
+  // Buzz. Failing closed with a 400 is strictly better than silently charging twice.
+  //
   // Same charset bound as the bridge input (`BLOCK_IDEMPOTENCY_KEY_REGEX`) so no
   // control chars / newlines / colons can flow into the orchestrator `externalId`
   // derived from it.
-  idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+  idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX),
 });
 
 // Exported for unit testing (the default export is wrapped in withBlockScope,
