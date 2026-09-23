@@ -1074,6 +1074,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 
+  // Qwen 2.1 - hosted checkpoint and release-specific LoRAs
+  { ecosystemId: ECO.Qwen21, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // Qwen 3 - checkpoint only
   { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
 

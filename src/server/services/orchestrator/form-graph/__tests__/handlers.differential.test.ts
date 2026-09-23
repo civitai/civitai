@@ -330,6 +330,33 @@ const CASES: Record<string, unknown>[] = [
     resources: [{ id: 135, baseModel: 'Qwen', model: { type: 'LORA' }, strength: 0.6 }],
   },
   { workflow: 'img2img:edit', ecosystem: 'Qwen', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2img', ecosystem: 'Qwen21', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Qwen21',
+    prompt: 'a cat',
+    seed: 42,
+    resolution: '2K',
+    aspectRatio: '16:9',
+    negativePrompt: 'blurry',
+    cfgScale: 2.5,
+    steps: 37,
+    resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Qwen21', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Qwen21',
+    prompt: 'a cat',
+    seed: 42,
+    images: Array.from({ length: 10 }, () => IMAGE),
+    resolution: '2K',
+    aspectRatio: '16:9',
+    negativePrompt: 'blurry',
+    cfgScale: 2.5,
+    steps: 37,
+    resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+  },
   { workflow: 'txt2img', ecosystem: 'Qwen2', prompt: 'a cat', negativePrompt: 'blurry', seed: 42 },
   {
     workflow: 'txt2img',
@@ -799,6 +826,72 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
     for (const steps of [v1, v2]) {
       expect(steps).toHaveLength(1);
       expect(steps[0].input).toMatchObject({ engine: 'openai', model, operation: 'createImage' });
+    }
+  });
+
+  it('Qwen 2.1 creates 2K images through comfy with release-specific LoRAs', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '2K',
+      aspectRatio: '16:9',
+      cfgScale: 2.5,
+      steps: 37,
+      outputFormat: 'png',
+      images: [IMAGE],
+      resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+    });
+    for (const steps of [v1, v2]) {
+      expect(steps).toHaveLength(1);
+      expect(steps[0].input).toMatchObject({
+        engine: 'comfy',
+        ecosystem: 'qwen',
+        model: '2.1',
+        operation: 'createImage',
+        width: 2048,
+        height: 1152,
+        cfgScale: 2.5,
+        steps: 37,
+        sampler: 'euler',
+        scheduler: 'simple',
+        outputFormat: 'png',
+        loras: { 'urn:air:test:135': 0.6 },
+      });
+      expect(steps[0].input).not.toHaveProperty('images');
+      expect(steps[0].input).not.toHaveProperty('resolution');
+    }
+  });
+
+  it('Qwen 2.1 sends ten references and resolution without read-only edit dimensions', async () => {
+    const images = Array.from({ length: 10 }, (_, i) => ({
+      ...IMAGE,
+      url: `https://example.com/${i}.png`,
+    }));
+    const { v1, v2 } = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '2K',
+      aspectRatio: '16:9',
+      images,
+    });
+    for (const steps of [v1, v2]) {
+      expect(steps).toHaveLength(1);
+      expect(steps[0].input).toMatchObject({
+        engine: 'comfy',
+        ecosystem: 'qwen',
+        model: '2.1',
+        operation: 'editImage',
+        resolution: 2048,
+        cfgScale: 1,
+        steps: 25,
+        images: images.map((image) => image.url),
+      });
+      expect(steps[0].input).not.toHaveProperty('width');
+      expect(steps[0].input).not.toHaveProperty('height');
     }
   });
 

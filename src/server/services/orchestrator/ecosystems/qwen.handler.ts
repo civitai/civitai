@@ -1,10 +1,11 @@
 /**
  * Qwen Family Handler
  *
- * Handles Qwen, Qwen 2 and Qwen 3 workflows using imageGen step type.
+ * Handles Qwen, Qwen 2, Qwen 2.1 and Qwen 3 workflows using imageGen step type.
  * Discriminates between ecosystems:
  * - Qwen: comfy engine, model version-based routing, LoRA support
  * - Qwen 2: fal engine, aspect ratio mapped to imageSize enum
+ * - Qwen 2.1: comfy engine, unified generation/editing, release-specific LoRAs
  * - Qwen 3: qwen engine (Alibaba DashScope), explicit width/height
  */
 
@@ -13,9 +14,11 @@ import type {
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
-  ImageGenStepTemplate,
 } from '@civitai/client';
 import type {
+  ImageGenStepTemplate,
+  ComfyQwen21CreateImageGenInput,
+  ComfyQwen21EditImageGenInputWritable,
   ComfyQwen20bCreateImageGenInput,
   ComfyQwen20bEditImageGenInput,
 } from '@civitai/orchestration-client';
@@ -26,7 +29,7 @@ import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' | 'Qwen3' };
+type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' | 'Qwen21' | 'Qwen3' };
 
 // =============================================================================
 // Qwen version mapping
@@ -75,6 +78,47 @@ const QWEN3_EDIT_MODEL: QwenApiEditImageGenInput['model'] = '3.0-pro';
 export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const isTxt2Img = data.workflow.startsWith('txt');
   const quantity = data.quantity ?? 1;
+
+  // Qwen 2.1 — unified generation/editing with its own LoRA compatibility
+  if (data.ecosystem === 'Qwen21') {
+    if (!('resolution' in data)) throw new Error('Qwen 2.1 settings are required');
+    const loras: Record<string, number> = {};
+    for (const resource of data.resources ?? []) {
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+    }
+    const baseInput = {
+      engine: 'comfy' as const,
+      ecosystem: 'qwen' as const,
+      model: '2.1' as const,
+      prompt: data.prompt,
+      negativePrompt: data.negativePrompt,
+      steps: data.steps,
+      cfgScale: data.cfgScale,
+      sampler: 'euler' as const,
+      scheduler: 'simple' as const,
+      quantity,
+      seed: data.seed,
+      loras: Object.keys(loras).length ? loras : undefined,
+      outputFormat: data.outputFormat,
+    };
+    if (isTxt2Img) {
+      if (!data.aspectRatio) throw new Error('Aspect ratio is required');
+      const input = {
+        ...baseInput,
+        operation: 'createImage',
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+      } satisfies ComfyQwen21CreateImageGenInput;
+      return [{ $type: 'imageGen', input: removeEmpty(input) }];
+    }
+    const input = {
+      ...baseInput,
+      operation: 'editImage',
+      resolution: data.resolution === '2K' ? 2048 : 1024,
+      images: data.images?.map((image) => image.url) ?? [],
+    } satisfies ComfyQwen21EditImageGenInputWritable;
+    return [{ $type: 'imageGen', input: removeEmpty(input) }];
+  }
 
   // Qwen 3 — qwen engine (Alibaba DashScope)
   if (data.ecosystem === 'Qwen3') {
