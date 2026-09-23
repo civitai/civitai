@@ -78,15 +78,33 @@ const imageOwners: Record<number, number> = {
   [ATTACKER_IMAGE_ID]: PARENT_AUTHOR,
 };
 
-/** Walks `Thread.commentId -> CommentV2.threadId` from the seed the CTE was built with. */
-function walkToTop(sql: string) {
+/**
+ * Stands in for Postgres on the owner walk: returns every row of the chain from the seed up, each
+ * with its depth, and leaves choosing the top to the query's own ORDER BY. Returning only the answer
+ * would let a flipped sort or a different join edge pass.
+ */
+function runChainWalk(sql: string) {
   let id = Number(/SELECT (\d+) "id"/.exec(sql)?.[1]);
-  for (let depth = 0; depth < 100; depth++) {
+  const rows = [{ id, depth: 0 }];
+  for (let depth = 1; depth <= 100; depth++) {
     const parent = threads[id]?.commentId;
     if (parent == null || !comments[parent]) break;
     id = comments[parent].threadId;
+    rows.push({ id, depth });
   }
-  return [{ id }];
+  const order = /ORDER BY mt\."depth" (ASC|DESC)/.exec(sql)?.[1];
+  if (!order) throw new Error(`owner walk has no depth ordering: ${sql}`);
+  rows.sort((x, y) => (order === 'DESC' ? y.depth - x.depth : x.depth - y.depth));
+  return /LIMIT 1/.test(sql) ? rows.slice(0, 1) : rows;
+}
+
+/** A tagged-template call's SQL with nested `Prisma.sql`/`Prisma.raw` fragments spliced in. */
+function renderedSql(strings: TemplateStringsArray, values: unknown[]) {
+  const render = (v: unknown) => ((v as { strings?: string[] })?.strings ?? []).join('');
+  return Array.from(strings).reduce(
+    (sql, str, i) => sql + str + (i < values.length ? render(values[i]) : ''),
+    ''
+  );
 }
 
 const ctx = (id: number, isModerator = false) => ({ user: { id, isModerator } } as never);
@@ -102,13 +120,10 @@ beforeEach(() => {
     const c = comments[where.id];
     return c ? { ...c, thread: threads[c.threadId] } : null;
   }) as never);
-  dbMock.dbRead.$queryRaw.mockImplementation((async (...args: unknown[]) =>
-    walkToTop(
-      args
-        .slice(1)
-        .map((v) => ((v as { strings?: string[] })?.strings ?? []).join(''))
-        .join('')
-    )) as never);
+  dbMock.dbRead.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => runChainWalk(renderedSql(strings, values))) as never);
   dbMock.dbRead.thread.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) => threads[where.id] ?? null) as never
   );
@@ -154,7 +169,7 @@ describe('commentv2 toggleHide: who may hide a single comment', () => {
   // No resolvable owner must mean "moderators only", never "anyone".
   it.each([
     ['a stranger', STRANGER],
-    ['the author of the orphaned parent', PARENT_AUTHOR],
+    ['another signed-in user', PARENT_AUTHOR],
   ])('refuses %s on an orphaned thread, which resolves no owner', async (_label, id) => {
     await expect(toggle(ORPHAN_ID, id)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(pin(ORPHAN_ID, id)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
@@ -212,6 +227,26 @@ describe('commentv2 toggleHide: who may hide a single comment', () => {
       })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(togglePinComment).not.toHaveBeenCalled();
+  });
+
+  it('still lets a moderator act on an orphaned thread', async () => {
+    await toggleHideCommentHandler({
+      input: { id: ORPHAN_ID, entityType: 'image', entityId: IMAGE_ID },
+      ctx: ctx(MODERATOR, true),
+    });
+    expect(toggleHideComment).toHaveBeenCalledWith({ id: ORPHAN_ID, currentToggle: false });
+  });
+
+  // The walk must follow the stored comment edge, never a pointer the first replier wrote.
+  it('walks the stored Thread.commentId edge and ignores the client-written pointers', async () => {
+    await hideReply(CONTENT_OWNER);
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const sql = renderedSql(strings, values);
+    expect(sql).toContain('pc.id = th."commentId"');
+    expect(sql).not.toMatch(/rootThreadId|parentThreadId/);
   });
 
   it('lets the content owner pin a reply', async () => {
