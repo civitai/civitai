@@ -44,6 +44,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
+import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
@@ -80,6 +81,7 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
+import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -130,6 +132,7 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
+  gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
   sendNotificationsJob,
@@ -192,6 +195,7 @@ export const jobs: Job[] = [
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
+  syncGeneratorLoadedResources,
   updateUserScore,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,

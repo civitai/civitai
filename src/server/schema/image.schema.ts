@@ -415,8 +415,10 @@ export function requiresImageDbPath(input: {
   prioritizedUserIds?: number[] | null;
   publishedOnly?: boolean | null;
   userId?: number | null;
+  hidden?: boolean | null;
 }) {
   return (
+    !!input.hidden ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||

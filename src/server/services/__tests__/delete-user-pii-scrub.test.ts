@@ -148,6 +148,50 @@ describe('deleteUser — payment-provider ids', () => {
     expect(ops).toContain(user.update.mock.results[softDeleteIndex()].value);
   });
 
+  it('nulls subscriptionId inside the transaction, via raw SQL', async () => {
+    await deleteUser();
+
+    // Prisma cannot reach this column — it is absent from the User model — so the scan over
+    // WRITE_PATHS is what sees it at all. 3,339 already-deleted accounts still held one when
+    // this shipped: a pointer to the subscription, hence the customer, hence charges carrying
+    // receipt_email. Nulling paddleCustomerId above does not close it.
+    expect(dbWriteCallsMentioning('subscriptionId')).toEqual(['dbWrite.$executeRaw']);
+
+    const rawCall = dbMock.dbWrite.$executeRaw.mock.calls.findIndex((call) =>
+      JSON.stringify(call)?.includes('subscriptionId')
+    );
+    expect(rawCall).toBeGreaterThan(-1);
+
+    // The WHOLE statement, by equality. Nothing here executes SQL, so the text is the only
+    // artifact carrying the semantics, and every substring of it is a guess about which part
+    // matters. A `toContain('SET "subscriptionId" = NULL')` was tried and let three mutants
+    // through: a neutered `AND "deletedAt" IS NULL` (false by then — the update above sets it),
+    // the wrong table, and the anchor text parked in a `/* ... */` comment beside `SET
+    // "image" = NULL`. Each left the pointer on the row with the suite green.
+    // Whitespace is normalised so reformatting the statement is not a failure.
+    const [strings] = dbMock.dbWrite.$executeRaw.mock.calls[rawCall] as [string[]];
+    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      'UPDATE "User" SET "subscriptionId" = NULL WHERE id = ?'
+    );
+
+    // The bound id, not an interpolated one: `id = ${user.id}` in a tagged template is a
+    // parameter, so it arrives as its own argument rather than inside the SQL string.
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[rawCall]).toContain(USER_ID);
+
+    // Atomic with the soft delete. In the post-transaction tail it would be skippable, which
+    // is the defect #4978 exists to fix.
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[rawCall].value);
+  });
+
+  it('CONTROL: the scan reports nothing for subscriptionId when the delete does not write it', () => {
+    // A BLEED control, not a visibility one: it shows the ['dbWrite.$executeRaw'] above comes
+    // from the call deleteUser makes rather than from mock state left by an earlier test.
+    // That the scan can SEE a $executeRaw write at all is a different property, carried by
+    // the tagged-raw-SQL control further down.
+    expect(dbWriteCallsMentioning('subscriptionId')).toEqual([]);
+  });
+
   it('does NOT purge the Stripe customerId — deleting it breaks our own webhook', async () => {
     await deleteUser();
 

@@ -29,23 +29,25 @@ describe('hub tag vocabulary: moderation labels are in, system tags are out', ()
   });
 
   /**
-   * The picker must PASS the constant, not restate or reshape it. Resolved from this
+   * The consumer must PASS the constant, not restate or reshape it. Resolved from this
    * file rather than `process.cwd()`, so a run whose cwd is not the repo root fails on
    * the assertion instead of on ENOENT.
    *
+   * It reads the SERVICE, not a component: the tag tab searches through
+   * `searchHubTags`, which shares `hubTagWhere` with the write path, so there is no
+   * longer a client-side copy of this vocabulary to guard. When it was a component,
+   * offering and refusing were two rules that could part company.
+   *
    * 🔴 Both halves are load-bearing, and the second is the one that catches the
-   * plausible regression. Whoever narrows the picker back will start from the spread
-   * line and edit it — `[...HUB_TAG_SOURCE_FILTER.types].filter(t => t !== Moderation)`
-   * re-narrows the client to exactly the pre-reversal vocabulary while still CONTAINING
-   * the spread, so the first assertion alone goes green over a silently reverted
-   * feature. Retyping the array as a literal is the shape nobody actually uses.
+   * plausible regression. Whoever narrows it back will start from the spread line and
+   * edit it — `[...HUB_TAG_SOURCE_FILTER.types].filter(t => t !== Moderation)`
+   * re-narrows to exactly the pre-reversal vocabulary while still CONTAINING the
+   * spread, so the first assertion alone goes green over a silently reverted feature.
+   * Retyping the array as a literal is the shape nobody actually uses.
    */
-  it('keeps the picker passing the constant rather than restating or reshaping it', () => {
+  it('keeps the consumer passing the constant rather than restating or reshaping it', () => {
     const src = readFileSync(
-      path.join(
-        path.dirname(fileURLToPath(import.meta.url)),
-        '../../../components/Hubs/HubSourceSearch.tsx'
-      ),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../services/user-hub.service.ts'),
       'utf8'
     );
     expect(src).toContain('...HUB_TAG_SOURCE_FILTER.types');

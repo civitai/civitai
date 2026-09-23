@@ -19,9 +19,13 @@
   const WINDOWS = [7, 30, 90, 180, 365];
   let days = $state('90');
 
+  const LIMIT_STEP = 200;
+  const LIMIT_MAX = 2000;
+  let limit = $state(LIMIT_STEP);
+
   // Its own fetch rather than riding the account payload: ~800ms against a 1.5B-row table. Re-derives
   // when the window changes, so there is no state to go stale.
-  const history = $derived(browser ? fetchBuzzHistory(userId, Number(days)) : null);
+  const history = $derived(browser ? fetchBuzzHistory(userId, Number(days), limit) : null);
 
   let paymentType = $state('all');
   let receiptType = $state('all');
@@ -102,13 +106,29 @@
   type: string,
   search: string,
   onType: (v: string) => void,
-  onSearch: (v: string) => void
+  onSearch: (v: string) => void,
+  capped: boolean,
+  /** The cap the SERVER applied, which is clamped — the local request value can exceed it. */
+  appliedLimit: number
 )}
   <div class="min-w-0 flex-1">
     <h4 class="mb-2 text-sm font-semibold text-white">
       {title}
-      <span class="font-normal text-dark-2">({num(rows.length)})</span>
+      <span class="font-normal text-dark-2">({num(rows.length)}{capped ? '+' : ''})</span>
     </h4>
+
+    {#if capped}
+      <p class="mb-2 text-xs text-amber-300">
+        Only the newest {num(appliedLimit)} are shown — this side has more, and the oldest were dropped.
+        {#if limit < LIMIT_MAX}
+          <button type="button" class="underline" onclick={() => (limit = Math.min(limit + LIMIT_STEP, LIMIT_MAX))}>
+            Load {num(LIMIT_STEP)} more
+          </button>
+        {:else}
+          Narrow the window to see further back.
+        {/if}
+      </p>
+    {/if}
 
     <div class="mb-2 flex flex-wrap gap-2">
       <Select.Root type="single" value={type} onValueChange={onType}>
@@ -194,13 +214,6 @@
     {#if !result}
       <p class="text-sm text-dark-2">Loading Buzz movement…</p>
     {:else}
-      {#if result.truncated}
-        <p class="mb-2 text-xs text-amber-300">
-          More than {num(result.payments.length + result.receipts.length)} in that window — only the most
-          recent are shown. Narrow the window to see further back within the cap.
-        </p>
-      {/if}
-
       <div class="flex flex-col gap-6 lg:flex-row">
         {@render table(
           'Payments',
@@ -209,7 +222,9 @@
           paymentType,
           paymentSearch,
           (v) => (paymentType = v),
-          (v) => (paymentSearch = v)
+          (v) => (paymentSearch = v),
+          result.truncated.payments,
+          result.limit
         )}
         {@render table(
           'Receipts',
@@ -218,7 +233,9 @@
           receiptType,
           receiptSearch,
           (v) => (receiptType = v),
-          (v) => (receiptSearch = v)
+          (v) => (receiptSearch = v),
+          result.truncated.receipts,
+          result.limit
         )}
       </div>
 
@@ -228,14 +245,14 @@
           filterTransactions(result.payments, paymentType, paymentSearch),
           paymentTotalsOpen,
           () => (paymentTotalsOpen = !paymentTotalsOpen),
-          result.truncated
+          result.truncated.payments
         )}
         {@render totals(
           'Received from, by counterparty',
           filterTransactions(result.receipts, receiptType, receiptSearch),
           receiptTotalsOpen,
           () => (receiptTotalsOpen = !receiptTotalsOpen),
-          result.truncated
+          result.truncated.receipts
         )}
       </div>
     {/if}

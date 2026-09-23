@@ -1191,6 +1191,10 @@ model ModelVersion {
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
+  // Set while the orchestrator reports this version resident, cleared when it stops. Display and
+  // filtering only — the generation-time check stays the orchestrator's.
+  generatorLoaded Boolean @default(false)
+
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
@@ -1230,6 +1234,9 @@ model ModelVersion {
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
+  /// Also `ModelVersion_generatorLoaded_id_modelId_idx` — a PARTIAL covering index on (id) INCLUDE
+  /// ("modelId") WHERE "generatorLoaded", read index-only by sync-generator-loaded-resources. Prisma
+  /// cannot express it, so it lives in migration 20260921120000 and will not round-trip here.
 }
 
 // A version registered as a chargeable licensing root for its (baseModel,
@@ -2150,7 +2157,8 @@ model Tag {
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
-  nsfw       NsfwLevel   @default(None)
+  /// Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+  nsfwTerm   Boolean     @default(false)
   nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
@@ -7076,7 +7084,6 @@ model ImageTag {
   tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagName      String
   tagType      TagType
-  tagNsfw      NsfwLevel
   tagNsfwLevel Int
   automated    Boolean
   confidence   Int?

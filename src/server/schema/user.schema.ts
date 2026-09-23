@@ -364,7 +364,6 @@ export const userSettingsSchema = z.object({
   ).optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
@@ -514,6 +513,15 @@ export const userMeta = z.object({
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),
+  // Retry state for the Stripe scrub of a deleted account, so one account that keeps failing
+  // cannot consume every run. Removed with `customerId` once the scrub finishes.
+  gdprStripeScrub: z
+    .object({
+      attempts: z.number(),
+      lastAttemptAt: z.string(),
+      lastError: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -525,7 +533,6 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
-  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;

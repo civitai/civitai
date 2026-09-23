@@ -5,7 +5,9 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { imageMetaCache } from '~/server/redis/caches';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { promptDerivationHolds } from '~/utils/prompt-similarity';
 
 /**
  * Provenance for generated media: which on-site images were actually fed to the
@@ -92,8 +94,20 @@ const AUTH_TAG_BYTES = 16;
  * upload path would let anyone claim derivation from any image they can open,
  * for nothing. It is spendable ONLY into a submit, where the server re-signs
  * whatever survives as a `job` token.
+ *
+ * `prompt` is issued by `orchestrator.mintPromptProvenance` for an image whose
+ * PROMPT the user reused. There is no source media, so nothing downstream can
+ * recover the link from the graph. It is the only conditional kind: at submit it
+ * is spent only if the prompt the server validated still derives from the
+ * source's own prompt.
+ *
+ * 🔴 That drift check bounds an already-minted click; it is not evidence of
+ * derivation. Measured 2026-09-18 over 30 days, 41% of the 1,683 remix-gallery
+ * submissions whose placer never clicked Remix on the host clear the threshold
+ * anyway. A `prompt` token without the mint behind it would open the free path
+ * to two in five strangers.
  */
-export type ProvenanceKind = 'job' | 'mint';
+export type ProvenanceKind = 'job' | 'mint' | 'prompt';
 
 type ProvenancePayload = {
   v: number;
@@ -205,7 +219,10 @@ export function signProvenance({
     s: sourceImageIds.slice(0, MAX_SOURCE_IMAGES),
     t: Math.floor(Date.now() / 1000),
     // Omitted for `job` so the encoding matches what pre-existing tokens carry.
-    ...(kind === 'mint' ? { k: kind } : {}),
+    // Every other kind is written out: `verifyProvenance` reads an absent `k` as
+    // `job`, so a kind that failed to serialise would be a silent promotion to the
+    // strongest audience rather than a token that fails its audience check.
+    ...(kind !== 'job' ? { k: kind } : {}),
   };
 
   const key = provenanceKey();
@@ -391,22 +408,74 @@ export function storedSourceImageIds(meta: unknown): number[] | null {
  * A token that does not verify contributes nothing and is not an error — an
  * expired or replayed one is the same "no signal" as an off-site remix.
  */
-export function unionSourceImageIds({
+export async function unionSourceImageIds({
   urlSourceImageIds,
   tokens,
   userId,
+  prompt,
 }: {
   urlSourceImageIds: number[];
   tokens?: string[];
   userId: number;
-}): number[] {
+  /**
+   * The prompt the server validated for this submission, off the graph. Absent
+   * for workflows that have none, which is not a drift verdict: `prompt` tokens
+   * simply cannot be spent there, because there is nothing to compare.
+   */
+  prompt?: string;
+}): Promise<number[]> {
   // `mint`, not the default: this is the submit path, and the only tokens a
   // client may present here are the ones the mint issued for an image they
   // clicked Remix on. Whatever survives is re-signed as `job` by the caller.
   const fromTokens = (tokens ?? []).flatMap(
     (token) => verifyProvenance(token, userId, 'mint') ?? []
   );
-  return [...new Set([...urlSourceImageIds, ...fromTokens])].slice(0, MAX_SOURCE_IMAGES);
+
+  const fromPrompt = await promptDerivedIds({ tokens, userId, prompt });
+
+  return [...new Set([...urlSourceImageIds, ...fromTokens, ...fromPrompt])].slice(
+    0,
+    MAX_SOURCE_IMAGES
+  );
+}
+
+/**
+ * The ids a `prompt` token is allowed to spend, which is the only place drift is
+ * decided.
+ *
+ * The source prompt is the stored one, never the request's: the CURRENT prompt is
+ * taken off the validated graph by the caller, and comparing two values the
+ * client sent would gate on something its subject controls on both sides.
+ *
+ * 🔴 Through `imageMetaCache`, not a raw read. It is the reader that applies
+ * `hideMeta`, and a raw read would compare against a prompt its owner hid — at
+ * which point the free/paid answer confirms or denies a guess at it.
+ */
+async function promptDerivedIds({
+  tokens,
+  userId,
+  prompt,
+}: {
+  tokens?: string[];
+  userId: number;
+  prompt?: string;
+}): Promise<number[]> {
+  if (!prompt?.trim() || !tokens?.length) return [];
+
+  const claimed = [
+    ...new Set(tokens.flatMap((token) => verifyProvenance(token, userId, 'prompt') ?? [])),
+  ].slice(0, MAX_SOURCE_IMAGES);
+  if (!claimed.length) return [];
+
+  const metas = await imageMetaCache.fetch(claimed);
+
+  // Iterates `claimed`, not the cache's keys: what a token spends is bounded by
+  // what the token named, whatever else a lookup returns.
+  return claimed.filter((id) => {
+    const sourcePrompt = metas[id]?.meta?.prompt;
+    if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) return false;
+    return promptDerivationHolds(sourcePrompt, prompt).holds;
+  });
 }
 
 /**

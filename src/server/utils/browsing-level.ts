@@ -42,6 +42,10 @@ export function getServerBrowsingLevel({
   return user?.showNsfw && user.browsingLevel ? user.browsingLevel : publicBrowsingLevelsFlag;
 }
 
+/** `getServerBrowsingLevel` for a request whose feature flags are already resolved. */
+export const getRequestBrowsingLevel = ({ features, user }: Pick<Context, 'features' | 'user'>) =>
+  getServerBrowsingLevel({ canViewNsfw: !!features.canViewNsfw, user });
+
 /**
  * What the viewer may see, with the SFW domain applied.
  *

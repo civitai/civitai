@@ -1424,7 +1424,12 @@ function schemaCarriesBlockToken(
   /** Nested references that resolved to NEITHER true nor false. See the ledger above. */
   unreadable: string[] = []
 ): boolean | null {
-  const key = `${file}#${ident}`;
+  // Forward slashes, always. These keys are not only a visited-set: they are LEDGERED and
+  // compared against a checked-in list, so a `path.relative` result carries the host's separator
+  // into the comparison and the ledger can only match on one platform. Measured on main: this
+  // test is red on every Windows run and green on every Linux one — CI is Linux, so nothing
+  // reported it, and the failure reads like a regression to whoever runs the suite locally.
+  const key = `${file.replace(/\\/g, '/')}#${ident}`;
   if (depth > MAX_SCHEMA_DEPTH) {
     truncated.push(`${key} @ depth ${depth}`);
     return false;

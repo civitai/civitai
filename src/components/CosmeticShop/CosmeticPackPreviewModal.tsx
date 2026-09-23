@@ -129,6 +129,11 @@ export const CosmeticPackPreviewModal = ({
                     it is discounted.
                   </Text>
                 )}
+                {/* Says nothing about those members not being delivered, which
+                    since #5034 they are not. Justin's call, 2026-09-22, asked
+                    and answered: the pack page already lists them and the buyer
+                    made them. Reviews keep proposing the missing sentence — it
+                    was declined, not overlooked. */}
                 {pack.selfAuthored > 0 && (
                   <Text size="xs" c="dimmed">
                     You made {numberWithCommas(pack.selfAuthored)} Buzz worth of what&apos;s in

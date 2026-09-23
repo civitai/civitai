@@ -31,6 +31,14 @@ export function fullyPassed(testModule) {
 
 const log = (msg) => console.error(msg);
 
+const relOrNull = (id, root) => {
+  try {
+    return core.toRel(id, root);
+  } catch {
+    return null;
+  }
+};
+
 export default class TestCacheReporter {
   onInit(vitest) {
     this.vitest = vitest;
@@ -64,7 +72,10 @@ export default class TestCacheReporter {
       const wasHit = state.hits.has(`${m.project.name}\0${m.moduleId}`);
       return {
         m,
-        file: core.toRel(m.moduleId, root),
+        // Never throws, so the tripwire below really is first: `toRel` can raise on a malformed
+        // id, and a throw here would abort `record()` before a false skip could be reported. A
+        // null file is refused by recordOne anyway ("test file outside the repo").
+        file: relOrNull(m.moduleId, root),
         project: m.project.name,
         ms: (d.prepareDuration ?? 0) + (d.setupDuration ?? 0) + (d.collectDuration ?? 0) + (d.duration ?? 0),
         passed,

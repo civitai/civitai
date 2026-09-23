@@ -1028,6 +1028,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -1665,7 +1666,7 @@ export interface Tag {
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
@@ -4626,7 +4627,6 @@ export interface ImageTag {
   tag?: Tag;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;

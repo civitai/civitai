@@ -81,7 +81,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => mocks.flags,
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-
 // mock): a hand-written replacement silently breaks every importer the day

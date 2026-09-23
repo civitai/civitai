@@ -23,7 +23,12 @@ export function useRegionWarning() {
   useEffect(() => {
     if (!data) return;
 
-    const blockDate = getRegionBlockDate(region);
+    // `AppContext.region` is optional because _app's `region` PROP is SSR-only; this
+    // CONTEXT read is not (AppProvider freezes it at mount). A runtime no-op today —
+    // `getRegionEffectiveDate` null-guards its argument (`region || {}`), so
+    // `getRegionBlockDate(undefined)` already answered `null`. See
+    // src/tests/pages/app-region-optional-chain.test.ts for the full account.
+    const blockDate = region ? getRegionBlockDate(region) : null;
     if (!blockDate || blockDate < new Date()) return;
 
     const isDismissed = localStorage.getItem(storageKey) === 'true';

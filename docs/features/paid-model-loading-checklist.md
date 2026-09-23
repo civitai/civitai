@@ -183,9 +183,18 @@ every measured number are in [paid-model-loading-coverage.md](paid-model-loading
       `/api/v1/model-versions/mini/[id]` (read by the orchestrator for `CanGenerate`; no site code
       calls it, so it widens what the orchestrator accepts without changing what a user sees).
 - [ ] **Decide what search shows.** The index derives `canGenerate` from `covered`, so the swap
-      advertises tens of thousands more models as generatable with no way to say "needs loading
-      first". Load
+      advertises tens of thousands more models as generatable. The index can now say "needs loading
+      first" — `versions.generatorLoaded`, synced every 5 minutes by
+      `sync-generator-loaded-resources` — so what is left is the display decision, not the data. Load
       state in search was deferred; this is the surface that deferral now collides with.
+  - [x] **Searchable before the cutover, without moving `canGenerate`.** The models index also
+        carries `canGenerateNext` (model level) and `versions.canGenerateNext`, the same
+        `isGenerationEligible` rule over `GenerationCoverageNext`. Query
+        `canGenerate = true OR canGenerateNext = true`: everything generatable today still matches
+        on `canGenerate`, so only the ~12,900 models that GAIN coverage need re-queueing, instead of
+        rebuilding all ~705K documents. Transitional — delete both fields at the cutover, when
+        `canGenerate` answers this on its own. Preview environments point at production, so this is
+        also what makes a preview accurate.
 - [x] **Check the public API field.** `/api/v1/model-versions/mini/[id]` now selects `covered` from
       `GenerationCoverageNext` — done 2026-09-08, because the orchestrator reads it for `CanGenerate`
       and on the live view refused every load worth making (verified on version 3040959).
@@ -347,7 +356,8 @@ with him.
 ## Not in v1, on the record
 
 - Pay to boost queue position — Justin expects it back if bot armies defeat the rate limits.
-- Load state in search results.
+- Load state shown in search results. (The index carries `versions.generatorLoaded`; nothing
+  displays it.)
 - Any hard guarantee on when a model becomes available. Bandwidth into the data centre was ~10
   KB/s at the time of the call; LoRAs took four hours. Promise nothing about *arrival* — a separate
   question from how long it stays once it arrives, which is

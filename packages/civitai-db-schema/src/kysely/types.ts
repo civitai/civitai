@@ -2680,7 +2680,6 @@ export type ImageTag = {
   tagId: number;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -3119,6 +3118,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
@@ -3919,7 +3919,10 @@ export type Tag = {
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;

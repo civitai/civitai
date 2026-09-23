@@ -1318,9 +1318,15 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // point, so reading the store for every image costs nothing when there is
     // none, and collecting by CURRENT url is what drops a token whose image the
     // user has since swapped out.
-    const sourceProvenance = (snapshot.images ?? [])
-      .map((img) => remixProvenanceStore.getToken(img.url))
-      .filter(isDefined);
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
+    ].filter(isDefined);
 
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;

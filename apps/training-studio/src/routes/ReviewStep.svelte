@@ -20,15 +20,14 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
-    loraTypeById,
     paramBounds,
     paramsForVersion,
+    seenFor,
     TE_TRAINING_UNSUPPORTED,
     typesForMedia,
     type FromPrices,
     type ParamBound,
   } from '$lib/data/trainingModels';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import {
     SAMPLE_RATE,
     cardBaseQuote,
@@ -36,6 +35,7 @@
     isCustom,
     runCard,
     runCost,
+    runVersion,
     runVersionLabel,
     type LaunchedRun,
     type Run,
@@ -87,8 +87,7 @@
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
-  const seenFor = (id: string) => loraTypeById(id).seen;
-  const defaultSteps = (id: string) => defaultStepsFor(id, imageCount);
+  const defaultSteps = (id: string) => defaultStepsFor(id, selection.media, imageCount);
 
   // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
   // selection gets a fresh component. untrack documents the intentional one-time capture.
@@ -132,7 +131,7 @@
   let promptSeq = initialPrompts.length;
   let openAdv = $state(-1);
 
-  const presetSeen = $derived(seenFor(presetType));
+  const presetSeen = $derived(seenFor(presetType, selection.media));
   const sampleCost = $derived(prompts.length * SAMPLE_RATE);
   // Per-run cost from the model's live quote; `null` for any run the orchestrator couldn't price, which
   // makes the whole total `null` (shown as "—") rather than a total quietly missing a run.
@@ -174,11 +173,7 @@
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
   const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
-  function runEngine(run: Run): string | undefined {
-    const card = runCard(run);
-    return (card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!).engine;
-  }
-  const noAdvancedParams = (run: Run) => runEngine(run) === 'flux2-dev';
+  const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
 
   type NumField = 'unetLr' | 'textEncoderLr' | 'networkDim' | 'networkAlpha' | 'resolution' | 'batchSize';
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
@@ -289,7 +284,6 @@
         {@const card = runCard(run)}
         <div class="overflow-hidden rounded-xl border border-dark-4">
           <div class="flex flex-wrap items-center gap-3 bg-dark-6 px-4 py-3">
-            <ModelCodeBadge code={card.code} size="sm" />
             <div>
               <div class="text-sm font-bold text-dark-0">
                 {multi ? `Run ${i + 1} · ` : ''}{card.name}
@@ -467,7 +461,8 @@
 
     <p class="mt-3 font-mono text-xs text-dark-2">
       Paid with <span class="text-blue-400">Blue</span> first, then your
-      <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz — switch in the top bar.
+      <span class="capitalize text-buzz">{buzzMode.value}</span>
+      Buzz{buzzMode.locked ? '.' : ' — switch in the top bar.'}
     </p>
 
     {#if needsAttestation}
@@ -523,7 +518,9 @@
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
         {/if}
-        You can switch which Buzz is used from the balance at the top of the page.
+        {#if !buzzMode.locked}
+          You can switch which Buzz is used from the balance at the top of the page.
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>

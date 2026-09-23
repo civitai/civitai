@@ -9078,18 +9078,34 @@ function assertPassThroughStepTypeAllowed($type: string): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * `timeout` is the PHYSICAL Buzz ceiling, derived from the single declared
- * `maxBuzz` exactly as the inline-comfy arm derives it: `stepTimeoutSeconds =
- * maxBuzz`, so `maxBuzz === ceil(stepTimeoutSeconds)` is not asserted, it is
- * unrepresentable.
+ * No `timeout` is stamped here; see `stampUnquotedTimeout`.
  */
-function buildPassThroughOrchestratorStep(body: PassThroughStepBody) {
+function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
+  $type: string;
+  name: string;
+  input: Record<string, unknown>;
+  timeout?: string;
+} {
   return {
     $type: body.$type,
     name: BLOCK_STEP_NAME,
-    timeout: formatStepTimeout(body.maxBuzz),
     input: body.input,
   };
+}
+
+/**
+ * Stamp the timeout for a step the orchestrator would not quote, where it is
+ * the only bound on spend. A quoted step is bounded by its quote instead.
+ *
+ * 🔴 Mutates the one step object rather than returning a copy: the quote and
+ * the submit must hold the same reference, asserted in
+ * `blocks.router.workflow.test.ts`.
+ */
+function stampUnquotedTimeout(
+  step: ReturnType<typeof buildPassThroughOrchestratorStep>,
+  maxBuzz: number
+): void {
+  step.timeout = formatStepTimeout(maxBuzz);
 }
 
 /**
@@ -10540,6 +10556,8 @@ async function submitPassThroughStepWorkflow(opts: {
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
+
+  if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.
   //

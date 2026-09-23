@@ -59,11 +59,13 @@ pnpm run build            # Production build
 
 ### Code Quality
 ```bash
-pnpm run typecheck        # Run TypeScript type checking
+pnpm run typecheck        # Run TypeScript type checking (5.9 — the authoritative one)
+pnpm run typecheck:fast   # TypeScript 7, edit loop only, NOT authoritative. Needs a one-time install
 pnpm run lint             # Run ESLint
 pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
+
 
 #### SvelteKit apps have their own standard
 
@@ -226,11 +228,11 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 44 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+Several repo conventions are enforced by tests, not by eslint. 45 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
 `no-divergent-active-sales-cap` (SERVER side only: the `model.getActiveSales` parser enforces the id cap, and the chunk size a card surface splits to does not exceed it — it CANNOT see the call site, which is pinned behaviourally by `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, a file in the full unit suite but NOT in `test:lint-rules`, so a `test:lint-rules` run alone does not cover that half; the procedure was rejecting every call from a scrolled feed as an input-validation 400, so no 5xx was recorded and the sale badge simply vanished from the grid), `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount` — the three are indistinguishable positive Buzz integers, so a percentage of the wrong one takes a cut of another creator's licensing fee),
 `no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
-`no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
+`no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-prompt-derivation` (the prompt-reuse remix threshold has one constant and one option-less verdict function, called by both the client claim check and the server's free-submission gate — it was a default parameter any caller could pass past), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint` (the remix provenance mint must sign `kind: 'mint'` — a `job`
 token there is spendable on the upload path, which is the free remix-gallery submission),
@@ -275,7 +277,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 49 files today.
+`test:lint-rules` names 50 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact
@@ -601,6 +603,19 @@ not reach them — set only that and you get a rendered page with an empty resul
 which looks like a broken query. **Take the flag's real key from `fliptKey` in that
 service; never infer it from the camelCase name** — an unknown key evaluates false and
 is indistinguishable from a feature that is legitimately off.
+
+🔴 **A flag declared `availability: []` that also carries a `fliptKey` cannot be switched on
+with `FEATURE_FLAG_<KEY>` at all** — that pairing hands the decision to Flipt alone, so the env
+override is ignored for it. Use `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` instead — comma-separated
+`key=value` pairs keyed by `fliptKey`, `on`/`off` for booleans, ignored when
+`NODE_ENV=production`. It reaches the feature-flag service and every `isFlipt`/`isFliptSync`
+gate, but **not** the `getFliptBoolean` gates, which ignore local overrides by design.
+
+**Both halves of that sentence are load-bearing.** A flag declared `availability: []` with **no**
+`fliptKey` — `coinbasePayments` and `nowpaymentPayments`, written in the legacy array form
+`coinbasePayments: []` — is the exception at both ends: its `FEATURE_FLAG_<KEY>` variable still
+applies and is the *only* switch it has, and `FLIPT_LOCAL_OVERRIDES` cannot reach it because
+there is no key to name. Check for a `fliptKey` before concluding a dark flag is unswitchable.
 
 🔴 **App Blocks need a signing keypair or they 503.** With `BLOCK_TOKEN_PRIVATE_KEY` /
 `BLOCK_TOKEN_PUBLIC_KEY` unset, `POST /api/v1/block-tokens` returns

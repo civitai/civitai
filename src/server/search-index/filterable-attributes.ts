@@ -50,6 +50,7 @@ export const imagesFilterableAttributes = [
 export const modelsFilterableAttributes = [
   'availability',
   'canGenerate',
+  'canGenerateNext',
   'category.name',
   'checkpointType',
   'fileFormats',
@@ -64,6 +65,8 @@ export const modelsFilterableAttributes = [
   'user.username',
   'version.baseModel',
   'versions.baseModel',
+  'versions.canGenerateNext',
+  'versions.generatorLoaded',
   'versions.hashes',
   'versions.id',
   'cannotPromote',

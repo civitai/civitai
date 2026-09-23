@@ -46,6 +46,10 @@ interface TrainingStudioHost {
     signalsEndpoint: string | null;
     civitaiUrl: string;           // publish/model links
     orchestratorMode: 'dev' | 'prod';
+    /** The host page's Buzz color (green domain vs yellow). When set, the component locks its
+     *  Buzz spend mode to it — the user toggle hides and nothing is persisted to localStorage.
+     *  Omit (standalone) to leave the user's own yellow⇄green toggle in charge. */
+    buzzMode?: 'yellow' | 'green';
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
@@ -79,6 +83,14 @@ interface TrainingStudioHost {
    *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
+
+  /** Open the host's own model picker for the Custom training base (the main app's
+   *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
+   *  that can map it pre-filters to compatible checkpoints. Resolves the picked model's
+   *  checkpoint AIR (`urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>`) plus a display
+   *  name; resolves null when the user cancels. Optional — omit and the component keeps its
+   *  paste-an-AIR input alone. */
+  pickModel?(req: { ecosystem?: string }): Promise<{ air: string; name?: string } | null>;
 }
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };

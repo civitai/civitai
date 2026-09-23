@@ -15,9 +15,11 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   // i.e. a permission boundary rendered as a clean record. Deciding server-side means there is no
   // client branch to get that wrong. The endpoint re-checks regardless, like every action here.
   const canSeeAbuse = canAccess(locals.user, '/abuse');
+  // Chat Audit is granted separately: someone who cannot open it must not read DM bodies here instead.
+  const canSeeChats = canAccess(locals.user, '/retool/chat-audit');
   // Full content width: the panels are multi-column and data-dense (Buzz shows the transaction form
   // and the history together), and the 6xl cap forced them into a single narrow stack.
-  const base = { q, canAct, canSeeAbuse, wide: true };
+  const base = { q, canAct, canSeeAbuse, canSeeChats, wide: true };
   if (!q) return { ...base, result: null, notFound: false };
 
   const userId = await resolveUserId(q);
