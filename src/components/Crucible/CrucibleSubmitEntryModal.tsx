@@ -785,7 +785,7 @@ export default function CrucibleSubmitEntryModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto px-5 pb-5">
           <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
             <Tabs.List>
               <Tabs.Tab

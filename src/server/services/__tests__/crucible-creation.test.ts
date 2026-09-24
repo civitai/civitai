@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import {
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+} from '~/shared/constants/crucible.constants';
 import type * as BuzzService from '~/server/services/buzz.service';
 import { dbMock } from '~/__tests__/mocks';
+import { CrucibleSort } from '~/server/common/enums';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const imageCreate = dbMock.dbWrite.image.create;
 const crucibleCreate = dbMock.dbWrite.crucible.create;
+const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -18,7 +24,12 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   refundMultiAccountTransaction,
 }));
 
-const { createCrucible } = await import('~/server/services/crucible.service');
+const { activateScheduledCrucibles, createCrucible, getCrucibles } = await import(
+  '~/server/services/crucible.service'
+);
+
+// duration 8 is free, so the customization fee is the whole setup cost.
+const SETUP_FEE = CRUCIBLE_PRIZE_CUSTOMIZATION_COST;
 
 const input = (overrides: Record<string, unknown> = {}) => ({
   userId: 4,
@@ -30,7 +41,6 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   entryLimit: 1,
   maxTotalEntries: undefined,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
-  // duration 8 is free, so the customization fee is the whole setup cost: 1,000 Buzz.
   prizeCustomized: true,
   duration: 8,
   seededPrizePool: 0,
@@ -62,7 +72,7 @@ describe('createCrucible — seeded prize pool', () => {
   it('charges the seed as its own transaction on top of the setup fee', async () => {
     await createCrucible(input({ seededPrizePool: 5_000 }));
 
-    expect(chargedAmounts()).toEqual([1_000, 5_000]);
+    expect(chargedAmounts()).toEqual([SETUP_FEE, 5_000]);
   });
 
   it('stores the seed and the prefix that can refund it', async () => {
@@ -80,13 +90,13 @@ describe('createCrucible — seeded prize pool', () => {
     const [{ data }] = crucibleCreate.mock.calls[0];
     expect(data.seededPrizePool).toBe(0);
     expect(data.seedTransactionId).toBeNull();
-    expect(chargedAmounts()).toEqual([1_000]);
+    expect(chargedAmounts()).toEqual([SETUP_FEE]);
   });
 });
 
 describe('createCrucible — the creator cannot afford the seed', () => {
   it('fails and creates no crucible', async () => {
-    balance(4_000); // covers the 1,000 setup fee but not the 5,000 seed
+    balance(4_000); // covers the setup fee but not the 5,000 seed
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow();
 
@@ -105,7 +115,9 @@ describe('createCrucible — the creator cannot afford the seed', () => {
   it('names the combined cost in the error, not just the setup fee', async () => {
     balance(4_000);
 
-    await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow(/6,000 Buzz/);
+    await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow(
+      new RegExp(`${(SETUP_FEE + 5_000).toLocaleString()} Buzz`)
+    );
   });
 });
 
@@ -181,5 +193,91 @@ describe('createCrucible — video settings', () => {
     const [{ data }] = crucibleCreate.mock.calls[0];
     expect(data.minViewSeconds).toBeNull();
     expect(data.maxClipSeconds).toBeNull();
+  });
+});
+
+describe('createCrucible — start date', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it('schedules a future start as Pending, ending one duration after it starts', async () => {
+    const startAt = new Date(Date.now() + 48 * HOUR);
+
+    await createCrucible(input({ startAt, duration: 24 }));
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.status).toBe(CrucibleStatus.Pending);
+    expect(data.startAt).toEqual(startAt);
+    expect(data.endAt).toEqual(new Date(startAt.getTime() + 24 * HOUR));
+  });
+
+  it('starts immediately when the chosen start already passed', async () => {
+    const before = Date.now();
+
+    await createCrucible(input({ startAt: new Date(before - HOUR) }));
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.status).toBe(CrucibleStatus.Active);
+    expect((data.startAt as Date).getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('starts immediately when no start was given', async () => {
+    await createCrucible(input());
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.status).toBe(CrucibleStatus.Active);
+  });
+});
+
+describe('createCrucible — resource requirements', () => {
+  it('charges the requirements fee on top of the setup fee', async () => {
+    await createCrucible(input({ allowedResources: [123] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE + CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+  });
+
+  it('charges nothing extra, and stores no restriction, for an empty list', async () => {
+    await createCrucible(input({ allowedResources: [] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE]);
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.allowedResources).not.toEqual([]);
+  });
+});
+
+describe('activateScheduledCrucibles', () => {
+  it('opens only Pending crucibles whose start has passed', async () => {
+    crucibleUpdateMany.mockResolvedValue({ count: 2 });
+
+    await expect(activateScheduledCrucibles()).resolves.toBe(2);
+
+    const [{ where, data }] = crucibleUpdateMany.mock.calls[0];
+    expect(where.status).toBe(CrucibleStatus.Pending);
+    expect(where.startAt.lte.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(data).toEqual({ status: CrucibleStatus.Active });
+  });
+});
+
+describe('getCrucibles — status for an unfiltered feed', () => {
+  const findMany = dbMock.dbRead.crucible.findMany;
+  const whereFor = async (input: { sort?: CrucibleSort; status?: CrucibleStatus }) => {
+    findMany.mockResolvedValue([]);
+    await getCrucibles({ input: { limit: 10, ...input }, select: { id: true } });
+    return findMany.mock.calls.at(-1)![0].where;
+  };
+
+  it('limits Ending Soon to active crucibles, so long-ended ones do not lead', async () => {
+    expect(await whereFor({ sort: CrucibleSort.EndingSoon })).toEqual({
+      status: CrucibleStatus.Active,
+    });
+  });
+
+  it('keeps an explicit status on Ending Soon', async () => {
+    expect(
+      await whereFor({ sort: CrucibleSort.EndingSoon, status: CrucibleStatus.Completed })
+    ).toEqual({ status: CrucibleStatus.Completed });
+  });
+
+  it('leaves the other sorts unfiltered', async () => {
+    expect(await whereFor({ sort: CrucibleSort.Newest })).toEqual({});
   });
 });

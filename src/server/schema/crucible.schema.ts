@@ -8,10 +8,14 @@ import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
-  CRUCIBLE_MAX_CLIP_SECONDS,
-  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
+  CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_RESOURCES,
+  CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  getMaxCrucibleStartAt,
 } from '~/shared/constants/crucible.constants';
 
 // Re-export CrucibleSort for convenience
@@ -57,12 +61,18 @@ export {
  * Calculate the total setup cost for creating a crucible
  * @param duration - Duration in hours
  * @param prizeCustomized - Whether prize distribution was customized
+ * @param requiresResources - Whether entries are restricted to specific model versions
  * @returns Total Buzz cost
  */
-export function calculateCrucibleSetupCost(duration: number, prizeCustomized: boolean): number {
+export function calculateCrucibleSetupCost(
+  duration: number,
+  prizeCustomized: boolean,
+  requiresResources = false
+): number {
   const durationCost = CRUCIBLE_DURATION_COSTS[duration] ?? 0;
   const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
-  return durationCost + prizeCustomizationCost;
+  const resourceRequirementsCost = requiresResources ? CRUCIBLE_RESOURCE_REQUIREMENTS_COST : 0;
+  return durationCost + prizeCustomizationCost + resourceRequirementsCost;
 }
 
 // Schema for creating a new crucible
@@ -85,10 +95,32 @@ const createCrucibleInputBaseSchema = z.object({
     { message: 'Prize percentages must sum to 100% or less' }
   ),
   prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
-  allowedResources: z.array(z.number()).optional(),
-  duration: z.number().min(1), // duration in hours
-  minViewSeconds: z.number().int().min(1).max(CRUCIBLE_MAX_MIN_VIEW_SECONDS).nullish(),
-  maxClipSeconds: z.number().int().min(1).max(CRUCIBLE_MAX_CLIP_SECONDS).nullish(),
+  allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  duration: z
+    .number()
+    .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
+      message: 'Unsupported crucible duration',
+    }), // duration in hours
+  // Absent or already past means "start now"; a start that went stale while the creator sat on the
+  // review step should not fail the submit.
+  startAt: z
+    .date()
+    .refine((startAt) => startAt <= getMaxCrucibleStartAt(), {
+      message: `A crucible can start at most ${CRUCIBLE_MAX_START_LEAD_DAYS} days from now`,
+    })
+    .optional(),
+  minViewSeconds: z
+    .number()
+    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s), {
+      message: 'Unsupported minimum view time',
+    })
+    .nullish(),
+  maxClipSeconds: z
+    .number()
+    .refine((s) => (CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS as readonly number[]).includes(s), {
+      message: 'Unsupported maximum clip length',
+    })
+    .nullish(),
 });
 
 export const createCrucibleInputSchema = createCrucibleInputBaseSchema

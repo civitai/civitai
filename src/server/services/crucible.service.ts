@@ -102,14 +102,20 @@ export const createCrucible = async ({
   seededPrizePool,
   minViewSeconds,
   maxClipSeconds,
+  startAt: requestedStartAt,
 }: CreateCrucibleInputSchema & { userId: number }) => {
   const now = new Date();
-  const startAt = now;
-  const endAt = dayjs(now).add(duration, 'hours').toDate();
+  const isScheduled = !!requestedStartAt && requestedStartAt > now;
+  const startAt = isScheduled ? requestedStartAt : now;
+  const endAt = dayjs(startAt).add(duration, 'hours').toDate();
   const isVideoCrucible = crucibleSupportsVideoSettings(contentType);
+  const requiresResources = (allowedResources?.length ?? 0) > 0;
 
-  // Calculate setup cost based on duration and prize customization
-  const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized ?? false);
+  const setupCost = calculateCrucibleSetupCost(
+    duration,
+    prizeCustomized ?? false,
+    requiresResources
+  );
   const seedAmount = seededPrizePool ?? 0;
   const totalDebit = setupCost + seedAmount;
 
@@ -243,13 +249,13 @@ export const createCrucible = async ({
           minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
           maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
           prizePositions: prizePositions as Prisma.JsonObject,
-          allowedResources: allowedResources
+          allowedResources: requiresResources
             ? (allowedResources as Prisma.JsonArray)
             : Prisma.JsonNull,
           duration: duration * 60, // Convert hours to minutes for storage
           startAt,
           endAt,
-          status: CrucibleStatus.Active,
+          status: isScheduled ? CrucibleStatus.Pending : CrucibleStatus.Active,
           buzzTransactionId, // Store the setup fee transaction ID for potential refunds
           seedTransactionId,
         },
@@ -345,9 +351,12 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
 
-  // Apply status filter
-  if (status) {
-    where.status = status;
+  // "Ending soon" only means something for crucibles still running; without this, an unfiltered
+  // feed would lead with the ones that ended longest ago.
+  const effectiveStatus =
+    status ?? (sort === CrucibleSort.EndingSoon ? CrucibleStatus.Active : undefined);
+  if (effectiveStatus) {
+    where.status = effectiveStatus;
   }
 
   // Apply sorting
@@ -1985,6 +1994,17 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
  * Get crucibles that are ready for finalization
  * (Active status with endAt in the past)
  */
+/**
+ * Opens every scheduled crucible whose start time has passed.
+ */
+export const activateScheduledCrucibles = async (): Promise<number> => {
+  const { count } = await dbWrite.crucible.updateMany({
+    where: { status: CrucibleStatus.Pending, startAt: { lte: new Date() } },
+    data: { status: CrucibleStatus.Active },
+  });
+  return count;
+};
+
 export const getCruciblesForFinalization = async (): Promise<number[]> => {
   const now = new Date();
 
@@ -2559,6 +2579,8 @@ export const getFeaturedCrucible = async (): Promise<{
     LEFT JOIN "Image" i ON c."imageId" = i.id
     LEFT JOIN "CrucibleEntry" ce ON c.id = ce."crucibleId"
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      -- Status lags the clock until finalize-crucibles runs; don't feature one that already ended.
+      AND (c."endAt" IS NULL OR c."endAt" > now())
     GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1

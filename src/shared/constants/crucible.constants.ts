@@ -32,7 +32,21 @@ export const CRUCIBLE_DURATION_COSTS: Record<number, number> = {
  * Cost in Buzz for customizing the prize distribution.
  * This fee is charged when the crucible creator changes the default prize percentages.
  */
-export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 1000;
+export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 500;
+
+/**
+ * Cost in Buzz for restricting entries to specific model versions (`allowedResources`).
+ */
+export const CRUCIBLE_RESOURCE_REQUIREMENTS_COST = 500;
+
+/** Matches ModelVersionMultiSelect's default `maxSelections`. */
+export const CRUCIBLE_MAX_ALLOWED_RESOURCES = 10;
+
+/** How far ahead a crucible's start may be scheduled. */
+export const CRUCIBLE_MAX_START_LEAD_DAYS = 30;
+
+export const getMaxCrucibleStartAt = (from: Date = new Date()) =>
+  new Date(from.getTime() + CRUCIBLE_MAX_START_LEAD_DAYS * 24 * 60 * 60 * 1000);
 
 /**
  * A live ranking predisposes judges, so scores and positions stay hidden — from everyone but the
@@ -55,16 +69,17 @@ export type CrucibleContentType = (typeof CRUCIBLE_CONTENT_TYPES)[number];
 export const CRUCIBLE_MAX_SEEDED_PRIZE_POOL = 10_000_000;
 
 /**
- * Ceiling on a crucible's `maxClipSeconds`. Ten minutes is far past anything a side-by-side
- * comparison can sustain; the minimax contest runs at two.
+ * The only values a crucible's `maxClipSeconds` may take. Topped just under
+ * `constants.mediaUpload.maxVideoDurationSeconds`: a longer limit could never reject anything,
+ * since no uploaded video can exceed that cap.
  */
-export const CRUCIBLE_MAX_CLIP_SECONDS = 600;
+export const CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS = [10, 15, 30, 60, 120, 240] as const;
 
 /**
- * Ceiling on a crucible's `minViewSeconds`. A judge is asked to watch BOTH clips before either
- * vote unlocks, so the wait a setting buys is twice its value — sixty here is two minutes a pair.
+ * The only values a crucible's `minViewSeconds` may take. A judge is asked to watch BOTH clips
+ * before either vote unlocks, so the wait a setting buys is twice its value.
  */
-export const CRUCIBLE_MAX_MIN_VIEW_SECONDS = 60;
+export const CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS = [3, 6, 10, 15, 30] as const;
 
 /**
  * Both video settings are meaningless on an image crucible, and NULL is the only value that reads

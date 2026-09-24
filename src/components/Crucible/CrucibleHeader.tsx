@@ -73,8 +73,6 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
-  const hasEnded = status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
-
   // Status badge styling
   const getStatusBadge = () => {
     switch (status) {
@@ -213,7 +211,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               </Text>
             </div>
 
-            {!hasEnded && endAt && <CrucibleTimer endAt={endAt} hasEnded={hasEnded} />}
+            {status === CrucibleStatus.Active && endAt && <CrucibleTimer endAt={endAt} />}
 
             {nsfwLevel > NsfwLevel.PG && (
               <Badge

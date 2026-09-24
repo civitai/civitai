@@ -160,9 +160,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
                 backgroundColor: 'rgba(0, 0, 0, 0.31)',
               }}
             />
-            {status !== CrucibleStatus.Completed &&
-              status !== CrucibleStatus.Cancelled &&
-              endAt && (
+            {status === CrucibleStatus.Active && endAt && new Date(endAt) > now && (
                 <IconBadge
                   icon={<IconClockHour4 size={14} />}
                   color="dark"

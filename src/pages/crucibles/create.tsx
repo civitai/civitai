@@ -5,8 +5,6 @@ import {
   Grid,
   Group,
   Input,
-  Loader,
-  NumberInput,
   Paper,
   Progress,
   SimpleGrid,
@@ -22,7 +20,6 @@ import {
   IconCalendar,
   IconCheck,
   IconClock,
-  IconCoin,
   IconInfoCircle,
   IconPencil,
   IconPhoto,
@@ -33,25 +30,41 @@ import {
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
-import type * as z from 'zod';
+import { useEffect, useState } from 'react';
+import * as z from 'zod';
 
-import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
+import { BackButton } from '~/components/BackButton/BackButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
+import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useStepper } from '~/hooks/useStepper';
-import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
+import {
+  Form,
+  InputDateTimePicker,
+  InputNumber,
+  InputSelect,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
+import { withController } from '~/libs/form/hoc/withController';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
-  CRUCIBLE_MAX_CLIP_SECONDS,
-  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
+  CRUCIBLE_CONTENT_TYPES,
+  CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
+  CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  getMaxCrucibleStartAt,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -60,47 +73,18 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/**
- * ==============================================================================
- * DESIGN DECISION: WIZARD vs SINGLE-PAGE LAYOUT
- * ==============================================================================
- *
- * The mockup at docs/features/crucible/mockups/creation.html shows a single-page
- * form where all sections (Basic Info, Entry Settings, Prize Distribution) are
- * visible simultaneously.
- *
- * The live implementation intentionally differs by using a WIZARD (multi-step)
- * approach. This design decision was made for the following reasons:
- *
- * 1. **Progressive Disclosure**: Each step focuses the user's attention on one
- *    category of settings, reducing cognitive load and preventing overwhelm.
- *
- * 2. **Mobile Experience**: On smaller screens, a single-page form with all
- *    options would require extensive scrolling. The wizard provides a better
- *    mobile UX by showing one manageable section at a time.
- *
- * 3. **Validation Flow**: Step-by-step validation ensures users complete required
- *    fields before moving forward, preventing form submission errors.
- *
- * 4. **Preview Context**: The persistent sidebar preview card and cost breakdown
- *    remain visible at each step, giving context without cluttering the form.
- *
- * 5. **Guided Experience**: New users benefit from the guided flow, especially
- *    for complex features like prize distribution customization.
- *
- * The core functionality and all form fields remain identical to the mockup;
- * only the navigation pattern differs.
- *
- * ==============================================================================
- */
+const InputContentRatingSelect = withController(ContentRatingSelect);
+const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 
-// Duration options with pricing
 const durationOptions = [
-  { value: '8', label: '8 hours', cost: 0, isFree: true },
-  { value: '24', label: '24 hours', cost: 500, isFree: false, disabled: true },
-  { value: '72', label: '3 days', cost: 1000, isFree: false, disabled: true },
-  { value: '168', label: '7 days', cost: 2000, isFree: false, disabled: true },
-];
+  { value: 8, label: '8 hours' },
+  { value: 24, label: '24 hours' },
+  { value: 72, label: '3 days' },
+  { value: 168, label: '7 days' },
+].map((option) => ({ ...option, cost: CRUCIBLE_DURATION_COSTS[option.value] ?? 0 }));
+
+const getDurationLabel = (hours: number) =>
+  durationOptions.find((d) => d.value === hours)?.label ?? `${hours} hours`;
 
 type ContentTypeOption = { value: CrucibleContentType; label: string; Icon: typeof IconPhoto };
 
@@ -109,55 +93,63 @@ const contentTypeOptions: ContentTypeOption[] = [
   { value: MediaType.video, label: 'Videos', Icon: IconVideo },
 ];
 
-// Default prize distribution
+const entryLimitOptions = [1, 2, 3, 5, 10].map((value) => ({
+  value,
+  label: `${value} ${value === 1 ? 'entry' : 'entries'}`,
+}));
+
+const formatSeconds = (seconds: number) =>
+  seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`;
+
+// 0 is the select's "no rule" choice; the server spells that as an absent value.
+const NO_RULE = 0;
+const toVideoRule = (seconds: number | undefined) => seconds || undefined;
+
 const defaultPrizePositions: Record<string, number> = {
   '1': 50,
   '2': 30,
   '3': 20,
 };
 
-// Form data type
-type FormData = {
-  // Step 1: Basic Info
-  name: string;
-  description: string;
-  coverImageId: string;
-  duration: string; // in hours as string
-  nsfwLevel: number;
+const formSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(100),
+  description: z.string().trim().max(500).optional(),
+  duration: z.number(),
+  startAt: z.date().nullish(),
+  nsfwLevel: z.number(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES),
+  entryFee: z.number({ error: 'Entry fee is required' }).int().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
+  entryLimit: z.number().int().min(1).max(10),
+  maxTotalEntries: z.number().int().min(1).optional(),
+  allowedResources: z.array(z.number()).optional(),
+  minViewSeconds: z.number().optional(),
+  maxClipSeconds: z.number().optional(),
+  seededPrizePool: z
+    .number({ error: 'Enter 0 for no seed' })
+    .int()
+    .min(0)
+    .max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL),
+  prizePositions: z.record(z.string(), z.number()),
+});
+type FormValues = z.infer<typeof formSchema>;
 
-  // Step 2: Entry Rules
-  contentType: CrucibleContentType;
-  entryFee: number;
-  entryLimit: number;
-  maxTotalEntries?: number;
-  minViewSeconds?: number;
-  maxClipSeconds?: number;
-
-  // Step 3: Prizes
-  seededPrizePool: number;
-  prizePositions: Record<string, number>;
-};
-
-// Form schema (client-side validation matching server schema)
-const formSchema: FormData = {
-  // Step 1: Basic Info
+const defaultValues: FormValues = {
   name: '',
   description: '',
-  coverImageId: '',
-  duration: '8', // in hours as string
-  nsfwLevel: 1, // Default to PG
-
-  // Step 2: Entry Rules
+  duration: 8,
+  nsfwLevel: 1,
   contentType: MediaType.image,
   entryFee: 100,
   entryLimit: 1,
-  maxTotalEntries: undefined,
-  minViewSeconds: undefined,
-  maxClipSeconds: undefined,
-
-  // Step 3: Prizes
+  allowedResources: [],
   seededPrizePool: 0,
   prizePositions: { ...defaultPrizePositions },
+};
+
+const stepFields: Record<number, (keyof FormValues)[]> = {
+  1: ['name', 'description', 'duration', 'startAt', 'nsfwLevel'],
+  2: ['contentType', 'entryFee', 'entryLimit', 'maxTotalEntries', 'minViewSeconds', 'maxClipSeconds'],
+  3: ['seededPrizePool'],
 };
 
 export const getServerSideProps = createServerSideProps({
@@ -179,19 +171,18 @@ export const getServerSideProps = createServerSideProps({
 export default function CrucibleCreate() {
   const router = useRouter();
   const [currentStep, { goToNextStep, goToPrevStep, setStep }] = useStepper(4);
-
-  // Form state
-  const [formData, setFormData] = useState<FormData>(formSchema);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // tRPC mutation for creating crucible
+  // The wizard unmounts each step's inputs, so they must keep their values when unregistered.
+  const form = useForm({ schema: formSchema, defaultValues, shouldUnregister: false });
+  const values = form.watch();
+
   const createCrucibleMutation = trpc.crucible.create.useMutation({
     onSuccess: (data) => {
       showSuccessNotification({
         title: 'Crucible Created!',
         message: 'Your crucible has been created successfully. Redirecting...',
       });
-      // Redirect to crucible detail page
       router.push(`/crucibles/${data.id}`);
     },
     onError: (error) => {
@@ -203,11 +194,9 @@ export default function CrucibleCreate() {
     },
   });
 
-  // Prize distribution edit mode
   const [prizeEditMode, setPrizeEditMode] = useState(false);
   const [prizeCustomized, setPrizeCustomized] = useState(false);
 
-  // Image upload
   const { files: imageFiles, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
 
@@ -218,104 +207,83 @@ export default function CrucibleCreate() {
     }
   };
 
-  // Update form data helper
-  const updateFormData = (updates: Partial<FormData>) => {
-    setFormData((prev) => ({ ...prev, ...updates }));
-  };
+  const setPrizePositions = (prizePositions: Record<string, number>) =>
+    form.setValue('prizePositions', prizePositions);
 
-  // Step validation
-  const isStep1Valid = () => {
-    return (
-      formData.name.trim().length > 0 && (imageFile?.status === 'success' || formData.coverImageId)
-    );
-  };
+  const isStep1Valid = () => values.name.trim().length > 0 && imageFile?.status === 'success';
 
   // Mirrors the server's cross-field refine. Both set and inverted means nothing can clear the
   // bar, so the crucible would have nothing votable in it.
+  const minViewSeconds = toVideoRule(values.minViewSeconds);
+  const maxClipSeconds = toVideoRule(values.maxClipSeconds);
   const videoSettingsError =
-    formData.minViewSeconds != null &&
-    formData.maxClipSeconds != null &&
-    formData.minViewSeconds > formData.maxClipSeconds
+    minViewSeconds != null && maxClipSeconds != null && minViewSeconds > maxClipSeconds
       ? 'Minimum view time cannot exceed the maximum clip length'
       : null;
 
-  const isStep2Valid = () => {
-    return formData.entryLimit >= 1 && formData.entryLimit <= 10 && !videoSettingsError;
-  };
+  const isStep2Valid = () =>
+    values.entryFee != null &&
+    values.entryLimit >= 1 &&
+    values.entryLimit <= 10 &&
+    !videoSettingsError;
 
-  const isStep3Valid = () => {
-    const totalPercentage = Object.values(formData.prizePositions).reduce(
-      (sum, val) => sum + val,
-      0
-    );
-    return totalPercentage <= 100;
-  };
+  const totalPrizePercentage = Object.values(values.prizePositions).reduce(
+    (sum, val) => sum + val,
+    0
+  );
+  const isStep3Valid = () => values.seededPrizePool != null && totalPrizePercentage <= 100;
 
-  // Calculate costs
-  const getDurationCost = () => {
-    const option = durationOptions.find((d) => d.value === formData.duration);
-    return option?.cost ?? 0;
-  };
+  const durationCost = CRUCIBLE_DURATION_COSTS[values.duration] ?? 0;
+  const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
+  const resourceRequirementsCost = values.allowedResources?.length
+    ? CRUCIBLE_RESOURCE_REQUIREMENTS_COST
+    : 0;
+  const totalCost =
+    durationCost +
+    prizeCustomizationCost +
+    resourceRequirementsCost +
+    (values.seededPrizePool ?? 0);
 
-  const getPrizeCustomizationCost = () => {
-    return prizeCustomized ? 1000 : 0;
-  };
-
-  const getTotalCost = () => {
-    return getDurationCost() + getPrizeCustomizationCost() + formData.seededPrizePool;
-  };
-
-  // Add a new prize position
   const addPrizePosition = () => {
-    const positions = Object.keys(formData.prizePositions);
-    const nextPosition = positions.length + 1;
-    updateFormData({
-      prizePositions: {
-        ...formData.prizePositions,
-        [nextPosition.toString()]: 0,
-      },
-    });
+    const nextPosition = Object.keys(values.prizePositions).length + 1;
+    setPrizePositions({ ...values.prizePositions, [nextPosition.toString()]: 0 });
   };
 
-  // Remove a prize position
   const removePrizePosition = (position: string) => {
-    const newPositions = { ...formData.prizePositions };
-    delete newPositions[position];
-    // Renumber positions
+    const remaining = { ...values.prizePositions };
+    delete remaining[position];
     const renumbered: Record<string, number> = {};
-    Object.entries(newPositions)
+    Object.entries(remaining)
       .sort(([a], [b]) => parseInt(a) - parseInt(b))
       .forEach(([, value], index) => {
         renumbered[(index + 1).toString()] = value;
       });
-    updateFormData({ prizePositions: renumbered });
+    setPrizePositions(renumbered);
   };
 
-  // Reset prize distribution to default
   const resetPrizeDistribution = () => {
-    updateFormData({ prizePositions: defaultPrizePositions });
+    setPrizePositions({ ...defaultPrizePositions });
     setPrizeCustomized(false);
     setPrizeEditMode(false);
   };
 
-  // Enter prize edit mode
   const enterPrizeEditMode = () => {
     setPrizeEditMode(true);
     setPrizeCustomized(true);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    const fields = stepFields[currentStep];
+    if (fields && !(await form.trigger(fields))) return;
     if (currentStep === 1 && !isStep1Valid()) return;
     if (currentStep === 2 && !isStep2Valid()) return;
     if (currentStep === 3 && !isStep3Valid()) return;
     goToNextStep();
   };
 
-  // Submit the crucible creation form
-  const handleSubmit = async () => {
+  const handleSubmit = (data: FormValues) => {
     if (isSubmitting) return;
 
-    // Validate image upload is complete
     if (!imageFile || imageFile.status !== 'success') {
       showErrorNotification({
         title: 'Missing Cover Image',
@@ -326,33 +294,34 @@ export default function CrucibleCreate() {
 
     setIsSubmitting(true);
 
+    const isVideo = data.contentType === MediaType.video;
     createCrucibleMutation.mutate({
-      name: formData.name.trim(),
-      description: formData.description.trim() || 'No description provided',
+      name: data.name,
+      description: data.description || 'No description provided',
       coverImage: {
         url: imageFile.url,
         width: imageFile.width,
         height: imageFile.height,
         hash: imageFile.hash,
       },
-      nsfwLevel: formData.nsfwLevel,
-      contentType: formData.contentType,
-      entryFee: formData.entryFee,
-      entryLimit: formData.entryLimit,
-      maxTotalEntries: formData.maxTotalEntries,
-      prizePositions: formData.prizePositions,
-      seededPrizePool: formData.seededPrizePool,
-      prizeCustomized, // Pass whether prize distribution was customized
-      duration: parseInt(formData.duration),
-      minViewSeconds: formData.minViewSeconds,
-      maxClipSeconds: formData.maxClipSeconds,
+      nsfwLevel: data.nsfwLevel,
+      contentType: data.contentType,
+      entryFee: data.entryFee,
+      entryLimit: data.entryLimit,
+      maxTotalEntries: data.maxTotalEntries,
+      allowedResources: data.allowedResources?.length ? data.allowedResources : undefined,
+      prizePositions: data.prizePositions,
+      seededPrizePool: data.seededPrizePool,
+      prizeCustomized,
+      duration: data.duration,
+      startAt: data.startAt ?? undefined,
+      minViewSeconds: isVideo ? toVideoRule(data.minViewSeconds) : undefined,
+      maxClipSeconds: isVideo ? toVideoRule(data.maxClipSeconds) : undefined,
     });
   };
 
-  // Step content components
   const renderStep1 = () => (
     <Stack gap="xl">
-      {/* Cover Image Upload */}
       <div>
         <Input.Wrapper
           label="Cover Image"
@@ -384,10 +353,7 @@ export default function CrucibleCreate() {
                   size="sm"
                   variant="filled"
                   color="red"
-                  onClick={() => {
-                    removeImage(imageFile.url);
-                    updateFormData({ coverImageId: '' });
-                  }}
+                  onClick={() => removeImage(imageFile.url)}
                   className="absolute right-2 top-2 z-10"
                 >
                   <IconTrash size={14} />
@@ -413,39 +379,25 @@ export default function CrucibleCreate() {
         </Input.Wrapper>
       </div>
 
-      {/* Name */}
-      <Input.Wrapper label="Crucible Name" description="Maximum 100 characters" withAsterisk>
-        <Input
-          mt={4}
-          placeholder="e.g., Anime Character Design Challenge"
-          value={formData.name}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateFormData({ name: e.target.value.slice(0, 100) })
-          }
-          maxLength={100}
-        />
-      </Input.Wrapper>
+      <InputText
+        name="name"
+        label="Crucible Name"
+        description="Maximum 100 characters"
+        placeholder="e.g., Anime Character Design Challenge"
+        maxLength={100}
+        withAsterisk
+      />
 
-      {/* Description */}
-      <Input.Wrapper
+      <InputTextArea
+        name="description"
         label="Description"
         description="Describe the theme, rules, or inspiration. Maximum 500 characters. (Optional)"
-      >
-        <Input
-          mt={4}
-          component="textarea"
-          rows={4}
-          placeholder="Describe the theme, rules, or inspiration for this crucible..."
-          value={formData.description}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-            updateFormData({ description: e.target.value.slice(0, 500) })
-          }
-          maxLength={500}
-          styles={{ input: { resize: 'vertical' } }}
-        />
-      </Input.Wrapper>
+        placeholder="e.g., Design an original anime character set in a neon-lit cyberpunk city. Show the full outfit, and keep it an original character — no fan art of existing ones."
+        maxLength={500}
+        autosize
+        minRows={3}
+      />
 
-      {/* Duration */}
       <Input.Wrapper
         label="Duration"
         description="Duration determines how long the crucible accepts entries"
@@ -453,48 +405,52 @@ export default function CrucibleCreate() {
       >
         <SimpleGrid cols={{ base: 2, sm: 4 }} mt={8}>
           {durationOptions.map((option) => (
-            <Tooltip key={option.value} label="Coming Soon" disabled={!option.disabled} withArrow>
-              <Paper
-                className={`cursor-pointer border p-3 text-center transition-all ${
-                  formData.duration === option.value
-                    ? 'border-blue-500 bg-blue-500/20'
-                    : 'border-dark-4 hover:border-blue-500'
-                } ${option.disabled ? 'cursor-not-allowed opacity-50' : ''}`}
-                onClick={() => {
-                  if (!option.disabled) {
-                    updateFormData({ duration: option.value });
-                  }
-                }}
-              >
-                <Text size="sm" fw={500}>
-                  {option.label}
-                </Text>
-                <div className="mt-1">
-                  {option.isFree ? (
-                    <Text size="xs" c="green" fw={700}>
-                      FREE
+            <Paper
+              key={option.value}
+              className={`cursor-pointer border p-3 text-center transition-all ${
+                values.duration === option.value
+                  ? 'border-blue-500 bg-blue-500/20'
+                  : 'border-dark-4 hover:border-blue-500'
+              }`}
+              onClick={() => form.setValue('duration', option.value)}
+            >
+              <Text size="sm" fw={500}>
+                {option.label}
+              </Text>
+              <div className="mt-1">
+                {option.cost === 0 ? (
+                  <Text size="xs" c="green" fw={700}>
+                    FREE
+                  </Text>
+                ) : (
+                  <Group gap={4} justify="center">
+                    <CurrencyIcon currency={Currency.BUZZ} size={12} />
+                    <Text size="xs" c="yellow" fw={700}>
+                      +{option.cost.toLocaleString()}
                     </Text>
-                  ) : (
-                    <Group gap={4} justify="center">
-                      <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                      <Text size="xs" c="yellow" fw={700}>
-                        +{option.cost.toLocaleString()}
-                      </Text>
-                    </Group>
-                  )}
-                </div>
-              </Paper>
-            </Tooltip>
+                  </Group>
+                )}
+              </div>
+            </Paper>
           ))}
         </SimpleGrid>
       </Input.Wrapper>
 
-      {/* NSFW Level */}
-      <BrowsingLevelsInput
+      <InputDateTimePicker
+        name="startAt"
+        label="Start Date"
+        description="Leave empty to start the crucible as soon as you create it"
+        placeholder="Start immediately"
+        valueFormat="lll"
+        minDate={new Date()}
+        maxDate={getMaxCrucibleStartAt()}
+        clearable
+      />
+
+      <InputContentRatingSelect
+        name="nsfwLevel"
         label="Allowed Content Levels"
         description="Users can only submit content matching these levels"
-        value={formData.nsfwLevel}
-        onChange={(value) => updateFormData({ nsfwLevel: value })}
       />
     </Stack>
   );
@@ -511,17 +467,17 @@ export default function CrucibleCreate() {
             <Paper
               key={value}
               className={`cursor-pointer border p-3 transition-all ${
-                formData.contentType === value
+                values.contentType === value
                   ? 'border-blue-500 bg-blue-500/20'
                   : 'border-dark-4 hover:border-blue-500'
               }`}
-              onClick={() =>
-                updateFormData(
-                  value === MediaType.video
-                    ? { contentType: value }
-                    : { contentType: value, minViewSeconds: undefined, maxClipSeconds: undefined }
-                )
-              }
+              onClick={() => {
+                form.setValue('contentType', value);
+                if (value !== MediaType.video) {
+                  form.setValue('minViewSeconds', undefined);
+                  form.setValue('maxClipSeconds', undefined);
+                }
+              }}
             >
               <Group gap={6} justify="center">
                 <Icon size={16} />
@@ -534,138 +490,78 @@ export default function CrucibleCreate() {
         </SimpleGrid>
       </Input.Wrapper>
 
-      {/* Entry Fee */}
-      <Input.Wrapper
+      <InputNumber
+        name="entryFee"
         label="Entry Fee per User"
         description={`How much Buzz users pay to enter their ${
-          formData.contentType === MediaType.video ? 'video' : 'image'
+          values.contentType === MediaType.video ? 'video' : 'image'
         }`}
-      >
-        <Group gap={8} mt={8}>
-          <Input
-            type="number"
-            min={0}
-            value={formData.entryFee}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              updateFormData({ entryFee: Math.max(0, parseInt(e.target.value) || 0) })
-            }
-            style={{ flex: 1 }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-          />
-          <Text fw={600} c="yellow">
-            Buzz
-          </Text>
-        </Group>
-        <Text size="xs" c="dimmed" mt={4}>
-          {formData.entryFee === 0 ? (
-            <Text span c="green">
-              {formData.seededPrizePool > 0
-                ? 'Free Entry (prize pool comes from your seed)'
-                : 'Free Entry (No Prize Pool)'}
-            </Text>
-          ) : (
-            `${formData.entryFee} Buzz entry fee`
-          )}
-        </Text>
-      </Input.Wrapper>
+        leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+        min={0}
+        max={CRUCIBLE_MAX_ENTRY_FEE}
+        step={10}
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
+      />
 
-      {/* Entry Limit */}
-      <Input.Wrapper
+      <InputSelect
+        name="entryLimit"
         label="Entry Limit per User"
         description="How many times can one user enter?"
+        data={entryLimitOptions}
+        allowDeselect={false}
         withAsterisk
-      >
-        <Input
-          mt={8}
-          component="select"
-          value={formData.entryLimit}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-            updateFormData({ entryLimit: parseInt(e.target.value) })
-          }
-        >
-          <option value="1">1 entry</option>
-          <option value="2">2 entries</option>
-          <option value="3">3 entries</option>
-          <option value="5">5 entries</option>
-          <option value="10">10 entries</option>
-        </Input>
-      </Input.Wrapper>
+      />
 
-      {/* Max Total Entries */}
-      <Input.Wrapper
+      <InputNumber
+        name="maxTotalEntries"
         label="Maximum Total Entries"
         description="Optional limit on total entries across all users"
-      >
-        <Input
-          mt={8}
-          type="number"
-          min={1}
-          placeholder="No limit"
-          value={formData.maxTotalEntries ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateFormData({
-              maxTotalEntries: e.target.value ? parseInt(e.target.value) : undefined,
-            })
-          }
-        />
-      </Input.Wrapper>
+        placeholder="No limit"
+        min={1}
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
+        clearable
+      />
 
-      {formData.contentType === MediaType.video && (
+      {values.contentType === MediaType.video && (
         <Input.Wrapper
           label="Advanced Video Options"
-          description="Optional. Leave either blank for no rule."
+          description="Optional. Both default to no rule."
         >
           <Stack gap="md" mt={8}>
-            <Input.Wrapper
+            <InputSelect
+              name="minViewSeconds"
               label="Minimum view time"
               description="Judges must watch this much of BOTH clips before either vote unlocks"
-            >
-              <Group gap={8} mt={8}>
-                <NumberInput
-                  value={formData.minViewSeconds ?? ''}
-                  onChange={(value) =>
-                    updateFormData({
-                      minViewSeconds: typeof value === 'number' ? value : undefined,
-                    })
-                  }
-                  min={1}
-                  max={CRUCIBLE_MAX_MIN_VIEW_SECONDS}
-                  placeholder="No minimum"
-                  // The wrapper's label sits outside the Group, so it never associates with this input.
-                  aria-label="Minimum view time in seconds"
-                  style={{ flex: 1 }}
-                />
-                <Text size="sm" c="dimmed">
-                  seconds
-                </Text>
-              </Group>
-            </Input.Wrapper>
-
-            <Input.Wrapper
+              placeholder="No minimum"
+              data={[
+                { value: NO_RULE, label: 'No minimum' },
+                ...CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS.map((seconds) => ({
+                  value: seconds,
+                  label: formatSeconds(seconds),
+                  disabled: maxClipSeconds != null && seconds > maxClipSeconds,
+                })),
+              ]}
+              allowDeselect={false}
+            />
+            <InputSelect
+              name="maxClipSeconds"
               label="Maximum clip length"
               description="Entries longer than this are rejected on submission"
-            >
-              <Group gap={8} mt={8}>
-                <NumberInput
-                  value={formData.maxClipSeconds ?? ''}
-                  onChange={(value) =>
-                    updateFormData({
-                      maxClipSeconds: typeof value === 'number' ? value : undefined,
-                    })
-                  }
-                  min={1}
-                  max={CRUCIBLE_MAX_CLIP_SECONDS}
-                  placeholder="No maximum"
-                  // The wrapper's label sits outside the Group, so it never associates with this input.
-                  aria-label="Maximum clip length in seconds"
-                  style={{ flex: 1 }}
-                />
-                <Text size="sm" c="dimmed">
-                  seconds
-                </Text>
-              </Group>
-            </Input.Wrapper>
-
+              placeholder="No maximum"
+              data={[
+                { value: NO_RULE, label: 'No maximum' },
+                ...CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS.map((seconds) => ({
+                  value: seconds,
+                  label: formatSeconds(seconds),
+                  disabled: minViewSeconds != null && seconds < minViewSeconds,
+                })),
+              ]}
+              allowDeselect={false}
+            />
             {videoSettingsError && (
               <Text size="xs" c="red">
                 {videoSettingsError}
@@ -675,140 +571,53 @@ export default function CrucibleCreate() {
         </Input.Wrapper>
       )}
 
-      {/* Resource Requirements - Coming Soon */}
-      <Tooltip label="Coming Soon - Premium feature" withArrow>
-        <Input.Wrapper
-          label="Resource Requirements"
-          description="Models/LoRAs required for submissions"
-          className="cursor-not-allowed opacity-50"
-        >
-          <Paper p="md" mt={8} className="border border-dark-4">
-            <Group gap={8} mb="sm">
-              <Input placeholder="Search models, LoRAs..." disabled style={{ flex: 1 }} />
-              <ActionIcon variant="light" disabled>
-                <IconPlus size={16} />
-              </ActionIcon>
-            </Group>
-            <Text size="xs" c="dimmed">
-              Require specific models or LoRAs for entries (Premium feature)
-            </Text>
-          </Paper>
-        </Input.Wrapper>
-      </Tooltip>
+      <InputModelVersionMultiSelect
+        name="allowedResources"
+        label={
+          <Group gap={8} component="span">
+            Resource Requirements
+            <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-xs font-bold text-yellow-4">
+              +{CRUCIBLE_RESOURCE_REQUIREMENTS_COST.toLocaleString()} Buzz
+            </span>
+          </Group>
+        }
+        description="Entries must use at least one of the selected models. Leave empty to allow any model."
+      />
     </Stack>
   );
 
   const renderStep3 = () => {
-    const totalPercentage = Object.values(formData.prizePositions).reduce(
-      (sum, val) => sum + val,
-      0
-    );
-    const sortedPositions = Object.entries(formData.prizePositions).sort(
+    const sortedPositions = Object.entries(values.prizePositions).sort(
       ([a], [b]) => parseInt(a) - parseInt(b)
     );
-    const positionColors = [
-      { bg: 'from-blue-500 to-blue-600', text: 'text-blue-4' },
-      { bg: 'from-green-500 to-green-600', text: 'text-green-4' },
-      { bg: 'from-yellow-500 to-yellow-600', text: 'text-yellow-4' },
-    ];
 
     const seededPoolInput = (
-      <Input.Wrapper
+      <InputNumber
+        name="seededPrizePool"
         label="Seed the Prize Pool"
         description="Add your own Buzz on top of what entry fees collect. Charged when you create the crucible."
-      >
-        <Group gap={8} mt={8}>
-          <Input
-            type="number"
-            min={0}
-            max={CRUCIBLE_MAX_SEEDED_PRIZE_POOL}
-            value={formData.seededPrizePool}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              updateFormData({
-                seededPrizePool: Math.min(
-                  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
-                  Math.max(0, parseInt(e.target.value) || 0)
-                ),
-              })
-            }
-            style={{ flex: 1 }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-          />
-          <Text fw={600} c="yellow">
-            Buzz
-          </Text>
-        </Group>
-        <Text size="xs" c="dimmed" mt={4}>
-          {formData.seededPrizePool > 0
-            ? `${formData.seededPrizePool.toLocaleString()} Buzz added to the pool before any entries`
-            : 'No seed — the pool is entry fees only'}
-        </Text>
-      </Input.Wrapper>
+        leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+        min={0}
+        max={CRUCIBLE_MAX_SEEDED_PRIZE_POOL}
+        step={100}
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
+      />
     );
 
-    // Display Mode - Default view with "Customize" button
     if (!prizeEditMode) {
       return (
         <Stack gap="lg">
           {seededPoolInput}
 
-          {/* Visual Progress Bar */}
           <div>
             <Text size="xs" c="dimmed" fw={600} mb={8}>
               {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
             </Text>
-            <div className="mb-3 flex h-8 overflow-hidden rounded border border-dark-4">
-              {sortedPositions.map(([position, percentage], index) => {
-                const colorClass = positionColors[index]?.bg || 'from-gray-500 to-gray-600';
-                return (
-                  <div
-                    key={position}
-                    className={`flex items-center justify-center bg-gradient-to-r text-xs font-bold text-white ${colorClass}`}
-                    style={{ flex: percentage || 0.1 }}
-                  >
-                    {percentage > 10 &&
-                      `${position}${getOrdinalSuffix(parseInt(position))}: ${percentage}%`}
-                  </div>
-                );
-              })}
-            </div>
+            <PrizeDistributionChart prizePositions={values.prizePositions} />
           </div>
 
-          {/* Distribution Summary Cards */}
-          <SimpleGrid cols={{ base: 2, sm: 3 }}>
-            {sortedPositions.slice(0, 3).map(([position, percentage]) => (
-              <Paper key={position} p="md" className="border border-dark-4 text-center" bg="dark.7">
-                <Text size="xs" c="dimmed" mb={6}>
-                  {position}
-                  {getOrdinalSuffix(parseInt(position))} Place
-                </Text>
-                <Text size="xl" fw={700}>
-                  {percentage}%
-                </Text>
-              </Paper>
-            ))}
-          </SimpleGrid>
-
-          {/* Additional positions if more than 3 */}
-          {sortedPositions.length > 3 && (
-            <Paper p="md" className="border border-dark-4">
-              <Stack gap="xs">
-                {sortedPositions.slice(3).map(([position, percentage]) => (
-                  <Group key={position} justify="space-between">
-                    <Text size="sm" c="dimmed">
-                      {position}
-                      {getOrdinalSuffix(parseInt(position))} Place
-                    </Text>
-                    <Text size="sm" fw={600}>
-                      {percentage}%
-                    </Text>
-                  </Group>
-                ))}
-              </Stack>
-            </Paper>
-          )}
-
-          {/* Customize Distribution Button */}
           <Button
             variant="filled"
             color="blue"
@@ -817,7 +626,7 @@ export default function CrucibleCreate() {
             rightSection={
               !prizeCustomized && (
                 <span className="ml-2 rounded bg-yellow-500/20 px-2 py-0.5 text-xs font-bold text-yellow-4">
-                  +1,000 Buzz
+                  +{CRUCIBLE_PRIZE_CUSTOMIZATION_COST.toLocaleString()} Buzz
                 </span>
               )
             }
@@ -828,12 +637,10 @@ export default function CrucibleCreate() {
       );
     }
 
-    // Edit Mode - Sliders and add/remove functionality
     return (
       <Stack gap="lg">
         {seededPoolInput}
 
-        {/* Editing Header */}
         <Group gap="xs">
           <IconPencil size={16} className="text-blue-5" />
           <Text size="sm" c="blue" fw={600}>
@@ -841,31 +648,22 @@ export default function CrucibleCreate() {
           </Text>
         </Group>
 
-        {/* Prize Rows with Sliders */}
         {sortedPositions.map(([position, percentage], index) => (
           <Paper key={position} p="md" className="border border-dark-4">
             <Group justify="space-between" align="center" gap="md">
               <Text size="sm" fw={600} style={{ width: 90 }}>
-                {position}
-                {getOrdinalSuffix(parseInt(position))} Place
+                {formatPlace(position)}
               </Text>
               <Slider
                 value={percentage}
-                onChange={(value) => {
-                  updateFormData({
-                    prizePositions: {
-                      ...formData.prizePositions,
-                      [position]: value,
-                    },
-                  });
-                }}
+                onChange={(value) =>
+                  setPrizePositions({ ...values.prizePositions, [position]: value })
+                }
                 min={0}
                 max={100}
                 step={1}
                 style={{ flex: 1 }}
-                color={
-                  index === 0 ? 'blue' : index === 1 ? 'green' : index === 2 ? 'yellow' : 'gray'
-                }
+                color={positionColors[index]?.slider ?? 'gray'}
                 styles={{
                   track: { height: 6 },
                   thumb: { borderWidth: 2 },
@@ -874,7 +672,6 @@ export default function CrucibleCreate() {
               <Text size="sm" fw={700} style={{ width: 50, textAlign: 'right' }}>
                 {percentage}%
               </Text>
-              {/* Only show remove button for positions beyond top 3 */}
               {parseInt(position) > 3 && (
                 <ActionIcon
                   variant="subtle"
@@ -889,7 +686,6 @@ export default function CrucibleCreate() {
           </Paper>
         ))}
 
-        {/* Add Prize Position Button */}
         <Button
           variant="light"
           color="blue"
@@ -899,27 +695,20 @@ export default function CrucibleCreate() {
           Add Prize Position
         </Button>
 
-        {/* Total Distribution Indicator */}
         <Paper p="md" className="border border-dark-4" bg="dark.7">
           <Group justify="space-between">
             <Text c="dimmed">Total Distribution</Text>
-            <Group gap={4}>
-              <Text size="lg" fw={700} c={totalPercentage <= 100 ? 'green' : 'red'}>
-                {totalPercentage}
-              </Text>
-              <Text size="lg" fw={700} c={totalPercentage <= 100 ? 'green' : 'red'}>
-                %
-              </Text>
-            </Group>
+            <Text size="lg" fw={700} c={totalPrizePercentage <= 100 ? 'green' : 'red'}>
+              {totalPrizePercentage}%
+            </Text>
           </Group>
-          {totalPercentage > 100 && (
+          {totalPrizePercentage > 100 && (
             <Text size="xs" c="red" mt={4}>
               Prize percentages cannot exceed 100%
             </Text>
           )}
         </Paper>
 
-        {/* Action Buttons */}
         <Group gap="md">
           <Button
             variant="light"
@@ -944,164 +733,112 @@ export default function CrucibleCreate() {
     );
   };
 
-  const renderStep4 = () => {
-    // Calculate estimated start and end times
-    const now = new Date();
-    const estimatedStartAt = now;
-    const durationHours = parseInt(formData.duration) || 8;
-    const estimatedEndAt = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
+  const renderStep4 = () => (
+    <Stack gap="xl">
+      <Title order={3}>Review Your Crucible</Title>
 
-    // Format dates for display
-    const formatDateTime = (date: Date) => {
-      return date.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
-    };
+      <EstimatedSchedule durationHours={values.duration} startAt={values.startAt} />
 
-    return (
-      <Stack gap="xl">
-        <Title order={3}>Review Your Crucible</Title>
-
-        {/* Timing Estimate */}
-        <Paper p="lg" className="border border-blue-500/30 bg-blue-500/5">
-          <Group gap="xs" mb="md">
-            <IconCalendar size={20} className="text-blue-5" />
-            <Text fw={600}>Estimated Schedule</Text>
+      <Paper p="lg" className="border border-dark-4">
+        <Group gap="xs" mb="md">
+          <IconInfoCircle size={20} className="text-blue-5" />
+          <Text fw={600}>Basic Information</Text>
+        </Group>
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Text c="dimmed">Name</Text>
+            <Text fw={500}>{values.name || 'Not set'}</Text>
           </Group>
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Group gap="xs">
-                <IconClock size={16} className="text-green-5" />
-                <Text c="dimmed">Starts</Text>
+          <Group justify="space-between">
+            <Text c="dimmed">Duration</Text>
+            <Text fw={500}>{getDurationLabel(values.duration)}</Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Description</Text>
+            <Text fw={500} lineClamp={2} style={{ maxWidth: 300, textAlign: 'right' }}>
+              {values.description || 'None'}
+            </Text>
+          </Group>
+        </Stack>
+      </Paper>
+
+      <Paper p="lg" className="border border-dark-4">
+        <Group gap="xs" mb="md">
+          <IconTicket size={20} className="text-blue-5" />
+          <Text fw={600}>Entry Settings</Text>
+        </Group>
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Text c="dimmed">Content Type</Text>
+            <Text fw={500}>
+              {contentTypeOptions.find((o) => o.value === values.contentType)?.label}
+            </Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Entry Fee</Text>
+            <CurrencyBadge unitAmount={values.entryFee ?? 0} currency={Currency.BUZZ} />
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Entry Limit per User</Text>
+            <Text fw={500}>
+              {entryLimitOptions.find((o) => o.value === values.entryLimit)?.label}
+            </Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Max Total Entries</Text>
+            <Text fw={500}>{values.maxTotalEntries || 'Unlimited'}</Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Required Resources</Text>
+            <Text fw={500}>
+              {values.allowedResources?.length
+                ? `${values.allowedResources.length} ${
+                    values.allowedResources.length === 1 ? 'model' : 'models'
+                  }`
+                : 'Any model'}
+            </Text>
+          </Group>
+          {values.contentType === MediaType.video && (
+            <>
+              <Group justify="space-between">
+                <Text c="dimmed">Minimum View Time</Text>
+                <Text fw={500}>
+                  {minViewSeconds ? formatSeconds(minViewSeconds) : 'None'}
+                </Text>
               </Group>
-              <Text fw={500} c="green">
-                {formatDateTime(estimatedStartAt)} (Immediately)
-              </Text>
-            </Group>
-            <Group justify="space-between">
-              <Group gap="xs">
-                <IconClock size={16} className="text-orange-5" />
-                <Text c="dimmed">Ends</Text>
+              <Group justify="space-between">
+                <Text c="dimmed">Maximum Clip Length</Text>
+                <Text fw={500}>
+                  {maxClipSeconds ? formatSeconds(maxClipSeconds) : 'Unlimited'}
+                </Text>
               </Group>
-              <Text fw={500} c="orange">
-                {formatDateTime(estimatedEndAt)}
-              </Text>
-            </Group>
-          </Stack>
-        </Paper>
+            </>
+          )}
+        </Stack>
+      </Paper>
 
-        {/* Basic Info Summary */}
-        <Paper p="lg" className="border border-dark-4">
-          <Group gap="xs" mb="md">
-            <IconInfoCircle size={20} className="text-blue-5" />
-            <Text fw={600}>Basic Information</Text>
-          </Group>
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Text c="dimmed">Name</Text>
-              <Text fw={500}>{formData.name || 'Not set'}</Text>
-            </Group>
-            <Group justify="space-between">
-              <Text c="dimmed">Duration</Text>
-              <Text fw={500}>
-                {durationOptions.find((d) => d.value === formData.duration)?.label || '8 hours'}
-              </Text>
-            </Group>
-            <Group justify="space-between">
-              <Text c="dimmed">Description</Text>
-              <Text fw={500} lineClamp={2} style={{ maxWidth: 300, textAlign: 'right' }}>
-                {formData.description || 'None'}
-              </Text>
-            </Group>
-          </Stack>
-        </Paper>
-
-        {/* Entry Rules Summary */}
-        <Paper p="lg" className="border border-dark-4">
-          <Group gap="xs" mb="md">
-            <IconTicket size={20} className="text-blue-5" />
-            <Text fw={600}>Entry Settings</Text>
-          </Group>
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Text c="dimmed">Content Type</Text>
-              <Text fw={500}>
-                {contentTypeOptions.find((o) => o.value === formData.contentType)?.label}
-              </Text>
-            </Group>
-            <Group justify="space-between">
-              <Text c="dimmed">Entry Fee</Text>
-              <CurrencyBadge unitAmount={formData.entryFee} currency={Currency.BUZZ} />
-            </Group>
-            <Group justify="space-between">
-              <Text c="dimmed">Entry Limit per User</Text>
-              <Text fw={500}>{formData.entryLimit} entries</Text>
-            </Group>
-            <Group justify="space-between">
-              <Text c="dimmed">Max Total Entries</Text>
-              <Text fw={500}>{formData.maxTotalEntries || 'Unlimited'}</Text>
-            </Group>
-            {formData.contentType === MediaType.video && (
-              <>
-                <Group justify="space-between">
-                  <Text c="dimmed">Minimum View Time</Text>
-                  <Text fw={500}>
-                    {formData.minViewSeconds ? `${formData.minViewSeconds}s` : 'None'}
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text c="dimmed">Maximum Clip Length</Text>
-                  <Text fw={500}>
-                    {formData.maxClipSeconds ? `${formData.maxClipSeconds}s` : 'Unlimited'}
-                  </Text>
-                </Group>
-              </>
+      <Paper p="lg" className="border border-dark-4">
+        <Group gap="xs" mb="md">
+          <IconTrophy size={20} className="text-blue-5" />
+          <Text fw={600}>Prize Distribution</Text>
+        </Group>
+        <Stack gap="md">
+          <Group justify="space-between">
+            <Text c="dimmed">Seeded Prize Pool</Text>
+            {values.seededPrizePool > 0 ? (
+              <CurrencyBadge unitAmount={values.seededPrizePool} currency={Currency.BUZZ} />
+            ) : (
+              <Text fw={500}>None</Text>
             )}
-          </Stack>
-        </Paper>
-
-        {/* Prize Distribution Summary */}
-        <Paper p="lg" className="border border-dark-4">
-          <Group gap="xs" mb="md">
-            <IconTrophy size={20} className="text-blue-5" />
-            <Text fw={600}>Prize Distribution</Text>
           </Group>
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Text c="dimmed">Seeded Prize Pool</Text>
-              {formData.seededPrizePool > 0 ? (
-                <CurrencyBadge unitAmount={formData.seededPrizePool} currency={Currency.BUZZ} />
-              ) : (
-                <Text fw={500}>None</Text>
-              )}
-            </Group>
-            {Object.entries(formData.prizePositions)
-              .sort(([a], [b]) => parseInt(a) - parseInt(b))
-              .map(([position, percentage]) => (
-                <Group key={position} justify="space-between">
-                  <Text c="dimmed">
-                    {position}
-                    {getOrdinalSuffix(parseInt(position))} Place
-                  </Text>
-                  <Text fw={500}>{percentage}%</Text>
-                </Group>
-              ))}
-          </Stack>
-        </Paper>
-      </Stack>
-    );
-  };
+          <PrizeDistributionChart prizePositions={values.prizePositions} />
+        </Stack>
+      </Paper>
+    </Stack>
+  );
 
-  // Get the current step component
   const renderCurrentStep = () => {
     switch (currentStep) {
-      case 1:
-        return renderStep1();
       case 2:
         return renderStep2();
       case 3:
@@ -1113,241 +850,336 @@ export default function CrucibleCreate() {
     }
   };
 
-  // Step labels
   const stepLabels = ['Basic Info', 'Entry Rules', 'Prizes', 'Review'];
 
   return (
     <Container size="lg" py="xl">
-      <Grid gutter="xl">
-        {/* Left Column - Form */}
-        <Grid.Col span={{ base: 12, lg: 8 }}>
-          {/* Header */}
-          <Group gap="md" mb="xl">
-            <BackButton url="/crucibles" />
-            <div>
-              <Title order={2}>Create Crucible</Title>
-              <Text c="dimmed" size="sm">
-                Set up a new creative competition
-              </Text>
-            </div>
-          </Group>
-
-          {/* Step Indicators */}
-          <Group gap="xs" mb="xl">
-            {stepLabels.map((label, index) => (
-              <Paper
-                key={label}
-                className={`flex-1 cursor-pointer border p-2 text-center ${
-                  currentStep === index + 1
-                    ? 'border-blue-500 bg-blue-500/20'
-                    : currentStep > index + 1
-                    ? 'border-green-500 bg-green-500/10'
-                    : 'border-dark-4'
-                }`}
-                onClick={() => {
-                  // Allow navigating to previous steps
-                  if (index + 1 < currentStep) {
-                    setStep(index + 1);
-                  }
-                }}
-              >
-                <Text size="xs" c="dimmed">
-                  Step {index + 1}
+      <Form form={form}>
+        <Grid gutter="xl">
+          <Grid.Col span={{ base: 12, lg: 8 }}>
+            <Group gap="md" mb="xl">
+              <BackButton url="/crucibles" />
+              <div>
+                <Title order={2}>Create Crucible</Title>
+                <Text c="dimmed" size="sm">
+                  Set up a new creative competition
                 </Text>
-                <Text size="sm" fw={500}>
-                  {label}
-                </Text>
-              </Paper>
-            ))}
-          </Group>
-
-          {/* Section Card */}
-          <Paper p="xl" className="border border-dark-4">
-            <Group gap="sm" mb="lg" pb="md" className="border-b border-dark-4">
-              <div className="flex size-8 items-center justify-center rounded-lg bg-blue-500/10">
-                {currentStep === 1 && <IconInfoCircle size={18} className="text-blue-5" />}
-                {currentStep === 2 && <IconTicket size={18} className="text-blue-5" />}
-                {currentStep === 3 && <IconTrophy size={18} className="text-blue-5" />}
-                {currentStep === 4 && <IconInfoCircle size={18} className="text-blue-5" />}
               </div>
-              <Text fw={600}>{stepLabels[currentStep - 1]}</Text>
             </Group>
 
-            {renderCurrentStep()}
-          </Paper>
-
-          {/* Navigation Buttons */}
-          <Group justify="space-between" mt="xl">
-            <Button
-              variant="light"
-              color="gray"
-              onClick={goToPrevStep}
-              disabled={currentStep === 1}
-              leftSection={<IconArrowLeft size={16} />}
-            >
-              Previous
-            </Button>
-            <Button
-              onClick={handleNext}
-              disabled={
-                (currentStep === 1 && !isStep1Valid()) ||
-                (currentStep === 2 && !isStep2Valid()) ||
-                (currentStep === 3 && !isStep3Valid())
-              }
-              style={{ display: currentStep === 4 ? 'none' : undefined }}
-            >
-              Next
-            </Button>
-          </Group>
-        </Grid.Col>
-
-        {/* Right Column - Preview & Costs */}
-        <Grid.Col span={{ base: 12, lg: 4 }}>
-          <div className="sticky top-8">
-            {/* Preview Card */}
-            <Text size="xs" c="dimmed" fw={600} mb="sm" tt="uppercase">
-              Preview
-            </Text>
-            <Paper className="mb-4 overflow-hidden border border-dark-4">
-              <div
-                className="flex items-center justify-center bg-gradient-to-br from-dark-6 to-dark-8"
-                style={{ aspectRatio: '16 / 9' }}
-              >
-                {imageFile?.status === 'success' ? (
-                  <EdgeMedia
-                    src={imageFile.objectUrl ?? imageFile.url}
-                    width={400}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                ) : (
-                  <Text c="dimmed" size="xs">
-                    No cover image
+            <Group gap="xs" mb="xl">
+              {stepLabels.map((label, index) => (
+                <Paper
+                  key={label}
+                  className={`flex-1 cursor-pointer border p-2 text-center ${
+                    currentStep === index + 1
+                      ? 'border-blue-500 bg-blue-500/20'
+                      : currentStep > index + 1
+                      ? 'border-green-500 bg-green-500/10'
+                      : 'border-dark-4'
+                  }`}
+                  onClick={() => {
+                    if (index + 1 < currentStep) setStep(index + 1);
+                  }}
+                >
+                  <Text size="xs" c="dimmed">
+                    Step {index + 1}
                   </Text>
-                )}
-              </div>
-              <div className="p-3">
-                <Text size="sm" fw={600} lineClamp={2} mb="sm">
-                  {formData.name || 'Your Crucible Name'}
-                </Text>
-                <Group justify="space-between" gap={4}>
-                  <div className="text-center">
-                    <Text size="sm" fw={600}>
-                      {formData.entryFee}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      Entry
-                    </Text>
-                  </div>
-                  <div className="text-center">
-                    <Text size="sm" fw={600}>
-                      {durationOptions.find((d) => d.value === formData.duration)?.label || '8h'}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      Duration
-                    </Text>
-                  </div>
-                  <div className="text-center">
-                    <Text size="sm" fw={600}>
-                      0
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      Entries
-                    </Text>
-                  </div>
-                </Group>
-              </div>
+                  <Text size="sm" fw={500}>
+                    {label}
+                  </Text>
+                </Paper>
+              ))}
+            </Group>
+
+            <Paper p="xl" className="border border-dark-4">
+              <Group gap="sm" mb="lg" pb="md" className="border-b border-dark-4">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-blue-500/10">
+                  {currentStep === 2 ? (
+                    <IconTicket size={18} className="text-blue-5" />
+                  ) : currentStep === 3 ? (
+                    <IconTrophy size={18} className="text-blue-5" />
+                  ) : (
+                    <IconInfoCircle size={18} className="text-blue-5" />
+                  )}
+                </div>
+                <Text fw={600}>{stepLabels[currentStep - 1]}</Text>
+              </Group>
+
+              {renderCurrentStep()}
             </Paper>
 
-            {/* Create Button (only on final step) */}
-            {currentStep === 4 && (
+            <Group justify="space-between" mt="xl">
               <Button
-                fullWidth
-                size="lg"
-                mb="md"
-                className="bg-gradient-to-r from-yellow-500 to-yellow-600"
-                leftSection={
-                  isSubmitting ? <Loader size={20} color="dark" /> : <IconCoin size={20} />
-                }
-                onClick={handleSubmit}
-                disabled={isSubmitting}
+                variant="light"
+                color="gray"
+                onClick={goToPrevStep}
+                disabled={currentStep === 1}
+                leftSection={<IconArrowLeft size={16} />}
               >
-                {isSubmitting
-                  ? 'Creating Crucible...'
-                  : getTotalCost() === 0
-                  ? 'Create Crucible - Free'
-                  : `Create Crucible - ${getTotalCost().toLocaleString()} Buzz`}
+                Previous
               </Button>
-            )}
+              {currentStep < 4 && (
+                <Button
+                  onClick={handleNext}
+                  disabled={
+                    (currentStep === 1 && !isStep1Valid()) ||
+                    (currentStep === 2 && !isStep2Valid()) ||
+                    (currentStep === 3 && !isStep3Valid())
+                  }
+                >
+                  Next
+                </Button>
+              )}
+            </Group>
+          </Grid.Col>
 
-            {/* Cost Breakdown */}
-            <Paper p="md" className="border border-dark-4">
-              <Text size="xs" c="dimmed" fw={600} mb="md" tt="uppercase">
-                Cost Breakdown
+          <Grid.Col span={{ base: 12, lg: 4 }}>
+            <div className="sticky top-8">
+              <Text size="xs" c="dimmed" fw={600} mb="sm" tt="uppercase">
+                Preview
               </Text>
-              <Stack gap="xs">
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Duration
-                  </Text>
-                  <Text size="sm" c="yellow" fw={600}>
-                    {getDurationCost() === 0
-                      ? 'Free'
-                      : `+${getDurationCost().toLocaleString()} Buzz`}
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Entry Limit
-                  </Text>
-                  <Text size="sm" c="yellow" fw={600}>
-                    Free
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Prize Customization
-                  </Text>
-                  <Text size="sm" c="yellow" fw={600}>
-                    {getPrizeCustomizationCost() === 0
-                      ? 'Free'
-                      : `+${getPrizeCustomizationCost().toLocaleString()} Buzz`}
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">
-                    Seeded Prize Pool
-                  </Text>
-                  <Text size="sm" c="yellow" fw={600}>
-                    {formData.seededPrizePool === 0
-                      ? 'None'
-                      : `+${formData.seededPrizePool.toLocaleString()} Buzz`}
-                  </Text>
-                </Group>
-                <div className="mt-2 border-t border-dark-4 pt-3">
-                  <Group justify="space-between">
-                    <Text size="sm" fw={600}>
-                      Total Cost
+              <Paper className="mb-4 overflow-hidden border border-dark-4">
+                <div
+                  className="flex items-center justify-center bg-gradient-to-br from-dark-6 to-dark-8"
+                  style={{ aspectRatio: '16 / 9' }}
+                >
+                  {imageFile?.status === 'success' ? (
+                    <EdgeMedia
+                      src={imageFile.objectUrl ?? imageFile.url}
+                      width={400}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <Text c="dimmed" size="xs">
+                      No cover image
                     </Text>
-                    <Text size="md" c="yellow" fw={700}>
-                      {getTotalCost() === 0 ? 'Free' : `${getTotalCost().toLocaleString()} Buzz`}
-                    </Text>
+                  )}
+                </div>
+                <div className="p-3">
+                  <Text size="sm" fw={600} lineClamp={2} mb="sm">
+                    {values.name || 'Your Crucible Name'}
+                  </Text>
+                  <Group justify="space-between" gap={4}>
+                    <Stack gap={2} align="flex-start">
+                      {values.entryFee ? (
+                        <CurrencyBadge unitAmount={values.entryFee} currency={Currency.BUZZ} />
+                      ) : (
+                        <Text size="sm" fw={600}>
+                          Free
+                        </Text>
+                      )}
+                      <Text size="xs" c="dimmed">
+                        Entry Fee
+                      </Text>
+                    </Stack>
+                    <Stack gap={2} align="flex-end">
+                      <Text size="sm" fw={600}>
+                        {getDurationLabel(values.duration)}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Duration
+                      </Text>
+                    </Stack>
                   </Group>
                 </div>
-              </Stack>
-            </Paper>
-          </div>
-        </Grid.Col>
-      </Grid>
+              </Paper>
+
+              {currentStep === 4 && (
+                <BuzzTransactionButton
+                  fullWidth
+                  size="lg"
+                  mb="md"
+                  buzzAmount={totalCost}
+                  accountTypes={['yellow', 'green']}
+                  label="Create Crucible"
+                  loading={isSubmitting}
+                  onPerformTransaction={form.handleSubmit(handleSubmit)}
+                  showPurchaseModal
+                />
+              )}
+
+              <Paper p="md" className="border border-dark-4">
+                <Text size="xs" c="dimmed" fw={600} mb="md" tt="uppercase">
+                  Cost Breakdown
+                </Text>
+                <Stack gap="xs">
+                  <CostRow label="Duration" amount={durationCost} />
+                  <CostRow label="Entry Limit" amount={0} />
+                  <CostRow label="Prize Customization" amount={prizeCustomizationCost} />
+                  <CostRow label="Resource Requirements" amount={resourceRequirementsCost} />
+                  <CostRow
+                    label="Seeded Prize Pool"
+                    amount={values.seededPrizePool ?? 0}
+                    zeroLabel="None"
+                  />
+                  <div className="mt-2 border-t border-dark-4 pt-3">
+                    <Group justify="space-between">
+                      <Text size="sm" fw={600}>
+                        Total Cost
+                      </Text>
+                      <Text size="md" c="yellow" fw={700}>
+                        {totalCost === 0 ? 'Free' : `${totalCost.toLocaleString()} Buzz`}
+                      </Text>
+                    </Group>
+                  </div>
+                </Stack>
+              </Paper>
+            </div>
+          </Grid.Col>
+        </Grid>
+      </Form>
     </Container>
   );
 }
 
-// Helper function for ordinal suffixes
-function getOrdinalSuffix(num: number): string {
+const positionColors = [
+  { bar: 'from-blue-500 to-blue-600', slider: 'blue' },
+  { bar: 'from-green-500 to-green-600', slider: 'green' },
+  { bar: 'from-yellow-500 to-yellow-600', slider: 'yellow' },
+];
+
+function PrizeDistributionChart({ prizePositions }: { prizePositions: Record<string, number> }) {
+  const sortedPositions = Object.entries(prizePositions).sort(
+    ([a], [b]) => parseInt(a) - parseInt(b)
+  );
+
+  return (
+    <Stack gap="md">
+      <div className="flex h-8 overflow-hidden rounded border border-dark-4">
+        {sortedPositions.map(([position, percentage], index) => (
+          <div
+            key={position}
+            className={`flex items-center justify-center bg-gradient-to-r text-xs font-bold text-white ${
+              positionColors[index]?.bar ?? 'from-gray-500 to-gray-600'
+            }`}
+            style={{ flex: percentage || 0.1 }}
+          >
+            {percentage > 10 && `${formatPlace(position, false)}: ${percentage}%`}
+          </div>
+        ))}
+      </div>
+
+      <SimpleGrid cols={{ base: 2, sm: 3 }}>
+        {sortedPositions.slice(0, 3).map(([position, percentage]) => (
+          <Paper key={position} p="md" className="border border-dark-4 text-center" bg="dark.7">
+            <Text size="xs" c="dimmed" mb={6}>
+              {formatPlace(position)}
+            </Text>
+            <Text size="xl" fw={700}>
+              {percentage}%
+            </Text>
+          </Paper>
+        ))}
+      </SimpleGrid>
+
+      {sortedPositions.length > 3 && (
+        <Paper p="md" className="border border-dark-4">
+          <Stack gap="xs">
+            {sortedPositions.slice(3).map(([position, percentage]) => (
+              <Group key={position} justify="space-between">
+                <Text size="sm" c="dimmed">
+                  {formatPlace(position)}
+                </Text>
+                <Text size="sm" fw={600}>
+                  {percentage}%
+                </Text>
+              </Group>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+    </Stack>
+  );
+}
+
+const formatDateTime = (date: Date) =>
+  date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+function EstimatedSchedule({
+  durationHours,
+  startAt,
+}: {
+  durationHours: number;
+  startAt?: Date | null;
+}) {
+  // An immediate start is "now" at submit time, so both estimates have to follow the clock while
+  // the creator sits on this step.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const scheduledStart = startAt && startAt > now ? startAt : null;
+  const estimatedEndAt = new Date(
+    (scheduledStart ?? now).getTime() + durationHours * 60 * 60 * 1000
+  );
+
+  return (
+    <Paper p="lg" className="border border-blue-500/30 bg-blue-500/5">
+      <Group gap="xs" mb="md">
+        <IconCalendar size={20} className="text-blue-5" />
+        <Text fw={600}>Estimated Schedule</Text>
+      </Group>
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <IconClock size={16} className="text-green-5" />
+            <Text c="dimmed">Starts</Text>
+          </Group>
+          <Text fw={500} c="green">
+            {scheduledStart ? formatDateTime(scheduledStart) : 'As soon as you create it'}
+          </Text>
+        </Group>
+        <Group justify="space-between">
+          <Group gap="xs">
+            <IconClock size={16} className="text-orange-5" />
+            <Text c="dimmed">Ends</Text>
+          </Group>
+          <Text fw={500} c="orange">
+            {scheduledStart ? '' : '~'}
+            {formatDateTime(estimatedEndAt)}
+          </Text>
+        </Group>
+      </Stack>
+    </Paper>
+  );
+}
+
+function CostRow({
+  label,
+  amount,
+  zeroLabel = 'Free',
+}: {
+  label: string;
+  amount: number;
+  zeroLabel?: string;
+}) {
+  return (
+    <Group justify="space-between">
+      <Text size="sm" c="dimmed">
+        {label}
+      </Text>
+      <Text size="sm" c="yellow" fw={600}>
+        {amount === 0 ? zeroLabel : `+${amount.toLocaleString()} Buzz`}
+      </Text>
+    </Group>
+  );
+}
+
+function formatPlace(position: string, withPlace = true) {
+  const num = parseInt(position);
   const j = num % 10;
   const k = num % 100;
-  if (j === 1 && k !== 11) return 'st';
-  if (j === 2 && k !== 12) return 'nd';
-  if (j === 3 && k !== 13) return 'rd';
-  return 'th';
+  const suffix =
+    j === 1 && k !== 11 ? 'st' : j === 2 && k !== 12 ? 'nd' : j === 3 && k !== 13 ? 'rd' : 'th';
+  return `${num}${suffix}${withPlace ? ' Place' : ''}`;
 }

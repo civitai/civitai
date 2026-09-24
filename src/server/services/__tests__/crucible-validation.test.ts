@@ -9,6 +9,7 @@ import {
   submitEntrySchema,
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
+import { constants } from '~/server/common/constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
@@ -16,12 +17,15 @@ import type * as NotificationService from '~/server/services/notification.servic
 import type * as PostService from '~/server/services/post.service';
 import {
   CRUCIBLE_DURATION_COSTS,
-  CRUCIBLE_MAX_CLIP_SECONDS,
+  CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
-  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
+  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  getMaxCrucibleStartAt,
 } from '~/shared/constants/crucible.constants';
 
 const createNotification = vi.fn();
@@ -210,6 +214,40 @@ describe('createCrucibleInputSchema', () => {
     );
   });
 
+  it.each(Object.keys(CRUCIBLE_DURATION_COSTS))('accepts the listed %s-hour duration', (hours) => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, duration: Number(hours) }).success
+    ).toBe(true);
+  });
+
+  it('accepts a start within the scheduling window', () => {
+    const startAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, startAt }).success).toBe(
+      true
+    );
+  });
+
+  it('rejects a start past the scheduling window', () => {
+    const startAt = new Date(getMaxCrucibleStartAt().getTime() + 60 * 60 * 1000);
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, startAt }).success).toBe(
+      false
+    );
+  });
+
+  it('caps how many resources a crucible can require', () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    const parse = (n: number) =>
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, allowedResources: ids(n) });
+    expect(parse(CRUCIBLE_MAX_ALLOWED_RESOURCES).success).toBe(true);
+    expect(parse(CRUCIBLE_MAX_ALLOWED_RESOURCES + 1).success).toBe(false);
+  });
+
+  it('rejects an unlisted duration, which the cost table would otherwise price as free', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, duration: 9999 }).success
+    ).toBe(false);
+  });
+
   it('defaults contentType to image, so existing crucibles behave unchanged', () => {
     expect(createCrucibleInputSchema.parse(validCreateInput).contentType).toBe(MediaType.image);
   });
@@ -246,6 +284,15 @@ describe('calculateCrucibleSetupCost', () => {
   it('charges only the customization fee when the duration itself is free', () => {
     expect(CRUCIBLE_DURATION_COSTS[8]).toBe(0);
     expect(calculateCrucibleSetupCost(8, true)).toBe(CRUCIBLE_PRIZE_CUSTOMIZATION_COST);
+  });
+
+  it('adds the resource requirements fee when entries are restricted', () => {
+    expect(calculateCrucibleSetupCost(8, false, true)).toBe(CRUCIBLE_RESOURCE_REQUIREMENTS_COST);
+    expect(calculateCrucibleSetupCost(24, true, true)).toBe(
+      CRUCIBLE_DURATION_COSTS[24] +
+        CRUCIBLE_PRIZE_CUSTOMIZATION_COST +
+        CRUCIBLE_RESOURCE_REQUIREMENTS_COST
+    );
   });
 
   it('treats an unlisted duration as free rather than NaN', () => {
@@ -475,10 +522,29 @@ describe('createCrucibleInputSchema — video settings', () => {
     ['a zero minimum — absent is how "no rule" is spelled', { minViewSeconds: 0 }],
     ['a zero maximum, which would forbid every entry', { maxClipSeconds: 0 }],
     ['a fractional minimum', { minViewSeconds: 6.5 }],
-    ['a minimum past the ceiling', { minViewSeconds: CRUCIBLE_MAX_MIN_VIEW_SECONDS + 1 }],
-    ['a maximum past the ceiling', { maxClipSeconds: CRUCIBLE_MAX_CLIP_SECONDS + 1 }],
+    ['an unlisted minimum', { minViewSeconds: 7 }],
+    ['an unlisted maximum', { maxClipSeconds: 1 }],
+    ['a maximum longer than any uploadable video', { maxClipSeconds: 600 }],
   ])('rejects %s', (_label, settings) => {
     expect(createCrucibleInputSchema.safeParse({ ...videoInput, ...settings }).success).toBe(false);
+  });
+
+  it.each(CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS)('accepts the listed %ss minimum', (minViewSeconds) => {
+    expect(createCrucibleInputSchema.safeParse({ ...videoInput, minViewSeconds }).success).toBe(
+      true
+    );
+  });
+
+  it.each(CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS)('accepts the listed %ss maximum', (maxClipSeconds) => {
+    expect(createCrucibleInputSchema.safeParse({ ...videoInput, maxClipSeconds }).success).toBe(
+      true
+    );
+  });
+
+  it('offers no maximum longer than the site accepts for an uploaded video', () => {
+    expect(Math.max(...CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS)).toBeLessThanOrEqual(
+      constants.mediaUpload.maxVideoDurationSeconds
+    );
   });
 });
 

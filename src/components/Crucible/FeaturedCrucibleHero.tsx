@@ -127,7 +127,7 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
           <Group gap="md">
             <Button
               component={Link}
-              href={`/crucibles/${featured.id}`}
+              href={`/crucibles/${featured.id}?submit=1`}
               size="md"
               leftSection={<IconLogin size={18} />}
               className="bg-blue-600 hover:bg-blue-500"

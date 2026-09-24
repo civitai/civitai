@@ -2,6 +2,7 @@ import { Button, Container, Paper, Progress, Stack, Text, Title } from '@mantine
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
 import * as z from 'zod';
 import {
   IconGavel,
@@ -24,7 +25,8 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl, slugit } from '~/utils/string-helpers';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
@@ -36,7 +38,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
 import { formatDate } from '~/utils/date-helpers';
-import type { Prisma } from '@prisma/client';
 import type { RouterOutput } from '~/types/router';
 import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -87,6 +88,25 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     { crucibleId: id },
     { enabled: !!id }
   );
+
+  // `?submit=1` (from the featured hero's "Enter Competition") opens the submit modal once, and is
+  // stripped first so a refresh or back-nav doesn't reopen it. Keyed by id because Next reuses this
+  // component across detail-to-detail navigations.
+  const submitDeepLinkHandledFor = useRef<number>();
+  useEffect(() => {
+    if (!crucible || submitDeepLinkHandledFor.current === crucible.id) return;
+    submitDeepLinkHandledFor.current = crucible.id;
+    if (!router.query.submit) return;
+
+    const { submit, ...query } = router.query;
+    router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+
+    const canSubmit =
+      crucible.status === CrucibleStatus.Active &&
+      !!currentUser &&
+      crucible.viewerEntries.length < getMaxUserEntries(crucible);
+    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible));
+  }, [crucible, router, currentUser]);
 
   const cancelMutation = trpc.crucible.cancel.useMutation({
     onSuccess: (result) => {
@@ -143,7 +163,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   });
   const isActive = crucible.status === CrucibleStatus.Active;
   const isPending = crucible.status === CrucibleStatus.Pending;
-  const canSubmitEntries = isActive || isPending;
+  const canSubmitEntries = isActive;
   const canJudge = isActive;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
@@ -181,11 +201,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     });
   };
   const userEntryCount = userEntries.length;
-  const maxUserEntries = crucible.entryLimit ?? 5;
+  const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
 
-  // Parse allowed resources if present
-  const allowedResources = crucible.allowedResources as Prisma.JsonValue;
+  const allowedResources = Array.isArray(crucible.allowedResources)
+    ? (crucible.allowedResources as number[])
+    : [];
 
   // Moderator-only: check if crucible can be cancelled
   const isModerator = currentUser?.isModerator ?? false;
@@ -338,18 +359,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     fullWidth
                     leftSection={<IconUpload size={16} />}
                     className="mb-4"
-                    onClick={() => {
-                      openCrucibleSubmitEntryModal({
-                        crucibleId: crucible.id,
-                        crucibleName: crucible.name,
-                        entryFee: crucible.entryFee,
-                        entryLimit: maxUserEntries,
-                        nsfwLevel: crucible.nsfwLevel,
-                        contentType: crucible.contentType,
-                        currentEntryCount: userEntryCount,
-                        maxClipSeconds: crucible.maxClipSeconds,
-                      });
-                    }}
+                    onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
                     disabled={!currentUser || userEntryCount >= maxUserEntries}
                   >
                     {userEntryCount >= maxUserEntries ? 'All entries submitted' : 'Submit Entry'}
@@ -438,6 +448,20 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     content={<ContentLevelBadges nsfwLevel={crucible.nsfwLevel} />}
                   />
 
+                  {isPending && crucible.startAt && (
+                    <RuleItem
+                      label="Starts"
+                      content={formatDate(crucible.startAt, undefined, true)}
+                    />
+                  )}
+
+                  {allowedResources.length > 0 && (
+                    <RuleItem
+                      label="Required Resources"
+                      content={<RequiredResources versionIds={allowedResources} />}
+                    />
+                  )}
+
                   {/* Deadline */}
                   {crucible.endAt && (
                     <RuleItem
@@ -504,6 +528,20 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 }
 
 type CrucibleEntry = RouterOutput['crucible']['getEntries']['items'][number];
+type CrucibleDetail = NonNullable<RouterOutput['crucible']['getById']>;
+
+const getMaxUserEntries = (crucible: CrucibleDetail) => crucible.entryLimit ?? 5;
+
+const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
+  crucibleId: crucible.id,
+  crucibleName: crucible.name,
+  entryFee: crucible.entryFee,
+  entryLimit: getMaxUserEntries(crucible),
+  nsfwLevel: crucible.nsfwLevel,
+  contentType: crucible.contentType,
+  currentEntryCount: crucible.viewerEntries.length,
+  maxClipSeconds: crucible.maxClipSeconds,
+});
 
 const toGridEntry = (entry: CrucibleEntry) => ({
   ...entry,
@@ -587,6 +625,37 @@ function RuleItem({ label, content }: { label: string; content: React.ReactNode 
         {label}:
       </Text>{' '}
       {typeof content === 'string' ? content : content}
+    </div>
+  );
+}
+
+function RequiredResources({ versionIds }: { versionIds: number[] }) {
+  const { data: versions, isLoading } = trpc.modelVersion.getVersionsByIds.useQuery({
+    ids: versionIds,
+  });
+
+  if (isLoading) return <>Loading…</>;
+  if (!versions?.length) return <>{`${versionIds.length} specific models`}</>;
+
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <Text size="xs" c="dimmed">
+        Entries must use at least one of:
+      </Text>
+      {versions.map((version) => (
+        <Link
+          key={version.id}
+          href={getModelUrl({
+            modelId: version.modelId,
+            modelName: version.modelName,
+            modelVersionId: version.id,
+          })}
+          target="_blank"
+          className="text-blue-400 hover:underline"
+        >
+          {version.modelName} — {version.name}
+        </Link>
+      ))}
     </div>
   );
 }

@@ -6,8 +6,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
-import { CrucibleSortDropdown } from '~/components/Crucible/CrucibleSortDropdown';
-import { CrucibleFilterTabs } from '~/components/Crucible/CrucibleFilterTabs';
+import { SortFilter } from '~/components/Filters/SortFilter';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
@@ -55,10 +54,8 @@ function CruciblesPage() {
             Discover Crucibles
           </Text>
 
-          {/* Filter controls with underline tabs and sort dropdown */}
-          <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
-            <CrucibleFilterTabs />
-            <CrucibleSortDropdown />
+          <Group justify="flex-end">
+            <SortFilter type="crucibles" />
           </Group>
 
           <CruciblesInfinite filters={filters} />

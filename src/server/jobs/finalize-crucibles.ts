@@ -1,6 +1,10 @@
 import { createJob } from './job';
 import { createLogger } from '~/utils/logging';
-import { finalizeCrucible, getCruciblesForFinalization } from '~/server/services/crucible.service';
+import {
+  activateScheduledCrucibles,
+  finalizeCrucible,
+  getCruciblesForFinalization,
+} from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
@@ -14,9 +18,10 @@ const logJob = (data: MixedObject) => {
  * Finalize crucibles background job
  *
  * This job runs every minute to:
- * 1. Query active crucibles where endAt < now
- * 2. Call finalizeCrucible() for each
- * 3. Log results
+ * 1. Activate scheduled crucibles whose startAt has passed
+ * 2. Query active crucibles where endAt < now
+ * 3. Call finalizeCrucible() for each
+ * 4. Log results
  *
  * Redis locking is handled by the job runner infrastructure
  */
@@ -27,6 +32,11 @@ export const finalizeCruciblesJob = createJob(
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED))) return { finalized: 0 };
 
     log('Starting finalize-crucibles job');
+
+    // Before finalization: finalization only picks up Active crucibles, so a scheduled one whose
+    // whole window passed while the job was off would otherwise sit in Pending forever.
+    const activated = await activateScheduledCrucibles();
+    if (activated > 0) log(`Activated ${activated} scheduled crucibles`);
 
     // Get all crucibles that need finalization
     const crucibleIds = await getCruciblesForFinalization();
