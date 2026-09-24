@@ -28,6 +28,13 @@ type PushSubscriptionStore = {
  *
  * Only browser-derived state lives here. Whether the SERVER still holds this endpoint's row stays
  * in react-query (`getPushSubscriptions`), which already shares its cache across instances.
+ *
+ * SSR-safe by construction, and it has to stay that way: this module is a singleton shared by every
+ * request the node process serves, so a write reachable during server render would leak one user's
+ * push state into another's HTML. Every mutation below is reached only from a `useEffect` or a user
+ * callback in `usePushSubscription` — both browser-only — so a server render always reads these
+ * initial values, which is exactly what the per-instance `useState` defaults produced before.
+ * Do not seed this store from server data.
  */
 export const usePushSubscriptionStore = create<PushSubscriptionStore>()((set) => ({
   support: 'unsupported',

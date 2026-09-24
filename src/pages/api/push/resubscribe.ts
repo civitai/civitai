@@ -24,6 +24,12 @@ export default AuthedEndpoint(
     // Reap the endpoint the push service rotated away from. Scoped to this user by the service, so
     // it can only ever delete a row this session already owns. Guarded on inequality because a SW
     // that reports the same endpoint twice would otherwise delete the row just written.
+    //
+    // 🔴 This MUST stay after the upsert. `upsertPushSubscription` materializes DEFAULT_PUSH_TYPES
+    // only while the user holds zero subscriptions; deleting first makes a rotating browser that
+    // held exactly one subscription look brand new, silently re-creating every push type the user
+    // had since turned off (invariant 3, docs/features/web-push.md). Pinned by
+    // src/server/__tests__/push-resubscribe-endpoint.test.ts.
     if (oldEndpoint && oldEndpoint !== subscription.endpoint)
       await deletePushSubscription({ endpoint: oldEndpoint, userId: user.id });
     return res.status(200).json({ ok: true });
