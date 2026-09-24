@@ -204,6 +204,16 @@ export function missingColumnFromError(e: unknown): string | null {
  * a write, which is why the two sides answer `null` differently.
  */
 function isMissingVerdictColumn(e: unknown): boolean {
+  // 🔴 NOT REDUNDANT WITH THE CALL BELOW, AND DELETING IT IS A ONE-LINE OUTAGE-INTO-SILENCE.
+  // `missingColumnFromError` answers `null` for TWO different reasons — "this is not a 42703" and
+  // "this IS a 42703 whose message I could not parse" — and the line after this one treats `null`
+  // as the second. Without this check a `57P01` connection drop, a pool timeout or a TypeError out
+  // of the query builder all compute `null` and therefore `true`, so both reads answer "no ruling
+  // can exist here": the run page renders read-only under a notice telling an operator to apply a
+  // DDL that is already applied, and the list shows an em dash under Reviewed, on a board that is
+  // simply broken. It reads as removable because the callee re-checks the code; the two `null`s are
+  // what make it load-bearing. Pinned by the `57P01` cases in
+  // `apps/moderator/src/lib/server/__tests__/abuse-detection.run-list.test.ts`.
   if (!isUndefinedColumnError(e)) return false;
   const missing = missingColumnFromError(e);
   return missing === null || missing === VERDICT_COLUMN;

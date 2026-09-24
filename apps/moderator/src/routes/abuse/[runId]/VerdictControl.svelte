@@ -66,15 +66,16 @@
      widened the account column, the buttons left the viewport entirely, so the larger the
      coordinated group the further off-screen the control that rules it. Nothing to its left can
      move it here. -->
-<div class="border-dark-4 mt-4 border-t pt-4">
-  <!-- 🔴 "NOT YET RULED" IS A CLAIM ABOUT A BACKLOG, so it is withheld where there cannot be one.
-       Without the verdict columns every finding reads back as `verdict: null` — the same value as
-       genuinely unruled — so an ungated line would tell a moderator, once per card, that nobody has
-       got to these yet on a board where nobody ever can. That is the null-vs-zero conflation the
-       list page's own `ruledLabel` refuses to make, and the page banner above already explains the
-       state. `shown !== null` is still honoured in that mode: it cannot happen, and a ruling that
-       somehow exists must not be hidden. -->
-  {#if canRule || shown !== null}
+<!-- 🔴 "NOT YET RULED" IS A CLAIM ABOUT A BACKLOG, so nothing here renders where there cannot be one
+     — the rule ABOVE the block included, or every card would carry an empty divider. Without the
+     verdict columns every finding reads back as `verdict: null`, the same value as genuinely
+     unruled, so an ungated line would tell a moderator once per card that nobody has got to these
+     yet on a board where nobody ever can. That is the null-vs-zero conflation the list page's own
+     `ruledLabel` refuses to make, and the page banner above already explains the state.
+     `shown !== null` is still honoured in that mode: it cannot happen, and a ruling that somehow
+     exists must not be hidden. -->
+{#if canRule || shown !== null}
+  <div class="border-dark-4 mt-4 border-t pt-4">
     <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <!-- 🔴 A SEPARATE JUDGEMENT FROM THE DETECTOR'S "acted", and the label says whose it is. The
            two are independent: the common finding is one the detector left alone and a moderator
@@ -91,35 +92,37 @@
         {/if}
       {/if}
     </div>
-  {/if}
 
-  {#if canRule}
-    <div class="flex flex-wrap gap-3">
-      {#each ABUSE_VERDICTS as v (v)}
-        <form method="POST" action="?/verdict" use:enhance={submit(v)} class="max-w-xs grow basis-56">
-          <!-- The LEAD's id. The server reads the group key off this row and rules every member
-               sharing it IN THIS RUN — the run bound lives there, not here, because everything in
-               this form is attacker-supplied. -->
-          <input type="hidden" name="findingId" value={findingId} />
-          <input type="hidden" name="verdict" value={v} />
-          <button
-            type="submit"
-            aria-pressed={shown === v}
-            aria-describedby="verdict-hint-{findingId}-{v}"
-            class="w-full rounded border px-3 py-2 text-sm font-semibold transition {FOCUS_CLASS} {shown ===
-            v
-              ? VERDICT_CLASS[v].chosen
-              : VERDICT_CLASS[v].idle}">{VERDICT_LABEL[v]}</button
-          >
-          <!-- Outside the button rather than inside it, so the hint keeps one contrast ratio whether
-               or not its button is filled — and tied back to it by id, so a screen reader reaches the
-               expansion the sighted reader gets for free. The finding id is in the id because every
-               card on the page offers the same three verdicts. -->
-          <p id="verdict-hint-{findingId}-{v}" class="text-dark-2 mt-1 text-xs">
-            {VERDICT_HINT[v]}
-          </p>
-        </form>
-      {/each}
-    </div>
-  {/if}
-</div>
+    {#if canRule}
+      <div class="flex flex-wrap gap-3">
+        {#each ABUSE_VERDICTS as v (v)}
+          <!-- `basis-56` + `grow` + `max-w-xs`: three across on a wide card, wrapping to one column
+               rather than overflowing as the content column narrows. -->
+          <form method="POST" action="?/verdict" use:enhance={submit(v)} class="max-w-xs grow basis-56">
+            <!-- The LEAD's id. The server reads the group key off this row and rules every member
+                 sharing it IN THIS RUN — the run bound lives there, not here, because everything in
+                 this form is attacker-supplied. -->
+            <input type="hidden" name="findingId" value={findingId} />
+            <input type="hidden" name="verdict" value={v} />
+            <button
+              type="submit"
+              aria-pressed={shown === v}
+              aria-describedby="verdict-hint-{findingId}-{v}"
+              class="w-full rounded border px-3 py-2 text-sm font-semibold transition {FOCUS_CLASS} {shown ===
+              v
+                ? VERDICT_CLASS[v].chosen
+                : VERDICT_CLASS[v].idle}">{VERDICT_LABEL[v]}</button
+            >
+            <!-- Outside the button rather than inside it, so the hint keeps one contrast ratio
+                 whether or not its button is filled — and tied back to it by id, so a screen reader
+                 reaches the expansion the sighted reader gets for free. The finding id is in the id
+                 because every card on the page offers the same three verdicts. -->
+            <p id="verdict-hint-{findingId}-{v}" class="text-dark-2 mt-1 text-xs">
+              {VERDICT_HINT[v]}
+            </p>
+          </form>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/if}

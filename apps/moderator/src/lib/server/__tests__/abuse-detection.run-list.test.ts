@@ -233,3 +233,82 @@ describe('a 42703 that is not about `verdict`', () => {
     await expect(service.getAbuseVerdictSummary(1)).resolves.toBeNull();
   });
 });
+
+/**
+ * 🔴 AN ERROR THAT IS NOT A MISSING COLUMN AT ALL.
+ *
+ * This block exists because the guard separating the two — `isMissingVerdictColumn`'s opening
+ * `isUndefinedColumnError` check — was UNREACHABLE by the entire suite. Deleting that one line left
+ * 79 files and 1149 tests green, measured.
+ *
+ * The mutant is not a near-miss. `missingColumnFromError` re-reads the pg code itself and answers
+ * `null` for TWO different reasons — "not a 42703" and "a 42703 whose message I could not parse" —
+ * and the line after the guard treats `null` as the second. So without it a connection drop, a lock
+ * timeout or a TypeError out of the query builder makes BOTH reads answer "no ruling can exist
+ * here": the run page goes read-only under a notice telling an operator to apply a DDL that is
+ * already applied, and the list renders an em dash under Reviewed. A broken board reporting itself
+ * as a deployment state is strictly worse than the 503 it replaced.
+ *
+ * The line reads as removable precisely because its callee re-checks the code, which is what makes
+ * it worth a test rather than a comment: a comment is what a tidy-up reads past.
+ */
+describe('an error that is not a missing column', () => {
+  /** Fails every statement — what a dropped connection or an exhausted pool actually does. */
+  const failEverything = (e: unknown) => {
+    const stub = {
+      withTables: () => stub,
+      selectFrom: () => {
+        throw e;
+      },
+    };
+    dbHandle.current = stub;
+  };
+
+  const CONNECTION_DROP = () =>
+    Object.assign(new Error('terminating connection due to administrator command'), {
+      code: '57P01',
+    });
+  const LOCK_TIMEOUT = () =>
+    Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+  /** No pg code at all — a fault from the driver or the builder rather than from the server. */
+  const BUILDER_FAULT = () => new TypeError("cannot read properties of undefined (reading 'ref')");
+
+  it('positive control — this harness DOES degrade for a real missing `verdict`', async () => {
+    // Run FIRST and asserted on its own, because without it every rejection below is equally well
+    // explained by a stub that fails before anything under test runs. One error apart, the same
+    // harness produces the opposite answer, which is what attributes those rejections to the error
+    // KIND rather than to the plumbing.
+    failEverything(Object.assign(new Error('column "verdict" does not exist'), { code: '42703' }));
+    await expect(service.getAbuseVerdictSummary(1)).resolves.toBeNull();
+  });
+
+  it.each([
+    ['a connection drop', CONNECTION_DROP],
+    ['a lock timeout', LOCK_TIMEOUT],
+    ['a builder fault carrying no pg code', BUILDER_FAULT],
+  ])('%s propagates out of the run summary, never reads as a missing DDL', async (_label, make) => {
+    failEverything(make());
+    // `rejects` alone would pass for a rejection with any value; the board's whole failure mode here
+    // is answering `null` INSTEAD of throwing, so the identity of what comes back is the assertion.
+    await expect(service.getAbuseVerdictSummary(1)).rejects.toThrow(make().message);
+  });
+
+  it.each([
+    ['a connection drop', CONNECTION_DROP],
+    ['a builder fault carrying no pg code', BUILDER_FAULT],
+  ])('%s propagates out of the reviewed count', async (_label, make) => {
+    // Through the FINDING table only, so the list query still answers from the real database and the
+    // count is genuinely the statement under test — the same discrimination the block above needs.
+    await seedRun(db, 'review-bomb', STARTED_TODAY);
+    const real = pgliteKysely(db);
+    const stub = {
+      withTables: () => stub,
+      selectFrom: (table: string) => {
+        if (String(table).startsWith('abuse_detection_finding')) throw make();
+        return (real as unknown as { selectFrom: (t: string) => unknown }).selectFrom(table);
+      },
+    };
+    dbHandle.current = stub;
+    await expect(service.getAbuseRuns()).rejects.toThrow(make().message);
+  });
+});

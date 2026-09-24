@@ -115,8 +115,13 @@
                  wrong for prose, and a one-line summary overruns the width this `max-w-xl` asks
                  for. -->
             <!-- An em dash, matching the two count columns beside it. A blank cell reads as a
-                 rendering failure next to two that spell their absence out. -->
-            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary ?? '—'}</TableCell
+                 rendering failure next to two that spell their absence out.
+                 🔴 `||`, NOT `??`: the wire contract admits an EMPTY summary — `summary` is
+                 `z.string().max(2_000).nullish()` with no `.min(1)`, while the `action` field beside
+                 it carries `.min(1)` against exactly this defect. `??` passes `''` straight through
+                 and the cell goes blank again. No producer sends one today; the contract is what
+                 decides whether it can. -->
+            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary || '—'}</TableCell
             >
           </TableRow>
         {/each}
