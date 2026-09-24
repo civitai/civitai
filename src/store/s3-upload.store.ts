@@ -491,11 +491,13 @@ export const useS3UploadStore = create<StoreProps>()(
           const runWorker = async () => {
             while (queue.length > 0 && !fatalErrorRef.value) {
               // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
-              // records `{ aborted: true }`. Neither is reachable today: this guard runs
-              // only after a part SUCCEEDED, and the gap between that part settling and
-              // this check is a microtask, which a click cannot land in. The two real
-              // macrotask windows inside the loop — the backoff sleep and the part
-              // re-sign — both re-enter at the `for`-loop top, whose guard DOES record.
+              // records `{ aborted: true }`. Neither is reachable today. This guard runs
+              // on first loop entry — synchronous with pool creation, with no `await`
+              // between registering `abort` on the row and `Promise.all`, so a click
+              // cannot land there — and thereafter only after a part SUCCEEDED, where the
+              // gap before it is a microtask, which a click also cannot land in. The two
+              // real macrotask windows inside the loop, the backoff sleep and the part
+              // re-sign, both re-enter at the `for`-loop top, whose guard DOES record.
               // If this loop ever grows an `await` before this line, record here too.
               if (cancelController.signal.aborted) return;
               const item = queue.shift();

@@ -283,8 +283,17 @@ describe('resolveUploadRowStatus', () => {
   // THREE cases, not more. The seam tests in both clients already assert these outcomes
   // through a real upload; what is pinned here is the one-line rule itself, at the three
   // points that discriminate it — each kills a different mutation of
-  // `fatal.aborted || opts.userAborted`, and no fourth case kills anything the first
-  // three miss. An enumerated ledger over the return values was written and deleted: the
+  // `fatal.aborted || opts.userAborted`, and each is the ONLY one that kills its own.
+  //
+  // ⚠ "No fourth case is needed" is a claim about the SUITE, not this file. The realistic
+  // copy-paste mutation for this module — `!fatal.networkError || opts.userAborted`,
+  // which is the clause spelled out in `shouldRelayOnPartFailure` above — survives all
+  // three cases here and dies at the seam, in `useS3Upload.test.ts`'s
+  // "does not relay when the storage host answered with an HTTP status". Do not restore a
+  // fourth case for it: the seam owns that outcome, and duplicating it here is what this
+  // block was trimmed for.
+  //
+  // An enumerated ledger over the return values was also written and deleted: the
   // signature is `'aborted' | 'error'`, so a third outcome is a compile error and the
   // assertion could never go red. That is the vacuous-guard shape this whole PR is about.
 

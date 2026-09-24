@@ -101,9 +101,9 @@ export function shouldRelayOnPartFailure(
  * 🔴 Lives HERE for the reason `isTerminalCompleteStatus` below gives: this is the second
  * predicate both upload clients need, it was open-coded in both, and the first one that
  * was open-coded in both went wrong in one of them. It is NOT called
- * `resolveTerminal*` — `isTerminalCompleteStatus` two functions down means a different
- * "terminal" (an HTTP status that must not be re-POSTed), and both clients import the
- * two of them two lines apart.
+ * `resolveTerminal*` — `isTerminalCompleteStatus` further down this file means a
+ * different "terminal" (an HTTP status that must not be re-POSTed), and both clients
+ * import the two of them two lines apart, which is exactly where a reader mis-binds.
  *
  * 🔴 The flag is NAMED rather than positional, matching `shouldRelayOnPartFailure`. Every
  * candidate expression at the call site is some `.signal.aborted` and they all typecheck,
