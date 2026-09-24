@@ -37,6 +37,8 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useRemixStore } from '~/store/remix.store';
 import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
+import type { GenerationPanelView } from '~/components/ImageGeneration/generation-tabs-layout';
+import { getGenerationPanelLayout } from '~/components/ImageGeneration/generation-tabs-layout';
 
 // Each form lane pulls in its whole engine (~50 graph modules for form-graph,
 // the data-graph tree for v1), so load only the lane the flag selects.
@@ -46,8 +48,6 @@ const GenerationFormV2 = dynamic<GenerationFormV2Props>(() =>
 const FormGraphGenerator = dynamic(() =>
   import('~/components/form-graph/generation/FormGraphGenerator').then((m) => m.FormGraphGenerator)
 );
-
-type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
 // Exported so `tour-steps.test.ts` can check `gen:<key>` step targets against the tabs
 // that actually render. The `data-tour` is built by template literal below, so no
@@ -83,19 +83,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
 
   const isGeneratePage = router.pathname.startsWith('/generate');
-  const isImageFeedSeparate = isGeneratePage && !fullScreen;
-
   const view = useGenerationPanelStore((state) => state.view);
-  // In the separate-feed layout 'generate' has no tab of its own, so a tool that
-  // sets it has to be bounced back — to whichever panel the user was on, not 'queue'.
-  const lastPanelViewRef = useRef<Exclude<GenerationPanelView, 'generate'>>('queue');
-  useEffect(() => {
-    if (view !== 'generate') {
-      lastPanelViewRef.current = view;
-      return;
-    }
-    if (isImageFeedSeparate) generationGraphPanel.setView(lastPanelViewRef.current);
-  }, [isImageFeedSeparate, view]);
 
   // Perf experiment: defer the generation-tab-switch remount to fix mobile INP.
   // Switching tabs swaps `View` to a DIFFERENT component, so React synchronously
@@ -109,6 +97,23 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   const deferGenTabView = features.genTabDeferView;
   const deferredView = useDeferredValue(view);
   const contentView = deferGenTabView ? deferredView : view;
+
+  const { imageFeedSeparate, showResults } = getGenerationPanelLayout({
+    isGeneratePage,
+    fullScreen: !!fullScreen,
+    view: contentView,
+  });
+
+  // In the separate-feed layout 'generate' has no tab of its own, so a tool that
+  // sets it has to be bounced back — to whichever panel the user was on, not 'queue'.
+  const lastPanelViewRef = useRef<Exclude<GenerationPanelView, 'generate'>>('queue');
+  useEffect(() => {
+    if (view !== 'generate') {
+      lastPanelViewRef.current = view;
+      return;
+    }
+    if (imageFeedSeparate) generationGraphPanel.setView(lastPanelViewRef.current);
+  }, [imageFeedSeparate, view]);
 
   // form-graph cutover: the new lane behind its flag; OFF is byte-identical
   const GenerationFormComponent = features.formGraphGenerator
@@ -136,11 +141,9 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
     [GenerationFormComponent]
   );
 
-  const View = isImageFeedSeparate ? tabs.generate.Component : tabs[contentView].Component;
-  // The Queue/Feed views share one workflow fetch + selection order via the provider.
-  const showResults = !isImageFeedSeparate && contentView !== 'generate';
+  const View = imageFeedSeparate ? tabs.generate.Component : tabs[contentView].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    isImageFeedSeparate ? key !== 'generate' : true
+    imageFeedSeparate ? key !== 'generate' : true
   );
 
   const isClient = useIsClient();
@@ -243,9 +246,10 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
             />
           </div>
         </div>
-        {contentView !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
+        {showResults && <GeneratedImageActions />}
       </div>
       {showResults ? (
+        // Queue and Feed share one workflow fetch + selection order via the provider.
         <GeneratedRequestsProvider>
           <View />
         </GeneratedRequestsProvider>

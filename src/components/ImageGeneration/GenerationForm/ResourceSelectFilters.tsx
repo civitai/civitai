@@ -30,6 +30,7 @@ import {
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -232,7 +233,7 @@ export function ResourceSelectFiltersDropdown() {
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          zIndex={400}
+          zIndex={mobileMenuSheetZIndex}
           styles={{
             content: {
               height: 'auto',

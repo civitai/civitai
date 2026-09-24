@@ -1,30 +1,22 @@
 -- GenerationCoverage — one view, both rules, one row per version.
 --
--- Until now the two coverage rules lived in two views: `GenerationCoverage` (the live rule, which
--- requires a checkpoint be in the weekly auction's `CoveredCheckpoint` list) and
--- `GenerationCoverageNext` (the staged rule, which covers community checkpoints so paid model
--- loading can download them on demand). Choosing between them meant choosing a TABLE NAME, which
--- pushed a runtime decision into every query, every Prisma relation and every selector.
+-- The two coverage rules used to live in two views, so choosing a rule meant choosing a TABLE NAME,
+-- which pushed a runtime decision into every query, every Prisma relation and every selector. This
+-- replaces the live view with one carrying two booleans: `covered` (the live rule, a checkpoint must
+-- be in the weekly auction's `CoveredCheckpoint` list) and `coveredNext` (the staged rule, which
+-- covers community checkpoints so paid model loading can download them on demand).
 --
--- This replaces the live view with one carrying two booleans. A reader joins once and reads the
--- column it wants. `GenerationCoverageNext` is left in place and drops separately, AFTER the deploy
--- — see the note at the foot of this file.
+-- `GenerationCoverageNext` is left in place and drops separately, AFTER the deploy — see the foot of
+-- this file.
 --
 -- 🔴 ROW EXISTENCE NO LONGER MEANS COVERED. Both old views emitted rows only for covered versions,
 -- so `EXISTS (SELECT 1 FROM "GenerationCoverage" …)` was a coverage test. Here a row exists when
--- EITHER rule covers, so every reader must test a column. The three that relied on existence alone
--- are fixed in the same change as this migration:
---   - getCoveredNextVersionIds        (models.search-index.ts)
---   - getCoveredVersionIds            (resource-load.service.ts)
---   - the daily-challenge resource join
--- Anything outside this repo that reads `gc.covered` keeps working unchanged — including
--- `event-engine-common`, which selects the column rather than testing existence.
+-- EITHER rule covers, so every reader must test a column. Readers outside this repo that select
+-- `gc.covered` keep working unchanged.
 --
--- 🔴 BOTH RULES NOW EXCLUDE MODERATED MODELS. `m.mode IS NULL` has guarded the staged rule since
+-- 🔴 BOTH RULES NOW EXCLUDE MODERATED MODELS. `m.mode IS NULL` had guarded the staged rule since
 -- 2026-09-11 and never guarded the live one, so a flag selecting between them could un-block
--- generation for Archived and TakenDown models. Measured on the production replica 2026-09-23:
--- 1,801 versions of mode-set models were covered by the live rule — 1,724 LORA, 39 LoCon, 21 LORA
--- under TakenDown, 12 TextualInversion, 5 DoRA. They lose coverage here. This supersedes
+-- generation for Archived and TakenDown models. Supersedes
 -- `20260923120000_generation_coverage_exclude_moderated_models`, which applied that guard alone.
 --
 -- 🔴 APPLYING THIS NARROWS `covered` THE MOMENT IT RUNS, and coverage is cached. Follow it with the
@@ -50,8 +42,10 @@
 -- block predicate pushdown.
 --
 -- ⚠️ `bool_or` reads every file of a version where `EXISTS` stops at the first match. That is the
--- right trade at a handful of files per version, which is what the data looks like; it would invert
--- for a version carrying thousands.
+-- right trade at a handful of files per version; it would invert for a version carrying thousands.
+--
+-- Measured coverage impact and the query behind it:
+-- docs/features/paid-model-loading-coverage.md.
 
 CREATE OR REPLACE VIEW "GenerationCoverage" AS
 SELECT "modelId", "modelVersionId", covered, "coveredNext"

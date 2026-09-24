@@ -90,10 +90,10 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // covers both set and delete). The endpoint string is the source of
   // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
-  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All four routes are
+  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All FIVE routes are
   // wrapped with `requiredScope: 'ai:write:budgeted'`, so WITHOUT an arm here
   // their access rows fall past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and
-  // render as 'Submit AI workflow' — false for these three, and at the SDK's
+  // render as 'Submit AI workflow' — false for these four, and at the SDK's
   // poll cadence roughly thirty times per generation.
   // `===`, not a prefix: `normalizeEndpoint` strips the query string and leaves
   // these segments literal (they are in KNOWN_STATIC_ENDPOINT_SEGMENTS), so the
@@ -104,6 +104,16 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   if (endpoint === '/api/v1/blocks/workflows/poll') return 'Checked an AI workflow';
   if (endpoint === '/api/v1/blocks/workflows/estimate') return 'Priced an AI workflow';
   if (endpoint === '/api/v1/blocks/workflows/cancel') return 'Canceled an AI workflow';
+  // `/workflows/query` — the app-subqueue read. It is a LIST, not a read of one
+  // workflow, so it is deliberately not worded like `/poll`'s 'Checked an AI
+  // workflow': the two would otherwise be indistinguishable in this column while
+  // describing very different reads (one workflow the app already knows about,
+  // versus every generation the app has ever made for this viewer).
+  // THIRD PERSON, matching the other four arms and 'Generated an image'. It read
+  // 'Listed YOUR AI workflows' until review: that was the only second-person
+  // string among them, and the possessive is redundant anyway — this column
+  // already only ever describes what an app did to THIS viewer's data.
+  if (endpoint === '/api/v1/blocks/workflows/query') return 'Listed AI workflows';
   // The REST app-storage WRITE twins (`/api/v1/blocks/app-storage/{set,delete}`).
   // Both routes are wrapped with `requiredScope: 'apps:storage:write'`, which is
   // in NEITHER `READ_SCOPE_LABELS` nor `SCOPE_ACTION_LABELS` — so WITHOUT an arm
@@ -133,6 +143,21 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // match cannot silently swallow a future sibling route.
   if (endpoint === '/api/v1/blocks/app-storage/set') return 'Wrote app-local storage (API)';
   if (endpoint === '/api/v1/blocks/app-storage/delete') return 'Deleted app-local storage (API)';
+  // The REST per-viewer checkpoint override write. It declares NO `requiredScope`
+  // (matching the bridge, which enforces no block scope on this write), so its
+  // access row carries the `'(any-token)'` sentinel — a scope that is in NEITHER
+  // label map. WITHOUT this arm the row falls all the way through and renders the
+  // literal string `(any-token)` to the viewer: the app-storage failure in its
+  // worst form, not a wrong label but a meaningless one.
+  //
+  // Same TWO-ROW shape as the app-storage writes above, and the same reason for the
+  // '(API)' suffix: the shared body writes its own richer row
+  // (`endpoint: 'user-settings:write'`, carrying `detail.action`) which the table
+  // renders through `describeBlockAction`, and `withBlockScope` then writes the
+  // access row for the HTTP call itself. The bridge produces only the first, so
+  // identical text would render one action as two identical entries.
+  if (endpoint === '/api/v1/blocks/user-checkpoint/set')
+    return 'Saved your checkpoint choice (API)';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   // Prefix (not `===`) so BOTH the bounded template written today
   // (`storage:set`) and the historical per-key value (`storage:set:<key>`)

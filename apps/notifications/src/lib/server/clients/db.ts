@@ -23,6 +23,10 @@ export const { write: notifDbWrite, read: notifDbRead } = createClients({
   label: 'notif',
   applicationName: 'notif-pg',
   max: Number(process.env.NOTIFICATION_POOL_MAX ?? process.env.DATABASE_POOL_MAX ?? 20),
+  // createClients forces sslmode=no-verify unless ssl:false, and the docker-compose notification-db
+  // has no SSL at all — without this knob a local worker cannot connect and every create is
+  // swallowed as "The server does not support SSL connections".
+  ssl: process.env.NOTIFICATION_DB_SSL === 'disable' ? false : undefined,
   log: log('notif'),
 });
 
@@ -34,5 +38,21 @@ export function mainDbRead(): AugmentedPool {
     label: 'main-read',
     applicationName: 'notif-main-read',
     log: log('main-read'),
+  }));
+}
+
+let _mainWrite: AugmentedPool | undefined;
+/**
+ * Primary-DB WRITE pool — used only by the push dispatcher (PushSubscription lifecycle: delete dead
+ * endpoints, stamp lastSuccessAt/failureCount). Small on purpose: this is a side channel, not the
+ * app's main workload, and it only exists while push is configured (see pushEnabled).
+ */
+export function mainDbWrite(): AugmentedPool {
+  return (_mainWrite ??= createPool({
+    connectionString: process.env.DATABASE_URL ?? '',
+    label: 'main-write',
+    applicationName: 'notif-main-write',
+    max: Number(process.env.MAIN_DB_POOL_MAX ?? 5),
+    log: log('main-write'),
   }));
 }

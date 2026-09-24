@@ -175,7 +175,7 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
 
   /**
    * 🔴 REGRESSION (#5068 round 1, F1). The REST workflow twins are wrapped with
-   * `requiredScope: 'ai:write:budgeted'`. Before the fix these three had no arm,
+   * `requiredScope: 'ai:write:budgeted'`. Before the fix those three had no arm,
    * so they fell past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and every row
    * read 'Submit AI workflow' — false, on the viewer's own consent-and-spend
    * surface, and ~30x per generation at the SDK's poll cadence.
@@ -241,7 +241,9 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
 
     // Positive control: the enumeration actually found the routes. Without this a
     // wrong `dir` yields an empty list and every assertion below passes vacuously.
-    expect(routes).toEqual(expect.arrayContaining(['submit', 'estimate', 'poll', 'cancel']));
+    expect(routes).toEqual(
+      expect.arrayContaining(['submit', 'estimate', 'poll', 'cancel', 'query'])
+    );
 
     expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/poll`)).toBe(
       'Checked an AI workflow'
@@ -251,6 +253,13 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     );
     expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/cancel`)).toBe(
       'Canceled an AI workflow'
+    );
+    // The app-subqueue READ. Deliberately not worded like `/poll`'s — it lists every
+    // workflow the app made for this viewer, not one the app already knows about —
+    // so the string is pinned in its own right rather than folded into the loop
+    // below, which only asserts the label is not the WRONG one.
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/query`)).toBe(
+      'Listed AI workflows'
     );
 
     // `submit` is the ONE route for which the label is true — see the next test.

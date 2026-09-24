@@ -170,6 +170,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Collection discovery AND the viewer’s own collection list — the second half is viewer data an anonymous caller does not receive.',
   },
+  'src/pages/api/v1/blocks/gated-images.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     exposure: 'READ_PUBLIC',
     why: 'Public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
@@ -230,6 +234,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'DELETEs the viewer’s own shared_kv row, cascading away its votes, counter and reports. The most destructive route on the whole shared surface: what it removes cannot be reconstructed from anything left behind, so a suspended app left reachable here could erase a user’s published history in a loop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
+  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
+  },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
@@ -249,6 +257,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/workflows/poll.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Reads one of the VIEWER’s own workflows — its live status, its cost and its output image urls and generated text, scoped by assertBlockWorkflowMintedForViewer (the id must name this viewer) and assertBlockWorkflowTaggedForApp (the record must carry this app’s provenance tag). A suspended app left reachable here would keep harvesting the outputs of generations it had already started on a signed-in user’s behalf, which is precisely the retained per-user data a takedown exists to stop; with the optional waitSeconds hold it also keeps an origin request slot open per call.',
+  },
+  'src/pages/api/v1/blocks/workflows/query.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Pages the VIEWER’s own generation workflows, narrowed to the calling app’s subqueue by a host-forced app-block:<appId> tag built from the verified token — so the body is a list of that viewer’s statuses, costs and output image urls, up to 50 per call, and an anonymous caller receives none of it. A suspended app left reachable here would keep harvesting the full history of everything it ever generated on a signed-in user’s behalf, in BULK rather than one workflow at a time like poll.ts, which is the same retained per-user data a takedown exists to stop at the worst rows-per-call ratio on this surface.',
   },
   'src/pages/api/v1/blocks/workflows/submit.ts': {
     exposure: 'SPEND',
@@ -1305,6 +1317,15 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
+    // The per-viewer gated image read. It sits NEXT TO images.ts in the route
+    // tree and on the opposite side of this line from it, which is the pairing
+    // worth noticing: images.ts is READ_PUBLIC and opts out, this one may not.
+    // The corpus is the calling app's OWN published rows rather than the public
+    // catalog, every verdict is computed against the verified subject, and a
+    // `visible` entry hands out a minted edge url for bytes that are otherwise
+    // unreachable — so a suspended app left serving it keeps delivering its
+    // users' generated images after the takedown.
+    'src/pages/api/v1/blocks/gated-images.ts',
     'src/pages/api/v1/blocks/me.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
@@ -1319,14 +1340,21 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
-    // The four workflow routes. `submit.ts` is the second SPEND route this table
-    // has ever carried; the other three are WRITE / READ_VIEWER_SCOPED. None may
+    // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
+    // suspended app reaching it keeps steering which Checkpoint a signed-in
+    // viewer's future generations anchor to, and the row it writes OUTLIVES the
+    // takedown — `resolveBlockCheckpoint` consults the viewer override ahead of
+    // the publisher's own default on every subsequent submit.
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+    // The five workflow routes. `submit.ts` is the second SPEND route this table
+    // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
     // opt out: a suspended app reaching any of them keeps spending, stopping or
     // harvesting a signed-in viewer's generations, which is the whole exposure
     // the gate removes.
     'src/pages/api/v1/blocks/workflows/cancel.ts',
     'src/pages/api/v1/blocks/workflows/estimate.ts',
     'src/pages/api/v1/blocks/workflows/poll.ts',
+    'src/pages/api/v1/blocks/workflows/query.ts',
     'src/pages/api/v1/blocks/workflows/submit.ts',
   ];
 
