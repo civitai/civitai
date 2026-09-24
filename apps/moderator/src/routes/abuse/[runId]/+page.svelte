@@ -1,12 +1,11 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
   import { optimisticEnhancer } from '$lib/form-action';
-  import { dateTime, num, LINK_CLASS } from '$lib/format';
+  import { dateTime, num, plural, LINK_CLASS } from '$lib/format';
   import type { AbuseVerdict } from '$lib/abuse-verdicts';
   import { groupFindings, storedVerdict } from '$lib/abuse-decisions';
   import FindingCard from './FindingCard.svelte';
   import RunCounters from './RunCounters.svelte';
-  import { plural } from './finding-presentation';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -29,6 +28,9 @@
   // decision id → the verdict this session just submitted, shown until the reload lands.
   const pending = new SvelteMap<string, AbuseVerdict>();
   $effect(() => {
+    // 🔴 `data.findings` IS READ FOR ITS DEPENDENCY, NOT ITS VALUE — deleting the bare statement as
+    // dead code leaves an effect that never re-runs, so this session's optimistic verdicts would
+    // stay on screen over whatever the reload actually stored.
     data.findings;
     pending.clear();
   });
@@ -36,6 +38,13 @@
   const submit = (d: Decision, verdict: AbuseVerdict) =>
     optimisticEnhancer(
       () => {
+        // 🔴 THIS CALLBACK IS CAPTURED ONCE, AT MOUNT. `use:enhance` returns only `{ destroy }` —
+        // it has no `update`, so re-rendering the action with a new parameter changes nothing, and
+        // the closure serves the `d` it was created with for the life of the form. That is safe
+        // ONLY because the single field read here is `d.id`, which is the `{#each}` key and is
+        // therefore constant for that component instance. Reading a second field — `d.lead.id`,
+        // `d.members.length` — silently serves a stale decision. The capture and its use are now
+        // two components apart, so nothing on screen suggests the parameter is frozen.
         pending.set(d.id, verdict);
         return () => pending.delete(d.id);
       },

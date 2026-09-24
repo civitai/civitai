@@ -186,6 +186,30 @@ export function missingColumnFromError(e: unknown): string | null {
 }
 
 /**
+ * A `42703` this feature's READS are allowed to degrade on: one naming `verdict`, or one whose column
+ * cannot be read out of the message at all.
+ *
+ * 🔴 NARROWER THAN THE BARE CODE, AND THE DIFFERENCE IS A SILENT WRONG ANSWER RATHER THAN AN ERROR.
+ * Both verdict reads name other columns besides `verdict` — `id` and `run_id` — and the bare code
+ * cannot tell which one the server complained about. Today neither of those can be missing while the
+ * table exists, so the blunt gate happens to be right; the moment one is renamed or the shape around
+ * it changes, a genuinely broken board answers `null` and renders an em dash under "Reviewed", with
+ * nothing anywhere saying so. The WRITE paths already discriminate this way (`recordAbuseRun`,
+ * `recordAbuseVerdict`); the reads did not.
+ *
+ * An UNREADABLE name still degrades, deliberately. `missingColumnFromError` parses an ENGLISH
+ * message, so a server running a non-English `lc_messages` yields `null` for an ordinary missing
+ * column — gating on "a name came back" would turn the degradation OFF on those servers and take the
+ * board down instead. Degrading is the safe direction for a read; refusing is the safe direction for
+ * a write, which is why the two sides answer `null` differently.
+ */
+function isMissingVerdictColumn(e: unknown): boolean {
+  if (!isUndefinedColumnError(e)) return false;
+  const missing = missingColumnFromError(e);
+  return missing === null || missing === VERDICT_COLUMN;
+}
+
+/**
  * What the live table can actually do, as TWO independent capabilities.
  *
  * 🔴 ONE BOOLEAN OVER ALL FOUR COLUMNS CONFLATED TWO UNRELATED QUESTIONS, AND THAT COST VERDICTS.
@@ -614,8 +638,10 @@ async function ruledCountsByRun(
       .execute();
     return new Map(rows.map((r) => [r.run_id, Number(r.ruled)]));
   } catch (e) {
-    // The DDL has not been applied here. Read-only is the correct state, not an error.
-    if (isUndefinedColumnError(e)) return null;
+    // The DDL has not been applied here. Read-only is the correct state, not an error — but only for
+    // a `42703` about `verdict`: this statement also names `run_id` and `id`, and a board broken in
+    // one of those must not answer an em dash and look merely unreviewed.
+    if (isMissingVerdictColumn(e)) return null;
     throw e;
   }
 }
@@ -814,8 +840,11 @@ export async function getAbuseVerdictSummary(
       .executeTakeFirst();
     return { ruled: Number(row?.ruled ?? 0), unruled: Number(row?.unruled ?? 0) };
   } catch (e) {
-    // The DDL has not been applied here. Read-only is the correct state, not an error.
-    if (isUndefinedColumnError(e)) return null;
+    // The DDL has not been applied here. Read-only is the correct state, not an error — narrowed to
+    // a `42703` about `verdict` for the reason `isMissingVerdictColumn` gives: this statement names
+    // `id` and `run_id` too, and answering `null` for one of those would render the page read-only
+    // while telling nobody the board is broken.
+    if (isMissingVerdictColumn(e)) return null;
     throw e;
   }
 }

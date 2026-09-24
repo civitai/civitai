@@ -165,3 +165,71 @@ describe('a deployment whose verdict columns are not applied', () => {
     expect(runs.find((r) => r.id === runId)?.ruledCount).toBeNull();
   });
 });
+
+/**
+ * 🔴 A `42703` IS NOT AUTOMATICALLY "THE DDL IS NOT APPLIED".
+ *
+ * Both verdict reads name `id` and `run_id` alongside `verdict`, and the bare error CODE cannot say
+ * which one the server complained about. Read as the DDL window, a board broken in one of those
+ * answers `null` — the list renders an em dash under "Reviewed" and the run page goes read-only,
+ * with nothing anywhere reporting a fault. That is a silent wrong answer where an error belongs.
+ *
+ * The write paths already discriminate on the column NAME; these two now do the same. An unreadable
+ * name still degrades, because the name is parsed out of an ENGLISH message and a non-English
+ * `lc_messages` would otherwise take the board down where it used to degrade.
+ */
+describe('a 42703 that is not about `verdict`', () => {
+  const pgError = (message: string) => Object.assign(new Error(message), { code: '42703' });
+
+  /**
+   * A client that answers the RUN table from the real database and fails only on the FINDING table.
+   *
+   * 🔴 THE DISCRIMINATION IS THE WHOLE TEST. Failing every statement would make `getAbuseRuns` throw
+   * on its list query — which has always propagated — so the case would pass without the count query
+   * ever running. The positive control below feeds the same stub a `verdict` error and watches the
+   * answer degrade, which is what proves this reaches `ruledCountsByRun` at all.
+   */
+  const failOnFindings = (e: unknown) => {
+    const real = pgliteKysely(db);
+    const stub = {
+      withTables: () => stub,
+      selectFrom: (table: string) => {
+        if (String(table).startsWith('abuse_detection_finding')) throw e;
+        return (real as unknown as { selectFrom: (t: string) => unknown }).selectFrom(table);
+      },
+    };
+    dbHandle.current = stub;
+  };
+
+  it('🔴 propagates from the reviewed count, rather than reporting the board unreviewed', async () => {
+    await seedRun(db, 'review-bomb', STARTED_TODAY);
+    failOnFindings(pgError('column "run_id" does not exist'));
+    await expect(service.getAbuseRuns()).rejects.toMatchObject({ code: '42703' });
+  });
+
+  it('positive control — the same stub degrades when the error names `verdict`', async () => {
+    // Without this the case above is indistinguishable from a stub that never reached the count
+    // query: both end in a rejection, one for the reason claimed and one for the wrong reason.
+    await seedRun(db, 'review-bomb', STARTED_TODAY);
+    failOnFindings(pgError('column "verdict" does not exist'));
+    const runs = await service.getAbuseRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].ruledCount).toBeNull();
+  });
+
+  it('🔴 propagates from the run summary, rather than reporting the run unruleable', async () => {
+    failOnFindings(pgError('column "id" does not exist'));
+    await expect(service.getAbuseVerdictSummary(1)).rejects.toMatchObject({ code: '42703' });
+  });
+
+  it.each([
+    ['names `verdict`', 'column "verdict" does not exist'],
+    // A server whose messages are not English. Degrading is the safe direction for a READ — the
+    // alternative turns the degradation OFF wherever `lc_messages` is not English, taking the board
+    // down in the one window it exists to survive.
+    ['cannot be parsed at all', 'Spalte »verdict« existiert nicht'],
+  ])('the run summary still degrades when the error %s', async (_label, message) => {
+    failOnFindings(pgError(message));
+    await expect(service.getAbuseVerdictSummary(1)).resolves.toBeNull();
+  });
+});

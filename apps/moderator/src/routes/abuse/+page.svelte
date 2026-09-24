@@ -114,7 +114,10 @@
             <!-- Same opt-in as the run page's reason cell: `TableCell`'s `whitespace-nowrap` is
                  wrong for prose, and a one-line summary overruns the width this `max-w-xl` asks
                  for. -->
-            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary ?? ''}</TableCell>
+            <!-- An em dash, matching the two count columns beside it. A blank cell reads as a
+                 rendering failure next to two that spell their absence out. -->
+            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary ?? '—'}</TableCell
+            >
           </TableRow>
         {/each}
       </TableBody>

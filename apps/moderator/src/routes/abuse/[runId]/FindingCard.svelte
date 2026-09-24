@@ -1,11 +1,15 @@
 <script lang="ts">
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS } from '$lib/format';
+  import { LINK_CLASS, plural } from '$lib/format';
   import type { Decision } from '$lib/abuse-decisions';
   import type { AbuseVerdict } from '$lib/abuse-verdicts';
   import VerdictControl from './VerdictControl.svelte';
-  import { moreMembersLabel, plural, type RenderableFinding } from './finding-presentation';
+  import {
+    confidenceLabel,
+    moreMembersLabel,
+    type RenderableFinding,
+  } from './finding-presentation';
 
   let {
     decision,
@@ -25,11 +29,6 @@
 
   const lead = $derived(decision.lead);
 
-  // Two digits, not a percentage. These are the producer's own 0..1 scores and are NOT comparable
-  // across detectors — rendering "94%" invites exactly the cross-detector ranking that would be
-  // meaningless, and a bare decimal reads as the raw number it is.
-  const confidence = $derived(lead.confidence.toFixed(2));
-
   /** A few members, named. Not all of them: the point of collapsing is that the list is long. */
   const EXAMPLES = 4;
   const others = $derived(decision.members.length - 1);
@@ -38,17 +37,8 @@
 
 <article class="border-dark-4 bg-dark-6 rounded-xl border p-5">
   <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-    <!-- 🔴 BOTH FIGURES ARE THE PRODUCER'S SELF-REPORT, never cross-checked against the action log,
-         and both say so. Without the word this board reads as independent confirmation that
-         something was done, when it is an input to a human decision and nothing more. -->
-    {#if lead.actioned}
-      <Badge variant="destructive">Acted (reported): {lead.action}</Badge>
-    {:else}
-      <!-- "No" is the common and important case: detected, scored, deliberately left alone. It is
-           spelled out rather than shown as a blank, which would read as missing data. -->
-      <Badge variant="secondary">Not acted on (reported)</Badge>
-    {/if}
-    <span class="text-dark-2 text-sm">Confidence (reported) {confidence}</span>
+    <!-- Identity first: it is the subject of the decision, and it is what the columns this replaced
+         led with. -->
     <span class="text-dark-2 text-sm">
       Account
       <!-- `?q=`, not `?userId=` — an unknown param is dropped, landing the moderator on an empty
@@ -59,6 +49,18 @@
            moderator clicked is on the page they land on. -->
       <a class={LINK_CLASS} href="/retool/user-lookup/mod-activity?q={lead.userId}">{lead.userId}</a>
     </span>
+    <!-- 🔴 BOTH FIGURES ARE THE PRODUCER'S SELF-REPORT, never cross-checked against the action log,
+         and both say so. Without the word this board reads as independent confirmation that
+         something was done, when it is an input to a human decision and nothing more. -->
+    <span class="text-dark-2 text-sm">Confidence (reported) {confidenceLabel(lead.confidence)}</span
+    >
+    {#if lead.actioned}
+      <Badge variant="destructive">Acted (reported): {lead.action}</Badge>
+    {:else}
+      <!-- "No" is the common and important case: detected, scored, deliberately left alone. It is
+           spelled out rather than shown as a blank, which would read as missing data. -->
+      <Badge variant="secondary">Not acted on (reported)</Badge>
+    {/if}
   </div>
 
   {#if others > 0}
@@ -77,7 +79,7 @@
   <!-- 🔴 `whitespace-normal` IS AN OPT-IN THIS TEXT CANNOT DO WITHOUT. A finding's reason is a
        multi-sentence paragraph from the producer; in any container that does not wrap it renders on
        one line and paints over whatever is beside it. That is what the table cell it used to live in
-       did. Pinned by `__tests__/prose-wrapping.test.ts`. -->
+       did. Pinned by `apps/moderator/src/routes/abuse/__tests__/prose-wrapping.test.ts`. -->
   <p class="break-words whitespace-normal">{lead.reason}</p>
 
   <VerdictControl

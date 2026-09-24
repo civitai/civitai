@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ABUSE_VERDICTS } from '$lib/abuse-verdicts';
 import {
+  VERDICT_CLASS,
   VERDICT_HINT,
   VERDICT_LABEL,
+  confidenceLabel,
   moreMembersLabel,
-  plural,
   verdictAttribution,
 } from '../[runId]/finding-presentation';
 import { LIST_PAGE_DIR, RUN_PAGE_DIR, pageSurface } from './page-sources';
@@ -87,36 +88,65 @@ describe('moreMembersLabel', () => {
   });
 });
 
-describe('plural', () => {
-  it.each([
-    [0, '0 findings'],
-    [1, '1 finding'],
-    [2, '2 findings'],
-  ])('agrees with %i', (count, expected) => {
-    expect(plural(count, 'finding')).toBe(expected);
+describe('confidenceLabel', () => {
+  it('renders two digits, never a percentage', () => {
+    // A percentage invites a cross-detector ranking that would be meaningless — the producers do not
+    // share a calibration.
+    expect(confidenceLabel(0.9137)).toBe('0.91');
+    expect(confidenceLabel(1)).toBe('1.00');
   });
 
-  it('takes an irregular plural where -s is wrong', () => {
-    expect(plural(3, 'entry', 'entries')).toBe('3 entries');
+  it('🔴 labels 0.00 as a judged verdict rather than leaving it to read as "unscored"', () => {
+    // It renders beside a reason that describes the evidence in detail, which reads as
+    // self-contradictory unless the zero is explained — a moderator then either dismisses a real
+    // finding or trusts a rejected one. The user-lookup panel has said this about the same rows
+    // since it was built; this board showed the bare number, so the two screens gave one row two
+    // readings.
+    expect(confidenceLabel(0)).toContain('0.00');
+    expect(confidenceLabel(0)).toMatch(/judged not abuse/i);
   });
 
-  it('formats the count the way the rest of the app does', () => {
-    expect(plural(12345, 'finding')).toBe(`${(12345).toLocaleString()} findings`);
+  it('says it of zero and of nothing else', () => {
+    expect(confidenceLabel(0.01)).toBe('0.01');
+    // 🔴 ROUNDS TO 0.00 BUT IS NOT ZERO. A real score below the two-digit floor is not a judged
+    // verdict, and labelling it as one would be the board asserting something no detector said.
+    expect(confidenceLabel(0.0001)).toBe('0.00');
   });
 });
 
 describe('every verdict the board offers is spelled out', () => {
   // 🔴 A LEDGER OVER THE SHARED TUPLE, not three hand-written cases. A fourth verdict added to
   // `ABUSE_VERDICTS` renders a fourth button; without this it would render an EMPTY one, with no
-  // hint under it and nothing failing.
-  it.each(ABUSE_VERDICTS)('%s has a label and a visible hint', (v) => {
+  // hint under it, no colour, and nothing failing.
+  it.each(ABUSE_VERDICTS)('%s has a label, a visible hint and both button states', (v) => {
     expect(VERDICT_LABEL[v]?.length ?? 0).toBeGreaterThan(0);
     expect(VERDICT_HINT[v]?.length ?? 0).toBeGreaterThan(0);
+    expect(VERDICT_CLASS[v]?.idle?.length ?? 0).toBeGreaterThan(0);
+    expect(VERDICT_CLASS[v]?.chosen?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it('offers no label or hint for a verdict the tuple does not contain', () => {
-    expect(Object.keys(VERDICT_LABEL).sort()).toEqual([...ABUSE_VERDICTS].sort());
-    expect(Object.keys(VERDICT_HINT).sort()).toEqual([...ABUSE_VERDICTS].sort());
+  it('offers no label, hint or palette for a verdict the tuple does not contain', () => {
+    const tuple = [...ABUSE_VERDICTS].sort();
+    expect(Object.keys(VERDICT_LABEL).sort()).toEqual(tuple);
+    expect(Object.keys(VERDICT_HINT).sort()).toEqual(tuple);
+    expect(Object.keys(VERDICT_CLASS).sort()).toEqual(tuple);
+  });
+
+  it.each(ABUSE_VERDICTS)('%s reacts to a hover in BOTH states', (v) => {
+    // 🔴 A CHOSEN BUTTON IS STILL CLICKABLE — re-ruling overwrites, deliberately. With its two
+    // neighbours lighting up on hover and the filled one inert, it reads as disabled, and that
+    // misreading arrived WITH the fill: nothing was distinguishable enough to notice before.
+    expect(VERDICT_CLASS[v].idle).toMatch(/\bhover:/);
+    expect(VERDICT_CLASS[v].chosen).toMatch(/\bhover:/);
+  });
+
+  it('the chosen state is filled, not tinted', () => {
+    // The defect: `bg-muted/60` on a transparent button, a lightness step of about 0.03 against this
+    // page's panel. A fractional-opacity background is that same non-treatment respelled.
+    for (const v of ABUSE_VERDICTS) {
+      expect(VERDICT_CLASS[v].chosen).toMatch(/\bbg-[a-z0-9-]+\b/);
+      expect(VERDICT_CLASS[v].chosen).not.toMatch(/\bbg-[a-z0-9-]+\/\d/);
+    }
   });
 
   it('the hints are rendered, not hidden behind a hover', () => {
@@ -141,7 +171,34 @@ describe('every verdict the board offers is spelled out', () => {
  */
 const BLOCK_OPENING_WITH_TEXT = /\{[#:][^{}]*\}[^\S\n]*\n?[^\S\n]*[^\s<{]/g;
 
+/**
+ * Markup only — comments removed.
+ *
+ * 🔴 A COMMENT THAT NAMES A BLOCK TAG IS NOT A BLOCK TAG, and this rule is blunt enough to be fooled
+ * by one: a line explaining what an each-block key is for read as an each-block opening with welded
+ * text. Caught by this very guard on its own diff, which is the one time a false positive is cheap.
+ *
+ * Conservative on purpose. HTML comments and block comments go whole; a `//` comment is stripped
+ * only when it OPENS its line, so a `https://` inside a string cannot be mistaken for one.
+ */
+export const withoutComments = (src: string): string =>
+  src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+
 describe('no block on the board opens with text Svelte will weld', () => {
+  it('ignores a block tag named inside a comment — false-positive control', () => {
+    expect(withoutComments('  // the {#each} key\n<p>x</p>')).not.toMatch(/\{#each\}/);
+    expect(withoutComments('<!-- {#if x} and more -->\n<p>x</p>')).not.toMatch(/\{#if/);
+    // …and does not eat a URL that merely contains a double slash.
+    expect(withoutComments('<a href="https://example.test">x</a>')).toContain(
+      'https://example.test'
+    );
+  });
+
   it('sees the defect that shipped — negative control', () => {
     // Both, verbatim as they were written.
     const shipped = [
@@ -158,7 +215,10 @@ describe('no block on the board opens with text Svelte will weld', () => {
   });
 
   it.each([RUN_PAGE_DIR, LIST_PAGE_DIR])('%s opens no block with welded text', (dir) => {
-    const offenders = [...pageSurface(dir).matchAll(BLOCK_OPENING_WITH_TEXT)].map((m) => m[0]);
+    const markup = withoutComments(pageSurface(dir));
+    // The strip must not have taken the markup with it — an empty surface passes vacuously.
+    expect(markup, `${dir} has no markup left after removing comments`).toMatch(/\{[#:]/);
+    const offenders = [...markup.matchAll(BLOCK_OPENING_WITH_TEXT)].map((m) => m[0]);
     expect(offenders).toEqual([]);
   });
 });
