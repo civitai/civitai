@@ -6,6 +6,7 @@ import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
+import { clickhouseFailSoftCounter } from '~/server/prom/client';
 import { logToAxiom } from '../logging/client';
 import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { parse as parseStackTrace } from 'stacktrace-parser';
@@ -530,15 +531,24 @@ export function isClickHouseConnectionError(e: unknown): boolean {
  * `clickhouse.$query` client boundary, which also serves inserts + background/cron
  * reads where a tRPC-typed 503 would be semantically wrong; classification stays a
  * narrow, transient-only allowlist (see {@link isClickHouseConnectionError}).
+ *
+ * `path` is a Prometheus label on `clickhouseFailSoftCounter`, so it must be a
+ * per-call-site constant — anything request-derived multiplies the series.
  */
 export async function runClickHouseRead<T>(
   fn: () => Promise<T>,
-  message = 'This service is temporarily unavailable. Please try again.'
+  options: { path: string; message?: string }
 ): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (isClickHouseConnectionError(e)) throwServiceUnavailableError(message, e);
+    if (isClickHouseConnectionError(e)) {
+      clickhouseFailSoftCounter.inc({ path: options.path });
+      throwServiceUnavailableError(
+        options.message ?? 'This service is temporarily unavailable. Please try again.',
+        e
+      );
+    }
     throw e;
   }
 }

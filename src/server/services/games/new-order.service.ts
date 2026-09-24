@@ -869,7 +869,7 @@ export async function updatePendingImageRatings({
       )
       WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
     `,
-    'This service is temporarily unavailable.'
+    { path: 'new-order-ratings', message: 'This service is temporarily unavailable.' }
   );
 
   await clickhouse.$exec`

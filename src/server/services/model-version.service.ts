@@ -2187,7 +2187,8 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         AND modelVersionId IN (${modelVersions.map((x) => x.id)})
       GROUP BY modelVersionId, createdDate
       ORDER BY createdAt DESC, generations DESC;
-    `
+    `,
+    { path: 'model-version-generations' }
   );
 
   const versions = modelVersions

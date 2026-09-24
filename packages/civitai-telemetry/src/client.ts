@@ -387,15 +387,15 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
-// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path swallows a TRANSIENT
-// ClickHouse connection/transport failure (socket hang up / Code 279 / Code 210 — see
-// isClickHouseConnectionError) instead of 500-ing the request. The `path` label names where it
-// happened. A query/schema error (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A
-// SUSTAINED nonzero rate is the alert signal that ClickHouse Cloud is in a real outage that fail-soft
-// is now masking.
+// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path degrades on a
+// TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 / Code 210 — see
+// isClickHouseConnectionError) instead of 500-ing the request — whether it swallows the failure or
+// re-maps it to a retryable 503. The `path` label names where it happened. A query/schema error
+// (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A SUSTAINED nonzero rate means a
+// real ClickHouse Cloud outage that no longer shows up as a 500.
 export const clickhouseFailSoftCounter = registerCounterWithLabels({
   name: 'civitai_app_clickhouse_failsoft_total',
-  help: 'Transient ClickHouse transport errors swallowed (failed soft) instead of 500-ing, by path',
+  help: 'Transient ClickHouse transport errors degraded (swallowed or re-mapped to 503) instead of 500-ing, by path',
   labelNames: ['path'] as const,
 });
 

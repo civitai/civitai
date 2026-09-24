@@ -223,10 +223,10 @@ vi.mock('~/server/prom/client', () => ({
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
-  // prom/client, so this module-replacing mock drops it. `base.reward` and
-  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
-  // neighbours use, so the first test to drive either fail-soft path dies here
-  // rather than on whatever it was written to check.
+  // prom/client, so this module-replacing mock drops it. Every fail-soft call site
+  // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT
+  // the `?.inc?.()` guard their neighbours use, so the first test to drive one of those
+  // paths dies here rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
   // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
   // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the
