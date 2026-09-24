@@ -6,8 +6,6 @@ import type { PushSupport } from '~/store/push-subscription.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export type { PushSupport };
-
 function getPushSupport(): PushSupport {
   if (typeof window === 'undefined') return 'unsupported';
   if (!env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) return 'unsupported';

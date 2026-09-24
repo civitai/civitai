@@ -28,7 +28,8 @@ export default AuthedEndpoint(
     // 🔴 This MUST stay after the upsert. `upsertPushSubscription` materializes DEFAULT_PUSH_TYPES
     // only while the user holds zero subscriptions; deleting first makes a rotating browser that
     // held exactly one subscription look brand new, silently re-creating every push type the user
-    // had since turned off (invariant 3, docs/features/web-push.md). Pinned by
+    // had since turned off — the failure mode invariant 3 of docs/features/web-push.md exists to
+    // prevent, though the ordering rule itself is invariant 8 there. Pinned by
     // src/server/__tests__/push-resubscribe-endpoint.test.ts.
     if (oldEndpoint && oldEndpoint !== subscription.endpoint)
       await deletePushSubscription({ endpoint: oldEndpoint, userId: user.id });

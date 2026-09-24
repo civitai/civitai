@@ -12,6 +12,18 @@ type PushSubscriptionStore = {
   subscribed: boolean;
   /** This browser's subscription endpoint — matches its PushSubscription row. */
   currentEndpoint: string | null;
+  /**
+   * Shared ON PURPOSE, and it is the one field here that is not a browser-derived fact.
+   *
+   * `enable()` and `disable()` both mutate the single PushManager subscription this browser owns,
+   * so two of them in flight at once is a race over one resource, not two independent actions —
+   * a per-component flag would let the toggle and the soft-ask start one each. Making it global
+   * turns the guard in those two callbacks into a real mutual exclusion.
+   *
+   * The visible cost, accepted: while any surface has an operation in flight, the others' controls
+   * disable too. Callers that render an action button should read `busy` so that reads as a
+   * disabled control rather than a click that silently does nothing.
+   */
   busy: boolean;
   set: (patch: Partial<Omit<PushSubscriptionStore, 'set'>>) => void;
 };

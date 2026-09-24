@@ -13,6 +13,9 @@ const h = vi.hoisted(() => {
     redisCounters: Map<string, number>;
     redisAvailable: boolean;
     writeFails: boolean;
+    writeFailsOnResult: boolean;
+    bumpedFailureCount: number | null;
+    writeResultCalls: number;
     sendResults: (Error | null)[]; // per sendNotification call, in order; null = accept
     sends: { endpoint: string; body: string }[];
     renderResponse: { ok: boolean; results?: any[] };
@@ -24,6 +27,9 @@ const h = vi.hoisted(() => {
     redisCounters: new Map(),
     redisAvailable: true,
     writeFails: false,
+    writeFailsOnResult: false,
+    bumpedFailureCount: null,
+    writeResultCalls: 0,
     sendResults: [],
     sends: [],
     renderResponse: { ok: true, results: [{ title: 'T', body: 'B', url: '/x' }] },
@@ -40,10 +46,24 @@ vi.mock('../lib/server/clients/db', () => ({
     },
   }),
   mainDbWrite: () => ({
+    // Two distinct failure shapes, because they are NOT interchangeable. `writeFails` throws from
+    // cancellableQuery itself — the shape production never produces. `writeFailsOnResult` rejects
+    // from result(), which is what a real failing statement does: cancellableQuery dispatches the
+    // query and resolves before the DB answers.
     cancellableQuery: async (sql: string, params: any[]) => {
       h.state.writeQueries.push({ sql, params });
       if (h.state.writeFails) throw new Error('main DB write down');
-      return { result: async () => [] };
+      const rows =
+        h.state.bumpedFailureCount !== null && sql.includes('"failureCount" + 1')
+          ? [{ failureCount: h.state.bumpedFailureCount }]
+          : [];
+      return {
+        result: async () => {
+          h.state.writeResultCalls += 1;
+          if (h.state.writeFailsOnResult) throw new Error('main DB write down (on result)');
+          return rows;
+        },
+      };
     },
   }),
 }));
@@ -91,6 +111,12 @@ vi.mock('web-push', () => ({
 
 import { dispatchPush } from './push';
 
+/** The row id alone is not enough: a PushSubscription row is reassigned to a new userId when the
+ *  same browser subscribes under another account, so every bookkeeping write must re-assert the
+ *  owner it targeted. Asserted alongside the exact params, never alone — on its own this is a
+ *  SPELLED guard that `AND "userId" = $2 OR true` would satisfy. */
+const ownerScoped = (sql: string) => /"userId"\s*=\s*\$\d/.test(sql);
+
 function statusError(statusCode: number): Error {
   const err = new Error(`status ${statusCode}`);
   (err as any).statusCode = statusCode;
@@ -110,6 +136,9 @@ beforeEach(() => {
   h.state.redisCounters = new Map();
   h.state.redisAvailable = true;
   h.state.writeFails = false;
+  h.state.writeFailsOnResult = false;
+  h.state.bumpedFailureCount = null;
+  h.state.writeResultCalls = 0;
   h.state.sendResults = [];
   h.state.sends = [];
   h.state.renderResponse = { ok: true, results: [{ title: 'T', body: 'B', url: '/x' }] };
@@ -174,6 +203,7 @@ describe('dispatchPush', () => {
     const deletes = h.state.writeQueries.filter((q) => q.sql.trim().startsWith('DELETE'));
     expect(deletes).toHaveLength(1);
     expect(deletes[0]!.params).toEqual([1, 10]);
+    expect(ownerScoped(deletes[0]!.sql)).toBe(true);
     expect(h.state.writeQueries.filter((q) => q.sql.includes('failureCount'))).toHaveLength(0);
   });
 
@@ -184,6 +214,7 @@ describe('dispatchPush', () => {
     const deletes = h.state.writeQueries.filter((q) => q.sql.trim().startsWith('DELETE'));
     expect(deletes).toHaveLength(1);
     expect(deletes[0]!.params).toEqual([7, 10]);
+    expect(ownerScoped(deletes[0]!.sql)).toBe(true);
   });
 
   it('keeps the subscription untouched on 429', async () => {
@@ -215,7 +246,8 @@ describe('dispatchPush', () => {
 
     const failureWrites = h.state.writeQueries.filter((q) => q.sql.includes('"failureCount" + 1'));
     expect(failureWrites).toHaveLength(1);
-    expect(failureWrites[0]!.params).toEqual([1, 10, 10]);
+    expect(failureWrites[0]!.params).toEqual([1, 10]);
+    expect(ownerScoped(failureWrites[0]!.sql)).toBe(true);
   });
 
   it('caps a user at pushDailyCap, then sends exactly one summary push', async () => {
@@ -255,6 +287,76 @@ describe('dispatchPush', () => {
     expect(h.state.sends).toHaveLength(0);
   });
 
+  describe('failure-streak reap', () => {
+    // Regression: this was ONE data-modifying CTE, and its DELETE half never fired. Sub-statements
+    // share a snapshot and a command id, so Postgres cannot delete the row the same statement's
+    // UPDATE just modified — it reports `DELETE 0` and the row survives past the ceiling forever.
+    // Verified against PG 17.11: row at failureCount 9 → statement → row present at 10.
+    it('issues a SEPARATE delete once the streak reaches the ceiling', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      h.state.sendResults = [statusError(500)];
+      h.state.bumpedFailureCount = 10; // the UPDATE's RETURNING value
+
+      await dispatchPush('new-mention', {}, [42]);
+
+      const update = h.state.writeQueries.find((q) => q.sql.includes('"failureCount" + 1'));
+      const del = h.state.writeQueries.find((q) => q.sql.trimStart().startsWith('DELETE'));
+      expect(update).toBeDefined();
+      // A second statement, not a CTE — the delete must not be nested inside the update.
+      expect(update!.sql).not.toMatch(/DELETE/i);
+      expect(del).toBeDefined();
+      expect(del!.params).toEqual([7, 42, 10]);
+      expect(ownerScoped(del!.sql)).toBe(true);
+    });
+
+    it('does not delete while the streak is below the ceiling', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      h.state.sendResults = [statusError(500)];
+      h.state.bumpedFailureCount = 9;
+
+      await dispatchPush('new-mention', {}, [42]);
+
+      expect(
+        h.state.writeQueries.filter((q) => q.sql.trimStart().startsWith('DELETE'))
+      ).toHaveLength(0);
+    });
+
+    it('does not delete when the UPDATE matched no row (reassigned mid-flight)', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      h.state.sendResults = [statusError(500)];
+      h.state.bumpedFailureCount = null; // RETURNING yields nothing — the row is no longer ours
+
+      await dispatchPush('new-mention', {}, [42]);
+
+      expect(
+        h.state.writeQueries.filter((q) => q.sql.trimStart().startsWith('DELETE'))
+      ).toHaveLength(0);
+    });
+  });
+
+  it('awaits each bookkeeping write to COMPLETION, not just dispatch', async () => {
+    // cancellableQuery resolves once the statement is SENT. A caller that awaits only that never
+    // joins the outcome, so a failing write rejects a promise nothing handles — an unhandled
+    // rejection, which on node >=15 exits the worker that owns all fan-out, and which bestEffort
+    // cannot intercept because the promise it wrapped already resolved.
+    h.state.subscriptionRows = [sub(1, 10)];
+    await dispatchPush('new-mention', {}, [10]);
+
+    expect(h.state.writeQueries).toHaveLength(1); // the recordSuccess stamp
+    expect(h.state.writeResultCalls).toBe(1); // ...and it was actually awaited
+  });
+
+  it('a bookkeeping failure raised from result() does not suppress the remaining sends', async () => {
+    // The production failure shape: cancellableQuery dispatches and resolves, then the statement
+    // fails. Awaiting only cancellableQuery would leave this rejection unhandled rather than
+    // routing it into bestEffort — which on node >=15 exits the worker process.
+    h.state.subscriptionRows = [sub(1, 10), sub(2, 20), sub(3, 30)];
+    h.state.writeFailsOnResult = true;
+
+    await expect(dispatchPush('new-mention', {}, [10, 20, 30])).resolves.toBeUndefined();
+    expect(h.state.sends).toHaveLength(3);
+  });
+
   describe('render request', () => {
     it('percent-encodes the webhook token into the query string', async () => {
       h.state.subscriptionRows = [sub(1, 10)];
@@ -276,46 +378,6 @@ describe('dispatchPush', () => {
       // and the next pending row — an unbounded render would stall all fan-out, not just push.
       const { signal } = h.state.fetchCalls[0];
       expect(signal).toBeInstanceOf(AbortSignal);
-    });
-  });
-
-  describe('bookkeeping is scoped to the owner the send targeted', () => {
-    // A PushSubscription row is keyed on the browser endpoint and gets REASSIGNED to a new userId
-    // when the same browser subscribes under a different account. The dispatcher reads its targets
-    // before sending, so an unqualified `WHERE id = $1` could stamp, streak or DELETE the new
-    // owner's live row off the back of the previous owner's send.
-    const ownerScoped = (sql: string) => /"userId"\s*=\s*\$\d/.test(sql);
-
-    it('scopes the success stamp by userId', async () => {
-      h.state.subscriptionRows = [sub(7, 42)];
-      await dispatchPush('new-mention', {}, [42]);
-
-      const write = h.state.writeQueries.find((q) => q.sql.includes('lastSuccessAt'));
-      expect(write).toBeDefined();
-      expect(ownerScoped(write!.sql)).toBe(true);
-      expect(write!.params).toContain(42);
-    });
-
-    it('scopes the 410 delete by userId', async () => {
-      h.state.subscriptionRows = [sub(7, 42)];
-      h.state.sendResults = [statusError(410)];
-      await dispatchPush('new-mention', {}, [42]);
-
-      const write = h.state.writeQueries.find((q) => q.sql.trimStart().startsWith('DELETE'));
-      expect(write).toBeDefined();
-      expect(ownerScoped(write!.sql)).toBe(true);
-      expect(write!.params).toContain(42);
-    });
-
-    it('scopes the failure streak by userId', async () => {
-      h.state.subscriptionRows = [sub(7, 42)];
-      h.state.sendResults = [statusError(500)];
-      await dispatchPush('new-mention', {}, [42]);
-
-      const write = h.state.writeQueries.find((q) => q.sql.includes('failureCount" + 1'));
-      expect(write).toBeDefined();
-      expect(ownerScoped(write!.sql)).toBe(true);
-      expect(write!.params).toContain(42);
     });
   });
 });

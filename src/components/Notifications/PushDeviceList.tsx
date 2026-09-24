@@ -62,7 +62,10 @@ function parseDevice(userAgent: string | null): DeviceInfo {
  * its UI reconciles against the server list the next time it loads.
  */
 export function PushDeviceList() {
-  const { currentEndpoint, disable } = usePushSubscription();
+  // `busy` is shared across every push surface (see push-subscription.store). Without reading it
+  // here, revoking THIS device while the toggle or soft-ask has an operation in flight hits the
+  // `if (busy) return` inside disable() and silently does nothing.
+  const { currentEndpoint, disable, busy } = usePushSubscription();
   const queryUtils = trpc.useUtils();
   // staleTime 0 (app default Infinity): a revoke from another device must show on the next visit.
   const { data: devices = [] } = trpc.notification.getPushSubscriptions.useQuery(undefined, {
@@ -136,6 +139,7 @@ export function PushDeviceList() {
                       isThisDevice ? 'Turn off push on this device' : 'Remove this device'
                     }
                     loading={unsubscribeMutation.isPending}
+                    disabled={busy}
                     onClick={() => remove(device.endpoint)}
                   >
                     <IconTrash size={16} />

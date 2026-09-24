@@ -148,32 +148,65 @@ async function getTargetSubscriptions(userIds: number[], type: string): Promise<
 // subscription on the strength of a send made for the previous owner. Scoping by userId makes the
 // write a no-op in exactly that case, which is the correct outcome: the row is no longer ours.
 
+/**
+ * Run a bookkeeping write to COMPLETION and return its rows.
+ *
+ * 🔴 Awaiting `cancellableQuery` alone is not awaiting the query. It dispatches
+ * `connection.query(...)` eagerly and resolves once the statement is SENT, so the outer await
+ * returns before the database has answered. A failure then rejects a promise derived inside the
+ * helper that nothing is handling — an unhandled rejection, which Node ≥15 turns into a process
+ * exit, on the worker that owns all fan-out. `bestEffort` cannot catch it either: the promise it
+ * wrapped already resolved. Only `.result()` joins the statement's actual outcome to this caller.
+ *
+ * The existing "a bookkeeping write failure does not suppress the remaining sends" test passes
+ * either way, because its fake pool throws from `cancellableQuery` itself — the one shape
+ * production never produces.
+ */
+async function runWrite<R extends Record<string, any> = Record<string, any>>(
+  sql: string,
+  params: any[]
+): Promise<R[]> {
+  const query = await mainDbWrite().cancellableQuery<R>(sql, params);
+  return (await query.result()) as R[];
+}
+
 async function deleteSubscription(id: number, userId: number) {
-  await mainDbWrite().cancellableQuery(
-    `DELETE FROM "PushSubscription" WHERE id = $1 AND "userId" = $2`,
-    [id, userId]
-  );
+  await runWrite(`DELETE FROM "PushSubscription" WHERE id = $1 AND "userId" = $2`, [id, userId]);
 }
 
 async function recordSuccess(id: number, userId: number) {
-  await mainDbWrite().cancellableQuery(
+  await runWrite(
     `UPDATE "PushSubscription" SET "lastSuccessAt" = NOW(), "failureCount" = 0
      WHERE id = $1 AND "userId" = $2`,
     [id, userId]
   );
 }
 
-/** Increments the failure streak; deletes the row once it hits the ceiling. */
+/**
+ * Increments the failure streak; deletes the row once it hits the ceiling.
+ *
+ * 🔴 TWO statements, deliberately — this was one data-modifying CTE and the delete half NEVER
+ * FIRED. Sub-statements of a single statement share one snapshot and one command id, so an outer
+ * `DELETE` cannot remove the row the CTE's `UPDATE` just modified: Postgres skips it and reports
+ * `DELETE 0`. Measured on PG 17.11 and 18: a row at `failureCount` 9 reached 10 and then survived
+ * indefinitely, so the ceiling reaped nothing and a permanently-dead endpoint kept costing one
+ * send per fan-out until the 180-day cleanup job. It reads as correct because the CTE's own
+ * `SELECT` does return the id — only the DELETE's view of the table is stale. Do not "simplify"
+ * this back into one statement.
+ */
 async function recordFailure(id: number, userId: number) {
-  await mainDbWrite().cancellableQuery(
-    `WITH bumped AS (
-       UPDATE "PushSubscription" SET "failureCount" = "failureCount" + 1
-       WHERE id = $1 AND "userId" = $3
-       RETURNING id, "failureCount"
-     )
-     DELETE FROM "PushSubscription"
-     WHERE id IN (SELECT id FROM bumped WHERE "failureCount" >= $2)`,
-    [id, MAX_CONSECUTIVE_FAILURES, userId]
+  const bumped = await runWrite<{ failureCount: number }>(
+    `UPDATE "PushSubscription" SET "failureCount" = "failureCount" + 1
+     WHERE id = $1 AND "userId" = $2
+     RETURNING "failureCount"`,
+    [id, userId]
+  );
+  // No row ⇒ reassigned or already deleted between the send and now; nothing of ours to reap.
+  const failureCount = bumped[0]?.failureCount;
+  if (failureCount === undefined || failureCount < MAX_CONSECUTIVE_FAILURES) return;
+  await runWrite(
+    `DELETE FROM "PushSubscription" WHERE id = $1 AND "userId" = $2 AND "failureCount" >= $3`,
+    [id, userId, MAX_CONSECUTIVE_FAILURES]
   );
 }
 
