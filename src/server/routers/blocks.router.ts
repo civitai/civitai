@@ -7051,9 +7051,12 @@ export const blocksRouter = router({
    * a single `updateBlockUserSettings({ blockToken })` call — that turns the guard red.
    */
   updateUserSettings: publicProcedure
-    // Block-JWT-authed (no session for dev:live) — the App-Blocks flag is evaluated
-    // against the TOKEN subject inside the shared body, not by the `enforceAppBlocksFlag`
-    // middleware, whose `ctx.user` is undefined on every block-token transport (#5087).
+    // Block-JWT-authed — this is a `publicProcedure` and dev:live carries no session, so
+    // its ctx has no user to evaluate a flag against. The App-Blocks flag is therefore
+    // evaluated against the TOKEN SUBJECT inside the shared body rather than by the
+    // `enforceAppBlocksFlag` middleware. Reason stated in full on that body; note it is
+    // NOT the general claim "ctx.user is undefined on a block-token transport", which
+    // #5087 records as refuted by `blockFliptUser`.
     .input(
       z.object({
         blockToken: z.string().min(1),

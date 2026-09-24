@@ -66,10 +66,28 @@ import type { SessionUser } from '~/types/session';
  * The settings key the checkpoint override is stored under, inside the
  * `block_user_settings.settings` JSON blob.
  *
- * 🔴 NAMED ONCE, HERE. `resolveBlockCheckpoint` (`checkpoint.service.ts`) reads this exact
- * key back at submit time; the publisher's parallel key is the DIFFERENT
- * `default_checkpoint_version_id`. A writer that spelled it any other way would persist a
- * row that resolves as "no override" forever — a silent no-op, not an error.
+ * The hazard it guards: a writer that spelled this key any other way would persist a row
+ * that resolves as "no override" FOREVER — a silent no-op, not an error. The publisher's
+ * parallel key is the DIFFERENT `default_checkpoint_version_id`, so the two are one
+ * plausible typo apart.
+ *
+ * 🔴 THIS IS **NOT** THE ONLY SPELLING OF THE KEY, AND SAYING OTHERWISE WOULD BE WORSE THAN
+ * SAYING NOTHING. An earlier version of this docblock claimed "NAMED ONCE, HERE"; that was
+ * false when written, and a comment that reads as consolidation is what stops the next
+ * person checking. The key is open-coded in production at three sites, none of which
+ * imports this constant:
+ *
+ *   - `IframeHost.tsx` — the BRIDGE writer, `settings: { checkpoint_version_id: versionId }`.
+ *     A client component: importing this module would drag the server graph into the browser
+ *     bundle, so the hand-spelling stays.
+ *   - `checkpoint.service.ts` — `resolveBlockCheckpoint`, the reader at submit time.
+ *   - `block-registry.service.ts` — a SECOND reader, near-duplicating the one above.
+ *
+ * Consolidating them is a real cleanup and is NOT done here (the client-component import is
+ * the blocker for one of the three, and the duplicated resolver is its own question). What
+ * IS done: `user-settings.keying.test.ts` asserts all three spellings against this constant,
+ * so a rename that misses one fails a test rather than silently voiding every stored
+ * override. Read that guard before changing this value.
  */
 export const VIEWER_CHECKPOINT_SETTINGS_KEY = 'checkpoint_version_id';
 
@@ -124,9 +142,24 @@ export async function updateBlockUserSettings(opts: {
  *      backing app's `approved` status) — run by the CALLER, see the note above;
  *   2. a NON-ANONYMOUS subject — anon is refused `UNAUTHORIZED`, because the write's own
  *      primary key needs a `user_id` and there is no row to key on;
- *   3. the `app-blocks-enabled` audience, evaluated against the TOKEN SUBJECT
- *      (`assertAppBlocksEnabledForTokenUser`) — NOT `enforceAppBlocksFlag`, which reads
- *      `ctx.user` and is `undefined` on every block-token transport (#5087);
+ *      3. the `app-blocks-enabled` audience, evaluated against the TOKEN SUBJECT
+ *      (`assertAppBlocksEnabledForTokenUser`) — NOT `enforceAppBlocksFlag`.
+ *
+ *      ⚠ THE REASON, STATED PRECISELY, BECAUSE THE SHORT VERSION IS CONTESTED. The short
+ *      version — "`ctx.user` is undefined on a block-token transport" — is what #5085's
+ *      body said, and #5087 explicitly records it as REFUTED: `blockFliptUser`
+ *      (`block-workflow-rest.ts:154`) hydrates exactly such a user from a verified block
+ *      token on a REST transport, so "a REST transport cannot have a ctx.user" is simply
+ *      not true as a general claim. Do not repeat it.
+ *
+ *      What IS true here, and is the actual reason: `enforceAppBlocksFlag` is a tRPC
+ *      MIDDLEWARE, and neither caller is in a position to use it — the REST route mints no
+ *      tRPC caller at all, so there is no ctx to hydrate, and the bridge proc is a
+ *      `publicProcedure` whose ctx carries no session (dev:live has none). The gate must
+ *      therefore bind to the token subject on both paths, which is what
+ *      `assertAppBlocksEnabledForTokenUser` does. That is also the conclusion #5087
+ *      reaches for the five storage procedures — the outcome is agreed; only the
+ *      justification above was wrong;
  *   4. `assertViewerIsAppDeveloper`, the app-AUTHORING capability — see the note below,
  *      which is the one semantic here a reader will not expect;
  *   5. a token ctx carrying an integer `modelId` and a non-empty `slotId`;

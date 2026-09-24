@@ -354,11 +354,16 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // SET_USER_CHECKPOINT bridge message. One new STATIC segment; `set` was
       // already in the vocabulary, earned by `app-storage/set.ts`. Pinned for the
       // OVER-templating reason this file's docblock names: without it
-      // `normalizeEndpoint` yields `/api/v1/blocks/:seg/set`, which does not merely
-      // lose the name — it COLLIDES with `app-storage/set.ts` under the same
-      // template, so the `topEndpoints` rollup would sum a checkpoint write and a
-      // storage write into one row and the Activity panel would have no value to
-      // match its label arm on.
+      // `normalizeEndpoint` yields `/api/v1/blocks/:seg/set`, so the route loses its
+      // name in the `topEndpoints` rollup and `AppActivityPanel`'s label arm — an
+      // exact `===` on the literal path — has no value to match, leaving the row to
+      // render the raw `(any-token)` scope sentinel.
+      //
+      // ⚠ RETRACTED: an earlier version of this comment claimed the templated form
+      // COLLIDES with `app-storage/set.ts`. It does not — `'app-storage'` is itself
+      // a pinned segment (above), so that route normalises to its own literal path
+      // and never to `:seg/set`. The entry is still required, for the naming reason
+      // above; the collision was never the reason.
       'user-checkpoint',
       'v1',
       'vote',

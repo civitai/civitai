@@ -1,5 +1,9 @@
+import { readFileSync } from 'fs';
+import { join, resolve } from 'path';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const REPO_ROOT = resolve(__dirname, '../../../../..');
 
 /**
  * PER-VIEWER CHECKPOINT OVERRIDE — THE KEYING, PINNED.
@@ -219,13 +223,60 @@ describe('the checkpoint-override write is keyed on the VERIFIED TOKEN, not the 
     });
   });
 
-  it('the settings FIELD NAME is the one resolveBlockCheckpoint reads back', () => {
-    // A literal, not a reference to the constant: a mutant that renamed the constant would
-    // otherwise rename this expectation with it and survive. `checkpoint_version_id` is the
-    // string `resolveBlockCheckpoint` destructures, and the publisher's parallel key
-    // (`default_checkpoint_version_id`) is deliberately NOT it.
+  it('the settings FIELD NAME is the one EVERY reader actually destructures', () => {
+    // 🔴 THIS GUARD PINS A RELATIONSHIP, AND ITS FIRST VERSION DID NOT. That version asserted
+    // only `VIEWER_CHECKPOINT_SETTINGS_KEY === 'checkpoint_version_id'` — two expectations on
+    // the constant, touching NEITHER reader. Its NAME claimed a relationship while its BODY
+    // inspected one side, so it could not fail for the drift it was named after: rename the
+    // key at a reader and this test, the service and all 32 cases stay green while every
+    // stored override silently stops resolving. Caught by the round-0 audit of #5093.
+    //
+    // 🔴 AND THE KEY IS NOT "NAMED ONCE": it is open-coded in production at THREE sites, none
+    // of which imports the constant. Two of them are READERS — and the fact that there are
+    // two at all is worth seeing: `resolveBlockCheckpoint` has a near-duplicate in
+    // `block-registry.service.ts`. Both are asserted, so a rename that misses either fails
+    // here rather than in production.
+    //
+    // Asserted by READING THE SOURCE rather than importing it: these modules pull in the
+    // Prisma client and the Redis client at import time, which a unit test must not do. It is
+    // a text check and therefore weaker than a call — but it is strictly stronger than the
+    // constant-only version it replaces, and it fails in the direction that matters.
+    const readers = [
+      'src/server/services/blocks/checkpoint.service.ts',
+      'src/server/services/block-registry.service.ts',
+    ];
+    for (const rel of readers) {
+      const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
+      // POSITIVE CONTROL: the file must contain the viewer-override read at all, so a moved
+      // or renamed reader fails LOUDLY here instead of leaving a vacuous zero-match pass.
+      expect(src, `${rel} must still read a viewer override`).toContain(
+        `{ ${VIEWER_CHECKPOINT_SETTINGS_KEY}?: unknown }`
+      );
+      expect(
+        src.includes(`viewerRaw.${VIEWER_CHECKPOINT_SETTINGS_KEY}`),
+        `${rel} must destructure the viewer key as ${VIEWER_CHECKPOINT_SETTINGS_KEY}`
+      ).toBe(true);
+    }
+
+    // The literal, spelled out: a mutant that renamed the constant would otherwise rename
+    // every expectation above with it and survive.
     expect(VIEWER_CHECKPOINT_SETTINGS_KEY).toBe('checkpoint_version_id');
+    // The publisher's parallel key is deliberately NOT it — writing an override under
+    // `default_checkpoint_version_id` would resolve as "no override" forever.
     expect(VIEWER_CHECKPOINT_SETTINGS_KEY).not.toBe('default_checkpoint_version_id');
+  });
+
+  it('the BRIDGE writer spells the key the same way the REST writer does', () => {
+    // `IframeHost.tsx` builds `{ checkpoint_version_id: versionId }` by hand rather than
+    // importing the constant (it is a client component; importing a server service would drag
+    // the server graph into the browser bundle). That hand-spelling is the one place the two
+    // transports could silently disagree about WHICH FIELD they write, which is the same class
+    // of divergence the shared body exists to prevent — so it is pinned rather than trusted.
+    const src = readFileSync(
+      join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx'),
+      'utf8'
+    );
+    expect(src).toContain(`settings: { ${VIEWER_CHECKPOINT_SETTINGS_KEY}: versionId }`);
   });
 });
 

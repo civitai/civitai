@@ -1417,9 +1417,17 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // identifying is in the path: the install and the viewer both come from the
   // JWT, and the only body field is a bounded integer — so there is no `:seg`
   // position on this surface to lose. Without this entry the audit row records
-  // `/api/v1/blocks/:seg/set`, which collides with the app-storage `set` route
-  // in the `topEndpoints` rollup and leaves the Activity panel with nothing to
-  // match on.
+  // `/api/v1/blocks/:seg/set`, which loses the route's name in the
+  // `topEndpoints` rollup and leaves `AppActivityPanel`'s label arm — an exact
+  // `===` on the literal path — with nothing to match, so the row renders the
+  // raw `(any-token)` scope sentinel to the viewer.
+  //
+  // ⚠ An earlier version of this comment said the templated form COLLIDES with
+  // `app-storage/set.ts`. That was FALSE and is retracted: `'app-storage'` is
+  // itself in this set (above), so that route normalises to the literal
+  // `/api/v1/blocks/app-storage/set` and never to `:seg/set`. There is no other
+  // unlisted segment to collide with either. The entry is still required — for
+  // the naming reason above — but not for that reason.
   'user-checkpoint',
   'vote',
   'withdraw',
