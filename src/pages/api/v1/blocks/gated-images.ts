@@ -34,6 +34,21 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  * 🔴 WHY THIS ROUTE EXISTS WHEN `/api/v1/blocks/images?ids=` ALREADY DOES, AND
  * WHY THAT ROUTE CANNOT BE USED INSTEAD. READ THIS BEFORE PROPOSING A MERGE.
  *
+ * 🔴 THE DECISIVE FACT IS THAT THE TWO CORPORA ARE DISJOINT — not that the two
+ * routes DISCLOSE differently. `blocks/images` serves `runImageSearch`
+ * (`src/pages/api/v1/blocks/images.ts:218`) over the Meilisearch images index,
+ * whose source query hard-filters `i."postId" IS NOT NULL`
+ * (`src/server/search-index/images.search-index.ts:134`, and again at `:282` for
+ * the incremental update pass). THIS route's corpus is exactly the complement —
+ * `AND i."postId" IS NULL` (`block-gated-images.service.ts:184`), further scoped
+ * to `blockPublishedAppId = claims.appId`. Complementary predicates: an image
+ * cannot satisfy both. So `blocks/images?ids=` returns an EMPTY ARRAY for every
+ * id in this route's corpus — at any ceiling, for any viewer, forever. "Use
+ * `blocks/images` and accept losing the hidden tile" is therefore not a trade:
+ * there is no hidden tile, and no visible one either. Everything below is why the
+ * two routes ANSWER differently; THIS is why one cannot substitute for the other
+ * at all.
+ *
  * `blocks/images` is a catalog SEARCH route sharing `runImageSearch` with the
  * public `/api/v1/images`. Its `?ids=` selector is a FILTER over that search, and
  * an id the viewer's ceiling excludes is reported BY OMISSION — its own docblock:
@@ -61,6 +76,15 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *   OMISSION covers every case where EXISTENCE would be the disclosed bit — the
  *   id is not this app's, does not exist, or belongs to a user/tag this viewer
  *   has blocked. Those ids simply are not in the response array.
+ *
+ *   HONEST BOUND ON THAT ABSOLUTE: because the viewer's blocked-users and
+ *   blocked-tags sets are excluded AT THE QUERY LEVEL rather than classified,
+ *   omission of an id the app KNOWS is its own means "deleted" OR "this viewer
+ *   blocked the author or one of its tags" — so an app publishing on behalf of
+ *   many users can probe viewer B's block list. Pre-existing and inherited
+ *   verbatim from the bridge — `block-gated-images.{logic,service}.ts` are
+ *   UNCHANGED by the PR that added this route (byte-identical to its merge base
+ *   and to `main` at the time of writing), so this route introduces no new bit.
  *
  *   `status: 'hidden'` covers the case where the caller already knows the row
  *   exists because it published it, and the only open question is whether THIS
