@@ -9,7 +9,6 @@ export type ReplyThread = {
   depth: number;
   /** What the viewer can actually be shown — excludes ToS-flagged replies for non-moderators. */
   commentCount: number;
-  hiddenCount: number;
   comments: CommentV2Model[];
   nextCursor?: number;
 };
@@ -120,14 +119,12 @@ function compareBySort(sort: ThreadSort) {
 export function groupReplyThreads({
   threads,
   comments,
-  hiddenCounts,
   commentCounts,
   sort,
   limit,
 }: {
   threads: ReplyThreadRow[];
   comments: CommentV2Model[];
-  hiddenCounts: Record<number, number>;
   commentCounts: Record<number, number>;
   sort: ThreadSort;
   limit: number;
@@ -155,7 +152,6 @@ export function groupReplyThreads({
       locked: thread.locked,
       depth: thread.depth,
       commentCount: commentCounts[thread.id] ?? 0,
-      hiddenCount: hiddenCounts[thread.id] ?? 0,
       comments: [...pinned, ...page],
       nextCursor: page.length === limit ? page[page.length - 1].id : undefined,
     };

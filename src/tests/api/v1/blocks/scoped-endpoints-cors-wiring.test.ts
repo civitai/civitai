@@ -93,6 +93,14 @@ vi.mock('~/server/services/buzz.service', () => ({
   getDailyCompensationRewardByUser: vi.fn(),
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({ handleEndpointError: vi.fn() }));
+// The four workflow routes' delegation seam. Stubbed so importing them does not
+// drag the tRPC caller factory / blocks.router graph in at module eval — the same
+// reason every other heavy import here is stubbed. Never invoked (this file only
+// captures the options literal).
+vi.mock('~/server/services/blocks/block-workflow-rest', () => ({
+  blockWorkflowBearer: vi.fn(),
+  blockWorkflowCaller: vi.fn(),
+}));
 vi.mock('~/server/routers/apps-shared.router', async () => {
   // ASYNC factory purely so the value schema below can be a REAL zod object.
   // `append.ts` / `update.ts` do `z.object({ value: sharedValueInput })` at
@@ -256,6 +264,69 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // loud. (me.ts's own header says "CORS: handled in withBlockScope from
   // BLOCK_ALLOWED_ORIGINS", which is consistent with omission rather than intent.)
   { module: '~/pages/api/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: false },
+  // The WORKFLOW surface. Same opaque-origin argument as the shared writes, and it
+  // bites hardest of all here: a block whose catalog renders but whose Generate
+  // button 405s on the preflight is the most confusing failure this platform can
+  // produce, and it would be diagnosed anywhere except in a missing CORS opt-in.
+  // The scope half of each entry is the authorization claim — all four take
+  // `ai:write:budgeted`, INCLUDING the two reads, because that is the scope their
+  // bridge twins assert, and a route that silently downgraded to something weaker
+  // would still pass a CORS-only check.
+  {
+    module: '~/pages/api/v1/blocks/workflows/submit',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/estimate',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/poll',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/cancel',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  // The five PER-VIEWER app-storage routes. Same CORS reasoning as every entry
+  // above — an unverified block direct-fetches these from an opaque origin.
+  //
+  // The scope half is the load-bearing claim here, and it is a READ/WRITE SPLIT
+  // rather than one scope for the surface: `get`/`list`/`quota` assert
+  // `apps:storage:read`, `set`/`delete` assert `apps:storage:write`. A route that
+  // silently took the read scope for a write would still pass a CORS-only check,
+  // and would let a block approved for read-only access mutate the viewer's
+  // store — which is precisely the ambient-capability failure (audit A5 /
+  // design-gaps H4) that made these two scopes exist in the first place.
+  {
+    module: '~/pages/api/v1/blocks/app-storage/get',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/set',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/delete',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/list',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/quota',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
 ];
 
 /**

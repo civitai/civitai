@@ -65,7 +65,7 @@ function arrange({ alreadyInContest }: { alreadyInContest: boolean }) {
     alreadyInContest ? [{ collectionId: CLOSED_CONTEST_ID, tagId: CONTEST_TAG_ID }] : []
   );
   mockDbRead.collectionItem.count.mockResolvedValue(0);
-  mockDbRead.challenge.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.challenge.findFirst.mockResolvedValue(null);
   mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
   mockDbRead.model.findMany.mockResolvedValue([{ id: MODEL_ID, userId: USER_ID }]);
   mockDbRead.modelVersion.findMany.mockResolvedValue([]);

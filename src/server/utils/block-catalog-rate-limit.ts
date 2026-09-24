@@ -201,24 +201,58 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again. ⚠️ NO HOLD
-//     REACHES THE SERVER TODAY, BUT THE REASON IS NARROWER THAN AN EARLIER REVISION OF
-//     THIS COMMENT CLAIMED, and the difference matters to anyone sizing for GA.
+//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again.
 //
-//     What is MEASURED here: neither host passes `waitSeconds` — zero occurrences of the
-//     identifier in `components/AppBlocks/` — and `@civitai/app-sdk`'s `POLL_WORKFLOW`
-//     payload type (0.14.0, the version this repo installs) carries `requestId` and
-//     `workflowId` only. The hosts are the choke point, so the server sees no hold.
+//     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
+//     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
+//     │
+//     │  THE BARRIER IS GONE. NOTHING IS THROUGH IT YET.
+//     │
+//     │  Gone: `/api/v1/blocks/workflows/poll` (#5068) takes `waitSeconds` off the wire
+//     │  and forwards it with no host in the path, so the host choke point does not
+//     │  apply to that transport.
+//     │  Not through: no shipped client calls that route yet, and over the BRIDGE the
+//     │  hosts still drop the field — so no hold reaches the server today.
+//     │  Therefore: the ~300-concurrent-hold figure below is what the FIRST REST
+//     │  adopter produces at the 15 s default, and the concurrency cap it calls for is
+//     │  still not implemented. Size for it; do not claim it is already happening.
+//     │
+//     │  ⚠️ THIS BLOCK EXISTS BECAUSE THE STATUS WAS PREVIOUSLY RESTATED SIX TIMES IN
+//     │  THIS COMMENT, IN SIX WORDINGS. Two successive rounds each corrected one copy
+//     │  and left the others, and the copies then contradicted each other ten lines
+//     │  apart ("NO HOLD REACHES THE SERVER TODAY" beside "IS NO LONGER TRUE", and
+//     │  "LIVE, not prospective" beside "nothing is holding today"). Both retracted.
+//     │  A status with six homes has six edit sites and no greppable anchor, which is
+//     │  how it re-arms. If you are about to restate it below, don't — amend this box.
+//     └─
 //
-//     What that earlier revision got WRONG: it generalised from the app-sdk payload to
-//     "no shipped client takes that path". The round-0 audit reports that
+//     EVIDENCE — for the BRIDGE arm: neither host passes `waitSeconds` (zero occurrences
+//     of the identifier in `components/AppBlocks/`), and `@civitai/app-sdk`'s
+//     `POLL_WORKFLOW` payload type (0.14.0, the version this repo installs) carries
+//     `requestId` and `workflowId` only. The hosts are the choke point.
+//
+//     EVIDENCE — for the REST arm: `@civitai/blocks-react`'s `watch` defaults
+//     `waitSeconds` to 15 (`DEFAULT_WATCH_WAIT_SECONDS`, v0.57.1), and a whole-tree
+//     sweep of `civitai-app-starters` finds no reference to `/api/v1/blocks/workflows/*`
+//     outside prose.
+//
+//     ⚠️ THIS CANNOT GO RED ON ITS OWN — the evidence lives in another repo, so nothing
+//     in this tree asserts on it and the "not through it yet" half will go stale
+//     SILENTLY the day a block adopts the route. Re-check it rather than trusting it.
+//
+//     An earlier revision also got this WRONG by generalising from the app-sdk payload
+//     to "no shipped client takes that path". The round-0 audit reports that
 //     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
 //     `watch` defaulting it to 15 — and the server already accepts the field. That
 //     package is not installed in this repo, so it is recorded here as the audit's
-//     finding rather than as something measured at this call site. If it holds, blocks
-//     are ALREADY asking and the hosts are dropping it: the ~300-concurrent-hold figure
-//     below is one line in each host away, not a hypothetical a future block might
-//     reach. Size for it rather than against it.
+//     finding rather than as something measured at this call site. ✅ IT HOLDS, and this
+//     hedge is now RESOLVED rather than left standing beside the paragraph above that
+//     asserts it: `DEFAULT_WATCH_WAIT_SECONDS = 15` in
+//     `packages/civitai-blocks-react/src/hooks/useBuzzWorkflow.ts` (v0.57.1). So blocks
+//     ARE already asking and the bridge hosts ARE dropping it: over the BRIDGE the
+//     ~300-concurrent-hold figure below is one line in each host away. Over the REST
+//     twin the host is gone entirely and no line is needed — see the paragraph above
+//     for what that does and does not mean. Size for it rather than against it.
 //   - the pathological shape the resolver warns about — `setInterval(poll, 2000)` against
 //     a 15 s hold, stacking ~7 concurrent requests per workflow — fits at ~5 concurrent
 //     workflows for one viewer.
@@ -242,6 +276,18 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // structurally empty for this path. `pollWorkflow` writes NO `block_scope_invocations`
 // row (that audit is written by the REST wrapper; the bridge has no equivalent), so the
 // per-instance poll distribution "that should replace this" would never accumulate.
+//
+// 🔴 #5068 CHANGES THE SHAPE OF THAT GAP RATHER THAN CLOSING IT, and the new problem is
+// the opposite one. The REST twin IS wrapped, so `/workflows/poll` writes one
+// `dbWrite.blockScopeInvocation.create` PER REQUEST — unbatched, unsampled — turning a
+// zero-write path into a primary-DB write stream bounded only by the 1200/60s ceiling
+// above. For scale: the whole block REST surface was ~1,037 requests over 15 days across
+// 4 apps; one viewer polling at 0.5 Hz matches that in ~35 minutes. So the poll
+// distribution this comment wanted will now accumulate — at a cost nobody has sized, and
+// on the primary rather than on a counter. **Open decision, deliberately not taken in
+// #5068: whether poll should write an audit row at all.** Dropping it is cheap and is
+// also a security-relevant removal on a spend-adjacent surface, which is why it is not
+// being done as a performance tweak.
 // **What would create it: a counter on bridge calls and on limiter refusals, labelled by
 // procedure and bucket. Closing condition for revisiting this ceiling: that counter
 // exists and has recorded a full GA week.**

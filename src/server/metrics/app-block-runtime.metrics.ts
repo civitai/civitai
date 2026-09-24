@@ -93,6 +93,58 @@ export type AppBlockEndpoint =
   | 'shared_storage_unvote'
   | 'shared_storage_withdraw'
   | 'shared_storage_report'
+  // The WORKFLOW surface (`/api/v1/blocks/workflows/{submit,estimate,poll,cancel}`)
+  // — the v1 replacement for the postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW
+  // bridge messages. FOUR labels, and the split is not stylistic: these are the
+  // most different four workloads on this surface.
+  //
+  // `submit` is the only one that MOVES MONEY, and the only one whose latency
+  // includes a whatIf quote, several Redis reservations and an orchestrator
+  // submit. `estimate` is the whatIf alone — no spend, no queue, and the call a
+  // person makes repeatedly while adjusting parameters, so it outnumbers the
+  // others by an order of magnitude. `poll` is a block's watch loop: the
+  // highest-RATE label here by far AND the only one that can deliberately be held
+  // open for seconds (the `waitSeconds` long poll), so its duration histogram
+  // means something entirely different from the others'. `cancel` is GET + PATCH
+  // + GET against the orchestrator — the rarest and the heaviest per call.
+  //
+  // Merging any pair makes the RED series unreadable in the direction an operator
+  // actually reads it: a long-poll `poll` sharing a series with `submit` puts a
+  // deliberate multi-second hold into the p95 of the SPEND path, and a spend
+  // failure disappears into the volume of estimates. They also charge DIFFERENT
+  // rate-limit buckets — `poll` its own `:poll:` bucket, `estimate`/`cancel` the
+  // catalog bucket, `submit` none at all (bounded by the per-app velocity cap
+  // instead) — which is the other dimension these series get read for.
+  | 'workflows_submit'
+  | 'workflows_estimate'
+  | 'workflows_poll'
+  | 'workflows_cancel'
+  // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
+  // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
+  // bridge messages, and the per-viewer counterpart to the `shared_storage_*`
+  // labels above. FIVE labels, split on the same grounds those were: these are
+  // not one workload.
+  //
+  // `get` and `delete` are single-row primary-key operations against
+  // (block_instance, user, key) — constant time, and the only two here that
+  // structurally cannot be slow. `list` is the paged prefix scan and the only one
+  // that paginates, so it is the only one whose duration grows with how much a
+  // viewer has stored. `set` is the heaviest by a wide margin AND the only one
+  // that can refuse for a reason other than authorization: it runs a pre-flight
+  // quota read, a size-prediction round trip and then the insert.
+  // `quota` is a counter read that touches no `kv` row at all.
+  //
+  // Merging them would make the RED series unreadable in the direction an
+  // operator reads it: a prefix scan over a large keyspace sharing a series with
+  // a point read leaves the p95 meaningless, and — the one that actually matters
+  // — a rising `set` error rate is how an app hitting its 50MB app ceiling or a
+  // viewer hitting their 2MB sub-budget becomes visible, and that signal would
+  // vanish into the volume of reads.
+  | 'app_storage_get'
+  | 'app_storage_set'
+  | 'app_storage_delete'
+  | 'app_storage_list'
+  | 'app_storage_quota'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that

@@ -79,7 +79,7 @@ import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
-import { ReadyAlert } from './ResourceAlerts';
+import { DownloadReadyAlert } from './ResourceAlerts';
 import { resolveBoostSubmitFields } from './hooks/usePreBoost';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { SourceMetadata } from '~/store/source-metadata.store';
@@ -669,7 +669,7 @@ function PriorityAlertSpace({
       <QueueSnackbar right={snackbarRight} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
-      <ReadyAlert />
+      <DownloadWarning />
       {priorityAlert}
     </>
   );
@@ -1687,4 +1687,8 @@ export function MetadataExtractionFooter() {
       </div>
     </div>
   );
+}
+
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }

@@ -39,12 +39,13 @@ import { describe, expect, it } from 'vitest';
  *
  * ## 🔴 THE NAME IS AMBIGUOUS AND MATCHING ON IT IS WRONG
  *
- * `apps.router.ts` declares its OWN module-private `assertAppBlocksEnabledForTokenUser`,
+ * `services/apps/app-storage.service.ts` declares its OWN module-private
+ * `assertAppBlocksEnabledForTokenUser`,
  * taking `(userId, op)` and incrementing `appStorageOpsCounter` on both refusals. It is a
  * deliberate, documented divergence — NOT a consumer of the shared gate. A ledger that
  * grepped the bare name would count it, then "reconcile" two functions that are separate on
  * purpose. So consumption is resolved by IMPORT of the service module, never by name, and
- * `apps.router.ts` is asserted as an explicit NEGATIVE control below: if it ever starts
+ * that module is asserted as an explicit NEGATIVE control below: if it ever starts
  * matching, the discriminator has broken and every number here is suspect.
  */
 
@@ -61,7 +62,10 @@ const DEFINING_MODULE = 'src/server/services/blocks/block-token-access.service.t
  * the positive control that import-resolution really is discriminating, rather than this
  * file silently matching nothing at all.
  */
-const NAME_COLLISION_MODULE = 'src/server/routers/apps.router.ts';
+// (It lived in `src/server/routers/apps.router.ts` until the per-viewer storage
+// implementation moved out so the `/api/v1/blocks/app-storage/*` routes could import it
+// without module-evaluating `appsRouter`. Same private function, new file.)
+const NAME_COLLISION_MODULE = 'src/server/services/apps/app-storage.service.ts';
 
 /**
  * Every PRODUCTION consumer of the SHARED gate, with its call count and why it is allowed
@@ -143,7 +147,7 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     expect(actual).toEqual(expected);
   });
 
-  it('NEGATIVE CONTROL: the same-named private function in apps.router.ts is NOT counted', () => {
+  it('NEGATIVE CONTROL: the same-named private function in app-storage.service.ts is NOT counted', () => {
     // It declares its own `(userId, op)` variant and imports nothing from the service. If
     // this ever flips, the import discriminator has broken and both assertions above are
     // measuring the wrong population rather than passing honestly.

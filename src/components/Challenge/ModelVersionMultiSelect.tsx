@@ -86,6 +86,7 @@ export function ModelVersionMultiSelect({
         }
       },
       options: {
+        canGenerate: true,
         resources: [
           { type: ModelType.Checkpoint },
           { type: ModelType.LORA },

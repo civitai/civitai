@@ -362,7 +362,3 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     </Alert>
   );
 }
-
-export function ReadyAlert() {
-  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
-}

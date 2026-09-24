@@ -1,3 +1,5 @@
+import { readdirSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { humaniseScopeEndpoint, humaniseScopeInvocation } from '~/components/Apps/AppActivityPanel';
@@ -141,9 +143,16 @@ describe('scopeBucketLabel', () => {
 /**
  * 🔴 WHY THE ACTIVITY PANEL'S LABELLERS ARE NOT REUSED.
  *
- * `humaniseScopeInvocation` is the genuine near-duplicate — prefix-based, needs no
- * `detail`, already maps all four endpoint tokens — so it is what a reader will reach for.
+ * `humaniseScopeInvocation` is the genuine near-duplicate — endpoint-arm based and needs
+ * no `detail` — so it is what a reader will reach for. It maps FOUR of the FIVE synthetic
+ * tokens; `post:create` has no arm and returns the raw scope. See reason 3 in the source
+ * module's docblock for why that count is written as a count.
  * These assertions call the REAL functions so the reasoning is verified, not restated.
+ *
+ * ⚠ It gained three `/api/v1/blocks/workflows/*` arms in #5068, so it is no longer true
+ * that it has NO arm for a REST path — see the twin tests further down. The reasoning
+ * below is unaffected: the arms it gained are exact-match, not a general REST fallback,
+ * so an arbitrary REST path still falls through to the scope map.
  */
 describe('the Activity panel labellers cannot serve an aggregate card', () => {
   it('humaniseScopeInvocation is the wrong REGISTER for a count column', () => {
@@ -154,11 +163,217 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     expect(endpointBucketLabel('workflow:submit')).toBe('Generations');
   });
 
-  it('humaniseScopeInvocation has NO arm for a REST path, a large share of this card', () => {
+  // Title says "an UNMAPPED REST path": #5068 gave three exact `/blocks/workflows/*`
+  // paths their own arms, so the blanket claim this test used to make is no longer true.
+  // The probe below is deliberately a path with no arm, which is still the common case.
+  it('humaniseScopeInvocation has no arm for an UNMAPPED REST path, a large share of this card', () => {
     // Falls through to its scope→label map; with no meaningful scope that is a blank cell,
     // which is strictly worse than showing the path.
     expect(humaniseScopeInvocation('', '/api/v1/blocks/submissions')).toBe('');
     expect(endpointBucketLabel('/api/v1/blocks/submissions')).toBe('/api/v1/blocks/submissions');
+  });
+
+  /**
+   * 🔴 REGRESSION (#5068 round 1, F1). The REST workflow twins are wrapped with
+   * `requiredScope: 'ai:write:budgeted'`. Before the fix these three had no arm,
+   * so they fell past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and every row
+   * read 'Submit AI workflow' — false, on the viewer's own consent-and-spend
+   * surface, and ~30x per generation at the SDK's poll cadence.
+   *
+   * Red at the pre-change tree with `expected 'Submit AI workflow' to be
+   * 'Checked an AI workflow'`; green here.
+   *
+   * 🔴 THE ROUTE LIST IS READ OFF DISK, NOT HARDCODED, and that is the whole point.
+   * An earlier revision of this test looped over a literal `['poll','estimate','cancel']`
+   * and its docblock claimed the loop would "catch a fourth twin added later with no
+   * arm". It could not: the literal named exactly the three routes the positive
+   * assertions already pinned, so it was redundant and structurally blind to the case
+   * it advertised — a guard reading as coverage while providing none, which is worse
+   * than no guard because it stops anyone looking. Enumerating the directory is what
+   * makes the claim true: add `workflows/retry.ts` with no arm and this goes red.
+   */
+  it('every READ-shaped REST workflow twin on disk has its own label', () => {
+    const base = '/api/v1/blocks/workflows';
+    // Rooted at `__dirname`, not `process.cwd()` — matching the sibling drift guard.
+    // cwd depends on who spawned the runner; `__dirname` does not.
+    const dir = path.resolve(__dirname, '../../../..', 'src/pages/api/v1/blocks/workflows');
+    // 🔴 `/\.(t|j)sx?$/`, NOT `.ts` only. Next's `pageExtensions` is unset, so the
+    // default ['tsx','ts','jsx','js'] applies and a `.tsx` API route is a real,
+    // shipped shape here (`src/pages/api/v1/vault/*.tsx`). An earlier revision of
+    // this guard filtered `.ts` alone: MEASURED, a `workflows/retry.tsx` twin left
+    // it GREEN while the same file as `.ts` turned it red — i.e. the guard was
+    // narrower than the sentence above it, which is the exact defect this test
+    // exists to prevent. `.d.ts` and `.test.` are excluded because neither is a route.
+    //
+    // 🔴 RECURSES, because `readdirSync` is FLAT and a DIRECTORY entry carries no
+    // extension. `workflows/retry/index.ts` is a real Next route at
+    // `/api/v1/blocks/workflows/retry`, and a flat listing filtered it out — MEASURED
+    // GREEN with that twin present, i.e. the same class of blind spot as the `.ts`-only
+    // filter one revision earlier, on a different axis. The sibling guard this predicate
+    // comes from (`block-scope.normalize-endpoint.test.ts`) already recurses; not
+    // recursing was the divergence, not the recursion.
+    // 🔴 BUILDS THE FULL RELATIVE ROUTE PATH, not the directory's own name. An earlier
+    // revision returned the DIRECTORY NAME when its recursive call was non-empty, which
+    // swallowed every route nested under an already-labelled directory: MEASURED,
+    // `workflows/poll/history.ts` and `workflows/submit/retry.ts` both left the guard
+    // GREEN, and the `submit/` case was the worst — it collapsed to `submit`, which the
+    // loop below filters out, so the route was never checked at all. That is the same
+    // blind-spot class as the `.ts`-only filter and the flat listing before it, on a
+    // third axis. The sibling this predicate comes from builds the full relative path;
+    // copying half its shape is what left the gap each time.
+    // `__tests__` is excluded because both guards this is modelled on exclude it and a
+    // fixture there is not a route — without it, `workflows/__tests__/helpers.ts` turned
+    // the guard RED on a non-route.
+    const collect = (d: string, prefix = ''): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        if (e.isDirectory()) {
+          if (e.name === '__tests__') return [];
+          return collect(path.join(d, e.name), prefix ? `${prefix}/${e.name}` : e.name);
+        }
+        if (!/\.(t|j)sx?$/.test(e.name)) return [];
+        if (/\.test\.(t|j)sx?$/.test(e.name) || e.name.endsWith('.d.ts')) return [];
+        const stem = e.name.replace(/\.(t|j)sx?$/, '');
+        // `index` names the directory itself: `retry/index.ts` → `retry`.
+        const rel = stem === 'index' ? prefix : prefix ? `${prefix}/${stem}` : stem;
+        return rel ? [rel] : [];
+      });
+    const routes = collect(dir);
+
+    // Positive control: the enumeration actually found the routes. Without this a
+    // wrong `dir` yields an empty list and every assertion below passes vacuously.
+    expect(routes).toEqual(expect.arrayContaining(['submit', 'estimate', 'poll', 'cancel']));
+
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/poll`)).toBe(
+      'Checked an AI workflow'
+    );
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/estimate`)).toBe(
+      'Priced an AI workflow'
+    );
+    expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/cancel`)).toBe(
+      'Canceled an AI workflow'
+    );
+
+    // `submit` is the ONE route for which the label is true — see the next test.
+    for (const route of routes.filter((r) => r !== 'submit')) {
+      expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/${route}`)).not.toBe(
+        'Submit AI workflow'
+      );
+    }
+  });
+
+  /**
+   * The app-storage twin of the workflow guard above, enumerated off disk for the
+   * same reason: a hardcoded list would name exactly the routes the positive
+   * assertions already pin and would be structurally blind to a SIXTH route added
+   * later with no arm.
+   *
+   * 🔴 THE FAILURE THIS PINS IS DIFFERENT FROM THE WORKFLOW ONE. There, a missing
+   * arm produced a WRONG label ('Submit AI workflow' on a poll). Here a missing
+   * arm produces NO label: `apps:storage:write` is in neither `READ_SCOPE_LABELS`
+   * nor `SCOPE_ACTION_LABELS`, so `humaniseScopeInvocation` falls all the way
+   * through its ladder and renders the RAW SCOPE STRING `apps:storage:write` into
+   * the viewer's activity feed. Watched RED at `origin/main` + the routes without
+   * the two `AppActivityPanel` arms; green with them.
+   */
+  it('every app-storage REST route on disk renders a real label, never a raw scope', () => {
+    const base = '/api/v1/blocks/app-storage';
+    // Same predicate as the workflow guard above — rooted at `__dirname`,
+    // recursive, `/\.(t|j)sx?$/`, `__tests__` excluded. See its docblock for why
+    // each of those three is load-bearing; copying half its shape is what left a
+    // gap there three revisions running.
+    const dir = path.resolve(__dirname, '../../../..', 'src/pages/api/v1/blocks/app-storage');
+    const collect = (d: string, prefix = ''): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        if (e.isDirectory()) {
+          if (e.name === '__tests__') return [];
+          return collect(path.join(d, e.name), prefix ? `${prefix}/${e.name}` : e.name);
+        }
+        if (!/\.(t|j)sx?$/.test(e.name)) return [];
+        if (/\.test\.(t|j)sx?$/.test(e.name) || e.name.endsWith('.d.ts')) return [];
+        const stem = e.name.replace(/\.(t|j)sx?$/, '');
+        const rel = stem === 'index' ? prefix : prefix ? `${prefix}/${stem}` : stem;
+        return rel ? [rel] : [];
+      });
+    const routes = collect(dir);
+
+    // Positive control: the enumeration actually found the routes. Without this a
+    // wrong `dir` yields an empty list and every assertion below passes vacuously.
+    expect(routes).toEqual(expect.arrayContaining(['get', 'set', 'delete', 'list', 'quota']));
+
+    // The WRITE pair carries `apps:storage:write`, which has no map entry — so
+    // without an arm each of these IS the raw scope string.
+    const WRITE_ROUTES = new Set(['set', 'delete']);
+    for (const route of routes) {
+      const scope = WRITE_ROUTES.has(route) ? 'apps:storage:write' : 'apps:storage:read';
+      const label = humaniseScopeInvocation(scope, `${base}/${route}`);
+      expect(label, `${route} renders its own scope string as a label`).not.toBe(scope);
+      expect(label.startsWith('apps:storage'), `${route} leaked a scope-shaped label`).toBe(false);
+    }
+
+    // The exact labels, so this is a contract and not merely "something non-empty".
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/set`)).toBe(
+      'Wrote app-local storage (API)'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/delete`)).toBe(
+      'Deleted app-local storage (API)'
+    );
+    // The three READS need NO arm — `apps:storage:read` IS in READ_SCOPE_LABELS,
+    // and that label is true for all three. Pinning it here is what stops someone
+    // "completing the set" with three redundant arms, and what makes the absence
+    // of those arms a decision rather than an omission.
+    for (const route of ['get', 'list', 'quota']) {
+      expect(humaniseScopeInvocation('apps:storage:read', `${base}/${route}`)).toBe(
+        'Read your app storage'
+      );
+    }
+
+    // 🔴 The two WRITE labels must NOT equal the labels the shared body's OWN
+    // activity row renders ('Wrote app-local storage' / 'Deleted app-local
+    // storage'). A REST write emits BOTH rows, so identical text would render one
+    // action as two identical entries — the specific noise the '(API)' suffix
+    // exists to prevent. This is the assertion that fails if someone "tidies" the
+    // suffix away.
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/set`)).not.toBe(
+      humaniseScopeInvocation('apps:storage:write', 'storage:set')
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/delete`)).not.toBe(
+      humaniseScopeInvocation('apps:storage:write', 'storage:delete')
+    );
+  });
+
+  it('but /workflows/submit still DOES — that label is true for that one route', () => {
+    // Pins the deliberate asymmetry so a later reader does not "complete the set"
+    // by adding a submit arm and silently relabel a real submission.
+    expect(humaniseScopeInvocation('ai:write:budgeted', '/api/v1/blocks/workflows/submit')).toBe(
+      'Submit AI workflow'
+    );
+  });
+
+  /**
+   * 🔴 PINS THE FOUR-OF-FIVE COUNT the docblock above and reason 3 in the source module
+   * both assert. Until now nothing did: the docblock said "These assertions call the REAL
+   * functions so the reasoning is verified, not restated" while `post:create` appeared in
+   * no assertion in either label file — so adding a `post:create` arm (plausible, since
+   * reason 3 reads like a TODO) would have falsified two comments with nothing going red.
+   * A sixth TOKEN is already guarded by `analytics-bucket-labels.drift.test.ts`; the ARM
+   * COUNT was the unguarded half.
+   */
+  it('post:create is the FIFTH synthetic token and has NO arm — it returns the raw scope', () => {
+    // `posts:write:self` is in neither label map, so the scope falls all the way through.
+    expect(humaniseScopeInvocation('posts:write:self', 'post:create')).toBe('posts:write:self');
+    // Contrast: the four that DO have arms, so this pins a count and not just one miss.
+    expect(humaniseScopeInvocation('ai:write:budgeted', 'workflow:submit')).toBe(
+      'Generated an image'
+    );
+    expect(humaniseScopeInvocation('block:settings:write', 'user-settings:write')).toBe(
+      'Saved your block settings'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', 'storage:set')).toBe(
+      'Wrote app-local storage'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', 'storage:delete')).toBe(
+      'Deleted app-local storage'
+    );
   });
 
   it('humaniseScopeEndpoint resolves a per-ROW id an aggregate bucket does not have', () => {

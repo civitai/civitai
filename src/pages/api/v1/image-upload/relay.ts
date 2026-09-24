@@ -8,6 +8,7 @@ import {
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 
 // FALLBACK upload path, for clients that cannot reach the storage host directly.
@@ -338,6 +339,21 @@ async function runRelay(
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
       res.status(200).json({ id: key });
+      // One event per relayed upload. The usage counter (below) says THAT relays
+      // happen; this says WHO — the only signal that can size the population of
+      // clients that cannot reach the storage host directly (the 2026-09
+      // image-upload investigation had no per-user source for this). Contained: the
+      // bytes are already stored, so a telemetry failure must not fail the route.
+      try {
+        await logToAxiom({
+          name: 'image-upload-relayed',
+          userId,
+          bytes: body.length,
+          ...(contentType ? { contentType } : {}),
+        });
+      } catch {
+        /* contained — see above */
+      }
       // 🔴 The ONLY path that returns `success`, and it is AFTER the store write
       // resolved. A relay that answered 200 without the bytes landing would be the
       // corruption this route's other guards exist to prevent, so the counter must

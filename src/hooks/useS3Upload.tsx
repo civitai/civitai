@@ -5,13 +5,16 @@ import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider
 import type { UploadTypeUnion } from '~/server/common/enums';
 import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
-import type { UploadPartError } from '~/utils/upload-retry';
+import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  describePartFailure,
   getPartRetryDelay,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  shouldRelayOnPartFailure,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
+import { relayImageFallback } from '~/utils/upload-settlement';
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
@@ -218,7 +221,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       };
 
       // Prepare abort
-      const abortUpload = () =>
+      const abortUpload = (failure?: PartFailureReason) =>
         fetch(abortEndpoint, {
           method: 'POST',
           headers,
@@ -228,6 +231,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             type,
             uploadId,
             backend,
+            ...(failure ? { failure } : {}),
           }),
         });
 
@@ -291,17 +295,18 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
               const err: UploadPartError = {
                 status: xhr.status,
                 retryAfter: xhr.getResponseHeader('Retry-After'),
+                partNumber: i,
               };
               reject(err);
             }
           });
           xhr.addEventListener('error', () => {
             activeXhrs.delete(xhr);
-            reject({ status: null, networkError: true } as UploadPartError);
+            reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
           });
           xhr.addEventListener('abort', () => {
             activeXhrs.delete(xhr);
-            reject({ status: null, aborted: true } as UploadPartError);
+            reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
           });
           xhr.open('PUT', url);
           xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -356,9 +361,47 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       );
 
       if (fatalErrorRef.value) {
-        const status: TrackedFile['status'] = fatalErrorRef.value.aborted ? 'aborted' : 'error';
+        const fatal = fatalErrorRef.value;
+
+        // Relay fallback: a client whose network cannot reach the storage host at all
+        // (DNS, TLS, connection reset — the ERR_CONNECTION_RESET class behind the 2026-09
+        // image-upload ticket) re-sends the whole file through our own origin, the same
+        // rescue `useCFImageUpload` got in #4573. Gated by shouldRelayOnPartFailure: only
+        // network-layer failures, only image uploads on the image backend, only files
+        // that fit the relay's body cap. A relayed upload reports the RELAY-MINTED key —
+        // the fallback endpoint deliberately accepts no caller key, so the id this
+        // returns is not the one the multipart session was opened with.
+        if (
+          shouldRelayOnPartFailure(fatal, {
+            type,
+            backend,
+            fileSize: size,
+            signalAborted: abortController.signal.aborted,
+          })
+        ) {
+          const relayedKey = await relayImageFallback(file, {
+            signal: abortController.signal,
+            sleep: (ms) => cancellableSleep(ms, abortController.signal),
+            defaultRetryAfterSeconds: 2,
+          });
+          if (relayedKey) {
+            updateFile({ status: 'success' });
+            // The multipart session is now orphaned (its key holds no bytes) — tear it
+            // down best-effort, after the success write so a teardown failure cannot
+            // mask the outcome.
+            try {
+              await abortUpload(describePartFailure(fatal));
+            } catch {
+              /* the upload already succeeded */
+            }
+            return { url: relayedKey, bucket, key: relayedKey, name: file.name, size, backend };
+          }
+        }
+
+        const status: TrackedFile['status'] =
+          fatal.aborted || abortController.signal.aborted ? 'aborted' : 'error';
         updateFile({ status, file: undefined });
-        await abortUpload();
+        await abortUpload(describePartFailure(fatal));
         return { url: null, bucket, key, backend };
       }
 

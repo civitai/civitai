@@ -50,6 +50,24 @@ install. Each app is served from its own platform-owned subdomain
 - Per-instance revocation via `BlockRevocation` service — uninstall and
   toggleEnabled(false) write a marker; toggleEnabled(true) clears it.
 
+### OAuth access tokens (manifest `auth: "oauth"`)
+
+A block that declares `"auth": "oauth"` in its manifest gets a real OAuth access
+token instead of the JWT when `APP_BLOCK_OAUTH_TOKENS_ENABLED` is on and the
+viewer is signed in. It is an `ApiKey` row for the block's `OauthClient`, minted
+by the auth hub (`POST /api/auth/oauth/app-token`, internal-only) against an
+`OauthConsent` row that `grantScopes` and the mint keep in step with the
+viewer's `AppUserScopeGrant` (`oauth-consent-sync.service.ts`). `/api/v1`, the
+orchestrator and the MCP accept it unchanged; `withBlockScope` also accepts it
+on the block routes, deriving the block claims from the grant. The mint
+response and `BLOCK_INIT.token` carry `kind: "block" | "oauth"` so
+`@civitai/sdk` can refuse a JWT for a signed-in viewer with a clear message.
+Anonymous viewers and blocks without the field keep the JWT path exactly as
+described above. Not yet covered for direct-to-orchestrator spend: the
+platform-wide per-user daily cap across blocks and the per-app aggregate cap,
+which still live in the `blocks.submitWorkflow` proxy; keep the flag off for
+spend-driving public apps until they do.
+
 ## Scopes
 
 See `src/shared/constants/block-scope.constants.ts`. Each block scope maps

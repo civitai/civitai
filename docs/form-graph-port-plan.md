@@ -339,6 +339,12 @@ itself is staged: GenerationTabs mounts `FormGraphGenerator` behind the
 `/dev-server` skill; verify with `probe`), typecheck green, full suite green. This phase
 needs Briant's hands-on testing before it is called done.
 
+**UI parity sweep (2026-09-23):** [`form-graph-lane-parity-sweep.md`](form-graph-lane-parity-sweep.md)
+reads the two lanes across for behaviour the port does not cover — seven gaps, the largest being that
+the content-generation tour never starts on the form-graph lane. It also records what looks like a gap
+and is not (three v2 controls whose fields no graph declares), and sizes the Phase 6 blast radius.
+Re-run it before the flag widens past moderators.
+
 ### Phase 6 — deletion
 
 Delete `src/libs/data-graph/`, `src/shared/data-graph/generation/` (the old graphs),

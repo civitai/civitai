@@ -5,8 +5,9 @@ import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
-import type { UploadPartError } from '~/utils/upload-retry';
+import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  describePartFailure,
   getPartRetryDelay,
   isExpiredPartError,
   isTerminalCompleteStatus,
@@ -289,7 +290,7 @@ export const useS3UploadStore = create<StoreProps>()(
           };
 
           // Prepare abort
-          const abortUpload = () =>
+          const abortUpload = (failure?: PartFailureReason) =>
             fetch(abortEndpoint, {
               method: 'POST',
               headers,
@@ -299,6 +300,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                ...(failure ? { failure } : {}),
               }),
             });
 
@@ -314,9 +316,9 @@ export const useS3UploadStore = create<StoreProps>()(
           // with an incidental teardown error at every call site. The abort endpoint
           // also treats an already-gone upload as success, so a throw on this path is
           // genuinely exceptional — it gets logged, not raised.
-          const abortUploadQuietly = async () => {
+          const abortUploadQuietly = async (failure?: PartFailureReason) => {
             try {
-              await abortUpload();
+              await abortUpload(failure);
             } catch (err) {
               console.error('Failed to abort upload');
               console.error(err);
@@ -422,16 +424,17 @@ export const useS3UploadStore = create<StoreProps>()(
                   reject({
                     status: xhr.status,
                     retryAfter: xhr.getResponseHeader('Retry-After'),
+                    partNumber: i,
                   } as UploadPartError);
                 }
               });
               xhr.addEventListener('error', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, networkError: true } as UploadPartError);
+                reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
               });
               xhr.addEventListener('abort', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, aborted: true } as UploadPartError);
+                reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
               });
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -526,7 +529,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
           if (failureStatus) {
             setTerminalStatus(failureStatus);
-            await abortUploadQuietly();
+            await abortUploadQuietly(describePartFailure(fatalErrorRef.value));
             return;
           }
 

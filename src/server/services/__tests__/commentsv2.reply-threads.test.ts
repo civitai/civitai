@@ -56,7 +56,6 @@ describe('groupReplyThreads', () => {
         comment({ id: 200, threadId: 11 }),
         comment({ id: 101, threadId: 10 }),
       ],
-      hiddenCounts: {},
       commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 5,
@@ -71,7 +70,6 @@ describe('groupReplyThreads', () => {
     const result = groupReplyThreads({
       threads: [thread(10, 1, 1)],
       comments: [],
-      hiddenCounts: {},
       commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 5,
@@ -90,7 +88,6 @@ describe('groupReplyThreads', () => {
     const args = {
       threads: [thread(10, 1, 1)],
       comments,
-      hiddenCounts: {},
       commentCounts: {},
       limit: 5,
     };
@@ -115,7 +112,6 @@ describe('groupReplyThreads', () => {
         comment({ id: 3, threadId: 10, pinnedAt: new Date('2026-01-01') }),
         comment({ id: 4, threadId: 10, pinnedAt: new Date('2026-02-01') }),
       ],
-      hiddenCounts: {},
       commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 2,
@@ -135,7 +131,6 @@ describe('groupReplyThreads', () => {
       groupReplyThreads({
         threads: [thread(10, 1, 1)],
         comments,
-        hiddenCounts: {},
         commentCounts: {},
         sort: ThreadSort.Oldest,
         limit: 2,
@@ -146,7 +141,6 @@ describe('groupReplyThreads', () => {
       groupReplyThreads({
         threads: [thread(10, 1, 1)],
         comments,
-        hiddenCounts: {},
         commentCounts: {},
         sort: ThreadSort.Oldest,
         limit: 5,
@@ -161,7 +155,6 @@ describe('groupReplyThreads', () => {
       // `commentCounts` instead, or a removed reply keeps its "show N replies" affordance.
       threads: [{ id: 10, commentId: 1, locked: true, commentCount: 7, depth: 3 }],
       comments: [comment({ id: 1, threadId: 10 })],
-      hiddenCounts: { 10: 2 },
       commentCounts: { 10: 4 },
       sort: ThreadSort.Oldest,
       limit: 5,
@@ -172,7 +165,6 @@ describe('groupReplyThreads', () => {
       locked: true,
       commentCount: 4,
       depth: 3,
-      hiddenCount: 2,
     });
   });
 
@@ -180,7 +172,6 @@ describe('groupReplyThreads', () => {
     const [result] = groupReplyThreads({
       threads: [{ id: 10, commentId: 1, locked: false, commentCount: 8, depth: 1 }],
       comments: [],
-      hiddenCounts: {},
       commentCounts: {},
       sort: ThreadSort.Oldest,
       limit: 5,
@@ -247,7 +238,6 @@ describe('selectReplyThreadsWithinBudget', () => {
 describe('getChildlessCommentIds', () => {
   const asThread = (row: ReplyThreadRow, commentIds: number[]): ReplyThread => ({
     ...row,
-    hiddenCount: 0,
     comments: commentIds.map((id) => comment({ id, threadId: row.id })),
   });
 

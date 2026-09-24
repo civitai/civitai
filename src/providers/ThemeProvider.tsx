@@ -33,6 +33,16 @@ export const theme = createTheme({
       defaultProps: { withArrow: true },
     },
     Popover: { styles: { dropdown: { maxWidth: '100vw' } }, defaultProps: { withinPortal: false } },
+
+    // Mantine's OptionsDropdown defaults to a 4px scrollbar that only shows mid-scroll, so a list
+    // past the 220px cap reads as if it ends at the fold. 'auto' shows the bar whenever the options
+    // overflow and nothing when they don't. Every component built on that dropdown needs it, so a
+    // fifth one belongs here too.
+    Select: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    Autocomplete: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    MultiSelect: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    TagsInput: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+
     Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
     Switch: {
       styles: {
