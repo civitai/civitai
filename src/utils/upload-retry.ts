@@ -100,13 +100,21 @@ export function shouldRelayOnPartFailure(
  *
  * 🔴 Lives HERE for the reason `isTerminalCompleteStatus` below gives: this is the second
  * predicate both upload clients need, it was open-coded in both, and the first one that
- * was open-coded in both went wrong in one of them.
+ * was open-coded in both went wrong in one of them. It is NOT called
+ * `resolveTerminal*` — `isTerminalCompleteStatus` two functions down means a different
+ * "terminal" (an HTTP status that must not be re-POSTed), and both clients import the
+ * two of them two lines apart.
+ *
+ * 🔴 The flag is NAMED rather than positional, matching `shouldRelayOnPartFailure`. Every
+ * candidate expression at the call site is some `.signal.aborted` and they all typecheck,
+ * so a bare boolean in argument position makes the documented mistake invisible exactly
+ * where it gets made. `userAborted:` forces the author to say which one they mean.
  */
-export function resolveTerminalUploadStatus(
+export function resolveUploadRowStatus(
   fatal: UploadPartError,
-  userAborted: boolean
+  opts: { userAborted: boolean }
 ): 'aborted' | 'error' {
-  return fatal.aborted || userAborted ? 'aborted' : 'error';
+  return fatal.aborted || opts.userAborted ? 'aborted' : 'error';
 }
 
 /** A presigned part URL that outlived its expiry — retrying the same URL can never succeed. */

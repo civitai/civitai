@@ -12,7 +12,7 @@ import {
   isExpiredPartError,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
-  resolveTerminalUploadStatus,
+  resolveUploadRowStatus,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -490,6 +490,13 @@ export const useS3UploadStore = create<StoreProps>()(
 
           const runWorker = async () => {
             while (queue.length > 0 && !fatalErrorRef.value) {
+              // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
+              // records `{ aborted: true }`. Neither is reachable today: this guard runs
+              // only after a part SUCCEEDED, and the gap between that part settling and
+              // this check is a microtask, which a click cannot land in. The two real
+              // macrotask windows inside the loop — the backoff sleep and the part
+              // re-sign — both re-enter at the `for`-loop top, whose guard DOES record.
+              // If this loop ever grows an `await` before this line, record here too.
               if (cancelController.signal.aborted) return;
               const item = queue.shift();
               if (!item) return;
@@ -533,9 +540,9 @@ export const useS3UploadStore = create<StoreProps>()(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
           // Shared with the hook client; the rules and the reason they are shared are on
-          // `resolveTerminalUploadStatus`.
+          // `resolveUploadRowStatus`.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? resolveTerminalUploadStatus(fatalErrorRef.value, userAborted)
+            ? resolveUploadRowStatus(fatalErrorRef.value, { userAborted })
             : null;
 
           // No more progress events past this point; drop any queued frame so it can't

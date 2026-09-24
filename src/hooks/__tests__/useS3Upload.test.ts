@@ -49,6 +49,16 @@ let backend: string;
 let hangPartNumbers: number[];
 let relayCalls: number;
 let relayResponse: { ok: boolean; id?: string };
+/** Consumed before `relayResponse`, so a test can script a shed followed by a success. */
+let relayScriptedStatuses: number[];
+/** What a scripted 429 advertises in `Retry-After`. */
+let relayRetryAfterSeconds: number | null;
+/**
+ * Fake-clock time of each relay POST. `vi.useFakeTimers()` mocks `Date.now()`, so a delta
+ * between two of these is an assertion about how long the client WAITED — independent of
+ * how coarsely the test drives the clock.
+ */
+let relayTimes: number[];
 /** Park the relay POST in flight so a test can cancel while it is running. */
 let relayHangsUntilAborted: boolean;
 /** Set once the parked relay POST has actually been issued. */
@@ -147,7 +157,21 @@ function makeFetch(partCount: number) {
       };
     }
     if (url === RELAY_ENDPOINT) {
+      relayTimes.push(Date.now());
       relayCalls++;
+      const scripted = relayScriptedStatuses.shift();
+      if (scripted !== undefined)
+        return {
+          ok: scripted === 200,
+          status: scripted,
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === 'retry-after' && relayRetryAfterSeconds !== null
+                ? String(relayRetryAfterSeconds)
+                : null,
+          },
+          json: async () => ({ id: relayResponse.id }),
+        };
       const response = {
         ok: relayResponse.ok,
         status: relayResponse.ok ? 200 : 500,
@@ -261,7 +285,12 @@ async function runUpload(
   return promise;
 }
 
-/** Drive the clock until `predicate` holds, so a test can act mid-flight. */
+/**
+ * Drive the clock until `predicate` holds, so a test can act mid-flight.
+ *
+ * Its budget is ADDITIONAL to `runUpload`'s, so a case using both is bounded at 2x
+ * MAX_CLOCK_TURNS. Both throw rather than hang, which is the property that matters.
+ */
 async function advanceUntil(predicate: () => boolean, what: string) {
   for (let turn = 0; !predicate() && turn < MAX_CLOCK_TURNS; turn++) await turnClock();
   if (!predicate()) throw new Error(`${what} never happened within ${MAX_CLOCK_TURNS} clock turns`);
@@ -277,6 +306,9 @@ beforeEach(() => {
   hangPartNumbers = [];
   relayCalls = 0;
   relayResponse = { ok: true, id: RELAY_KEY };
+  relayScriptedStatuses = [];
+  relayRetryAfterSeconds = null;
+  relayTimes = [];
   relayHangsUntilAborted = false;
   relayStarted = false;
   abortCalls = [];
@@ -352,6 +384,15 @@ describe('useS3Upload relay fallback', () => {
   });
 
   it('reports aborted when the user cancels while the relay is in flight', async () => {
+    // ⚠ HONEST SCOPE, the same qualification the predicate's own cancel case carries: no
+    // image-upload path renders a cancel today (see the note on `abort` in the hook), so
+    // the STATUS half of this asserts a combination production cannot currently produce.
+    // It is kept as a forward guard rather than deleted — unlike an unreachable guard in
+    // production code, an unreachable assertion costs nothing and arms the day a cancel
+    // button is wired to the dropzone — and the rest of the case is reachable now: it is
+    // the only thing that pins the relay POST as cancellable AT ALL, and the only thing
+    // that pins the teardown on this branch.
+    //
     // 🔴 The relay is the ONE await between the upload failing and its terminal status,
     // so it is the only window where a cancel can land with a NON-cancel already on the
     // fatal slot. The row must still say the person cancelled — otherwise this is the very
@@ -375,6 +416,10 @@ describe('useS3Upload relay fallback', () => {
     expect(h.statuses()).toEqual(['aborted']);
     // The bytes never landed anywhere, so the upload reports the presigned key and no url.
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
+    // The session still owes a teardown. This is the ONE path where dropping it would go
+    // unnoticed — the relay-success case asserts its own, and every non-relay case asserts
+    // through the ordinary failure path.
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
     h.unmount();
   });
 
@@ -385,7 +430,11 @@ describe('useS3Upload relay fallback', () => {
     // declared by the harness and exercised by nothing.
     vi.stubGlobal('fetch', makeFetch(1));
     partHandler = () => ({ status: 0, networkError: true });
-    relayResponse = { ok: false };
+    // 🔴 The refusal carries an id ANYWAY. With `{ ok: false }` alone it is the MISSING id
+    // that produces null, so deleting `relayImageFallback`'s `if (!res.ok) return null`
+    // would leave this green — the case would be pinning the harness rather than the
+    // status check. Measured: it survives that mutation without this id.
+    relayResponse = { ok: false, id: RELAY_KEY };
     const h = await mountHook();
 
     const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
@@ -398,17 +447,44 @@ describe('useS3Upload relay fallback', () => {
     h.unmount();
   });
 
+  it('waits out the relay\u2019s Retry-After before re-posting a shed file', async () => {
+    // 🔴 The relay's 429 backoff sleeps on the USER's signal, like the POST itself — and
+    // for a reason the other cases cannot see. The upload's internal teardown signal has
+    // ALWAYS fired by the time the relay runs, so a sleep bound to it resolves instantly
+    // and the retry re-posts the moment the origin said "back off". Nothing else in this
+    // file notices: the retry still happens and the upload still succeeds, just without
+    // the wait. So this is the one assertion about WHEN rather than whether.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    relayScriptedStatuses = [429, 200];
+    relayRetryAfterSeconds = 8; // under MAX_RETRY_AFTER_SECONDS, so it is honoured as-is
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(relayCalls).toBe(2);
+    // The claim is about the WAIT, not about the retry happening — the retry happens
+    // either way, which is why nothing else here notices. Asserted as a delta between two
+    // mocked `Date.now()` readings so it does not depend on the clock-turn size.
+    expect(relayTimes[1] - relayTimes[0]).toBeGreaterThanOrEqual(8_000);
+    expect(result.key).toBe(RELAY_KEY);
+    expect(h.statuses()).toEqual(['success']);
+    h.unmount();
+  });
+
   it('does not relay a cancelled upload, and reports it as aborted', async () => {
     // The mirror case, and the negative control for the relay assertion above: a cancelled
     // upload has an owner, not a fallback. If this ever relayed, the person who pressed
     // cancel would have their file uploaded anyway.
     //
-    // ⚠ It is NOT evidence that the gate's `userAborted` clause works. The cancelled part
-    // xhr rejects with `aborted`, so the gate's SECOND clause (`err.aborted`) is what
-    // refuses here and the first never executes — deleting `opts.userAborted` from the
-    // predicate leaves this green. That clause is pinned in
-    // `src/utils/__tests__/upload-retry.test.ts`, where the combination can be built by
-    // hand; see the note there on why this caller cannot currently produce it.
+    // ⚠ It is NOT evidence that the gate's `userAborted` clause works, and not evidence
+    // for its `err.aborted` clause either. A cancelled part xhr rejects with
+    // `{ status: null, aborted: true }` and NO `networkError`, so `!err.networkError`
+    // short-circuits first: neither `opts.userAborted` nor `err.aborted` is ever
+    // evaluated on this path. Measured — deleting either one leaves this green, while
+    // deleting `!err.networkError` turns the HTTP-status case red. Those two clauses are
+    // pinned in `src/utils/__tests__/upload-retry.test.ts`, on hand-built fixtures; see
+    // the note there on why this caller cannot produce them.
     vi.stubGlobal('fetch', makeFetch(2));
     hangPartNumbers = [1, 2];
     const h = await mountHook();

@@ -4,7 +4,7 @@ import {
   getPartRetryDelay,
   isTerminalCompleteStatus,
   RELAY_FALLBACK_MAX_BYTES,
-  resolveTerminalUploadStatus,
+  resolveUploadRowStatus,
   shouldRelayOnPartFailure,
 } from '~/utils/upload-retry';
 
@@ -213,12 +213,12 @@ describe('shouldRelayOnPartFailure', () => {
     // ⚠ HONEST SCOPE. At the ONE production call site this combination is currently
     // unreachable: the gate is evaluated synchronously right after the worker pool
     // settles, and every path that sets the user flag before the fatal slot is filled
-    // ALSO fills that slot with `{ aborted: true }` — so the NEXT clause (`err.aborted`)
-    // is what refuses a cancelled upload today, and this one is defence in depth. Kept
-    // because it is the clause that states the rule, because `useCFImageUpload` may adopt
-    // this predicate, and because the multi-worker shape reopens the window. Do NOT read
-    // it as cover for the production cancel path — the seam case in
-    // `src/hooks/__tests__/useS3Upload.test.ts` is that, and it refuses via `err.aborted`.
+    // ALSO fills that slot with `{ aborted: true, networkError: undefined }` — which the
+    // `!err.networkError` clause below refuses first, so neither this clause nor
+    // `err.aborted` ever executes there. Both are defence in depth, and this fixture is
+    // the only thing that exercises either. Kept because they state the rule, because
+    // `useCFImageUpload` may adopt this predicate, and because the multi-worker shape
+    // reopens the window — NOT because the production cancel path runs through them.
     expect(
       shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, userAborted: true })
     ).toBe(false);
@@ -272,50 +272,45 @@ describe('shouldRelayOnPartFailure', () => {
 });
 
 /**
- * `resolveTerminalUploadStatus` is the OTHER predicate both upload clients need, and it
+ * `resolveUploadRowStatus` is the OTHER predicate both upload clients need, and it
  * was open-coded in both until it moved here. It answers one question — did the person
  * stop this upload, or did it fail? — and getting it wrong is user-visible in both
  * directions: a failure reported as a cancel hides a fault from whoever is counting
  * errors, and a cancel reported as a failure puts a red badge on something the user did
  * on purpose.
  */
-describe('resolveTerminalUploadStatus', () => {
+describe('resolveUploadRowStatus', () => {
+  // THREE cases, not more. The seam tests in both clients already assert these outcomes
+  // through a real upload; what is pinned here is the one-line rule itself, at the three
+  // points that discriminate it — each kills a different mutation of
+  // `fatal.aborted || opts.userAborted`, and no fourth case kills anything the first
+  // three miss. An enumerated ledger over the return values was written and deleted: the
+  // signature is `'aborted' | 'error'`, so a third outcome is a compile error and the
+  // assertion could never go red. That is the vacuous-guard shape this whole PR is about.
+
   it('reports a cancelled part as aborted', () => {
-    expect(resolveTerminalUploadStatus({ status: null, aborted: true }, false)).toBe('aborted');
+    // Kills dropping `fatal.aborted` — the only case that does, since the other two have
+    // the user flag or neither.
+    expect(resolveUploadRowStatus({ status: null, aborted: true }, { userAborted: false })).toBe(
+      'aborted'
+    );
   });
 
   it('reports a network failure as an error', () => {
-    // 🔴 The regression. Both clients tear their own upload down on a fatal part failure,
-    // so a caller that passed its abort signal as `userAborted` made EVERY failed upload
-    // report as a cancel.
-    expect(resolveTerminalUploadStatus({ status: null, networkError: true }, false)).toBe('error');
-  });
-
-  it('reports an HTTP-status failure as an error', () => {
-    expect(resolveTerminalUploadStatus({ status: 400, partNumber: 2 }, false)).toBe('error');
+    // 🔴 The regression, and the case that kills a predicate hardwired to 'aborted'. Both
+    // clients tear their own upload down on a fatal part failure, so a caller that passed
+    // its abort signal as `userAborted` made EVERY failed upload report as a cancel.
+    expect(
+      resolveUploadRowStatus({ status: null, networkError: true }, { userAborted: false })
+    ).toBe('error');
   });
 
   it('reports a cancel that raced a failure onto the fatal slot as aborted', () => {
-    // A non-retryable part failure lands on the fatal slot immediately, so a cancel in the
-    // same tick can never overwrite it. Without the user flag the row blames the upload
-    // for something the person did.
-    expect(resolveTerminalUploadStatus({ status: 400, partNumber: 2 }, true)).toBe('aborted');
-    expect(resolveTerminalUploadStatus({ status: null, networkError: true }, true)).toBe('aborted');
-  });
-
-  it('never reports anything but aborted or error', () => {
-    // An enumerated ledger over the whole input space this predicate has: both flags,
-    // independently. A third outcome would be a row state the consumers do not handle.
-    const outcomes = new Set(
-      [
-        { status: null, aborted: true },
-        { status: null, networkError: true },
-        { status: 400 },
-        { status: null },
-      ].flatMap((err) =>
-        [true, false].map((userAborted) => resolveTerminalUploadStatus(err, userAborted))
-      )
+    // Kills dropping `opts.userAborted`. A non-retryable part failure lands on the fatal
+    // slot immediately, so a cancel in the same tick can never overwrite it — without the
+    // flag the row blames the upload for something the person did.
+    expect(resolveUploadRowStatus({ status: 400, partNumber: 2 }, { userAborted: true })).toBe(
+      'aborted'
     );
-    expect([...outcomes].sort()).toEqual(['aborted', 'error']);
   });
 });

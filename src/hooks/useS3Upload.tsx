@@ -11,7 +11,7 @@ import {
   getPartRetryDelay,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
-  resolveTerminalUploadStatus,
+  resolveUploadRowStatus,
   shouldRelayOnPartFailure,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
@@ -439,12 +439,11 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         }
 
         // Shared with the store client; the rules and the reason they are shared are on
-        // `resolveTerminalUploadStatus`. The flag is the USER's, not the teardown's —
+        // `resolveUploadRowStatus`. The flag is the USER's, not the teardown's —
         // reading the teardown signal here made every failed upload report as a cancel.
-        const status: TrackedFile['status'] = resolveTerminalUploadStatus(
-          fatal,
-          userAbortController.signal.aborted
-        );
+        const status: TrackedFile['status'] = resolveUploadRowStatus(fatal, {
+          userAborted: userAbortController.signal.aborted,
+        });
         updateFile({ status, file: undefined });
         await abortUpload(describePartFailure(fatal));
         return { url: null, bucket, key, backend };
