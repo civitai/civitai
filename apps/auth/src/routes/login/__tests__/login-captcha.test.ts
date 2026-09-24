@@ -91,8 +91,8 @@ const blockedNote = normalize(
 );
 
 // Shared anchors. An anchor that stops matching yields -1 and a SILENTLY EMPTY slice rather than a red,
-// so each must exist in exactly one place: three copies is three chances to tighten one and leave two
-// pointing at nothing.
+// so each must exist in exactly one place: a duplicated anchor is one more chance to tighten one copy
+// and leave the others pointing at nothing.
 const LIVE_REGION_TAG = /<div\b[^>]*role="status"[^>]*>/;
 // Regex, not indexOf: an ordinary second class on the form would otherwise red every guard using it.
 const EMAIL_FORM_ANCHOR = /class="[^"]*\bemail-form\b/;
@@ -114,10 +114,8 @@ const styleStart = pageSource.indexOf('<style');
 // CHARACTER — a guard that passes forever against a 1-char string.
 const styles = styleStart > -1 ? pageSource.slice(styleStart) : '';
 
-// Every line naming `identifier`, paired with the top-level scope it sits in. A flat list of lines
-// cannot tell a site MOVED between functions from the same site left alone — two identical call lines
-// are indistinguishable without the scope, and one swapped for another disables a feature under a
-// list that still matches. Scope resolution includes the matched line, so a declaration is its own scope.
+// Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
+// the matched line, so a declaration is its own scope.
 const ledger = (identifier: string) => {
   const scopeOf = (end: number) => {
     const opener = [
@@ -352,11 +350,31 @@ describe('login copy when the verification check cannot run', () => {
     ]);
   });
 
+  it('re-arms the grace on every failure, not once per page load', () => {
+    // An $effect re-runs only when a dependency CHANGES, and Svelte short-circuits a write of an equal
+    // value — so a boolean set to `true` a second time re-arms nothing. That is reachable: the widget
+    // can fail, recover with a token that spends the grace harmlessly, and fail again after
+    // resetTurnstile() clears the token on the next submit. With no second arm the verdict never
+    // lands: captchaPending stays true, the submit is disabled for the rest of the session, and
+    // captchaBlocked stays false so the honest note never appears either.
+    // This is a source-text guard, not a behavioural one — no component can be mounted here — so it
+    // pins the RELATIONSHIP: the trigger produces a fresh value, and the grace effect reads that value.
+    const trigger = markup.match(/function triggerFallback\([\s\S]*?\n  \}/)?.[0] ?? '';
+    expect(trigger, 'triggerFallback not found').not.toBe('');
+    const armed = trigger.match(/else (\w+) \+= 1;/)?.[1];
+    expect(
+      armed,
+      'the no-managed-key arm does not produce a new value on every call'
+    ).toBeDefined();
+    const grace =
+      markup.match(/\$effect\(\(\) => \{[\s\S]*?decideAfterGrace[\s\S]*?\n  \}\);/)?.[0] ?? '';
+    expect(grace, 'the decideAfterGrace effect not found').not.toBe('');
+    expect(grace, 'the grace effect does not depend on the value the trigger bumps').toContain(
+      `${armed} ===`
+    );
+  });
+
   it('asks nobody to solve a challenge that is not on screen', () => {
-    // The slot mounts a whole grace period before the widget can render into it. Keying the prompt, the
-    // reserved height or the button label on `fallbackActive` therefore spends that period telling a
-    // user to complete a check that is not there, over an empty reserved box, behind a disabled button.
-    // The reactive mirror of the render is the only honest key for all three.
     const guarded = markup.match(
       /\{#if managedWidgetShown && !captchaBlocked\}([\s\S]*?)\{\/if\}/
     )?.[1];
@@ -370,10 +388,8 @@ describe('login copy when the verification check cannot run', () => {
       /\? managedWidgetShown\s*\n\s*\? 'Verify to continue'\s*\n\s*: 'Verifying…'/
     );
 
-    // Three readers pinned above are worth nothing while nothing SETS the mirror: the flag would be
-    // false forever, so the prompt never appears and the button reads "Verifying…" over a widget that
-    // is on screen waiting to be solved. The write belongs to the render, and after it — before the
-    // early returns it would be claiming a render that did not happen.
+    // Pinning the readers is worth nothing while nothing SETS the mirror — it would be false forever,
+    // and all three assertions above would still pass.
     expect(ledger('managedWidgetShown = true')).toEqual([
       ['renderManagedWidget', 'managedWidgetShown = true;'],
     ]);
@@ -385,19 +401,14 @@ describe('login copy when the verification check cannot run', () => {
   });
 
   it('releases the gate when no widget could be created at all', () => {
-    // Cloudflare's render() answers `string | null | undefined` and fires NO error-callback for a
-    // widget it never made — a managed sitekey not allow-listed for this host is the live case, and
-    // this path is the only place it surfaces. Unhandled it is the exact trap the soft-release exists
-    // to prevent: prompt and reserved box over nothing, submit gated forever, honest note suppressed.
     expect(markup, 'the render() return type is declared as always-a-string').toMatch(
       /render: \([^)]*\) => string \| null \| undefined;/
     );
     const renderBody = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n  \}/)?.[0] ?? '';
     expect(renderBody, 'renderManagedWidget body not found').not.toBe('');
     // A throw out of render() is the same outcome by a quieter route, so it lands in the same branch.
-    expect(renderBody, 'render() can throw past the guard').toMatch(
-      /\} catch \{\s*\n\s*id = undefined;/
-    );
+    // The call being inside a try is the claim; how the catch spells it is not.
+    expect(renderBody, 'render() can throw past the guard').toMatch(/\} catch \{/);
     const failure = renderBody.match(/if \(typeof id !== 'string'\) \{([\s\S]*?)\n    \}/)?.[1];
     expect(failure, 'no branch for a render that produced no widget').toBeDefined();
     expect(failure).toContain("captchaFailReason = 'fallback-error';");

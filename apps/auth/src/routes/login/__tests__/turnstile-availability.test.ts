@@ -94,9 +94,7 @@ describe('turnstile availability probe', () => {
   });
 });
 
-// The no-managed-key call site. There is no widget to render, so the script's presence answers nothing
-// a token does not — a script that arrived a moment before the deadline has had no time to solve — and
-// the verdict waits on the token alone.
+// The no-managed-key call site: the verdict waits on the token alone.
 describe('deferred verdict with no interactive fallback to offer', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

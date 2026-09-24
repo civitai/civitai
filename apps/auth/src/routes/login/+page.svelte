@@ -52,8 +52,7 @@
   // now flips only when we truly give up (no managed key configured, or the managed widget ALSO failed to load).
   // The managed token rides its own hidden field so it never collides with the invisible auto-injected input.
   type TurnstileApi = {
-    // `string | null | undefined`, not `string`: Cloudflare answers a non-string when the widget cannot
-    // be created at all. Declaring it `string` is what lets an unhandled failure look impossible.
+    // Cloudflare answers a non-string when the widget cannot be created at all.
     render: (el: HTMLElement, opts: Record<string, unknown>) => string | null | undefined;
     reset: (id?: string) => void;
   };
@@ -68,14 +67,14 @@
   let fallbackActive = $state(false);
   let managedEl = $state<HTMLDivElement>();
   let managedWidgetId: string | undefined;
-  // Reactive mirror of managedWidgetId, which the template cannot read: it is a plain let, and making it
-  // $state would have the $effect below writing the value it guards on. Everything that asks the user to
-  // solve the challenge — the prompt, the reserved height, the button label — keys on the widget being ON
-  // SCREEN, never on fallbackActive: between the two lies the grace, where there is nothing to solve.
+  // Reactive mirror of managedWidgetId, which is a plain let the template cannot track. These two are the
+  // only things that survive the slot's unmount, so a future reset of either must reset the other.
   let managedWidgetShown = $state(false);
-  // Set while the no-managed-key path waits its grace out, so an $effect owns that timer and both probes
-  // are torn down by the same mechanism.
-  let awaitingScript = $state(false);
+  // A COUNTER, not a flag. The grace effect below can only re-run when its dependency changes, and Svelte
+  // short-circuits a write of an equal value — so a second failure setting a boolean `true` again would
+  // not re-arm. A grace spent on a token that then got cleared (resetTurnstile runs after every submit)
+  // would never be replaced, leaving the gate closed for the rest of the session with no verdict.
+  let scriptWatch = $state(0);
 
   // The only writer of the verdict. Reaching it needs evidence about the USER'S environment: a Turnstile
   // error callback is that, a missing token or missing global at a deadline is not.
@@ -89,14 +88,13 @@
     if (captchaToken || fallbackActive) return;
     captchaFailReason = reason;
     if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM
-    else awaitingScript = true;
+    else scriptWatch += 1;
   }
 
   // No managed key: there is no second widget, so the script's presence decides nothing a token does not
-  // already decide — and a script that arrived just before the deadline has not had time to solve. Wait
-  // the grace out and let a late token withdraw the verdict.
+  // already decide — and a script that arrived just before the deadline has not had time to solve.
   $effect(() => {
-    if (!awaitingScript) return;
+    if (scriptWatch === 0) return;
     return decideAfterGrace({ tokenArrived: () => !!captchaToken, decide: concludeUnavailable });
   });
 
@@ -108,9 +106,8 @@
       tokenArrived: () => !!captchaToken,
       onScriptPresent: renderManagedWidget,
       onScriptAbsent: () => {
-        // The script never ran, so the interactive fallback cannot reach this user either — the same
-        // state the managed widget's own error callback reports, and the server sizes the recoverable
-        // and unrecoverable populations from this value. Soft-release; the server stays the sole gate.
+        // Script never ran, so the interactive fallback cannot reach this user either. Soft-release;
+        // the server stays the sole gate.
         captchaFailReason = 'fallback-error';
         concludeUnavailable();
       },
@@ -149,11 +146,8 @@
     } catch {
       id = undefined;
     }
-    // No widget was created — a managed sitekey not allow-listed for this host is the live case, and
-    // this path is where it is discovered or nowhere, since it only runs once the invisible widget has
-    // already failed. Cloudflare fires no error-callback for a widget it never made, so without this
-    // branch the page would sit on a prompt and a reserved box over nothing, with the submit gated and
-    // the honest note suppressed: the trap the soft-release exists to prevent.
+    // Cloudflare fires no error-callback for a widget it never made (a managed sitekey not allow-listed
+    // for this host), so a non-string id is the only signal that the fallback is not coming.
     if (typeof id !== 'string') {
       captchaFailReason = 'fallback-error';
       concludeUnavailable();

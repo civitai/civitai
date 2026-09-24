@@ -291,8 +291,8 @@ describe('captcha verification counter — result x widget mode', () => {
 
   it('carries the mode into the http_error Axiom row too, not only the counter', async () => {
     // A verification outage that answers 500 rather than refusing the connection lands here, so this is
-    // the reject the mode split most needs to be able to break down. The counter gets `mode` from the
-    // shared assembly site; the Axiom row is hand-built and had no such binding.
+    // the reject the mode split most needs to break down. The counter gets `mode` from the shared
+    // assembly site; the Axiom row is hand-built, so it has to be passed explicitly.
     process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
     logToAxiom.mockClear();
     vi.stubGlobal(
@@ -304,8 +304,8 @@ describe('captcha verification counter — result x widget mode', () => {
   });
 
   it('counts one verification once, even when a sink throws after the count', async () => {
-    // The outer catch counts now, so a throw from a log line after a branch has already counted would
-    // record the same verification twice under two different results.
+    // The outer catch counts too, so a throw from a log line after a branch has already counted would
+    // otherwise record one verification twice under two different results.
     logToAxiom.mockImplementationOnce(() => {
       throw new Error('axiom exploded');
     });
