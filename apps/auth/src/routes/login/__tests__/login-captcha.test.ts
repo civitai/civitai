@@ -84,11 +84,17 @@ const markup = pageSource
   .split('\n')
   .filter((line) => !line.trim().startsWith('//'))
   .join('\n');
-const blockedNote = normalize(
-  pageSource.match(
-    /\{#if captchaBlocked\}[\s\S]*?<p class="captcha-fallback-note"[^>]*>([\s\S]*?)<\/p>/
-  )?.[1] ?? ''
-);
+// One extraction for every note in the region, so the sibling pins cannot drift: written twice, the
+// two copies already disagreed, one tolerating attributes after `class` and one not.
+const noteAfter = (condition: string) =>
+  normalize(
+    pageSource.match(
+      new RegExp(
+        condition + '\\}[\\s\\S]*?<p class="captcha-fallback-note"[^>]*>([\\s\\S]*?)<\\/p>'
+      )
+    )?.[1] ?? ''
+  );
+const blockedNote = noteAfter('\\{#if captchaBlocked');
 
 // Shared anchors. An anchor that stops matching yields -1 and a SILENTLY EMPTY slice rather than a red,
 // so each must exist in exactly one place: a duplicated anchor is one more chance to tighten one copy
@@ -117,8 +123,10 @@ const NO_WIDGET_BRANCH = RENDER_BODY.match(
 // moment an attribute is added before `class`. Hiding `.captcha-fallback-note` empties the region just
 // as completely as hiding the region, and it is the more natural thing for a responsive edit to reach
 // for — it is the element with the padding and the background.
-const NOTE_TAG_TEXT = liveRegionInner.match(/<p\b[^>]*>/)?.[0] ?? '';
-const blockedNoteClasses = (NOTE_TAG_TEXT.match(/class="([^"]*)"/)?.[1] ?? '')
+// ALL of them, not the first: the region holds one note per cause, and a ban that reads only `[0]`
+// covers whichever happens to be written first — which is how the id ban shipped covering one element.
+const NOTE_TAGS = [...liveRegionInner.matchAll(/<p\b[^>]*>/g)].map((m) => m[0]);
+const blockedNoteClasses = (NOTE_TAGS[0]?.match(/class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
   .filter(Boolean);
 // Covers BOTH the region and the note; each half is asserted non-empty where the ban is applied.
@@ -306,11 +314,22 @@ describe('login copy when the verification check cannot run', () => {
     // The note sits at depth 1 inside the region: exactly ONE block opened before it and none closed.
     // A prefix match is not enough — `{#if captchaBlocked}{#if form}` still starts with the right
     // literal while putting the note behind a second condition, which is the wasted-submit regression.
-    const noteStart = region.indexOf('<p');
-    expect(noteStart, 'no note element inside the live region').toBeGreaterThan(-1);
-    const beforeNote = region.slice(0, noteStart);
-    expect((beforeNote.match(/\{#/g) ?? []).length, 'extra block opened before the note').toBe(1);
-    expect((beforeNote.match(/\{\//g) ?? []).length).toBe(0);
+    // EVERY note, not the first. The region carries one per cause, chained with {:else if} so exactly
+    // one can render; a `{#if form}` wrapped around the second would put it behind a round-trip the
+    // user has to pay for, which is the wasted-submit regression this check exists to catch, and a
+    // first-note-only check cannot see it. `{:else if}` opens no block, so the count stays 1 for each.
+    const noteStarts = [...region.matchAll(/<p\b/g)].map((m) => m.index ?? -1);
+    expect(noteStarts, 'no note element inside the live region').not.toHaveLength(0);
+    for (const noteStart of noteStarts) {
+      const beforeNote = region.slice(0, noteStart);
+      // DEPTH, i.e. blocks still OPEN at the note — not a raw `{#` count. Each note's own body opens
+      // and closes inline blocks for the conditional fragments of its copy, so by the second note the
+      // raw count is 3 while the depth is still 1. A raw count would red on correct markup here and,
+      // worse, could be satisfied by an unrelated closed block elsewhere in the prefix.
+      const depth =
+        (beforeNote.match(/\{#/g) ?? []).length - (beforeNote.match(/\{\//g) ?? []).length;
+      expect(depth, 'a note sits behind more than the one condition that selects it').toBe(1);
+    }
 
     // Sibling, above the form. Block counting runs over the unquoted text: stripping quoted spans pairs
     // the apostrophe in "Couldn't" with the next quote and swallows a {/if}, and the prose that would
@@ -360,23 +379,22 @@ describe('login copy when the verification check cannot run', () => {
     const INLINE_HIDE =
       /\bhidden\b|class:|aria-live=['"]off|style:(display|visibility)|style=["{][^>]*?(display|visibility)/;
     expect(liveRegionTagText, 'the region tag can hide or mute itself').not.toMatch(INLINE_HIDE);
-    expect(NOTE_TAG_TEXT, 'no note element found inside the live region').not.toBe('');
-    expect(NOTE_TAG_TEXT, 'the note tag can hide or mute itself').not.toMatch(INLINE_HIDE);
+    expect(NOTE_TAGS, 'no note element found inside the live region').not.toHaveLength(0);
+    for (const tag of NOTE_TAGS) {
+      expect(tag, 'a note tag can hide or mute itself').not.toMatch(INLINE_HIDE);
+    }
     // …and NEITHER may carry an id. The reach test answers a hard `false` for an `#id` compound, which
     // is only sound while these elements have no id to select — and an id is one ordinary edit away
     // (aria-describedby, a scroll anchor, a test hook). Measured: with an id on the region and a
     // matching `#id { display: none }` in the sheet, every guard here stays green while the
     // announcement is hidden. Pinning the precondition is cheaper than widening `#` to "reaches",
     // which would red on any unrelated id-scoped hide.
-    expect(
-      liveRegionTagText,
-      'the region tag carries an id, which the reach test cannot see'
-    ).not.toMatch(/\bid=/);
-    expect(
-      NOTE_TAG_TEXT,
-      'the note tag carries an id, which the reach test cannot see'
-    ).not.toMatch(/\bid=/);
-    expect(styles, '<style> block not found').not.toBe('');
+    for (const tag of [liveRegionTagText, ...NOTE_TAGS]) {
+      expect(
+        tag,
+        'an announcement element carries an id, which the reach test cannot see'
+      ).not.toMatch(/\bid=/);
+    }
 
     // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
     // banning it reds a legitimate `:not(:empty) { margin… }`.
@@ -438,9 +456,6 @@ describe('login copy when the verification check cannot run', () => {
     // …and type names are case-INSENSITIVE for HTML, while class names are not.
     expect(canReachAnnouncement('DIV[role]')).toBe(true);
     expect(canReachAnnouncement(`.${regionClass.toUpperCase()}`)).toBe(false);
-    // The `#` branch stays a hard `false`, which is sound only because neither element carries an id —
-    // asserted in the hiding ban above, not here.
-    expect(canReachAnnouncement('#anything')).toBe(false);
     // A genuine multi-selector list still splits: neither side reaches.
     expect(canReachAnnouncement('.badge svg, .divider span')).toBe(false);
     // …and a subject pseudo with several arguments still decides from them.
@@ -449,6 +464,8 @@ describe('login copy when the verification check cannot run', () => {
     // Does not reach: an unrelated element, an id, an ancestor-only compound.
     expect(canReachAnnouncement('.badge svg')).toBe(false);
     expect(canReachAnnouncement('div.divider')).toBe(false);
+    // The `#` branch is a hard `false`, sound only because no announcement element carries an id —
+    // asserted in the hiding ban above, not here.
     expect(canReachAnnouncement('#something')).toBe(false);
   });
 
@@ -596,31 +613,38 @@ describe('login copy when the verification check cannot run', () => {
   it('never concludes the check is blocked where no check was ever offered', () => {
     // `captchaBlocked` consults ENFORCEMENT but not whether a widget exists, and the note it gates
     // blames the reader's browser. With enforcement on and NEITHER sitekey configured, nothing on the
-    // page ever requests a token — no api.js, no .cf-turnstile, no managed slot — so the one route to
-    // captchaUnavailable that survives is the onMount deadline. Unguarded it fires on every page load
-    // for every visitor, and ~5s later the page tells all of them an extension, a VPN or a network
-    // filter is blocking a check that was never offered. That claim is not merely unhedgeable there,
-    // it is refutable from `data` alone. The other two routes to the verdict sit behind fallbackActive,
-    // which only a managed sitekey sets, so guarding the deadline closes the class at its root — which
-    // is why captchaBlocked itself carries no captchaConfigured term.
+    // page ever requests a token, so saying an extension or a VPN is blocking the check is refutable
+    // from `data` alone.
+    // It is closed at ONE choke point, and this pins the chain rather than any single link: every
+    // writer of the verdict is reached through triggerFallback or from inside the fallbackActive
+    // effect, triggerFallback refuses unless captchaPending, and captchaPending requires
+    // captchaConfigured. An earlier round instead guarded the onMount deadline; that was measured
+    // redundant once triggerFallback started reading captchaPending, and its guard could not be
+    // asserted without pinning the operator — `!captchaConfigured ? …` and `captchaConfigured || true`
+    // both walked the dependency-only form. Nothing here can be satisfied by a spelling.
+    const guard = normalize(
+      markup.match(/function triggerFallback\(reason: string\) \{\n([^\n]*)/)?.[1] ?? ''
+    );
+    expect(guard, 'triggerFallback no longer refuses on !captchaPending').toBe(
+      'if (fallbackActive || !captchaPending) return;'
+    );
+    const pending = normalize(
+      pageSource.match(/const captchaPending = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    );
+    expect(pending, 'captchaPending no longer requires a configured widget').toContain(
+      'captchaConfigured'
+    );
+    // The third link — that nothing reaches the verdict outside triggerFallback's reach — is the
+    // concludeUnavailable ledger, owned by 'reaches the unavailable verdict only through the probe or
+    // a Turnstile error callback'. Re-asserting it here would be a second copy of that list.
+    // The deadline still exists and still names its constant — a bare literal here would be a second,
+    // unnamed copy of a timing value the cost note reasons about.
     const mount = markup.match(/onMount\(\(\) => \{[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
     expect(mount, 'the onMount block was not found').not.toBe('');
-    const armed = mount.match(/const timeout = ([\s\S]*?);\n {4}return \(\) => \{/)?.[1] ?? '';
-    expect(armed, 'the deadline is not assigned to `timeout` before the teardown').not.toBe('');
-    // The DEPENDENCY, not the operator: a ternary, a `&&`, or anything else that makes the arming
-    // expression read captchaConfigured satisfies this, and an unconditional arm does not. LIMIT: the
-    // extraction below assumes `const timeout = <expr>;`, so rewriting this as a bare `if` statement
-    // reds here — widen the extraction with that change rather than dropping the guard.
-    expect(
-      armed,
-      'the token deadline is armed without consulting captchaConfigured, so it concludes "this ' +
-        'browser is blocking the check" in a configuration that never offered one'
-    ).toContain('captchaConfigured');
-    expect(armed, 'the deadline does not call triggerFallback').toContain(
+    expect(mount, 'the deadline does not call triggerFallback').toContain(
       "triggerFallback('timeout')"
     );
-    // A bare literal here is a second, unnamed copy of a timing constant the cost note reasons about.
-    expect(armed, 'the deadline length is an unnamed literal').toContain(
+    expect(mount, 'the deadline length is an unnamed literal').toContain(
       'TURNSTILE_TOKEN_DEADLINE_MS'
     );
   });
@@ -653,9 +677,13 @@ describe('login copy when the verification check cannot run', () => {
     // the common path and leaves the instruction standing beside an ALREADY-ENABLED button in two
     // others: a rendered widget that errored with enforcement off, and a deployment whose invisible
     // sitekey has no secret.
-    const guarded = markup.match(
-      /\{#if managedWidgetShown && captchaPending\}([\s\S]*?)\{\/if\}/
-    )?.[1];
+    // The derived ITSELF, or every reader below pins a name whose meaning can be inverted underneath
+    // them: `||` instead of `&&` reads identically at all three call sites and prompts a solve for a
+    // widget that is not on screen.
+    expect(
+      normalize(pageSource.match(/const solvePrompted = \$derived\([\s\S]*?\);/)?.[0] ?? '')
+    ).toBe('const solvePrompted = $derived(managedWidgetShown && captchaPending);');
+    const guarded = markup.match(/\{#if solvePrompted\}([\s\S]*?)\{\/if\}/)?.[1];
     expect(
       guarded,
       'the fallback prompt is not gated on the widget being on screen AND the submit still being gated'
@@ -665,10 +693,15 @@ describe('login copy when the verification check cannot run', () => {
     // The slot's height and the prompt read ONE rule, negated — they diverged once already, leaving a
     // bare Cloudflare challenge in an expanded box with no copy beside it.
     expect(markup, 'the slot reserves height for a widget nothing is waiting on').toMatch(
-      /class:collapsed=\{!managedWidgetShown \|\| !captchaPending\}/
+      /class:collapsed=\{!solvePrompted\}/
     );
-    expect(markup, 'the button invites a solve before the widget exists').toMatch(
-      /\? managedWidgetShown\s*\n\s*\? 'Verify to continue'\s*\n\s*: 'Verifying…'/
+    // The label reads the same derived, so it cannot invite a solve the prompt is not asking for — and
+    // it must not say "Email me a login link" in the state where every press is refused.
+    expect(markup, 'the button label does not read solvePrompted').toMatch(
+      /: solvePrompted\s*\n\s*\? 'Verify to continue'/
+    );
+    expect(markup, 'the button offers a send in the misconfigured state').toMatch(
+      /: captchaMisconfigured\s*\n\s*\? 'Email login unavailable'\s*\n\s*: 'Email me a login link'/
     );
 
     // Pinning the readers is worth nothing while nothing SETS the mirror — it would be false forever,
@@ -732,12 +765,12 @@ describe('login copy when the verification check cannot run', () => {
     // respect, so the suppression reads the union rather than one of them: gating on captchaBlocked
     // alone leaves the misconfigured state inviting a doomed retry, five of which spend the
     // rate-limit budget and turn into "Too many attempts".
-    expect(pageSource).toMatch(/\{#if form\?\.captcha && !emailUnusable\}/);
+    expect(pageSource).toMatch(/\{#if form\?\.captcha && !retryCannotHelp\}/);
     expect(pageSource).toContain('Captcha verification failed. Please try again.');
     const union = normalize(
-      pageSource.match(/const emailUnusable = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+      pageSource.match(/const retryCannotHelp = \$derived\([\s\S]*?\);/)?.[0] ?? ''
     );
-    expect(union).toBe('const emailUnusable = $derived(captchaBlocked || captchaMisconfigured);');
+    expect(union).toBe('const retryCannotHelp = $derived(captchaBlocked || captchaMisconfigured);');
   });
 
   it('tells a user whose page was never given a check, without blaming their browser', () => {
@@ -759,11 +792,7 @@ describe('login copy when the verification check cannot run', () => {
     // The copy, pinned whole. It names NO cause — the page cannot honestly attribute a key it was
     // never given — and offers the one route that still works. The browser-blame vocabulary of the
     // sibling note is banned outright: reaching for it here is the regression this replaced.
-    const note = normalize(
-      pageSource.match(
-        /\{:else if captchaMisconfigured\}[\s\S]*?<p class="captcha-fallback-note">([\s\S]*?)<\/p>/
-      )?.[1] ?? ''
-    );
+    const note = noteAfter('\\{:else if captchaMisconfigured');
     expect(note, 'no note for the misconfigured state').not.toBe('');
     expect(note).toBe(
       "{#if form?.captcha}That didn't go through.{/if} Email login isn't available right now. " +
@@ -794,29 +823,28 @@ describe('login copy when the verification check cannot run', () => {
     expect(pending).toBe(
       'const captchaPending = $derived( data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable );'
     );
-    // The two config terms are what make this gate honest, and each can only RELEASE the button:
-    //  - turnstileEnforced, or a deployment with a sitekey and no secret makes every user wait on a
-    //    check the action passes through, and then asks them to solve the interactive fallback for it;
-    //  - captchaOffered, or a managed-only deployment leaves the button live while its only widget is
-    //    still a deadline away, refusing that submit for a token the page never asked for.
-    // Both read only `data`, so neither can become true because captcha FAILED — the one property this
-    // expression must keep.
-    const offered = normalize(
-      pageSource.match(/const captchaConfigured = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    // Both config terms read only `data`, so neither can become true because captcha FAILED — the one
+    // property this expression must keep. Why each is load-bearing is stated once, beside the derived.
+    expect(
+      normalize(pageSource.match(/const captchaConfigured = \$derived\([\s\S]*?\);/)?.[0] ?? '')
+    ).toBe(
+      'const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);'
     );
-    // …and the predicate is expressed ONCE. The `<svelte:head>` gate on api.js asks the same question,
-    // and it is the physical precondition for everything captchaConfigured claims — a hand-spelled copy
-    // there can answer the old question after this declaration is changed, and nothing would say so.
+  });
+
+  it('asks whether a widget is configured in exactly one place', () => {
+    // The `<svelte:head>` gate on api.js asks the same question, and it is the physical precondition
+    // for everything captchaConfigured claims — a hand-spelled copy there keeps answering the OLD
+    // question after the derived is changed, and nothing would say so.
     expect(
       markup.match(/<svelte:head>[\s\S]*?\{#if ([^}]*)\}/)?.[1],
       'the api.js gate hand-spells the predicate instead of reading captchaConfigured'
     ).toBe('captchaConfigured');
+    // LIMIT: this counts one spelling, so a second site writing the operands in the other order still
+    // reads as 1. It catches the copy-paste, not every possible restatement.
     expect(
       markup.match(/data\.turnstileSiteKey \|\| !?!?data\.turnstileManagedSiteKey/g) ?? [],
       'the two-sitekey disjunction is written in more than one place'
     ).toHaveLength(1);
-    expect(offered).toBe(
-      'const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);'
-    );
   });
 });

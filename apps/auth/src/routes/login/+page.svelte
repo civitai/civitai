@@ -42,17 +42,16 @@
   let captchaToken = $state('');
   let captchaUnavailable = $state(false);
   // Whether a widget can appear AT ALL — the two sitekeys are independent config, so neither alone
-  // answers it. 🔴 THIS AND THE onMount DEADLINE GUARD ARE MUTUALLY LOAD-BEARING, enumerated over all
-  // 16 key combinations: deadline guarded without this term disables the submit FOREVER in three of
-  // them (nothing offers a token, nothing can set captchaUnavailable to release it); this term without
-  // the guard tells those same three that their browser is blocking a check never offered. Removing
-  // either alone reintroduces one of those. Both are pinned in login-captcha.test.ts.
+  // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW: drop it there and every configuration that
+  // enforces with no sitekey disables the submit FOREVER, because nothing offers a token and nothing
+  // can reach captchaUnavailable to release it.
   const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);
   // THIS is the expression a broken widget must never reach: no term may be added here that is true
   // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
   // being trapped behind a permanently disabled button, and the server stays the sole gate. The two
   // config terms pass that test — both read only `data`, so neither can become true because the check
-  // FAILED, and each can only RELEASE the button. Why each is load-bearing: see captchaConfigured.
+  // FAILED, and each can only RELEASE the button. captchaConfigured, see above; turnstileEnforced,
+  // because a sitekey without its secret otherwise makes everyone wait on a check the action ignores.
   const captchaPending = $derived(
     data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable
   );
@@ -63,8 +62,11 @@
   // every submit is refused. Separate from captchaBlocked because it is provable from `data` and is
   // not about the reader — it must never reach the note above.
   const captchaMisconfigured = $derived(data.turnstileEnforced && !captchaConfigured);
-  // Either way, a retry cannot work, so the generic "please try again" must be suppressed for both.
-  const emailUnusable = $derived(captchaBlocked || captchaMisconfigured);
+  // Named for the RULE, not for a state: it covers exactly the cases where pressing the button again
+  // cannot change the outcome, so the generic "please try again" is suppressed. It is not "email is
+  // off" — that is data.emailEnabled — and must not grow to cover rate-limited or blocked-domain,
+  // which are different messages the user can act on.
+  const retryCannotHelp = $derived(captchaBlocked || captchaMisconfigured);
 
   // INTERACTIVE FALLBACK: when the invisible widget can't issue a token, render the MANAGED (visible,
   // interactive) widget instead of un-gating a doomed tokenless submit. `captchaToken` stays the single gate —
@@ -92,6 +94,10 @@
   // managedWidgetId to allow a fresh render must clear this too, or the prompt and the reserved box go
   // on claiming a widget that is gone.
   let managedWidgetShown = $state(false);
+  // Solving the managed widget is what would clear the gate: it is on screen AND something waits on it.
+  // ONE name, because the prompt, the slot's reserved height and the button label all ask it, and the
+  // first two are exact negations of each other — spelled separately they diverged once already.
+  const solvePrompted = $derived(managedWidgetShown && captchaPending);
   // A COUNTER, not a flag. The grace effect below can only re-run when its dependency changes, and Svelte
   // short-circuits a write of an equal value — so a second failure setting a boolean `true` again would
   // not re-arm. A grace spent on a token that then got cleared (resetTurnstile runs after every submit)
@@ -265,14 +271,12 @@
       triggerFallback('widget-error');
     };
     // If no token has arrived in time, the invisible widget silently failed to auto-solve — offer the
-    // fallback. ARMED ONLY WHERE A WIDGET EXISTS: this is the one route to captchaUnavailable that
-    // needs no widget, and that verdict means "this check cannot run in this browser", which is a lie
-    // where none was ever offered. See captchaConfigured for the other half of this pair.
-    const timeout = captchaConfigured
-      ? setTimeout(() => {
-          if (!captchaToken) triggerFallback('timeout');
-        }, TURNSTILE_TOKEN_DEADLINE_MS)
-      : undefined;
+    // fallback. Armed unconditionally: triggerFallback is the single choke point and it refuses unless
+    // captchaPending, so where no widget was ever offered this fires and does nothing. Guarding it here
+    // too was measured redundant, and the guard could not be pinned without pinning its spelling.
+    const timeout = setTimeout(() => {
+      if (!captchaToken) triggerFallback('timeout');
+    }, TURNSTILE_TOKEN_DEADLINE_MS);
     return () => {
       clearTimeout(timeout);
       delete w.onAuthCaptcha;
@@ -365,8 +369,9 @@
               </p>
             {:else if captchaMisconfigured}
               <!-- Same dead end, opposite cause, so deliberately NOT the note above: no action of the
-                   reader's can clear this, so it names no cause and offers only what still works. An
-                   {:else if} keeps the note at depth 1 in the region and the two mutually exclusive. -->
+                   reader's can clear this, so it names no cause and offers only what still works.
+                   Unlike its sibling this derives from `data` alone, so it is present at first paint and
+                   the live region announces nothing for it — it is read in document order. -->
               <p class="captcha-fallback-note">
                 {#if form?.captcha}That didn't go through.{/if} Email login isn't available right now.
                 {#if data.providers.length > 0}Sign in with one of the buttons above instead.{/if}
@@ -414,12 +419,10 @@
             {#if fallbackActive}
               <!-- Interactive fallback: shown only after the invisible widget fails. The managed widget is
                    rendered imperatively into this slot (see the $effect) so it can carry data-action + callbacks. -->
-              {#if managedWidgetShown && captchaPending}
-                <!-- ON SCREEN, because the slot mounts a grace period before the widget can render and
-                     asking for a check that is not there yet is an instruction with no target. AND
-                     captchaPending, because that is exactly "solving this unblocks the button" — the
-                     same rule the button reads, so the two cannot disagree. The slot's class:collapsed
-                     below is this condition negated, for the same reason. -->
+              {#if solvePrompted}
+                <!-- The slot mounts a grace period before the widget can render, and asking for a check
+                     that is not there yet is an instruction with no target — so the prompt, the slot's
+                     reserved height and the button label all read one derived. -->
                 <p class="captcha-fallback-note">
                   Couldn't verify you automatically. Complete this quick check to continue.
                 </p>
@@ -428,7 +431,7 @@
                    keeps Cloudflare's own error UI, which min-height cannot shrink. -->
               <div
                 class="managed-slot"
-                class:collapsed={!managedWidgetShown || !captchaPending}
+                class:collapsed={!solvePrompted}
                 bind:this={managedEl}
               ></div>
             {/if}
@@ -442,11 +445,13 @@
               <span
                 >{submitting
                   ? 'Sending…'
-                  : captchaPending
-                    ? managedWidgetShown
-                      ? 'Verify to continue'
-                      : 'Verifying…'
-                    : 'Email me a login link'}</span
+                  : solvePrompted
+                    ? 'Verify to continue'
+                    : captchaPending
+                      ? 'Verifying…'
+                      : captchaMisconfigured
+                        ? 'Email login unavailable'
+                        : 'Email me a login link'}</span
               >
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
@@ -455,7 +460,7 @@
             {/if}
             <!-- "try again" only where a retry can work — a rejected (expired/reused) token, not a
                  check that cannot run. Dropping the second term re-invites a doomed retry. -->
-            {#if form?.captcha && !emailUnusable}
+            {#if form?.captcha && !retryCannotHelp}
               <p class="error">Captcha verification failed. Please try again.</p>
             {/if}
             {#if form?.blockedDomain}
