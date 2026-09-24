@@ -241,7 +241,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
-  flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
+  flux2Training: { availability: ['mod'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
   zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
