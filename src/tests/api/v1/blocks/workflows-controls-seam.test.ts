@@ -700,11 +700,20 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
  * nothing at all about what the ORCHESTRATOR is asked for. Only the combined state
  * answers "could a forged tag broaden the result set".
  *
- * ⚠️ AND THE SUBSTITUTE THAT MAKES THIS WORTH A SUITE OF ITS OWN:
- * `app.orchestration.queryWorkflows({ tags })` in `@civitai/sdk` takes `tags` FROM
- * THE CALLER. Adopting it in place of this route moves a server-enforced boundary
- * into the iframe, and it type-checks and passes tests while doing so. These cases
- * are what make the REST surface's answer to that mechanical.
+ * ⚠️ THE SUBSTITUTE THAT MOTIVATES THIS SUITE — STATED AT ITS TRUE WIDTH, WHICH IS
+ * NARROWER THAN AN EARLIER DRAFT OF THIS PARAGRAPH CLAIMED. `app.orchestration
+ * .queryWorkflows({ tags })` in `@civitai/sdk` does take `tags` FROM THE CALLER,
+ * and adopting it in place of this route really does move a server-enforced
+ * boundary into the iframe while type-checking and passing tests.
+ *
+ * 🔴 BUT THIS ROUTE DOES NOT INTERCEPT THAT CLIENT, AND THE RETRACTION LIVES IN
+ * `query.ts` — read it before re-deriving the wider claim from this file. That
+ * client is a GET to a DIFFERENT HOST with `tags` in the query string; aimed here
+ * it meets the 405 method guard, so the strict schema never sees a `tags` at all.
+ * What these cases prove is the reachable half: a POST *to this route* carrying a
+ * forged `tags` cannot broaden the result set, and the tag the orchestrator is
+ * asked for is `appBlockTag(claims.appId)` off the verified token. That is worth a
+ * suite of its own; it is not the same claim as "the SDK substitute is caught".
  *
  * `mockQueryWorkflows` is given a FILTERING implementation here rather than a
  * constant, which is the positive control: it genuinely returns a different app's

@@ -135,12 +135,23 @@ export type AppBlockEndpoint =
   // to `client_error` — so a 429 is indistinguishable from a 400 on
   // `civitai_app_block_requests_total`, and 400 is exactly the class this route
   // makes easiest to hit (its `unrecognized_keys` refusals). Compounding it,
-  // `queryAppWorkflows` is the ONE rate-limited procedure in this family that does
-  // not call `recordBlockBridgeRateLimitRefusal` — `pollWorkflow`,
-  // `cancelWorkflow`, `estimateWorkflow` and `getMyBuzzBalance` all do. So today
-  // the subqueue throttle has NO dedicated signal on either surface. That gap is
-  // pre-existing in the procedure and is filed rather than fixed here; this label
-  // is for per-endpoint ATTRIBUTION and latency, which it does give.
+  // `queryAppWorkflows` does not call `recordBlockBridgeRateLimitRefusal`, so the
+  // subqueue throttle has NO dedicated signal on either surface. That gap is
+  // pre-existing in the procedure and is filed rather than fixed here
+  // (civitai/civitai#5095); this label is for per-endpoint ATTRIBUTION and
+  // latency, which it does give.
+  //
+  // ⚠ AND IT IS **TWO** PROCEDURES, NOT ONE — stated as a count because the first
+  // draft of this paragraph said `queryAppWorkflows` was "the ONE rate-limited
+  // procedure in this family" missing the recorder, and that was false in the
+  // direction that would have under-scoped the fix. `cancelAppWorkflow` charges
+  // the SAME `catalog` bucket (its own comment says it "MUST be bounded exactly
+  // like the sibling queryAppWorkflows") and is equally silent. Measured by
+  // enumerating every `recordBlockBridgeRateLimitRefusal(` call site in
+  // `blocks.router.ts`: four, in `pollWorkflow`, `cancelWorkflow`,
+  // `estimateWorkflow` and `getMyBuzzBalance` — none in either app-subqueue proc.
+  // Closing only `queryAppWorkflows` would leave the catalog bucket's refusal
+  // signal blind and this comment reading as though the gap were shut.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*

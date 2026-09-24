@@ -54,8 +54,11 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  *      type-checking cleanly. But that client is a **GET** to a DIFFERENT HOST
  *      (`DEFAULT_ORCHESTRATION_URL`, path `v2/consumer/workflows`) with `tags` in
  *      the QUERY STRING. Pointed at this path it meets the 405 method guard
- *      below, before any body parsing; `tags` never enters a body, so the strict
- *      schema never sees it. "This catches the SDK substitute" is FALSE and must
+ *      below and never reaches the schema; `tags` never enters a body at all, so
+ *      the strict schema cannot see it. (Precisely: Next parses the body BEFORE
+ *      the handler runs, so what the 405 precedes is this route's own validation,
+ *      not body parsing — an earlier draft said "before any body parsing", which
+ *      is wrong about the ordering even though the conclusion holds.) "This catches the SDK substitute" is FALSE and must
  *      not be re-derived as a reason to keep the schema.
  *
  *      ⚠ THE REAL SUBSTITUTE RISK IS NOT INTERCEPTABLE HERE AT ALL: a block
