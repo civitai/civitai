@@ -1,4 +1,5 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
+import { plural } from '../abuse-report-prose';
 import {
   BOT_ACCOUNT_COHORT_WINDOW_HOURS,
   COHORT_PAGE_SIZE,
@@ -24,7 +25,7 @@ import {
   isCommonEmailDomain,
   registrationClusterGroupKey,
 } from './heuristics';
-import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
+import { BOT_ACCOUNT_DETECTOR, POST_COUNT_LEGEND, buildFinding, buildReports } from './report';
 import {
   MIN_REPORTED_CONFIDENCE,
   confidenceBucketCounters,
@@ -491,10 +492,21 @@ export async function runBotAccountDetection(
   // oldest tail of the window; saying so is what stops a moderator drawing the backwards
   // conclusion that the newest signups went unexamined.
   const summary =
-    `Scanned ${cohort.scanned} account(s) created since ${createdAfter.toISOString()}; ` +
-    `${cohort.members.length} had posted something and were scored by ${heuristics.length} ` +
-    `heuristic(s). They posted ${postedAll} item(s), of which ${postedExcluded} are no longer on ` +
-    `the site; ${nothingOnSite} of the ${cohort.members.length} have nothing left on the site at ` +
+    // 🔴 THE VERBS AGREE AS WELL AS THE NOUNS. A one-account run is not a hypothetical shape here —
+    // the cohort is a single day's signups that posted something, and `were scored`/`are no longer`/
+    // `have nothing`/`appear below` all read as a defect at 1. `plural` takes the irregular form as
+    // its third argument precisely so a verb can go through the same helper as a noun.
+    `Scanned ${cohort.scanned} ${plural(cohort.scanned, 'account')} created since ` +
+    `${createdAfter.toISOString()}; ${cohort.members.length} had posted something and ` +
+    `${plural(cohort.members.length, 'was', 'were')} scored by ${heuristics.length} ` +
+    `${plural(heuristics.length, 'heuristic')}. They posted ${postedAll} ` +
+    `${plural(postedAll, 'item')}, of which ${postedExcluded} ` +
+    `${plural(postedExcluded, 'is', 'are')} no longer on the site; ${nothingOnSite} of the ` +
+    `${cohort.members.length} ${plural(
+      nothingOnSite,
+      'has',
+      'have'
+    )} nothing left on the site at ` +
     `all. Membership counts everything an account posted, so an account whose uploads were all ` +
     `blocked or removed is included rather than dropped.` +
     // 🔴 THE SUPPRESSION SENTENCE. The counters carry this too, but the summary is what a human
@@ -508,8 +520,13 @@ export async function runBotAccountDetection(
     ` ${reported.length} scored at or above the ${String(
       Number(minConfidence.toFixed(4))
     )} reporting threshold and ` +
-    `appear below; ${suppressed.length} scored under it and are counted in the ` +
-    `confidence_bucket_* counters but NOT reported as findings.` +
+    `${plural(reported.length, 'appears', 'appear')} below; ${suppressed.length} scored under it ` +
+    `and ${plural(
+      suppressed.length,
+      'is',
+      'are'
+    )} counted in the confidence_bucket_* counters but ` +
+    `NOT reported as findings.` +
     // Two of three heuristics are ring detectors and both can go dark. Saying so in the summary
     // stops a reader treating a low-confidence run as evidence that no ring existed.
     (signals.sources.registrationIps
@@ -528,7 +545,11 @@ export async function runBotAccountDetection(
     // recognise it.
     (signals.sources.registrationIps && signals.membersPerIp.size === 0 && cohort.members.length > 0
       ? ` 🔴 THE REGISTRATION-IP READ RAN AND MATCHED NOTHING for any of the ` +
-        `${cohort.members.length} member(s). That is possible on a quiet day, and it is also what a ` +
+        `${cohort.members.length} ${plural(
+          cohort.members.length,
+          'member'
+        )}. That is possible on ` +
+        `a quiet day, and it is also what a ` +
         `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
         `distinguishable from this run alone.`
       : '') +
@@ -581,7 +602,30 @@ export async function runBotAccountDetection(
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
         `${cohort.scanned} read are the most recent of the window and the unread remainder is its ` +
         `OLDEST end — the earliest signups of the window were not scored.`
-      : '');
+      : '') +
+    // 🔴 THE LEGEND FOR BOTH ON-SITE CATEGORIES, HERE AND NOT ON EVERY ROW. It used to be appended
+    // to each finding's reason, so a run of a thousand findings carried a thousand copies of one
+    // definition and pushed each account's own facts down the reason cell. The board renders this
+    // summary once, above the findings table, on the same screen as every row it explains — see
+    // `apps/moderator/src/routes/abuse/[runId]/+page.svelte`.
+    //
+    // ⚠️ ONLY the ENUMERATION moved. The scan-pending caveat stayed on every finding, because the
+    // run page is not the only surface that renders a reason:
+    // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` shows `{f.reason}`
+    // with no summary anywhere on the screen. See `PENDING_CARVE_OUT` in `./report`.
+    //
+    // 🔴 LAST ON PURPOSE, AND THE ORDER IS A SAFETY PROPERTY RATHER THAN A STYLE CHOICE. This
+    // summary is capped at 2,000 characters by the wire contract and it GROWS WITH THE RUN'S ILL
+    // HEALTH — every branch above is appended only when something went wrong. Measured when the
+    // legend was first appended in full: three failed reads plus a capped cohort put the summary at
+    // 2,037 characters and `abuseReportInput.safeParse` refused the WHOLE report, losing the
+    // findings, the counters and the record that the reads had failed. That same case measures
+    // 1,973 today — 27 characters of headroom, which is one reworded sentence, not a margin.
+    // `truncateSummary` in `report.ts` bounds it, and it cuts the TAIL — so whatever sits last is
+    // what gets sacrificed. A definition that is
+    // identical on every run and inferable from the words it defines is the right thing to lose; a
+    // source-read failure, which appears nowhere else a human reads, is not.
+    ` ${POST_COUNT_LEGEND}`;
 
   const reports = buildReports({
     findings,

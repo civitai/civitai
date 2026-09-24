@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
+import { NO_ACTION_TAKEN, plural } from '../abuse-report-prose';
 import type { BotAccountCohortMember, SurfaceCounts } from './cohort';
-import { renderNotes, renderSubScores, type BotAccountScore } from './scoring';
+import { renderNotes, type BotAccountScore } from './scoring';
 
 /**
  * Turning a scored cohort into abuse-board reports.
@@ -36,11 +37,71 @@ const MAX_REASON_LENGTH = 2_000;
  * runs `abuseReportInput.parse(input)` before the fetch, so an over-long reason throws a ZodError in
  * this process and nothing is ever sent. So it is truncated here rather than left to fail, and the
  * ellipsis is the record that something was cut. Reason text is generated from bounded facts plus a
- * username and a per-heuristic list, both of which can grow.
+ * username and the heuristics' own notes, both of which can grow. (The per-heuristic `id=0.00` list
+ * was a third such input and is no longer rendered — see `buildFinding` — so the reason is shorter
+ * than it was, not differently bounded.)
  */
 export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string {
   if (reason.length <= max) return reason;
   return `${reason.slice(0, max - 1)}…`;
+}
+
+/**
+ * The wire contract's own cap on a report's `summary`, restated for the same reason
+ * `MAX_REASON_LENGTH` is.
+ *
+ * 🔴 THE THIRD PRODUCER-SUPPLIED STRING ON THIS CONTRACT, AND IT SHIPPED UNBOUNDED. `reason` and
+ * `groupKey` were each brought inside their cap at the point a finding is built; the summary was
+ * not, and it is the one of the three that GROWS WITH THE RUN'S ILL HEALTH — every disclosure
+ * sentence in `run.ts` (three source-failure branches, two budget-exhausted branches, the cap
+ * branch) is appended only when something went wrong. So the longest summary this producer can emit is the one
+ * describing the worst run, which is exactly the run whose report must not be lost.
+ *
+ * MEASURED, AND THE MEASUREMENT IS HISTORICAL — READ THE DATE ON IT. When the on-site legend was
+ * first appended to the summary in full, a run with all three evidence reads failing and the cohort
+ * capped produced a 2,037-character summary and `abuseReportInput.safeParse` REFUSED the whole
+ * report: no findings, no counters, no record that the reads had failed. The failure is local
+ * (`moderatorApp.abuseReport` parses before the fetch), so there is no 400 to read and nothing is
+ * sent.
+ *
+ * ⚠️ THAT CASE NOW MEASURES 1,973 AND IS NOT TRIMMED, because the scan-pending caveat moved back
+ * onto each finding and took ~50 characters out of the legend. 27 characters of headroom is not a
+ * safety margin — it is one reworded disclosure sentence — which is the whole argument for the
+ * bound existing rather than for it being unnecessary. Do not read the smaller number as "this
+ * cannot happen"; `run.ts` has two budget-exhausted branches that this fixture does not even
+ * trigger.
+ *
+ * ⚠️ IT IS A LOCAL LITERAL BECAUSE THE CONTRACT DOES NOT EXPORT THIS ONE — `MAX_REASON_LENGTH` and
+ * `MAX_FINDINGS_PER_REPORT` are exported, the summary's `.max(2_000)` is inline. A copy can drift,
+ * so `__tests__/report.test.ts` pins it against the REAL schema by parsing at the boundary in both
+ * directions rather than by restating the number a second time.
+ */
+const MAX_SUMMARY_LENGTH = 2_000;
+
+/**
+ * Bring a run summary inside the contract's cap.
+ *
+ * 🔴 IT CUTS THE TAIL, AND THAT IS WHY `run.ts` PUTS THE LEGEND LAST. Everything a summary says is
+ * worth saying, but not equally: a source-read failure is a fact about THIS run that appears nowhere
+ * else a human reads, while `POST_COUNT_LEGEND` is a definition that is the same on every run and is
+ * inferable from the words it defines. So the ordering in `run.ts` is the priority order, and this
+ * function is what makes that ordering matter. Rewriting it to cut from the middle, or to drop whole
+ * sentences, would be a worse trade for a more complicated function.
+ *
+ * TRUNCATION, NOT REFUSAL, for the reason `truncateReason` gives: over the cap the report is not
+ * shortened, it is REJECTED, and every finding and counter in it is lost. The ellipsis is the record
+ * that something was cut.
+ */
+export function truncateSummary(summary: string, max = MAX_SUMMARY_LENGTH): string {
+  // 🔴 A NON-POSITIVE BUDGET MUST RETURN NOTHING, NOT A LONGER STRING. The caller subtracts the
+  // batch wording's length from the cap, so this is reachable in principle by a caller with a
+  // pathological suffix — and the naive path is worse than useless there: `slice(0, 0)` plus an
+  // ellipsis is ONE character where zero were allowed, and `slice(0, -1)` returns nearly the whole
+  // string. A bound that can exceed its own budget is not a bound. (Unreachable today: the batch
+  // wording is ~130 characters against a 2,000 cap, so the budget is ~1,870.)
+  if (max <= 0) return '';
+  if (summary.length <= max) return summary;
+  return `${summary.slice(0, max - 1)}…`;
 }
 
 /** The wire contract's own cap on `groupKey`, restated for the same reason `MAX_REASON_LENGTH` is. */
@@ -78,9 +139,54 @@ export function boundGroupKey(key: string, max = MAX_GROUP_KEY_LENGTH): string {
   return `${HASHED_GROUP_KEY_PREFIX}${createHash('sha256').update(key).digest('hex')}`;
 }
 
-/** `3 comment(s), 0 model(s), 40 image(s)` — the per-surface breakdown, spelled one way. */
+/** `3 comments, 0 models, 40 images` — the per-surface breakdown, spelled one way. */
 const renderSurface = (s: SurfaceCounts) =>
-  `${s.comments} comment(s), ${s.models} model(s), ${s.images} image(s)`;
+  `${s.comments} ${plural(s.comments, 'comment')}, ${s.models} ${plural(s.models, 'model')}, ` +
+  `${s.images} ${plural(s.images, 'image')}`;
+
+/**
+ * 🔴 THE CARVE-OUT THAT KEEPS "STILL ON THE SITE" HONEST — PER ROW, BECAUSE IT HAS TO BE.
+ *
+ * `cohort.ts` deliberately counts an image whose scan has not finished (`ingestion: Pending`) as
+ * on-site, which is exactly the case a moderator cannot view yet. Without this clause "All 3 are
+ * still on the site" sends someone to look at three items none of which they can open — the same
+ * over-claim the word "visible" was removed for.
+ *
+ * 🔴 IT STAYS ON EVERY FINDING WHILE THE ENUMERATION MOVES TO THE SUMMARY, AND THE SPLIT IS NOT
+ * ARBITRARY. A reason is rendered on TWO surfaces, and only one of them shows a summary:
+ * `apps/moderator/src/routes/abuse/[runId]/+page.svelte` renders the run summary above the findings
+ * table, but `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders
+ * `{f.reason}` on its own — `getAbuseFindingsForUser` selects from `abuse_detection_finding` alone
+ * and never joins the run. So anything moved to the summary is UNREACHABLE from User Lookup. A
+ * definition of the two categories is inferable from the words it defines and can live there; a
+ * caveat that inverts what one of those categories means cannot, so it rides with the number.
+ */
+const PENDING_CARVE_OUT = 'Images awaiting a scan result count as on the site.';
+
+/**
+ * 🔴 WHAT THE TWO ON-SITE CATEGORIES COVER — ONCE, ON THE RUN PAGE.
+ *
+ * The enumeration used to be appended to EVERY finding, ~210 characters of identical prose repeated
+ * for every account in a run that can carry a thousand of them. A list a reader needs once is noise
+ * on the 999 rows after that, and it pushed the account's own facts — the only part that differs per
+ * row — down below the fold of the board's reason cell.
+ *
+ * ⚠️ IT IS REACHABLE FROM THE RUN PAGE AND NOT FROM USER LOOKUP; see `PENDING_CARVE_OUT` above for
+ * why that is an acceptable trade for this half and not for the other. "Still on the site" and "no
+ * longer on the site" are ordinary English that a moderator can act on without the list; the list
+ * tells them WHICH states fall where, which is a refinement rather than a correction.
+ *
+ * 🔴 IT MUST STAY IN THE SUMMARY OF EVERY BATCH, not only the first. `buildReports` splits a large
+ * run across several reports and each becomes its own row on the board with its own summary; a
+ * legend attached to batch 1 alone would leave batches 2..n undefined. `buildReports` appends its
+ * batch wording to the caller's summary rather than replacing it, so a caller that includes this
+ * once gets it on all of them.
+ */
+export const POST_COUNT_LEGEND =
+  'Still on the site means the item has not been hidden, blocked, unpublished or removed; ' +
+  'no longer on the site covers drafts, unpublished or scheduled models, unattached uploads, ' +
+  'uploads the scanner blocked or could not find, and hidden, TOS-flagged or already-removed ' +
+  'content.';
 
 /**
  * 🔴 WHAT THE ACCOUNT POSTED, AND HOW MUCH OF IT IS STILL UP — both, always, in that order.
@@ -94,32 +200,25 @@ const renderSurface = (s: SurfaceCounts) =>
  * collapses to one clause — the sentence still states it, so a reader never has to infer the
  * absence of a missing clause.
  *
- * 🔴 "STILL ON THE SITE", NOT "VISIBLE". `cohort.ts` deliberately counts an image whose scan has
- * not finished (`ingestion: Pending`) as on-site, which is exactly the case a moderator cannot view
- * yet — so calling that number "visible" claimed something the query does not deliver. The carve-out
- * is stated in BOTH branches, rather than left to a reader who would have no way to know.
- *
- * 🔴 THE NOTHING-EXCLUDED BRANCH NEEDS THE CARVE-OUT MOST, and used to be the one branch without it.
- * `imageCountArgs` keeps `ingestion: Pending`, so a twenty-minute-old account whose three uploads are
- * all attached and all awaiting a scan has `excluded.total === 0` and takes this branch — and this is
- * the modal shape of the population this detector exists to find, precisely because nothing has been
- * actioned yet. "All 3 still on the site" then sent a moderator to look at three items none of which
- * they can view. Same over-claim the word "visible" was removed for, surviving in the commoner half.
+ * The CATEGORIES are ENUMERATED once in `POST_COUNT_LEGEND`, on the run summary. What stays here is
+ * this account's own numbers — the only part that differs from one row to the next — plus
+ * `PENDING_CARVE_OUT`, which could not move for the reason its own docstring gives: one of the two
+ * surfaces that renders a reason shows no summary at all.
  */
-const PENDING_CARVE_OUT = 'Images still awaiting a scan result are counted as on the site.';
-
 export function renderPostCounts(posts: BotAccountCohortMember['posts']): string {
-  const head = `Posted ${posts.all.total} item(s) — ${renderSurface(posts.all)}.`;
+  const head = `Posted ${posts.all.total} ${plural(posts.all.total, 'item')} — ${renderSurface(
+    posts.all
+  )}.`;
+  // `All 1 are still on the site` is grammatical nonsense and the single-item account is common in
+  // a cohort of day-old signups, so the singular gets its own sentence rather than a spliced verb.
   if (posts.excluded.total === 0)
-    return (
-      `${head} All ${posts.all.total} still on the site (nothing hidden, blocked, unpublished or ` +
-      `removed). ${PENDING_CARVE_OUT}`
-    );
+    return posts.all.total === 1
+      ? `${head} It is still on the site. ${PENDING_CARVE_OUT}`
+      : `${head} All ${posts.all.total} are still on the site. ${PENDING_CARVE_OUT}`;
   return (
     `${head} Still on the site: ${posts.visible.total} (${renderSurface(posts.visible)}). ` +
-    `NOT on the site: ${posts.excluded.total} (${renderSurface(posts.excluded)}) — drafts, ` +
-    `unpublished or scheduled models, unattached uploads, uploads the scanner blocked or could not ` +
-    `find, and hidden, TOS-flagged or already-removed content. ${PENDING_CARVE_OUT}`
+    `No longer on the site: ${posts.excluded.total} (${renderSurface(posts.excluded)}). ` +
+    PENDING_CARVE_OUT
   );
 }
 
@@ -149,21 +248,64 @@ export function buildFinding(
   // Floored at zero: an account timestamped after the scan instant is clock skew between the app and
   // the database, not a negative age, and a negative figure in the reason reads as corrupt data.
   const ageHours = Math.max(0, (observedAt.getTime() - member.createdAt.getTime()) / 3_600_000);
-  // 🔴 THE NOTES ARE THE ONLY PART A MODERATOR CAN ACT ON. `Per-heuristic: a=0.60, b=0.00` says
-  // which signal fired and nothing about WHAT IT SAW — so the clause below carries the cluster
-  // sizes, the posting rate and the shared text, and it is placed BEFORE the numbers because it is
-  // the part that gets read. It is omitted entirely when nothing fired rather than rendered as an
-  // empty clause; that is the case where the numbers alone are the whole story.
+  // 🔴 THE NOTES ARE THE ONLY PART A MODERATOR CAN ACT ON, AND THEY ARE NOW THE ONLY PART OF THE
+  // SCORING THAT REACHES THE SENTENCE. Each clause says what a signal SAW — the cluster sizes, the
+  // posting rate, the shared filename — which is the half a human can check. It is omitted entirely
+  // when nothing fired rather than rendered as an empty clause.
   const notes = renderNotes(score.subScores);
-  const reason = truncateReason(
-    `Shadow-mode observation — NOT actioned. Account ${member.userId}` +
-      `${member.username ? ` (${member.username})` : ''} registered ` +
-      `${member.createdAt.toISOString()}, ${ageHours.toFixed(1)}h old at scan. ` +
-      `${renderPostCounts(member.posts)} ` +
-      `${notes ? `Signals — ${notes}. ` : ''}` +
-      `Per-heuristic: ${renderSubScores(score.subScores)}. ` +
-      `Blended confidence ${score.confidence.toFixed(2)}.`
-  );
+  // 🔴 THE `id=0.00` PER-HEURISTIC DUMP IS GONE FROM THE PROSE, AND THE NUMBERS ARE NOT.
+  //
+  // The reason used to end `Per-heuristic: posting-velocity=0.00, registration-cluster=0.00,
+  // content-templating=1.00, asset-staging=1.00. Blended confidence 0.50.` — machine syntax on the
+  // one string the board describes as "the whole value of the row to a moderator", and the part a
+  // non-technical reader stops at. Measured on the fixture in
+  // `src/server/services/__tests__/abuse-detector-reason-prose.test.ts` — one account, four
+  // registered heuristics, three of them carrying notes — the reason went from 690 characters to
+  // 516: this clause accounts for 110 of the 174 saved and the enumeration that moved to
+  // `POST_COUNT_LEGEND` for the rest. A production finding with longer notes ran longer than the
+  // fixture does. (516 and not 464: the scan-pending caveat was kept on the row rather than moved
+  // to the summary, because one of the two surfaces that renders a reason shows no summary at all —
+  // see `PENDING_CARVE_OUT`.)
+  //
+  // WHERE THE NUMBERS WENT, because they are load-bearing for grading and deleting them was not on
+  // the table: `heuristic:<id>:score_sum` in the run counters, added beside the `evaluated`/`fired`/
+  // `clamped` trio that was already there (see `heuristicCounters`). That is the record a grading
+  // pass already reads — `abuse_detection_run.counters`, rendered key by key on the run page — and
+  // the sum against `evaluated` gives the mean sub-score per heuristic per run, which is the "how
+  // hard does this fire" half that NO counter carried before: all three existing ones are COUNTS, so
+  // the only place a magnitude appeared was this dumped clause.
+  //
+  // ⚠️ WHAT THE MOVE COSTS, said plainly rather than left for someone to discover: per-ACCOUNT
+  // sub-scores no longer leave this process. The wire contract has no structured field on a finding
+  // (`packages/civitai-moderation/src/schema.ts` — userId, confidence, reason, actioned, action,
+  // groupKey and nothing else), so the only alternatives were the prose or a per-account counter key,
+  // and the latter is 4 keys × up to `MAX_COHORT_ACCOUNTS` rows into a jsonb column the page renders
+  // one key per line. The per-account signal that survives is `confidence`, which is a first-class
+  // column on the board, plus the notes above.
+  //
+  // `Blended confidence` went with it: the board renders `confidence` as its own column beside the
+  // reason cell, so the sentence was restating a number the reader is already looking at, in
+  // vocabulary ("blended") that means something only to whoever wrote the blend.
+  const body =
+    `Account ${member.userId}` +
+    `${member.username ? ` (${member.username})` : ''} registered ` +
+    `${member.createdAt.toISOString()}, ${ageHours.toFixed(1)}h old at scan. ` +
+    `${renderPostCounts(member.posts)} ` +
+    `${notes ? `Signals — ${notes}. ` : ''}`;
+  // 🔴 LAST, AND IN THE WORDS `new-order-abuse-detection` ALREADY USED. It used to LEAD, as
+  // "Shadow-mode observation — NOT actioned." — a phrase naming an internal rollout phase, in the
+  // position a reader skips. Shared from `../abuse-report-prose` so the two producers cannot drift
+  // back apart. Unconditional here because this producer holds no write client at all:
+  // `actioned: false` is a literal in the object below, not a parameter.
+  //
+  // 🔴 ITS BUDGET IS RESERVED, NOT TRIMMED — MOVING IT TO THE END PUT IT IN THE CUT ZONE.
+  // `truncateReason` keeps a PREFIX, so the last clause is the first thing it drops. While this
+  // sentence LED it survived truncation for free; appended naively it would vanish from exactly the
+  // findings that ran long, and those are not hypothetical — `member.username` is unbounded and the
+  // notes carry a sampled filename, which is why `truncateReason` exists at all. So the body is
+  // trimmed against a budget that already excludes this sentence, and the sentence is concatenated
+  // afterwards. Same shape as `buildReports`, which reserves its batch wording for the same reason.
+  const reason = truncateReason(body, MAX_REASON_LENGTH - NO_ACTION_TAKEN.length) + NO_ACTION_TAKEN;
   return {
     userId: member.userId,
     confidence: score.confidence,
@@ -237,14 +379,22 @@ export function buildReports(args: BuildReportsArgs): AbuseReportInput[] {
   return batches.map((batch, index) => {
     const startedAt = new Date(args.startedAt.getTime() + index);
     const finishedAt = new Date(Math.max(args.finishedAt.getTime(), startedAt.getTime()));
+    // 🔴 THE BATCH WORDING IS BUILT FIRST AND SUBTRACTED FROM THE BUDGET, so it is the CALLER's
+    // sentence that gets cut and never this. "Batch 2 of 3" and "nothing was muted" are the two
+    // facts a reader cannot reconstruct from anywhere else on the row.
+    const batchWording =
+      ` Batch ${index + 1} of ${batches.length}; ` +
+      `${batch.length} ${plural(batch.length, 'finding')} in this report, ` +
+      `${args.findings.length} in the run. ` +
+      `Nothing was muted, banned or restricted by this scan.`;
     return {
       detector,
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
-      summary:
-        `${args.summary} Batch ${index + 1} of ${batches.length}; ` +
-        `${batch.length} finding(s) in this report, ${args.findings.length} in the run. ` +
-        `SHADOW MODE: nothing was muted, banned or restricted.`,
+      summary: `${truncateSummary(
+        args.summary,
+        MAX_SUMMARY_LENGTH - batchWording.length
+      )}${batchWording}`,
       counters: {
         ...args.counters,
         batch_index: index + 1,

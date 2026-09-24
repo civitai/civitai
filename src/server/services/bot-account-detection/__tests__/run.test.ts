@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, mockNode } from '~/__tests__/mocks';
 import type { BotAccountCohortMember, CohortReader, NewAccountRow } from '../cohort';
 import { emptyCohortSignals } from '../evidence';
-import { BOT_ACCOUNT_DETECTOR } from '../report';
+import { BOT_ACCOUNT_DETECTOR, POST_COUNT_LEGEND } from '../report';
 import {
   BOT_ACCOUNT_HEURISTICS,
   assetStagingHeuristic,
@@ -237,23 +237,54 @@ describe('the reporting threshold, end to end', () => {
 });
 
 /**
- * The reason string's `Per-heuristic: a=0.60, b=0.00` clause, parsed back into a map.
+ * Every heuristic's own score, read back off the EMITTED REPORT.
  *
- * Read off the EMITTED FINDING rather than off an intermediate, because the finding is the only
- * thing that leaves this process — an assertion on a score object one layer up cannot tell whether
- * that score ever reached the board.
+ * 🔴 THIS USED TO PARSE THE FINDING'S `reason` STRING, AND THE SOURCE MOVED FOR A REASON THAT IS NOT
+ * ABOUT THESE TESTS. The reason carried a `Per-heuristic: a=0.60, b=0.00` clause — machine syntax in
+ * the one sentence a non-technical moderator reads, which is what this suite was quietly depending
+ * on. Deleting that clause without a replacement would have deleted the seam guards below with it,
+ * so the magnitudes moved to the run counters (`heuristic:<id>:score_sum` over
+ * `heuristic:<id>:evaluated`, see `heuristicCounters`) and this helper follows them there.
+ *
+ * WHAT IS UNCHANGED: it still reads something that LEFT THE PROCESS. The counters ride out on the
+ * same report as the findings and land in `abuse_detection_run.counters`, which the board renders
+ * key by key — so an assertion here is still a claim about what reached the board, not about an
+ * intermediate score object. That was the whole argument for parsing the reason, and it survives.
+ *
+ * ⚠️ WHAT IS WEAKER, SAID PLAINLY: this is a MEAN over every SCORED member, not one account's
+ * sub-score. Two things follow that are easy to get wrong:
+ *
+ *  - The population is `cohort.members`, not the reported half. `heuristicCounters` runs over every
+ *    score (`run.ts`), so the threshold does NOT narrow it — a case that sets `minConfidence: 0` is
+ *    doing so for its own reasons, not to make this helper honest.
+ *  - "Homogeneous" here means the fixtures give every member the SAME EVIDENCE, not that the
+ *    accounts are identical: `account(id)` deliberately varies username and email domain so a
+ *    fixture is not accidentally a domain cluster. What matters is that the heuristics score them
+ *    alike, which the ring and staging cohorts do by construction.
+ *
+ * So the mean IS each member's own score for these fixtures, and the assertions mean what they did.
+ * A fixture whose members score differently would silently turn these into averages — keep them
+ * evidence-homogeneous, or assert on `confidence`, which is still per-finding and still on the
+ * board. Several of the cases below already do both. Note the direction of the weakening is not
+ * uniform: a `toBe(0)` assertion gets STRONGER (a mean of non-negatives is 0 only if every member
+ * is), while a `toBeGreaterThan(0)` no longer attributes to any one account.
  */
-function subScoresOf(finding: { reason: string }): Record<string, number> {
-  // Anchored on the clause that FOLLOWS it, because the scores themselves contain full stops —
-  // `[^.]*` reads `posting-velocity=0` and stops, which is a parse that looks like a value.
-  const clause = /Per-heuristic: (.*?)\. Blended confidence/.exec(finding.reason);
-  if (!clause) throw new Error(`no per-heuristic clause in reason: ${finding.reason}`);
-  return Object.fromEntries(
-    clause[1].split(', ').map((pair) => {
-      const [id, value] = pair.split('=');
-      return [id, Number(value)];
-    })
-  );
+function subScoresOf(report: AbuseReportInput): Record<string, number> {
+  const counters = report.counters ?? {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(counters)) {
+    const match = /^heuristic:(.+):score_sum$/.exec(key);
+    if (!match) continue;
+    const evaluated = counters[`heuristic:${match[1]}:evaluated`];
+    // A `score_sum` with no `evaluated` beside it is the counters having been built wrong, not a
+    // heuristic that scored nothing — throwing is what stops it reading as a 0.
+    if (!evaluated)
+      throw new Error(`no evaluated counter for ${match[1]}: ${JSON.stringify(counters)}`);
+    out[match[1]] = value / evaluated;
+  }
+  if (!Object.keys(out).length)
+    throw new Error(`no per-heuristic counters in report: ${JSON.stringify(counters)}`);
+  return out;
 }
 
 describe('🔴 the seam between the evidence and the scoring', () => {
@@ -305,7 +336,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
     const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
     expect(finding).toBeDefined();
-    const sub = subScoresOf(finding as { reason: string });
+    const sub = subScoresOf(scenario.reports[0]);
 
     // A positive control on the parse before either number is believed: all four registered
     // heuristics are present, so a regex that matched a fragment cannot read as a pass.
@@ -350,7 +381,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
     const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
     expect(finding).toBeDefined();
-    const sub = subScoresOf(finding as { reason: string });
+    const sub = subScoresOf(scenario.reports[0]);
     expect(Object.keys(sub).sort()).toEqual([
       'asset-staging',
       'content-templating',
@@ -396,6 +427,43 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(Object.keys(result.counters).length).toBeGreaterThan(20);
     expect(result.counters.evidence_distinct_filename_fingerprints).toBe(1);
     expect(result.counters.evidence_filename_samples).toBe(1);
+  });
+
+  it('🔴 every counter key fits the contract’s 64-character cap', async () => {
+    // 🔴 THE CAP IS ON THE KEY, AND BREAKING IT LOSES THE WHOLE RUN, NOT THE COUNTER.
+    // `packages/civitai-moderation/src/schema.ts` declares `counters` as
+    // `z.record(z.string().max(64), z.number())` and `moderatorApp.abuseReport` parses BEFORE the
+    // fetch, so an over-long key throws in this process and nothing is sent. The per-heuristic keys
+    // are the ones that can grow: they are `heuristic:` + an id + a suffix, and this change added a
+    // fourth suffix (`:score_sum`). At today's ids the longest is 40 characters, so this has ~24 to
+    // spare — which is exactly the kind of margin that gets spent without anyone noticing, because
+    // the thing that spends it is naming a heuristic descriptively.
+    // 🔴 THE PRODUCTION REGISTRY, NOT AN INJECTED ONE, AND THE FIRST DRAFT OF THIS CASE GOT THAT
+    // WRONG. It used the suite's `run()` helper, which injects `constantHeuristic('h', 0.4)` — so
+    // every key it ever saw was `heuristic:h:score_sum`, twenty characters, and a mutant that
+    // renamed a REAL heuristic to a 57-character id left this GREEN while five sibling cases went
+    // red. A guard on a length budget has to be fed the strings that actually spend it.
+    const { reader } = recordingReader([account(1)]);
+    const out = sink();
+    const result = await runBotAccountDetection(
+      { reader, sendReport: out.sendReport, now: clock() }, // no `heuristics` — the shipped registry
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+    const keys = Object.keys(result.counters);
+    // Positive controls: an empty key set satisfies the filter below, and a registry that failed to
+    // load would produce no `heuristic:` keys at all — which is the shape the mutant above exposed.
+    expect(keys.length).toBeGreaterThan(20);
+    expect(keys.filter((k) => k.startsWith('heuristic:')).length).toBeGreaterThanOrEqual(
+      4 * BOT_ACCOUNT_HEURISTICS.length
+    );
+    for (const id of BOT_ACCOUNT_HEURISTICS.map((h) => h.id))
+      expect(keys, `${id} contributed no counter key`).toContain(`heuristic:${id}:score_sum`);
+
+    const tooLong = keys.filter((k) => k.length > 64);
+    expect(tooLong, `these counter keys exceed the contract's 64-character cap`).toEqual([]);
+    // And the real schema agrees, rather than this file restating the number — the same reason the
+    // summary cap is pinned by parsing in `report.test.ts`.
+    expect(abuseReportInput.safeParse(out.reports[0]).success).toBe(true);
   });
 
   it('🔴 the filename source is reported UNAVAILABLE when the read fails, not as a quiet zero', async () => {
@@ -565,7 +633,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
     const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
     expect(finding).toBeDefined();
-    const sub = subScoresOf(finding as { reason: string });
+    const sub = subScoresOf(scenario.reports[0]);
     // Positive control on the parse before any number is believed.
     expect(Object.keys(sub).sort()).toEqual([
       'asset-staging',
@@ -576,14 +644,15 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
     // 🔴 THE HEURISTIC THAT GOES INERT UNDER THE SEAM MUTANT, AT ITS FIRING POINT. TWO staged
     // uploads a minute apart saturates the volume half at 1 and scores nothing on the burst half.
-    // Read off the reason's `id=0.00` clause, so the expectation is the RENDERED two-decimal form —
-    // which is what a moderator sees. ⚠️ Do not read the exact matcher as buying precision: the
-    // sub-score is rendered with `toFixed(2)` before `subScoresOf` parses it back, so the renderer
-    // sets the resolution and a heuristic scoring 0.999 renders `1.00` and passes this line. What
-    // discriminates a near-miss is the confidence assertion below, on its own — measured, a
-    // `score * 0.999` mutant reaches it and fails with `expected 0.24975 to be close to 0.25`. The
-    // `count: 1` control at the foot of this case catches a constant CEILING, which is a different
-    // mutant; it does not see a near-miss, and an earlier wording here credited it with both.
+    // ⚠️ THIS PARAGRAPH DESCRIBED A SOURCE THAT NO LONGER EXISTS, AND IT UNDERSTATED ITS OWN TEST.
+    // It said the value is "rendered with `toFixed(2)` before `subScoresOf` parses it back, so the
+    // renderer sets the resolution and a heuristic scoring 0.999 renders `1.00` and passes this
+    // line". That was true of the reason clause this helper used to parse; it now reads
+    // `heuristic:<id>:score_sum / heuristic:<id>:evaluated` off the run counters, which are rounded
+    // to FOUR places — so 0.999 no longer rounds to 1 and this line catches a near-miss on its own.
+    // The confidence assertion below still catches it too, and the `count: 1` control at the foot of
+    // this case still catches a constant CEILING, which is a different mutant; what has changed is
+    // that this line is no longer the weak one of the three.
     //
     // 🔴 THIS EXPECTATION IS NOW THE HEURISTIC'S CEILING, AND THAT USED TO BE DELIBERATELY AVOIDED
     // HERE. While the volume ramp rose to a boundary of 3, two uploads landed mid-ramp at 0.5, and
@@ -628,7 +697,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     await below.result;
     const belowFinding = below.reports[0].findings.find((f) => f.userId === 1);
     expect(belowFinding).toBeDefined();
-    expect(subScoresOf(belowFinding as { reason: string })['asset-staging']).toBe(0);
+    expect(subScoresOf(below.reports[0])['asset-staging']).toBe(0);
     expect(belowFinding?.confidence).toBe(0);
   });
 
@@ -654,14 +723,12 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const burst = stagingRun(stagedEvidence(2, true));
     const burstResult = await burst.result;
 
-    const scoreOf = (s: typeof spread) =>
-      subScoresOf(s.reports[0].findings.find((f) => f.userId === 1) as { reason: string })[
-        'asset-staging'
-      ];
-    // Rendered to two decimals in the reason clause: the volume half saturates at its boundary of
-    // two in BOTH runs, and the burst half contributes nothing visible even when it is fully
-    // engaged. A mutant that zeroed the VOLUME half fails here — `scoreOf` reads 0 out of the
-    // rendered reason clause against an expected 1. (NOT because the finding would disappear: this
+    const scoreOf = (s: typeof spread) => subScoresOf(s.reports[0])['asset-staging'];
+    // The volume half saturates at its boundary of two in BOTH runs, and the burst half contributes
+    // nothing visible even when it is fully engaged. A mutant that zeroed the VOLUME half fails
+    // here — `scoreOf` reads 0 against an expected 1. (It reads the run counters now, not the
+    // "rendered reason clause" an earlier wording here named: that clause was deleted when the
+    // per-heuristic dump came out of the moderator's sentence.) (NOT because the finding would disappear: this
     // scenario runs with `minConfidence: 0`, so a member scoring 0 is still emitted, which the
     // negative control in the sibling case relies on.) 🔴 A mutant that zeroed the BURST half does
     // NOT fail here — `max` is identically `volume`, so `scoreOf` still reads 1 and both lines pass;
@@ -810,9 +877,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     // and that is exactly the state the mutant manufactures.
     const scenario = ringRun(undefined);
     await scenario.result;
-    const sub = subScoresOf(
-      scenario.reports[0].findings.find((f) => f.userId === 1) as { reason: string }
-    );
+    const sub = subScoresOf(scenario.reports[0]);
     expect(sub['registration-cluster']).toBe(0);
     expect(sub['content-templating']).toBe(0);
   });
@@ -1590,12 +1655,112 @@ describe('runBotAccountDetection', () => {
     const scenario = run([account(1), account(2)], {}, undefined, new Set([2]));
     await scenario.result;
     const summary = scenario.reports[0].summary ?? '';
-    expect(summary).toContain('They posted 41 item(s), of which 40 are no longer on the site');
-    expect(summary).toContain('1 of the 2 have nothing left on the site at all');
+    expect(summary).toContain('They posted 41 items, of which 40 are no longer on the site');
+    expect(summary).toContain('1 of the 2 has nothing left on the site at all');
     expect(summary).toContain(
       'Membership counts everything an account posted, so an account whose uploads were all ' +
         'blocked or removed is included rather than dropped.'
     );
+    // 🔴 AND THE LEGEND FOR BOTH ON-SITE CATEGORIES IS HERE, not on every finding. It used to be
+    // ~260 characters appended to each row; the board renders this summary once, above the table.
+    // Asserting it on the SUMMARY is what stops "shortened the reason" meaning "deleted the
+    // definition" — the words still reach the moderator, in one copy instead of a thousand.
+    expect(summary).toContain(POST_COUNT_LEGEND);
+    for (const finding of scenario.reports[0].findings) {
+      // The ENUMERATION moved to the summary; the scan-pending CAVEAT stayed on the row, because
+      // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders a reason
+      // with no summary anywhere on the screen. See `PENDING_CARVE_OUT` in `../report`.
+      expect(finding.reason).not.toContain('TOS-flagged');
+      expect(finding.reason).toContain('Images awaiting a scan result count as on the site.');
+    }
+    // Pluralised on both sides of the count — `1 heuristic`, not `1 heuristic(s)`.
+    expect(summary).toContain('were scored by 1 heuristic.');
+    expect(summary).toContain('Scanned 2 accounts created since');
+  });
+
+  it('🔴 the WORST run still produces a report the contract accepts', async () => {
+    // 🔴 THE REGRESSION THIS EXISTS FOR, AND IT WAS INTRODUCED BY A PROSE CHANGE. The summary is
+    // capped at 2,000 characters by the wire contract, and it is the one producer-supplied string
+    // here that GROWS WITH THE RUN'S ILL HEALTH: three source-failure branches, two
+    // budget-exhausted branches and the cap branch are each appended only when something went
+    // wrong. Appending `POST_COUNT_LEGEND` in full took the all-branches case to 2,037 — over the
+    // cap, so `abuseReportInput.parse` refused the WHOLE report and the findings, the counters and
+    // the record that three reads had failed were all lost. The failure is local:
+    // `moderatorApp.abuseReport` parses before the fetch, so there is no 400 to read.
+    //
+    // ⚠️ THIS FIXTURE MEASURES 1,973 TODAY AND IS NOT TRIMMED — the scan-pending caveat moved back
+    // onto each finding and took ~50 characters out of the legend. So the assertions below are
+    // about the bound being CORRECT and the ordering being right, not about this case reaching the
+    // cap; a case keyed on the ellipsis would go red on any edit to an unrelated sentence. The trim
+    // itself is exercised on a deliberately over-long summary in `__tests__/report.test.ts`.
+    //
+    // Every read throws AND the cohort is capped: the maximum number of disclosure sentences this
+    // summary can carry. A fixture with only one branch active would pass at 1,700 and see nothing.
+    const accounts = [account(1), account(2), account(3)];
+    const { reader } = recordingReader(accounts);
+    const out = sink();
+    const boom = async () => {
+      throw new Error('read failed');
+    };
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: boom,
+          listFilenameSamples: boom,
+          listStagedImageSamples: boom,
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+      },
+      // `maxAccounts: 2` against three accounts, so the cap branch fires too.
+      { pageSize: 1, maxAccounts: 2, minConfidence: 0 }
+    );
+
+    const report = out.reports[0];
+    const summary = report.summary ?? '';
+    expect(summary.length).toBeLessThanOrEqual(2_000);
+    // 🔴 THE REAL SCHEMA, which is the only thing that decides whether the run reaches the board.
+    expect(abuseReportInput.safeParse(report).success).toBe(true);
+
+    // 🔴 EVERY FACT ABOUT THIS RUN IS INTACT. Asserting the length alone would pass just as well on
+    // a bound that ate the read-failure disclosures, which is the outcome that would actually cost
+    // someone a morning — so each one is checked, and each is checked by its CLOSING words.
+    //
+    // 🔴 THE CLOSING WORDS, NOT THE OPENING ONES, AND THAT CHOICE IS NOT COSMETIC. A tail-trim takes
+    // the tail of a sentence, so an opening phrase still matches a sentence that was cut in half.
+    // Measured while this case was being written, at a point where the fixture DID overflow: with
+    // the legend moved back ahead of these branches the cut landed 37 characters inside the last
+    // disclosure and every opening phrase still matched, so a version asserting
+    // `toContain('TRUNCATED at the 2-account cap')` was green on that mutant. The fixture no longer
+    // overflows (1,973 against 2,000), so what catches that mutant TODAY is the ordering assertion
+    // below rather than these lines; they are kept because the overflow is one reworded sentence
+    // away and the assertion costs nothing.
+    for (const disclosure of [
+      'a low score from it is not evidence that accounts share no IP.',
+      'That is not evidence that no accounts uploaded files under the same name — it is a broken ' +
+        'read, and it is counted in evidence_source_read_failures.',
+      'That is not evidence that these accounts published what they uploaded — it is a broken ' +
+        'read, and it is counted in evidence_source_read_failures.',
+      'the earliest signups of the window were not scored.',
+      'Batch 1 of 1',
+      'Nothing was muted, banned or restricted by this scan.',
+    ])
+      expect(summary, `the trim ate a fact about this run: ${disclosure}`).toContain(disclosure);
+
+    // 🔴 AND THE LEGEND IS LAST, WHICH IS WHAT DECIDES WHAT A TRIM SACRIFICES. Asserted as an
+    // ORDERING rather than by demanding this fixture actually overflow: whether it does depends on
+    // the exact length of every disclosure sentence, so a case keyed on the ellipsis goes green or
+    // red for reasons that have nothing to do with the property. (It went green, then red, then
+    // green again across two edits to unrelated prose while this was being written.) The trim
+    // ITSELF is exercised on a deliberately over-long summary in `__tests__/report.test.ts`; what
+    // only an end-to-end run can say is which sentence `run.ts` puts last.
+    expect(summary).toContain('Still on the site means');
+    expect(
+      summary.indexOf('Still on the site means'),
+      'the legend must follow every disclosure, or a tail-trim eats a fact about this run instead'
+    ).toBeGreaterThan(summary.indexOf('the earliest signups of the window were not scored.'));
   });
 
   it('batches across reports at the real cap, with distinct startedAt per batch', async () => {
