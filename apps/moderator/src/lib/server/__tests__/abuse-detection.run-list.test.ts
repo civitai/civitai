@@ -293,6 +293,25 @@ describe('an error that is not a missing column', () => {
     await expect(service.getAbuseVerdictSummary(1)).rejects.toThrow(make().message);
   });
 
+  it('🔴 a 42501 propagates too — it is a GRANT problem, not a missing DDL', async () => {
+    // The one surviving mutant of this guard, closed. Widening its code predicate to accept
+    // `PG_INSUFFICIENT_PRIVILEGE` as well left all 158 abuse tests green — and that constant is
+    // declared in this very file, a few lines above, which is what makes the edit a realistic one
+    // rather than a contrived one.
+    //
+    // Rethrowing is what the two page loads are built for: both already discriminate `42501` into
+    // their own branch, which names the actual remedy (re-run schema.sql AS THE APPLICATION ROLE —
+    // the `psql -U postgres` shortcut leaves tables the app can read but does not own). Degrading
+    // instead would answer "apply the verdict DDL" for a board whose DDL is applied and whose role
+    // simply cannot read it, sending an operator at the wrong file.
+    failEverything(
+      Object.assign(new Error('permission denied for table abuse_detection_finding'), {
+        code: '42501',
+      })
+    );
+    await expect(service.getAbuseVerdictSummary(1)).rejects.toThrow('permission denied for table');
+  });
+
   it.each([
     ['a connection drop', CONNECTION_DROP],
     ['a builder fault carrying no pg code', BUILDER_FAULT],
