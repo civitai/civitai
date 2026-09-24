@@ -3551,9 +3551,19 @@ export const getCollectionCoverImages = async ({
               AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
-    ), articleItemImage as MATERIALIZED (
-        SELECT a.id, a.cover image FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target)
+    ), articleItemImage AS MATERIALIZED (
+        SELECT
+          a.id,
+          ${imageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND a."coverId" IS NULL
     )
     SELECT
         target."collectionId" id,
@@ -3561,9 +3571,10 @@ export const getCollectionCoverImages = async ({
           (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
           NULL
         ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
     FROM target
   `
       : [];
