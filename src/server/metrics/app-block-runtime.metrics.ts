@@ -126,8 +126,21 @@ export type AppBlockEndpoint =
   // has generated through this app, which no other label here varies with. It
   // also charges the CATALOG rate-limit bucket and — unlike `poll`, which sheds a
   // 429 by RESOLVING a non-terminal snapshot — surfaces that refusal as a real
-  // error, so it is the one workflow label whose error rate reads as "blocks are
-  // being throttled on the subqueue" rather than disappearing into a 200.
+  // non-2xx rather than a 200.
+  //
+  // 🔴 DO NOT READ THAT AS "the throttle is visible on this series". An earlier
+  // draft of this comment said the error rate here reads as "blocks are being
+  // throttled on the subqueue", and that is FALSE: `statusToRequestResult` below
+  // maps 401/403 to `forbidden`, >=500 to `server_error` and EVERYTHING ELSE >=400
+  // to `client_error` — so a 429 is indistinguishable from a 400 on
+  // `civitai_app_block_requests_total`, and 400 is exactly the class this route
+  // makes easiest to hit (its `unrecognized_keys` refusals). Compounding it,
+  // `queryAppWorkflows` is the ONE rate-limited procedure in this family that does
+  // not call `recordBlockBridgeRateLimitRefusal` — `pollWorkflow`,
+  // `cancelWorkflow`, `estimateWorkflow` and `getMyBuzzBalance` all do. So today
+  // the subqueue throttle has NO dedicated signal on either surface. That gap is
+  // pre-existing in the procedure and is filed rather than fixed here; this label
+  // is for per-endpoint ATTRIBUTION and latency, which it does give.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*

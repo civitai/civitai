@@ -259,7 +259,7 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     // so the string is pinned in its own right rather than folded into the loop
     // below, which only asserts the label is not the WRONG one.
     expect(humaniseScopeInvocation('ai:write:budgeted', `${base}/query`)).toBe(
-      'Listed your AI workflows'
+      'Listed AI workflows'
     );
 
     // `submit` is the ONE route for which the label is true — see the next test.

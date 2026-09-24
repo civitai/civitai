@@ -497,6 +497,49 @@ describe('POST /api/v1/blocks/workflows/query', () => {
     });
   });
 
+  /**
+   * 🔴 REGRESSION. `query` is the only one of the five whose whole input is
+   * optional, so a bodyless POST is its PRIMARY call shape — and Next does not
+   * deliver one as `{}`. With a missing `Content-Type`, `parseBody` defaults to
+   * `text/plain` and returns the RAW STRING, so `req.body` is `''`; `'' ?? {}` is
+   * `''` (`??` only catches null/undefined) and `strictObject.safeParse('')`
+   * failed with `expected object, received string`.
+   *
+   * That is exactly what `@civitai/sdk`'s `createHttp` produces for an
+   * argument-less POST — it sets `Content-Type` ONLY when `opts.body !==
+   * undefined` — i.e. the spelling this route exists to enable.
+   *
+   * RED at 90e5f4f2cb (the PR's first head) with `expected 400 to be 200` on the
+   * `''` and `'   '` rows; GREEN here. The `undefined` row passed on both sides
+   * and is an INVARIANT GUARD, not regression coverage — it is kept only so the
+   * three shapes are pinned as one table.
+   */
+  it.each([
+    ['no body at all (undefined)', undefined],
+    ["a bodyless POST with no Content-Type ('')", ''],
+    ['a whitespace-only raw body', '   \n '],
+  ])('treats %s as an empty query and delegates', async (_name, body) => {
+    mockQuery.mockResolvedValue(PAGE);
+    const { req, res } = createMocks({ body });
+    await (queryHandler as any)(req, res);
+    expect(res._status()).toBe(200);
+    expect(mockQuery).toHaveBeenCalledWith({ blockToken: BEARER });
+  });
+
+  /**
+   * The narrow half of the same coercion, and the reason it is not "any string
+   * body means empty": a NON-empty raw string is a client that sent a payload
+   * without labelling it. This route does NOT guess — it refuses, rather than
+   * re-implementing JSON parsing so that one layer can interpret an unlabelled
+   * body differently from another.
+   */
+  it('still REFUSES a non-empty raw string body rather than parsing it', async () => {
+    const { req, res } = createMocks({ body: '{"limit":5}' });
+    await (queryHandler as any)(req, res);
+    expect(res._status()).toBe(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it('rejects a limit above the wire bound without delegating', async () => {
     const { req, res } = createMocks({ body: { limit: 51 } });
     await (queryHandler as any)(req, res);

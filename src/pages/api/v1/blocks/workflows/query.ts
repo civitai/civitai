@@ -37,20 +37,45 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  *   1. THIS ROUTE'S BODY SCHEMA IS `z.strictObject`, so a body carrying ANY key
  *      the schema does not declare — `tags` above all, but equally `appId`,
  *      `userId` or a second `blockToken` — is a 400 `unrecognized_keys` BEFORE
- *      any delegation happens. It is the only `strictObject` on this surface and
- *      the divergence from its four siblings is deliberate: a plain `z.object`
- *      would SILENTLY STRIP `tags`, and a block author who sent one would then
- *      receive a plausible, correctly-narrow answer and ship code believing
- *      their filter took effect. A loud refusal makes the trust boundary audible
- *      to the one caller who needs to hear it.
+ *      any delegation happens. The divergence from its four siblings (all plain
+ *      `z.object`) is deliberate: `z.object` would SILENTLY STRIP `tags`, and a
+ *      block author who sent one would then receive a plausible, correctly-narrow
+ *      answer and ship code believing their filter took effect. A loud refusal
+ *      makes the trust boundary audible to the one caller who needs to hear it.
+ *      (It is the only `strictObject` among the five `/workflows/*` routes;
+ *      `blocks/tools.ts` closes its own body schema with `.strict()`, so it is
+ *      not the only closed schema under `/api/v1/blocks/`.)
  *
- *      ⚠ THIS MATTERS BECAUSE THE OBVIOUS SUBSTITUTE IS WRONG IN A WAY THAT
- *      TYPE-CHECKS. `app.orchestration.queryWorkflows({ tags })` in
- *      `@civitai/sdk` takes `tags` FROM THE CALLER. A block reaching for it
- *      instead of this route relocates a server-enforced boundary into the
- *      iframe, and nothing about that fails to compile. Pointing that client at
- *      this path instead now produces a 400 naming `tags`, rather than quiet
- *      agreement.
+ *      🔴 WHAT THIS DOES **NOT** CATCH, stated because an earlier draft of this
+ *      docblock claimed it did and was WRONG — measured, not argued.
+ *      `app.orchestration.queryWorkflows({ tags })` in `@civitai/sdk` does take
+ *      `tags` FROM THE CALLER, and a block reaching for it instead of this route
+ *      really does relocate a server-enforced boundary into the iframe while
+ *      type-checking cleanly. But that client is a **GET** to a DIFFERENT HOST
+ *      (`DEFAULT_ORCHESTRATION_URL`, path `v2/consumer/workflows`) with `tags` in
+ *      the QUERY STRING. Pointed at this path it meets the 405 method guard
+ *      below, before any body parsing; `tags` never enters a body, so the strict
+ *      schema never sees it. "This catches the SDK substitute" is FALSE and must
+ *      not be re-derived as a reason to keep the schema.
+ *
+ *      ⚠ THE REAL SUBSTITUTE RISK IS NOT INTERCEPTABLE HERE AT ALL: a block
+ *      talking to `orchestration.civitai.com` directly with its own token never
+ *      touches civitai.com. What layer 1 genuinely buys is narrower — a
+ *      hand-rolled `fetch` POST to THIS route carrying `tags` gets told no
+ *      instead of being quietly narrowed. That is worth having and is what the
+ *      tests actually measure; it is not the same claim.
+ *
+ *      ⚠ AND THE COST SIDE, which the first draft never weighed. `strictObject`
+ *      makes this the one route on the surface where a NEWER CLIENT TALKING TO AN
+ *      OLDER SERVER is a hard 400: add a paging or filter field server-side, have
+ *      the SDK start sending it, and every request landing on a pod that has not
+ *      rolled yet fails un-retryably for the length of the rolling deploy. The
+ *      four `z.object` siblings structurally cannot have that window, and neither
+ *      can a client that attaches a benign extra key (a tracing or request id).
+ *      Accepted deliberately — the audibility above is judged worth it on the one
+ *      route whose whole point is a filter the caller must not control — but it
+ *      is a trade-off, not a free win, and a future field addition on this route
+ *      needs a client-then-server ordering the siblings do not.
  *
  *   2. AND IF LAYER 1 WERE DELETED, THE BOUNDARY WOULD STILL HOLD — which is
  *      why it is defence in depth rather than the guard itself. The route
@@ -104,10 +129,16 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * turned it into `{ workflows: [] }` would tell a block its queue had drained.
  *
  * ACTIVITY FEED: `/api/v1/blocks/workflows/query` gets its own arm in
- * `humaniseScopeInvocation` (`AppActivityPanel.tsx`) — "Listed your AI
- * workflows". Without one it would fall past the endpoint arms into
- * `SCOPE_ACTION_LABELS` and render as "Submit AI workflow", which is the exact
- * mislabelling #5068 shipped for polls.
+ * `humaniseScopeInvocation` (`AppActivityPanel.tsx`) — "Listed AI workflows".
+ * Without one it would fall past the endpoint arms into `SCOPE_ACTION_LABELS`
+ * and render as "Submit AI workflow" — the hazard #5068 found and closed.
+ *
+ * ⚠ NOT "the mislabelling #5068 SHIPPED", which an earlier draft of this line
+ * said and which the history does not support: `git log -S "Checked an AI
+ * workflow"` returns exactly one commit, `2a2eb0fe2f` (#5068), and that squash
+ * added `workflows/poll.ts` AND its label arm together. No row ever rendered
+ * wrong in production. The hazard is real and this arm is why it stays closed;
+ * the production-history claim was not.
  *
  * Response: `{ workflows, cursor }` — `workflows` is the `AppWorkflow[]`
  * projection (`{ workflowId, status, images, cost, createdAt }`) the bridge
@@ -147,7 +178,38 @@ export const baseHandler = withAxiom(async function handler(
     return;
   }
 
-  const parsed = bodySchema.safeParse(req.body ?? {});
+  // 🔴 A ZERO-ARGUMENT POST IS THIS ROUTE'S PRIMARY CALL SHAPE, AND NEXT DOES NOT
+  // HAND IT OVER AS `{}`. `req.body ?? {}` alone is NOT enough, and the bug it
+  // left was measured on the real handler rather than reasoned about:
+  //
+  //   req.body === undefined  -> 200   (there is no body at all)
+  //   req.body === ''         -> 400   ← a POST with no body and no Content-Type
+  //   req.body === '{}'       -> 400   ← a JSON body sent with no Content-Type
+  //
+  // Next's `parseBody` defaults a MISSING `Content-Type` to `text/plain` and then
+  // returns the RAW STRING, so a bodyless POST arrives as `''`. `'' ?? {}` is
+  // `''` — `??` only catches null/undefined — and `strictObject.safeParse('')`
+  // fails with `expected object, received string`.
+  //
+  // 🔴 THAT BROKE THE EXACT SPELLING THIS ROUTE EXISTS TO ENABLE. `query` is the
+  // only one of the five whose whole input is optional, so `fetch(url, { method:
+  // 'POST', headers: { Authorization } })` with no body is the natural call — and
+  // `@civitai/sdk`'s own `createHttp` sets `Content-Type` ONLY when
+  // `opts.body !== undefined`, making it the DEFAULT spelling for an argument-less
+  // POST. Worse, the 400 it produced was indistinguishable at a glance from the
+  // trust-boundary 400 below, which is the one refusal on this route that is
+  // supposed to be unambiguous.
+  //
+  // ⚠ THE COERCION IS DELIBERATELY NARROW: an EMPTY-or-whitespace string only. A
+  // non-empty string body still reaches the schema and still 400s — this route
+  // does NOT re-implement JSON parsing to rescue a client that omitted its
+  // `Content-Type`, because guessing at an unlabelled payload is how a body gets
+  // interpreted two different ways by two different layers. Sending JSON means
+  // sending the header; sending nothing now means nothing.
+  const rawBody = req.body;
+  const body = typeof rawBody === 'string' && rawBody.trim() === '' ? {} : rawBody ?? {};
+
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
     return;

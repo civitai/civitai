@@ -109,7 +109,11 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // workflow': the two would otherwise be indistinguishable in this column while
   // describing very different reads (one workflow the app already knows about,
   // versus every generation the app has ever made for this viewer).
-  if (endpoint === '/api/v1/blocks/workflows/query') return 'Listed your AI workflows';
+  // THIRD PERSON, matching the other four arms and 'Generated an image'. It read
+  // 'Listed YOUR AI workflows' until review: that was the only second-person
+  // string among them, and the possessive is redundant anyway — this column
+  // already only ever describes what an app did to THIS viewer's data.
+  if (endpoint === '/api/v1/blocks/workflows/query') return 'Listed AI workflows';
   // The REST app-storage WRITE twins (`/api/v1/blocks/app-storage/{set,delete}`).
   // Both routes are wrapped with `requiredScope: 'apps:storage:write'`, which is
   // in NEITHER `READ_SCOPE_LABELS` nor `SCOPE_ACTION_LABELS` — so WITHOUT an arm
