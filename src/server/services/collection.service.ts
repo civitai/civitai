@@ -2595,10 +2595,10 @@ export const updateCollectionItemsStatus = async ({
  * it; it samples instead (`getCollectionPlayableSample`).
  *
  * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
- * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,
- * so model / post / article collections are counted here too. `nsfwLevel` lives on
- * `Image`, so an INNER `JOIN "Image"` would silently return 0 for every one of
- * those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId` OR
+ * `model3dId`, so model / post / article / 3D model collections are counted here
+ * too. `nsfwLevel` lives on `Image`, so an INNER `JOIN "Image"` would silently
+ * return 0 for every one of those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
  * escape: a non-image item has no image maturity to test and is kept
  * unconditionally.
  *
