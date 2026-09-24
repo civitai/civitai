@@ -95,6 +95,10 @@ const noteAfter = (condition: string) =>
     )?.[1] ?? ''
   );
 const blockedNote = noteAfter('\\{#if captchaBlocked');
+const misconfiguredNote = noteAfter('\\{:else if captchaMisconfigured');
+// Every note the LIVE REGION carries, each pinned whole somewhere below. The region's note count is
+// asserted equal to this list, so a note cannot be added without its copy pin.
+const PINNED_REGION_NOTES = [blockedNote, misconfiguredNote];
 
 // Shared anchors. An anchor that stops matching yields -1 and a SILENTLY EMPTY slice rather than a red,
 // so each must exist in exactly one place: a duplicated anchor is one more chance to tighten one copy
@@ -118,19 +122,23 @@ const RENDER_BODY = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n {2}
 const NO_WIDGET_BRANCH = RENDER_BODY.match(
   /if \(typeof id !== 'string'\) \{([\s\S]*?)\n {4}\}/
 )?.[1];
-// The note element itself, not only its wrapper — extracted ONCE, same rule as above: two readers now
-// (its classes, and the inline-hide ban), and two hand-written patterns for one element disagree the
-// moment an attribute is added before `class`. Hiding `.captcha-fallback-note` empties the region just
-// as completely as hiding the region, and it is the more natural thing for a responsive edit to reach
-// for — it is the element with the padding and the background.
-// ALL of them, not the first: the region holds one note per cause, and a ban that reads only `[0]`
-// covers whichever happens to be written first — which is how the id ban shipped covering one element.
-const NOTE_TAGS = [...liveRegionInner.matchAll(/<p\b[^>]*>/g)].map((m) => m[0]);
-const blockedNoteClasses = (NOTE_TAGS[0]?.match(/class="([^"]*)"/)?.[1] ?? '')
-  .split(/\s+/)
-  .filter(Boolean);
-// Covers BOTH the region and the note; each half is asserted non-empty where the ban is applied.
-const announcementClasses = [...liveRegionClasses, ...blockedNoteClasses];
+// EVERY note in the region, matched ONCE — text and offset both come off this scan, because two
+// matchAll calls over the same string with different patterns is the duplicated-anchor trap above.
+// Hiding a note empties the announcement as completely as hiding the region, and the note is the more
+// natural target for a responsive edit: it carries the padding and the background. `[0]` is the wrong
+// cardinality — the region holds one note per cause, and a ban reading only the first covers whichever
+// happens to be written earliest, which is how the id ban shipped covering one element.
+const NOTE_MATCHES = [...liveRegionInner.matchAll(/<p\b[^>]*>/g)];
+const NOTE_TAGS = NOTE_MATCHES.map((m) => m[0]);
+const allNoteClasses = [
+  ...new Set(
+    NOTE_TAGS.flatMap((tag) => (tag.match(/class="([^"]*)"/)?.[1] ?? '').split(/\s+/)).filter(
+      Boolean
+    )
+  ),
+];
+// Covers the region and EVERY note; each half is asserted non-empty where the ban is applied.
+const announcementClasses = [...liveRegionClasses, ...allNoteClasses];
 const styleStart = pageSource.indexOf('<style');
 // indexOf returns -1 the moment the tag gains an attribute, and slice(-1) then yields the file's LAST
 // CHARACTER — a guard that passes forever against a 1-char string.
@@ -232,7 +240,7 @@ const canReachAnnouncement = (selectorList: string): boolean =>
 const rulesDeclaring = (prop: RegExp) => {
   expect(styles, '<style> block not found').not.toBe('');
   expect(liveRegionClasses, 'the live region carries no class').not.toHaveLength(0);
-  expect(blockedNoteClasses, 'the blocked note carries no class').not.toHaveLength(0);
+  expect(allNoteClasses, 'a note in the live region carries no class').not.toHaveLength(0);
   return [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter(([, , body]) => prop.test(body.toLowerCase().replace(/\s*:\s*/g, ':')))
     .map(([, selector]) => selector.trim().replace(/\s+/g, ' '))
@@ -318,7 +326,22 @@ describe('login copy when the verification check cannot run', () => {
     // one can render; a `{#if form}` wrapped around the second would put it behind a round-trip the
     // user has to pay for, which is the wasted-submit regression this check exists to catch, and a
     // first-note-only check cannot see it. `{:else if}` opens no block, so the count stays 1 for each.
-    const noteStarts = [...region.matchAll(/<p\b/g)].map((m) => m.index ?? -1);
+    // The region must stay FLAT: `liveRegionInner` stops at the first `</div>`, so an element wrapped
+    // around a note silently shrinks every guard built on NOTE_MATCHES to the notes before it — the
+    // `[0]` gap again, relocated from the index to the extraction anchor.
+    expect(liveRegionInner, 'an element wraps part of the live region').not.toMatch(/<div\b/);
+    // …and every note in it must be one this suite pins the copy of. Depth counts how many blocks
+    // enclose a note, never WHAT they test, so a third note behind `{#if x && form?.captcha}` sits at
+    // depth 1 and walks the check below. Tying the count to the pinned set means a new note cannot be
+    // added without a whole-string pin arriving with it.
+    expect(
+      NOTE_MATCHES,
+      'a note in the live region has no whole-string copy pin — add one, and count it here'
+    ).toHaveLength(PINNED_REGION_NOTES.length);
+    for (const note of PINNED_REGION_NOTES) {
+      expect(note, 'a pinned region note extracted empty').not.toBe('');
+    }
+    const noteStarts = NOTE_MATCHES.map((m) => m.index ?? -1);
     expect(noteStarts, 'no note element inside the live region').not.toHaveLength(0);
     for (const noteStart of noteStarts) {
       const beforeNote = region.slice(0, noteStart);
@@ -420,7 +443,7 @@ describe('login copy when the verification check cannot run', () => {
   // the markup, so removing the class from the region or the note reds it here as well as elsewhere.
   it('decides reach from the element the rule can actually match', () => {
     const [regionClass] = liveRegionClasses;
-    const [noteClass] = blockedNoteClasses;
+    const [noteClass] = allNoteClasses;
     expect(regionClass, 'live region class not found').toBeTruthy();
     expect(noteClass, 'blocked note class not found').toBeTruthy();
     // Reaches: the region, the note, the role, and an argument-less pseudo, which names no element.
@@ -622,30 +645,29 @@ describe('login copy when the verification check cannot run', () => {
     // redundant once triggerFallback started reading captchaPending, and its guard could not be
     // asserted without pinning the operator — `!captchaConfigured ? …` and `captchaConfigured || true`
     // both walked the dependency-only form. Nothing here can be satisfied by a spelling.
-    const guard = normalize(
-      markup.match(/function triggerFallback\(reason: string\) \{\n([^\n]*)/)?.[1] ?? ''
-    );
-    expect(guard, 'triggerFallback no longer refuses on !captchaPending').toBe(
-      'if (fallbackActive || !captchaPending) return;'
-    );
-    const pending = normalize(
-      pageSource.match(/const captchaPending = \$derived\([\s\S]*?\);/)?.[0] ?? ''
-    );
-    expect(pending, 'captchaPending no longer requires a configured widget').toContain(
-      'captchaConfigured'
-    );
-    // The third link — that nothing reaches the verdict outside triggerFallback's reach — is the
-    // concludeUnavailable ledger, owned by 'reaches the unavailable verdict only through the probe or
-    // a Turnstile error callback'. Re-asserting it here would be a second copy of that list.
-    // The deadline still exists and still names its constant — a bare literal here would be a second,
-    // unnamed copy of a timing value the cost note reasons about.
+    // ALL THREE LINKS ARE PINNED ELSEWHERE, AS WHOLE STRINGS, and are cited rather than re-asserted —
+    // a second copy of an assertion is a second thing to tighten and leave behind:
+    //   triggerFallback's guard  -> 'does not re-offer the fallback while an unavailable verdict stands'
+    //   captchaPending's terms   -> 'never disables the submit button on the blocked path'
+    //   the verdict's writers    -> 'reaches the unavailable verdict only through the probe or a
+    //                                Turnstile error callback'
+    // What is NOT covered by any of those is that the deadline ARMS AT ALL, which is this test's job.
+    // An earlier round asserted it through a `captchaConfigured` guard on the arming expression; that
+    // guard is gone, and deleting it took the arming claim with it. Measured on the resulting tree, all
+    // of these were green: `data.turnstileEnforced && false ? setTimeout(…) : undefined`,
+    // `TURNSTILE_TOKEN_DEADLINE_MS * 1000`, and `if (captchaToken) triggerFallback('timeout')`. Any of
+    // them leaves a widget that silently fails to auto-solve with no detector at all — no error
+    // callback fires, scriptWatch stays 0, and the submit reads "Verifying…" for the session.
     const mount = markup.match(/onMount\(\(\) => \{[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
     expect(mount, 'the onMount block was not found').not.toBe('');
-    expect(mount, 'the deadline does not call triggerFallback').toContain(
-      "triggerFallback('timeout')"
+    const armed = normalize(
+      mount.match(/const timeout = ([\s\S]*?);\n {4}return \(\) => \{/)?.[1] ?? ''
     );
-    expect(mount, 'the deadline length is an unnamed literal').toContain(
-      'TURNSTILE_TOKEN_DEADLINE_MS'
+    expect(
+      armed,
+      'the token deadline is no longer an unconditional setTimeout calling triggerFallback'
+    ).toBe(
+      "setTimeout(() => { if (!captchaToken) triggerFallback('timeout'); }, TURNSTILE_TOKEN_DEADLINE_MS)"
     );
   });
 
@@ -688,20 +710,40 @@ describe('login copy when the verification check cannot run', () => {
       guarded,
       'the fallback prompt is not gated on the widget being on screen AND the submit still being gated'
     ).toBeDefined();
-    expect(guarded).toContain('Complete this quick check to continue.');
+    // Pinned WHOLE, like both notes in the live region: a keyword check keeps "Complete this quick
+    // check to continue." while a reword drops "Couldn't verify you automatically." — the sentence
+    // carrying the cause. This element is deliberately outside NOTE_TAGS: it is not in the live region
+    // and is not an announcement, so the hide/id bans have no claim on it. It does share the class, so
+    // the CSS reach test covers it incidentally and a rule written to hide only this would red under
+    // the announcement ban's name.
+    expect(noteAfter('\\{#if solvePrompted')).toBe(
+      "Couldn't verify you automatically. Complete this quick check to continue."
+    );
     expect(markup.split('Complete this quick check to continue.')).toHaveLength(2);
     // The slot's height and the prompt read ONE rule, negated — they diverged once already, leaving a
     // bare Cloudflare challenge in an expanded box with no copy beside it.
     expect(markup, 'the slot reserves height for a widget nothing is waiting on').toMatch(
       /class:collapsed=\{!solvePrompted\}/
     );
-    // The label reads the same derived, so it cannot invite a solve the prompt is not asking for — and
-    // it must not say "Email me a login link" in the state where every press is refused.
-    expect(markup, 'the button label does not read solvePrompted').toMatch(
-      /: solvePrompted\s*\n\s*\? 'Verify to continue'/
+    // The label is one ORDERED rule, pinned whole. Order is the part a reader cannot check by eye:
+    // solvePrompted is a strict SUBSET of captchaPending, so testing captchaPending first makes
+    // 'Verify to continue' unreachable and puts "Verifying…" beside a prompt telling the user to
+    // complete the check — measured green against a flat chain that pinned only the two arms. And the
+    // dead-end arm reads retryCannotHelp, not one half of it: on the BLOCKED path the button would
+    // otherwise read "Email me a login link" under a note saying email login cannot complete, and the
+    // rate limiter runs before the captcha check, so each press spends one of five attempts.
+    expect(
+      normalize(
+        markup.match(/const emailButtonLabel = \$derived\.by\([\s\S]*?\n {2}\}\);/)?.[0] ?? ''
+      ),
+      'the button label is not one ordered rule'
+    ).toBe(
+      "const emailButtonLabel = $derived.by(() => { if (submitting) return 'Sending…'; " +
+        "if (solvePrompted) return 'Verify to continue'; if (captchaPending) return 'Verifying…'; " +
+        "if (retryCannotHelp) return 'Email login unavailable'; return 'Email me a login link'; });"
     );
-    expect(markup, 'the button offers a send in the misconfigured state').toMatch(
-      /: captchaMisconfigured\s*\n\s*\? 'Email login unavailable'\s*\n\s*: 'Email me a login link'/
+    expect(markup, 'the button renders something other than that rule').toMatch(
+      />\{emailButtonLabel\}<\/span/
     );
 
     // Pinning the readers is worth nothing while nothing SETS the mirror — it would be false forever,
@@ -792,7 +834,7 @@ describe('login copy when the verification check cannot run', () => {
     // The copy, pinned whole. It names NO cause — the page cannot honestly attribute a key it was
     // never given — and offers the one route that still works. The browser-blame vocabulary of the
     // sibling note is banned outright: reaching for it here is the regression this replaced.
-    const note = noteAfter('\\{:else if captchaMisconfigured');
+    const note = misconfiguredNote;
     expect(note, 'no note for the misconfigured state').not.toBe('');
     expect(note).toBe(
       "{#if form?.captcha}That didn't go through.{/if} Email login isn't available right now. " +

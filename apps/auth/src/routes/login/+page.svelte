@@ -62,10 +62,9 @@
   // every submit is refused. Separate from captchaBlocked because it is provable from `data` and is
   // not about the reader — it must never reach the note above.
   const captchaMisconfigured = $derived(data.turnstileEnforced && !captchaConfigured);
-  // Named for the RULE, not for a state: it covers exactly the cases where pressing the button again
-  // cannot change the outcome, so the generic "please try again" is suppressed. It is not "email is
-  // off" — that is data.emailEnabled — and must not grow to cover rate-limited or blocked-domain,
-  // which are different messages the user can act on.
+  // Named for the RULE: pressing the button again cannot change the outcome, so the generic "please
+  // try again" is suppressed and the button says so. Must NOT grow to cover rate-limited or
+  // blocked-domain — those are messages the user can act on.
   const retryCannotHelp = $derived(captchaBlocked || captchaMisconfigured);
 
   // INTERACTIVE FALLBACK: when the invisible widget can't issue a token, render the MANAGED (visible,
@@ -94,10 +93,22 @@
   // managedWidgetId to allow a fresh render must clear this too, or the prompt and the reserved box go
   // on claiming a widget that is gone.
   let managedWidgetShown = $state(false);
-  // Solving the managed widget is what would clear the gate: it is on screen AND something waits on it.
   // ONE name, because the prompt, the slot's reserved height and the button label all ask it, and the
   // first two are exact negations of each other — spelled separately they diverged once already.
   const solvePrompted = $derived(managedWidgetShown && captchaPending);
+  // ORDER IS LOAD-BEARING and cannot be seen in a flat chain of ternaries: solvePrompted is a strict
+  // SUBSET of captchaPending, so testing captchaPending first makes 'Verify to continue' unreachable
+  // and puts "Verifying…" on the button beside a prompt telling the user to complete the check. And
+  // the last branch reads retryCannotHelp, not one arm of it: in the blocked state the button would
+  // otherwise offer to send a link directly under a note saying email login cannot complete, and the
+  // rate limiter runs before the captcha check, so each press of it spends one of five attempts.
+  const emailButtonLabel = $derived.by(() => {
+    if (submitting) return 'Sending…';
+    if (solvePrompted) return 'Verify to continue';
+    if (captchaPending) return 'Verifying…';
+    if (retryCannotHelp) return 'Email login unavailable';
+    return 'Email me a login link';
+  });
   // A COUNTER, not a flag. The grace effect below can only re-run when its dependency changes, and Svelte
   // short-circuits a write of an equal value — so a second failure setting a boolean `true` again would
   // not re-arm. A grace spent on a token that then got cleared (resetTurnstile runs after every submit)
@@ -146,8 +157,7 @@
   // Render the managed widget once (after its slot mounts). Solving it sets the gate token + mode=managed.
   // This effect WRITES one of its own dependencies — probeTurnstile calls onScriptPresent synchronously,
   // so a render producing no widget reaches releaseFallbackIfEmpty inside this body. It terminates
-  // because the write FALSIFIES the guard below, so the re-run returns having done nothing. Term order
-  // is irrelevant to that; measured by reordering the guard.
+  // because the write FALSIFIES the guard below, so the re-run returns having done nothing.
   $effect(() => {
     if (!fallbackActive || !managedEl || managedWidgetId !== undefined) return;
     return probeTurnstile({
@@ -272,8 +282,7 @@
     };
     // If no token has arrived in time, the invisible widget silently failed to auto-solve — offer the
     // fallback. Armed unconditionally: triggerFallback is the single choke point and it refuses unless
-    // captchaPending, so where no widget was ever offered this fires and does nothing. Guarding it here
-    // too was measured redundant, and the guard could not be pinned without pinning its spelling.
+    // captchaPending, so where no widget was ever offered this fires and does nothing.
     const timeout = setTimeout(() => {
       if (!captchaToken) triggerFallback('timeout');
     }, TURNSTILE_TOKEN_DEADLINE_MS);
@@ -443,15 +452,7 @@
             <button type="submit" class="social email" disabled={submitting || captchaPending}>
               <IconMail size={20} stroke={2} />
               <span
-                >{submitting
-                  ? 'Sending…'
-                  : solvePrompted
-                    ? 'Verify to continue'
-                    : captchaPending
-                      ? 'Verifying…'
-                      : captchaMisconfigured
-                        ? 'Email login unavailable'
-                        : 'Email me a login link'}</span
+                >{emailButtonLabel}</span
               >
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
