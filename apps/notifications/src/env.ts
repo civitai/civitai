@@ -20,6 +20,21 @@ export const isProd = process.env.NODE_ENV === 'production';
  */
 export const workerEnabled = process.env.WORKER_ENABLED === 'true';
 
+// --- web push (VAPID) ---
+export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
+export const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? '';
+export const vapidSubject = process.env.VAPID_SUBJECT ?? 'mailto:hello@civitai.com';
+/** Main-app base URL for the push payload render endpoint (title/body/url live in the processor registry there). */
+export const mainAppUrl = process.env.MAIN_APP_URL ?? '';
+/** The main app's WEBHOOK_TOKEN, sent as ?token= to its internal render endpoint. */
+export const mainAppWebhookToken = process.env.MAIN_APP_WEBHOOK_TOKEN ?? '';
+/** Push dispatch is on only when fully configured; otherwise the worker skips it silently. */
+export const pushEnabled = Boolean(
+  vapidPublicKey && vapidPrivateKey && mainAppUrl && mainAppWebhookToken
+);
+/** Per-user daily push ceiling; past it, one summary push then silence until the day rolls over. */
+export const pushDailyCap = Number(process.env.PUSH_DAILY_CAP ?? 20);
+
 /**
  * Fail-fast boot validation. Called from server.ts BEFORE listen (not from buildServer, so vitest — which
  * imports app.ts — is unaffected). Without this, a missing DB URL or (in prod) an absent auth token

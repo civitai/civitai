@@ -912,6 +912,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
+| Web Push (browser push notifications) | [docs/features/web-push.md](docs/features/web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](docs/features/entity-metrics.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](docs/features/feed-impressions.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |

@@ -2369,6 +2369,8 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+    /** Per-user daily web-push quota counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
