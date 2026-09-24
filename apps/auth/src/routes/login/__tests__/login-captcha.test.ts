@@ -15,10 +15,7 @@ import { fileURLToPath } from 'node:url';
 // The app has no Svelte component DOM harness (vitest env = node), so we assert the source markup
 // directly. The security-critical fail-closed behavior is covered in ../../lib/server/auth/__tests__/
 // captcha.test.ts; this only locks the client wiring.
-const pageSource = readFileSync(
-  fileURLToPath(new URL('../+page.svelte', import.meta.url)),
-  'utf8'
-);
+const pageSource = readFileSync(fileURLToPath(new URL('../+page.svelte', import.meta.url)), 'utf8');
 
 // Isolate the `.cf-turnstile` element (anchor on the real attribute, not the comment token).
 const widget = pageSource.match(/class="cf-turnstile"[\s\S]*?><\/div>/)?.[0] ?? '';
@@ -137,8 +134,8 @@ describe('login copy when the verification check cannot run', () => {
     //  - the region must be UNCONDITIONAL (containment alone survives wrapping the whole region in
     //    {#if fallbackActive} — the very fold the markup comment forbids — which hides the note
     //    entirely in the no-managed-key config, where fallbackActive is never set).
-    // EVERY anchor comes from the comment-stripped copy: stripping only the counted slice left the
-    // anchors walkable by rewriting the comment that forbids the fold, which is the edit that folds it.
+    // Every anchor is read from the comment-stripped copy: a comment can spell any token a guard looks
+    // for, the comment forbidding the fold included, and that comment is what an edit folding it rewrites.
     const openTag = /<div\b[^>]*role="status"[^>]*>/;
     expect(markup, 'no role="status" wrapper found').toMatch(openTag);
 
@@ -155,8 +152,9 @@ describe('login copy when the verification check cannot run', () => {
 
     // Unconditional == every block opened since the form tag is also closed before the region.
     // The anchor is a regex, not indexOf: an ordinary second class would otherwise red this with a
-    // bare "expected 3 to be 4" for no defect. No quote-stripping — it paired the apostrophe in
-    // "Couldn't" with the next quote and ate a {/if}, and prose lives in comments, already stripped.
+    // bare "expected 3 to be 4" for no defect. Block counting runs over the unquoted text: stripping
+    // quoted spans pairs the apostrophe in "Couldn't" with the next quote and swallows a {/if}, and
+    // the prose that would justify stripping lives in comments, which are already gone.
     const formStart = markup.search(/class="[^"]*\bemail-form\b/);
     const regionStart = markup.search(openTag);
     // Without these the slice can silently go empty (anchor lost → -1, or region moved above the
@@ -169,9 +167,10 @@ describe('login copy when the verification check cannot run', () => {
 
   it('never hides the live region while it is empty', () => {
     // A region that is display:none until it fills is the same no-announce shape as one that is
-    // absent, and the motive is real: the region is a flex child, so while empty it costs one 0.6rem
-    // gap. Pin the MECHANISM, not a selector spelling — `[role='status']:empty`, `.live-region:empty`
-    // and `.email-form div:empty` are the same defect, and only the first names the role.
+    // absent, and the motive is real: the region is mounted for every visitor, so anything it costs
+    // an empty page invites hiding it. `display: contents` is the escape that pays that cost without
+    // leaving the accessibility tree. Pin the MECHANISM, not a selector spelling — `[role='status']:empty`,
+    // `.live-region:empty` and `.email-form div:empty` are the same defect, and only the first names the role.
     const openTagText = markup.match(/<div\b[^>]*role="status"[^>]*>/)?.[0];
     expect(openTagText, 'no role="status" wrapper found').toBeDefined();
     // `display: contents` is a legitimate way to drop the gap, so only inline hiding is banned here.
@@ -188,15 +187,45 @@ describe('login copy when the verification check cannot run', () => {
     expect(styleStart, '<style> block not found').toBeGreaterThan(-1);
     const styles = pageSource.slice(styleStart);
     // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
-    // banning it reds a legitimate `:not(:empty) { margin… }`. Free today — this block contains
-    // neither declaration, so any future hide anywhere in this page's CSS gets a named red.
-    // The message names the real scope: the ban is the WHOLE page's CSS, not just rules that mention
-    // the region. Narrowing it to a role/class selector is what round 6 measured as walkable.
+    // banning it reds a legitimate `:not(:empty) { margin… }`.
+    // The rules searched are only those that can REACH this region. Banning the pair across the whole
+    // stylesheet reds on an ordinary responsive edit — a `@media` rule hiding the divider — under a
+    // name that blames the live region, and a gate that goes red for a non-defect is one people learn
+    // to click through. The tag-level assertion above already covers the inline spelling.
+    const hidingRules = [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(([, , body]) => /display:\s*none|visibility:\s*hidden/.test(body))
+      .map(([, selector]) => selector.trim().replace(/\s+/g, ' '));
+    const canReachLiveRegion = (selector: string) =>
+      // The region's own class or role, or a bare element/universal selector that sweeps it in with
+      // everything else — `.email-form div`, `.card *` and `[role='status']:empty` are one defect.
+      /live-region|role=['"]?status/.test(selector) ||
+      /(^|[\s,>+~])(\*|div)(?![\w-])/.test(selector);
     expect(
-      styles,
-      'no display:none / visibility:hidden anywhere in this page CSS — any such rule could hide the ' +
-        'live region. Scope the rule into a child component, or use a non-hiding property.'
-    ).not.toMatch(/display:\s*none|visibility:\s*hidden/);
+      hidingRules.filter(canReachLiveRegion),
+      'a CSS rule that can match the live region hides it. While the region is empty that is the same ' +
+        'no-announce shape as never rendering it. Narrow the selector so it cannot reach the region, ' +
+        'or use a non-hiding property.'
+    ).toEqual([]);
+  });
+
+  it('keeps the always-mounted live region out of the form layout', () => {
+    // The region is mounted for every visitor, including the overwhelming majority who never see a
+    // note, and as a flex child of .email-form an empty one still spends a 0.6rem gap — every login
+    // page laid out around content that is not there. `display: contents` is the removal that keeps
+    // the element in the accessibility tree; the alternatives are the hiding the test above bans.
+    const openTagText = markup.match(/<div\b[^>]*role="status"[^>]*>/)?.[0] ?? '';
+    const classes = (openTagText.match(/class="([^"]*)"/)?.[1] ?? '').split(/\s+/).filter(Boolean);
+    expect(
+      classes,
+      'the live region carries no class, so no rule can take it out of the flex flow'
+    ).not.toHaveLength(0);
+    const styleStart = pageSource.indexOf('<style');
+    expect(styleStart).toBeGreaterThan(-1);
+    const styles = pageSource.slice(styleStart);
+    const removedFromFlow = classes.some((cls) =>
+      new RegExp(`\\.${cls}\\b[^{}]*\\{[^}]*display:\\s*contents`).test(styles)
+    );
+    expect(removedFromFlow, 'no `display: contents` rule reaches the live region').toBe(true);
   });
 
   it('clears the unavailable verdict when the managed widget finally solves', () => {
@@ -216,7 +245,10 @@ describe('login copy when the verification check cannot run', () => {
       callSite
     );
     const body = markup.match(new RegExp(callSite.source + '([\\s\\S]*?)\\n      \\},'))?.[1];
-    expect(body, 'managed success callback body not closed at the expected indentation').toBeDefined();
+    expect(
+      body,
+      'managed success callback body not closed at the expected indentation'
+    ).toBeDefined();
     const statements = (body ?? '')
       .split('\n')
       .map((line) => line.trim())
@@ -226,6 +258,43 @@ describe('login copy when the verification check cannot run', () => {
       'captchaToken = t;',
       "captchaMode = 'managed';",
       'captchaUnavailable = false;',
+    ]);
+  });
+
+  // SEAM between this component and turnstile-availability.ts. The probe's own behaviour — that it never
+  // reports absence on a first look — is exercised in ../__tests__/turnstile-availability.test.ts; this
+  // side pins that the component routes its absence-shaped evidence THROUGH it. Neither half can see the
+  // defect alone: the probe passes with nothing calling it, and a source-text guard cannot run it.
+  it('reaches the unavailable verdict only through the probe or a Turnstile error callback', () => {
+    // The 8s deadline with no token, and an absent `turnstile` global, are the same evidence a SLOW
+    // connection produces — the api.js tag is `async defer`. A site that concludes from either without
+    // the probe's second look announces "email login can't complete" to a user whose login completes
+    // seconds later, which is a statement the page has no grounds for.
+    const setter = normalize(
+      markup.match(/const concludeUnavailable = \(\) => \{[\s\S]*?\};/)?.[0] ?? ''
+    );
+    expect(setter, 'concludeUnavailable declaration not found').toBe(
+      'const concludeUnavailable = () => { captchaUnavailable = true; };'
+    );
+    // One writer, so the verdict cannot be reached behind the ledger below.
+    expect(markup.match(/captchaUnavailable = true/g) ?? []).toHaveLength(1);
+
+    // Ledger of every line naming it. A new route to the verdict makes this list GROW and must restate
+    // what evidence it has; deleting the probe from a route makes it SHRINK. A count alone sees neither.
+    const sites = markup
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes('concludeUnavailable'));
+    expect(sites).toEqual([
+      'const concludeUnavailable = () => {',
+      // triggerFallback with no managed key: no second widget to offer, so either answer ends here —
+      // but only after the probe's grace, which is what lets a late token withdraw the question.
+      'onScriptPresent: concludeUnavailable,',
+      'onScriptAbsent: concludeUnavailable,',
+      // The managed slot's probe: script present → render the fallback, absent → soft-release.
+      'onScriptAbsent: concludeUnavailable,',
+      // The managed widget's own error callback — Turnstile reporting its failure, so no grace needed.
+      'concludeUnavailable();',
     ]);
   });
 

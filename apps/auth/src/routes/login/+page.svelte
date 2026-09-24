@@ -11,6 +11,7 @@
     IconMail,
   } from '@tabler/icons-svelte';
   import type { PageData, ActionData } from './$types';
+  import { probeTurnstile } from './turnstile-availability';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -65,24 +66,54 @@
   let fallbackActive = $state(false);
   let managedEl = $state<HTMLDivElement>();
   let managedWidgetId: string | undefined;
+  let cancelProbe: (() => void) | undefined;
+
+  // The only writer of the verdict, so what can reach it is one read. Reaching it needs evidence about
+  // the USER'S environment: a Turnstile error callback is that; a missing token or missing global at a
+  // deadline is not — that is a slow script until probeTurnstile's second look says otherwise.
+  const concludeUnavailable = () => {
+    captchaUnavailable = true;
+  };
 
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
   // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
   function triggerFallback(reason: string) {
     if (captchaToken || fallbackActive) return;
     captchaFailReason = reason;
-    if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM
-    else captchaUnavailable = true;
+    if (data.turnstileManagedSiteKey) {
+      fallbackActive = true; // $effect renders it once the slot is in the DOM
+      return;
+    }
+    // No managed key, so there is no second widget to offer and both answers end in the same verdict:
+    // a script that never ran cannot verify anyone, and one that ran had the full deadline to solve.
+    // The probe still decides, for the escape it checks on the way: a token arriving during the grace,
+    // which is the slow browser this path must not label as blocked.
+    cancelProbe?.();
+    cancelProbe = probeTurnstile({
+      scriptPresent: () => !!turnstileApi(),
+      tokenArrived: () => !!captchaToken,
+      onScriptPresent: concludeUnavailable,
+      onScriptAbsent: concludeUnavailable,
+    });
   }
 
   // Render the managed widget once (after its slot mounts). Solving it sets the gate token + mode=managed.
   $effect(() => {
     if (!fallbackActive || !managedEl || managedWidgetId !== undefined) return;
+    return probeTurnstile({
+      scriptPresent: () => !!turnstileApi(),
+      // managedWidgetId guards a render the teardown cannot undo, so a second look must not conclude
+      // anything once the widget is already up.
+      tokenArrived: () => !!captchaToken || managedWidgetId !== undefined,
+      onScriptPresent: renderManagedWidget,
+      // Soft-release rather than trap: the server stays the sole gate.
+      onScriptAbsent: concludeUnavailable,
+    });
+  });
+
+  function renderManagedWidget() {
     const ts = turnstileApi();
-    if (!ts) {
-      captchaUnavailable = true; // Turnstile script never loaded (fully blocked) — soft-release, don't trap
-      return;
-    }
+    if (!ts || !managedEl || managedWidgetId !== undefined) return;
     managedWidgetId = ts.render(managedEl, {
       sitekey: data.turnstileManagedSiteKey,
       action: 'login',
@@ -104,10 +135,10 @@
       'error-callback': () => {
         // The managed widget can't load either → the whole Turnstile challenge is blocked for this user.
         captchaFailReason = 'fallback-error';
-        captchaUnavailable = true;
+        concludeUnavailable();
       },
     });
-  });
+  }
 
   // Framework-agnostic brand marks from @civitai/brand — no React, just SVG strings.
   const holiday = getHoliday();
@@ -168,6 +199,7 @@
     }, 8000);
     return () => {
       clearTimeout(timeout);
+      cancelProbe?.();
       delete w.onAuthCaptcha;
       delete w.onAuthCaptchaExpired;
       delete w.onAuthCaptchaError;
@@ -297,7 +329,7 @@
                  re-creates an empty div the $effect will never fill (managedWidgetId is already set).
                  The live region must also pre-exist its content — a role="status" inserted together
                  with its text is the no-announce shape, and this note appears with no user action. -->
-            <div role="status">
+            <div class="live-region" role="status">
               {#if captchaBlocked}
                 <p class="captcha-fallback-note">
                   {#if form?.captcha}That didn't go through.{/if} Something is preventing the verification
@@ -559,6 +591,13 @@
     border-radius: 6px;
     margin: 0;
     line-height: 1.4;
+  }
+  /* The region is mounted for every visitor so it pre-exists its content and can announce, but as a
+     flex child of .email-form an empty one still spends a 0.6rem gap on a page that will never fill it.
+     `display: contents` drops it out of the flex layout without dropping it out of the accessibility
+     tree — hiding it (display:none / visibility:hidden) would be the no-announce shape again. */
+  .live-region {
+    display: contents;
   }
   /* Reserve the managed widget's footprint so the card doesn't jump when it renders. */
   .managed-slot {
