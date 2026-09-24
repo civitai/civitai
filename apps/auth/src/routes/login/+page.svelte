@@ -35,15 +35,33 @@
   // if the widget errors or never loads (CF unreachable, hostname not allow-listed, script blocked),
   // we STOP gating and let the server-side check be the sole gate — a user must never be trapped
   // behind a permanently-disabled button.
+  /** How long the invisible widget gets to auto-solve before the fallback is offered. */
+  const TURNSTILE_TOKEN_DEADLINE_MS = 8000;
+
   let captchaToken = $state('');
   let captchaUnavailable = $state(false);
-  // Gates the email submit while captcha is configured, still loading, and not known-broken.
+  // Whether any widget can ever appear. The two sitekeys are independent server config and either can
+  // be absent, so neither one alone answers this.
+  const captchaOffered = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);
+  // Gates the email submit while captcha is ENFORCED, a widget was offered, no token is in hand, and the
+  // check is not known-broken.
   // THIS is the expression a broken widget must never reach: no term may be added here that is true
   // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
-  // being trapped behind a permanently disabled button, and the server stays the sole gate.
-  const captchaPending = $derived(!!data.turnstileSiteKey && !captchaToken && !captchaUnavailable);
-  // Each term guards a false claim: the 8s timeout sets captchaUnavailable even where the action does
-  // not enforce, and a token in hand contradicts "blocked" whatever the flag still says.
+  // being trapped behind a permanently disabled button, and the server stays the sole gate. The two
+  // config terms pass that test — both are static server facts, and each can only RELEASE the button.
+  // Both are load-bearing. Without turnstileEnforced, a deployment with a sitekey but no secret makes
+  // every user wait on a check the action passes through, and the managed fallback then asks them to
+  // solve an interactive challenge the server ignores. Without captchaOffered, a managed-only
+  // deployment leaves the button live while its only widget is still a deadline away, so a submit in
+  // that window is refused for a token the page never asked for.
+  const captchaPending = $derived(
+    data.turnstileEnforced && captchaOffered && !captchaToken && !captchaUnavailable
+  );
+  // Each term guards a false claim: the deadline sets captchaUnavailable even where the action does
+  // not enforce, and a token in hand contradicts "blocked" whatever the flag still says. A third claim
+  // — that a check was ever OFFERED — is not a term here: it is guarded upstream, on the one route to
+  // captchaUnavailable that does not require a widget (the onMount deadline). Do not weaken that guard
+  // without adding captchaOffered here, or this note blames the user's browser for a server-side gap.
   const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);
 
   // INTERACTIVE FALLBACK: when the invisible widget can't issue a token, render the MANAGED (visible,
@@ -117,9 +135,9 @@
 
   // Render the managed widget once (after its slot mounts). Solving it sets the gate token + mode=managed.
   // This effect WRITES one of its own dependencies — probeTurnstile calls onScriptPresent synchronously,
-  // so a render producing no widget reaches releaseFallbackIfEmpty inside this body. It terminates only
-  // because `!fallbackActive` is the FIRST term of the guard below: keep it first. Measured on svelte
-  // 5.56.3, two effect runs on a successful render and three on a released one.
+  // so a render producing no widget reaches releaseFallbackIfEmpty inside this body. It terminates
+  // because the write FALSIFIES the guard below, so the re-run returns having done nothing; term order
+  // is irrelevant to that, and an earlier draft of this comment claimed otherwise.
   $effect(() => {
     if (!fallbackActive || !managedEl || managedWidgetId !== undefined) return;
     return probeTurnstile({
@@ -144,9 +162,12 @@
     const ts = turnstileApi();
     // KNOWN OPEN: this early return leaves the commitment taken with an empty slot — the dead end
     // releaseFallbackIfEmpty closes everywhere else. Unreached today, and no route to it is established.
-    // It stays closed only because `managedEl` is a $state dependency of the effect above, so an unmount
-    // re-runs that effect and its teardown cancels the grace before the second look can fire on a stale
-    // element. Adding a release here is a change to the pinned list of sites, not a free fix.
+    // WHAT IT RESTS ON, so a later change can see what it is breaking: `managedEl` is a $state
+    // dependency of the effect above, probeTurnstile hands that effect the grace timer's teardown, and
+    // Svelte runs a teardown before re-running the effect — so an unmount cancels the second look
+    // before it can fire against a stale element. None of that is pinned by a test: the release-site
+    // ledger stays green through any change to it, because nothing would be added or moved.
+    // Adding a release here is a change to that pinned list, not a free fix.
     if (!ts || !managedEl || managedWidgetId !== undefined) return;
     let id: string | null | undefined;
     try {
@@ -242,10 +263,19 @@
       captchaToken = '';
       triggerFallback('widget-error');
     };
-    // If no token has arrived in time, the invisible widget silently failed to auto-solve — offer the fallback.
-    const timeout = setTimeout(() => {
-      if (!captchaToken) triggerFallback('timeout');
-    }, 8000);
+    // If no token has arrived in time, the invisible widget silently failed to auto-solve — offer the
+    // fallback. ARMED ONLY WHERE A WIDGET WAS OFFERED. captchaUnavailable means "this check cannot run
+    // in this browser", and this deadline is the one route to it that needs no widget: with enforcement
+    // on and neither sitekey configured, nothing ever requests a token, so an unguarded deadline
+    // concludes it on every page load for every visitor — and the note then tells all of them that an
+    // extension or VPN is blocking a check that was never offered. The other two routes
+    // (probeTurnstile's absent-script exit, the managed widget's own failures) all sit behind
+    // fallbackActive, which only the managed sitekey sets.
+    const timeout = captchaOffered
+      ? setTimeout(() => {
+          if (!captchaToken) triggerFallback('timeout');
+        }, TURNSTILE_TOKEN_DEADLINE_MS)
+      : undefined;
     return () => {
       clearTimeout(timeout);
       delete w.onAuthCaptcha;
@@ -379,14 +409,16 @@
             {#if fallbackActive}
               <!-- Interactive fallback: shown only after the invisible widget fails. The managed widget is
                    rendered imperatively into this slot (see the $effect) so it can carry data-action + callbacks. -->
-              {#if managedWidgetShown && !captchaBlocked && !captchaToken}
-                <!-- Gated on the widget being ON SCREEN, not on fallbackActive: the slot mounts a grace
-                     period before the widget can render, and asking someone to complete a check that is
-                     not there yet is an instruction with no target. It must not outlive the widget — it
-                     is the thing that failed — nor the GATE: a late invisible token releases the submit
-                     while this managed widget sits there unsolved, and without !captchaToken the page
-                     demands a ~50%-solve challenge beside an already-enabled button. The sibling
-                     class:collapsed only sets a height; this is the one that gives an instruction. -->
+              {#if managedWidgetShown && captchaPending}
+                <!-- ON SCREEN, because the slot mounts a grace period before the widget can render and
+                     asking for a check that is not there yet is an instruction with no target. AND
+                     captchaPending, because that is exactly "solving this is what unblocks the button":
+                     it is false once a token lands, once the check is written off, and in every
+                     configuration where the action ignores the result. Spelling those out instead —
+                     `!captchaBlocked && !captchaToken` — reads the same on the common path and leaves
+                     the instruction standing beside an ALREADY-ENABLED button in two others: a rendered
+                     widget that errored with enforcement off, and a deployment whose sitekey has no
+                     secret. The sibling class:collapsed only sets a height; this one gives an order. -->
                 <p class="captcha-fallback-note">
                   Couldn't verify you automatically. Complete this quick check to continue.
                 </p>

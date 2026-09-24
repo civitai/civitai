@@ -28,6 +28,10 @@ const rejectRow = () =>
   logToAxiom.mock.calls.map((c) => (c as unknown as [Record<string, unknown>])[0]).at(-1);
 
 beforeEach(() => {
+  // rejectRow() reads the LAST call, so a stale row from a previous test is indistinguishable from
+  // this test's own. Cleared centrally rather than per-test: the omission is silent, and it is the
+  // reassuring direction — an assertion on a row that was never emitted here still passes.
+  logToAxiom.mockClear();
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
   delete process.env.CF_INVISIBLE_TURNSTILE_SITEKEY;
   delete process.env.CF_MANAGED_TURNSTILE_SECRET;
