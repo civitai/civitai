@@ -734,7 +734,7 @@ export const submitEntry = async ({
         createNotification({
           userId: crucible.userId,
           type: 'crucible-entry-submitted',
-          category: NotificationCategory.Crucible,
+          category: NotificationCategory.Update,
           key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
           details: {
             crucibleId,
@@ -1665,7 +1665,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     createNotification({
       userId: crucible.userId,
       type: 'crucible-ended',
-      category: NotificationCategory.Crucible,
+      category: NotificationCategory.Update,
       key: `crucible-ended:${crucibleId}`,
       details: {
         crucibleId,
@@ -1930,7 +1930,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   createNotification({
     userId: crucible.userId,
     type: 'crucible-ended',
-    category: NotificationCategory.Crucible,
+    category: NotificationCategory.Update,
     key: `crucible-ended:${crucibleId}`,
     details: {
       crucibleId,
@@ -1965,7 +1965,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     createNotification({
       userId: participantUserId,
       type: 'crucible-won',
-      category: NotificationCategory.Crucible,
+      category: NotificationCategory.System,
       key: `crucible-won:${crucibleId}:${participantUserId}`,
       details: {
         crucibleId,

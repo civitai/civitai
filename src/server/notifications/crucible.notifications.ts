@@ -6,7 +6,7 @@ export const crucibleNotifications = createNotificationProcessor({
   // Sent to crucible creator when crucible finalizes
   'crucible-ended': {
     displayName: 'Crucible Ended',
-    category: NotificationCategory.Crucible,
+    category: NotificationCategory.Update,
     toggleable: true,
     prepareMessage: ({ details }) => ({
       message: `Your crucible "${details.crucibleName}" has ended! ${
@@ -18,7 +18,7 @@ export const crucibleNotifications = createNotificationProcessor({
   // Sent to all participants when crucible finalizes with their position
   'crucible-won': {
     displayName: 'Crucible Prize Won',
-    category: NotificationCategory.Crucible,
+    category: NotificationCategory.System,
     toggleable: true,
     prepareMessage: ({ details }) => {
       // If prizeAmount is 0, user participated but didn't win a prize
@@ -39,7 +39,7 @@ export const crucibleNotifications = createNotificationProcessor({
   // Sent to crucible creator when someone submits an entry
   'crucible-entry-submitted': {
     displayName: 'New Entry on Your Crucible',
-    category: NotificationCategory.Crucible,
+    category: NotificationCategory.Update,
     toggleable: true,
     prepareMessage: ({ details }) => ({
       message: `${details.entrantUsername} has submitted an entry to your crucible "${details.crucibleName}"`,
