@@ -169,26 +169,6 @@ module.exports = {
     // because it exports 2 things — a factory naming both IS the whole module.
     // Listing it would turn ~108 files red to guard nothing.
     //
-    // 🔴 CRITERION (a) IS FALSIFIED — REACH IS THE HAZARD, NOT SURFACE WIDTH.
-    // #5102: `~/utils/notifications` exports **7** bindings, so (a) excludes it.
-    // #5082 added `showWarningNotification` to `HideUserButton/BlockUserButton`, and
-    // five `src/components/Apps` browser suites that reach it through
-    // AppListingDetailBody -> AppListingComments -> CommentsV2/Comment failed at the
-    // browser's ESM link step. Measured on `ba6ce2b835`: `Test Files 5 failed | 257
-    // passed` beside `Tests 2808 passed` — 40 tests silently not running, and
-    // `preview / component-tests` red on EVERY PR for ~a day with four merged past
-    // it on written acceptances. What did the damage is the **347 non-test `src/`
-    // importers**, not the export count: 7 exports were plenty for one importer to
-    // land in an unrelated suite's graph. A later revision of this registry should
-    // weight (b) and drop (a) — and the useCurrentUser counterexample survives
-    // that, because it has 2 exports AND narrow reach.
-    //
-    // `~/utils/notifications` is the top NEXT candidate, still gated on (c): 39 test
-    // files carry a non-spreading factory for it today (44 before #5102 converted
-    // the five that broke). Until those 39 are converted, the ledger guard at
-    // `src/components/Apps/__tests__/notificationsMockSpread.test.ts` holds the line
-    // — it refuses a NEW one in the node tier and keeps the five fixed.
-    //
     //   module                                        exports  src importers  mocked by
     //   ~/shared/data-graph/generation/config/workflows    27        32           1
     //   ~/components/Image/image.utils                     17        29           1

@@ -10,6 +10,14 @@ import { describe, expect, it } from 'vitest';
  * browser tier it happens in: an import failure collects 0 tests, so it shows up as a file
  * count, never as a failing assertion.
  *
+ * NEITHER TIER BLOCKS A MERGE. The node one is `continue-on-error` on a pull request
+ * (`lint.yml:405`) and the browser one is report-only always (`preview / component-tests`);
+ * `main` requires no status check at all in this repo — `branches/main/protection` carries no
+ * `required_status_checks` key, and the only ruleset is
+ * `protect-deploy-branches-from-deletion`. So a failure here is a signal a reviewer must
+ * read, not a door that stays shut. What the node tier does buy is an honest verdict on a
+ * push to `main`, where it runs without that flag.
+ *
  * WHAT BROKE (#5102). #5082 (`b599d8d2da`, 2026-09-23) added `showWarningNotification` to
  * `~/components/HideUserButton/BlockUserButton`. Five browser suites under
  * `src/components/Apps` reach that module through
@@ -21,27 +29,31 @@ import { describe, expect, it } from 'vitest';
  *   SyntaxError: The requested module '/src/utils/notifications.tsx' does not provide an
  *   export named 'showWarningNotification'
  *
- * 🔴 AND THE FILE THEN FAILS TO IMPORT, WHICH IS NOT THE SAME AS FAILING. Measured on
- * `origin/main` at `ba6ce2b835`: `Test Files 5 failed | 257 passed (262)` next to
- * `Tests 2808 passed (2808)` — zero failing assertions, and the 40 tests those five files
- * contribute were not running at all. `preview / component-tests` had been red on every PR
- * in the repo for ~a day, and four PRs were merged past it on written acceptances.
+ * The GENERIC shape of that failure is not restated here, because the harness already prints
+ * it at runtime: `scripts/ci/assert-component-suite-ran.mjs` has emitted the
+ * "FAILED WITHOUT RUNNING A SINGLE ASSERTION" block since #4531 (`6de64ee5a8`, 2026-09-01),
+ * naming the offending files and the wholesale-factory cause. What that output does not carry
+ * is this incident's numbers: at `ba6ce2b835`, `Test Files 5 failed | 257 passed (262)` next
+ * to `Tests 2808 passed (2808)` — the 40 tests those five files contribute were not running
+ * at all, `preview / component-tests` had been red on every PR in the repo for ~a day, and
+ * four PRs were merged past it on written acceptances.
  *
- * WHY A LEDGER AND NOT A REPO-WIDE RULE. Measured 2026-09-24 on `origin/main`: 44 test files
- * carry a non-spreading `~/utils/notifications` factory; this PR converts the 5 that broke,
- * leaving the 39 below. A repo-wide "must spread" check would be red on all 39 — and a
- * permanently-red gate is worse than no gate, which is the whole subject of #5102. So the
- * tolerated set is enumerated instead, and the assertion is EQUALITY: the set may not GROW
- * (a new wholesale factory is refused at the blocking node tier) and may not SHRINK silently
- * (converting one is a one-line ledger edit, so the count in this file stays true).
+ * WHY A LEDGER AND NOT A REPO-WIDE RULE. Measured with the detector below: 44 test files
+ * carry a non-spreading `~/utils/notifications` factory at `ba6ce2b835`; this PR converts the
+ * 5 in `FIXED_BY_5102`, leaving the 39 in `TOLERATED`. A repo-wide "must spread" check would
+ * be red on all 39 — and a permanently-red gate is worse than no gate, which is the whole
+ * subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
+ * in both directions: adding a new wholesale factory fails this test, and converting one
+ * without editing the ledger also fails it, so the count here stays true. Per the tier note
+ * above, that failure is a red test someone has to read — it is not a merge gate, and this
+ * file cannot stop a new factory from landing.
  *
  * WHY NOT `local-rules/no-wholesale-module-mock` INSTEAD. That rule is the detector used
  * below, but its registry in `.eslintrc.js` deliberately excludes `~/utils/notifications`:
- * its stated admission test needs ≥15 exported bindings and ZERO existing violators, and
- * this module has 7 exports and 39. 🔴 The ≥15 criterion is FALSIFIED by this incident — the
- * hazard is REACH, not surface width: 7 exports and 347 non-test `src/` importers took out
- * five suites. Widening the registry needs those 39 converted first and is real, separate
- * work; it is not smuggled in here. See the note in `.eslintrc.js`.
+ * its stated admission test needs ≥15 exported bindings AND zero existing violators, and this
+ * module has 7 exports and 39 violators. Registering it is blocked on that second criterion —
+ * converting the 39 — which is tracked in #5115 together with the question of whether an
+ * export-count threshold is the right admission test at all. Deliberately not done here.
  *
  * Sibling guard, same defect class one module over:
  * `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`.
@@ -74,6 +86,12 @@ const FIXED_BY_5102 = [
  * Every test file whose `~/utils/notifications` factory does not spread the original TODAY.
  * Tolerated, not approved: each is one `...(await importOriginal<typeof M>())` away from
  * being immune to the next export added to that module. Shrink this list, never grow it.
+ *
+ * 39 entries, of which 36 are `.browser.test.tsx` and 3 run in the node tier
+ * (`creator-announcement-mutations`, `useCFImageUpload`, `useFormStorage`). Both numbers get
+ * quoted, so keep them apart: "36 browser suites left to convert" and "a 39-entry ledger" are
+ * the same fact counted over different sets, not a discrepancy. Conversion is tracked in
+ * #5115.
  */
 const TOLERATED = [
   'src/components/Account/DeleteCard.browser.test.tsx',
