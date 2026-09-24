@@ -77,6 +77,38 @@ export function shouldRelayOnPartFailure(
   return opts.fileSize <= RELAY_FALLBACK_MAX_BYTES;
 }
 
+/**
+ * The terminal row state for an upload that gave up: did the PERSON stop it, or did it
+ * fail?
+ *
+ * 🔴 `userAborted` is the same flag `shouldRelayOnPartFailure` takes and means the same
+ * thing — the person pressed cancel — and passing an upload's abort signal is the same
+ * mistake here, with a different symptom. Both clients tear their own upload down on a
+ * fatal part failure, so a status line reading that signal reports EVERY failed upload as
+ * a cancel: a user whose connection died gets the row they would have got by pressing
+ * cancel themselves, and the failure disappears from anything counting errors.
+ *
+ * 🔴 `fatal.aborted` is checked as well, not instead: it catches the ordinary cancel,
+ * where the cancelled part xhr rejects with `aborted`. `userAborted` catches the cancel
+ * that RACES a failure — a non-retryable part error lands on the fatal slot immediately,
+ * so a cancel in the same tick can never overwrite it.
+ *
+ * 🔴 This says nothing about the `/api/upload/abort` body, which keeps the real reason
+ * via `describePartFailure`. The row answers "what did the person do"; the abort reason
+ * answers "why did the transfer stop". Collapsing the second into the first would delete
+ * the diagnostic signal that field exists to carry.
+ *
+ * 🔴 Lives HERE for the reason `isTerminalCompleteStatus` below gives: this is the second
+ * predicate both upload clients need, it was open-coded in both, and the first one that
+ * was open-coded in both went wrong in one of them.
+ */
+export function resolveTerminalUploadStatus(
+  fatal: UploadPartError,
+  userAborted: boolean
+): 'aborted' | 'error' {
+  return fatal.aborted || userAborted ? 'aborted' : 'error';
+}
+
 /** A presigned part URL that outlived its expiry — retrying the same URL can never succeed. */
 export function isExpiredPartError(err: UploadPartError) {
   return err.status === 403 || err.status === 401;

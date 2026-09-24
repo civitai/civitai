@@ -11,6 +11,7 @@ import {
   getPartRetryDelay,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  resolveTerminalUploadStatus,
   shouldRelayOnPartFailure,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
@@ -195,8 +196,18 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         teardownController.abort();
         for (const x of activeXhrs) x.abort();
       };
-      // The only user-initiated cancel: handed to the UI on the tracked file, and reached
-      // by `removeFile(file, true)` and by FileUploadProvider's unmount.
+      // The only user-initiated cancel. It is handed to the UI on the tracked file, and
+      // the cancel buttons in `FileInputUpload` and `MultiFileInputUpload`'s `UploadItem`
+      // are what call it. `removeFile(file, true)` routes here too, though no caller
+      // passes that second argument today.
+      //
+      // ⚠ Two things that look like cancels and are NOT, so nobody reads this as wider
+      // cover than it is: `FileUploadProvider`'s unmount effect closes over the `files`
+      // from its first render with `[]` deps, so it always iterates an empty array and
+      // aborts nothing; and neither of the two call sites above can reach the relay
+      // (both upload model/training files, and the relay is image-only). So on the one
+      // path that CAN relay, nothing cancels an upload today — the `userAborted` gate
+      // below is correct and tested, but it is not currently exercised in production.
       const abort = () => {
         userAbortController.abort();
         teardown();
@@ -427,13 +438,13 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           }
         }
 
-        // 🔴 Only a genuine cancel is `aborted`. Reading the teardown signal here made
-        // EVERY failed multipart upload report as one, so a user whose connection died
-        // saw the row they would have seen if they had pressed cancel themselves.
-        // `userAborted` is also checked, not just `fatal.aborted`: a cancel that races a
-        // part failure onto the fatal slot is still a cancel.
-        const status: TrackedFile['status'] =
-          fatal.aborted || userAbortController.signal.aborted ? 'aborted' : 'error';
+        // Shared with the store client; the rules and the reason they are shared are on
+        // `resolveTerminalUploadStatus`. The flag is the USER's, not the teardown's —
+        // reading the teardown signal here made every failed upload report as a cancel.
+        const status: TrackedFile['status'] = resolveTerminalUploadStatus(
+          fatal,
+          userAbortController.signal.aborted
+        );
         updateFile({ status, file: undefined });
         await abortUpload(describePartFailure(fatal));
         return { url: null, bucket, key, backend };

@@ -49,6 +49,10 @@ let backend: string;
 let hangPartNumbers: number[];
 let relayCalls: number;
 let relayResponse: { ok: boolean; id?: string };
+/** Park the relay POST in flight so a test can cancel while it is running. */
+let relayHangsUntilAborted: boolean;
+/** Set once the parked relay POST has actually been issued. */
+let relayStarted: boolean;
 let abortCalls: AbortBody[];
 
 class FakeXHR {
@@ -144,12 +148,24 @@ function makeFetch(partCount: number) {
     }
     if (url === RELAY_ENDPOINT) {
       relayCalls++;
-      return {
+      const response = {
         ok: relayResponse.ok,
         status: relayResponse.ok ? 200 : 500,
         headers: { get: () => null },
         json: async () => ({ id: relayResponse.id }),
       };
+      // 🔴 The other half of honouring the signal: a real `fetch` also rejects an
+      // ALREADY-IN-FLIGHT request when the signal fires later. Without this, replacing
+      // the relay's signal with one that can never fire leaves every case green — the
+      // POST's cancellability would be claimed by a comment and checked by nothing.
+      if (relayHangsUntilAborted)
+        return new Promise((_resolve, reject) => {
+          relayStarted = true;
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        });
+      return response;
     }
     if (url === '/api/upload/abort') {
       abortCalls.push(JSON.parse(init?.body ?? '{}') as AbortBody);
@@ -190,35 +206,65 @@ async function mountHook(): Promise<Harness> {
 /**
  * Drive an upload to settlement on the fake clock.
  *
- * A network-layer part failure exhausts MAX_PART_ATTEMPTS of exponential backoff before
- * it becomes fatal — ~15s of real sleeping per test. The loop is BOUNDED and throws, so a
- * retry loop that stopped terminating fails with a message rather than wedging the runner
- * on a timeout that is itself a faked timer.
+ * A network-layer part failure exhausts MAX_PART_ATTEMPTS of exponential backoff before it
+ * becomes fatal — ~15s of real sleeping per test. On the fake clock it is free.
+ *
+ * 🔴 The loop is bounded and THROWS, which is the whole reason a fake clock is safe here.
+ * Driving a loop with a fake is normally how a regression turns into an unreportable hang:
+ * the runner's timeout is itself a timer, so a test that never settles can wedge CI with
+ * nothing to read. A retry loop that stopped terminating fails here with a message instead.
+ *
+ * 🔴 It advances the clock unconditionally rather than while `vi.getTimerCount() > 0`. That
+ * shape hangs: at the moment the upload is handed back no timer exists yet — the first is
+ * scheduled only after `fetch('/api/upload')` resolves — so the guard reads 0 and exits
+ * before the run has begun. A count of pending timers says nothing about what is coming.
+ *
+ * (Both traps are recorded on the sibling harness in `src/store/__tests__/s3-upload.store.test.ts`,
+ * which this is modelled on; they are repeated rather than cross-referenced because the
+ * next person to change this loop will be reading this file.)
  */
 const CLOCK_TURN_MS = 60_000;
-const MAX_CLOCK_TURNS = 100;
+/** Matches the sibling harness: far above this client's longest chain of sleeps. */
+const MAX_CLOCK_TURNS = 200;
 
-async function runUpload(h: Harness, file: File, type: UploadType, beforeSettle?: () => void) {
+/** Advance the fake clock one turn, inside `act` so React flushes what the turn produced. */
+async function turnClock() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
+  });
+}
+
+async function runUpload(
+  h: Harness,
+  file: File,
+  type: UploadType,
+  /** Runs once the upload is in flight, before the clock is driven to settlement. */
+  beforeSettle?: () => void | Promise<void>
+) {
   let settled = false;
   let promise!: Promise<{ url: string | null; key: string }>;
   await act(async () => {
-    promise = h.upload(file, type);
-    promise.finally(() => {
+    // Chained, not discarded: an upload that starts rejecting must surface as a clean
+    // assertion failure rather than as an unhandled rejection beside one.
+    promise = h.upload(file, type).finally(() => {
       settled = true;
     });
     // Let the multipart init and the first PUT start.
     await vi.advanceTimersByTimeAsync(0);
   });
-  beforeSettle?.();
-  for (let turn = 0; !settled && turn < MAX_CLOCK_TURNS; turn++)
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
-    });
+  await beforeSettle?.();
+  for (let turn = 0; !settled && turn < MAX_CLOCK_TURNS; turn++) await turnClock();
   if (!settled)
     throw new Error(
       `upload did not settle within ${MAX_CLOCK_TURNS} clock turns — a retry loop is not terminating`
     );
   return promise;
+}
+
+/** Drive the clock until `predicate` holds, so a test can act mid-flight. */
+async function advanceUntil(predicate: () => boolean, what: string) {
+  for (let turn = 0; !predicate() && turn < MAX_CLOCK_TURNS; turn++) await turnClock();
+  if (!predicate()) throw new Error(`${what} never happened within ${MAX_CLOCK_TURNS} clock turns`);
 }
 
 function makeFile(bytes: number) {
@@ -231,6 +277,8 @@ beforeEach(() => {
   hangPartNumbers = [];
   relayCalls = 0;
   relayResponse = { ok: true, id: RELAY_KEY };
+  relayHangsUntilAborted = false;
+  relayStarted = false;
   abortCalls = [];
   partHandler = () => ({ status: 200, etag: 'etag' });
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
@@ -257,6 +305,12 @@ describe('useS3Upload relay fallback', () => {
     // The relay mints its OWN key, so the upload must report the id that holds the bytes.
     expect(result.key).toBe(RELAY_KEY);
     expect(h.statuses()).toEqual(['success']);
+    // 🔴 The multipart session the relay bypassed is now orphaned — its key holds no
+    // bytes and nothing else will ever close it. Without this assertion, deleting the
+    // teardown entirely leaves every case in this file green: a relayed upload would leak
+    // one open session apiece, and the abort stream would lose the reason that explains
+    // why the direct path was abandoned.
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
     h.unmount();
   });
 
@@ -297,10 +351,64 @@ describe('useS3Upload relay fallback', () => {
     h.unmount();
   });
 
+  it('reports aborted when the user cancels while the relay is in flight', async () => {
+    // 🔴 The relay is the ONE await between the upload failing and its terminal status,
+    // so it is the only window where a cancel can land with a NON-cancel already on the
+    // fatal slot. The row must still say the person cancelled — otherwise this is the very
+    // bug being fixed, surviving in the half of the status line the other cases cannot
+    // reach (`fatal.aborted` is false here; only the user flag can produce 'aborted').
+    //
+    // It also pins that the relay POST is cancellable AT ALL. The request is handed the
+    // user's signal precisely so a cancel stops it; with a signal that can never fire the
+    // upload simply never settles, and this fails on the parked-relay guard below.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    relayHangsUntilAborted = true;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image, async () => {
+      await advanceUntil(() => relayStarted, 'the relay POST');
+      h.cancel();
+    });
+
+    expect(relayCalls).toBe(1);
+    expect(h.statuses()).toEqual(['aborted']);
+    // The bytes never landed anywhere, so the upload reports the presigned key and no url.
+    expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
+    h.unmount();
+  });
+
+  it('falls back to the original failure when the relay itself refuses', async () => {
+    // `relayImageFallback` returns null for EVERY failure, so a broken fallback degrades
+    // to the pre-existing outcome — "the upload failed" — rather than replacing the
+    // user's real diagnosis with a fallback error. Without this case the refusal path is
+    // declared by the harness and exercised by nothing.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    relayResponse = { ok: false };
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(relayCalls).toBe(1);
+    expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['error']);
+    // The abort still reports the ORIGINAL network failure, not the relay's refusal.
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
+    h.unmount();
+  });
+
   it('does not relay a cancelled upload, and reports it as aborted', async () => {
     // The mirror case, and the negative control for the relay assertion above: a cancelled
     // upload has an owner, not a fallback. If this ever relayed, the person who pressed
     // cancel would have their file uploaded anyway.
+    //
+    // ⚠ It is NOT evidence that the gate's `userAborted` clause works. The cancelled part
+    // xhr rejects with `aborted`, so the gate's SECOND clause (`err.aborted`) is what
+    // refuses here and the first never executes — deleting `opts.userAborted` from the
+    // predicate leaves this green. That clause is pinned in
+    // `src/utils/__tests__/upload-retry.test.ts`, where the combination can be built by
+    // hand; see the note there on why this caller cannot currently produce it.
     vi.stubGlobal('fetch', makeFetch(2));
     hangPartNumbers = [1, 2];
     const h = await mountHook();

@@ -12,6 +12,7 @@ import {
   isExpiredPartError,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  resolveTerminalUploadStatus,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -531,16 +532,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
-          // `userAborted` as well as `fatalErrorRef.value.aborted`: a non-retryable part
-          // failure lands on the fatal slot immediately, so a cancel in the same tick can
-          // never overwrite it, and the row then reported a failure for an upload the
-          // person stopped. The abort body still carries the REAL reason — the row's
-          // status answers "what did the user do", the failure reason answers "why did the
-          // transfer stop", and they are not the same question.
+          // Shared with the hook client; the rules and the reason they are shared are on
+          // `resolveTerminalUploadStatus`.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? userAborted || fatalErrorRef.value.aborted
-              ? 'aborted'
-              : 'error'
+            ? resolveTerminalUploadStatus(fatalErrorRef.value, userAborted)
             : null;
 
           // No more progress events past this point; drop any queued frame so it can't

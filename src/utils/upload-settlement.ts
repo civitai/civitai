@@ -191,8 +191,14 @@ function abortError() {
  *
  * The DECISION to call this lives in `shouldRelayOnPartFailure` (~/utils/upload-retry);
  * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
- * same way `attachUploadSettlement` is — that hook has no test file, and the fallback is
- * exactly the kind of path that must not rely on review alone.
+ * same way `attachUploadSettlement` is.
+ *
+ * ⚠ This used to add "that hook has no test file", and that was the reasoning that made
+ * unit-testing the two halves separately look sufficient. It was not: both halves were
+ * correct in isolation while the feature was inert, because the hook handed this function
+ * an ALREADY-ABORTED signal and handed the gate an always-true flag. The hook now has a
+ * test file — `src/hooks/__tests__/useS3Upload.test.ts` — and it is the one that can see
+ * that class of defect, because it drives the hook rather than these functions.
  *
  * 🔴 `null` for EVERY failure, including throws. The caller falls through to the normal
  * terminal-error path, so a broken fallback degrades to "the upload failed" (the
