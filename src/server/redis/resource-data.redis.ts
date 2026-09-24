@@ -29,6 +29,7 @@ export const resourceDataCache = createCachedArray({
         mv."status",
         mv."usageControl",
         mv."flags",
+        mv."generatorLoaded",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         gc."coveredNext",
@@ -86,6 +87,7 @@ export type GenerationResourceDataModel = {
   status: ModelStatus;
   usageControl?: string;
   flags: number;
+  generatorLoaded: boolean;
   hasAccess: boolean;
   epochNumber?: number;
   model: {

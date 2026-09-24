@@ -20,6 +20,8 @@ const ALLOWLIST = [
   'src/pages/api/testing/generator-loaded.ts',
   'src/pages/api/testing/orchestrator-loaded.ts',
   // Prisma/Meili field declarations, not readings.
+  'src/server/redis/resource-data.redis.ts',
+  'src/shared/types/generation.types.ts',
   'src/server/selectors/model.selector.ts',
   'src/server/selectors/modelVersion.selector.ts',
   'src/server/search-index/filterable-attributes.ts',
@@ -28,6 +30,9 @@ const ALLOWLIST = [
   'src/pages/api/mod/search/models-update.ts',
   // Names the column in a type it hands to generatorReadiness; the call is asserted below.
   'src/shared/data-graph/generation/gates.ts',
+  // Hands the column to the gate condition, which resolves it through the helper; it decides
+  // nothing itself.
+  'src/server/services/orchestrator/orchestration-new.service.ts',
   // These read the INDEXED field, which already carries readiness.
   'src/server/services/resource-select.service.ts',
   'src/components/ImageGeneration/GenerationForm/resource-select.types.ts',

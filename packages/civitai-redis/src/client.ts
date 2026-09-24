@@ -2337,7 +2337,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-4',
+    RESOURCE_DATA: 'packed:generation:resource-data-5',
     /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
     /**
