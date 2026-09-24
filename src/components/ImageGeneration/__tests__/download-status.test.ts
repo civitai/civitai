@@ -260,6 +260,27 @@ describe('isWorthBoosting', () => {
   it('withholds one with no boosted ETA', () => {
     expect(isWorthBoosting(summarizeDownloads([{ etaSeconds: 600 }]))).toBe(false);
   });
+
+  // Reported in testing: the panel kept offering a boost after one was bought, so the button could be
+  // pressed again on a workflow with nothing left to buy. Both ETAs were measured before the boost,
+  // so they still read as a saving — the lane is the only thing that says the purchase already
+  // happened.
+  it('withholds one from a workflow already in the boosted lane', () => {
+    expect(
+      isWorthBoosting(
+        summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300, lane: 'high' }])
+      )
+    ).toBe(false);
+  });
+
+  it('still offers one in the lanes a boost moves you out of', () => {
+    for (const lane of ['low', 'normal']) {
+      expect(
+        isWorthBoosting(summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300, lane }])),
+        `lane ${lane} should still be boostable`
+      ).toBe(true);
+    }
+  });
 });
 
 describe('buildDownloadRows', () => {

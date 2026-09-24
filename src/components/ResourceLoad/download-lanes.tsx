@@ -15,6 +15,20 @@ const LANES = [
 
 export const BOOST_LANE_LABEL = 'Express';
 
+/**
+ * Cancelling a boosted generation does not return the fee. One string, rendered at every purchase
+ * point, so no surface can be the one that leaves it unsaid.
+ */
+export const BOOST_NON_REFUNDABLE = "The boost fee isn't refunded if you cancel the generation.";
+
+export function BoostFeeNote({ className }: { className?: string }) {
+  return (
+    <Text size="xs" c="dimmed" className={className}>
+      {BOOST_NON_REFUNDABLE}
+    </Text>
+  );
+}
+
 export function downloadLaneLabel(lane: string | null | undefined) {
   if (!lane) return undefined;
   return LANES.find((x) => x.key === lane)?.label ?? lane;

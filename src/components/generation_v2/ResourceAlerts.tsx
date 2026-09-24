@@ -21,7 +21,11 @@ import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
-import { BOOST_LANE_LABEL, DownloadLanesInfo } from '~/components/ResourceLoad/download-lanes';
+import {
+  BOOST_LANE_LABEL,
+  DownloadLanesInfo,
+  BoostFeeNote,
+} from '~/components/ResourceLoad/download-lanes';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
 import { useWhatIfContext } from './WhatIfProvider';
 
@@ -317,38 +321,41 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
         )}
 
         {boostable && (
-          <div className="flex items-center gap-2 border-t border-white/10 pt-2.5">
-            <Switch
-              size="sm"
-              color="yellow"
-              checked={on}
-              disabled={boostFee == null}
-              onChange={(e) => setPreBoost(e.currentTarget.checked)}
-              label="Boost download"
-              styles={{ label: { fontWeight: 600 } }}
-            />
-            <DownloadLanesInfo
-              placement={{
-                lane,
-                queuePosition: preparation.queuePosition,
-                transferring: preparation.progress != null,
-                etaSeconds,
-                boostedEtaSeconds,
-                rateLimitBytesPerSecond: preparation.rateLimitBytesPerSecond,
-                totalBytes,
-                boostFee,
-              }}
-            />
-            <span className="ml-auto">
-              {boostFee != null ? (
-                <Text size="sm" fw={700} c="yellow.6" className="whitespace-nowrap tabular-nums">
-                  <IconBolt size={13} className="inline align-[-1px]" />
-                  {numberWithCommas(boostFee)}
-                </Text>
-              ) : pricing ? (
-                <Loader size="xs" color="yellow" />
-              ) : null}
-            </span>
+          <div className="flex flex-col gap-1 border-t border-white/10 pt-2.5">
+            <div className="flex items-center gap-2">
+              <Switch
+                size="sm"
+                color="yellow"
+                checked={on}
+                disabled={boostFee == null}
+                onChange={(e) => setPreBoost(e.currentTarget.checked)}
+                label="Boost download"
+                styles={{ label: { fontWeight: 600 } }}
+              />
+              <DownloadLanesInfo
+                placement={{
+                  lane,
+                  queuePosition: preparation.queuePosition,
+                  transferring: preparation.progress != null,
+                  etaSeconds,
+                  boostedEtaSeconds,
+                  rateLimitBytesPerSecond: preparation.rateLimitBytesPerSecond,
+                  totalBytes,
+                  boostFee,
+                }}
+              />
+              <span className="ml-auto">
+                {boostFee != null ? (
+                  <Text size="sm" fw={700} c="yellow.6" className="whitespace-nowrap tabular-nums">
+                    <IconBolt size={13} className="inline align-[-1px]" />
+                    {numberWithCommas(boostFee)}
+                  </Text>
+                ) : pricing ? (
+                  <Loader size="xs" color="yellow" />
+                ) : null}
+              </span>
+            </div>
+            <BoostFeeNote />
           </div>
         )}
       </Stack>

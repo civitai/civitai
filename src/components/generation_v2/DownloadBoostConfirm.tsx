@@ -4,7 +4,11 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
-import { BOOST_LANE_LABEL, DownloadLanesInfo } from '~/components/ResourceLoad/download-lanes';
+import {
+  BOOST_LANE_LABEL,
+  DownloadLanesInfo,
+  BoostFeeNote,
+} from '~/components/ResourceLoad/download-lanes';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 
@@ -66,6 +70,8 @@ function DownloadBoostConfirmModal({
             }}
           />
         </div>
+
+        <BoostFeeNote />
 
         <Stack gap={8}>
           <Button

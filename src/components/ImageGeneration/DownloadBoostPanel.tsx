@@ -8,6 +8,7 @@ import { useBoostWorkflow } from '~/components/ImageGeneration/utils/generationR
 import { formatDownloadEtaShort } from '~/components/ResourceLoad/download-eta';
 import {
   BOOST_LANE_LABEL,
+  BoostFeeNote,
   DownloadLanesInfo,
   downloadLaneLabel,
   formatLaneSpeed,
@@ -314,6 +315,7 @@ function BoostButton({ request, summary }: { request: WorkflowData; summary: Dow
           />
         )}
       </div>
+      <BoostFeeNote className="mt-1.5" />
       {!costLoading && cost == null && (
         <Text size="xs" c="red" mt={4}>
           Couldn&apos;t price this boost right now. Try again in a moment.

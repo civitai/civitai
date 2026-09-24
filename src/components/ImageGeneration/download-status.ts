@@ -184,10 +184,14 @@ export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undef
   };
 }
 
+/** The lane a boost buys. Already in it means there is nothing left to sell. */
+const BOOSTED_LANE = 'high';
+
 export function isWorthBoosting(
   summary: DownloadSummary | undefined
 ): summary is DownloadSummary & { boostedEtaSeconds: number } {
-  return !!summary && boostBuysVisibleTime(summary.etaSeconds, summary.boostedEtaSeconds);
+  if (!summary || summary.lane === BOOSTED_LANE) return false;
+  return boostBuysVisibleTime(summary.etaSeconds, summary.boostedEtaSeconds);
 }
 
 export function describeDownload(row: DownloadRow) {
