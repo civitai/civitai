@@ -20,32 +20,31 @@ const IMAGE_ID = 9001;
 
 const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
-// `validateContestCollectionEntry` reads only — every Prisma call it makes is on dbRead
-// (collection.service.ts). Nothing on this path writes, and the entry-fee charge (the one side
-// effect) is stubbed below.
-//
-// 🔴 KNOWN BLIND SPOT, measured. The mock this replaces bound dbWrite to `{}`, so ANY dbWrite
-// access threw. The canonical dbWrite answers silently instead, and that covers more than stray
-// writes: it hides a MISROUTED READ too. Mutating `collection.service.ts` `dbRead.challenge
-// .findFirst` to dbWrite kills 3 of the 6 cases here against the pre-conversion file and is
-// caught by NONE of them now. If you are relying on this file to pin which client that lookup
-// uses, it no longer does.
+// `validateContestCollectionEntry` writes nothing; the entry-fee charge (the one side effect) is
+// stubbed below. Its challenge lookups read the primary — which client each one uses is pinned by
+// challenge-entry-gates-read-primary.test.ts, not here.
 const mockDbRead = dbMock.dbRead;
-const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 
 // `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
 // which also supplies the REAL REDIS_*_KEYS tables in place of the placeholder proxy that used to
 // answer every key lookup here. Nothing in this file asserts a key.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/caches', () => ({ tagIdsForImagesCache: {}, userCollectionCountCache: {} }));
+vi.mock('~/server/redis/caches', () => ({
+  tagIdsForImagesCache: {},
+  userCollectionCountCache: {},
+}));
 vi.mock('~/server/services/article.service', () => ({ getArticles: vi.fn() }));
 vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
@@ -70,14 +69,16 @@ const { validateContestCollectionEntry } = await import('~/server/services/colle
 // The function makes several distinct `challenge.findFirst` lookups. The flag gate is the one
 // that filters on source alone (no entryFee/status/createdById), so dispatch on that shape.
 function wireChallengeFindFirst({ userChallengeCollection }: { userChallengeCollection: boolean }) {
-  mockChallengeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-    const isFlagGateLookup =
-      where.source === 'User' && !('entryFee' in where) && !('createdById' in where);
-    // status: 'Active' satisfies the assertUserChallengeAcceptingEntries timing gate (which shares
-    // this source-only lookup shape) so the flag-gate behavior under test is what actually decides.
-    if (isFlagGateLookup) return userChallengeCollection ? { id: 1, status: 'Active' } : null;
-    return null; // every other challenge lookup: nothing configured
-  });
+  mockChallengeFindFirst.mockImplementation(
+    async ({ where }: { where: Record<string, unknown> }) => {
+      const isFlagGateLookup =
+        where.source === 'User' && !('entryFee' in where) && !('createdById' in where);
+      // status: 'Active' satisfies the assertUserChallengeAcceptingEntries timing gate (which shares
+      // this source-only lookup shape) so the flag-gate behavior under test is what actually decides.
+      if (isFlagGateLookup) return userChallengeCollection ? { id: 1, status: 'Active' } : null;
+      return null; // every other challenge lookup: nothing configured
+    }
+  );
 }
 
 const entry = (overrides: Record<string, unknown> = {}) =>
