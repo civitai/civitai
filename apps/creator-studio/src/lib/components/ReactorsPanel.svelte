@@ -158,6 +158,9 @@
                         title={r.username}>{r.username}</a
                       >
                     {/if}
+                    {#if r.follows}<Badge variant="outline" class="shrink-0 text-[10px]"
+                        >Follows you</Badge
+                      >{/if}
                     {#if r.banned && !r.deleted}<Badge variant="outline" class="text-[10px]"
                         >Banned</Badge
                       >{/if}

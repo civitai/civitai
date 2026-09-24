@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
+import { followersAmong } from '$lib/server/followers';
 import { createCache } from '$lib/server/cache';
 import { getLogger } from '$lib/server/logger';
 import { mapWithConcurrency } from '$lib/server/concurrency';
@@ -556,17 +557,7 @@ async function fetchReactionAudienceSplit(
   // reactions total this page already shows.
   const reactors = rows.map((r) => ({ id: Number(r.reactorId), reactions: Number(r.reactions) }));
   const otherIds = reactors.filter((r) => r.id !== uid && r.id > 0).map((r) => r.id);
-
-  // `= ANY($1)` and not an `in` list: kysely expands `in` to one placeholder per id, and a heavy creator's reactor
-  // set is past Postgres' 65535-parameter ceiling.
-  const followerIds = new Set<number>();
-  if (otherIds.length) {
-    const result = await sql<{ userId: number }>`
-      SELECT "userId" FROM "UserEngagement"
-      WHERE "targetUserId" = ${uid} AND "type" = 'Follow' AND "userId" = ANY(${otherIds})
-    `.execute(dbRead);
-    for (const row of result.rows) followerIds.add(Number(row.userId));
-  }
+  const followerIds = await followersAmong(dbRead, uid, otherIds);
 
   return bucketReactors(reactors, uid, followerIds);
 }

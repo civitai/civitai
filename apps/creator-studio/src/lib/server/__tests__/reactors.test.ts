@@ -65,10 +65,16 @@ const reactorRow = (userId: number, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-/** Answers like Postgres over one image owned by OWNER, with `reactors` as the page query's rows. */
+const isFollowProbe = (q: Query) => q.text.includes('"UserEngagement"');
+
+/**
+ * Answers like Postgres over one image owned by OWNER, with `reactors` as the page query's rows and `followers`
+ * as the users who follow OWNER.
+ */
 function database(
   reactors: Record<string, unknown>[],
-  counts: Record<string, number> = { Like: 3, Laugh: 1 }
+  counts: Record<string, number> = { Like: 3, Laugh: 1 },
+  followers: number[] = []
 ) {
   state.answer = (q) => {
     if (q.text.startsWith('SELECT id FROM "Image"')) {
@@ -77,9 +83,17 @@ function database(
     }
     if (q.text.includes('count(*)'))
       return Object.entries(counts).map(([reaction, n]) => ({ reaction, n }));
+    if (isFollowProbe(q)) {
+      const [target, ids] = q.params as [number, number[]];
+      return target === OWNER
+        ? ids.filter((id) => followers.includes(id)).map((userId) => ({ userId }))
+        : [];
+    }
     return reactors;
   };
 }
+
+const pageQuery = () => state.queries.filter((q) => !isFollowProbe(q)).at(-1);
 
 const firstPage: ReactorQuery = { reaction: null, cursor: null };
 
@@ -123,7 +137,7 @@ describe('getReactors page', () => {
     database([reactorRow(1)], { Laugh: 2, Cry: 1 });
     const page = await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
     expect(page?.reaction).toBe('Laugh');
-    expect(state.queries.at(-1)?.params).toContain('Laugh');
+    expect(pageQuery()?.params).toContain('Laugh');
   });
 
   it('drops Dislike from the counts', async () => {
@@ -156,9 +170,9 @@ describe('getReactors page', () => {
       reaction: 'Like',
       cursor: { dir: 'after', userId: 500 },
     });
-    const q = state.queries[state.queries.length - 1];
-    expect(q.text).toContain('AND "userId" < $3 ORDER BY "userId" DESC LIMIT $4');
-    expect(q.params).toEqual([IMAGE, 'Like', 500, REACTORS_PAGE_SIZE + 1]);
+    const q = pageQuery();
+    expect(q?.text).toContain('AND "userId" < $3 ORDER BY "userId" DESC LIMIT $4');
+    expect(q?.params).toEqual([IMAGE, 'Like', 500, REACTORS_PAGE_SIZE + 1]);
   });
 
   it('pages newer accounts with userId > cursor, ascending', async () => {
@@ -167,9 +181,7 @@ describe('getReactors page', () => {
       reaction: 'Like',
       cursor: { dir: 'before', userId: 500 },
     });
-    expect(state.queries.at(-1)?.text).toContain(
-      'AND "userId" > $3 ORDER BY "userId" ASC LIMIT $4'
-    );
+    expect(pageQuery()?.text).toContain('AND "userId" > $3 ORDER BY "userId" ASC LIMIT $4');
     expect(page?.reactors.map((r) => r.userId)).toEqual([502, 501]);
   });
 
@@ -182,7 +194,7 @@ describe('getReactors page', () => {
       [{ dir: 'before', userId: 500 }, 'ASC'],
     ] as const) {
       await getReactors({} as never, OWNER, 'image', IMAGE, { reaction: 'Like', cursor });
-      expect(state.queries.at(-1)?.text).toMatch(
+      expect(pageQuery()?.text).toMatch(
         new RegExp(String.raw`\) r .* ORDER BY r\."userId" ${dir}$`)
       );
     }
@@ -193,7 +205,56 @@ describe('getReactors page', () => {
       reaction: 'Like',
       cursor: { dir: 'after', userId: 500 },
     });
-    expect(state.queries.at(-1)?.text).not.toMatch(/offset/i);
+    expect(pageQuery()?.text).not.toMatch(/offset/i);
+  });
+});
+
+describe('getReactors follows', () => {
+  const fullPage = (from: number) =>
+    Array.from({ length: REACTORS_PAGE_SIZE + 1 }, (_, i) => reactorRow(from - i));
+  const probe = () => {
+    const probes = state.queries.filter(isFollowProbe);
+    expect(probes).toHaveLength(1);
+    return probes[0].params as [number, number[]];
+  };
+
+  it('marks the reactors who follow the owner, and only them', async () => {
+    database([reactorRow(30), reactorRow(20), reactorRow(10)], undefined, [20]);
+    const page = await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
+    expect(page?.reactors.map((r) => [r.userId, r.follows])).toEqual([
+      [30, false],
+      [20, true],
+      [10, false],
+    ]);
+  });
+
+  it('asks about follows of the owner, not of the reactor', async () => {
+    database([reactorRow(30)], undefined, [30]);
+    await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
+    expect(probe()[0]).toBe(OWNER);
+  });
+
+  // The probe is one pkey lookup per id, so its cost stays flat only while it is handed the shown page and never
+  // the reaction list; a deep page is where a widening would cost the most.
+  it.each([
+    ['the first page', null, 1000],
+    ['a deep page', { dir: 'after', userId: 40_001 } as const, 40_000],
+  ])('probes only the rows %s shows, never the look-ahead row', async (_, cursor, top) => {
+    database(fullPage(top));
+    await getReactors({} as never, OWNER, 'image', IMAGE, { reaction: 'Like', cursor });
+    const shown = Array.from({ length: REACTORS_PAGE_SIZE }, (_, i) => top - i);
+    expect(probe()[1]).toEqual(shown);
+  });
+
+  it('does not probe the owner or a deleted account, and never marks them', async () => {
+    database(
+      [reactorRow(OWNER), reactorRow(20, { deletedAt: new Date() }), reactorRow(10)],
+      undefined,
+      [OWNER, 20, 10]
+    );
+    const page = await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
+    expect(probe()[1]).toEqual([10]);
+    expect(page?.reactors.map((r) => r.follows)).toEqual([false, false, true]);
   });
 });
 
