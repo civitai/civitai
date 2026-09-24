@@ -1,7 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { LIST_PAGE_DIR, RUN_PAGE_DIR, sveltesIn } from './page-sources';
 
 /**
  * The board's two prose fields — a finding's `reason` and a run's `summary` — wrap inside their own
@@ -20,25 +18,20 @@ import { describe, expect, it } from 'vitest';
  * does, the case fails rather than passing over nothing.
  */
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ABUSE = join(HERE, '..');
-
-/** Every Svelte source the given route directory is built from, so a later split is covered too. */
-function sveltesIn(dir: string): { name: string; src: string }[] {
-  return readdirSync(dir)
-    .filter((f) => f.endsWith('.svelte'))
-    .map((name) => ({ name, src: readFileSync(join(dir, name), 'utf8') }));
-}
-
 /**
  * The opening tag of the element a source renders `{…field…}` inside — walk back from the
  * interpolation to the `<` that opens the tag containing it.
+ *
+ * 🔴 A SVELTE BLOCK TAG IS NOT A RENDER. `{#if data.run.summary}` names the field and draws nothing,
+ * and it sits above the paragraph that does — so matching it first resolved to the closing tag
+ * before it and reported the field as unrendered. The `(?![#:/@])` is what skips `{#…}`, `{:…}`,
+ * `{/…}` and `{@…}` and leaves only interpolations.
  *
  * Returns `null` for anything it cannot resolve (no interpolation, a closing tag, a `<` belonging to
  * an unrelated expression), so an unresolved locator reads as a failure rather than as a pass.
  */
 export function hostTagFor(src: string, field: string): string | null {
-  const at = src.search(new RegExp(`\\{[^{}]*\\b${field}\\b[^{}]*\\}`));
+  const at = src.search(new RegExp(`\\{(?![#:/@])[^{}]*\\b${field}\\b[^{}]*\\}`));
   if (at === -1) return null;
   const open = src.lastIndexOf('<', at);
   if (open === -1 || src.startsWith('</', open)) return null;
@@ -72,6 +65,12 @@ describe('the locator can go wrong — controls', () => {
     expect(hostTagFor('<p class="x">{d.lead.action}</p>', 'reason')).toBeNull();
   });
 
+  it('skips a block tag that names the field and draws nothing', () => {
+    // The shape that made this locator lie: a guard above the paragraph that renders the field.
+    const src = '<p class="a">x</p>\n{#if run.summary}\n  <p class="b">{run.summary}</p>\n{/if}';
+    expect(hostTagFor(src, 'summary')).toBe('<p class="b">');
+  });
+
   it('rejects the exact tag the defect had — negative control', () => {
     // The pre-fix source, verbatim. If this ever reads as wrapping, every assertion below is
     // vacuous: the predicate would be accepting the thing it exists to refuse.
@@ -87,16 +86,13 @@ describe('the locator can go wrong — controls', () => {
   });
 });
 
-describe('a finding’s reason wraps inside its own box', () => {
-  it('renders in an element that opts into wrapping', () => {
-    const { name, tag } = soleHost(join(ABUSE, '[runId]'), 'reason');
-    expect(wraps(tag), `${name} renders the reason in ${tag}`).toBe(true);
-  });
-});
-
-describe('a run’s summary wraps inside its own box', () => {
-  it('renders in an element that opts into wrapping', () => {
-    const { name, tag } = soleHost(ABUSE, 'summary');
-    expect(wraps(tag), `${name} renders the summary in ${tag}`).toBe(true);
+describe('every prose field on the board wraps inside its own box', () => {
+  it.each([
+    ['a finding’s reason', RUN_PAGE_DIR, 'reason'],
+    ['a run’s summary, on the run page', RUN_PAGE_DIR, 'summary'],
+    ['a run’s summary, on the list page', LIST_PAGE_DIR, 'summary'],
+  ])('%s renders in an element that opts into wrapping', (_what, dir, field) => {
+    const { name, tag } = soleHost(dir, field);
+    expect(wraps(tag), `${dir}/${name} renders ${field} in ${tag}`).toBe(true);
   });
 });
