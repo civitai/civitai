@@ -14,8 +14,6 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
  * - Title and description
  * - Stats: Prize Pool (gold), Time Remaining, Entries
  * - Two CTAs: "Enter Competition" and "Learn More"
- *
- * Reference: docs/features/crucible/mockups/discovery.html
  */
 export function FeaturedCrucibleHero() {
   const { data: featured, isLoading } = trpc.crucible.getFeatured.useQuery({});

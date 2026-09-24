@@ -16,7 +16,6 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
  * - View and Submit buttons
  *
  * Only renders for authenticated users with at least one active crucible.
- * Reference: docs/features/crucible/mockups/discovery.html
  */
 export function ActiveCruciblesCarousel() {
   const currentUser = useCurrentUser();

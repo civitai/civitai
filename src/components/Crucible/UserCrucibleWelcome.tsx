@@ -15,7 +15,6 @@ import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
  * - Win Rate percentage
  *
  * Only renders for authenticated users.
- * Reference: docs/features/crucible/mockups/discovery.html
  */
 export function UserCrucibleWelcome() {
   const currentUser = useCurrentUser();
