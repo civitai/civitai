@@ -84,7 +84,9 @@ const challenge = (overrides: Partial<ChallengeRow> = {}): ChallengeRow => ({
   ...overrides,
 });
 
-// Evaluates the `where` shapes the entry gates use, so each client answers from its own rows.
+// Evaluates the `where` shapes the entry gates use, so each client answers from its own rows. It
+// pins which client a lookup reads, not the where clause: it ignores `select` and the condition
+// values of `maxParticipants` / `modelVersionIds`.
 function matches(row: ChallengeRow, where: Record<string, unknown>) {
   return Object.entries(where).every(([key, cond]) => {
     const value = row[key as keyof ChallengeRow];
@@ -183,6 +185,13 @@ describe('challenge-entry gates when the replica has not caught up', () => {
     seedRawQueries({ judgedImageIds: [IMAGE_ID] });
 
     await expect(entry()).rejects.toThrow('This image has already been judged');
+  });
+
+  it('does not apply the already-judged rule to a contest with no challenge', async () => {
+    seed({ replica: [], primary: [] });
+    seedRawQueries({ judgedImageIds: [IMAGE_ID] });
+
+    await expect(entry()).resolves.toBeUndefined();
   });
 
   it('enforces the participant cap', async () => {
