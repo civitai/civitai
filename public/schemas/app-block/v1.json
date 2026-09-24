@@ -70,6 +70,11 @@
       "description": "How the block renders. Defaults to \"iframe\". \"inline\"/\"hybrid\" require a verified/internal trust tier (server-assigned), so authors should leave this as iframe.",
       "enum": ["iframe", "inline", "hybrid"]
     },
+    "auth": {
+      "type": "string",
+      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" opts the block into a real OAuth access token for its own OauthClient, accepted unchanged by /api/v1, the orchestrator and the MCP.",
+      "enum": ["block-token", "oauth"]
+    },
     "trustTier": {
       "type": "string",
       "description": "SERVER-OWNED. Do NOT set this in your manifest — the platform assigns the trust tier during review. Present here only to reject dev-set values.",
