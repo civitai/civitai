@@ -46,6 +46,7 @@ import { RefreshImageResources } from '~/components/Image/RefreshImageResources/
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -130,7 +131,7 @@ const useAddedImageContext = () => {
 };
 // #endregion
 
-const getAllowedResources = (resources: ResourceHelper[]) => {
+export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
   const resourcesSorted = sortByModelTypes(resources);
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
@@ -138,11 +139,11 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
         ? getBaseModelGroup(resource.modelVersionBaseModel)
         : null;
       if (isDefined(baseModel)) {
-        return (
-          (getGenerationBaseModelResourceOptions(baseModel)?.filter(
-            (t) => t.type !== 'Checkpoint'
-          ) as AllowedResource[]) ?? []
-        );
+        const options =
+          (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
+        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
+        // second one can be added.
+        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
@@ -193,9 +194,12 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     .filter(isDefined)
     .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
 
+  const { generation } = useCurrentUserSettings();
+  const advancedMode = generation?.advancedMode ?? false;
+
   const allowedResources = useMemo(() => {
-    return getAllowedResources(image.resourceHelper);
-  }, [image.resourceHelper]);
+    return getAllowedResources(image.resourceHelper, advancedMode);
+  }, [image.resourceHelper, advancedMode]);
 
   const nsfwLicenseViolation = useMemo(() => {
     return hasImageLicenseViolation(storedImage);
