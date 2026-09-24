@@ -261,6 +261,7 @@ const ECOSYSTEMS = [
   'PonyV7',
   'Reve',
   'MuseImage',
+  'Ming',
   'MAI',
   'Ernie',
   'Ideogram',
@@ -291,6 +292,17 @@ const port = {
  * running zero extra shapes.
  */
 const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
+  Ming: [
+    { prompt: 'a poster', resolution: '2K', aspectRatio: '9:16', cfgScale: 2, steps: 24 },
+    { prompt: 'an edit', images: [IMG, IMG, IMG], resolution: '2K' },
+    { prompt: 'an edit', images: [IMG, IMG, IMG, IMG] },
+    {
+      prompt: 'a poster',
+      resources: [
+        { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.7 },
+      ],
+    },
+  ],
   NanoBanana: NANOBANANA_ONLY_SHAPES,
   Qwen: QWEN_ONLY_SHAPES,
   Qwen21: [

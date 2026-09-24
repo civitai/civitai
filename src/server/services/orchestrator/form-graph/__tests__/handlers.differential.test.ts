@@ -45,6 +45,51 @@ const VIDEO_INPUT = {
 
 /** Every input carries a seed so neither dispatcher reaches its RNG. */
 const CASES: Record<string, unknown>[] = [
+  { workflow: 'txt2img', ecosystem: 'Ming', prompt: 'a poster', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    resolution: '2K',
+    aspectRatio: '16:9',
+    outputFormat: 'png',
+    cfgScale: 2,
+    steps: 24,
+    negativePrompt: 'blurry',
+  },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    images: [IMAGE],
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.75 },
+    ],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'make it teal',
+    seed: 42,
+    images: [IMAGE],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'combine the references',
+    seed: 42,
+    images: [IMAGE, IMAGE, IMAGE],
+    resolution: '2K',
+    aspectRatio: '9:16',
+    cfgScale: 2,
+    steps: 30,
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.5 },
+    ],
+  },
+
   {
     workflow: 'txt2music',
     ecosystem: 'YuE2',

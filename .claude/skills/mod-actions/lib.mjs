@@ -92,11 +92,13 @@ export async function trpcCall(procedure, input, method = 'POST') {
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
     try {
       const errorData = JSON.parse(text);
-      if (errorData.error?.message) {
-        errorMessage = errorData.error.message;
-      } else if (errorData.message) {
-        errorMessage = errorData.message;
-      }
+      // tRPC nests the real message under error.json; without this a zod rejection
+      // surfaces only as "400 Bad Request".
+      errorMessage =
+        errorData.error?.json?.message ??
+        errorData.error?.message ??
+        errorData.message ??
+        errorMessage;
     } catch {
       if (text) errorMessage += `: ${text.slice(0, 200)}`;
     }
