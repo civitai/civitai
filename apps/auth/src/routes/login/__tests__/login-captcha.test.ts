@@ -84,21 +84,23 @@ const markup = pageSource
   .split('\n')
   .filter((line) => !line.trim().startsWith('//'))
   .join('\n');
-// One extraction for every note in the region, so the sibling pins cannot drift: written twice, the
-// two copies already disagreed, one tolerating attributes after `class` and one not.
+// One extraction for every note after a named condition, so the sibling pins cannot drift: written
+// twice, the two copies already disagreed, one tolerating attributes after `class` and one not.
+// Reads `markup`, NOT pageSource — measured, a note commented out keeps a pageSource-backed copy pin
+// green because the comment still holds the text. Same reason every structural guard reads markup.
 const noteAfter = (condition: string) =>
   normalize(
-    pageSource.match(
+    markup.match(
       new RegExp(
         condition + '\\}[\\s\\S]*?<p class="captcha-fallback-note"[^>]*>([\\s\\S]*?)<\\/p>'
       )
     )?.[1] ?? ''
   );
-const blockedNote = noteAfter('\\{#if captchaBlocked');
-const misconfiguredNote = noteAfter('\\{:else if captchaMisconfigured');
-// Every note the LIVE REGION carries, each pinned whole somewhere below. The region's note count is
-// asserted equal to this list, so a note cannot be added without its copy pin.
-const PINNED_REGION_NOTES = [blockedNote, misconfiguredNote];
+// The CONDITIONS are the single source: which notes the live region carries, and how many. Each one's
+// copy is pinned whole below, each is asserted to sit inside the region, and the region's note count
+// is asserted equal to this list — so a note cannot be added without arriving through here.
+const REGION_NOTE_CONDITIONS = ['\\{#if captchaBlocked', '\\{:else if captchaMisconfigured'];
+const [blockedNote, misconfiguredNote] = REGION_NOTE_CONDITIONS.map(noteAfter);
 
 // Shared anchors. An anchor that stops matching yields -1 and a SILENTLY EMPTY slice rather than a red,
 // so each must exist in exactly one place: a duplicated anchor is one more chance to tighten one copy
@@ -318,7 +320,6 @@ describe('login copy when the verification check cannot run', () => {
     expect(markup, 'no role="status" wrapper found').toMatch(LIVE_REGION_TAG);
 
     const region = liveRegionInner;
-    expect(region, 'live region is present but empty').toContain('{#if captchaBlocked}');
     // The note sits at depth 1 inside the region: exactly ONE block opened before it and none closed.
     // A prefix match is not enough — `{#if captchaBlocked}{#if form}` still starts with the right
     // literal while putting the note behind a second condition, which is the wasted-submit regression.
@@ -326,21 +327,32 @@ describe('login copy when the verification check cannot run', () => {
     // one can render; a `{#if form}` wrapped around the second would put it behind a round-trip the
     // user has to pay for, which is the wasted-submit regression this check exists to catch, and a
     // first-note-only check cannot see it. `{:else if}` opens no block, so the count stays 1 for each.
-    // The region must stay FLAT: `liveRegionInner` stops at the first `</div>`, so an element wrapped
-    // around a note silently shrinks every guard built on NOTE_MATCHES to the notes before it — the
-    // `[0]` gap again, relocated from the index to the extraction anchor.
-    expect(liveRegionInner, 'an element wraps part of the live region').not.toMatch(/<div\b/);
-    // …and every note in it must be one this suite pins the copy of. Depth counts how many blocks
-    // enclose a note, never WHAT they test, so a third note behind `{#if x && form?.captcha}` sits at
-    // depth 1 and walks the check below. Tying the count to the pinned set means a new note cannot be
-    // added without a whole-string pin arriving with it.
+    // The region holds ONLY `<p>`. Four guards scan it for `<p>` and nothing else, so any other
+    // element name is a note none of them can see — measured, a `<span class="…" id="x" hidden>` third
+    // note passed the count, the inline-hide ban, the id ban AND the CSS reach test. That is the `[0]`
+    // gap relocated once more: index, then extraction anchor, now element name. Asserting the element
+    // SET is what makes the `<p>`-only cardinality those guards assume actually true, and it subsumes
+    // the narrower `<div` ban it replaces (a nested `</div>` also truncates liveRegionInner).
+    const foreignTags = [
+      ...new Set(
+        [...liveRegionInner.matchAll(/<\/?([a-zA-Z][\w-]*)\b/g)]
+          .map((m) => m[1].toLowerCase())
+          .filter((t) => t !== 'p')
+      ),
+    ];
+    expect(foreignTags, 'the live region holds an element the note guards cannot see').toEqual([]);
+    // …and every note in it arrived through REGION_NOTE_CONDITIONS, whose copy each test pins whole.
+    // Depth counts how many blocks enclose a note, never WHAT they test, so a third note behind
+    // `{#if x && form?.captcha}` sits at depth 1 and walks the check below.
+    for (const condition of REGION_NOTE_CONDITIONS) {
+      expect(liveRegionInner, 'a pinned note condition is not inside the live region').toMatch(
+        new RegExp(condition)
+      );
+    }
     expect(
       NOTE_MATCHES,
-      'a note in the live region has no whole-string copy pin — add one, and count it here'
-    ).toHaveLength(PINNED_REGION_NOTES.length);
-    for (const note of PINNED_REGION_NOTES) {
-      expect(note, 'a pinned region note extracted empty').not.toBe('');
-    }
+      'a note in the live region did not arrive through REGION_NOTE_CONDITIONS, so nothing pins its copy'
+    ).toHaveLength(REGION_NOTE_CONDITIONS.length);
     const noteStarts = NOTE_MATCHES.map((m) => m.index ?? -1);
     expect(noteStarts, 'no note element inside the live region').not.toHaveLength(0);
     for (const noteStart of noteStarts) {
@@ -669,6 +681,17 @@ describe('login copy when the verification check cannot run', () => {
     ).toBe(
       "setTimeout(() => { if (!captchaToken) triggerFallback('timeout'); }, TURNSTILE_TOKEN_DEADLINE_MS)"
     );
+    // …and it must be REACHED. Pinning the expression says nothing about control arriving at it:
+    // measured, an early `return` above it survived every assertion here. That matters most in the
+    // config where this deadline is the ONLY detector — invisible secret set, invisible sitekey unset,
+    // managed pair set: no invisible widget renders, so no error callback can ever fire, scriptWatch
+    // stays 0, and de-arming the deadline leaves the submit on "Verifying…" for the session with no
+    // note. None of the window callbacks above it returns, so a bare `return` there is always new.
+    const beforeTimeout = mount.slice(0, mount.indexOf('const timeout ='));
+    expect(beforeTimeout, 'the onMount block was not found').not.toBe('');
+    expect(beforeTimeout, 'something returns before the deadline is armed').not.toMatch(
+      /\breturn\b/
+    );
   });
 
   it('does not re-offer the fallback while an unavailable verdict stands', () => {
@@ -705,33 +728,25 @@ describe('login copy when the verification check cannot run', () => {
     expect(
       normalize(pageSource.match(/const solvePrompted = \$derived\([\s\S]*?\);/)?.[0] ?? '')
     ).toBe('const solvePrompted = $derived(managedWidgetShown && captchaPending);');
-    const guarded = markup.match(/\{#if solvePrompted\}([\s\S]*?)\{\/if\}/)?.[1];
-    expect(
-      guarded,
-      'the fallback prompt is not gated on the widget being on screen AND the submit still being gated'
-    ).toBeDefined();
+
     // Pinned WHOLE, like both notes in the live region: a keyword check keeps "Complete this quick
     // check to continue." while a reword drops "Couldn't verify you automatically." — the sentence
     // carrying the cause. This element is deliberately outside NOTE_TAGS: it is not in the live region
     // and is not an announcement, so the hide/id bans have no claim on it. It does share the class, so
     // the CSS reach test covers it incidentally and a rule written to hide only this would red under
     // the announcement ban's name.
-    expect(noteAfter('\\{#if solvePrompted')).toBe(
-      "Couldn't verify you automatically. Complete this quick check to continue."
-    );
+    expect(
+      noteAfter('\\{#if solvePrompted'),
+      'the fallback prompt is not gated on the widget being on screen AND the submit still being gated'
+    ).toBe("Couldn't verify you automatically. Complete this quick check to continue.");
     expect(markup.split('Complete this quick check to continue.')).toHaveLength(2);
     // The slot's height and the prompt read ONE rule, negated — they diverged once already, leaving a
     // bare Cloudflare challenge in an expanded box with no copy beside it.
     expect(markup, 'the slot reserves height for a widget nothing is waiting on').toMatch(
       /class:collapsed=\{!solvePrompted\}/
     );
-    // The label is one ORDERED rule, pinned whole. Order is the part a reader cannot check by eye:
-    // solvePrompted is a strict SUBSET of captchaPending, so testing captchaPending first makes
-    // 'Verify to continue' unreachable and puts "Verifying…" beside a prompt telling the user to
-    // complete the check — measured green against a flat chain that pinned only the two arms. And the
-    // dead-end arm reads retryCannotHelp, not one half of it: on the BLOCKED path the button would
-    // otherwise read "Email me a login link" under a note saying email login cannot complete, and the
-    // rate limiter runs before the captcha check, so each press spends one of five attempts.
+    // WHOLE STRING, not per-arm: the order is load-bearing (stated beside the derived) and measured
+    // reorderable under assertions that pinned only the arms. Copy, order and branch set in one pin.
     expect(
       normalize(
         markup.match(/const emailButtonLabel = \$derived\.by\([\s\S]*?\n {2}\}\);/)?.[0] ?? ''
@@ -742,9 +757,18 @@ describe('login copy when the verification check cannot run', () => {
         "if (solvePrompted) return 'Verify to continue'; if (captchaPending) return 'Verifying…'; " +
         "if (retryCannotHelp) return 'Email login unavailable'; return 'Email me a login link'; });"
     );
-    expect(markup, 'the button renders something other than that rule').toMatch(
+    // Anchored on the email submit's OWN disabled expression: the logout form has a
+    // `<button type="submit" class="social email">` too, and it comes FIRST in the file.
+    const button =
+      markup.match(/<button type="submit" class="social email" disabled=[\s\S]*?<\/button>/)?.[0] ??
+      '';
+    expect(button, 'the email submit button was not found').not.toBe('');
+    expect(button, 'the button renders something other than that rule').toMatch(
       />\{emailButtonLabel\}<\/span/
     );
+    // CARDINALITY, not containment: a second span before this one, carrying override copy, keeps the
+    // match above green. Contrived while the button holds one span — live the moment it does not.
+    expect((button.match(/<span/g) ?? []).length, 'the button holds more than one span').toBe(1);
 
     // Pinning the readers is worth nothing while nothing SETS the mirror — it would be false forever,
     // and all three assertions above would still pass.

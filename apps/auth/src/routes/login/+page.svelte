@@ -90,13 +90,13 @@
   let managedWidgetId: string | undefined;
   // Reactive mirror of managedWidgetId, which is a plain `let` the template cannot react to.
   // INVARIANT, deliberately unguarded because nothing clears either one today: anything that clears
-  // managedWidgetId to allow a fresh render must clear this too, or the prompt and the reserved box go
-  // on claiming a widget that is gone.
+  // managedWidgetId to allow a fresh render must clear this too, or the prompt, the reserved box and
+  // the button label go on claiming a widget that is gone.
   let managedWidgetShown = $state(false);
   // ONE name, because the prompt, the slot's reserved height and the button label all ask it, and the
   // first two are exact negations of each other — spelled separately they diverged once already.
   const solvePrompted = $derived(managedWidgetShown && captchaPending);
-  // ORDER IS LOAD-BEARING and cannot be seen in a flat chain of ternaries: solvePrompted is a strict
+  // ORDER IS LOAD-BEARING and invisible at the call site: solvePrompted is a strict
   // SUBSET of captchaPending, so testing captchaPending first makes 'Verify to continue' unreachable
   // and puts "Verifying…" on the button beside a prompt telling the user to complete the check. And
   // the last branch reads retryCannotHelp, not one arm of it: in the blocked state the button would
@@ -451,9 +451,7 @@
             <input type="hidden" name="captchaFailReason" value={captchaFailReason} />
             <button type="submit" class="social email" disabled={submitting || captchaPending}>
               <IconMail size={20} stroke={2} />
-              <span
-                >{emailButtonLabel}</span
-              >
+              <span>{emailButtonLabel}</span>
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
