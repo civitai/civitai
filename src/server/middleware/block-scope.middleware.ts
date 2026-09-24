@@ -17,8 +17,18 @@ import {
   DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
-import { ANON_SUBJECT, isValidSubject, USER_SUB_RE } from '~/server/services/block-token-subject';
+import {
+  ANON_SUBJECT,
+  isValidSubject,
+  subjectForUserId,
+  USER_SUB_RE,
+} from '~/server/services/block-token-subject';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  allBrowsingLevelsFlag,
+  domainBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   isBlockActionDetail,
   type BlockActionDetail,
@@ -31,6 +41,8 @@ import {
  * Behavior matrix:
  *   - No Authorization: Bearer header           → fall through to existing handler (session auth)
  *   - Authorization: Bearer <opaque API key>    → fall through (legacy API key path)
+ *   - Authorization: Bearer <hub OAuth token>   → if its OauthClient owns an AppBlock: build block
+ *                                                 claims from the viewer's grant, set req.blockClaims
  *   - Authorization: Bearer <RS256 block JWT>   → validate, bind to context, set req.blockClaims
  *
  * See docs/features/app-blocks.md for the overall architecture.
@@ -938,6 +950,89 @@ export function enforceContextBinding(
   }
 }
 
+// Same instance id the page host mints under, so storage, rate-limit buckets and the
+// publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
+const HUB_INSTANCE_PREFIX = 'page_';
+// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+const HUB_BUZZ_BUDGET_DEFAULT = 10;
+const HUB_BUZZ_BUDGET_CAP = 1000;
+
+function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
+  const raw = manifest.page?.buzzBudgetPerGen;
+  const candidate =
+    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
+  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+}
+
+/**
+ * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
+ * Null for anything else — a personal API key is never elevated. Scopes are what the
+ * JWT mint would sign for this viewer: manifest ∩ approved ∩ (granted ∪ consent-exempt).
+ * With several blocks on one client the oldest approved one is chosen.
+ */
+async function resolveHubTokenClaims(
+  bearer: string,
+  req: NextApiRequest
+): Promise<BlockTokenClaims | null> {
+  const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+  const session = await getSessionFromBearerToken(bearer);
+  if (!session || session.subject.type !== 'oauth') return null;
+  const userId = session.user?.id;
+  if (typeof userId !== 'number') return null;
+  const clientId = session.subject.id;
+
+  const { dbRead } = await import('~/server/db/client');
+  const block = (await dbRead.appBlock.findFirst({
+    where: { appId: clientId, status: 'approved' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+  })) as {
+    id: string;
+    blockId: string;
+    manifest: unknown;
+    approvedScopes: string[];
+  } | null;
+  if (!block) return null;
+
+  const { getGrantedScopes, partitionByConsent } = await import(
+    '~/server/services/blocks/scope-grant.service'
+  );
+  const granted = await getGrantedScopes({ userId, appBlockId: block.id });
+  const manifest = (block.manifest ?? {}) as {
+    scopes?: unknown;
+    page?: { buzzBudgetPerGen?: unknown };
+  };
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  const scopes = partitionByConsent(declared, granted).signable;
+
+  const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
+  const host = req.headers.host ?? '';
+  const domainColor = getRequestDomainColor(req);
+  const maxBrowsingLevel =
+    host !== '' && isHostForColor(host, 'red')
+      ? allBrowsingLevelsFlag
+      : domainBrowsingCeiling(domainColor);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${session.apiKeyId}`,
+    blockId: block.blockId,
+    appId: clientId,
+    appBlockId: block.id,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
+    maxBrowsingLevel,
+  };
+}
+
 export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts): NextApiHandler {
   return async (req, res) => {
     const cors = await setBlockCors(req, res, opts);
@@ -948,13 +1043,15 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       ? authHeader.slice('bearer '.length).trim()
       : '';
 
-    // No block bearer present (or it's an opaque API key, not a 3-part JWS)
+    // No block bearer present (or it's an opaque API key, not a 3-part JWS,
+    // that does not resolve to a block's hub token below)
     // — hand off to the wrapped handler so it can run its own auth/CORS path.
     // This is what keeps pre-PR behavior (PublicEndpoint's ACAO:*,
     // AuthedEndpoint's allow-credentials path) intact for legacy callers.
-    if (!bearer || !isBlockJwt(bearer)) {
+    if (!bearer) {
       return handler(req, res);
     }
+    const isJwt = isBlockJwt(bearer);
 
     // Decision 4: gate block-JWT verification on the dedicated GLOBAL runtime
     // flag (`app-blocks-runtime-enabled`) rather than the global eval of the
@@ -980,8 +1077,13 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       return handler(req, res);
     }
 
-    const claims = await verifyBlockToken(bearer);
+    const claims = isJwt
+      ? await verifyBlockToken(bearer)
+      : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await resolveHubTokenClaims(bearer, req)
+      : null;
     if (!claims) {
+      if (!isJwt) return handler(req, res);
       res.status(401).json({ error: 'invalid block token' });
       return;
     }

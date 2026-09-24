@@ -323,6 +323,7 @@ function AppPage(props: PageProps) {
   const {
     token,
     expiresAt,
+    kind,
     needsConsent,
     missingScopes,
     domain,
@@ -454,6 +455,7 @@ function AppPage(props: PageProps) {
           slug={slug}
           token={token}
           expiresAt={expiresAt}
+          tokenKind={kind}
           declaredScopes={scopes}
           missingScopes={missingScopes}
           needsConsent={needsConsent}

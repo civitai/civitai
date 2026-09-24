@@ -44,6 +44,11 @@ import {
   consentGatedScopes,
 } from '~/server/services/blocks/scope-grant.service';
 import {
+  isConsentRequiredError,
+  manifestWantsOauthToken,
+  oauthScopeBitsFor,
+} from '~/server/services/blocks/block-oauth-scope';
+import {
   clampTunnelDeclaredScopes,
   FORCED_SFW_CEILING,
   parseManifestBuzzBudget,
@@ -351,6 +356,40 @@ function resolveBuzzBudget(
   return Math.min(candidate, BUZZ_BUDGET_CAP);
 }
 
+type OauthMintOutcome =
+  | { outcome: 'minted'; token: string; expiresAt: string }
+  | { outcome: 'consent_required'; withheld: string[] };
+
+/**
+ * Hub-minted OAuth access token for an `auth: "oauth"` manifest. The consent
+ * row is mirrored from the grant right before asking, so grants that predate
+ * the mirror still mint; a missing grant or a hub `consent_required` refusal
+ * falls back to the JWT path with the consent signal set, never a 500.
+ */
+async function mintOauthAppToken(args: {
+  userId: number;
+  appBlockId: string;
+  clientId: string;
+  scopes: string[];
+}): Promise<OauthMintOutcome> {
+  const { userId, appBlockId, clientId, scopes } = args;
+  const [{ syncOauthConsentFromGrant }, { mintAppToken }] = await Promise.all([
+    import('~/server/services/blocks/oauth-consent-sync.service'),
+    import('@civitai/auth'),
+  ]);
+  const consent = await syncOauthConsentFromGrant({ userId, appBlockId, scopes });
+  if (!consent) return { outcome: 'consent_required', withheld: consentGatedScopes(scopes) };
+  try {
+    const minted = await mintAppToken({ userId, clientId, scope: oauthScopeBitsFor(scopes) });
+    return { outcome: 'minted', token: minted.accessToken, expiresAt: minted.expiresAt };
+  } catch (err) {
+    if (isConsentRequiredError(err)) {
+      return { outcome: 'consent_required', withheld: consentGatedScopes(scopes) };
+    }
+    throw err;
+  }
+}
+
 /**
  * PHASE 2 — App Dev Tunnel author-own SCOPED mint.
  *
@@ -506,6 +545,7 @@ async function tryDevTunnelScopedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: 'block',
     // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
     // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
     needsConsent: false,
@@ -653,17 +693,30 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
   const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
 
+  const oauth =
+    manifestWantsOauthToken(app.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintOauthAppToken({
+          userId,
+          appBlockId: app.appBlockId,
+          clientId: app.appId,
+          scopes: granted,
+        })
+      : null;
+
   // SIGN with the app's REAL ids (appId/appBlockId/blockId), the client's page
   // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
-  const result = await signDevScopedPageToken({
-    userId,
-    signBlockId: app.blockId,
-    signAppId: app.appId,
-    signAppBlockId: app.appBlockId,
-    blockInstanceId,
-    granted,
-    buzzBudget,
-  });
+  const result =
+    oauth?.outcome === 'minted'
+      ? oauth
+      : await signDevScopedPageToken({
+          userId,
+          signBlockId: app.blockId,
+          signAppId: app.appId,
+          signAppBlockId: app.appBlockId,
+          blockInstanceId,
+          granted,
+          buzzBudget,
+        });
 
   // MINT-TIME AUDIT (parity with the ephemeral branch): the forensic record of
   // granting a (possibly spend-capable) dev token to a NON-approved owned app. Never
@@ -684,8 +737,10 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
-    needsConsent: false,
-    missingScopes: [],
+    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    scopes: granted,
+    needsConsent: oauth?.outcome === 'consent_required',
+    missingScopes: oauth?.outcome === 'consent_required' ? oauth.withheld : [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
@@ -1158,7 +1213,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     }
   }
 
-  const buzzBudget = manifestScopes.includes('ai:write:budgeted')
+  let buzzBudget = manifestScopes.includes('ai:write:budgeted')
     ? resolveBuzzBudget(manifestScopes, (install.settings ?? {}) as Record<string, unknown>) ??
       undefined
     : undefined;
@@ -1238,18 +1293,37 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const result = await BlockTokenService.sign({
-    userId,
-    blockId: block.blockId,
-    appId: block.appId,
-    appBlockId: block.id,
-    blockInstanceId,
-    scopes: manifestScopes,
-    ctx,
-    buzzBudget,
-    domain: domainColor ?? null,
-    maxBrowsingLevel,
-  });
+  const oauth =
+    userId != null && manifestWantsOauthToken(block.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintOauthAppToken({
+          userId,
+          appBlockId: block.id,
+          clientId: block.appId,
+          scopes: manifestScopes,
+        })
+      : null;
+  if (oauth?.outcome === 'consent_required') {
+    manifestScopes = manifestScopes.filter((s) => !oauth.withheld.includes(s));
+    missingScopes = [...missingScopes, ...oauth.withheld];
+    needsConsent = true;
+    if (!manifestScopes.includes('ai:write:budgeted')) buzzBudget = undefined;
+  }
+
+  const result =
+    oauth?.outcome === 'minted'
+      ? oauth
+      : await BlockTokenService.sign({
+          userId,
+          blockId: block.blockId,
+          appId: block.appId,
+          appBlockId: block.id,
+          blockInstanceId,
+          scopes: manifestScopes,
+          ctx,
+          buzzBudget,
+          domain: domainColor ?? null,
+          maxBrowsingLevel,
+        });
 
   // A6: surface the consent signal alongside the token. The token carries only
   // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
@@ -1260,6 +1334,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    scopes: manifestScopes,
     needsConsent,
     missingScopes,
     // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE

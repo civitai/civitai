@@ -676,6 +676,25 @@ describe('BlockManifestValidator', () => {
     });
   });
 
+  describe('auth (optional credential opt-in)', () => {
+    it.each(['block-token', 'oauth'])('accepts auth %j', (auth) => {
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, auth }, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+
+    it.each<[unknown]>([['session'], ['OAuth'], [''], [true], [null]])(
+      'rejects auth %j with a clear error',
+      (auth) => {
+        const result = BlockManifestValidator.validate({ ...VALID_MANIFEST, auth }, APP_CTX);
+        expect(result.valid).toBe(false);
+        if (!result.valid) {
+          expect(result.errors.some((e) => e.startsWith('auth must be one of'))).toBe(true);
+        }
+      }
+    );
+  });
+
   // The OPTIONAL one-line store `tagline`. Absent is fine (the store shows no
   // tagline); present must be a string whose TRIMMED length is 1..140. This is
   // the AUTHORITATIVE gate — the published JSON schema is a shape hint.
