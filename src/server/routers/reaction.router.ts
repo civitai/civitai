@@ -5,6 +5,8 @@ import {
   reactionRateLimits,
 } from './../schema/reaction.schema';
 import { getUserReactionsForImages } from '~/server/services/image.service';
+import { getImageReactors } from '~/server/services/image-reactors.service';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { router, guardedProcedure, protectedProcedure } from '~/server/trpc';
 import { rateLimit } from '~/server/middleware.trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -36,4 +38,9 @@ export const reactionRouter = router({
     .query(({ input, ctx }) =>
       getUserReactionsForImages({ imageIds: input.imageIds, userId: ctx.user.id })
     ),
+  /** Owner-only: anyone else gets NOT_FOUND, the same as a missing image. Reactor identities are never public. */
+  getImageReactors: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getByIdSchema)
+    .query(({ input, ctx }) => getImageReactors({ imageId: input.id, userId: ctx.user.id })),
 });
