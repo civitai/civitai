@@ -111,18 +111,28 @@ class FakeXHR {
       this.status = res.status;
       if (res.etag) this.headers['ETag'] = res.etag;
       if (res.networkError) {
-        // 🔴 NO `upload.progress` ON THIS PATH, and that is the point of the branch
-        // sitting ABOVE the progress emission rather than below it. A transport failure
-        // — DNS, TLS, connection reset — is precisely the case where the request body
-        // never leaves, so the browser fires little or no upload progress. Emitting a
-        // full-size `progress` here (which this fake used to do unconditionally) made
-        // every relayed row read `progress: 100` in tests while the real one sits at 0,
-        // and that single line silently disarmed the assertion guarding it: removing the
+        // 🔴 NO FULL-SIZE `upload.progress` ON THIS PATH, and that is the point of the
+        // branch sitting ABOVE the ordinary progress emission. Emitting a full-size
+        // `progress` here (which this fake used to do unconditionally) made every relayed
+        // row read `progress: 100` in tests while the real one sits far below it, and
+        // that single line silently disarmed the assertion guarding it: removing the
         // relay branch's `progress: 100` left this file GREEN. Measured, not reasoned.
         //
-        // The order below is the order the browser emits: `error` then `loadend` in the
-        // same dispatch, which is what lets the `error` rejection win the race against
-        // `loadend`'s status-0.
+        // ⚠ WHAT THIS MODELS, PRECISELY — the bytes-never-left sub-case, with
+        // `loaded: 0`. A reset can also land MID-BODY or after the body is fully sent,
+        // and this fake does not model that; an earlier draft of this comment claimed
+        // the body "never leaves" on a transport failure, which is false for exactly the
+        // ERR_CONNECTION_RESET class that motivated the relay. The assertions guarding
+        // the relay row hold for any transmitted fraction below 100%, so the narrow
+        // model is sufficient for them — it is not a general statement about resets.
+        //
+        // `upload.loadend` DOES fire on a request error (per XHR's request-error steps
+        // it is `progress` that is skipped, not `loadend`), so it is emitted here with
+        // the bytes actually transmitted. Dropping it left production's own
+        // `xhr.upload.addEventListener('loadend', …)` handler unexercised on the failure
+        // path. Then `error` before the xhr-level `loadend`, which is what lets the
+        // `error` rejection win the race against `loadend`'s status-0.
+        this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: 0 }));
         this.emit('error');
         this.emit('loadend');
         return;
