@@ -36,7 +36,10 @@ export const syncGeneratorLoadedResources = createJob(
   'sync-generator-loaded-resources',
   // Every run downloads the whole civitai resident list, uncompressed — the orchestrator ignores
   // Accept-Encoding. Weigh that before shortening the interval.
-  '*/5 * * * *',
+  //
+  // 15 minutes, not 5, since /api/webhooks/resource-availability began carrying the same news within
+  // seconds: this is the backstop for a delivery that never arrived, not the path a user waits on.
+  '*/15 * * * *',
   async () => {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SYNC_GENERATOR_LOADED_RESOURCES)))
       return { skipped: 'flag off' };
