@@ -1662,7 +1662,8 @@ describe('runBotAccountDetection', () => {
         'blocked or removed is included rather than dropped.'
     );
     // 🔴 AND THE LEGEND FOR BOTH ON-SITE CATEGORIES IS HERE, not on every finding. It used to be
-    // ~260 characters appended to each row; the board renders this summary once, above the table.
+    // its enumeration was 63-174 characters appended to each row depending on the branch; the board
+    // renders this summary once, above the table.
     // Asserting it on the SUMMARY is what stops "shortened the reason" meaning "deleted the
     // definition" — the words still reach the moderator, in one copy instead of a thousand.
     expect(summary).toContain(POST_COUNT_LEGEND);

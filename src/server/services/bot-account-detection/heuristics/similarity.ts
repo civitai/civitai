@@ -1,3 +1,4 @@
+import { plural } from '../../abuse-report-prose';
 import { unprefixFingerprint } from '../fingerprint-keys';
 import type { BotAccountHeuristic } from '../scoring';
 import { rampScore } from './ramp';
@@ -191,6 +192,9 @@ export const contentTemplatingHeuristic: BotAccountHeuristic = {
     const value = unprefixFingerprint(fingerprint ?? '');
     const quote = value.slice(0, QUOTE_CHARS);
     const ellipsis = value.length > QUOTE_CHARS ? '…' : '';
-    return `${size} new accounts uploaded a file with the same name — “${quote}${ellipsis}”`;
+    return (
+      `${size} new ${plural(size, 'account')} uploaded a file with the same name — ` +
+      `“${quote}${ellipsis}”`
+    );
   },
 };

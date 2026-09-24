@@ -117,6 +117,12 @@ function stripUserText(reason: string, userText: readonly string[]): string {
     // cheap fix — every real declared literal here is a username or a filename, both comfortably
     // over the floor, and a future fixture that trips this wants a human deciding, not a silent
     // pass.
+    //
+    // ⚠️ FOUR IS A FLOOR THE REAL FIXTURES SIT ON, NOT ABOVE — the ring cohort's shared filename is
+    // `logo`, exactly four characters. So there is no margin here: a fixture that shortened that
+    // name by one would start throwing. That is the intended direction (loud, at the fixture, with
+    // a message naming the cause) rather than a silent vacuous pass, but do not read the floor as
+    // generous.
     if (literal.length < 4)
       throw new Error(
         `user-text literal ${JSON.stringify(literal)} is too short to blank safely — it would ` +
@@ -614,17 +620,19 @@ describe('moderator-facing reason prose — the two in-repo detectors', () => {
   });
 
   it('🔴 the per-row definition of the on-site categories moved to the run summary', () => {
-    // It was ~260 characters of identical prose on every finding of a run that can carry a thousand
-    // of them. The legend still exists — this asserts WHERE, so "shortened" cannot quietly mean
+    // Its enumeration half was 63 characters on the nothing-taken-down branch and 174 on the other,
+    // on every finding of a run that can carry a thousand of them; stated once on the summary it
+    // costs 275. The legend still exists — this asserts WHERE, so "shortened" cannot quietly mean
     // "deleted": the reason keeps the account's own numbers, the legend keeps the definitions.
     const withExclusions = renderPostCounts(posts({ comments: 5, images: 40 }, { comments: 2 }));
     expect(withExclusions).toContain('Still on the site: 2');
     expect(withExclusions).toContain('No longer on the site: 43');
     // The ENUMERATION moved; the CAVEAT did not, and the split is load-bearing rather than tidy.
     // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders a reason with
-    // no run summary anywhere on the screen, so anything moved to the summary is unreachable from
-    // that surface — fine for a list of which states fall where, not fine for a caveat that inverts
-    // what "still on the site" means.
+    // no run summary on the screen, so anything moved to the summary is one click away via that
+    // panel's `run #{f.runId}` link rather than in front of the reader — fine for a list of which
+    // states fall where, not fine for a caveat that inverts what "still on the site" means, because
+    // a reader who does not already doubt the sentence has no reason to click.
     expect(withExclusions).not.toContain('TOS-flagged');
     expect(withExclusions).toContain('Images awaiting a scan result count as on the site.');
 
@@ -639,11 +647,15 @@ describe('moderator-facing reason prose — the two in-repo detectors', () => {
     //
     // ⚠️ THIS BOUND IS NOT WHAT CATCHES THE DUMP COMING BACK, and saying so is the point — a length
     // assertion reads as if it were. Measured: re-adding the per-heuristic clause puts this fixture
-    // at 626 — over this 700 only because 700 is loose, and it was under the previous 600 bound at
-    // the time, i.e. this line has ALREADY been observed staying green on that mutant. What kills it
-    // is the `assignment` rule in the it.each above, which was watched doing so. This bound is a
-    // coarse backstop against a gross regression, deliberately loose so ordinary edits to the
-    // sentence do not break it, and it must not be cited as the dump guard.
+    // at 626, which is UNDER this 700 — so this line stays GREEN on that mutant, and it was watched
+    // doing exactly that. What kills the mutant is the `assignment` rule in the it.each above,
+    // which was also watched doing so.
+    //
+    // The bound is 700 ON PURPOSE rather than tightened to 620 to duplicate that rule's job:
+    // squeezing it would add a second, fragile guard on a property already covered structurally,
+    // and it would go red on ordinary edits to the sentence. This is a coarse backstop against a
+    // gross regression — a reason that doubles in length for some reason nobody intended — and it
+    // must not be cited as the dump guard.
     const reason = buildFinding(member(), score(), SCAN).reason;
     expect(reason.length).toBeLessThan(700);
     // And not shortened by dropping the evidence: the account's own facts are all still there.

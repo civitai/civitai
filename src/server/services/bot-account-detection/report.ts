@@ -157,19 +157,28 @@ const renderSurface = (s: SurfaceCounts) =>
  * `apps/moderator/src/routes/abuse/[runId]/+page.svelte` renders the run summary above the findings
  * table, but `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders
  * `{f.reason}` on its own — `getAbuseFindingsForUser` selects from `abuse_detection_finding` alone
- * and never joins the run. So anything moved to the summary is UNREACHABLE from User Lookup. A
- * definition of the two categories is inferable from the words it defines and can live there; a
- * caveat that inverts what one of those categories means cannot, so it rides with the number.
+ * and never joins the run. So anything moved to the summary is NOT ON THAT SCREEN.
+ *
+ * ⚠️ NOT "UNREACHABLE", WHICH IS WHAT THIS PARAGRAPH SAID AND OVERSTATED. That panel renders a
+ * `run #{f.runId}` link to `/abuse/{runId}` beside each finding, so the summary is one click away
+ * for a reader who goes looking. The distinction is the whole basis of the split: a definition of
+ * the two categories is inferable from the words it defines and survives being a click away, while
+ * a caveat that inverts what one of those categories MEANS does not — a reader who does not already
+ * doubt the sentence has no reason to click. So the enumeration moved and the caveat rides with the
+ * number.
  */
 const PENDING_CARVE_OUT = 'Images awaiting a scan result count as on the site.';
 
 /**
  * 🔴 WHAT THE TWO ON-SITE CATEGORIES COVER — ONCE, ON THE RUN PAGE.
  *
- * The enumeration used to be appended to EVERY finding, ~210 characters of identical prose repeated
- * for every account in a run that can carry a thousand of them. A list a reader needs once is noise
- * on the 999 rows after that, and it pushed the account's own facts — the only part that differs per
- * row — down below the fold of the board's reason cell.
+ * The enumeration used to be appended to EVERY finding: measured, 63 characters on the branch where
+ * nothing was taken down and 174 on the branch where something was, repeated for every account in a
+ * run that can carry a thousand of them. (The whole definitional tail was 115 and 226 respectively;
+ * the other 52 is `PENDING_CARVE_OUT`, which stayed.) Stated once here it costs 275 characters, on
+ * one row instead of a thousand. A list a reader needs once is noise on the 999 rows after that,
+ * and it pushed the account's own facts — the only part that differs per row — down below the fold
+ * of the board's reason cell.
  *
  * ⚠️ IT IS REACHABLE FROM THE RUN PAGE AND NOT FROM USER LOOKUP; see `PENDING_CARVE_OUT` above for
  * why that is an acceptable trade for this half and not for the other. "Still on the site" and "no
@@ -261,11 +270,12 @@ export function buildFinding(
   // non-technical reader stops at. Measured on the fixture in
   // `src/server/services/__tests__/abuse-detector-reason-prose.test.ts` — one account, four
   // registered heuristics, three of them carrying notes — the reason went from 690 characters to
-  // 516: this clause accounts for 110 of the 174 saved and the enumeration that moved to
-  // `POST_COUNT_LEGEND` for the rest. A production finding with longer notes ran longer than the
-  // fixture does. (516 and not 464: the scan-pending caveat was kept on the row rather than moved
-  // to the summary, because one of the two surfaces that renders a reason shows no summary at all —
-  // see `PENDING_CARVE_OUT`.)
+  // 516. The 174 saved decomposes as 110 for this clause and 63 for the enumeration that moved to
+  // `POST_COUNT_LEGEND` — the fixture takes the nothing-taken-down branch, whose definitional tail
+  // was the shorter of the two — plus a separator. A production finding with longer notes ran
+  // longer than the fixture does. (516 and not 464: the scan-pending caveat was kept on the row
+  // rather than moved to the summary, because one of the two surfaces that renders a reason does
+  // not show a summary — see `PENDING_CARVE_OUT`.)
   //
   // WHERE THE NUMBERS WENT, because they are load-bearing for grading and deleting them was not on
   // the table: `heuristic:<id>:score_sum` in the run counters, added beside the `evaluated`/`fired`/
@@ -305,7 +315,17 @@ export function buildFinding(
   // notes carry a sampled filename, which is why `truncateReason` exists at all. So the body is
   // trimmed against a budget that already excludes this sentence, and the sentence is concatenated
   // afterwards. Same shape as `buildReports`, which reserves its batch wording for the same reason.
-  const reason = truncateReason(body, MAX_REASON_LENGTH - NO_ACTION_TAKEN.length) + NO_ACTION_TAKEN;
+  //
+  // 🔴 THE JOIN IS EXPLICIT, AND A NAIVE CONCATENATION LOSES THE SENTENCE BOUNDARY EXACTLY WHEN IT
+  // MATTERS. `body` ends in a space in the ordinary case, so `body + NO_ACTION_TAKEN` reads fine —
+  // but a TRUNCATED body ends in the ellipsis, and the result is `…No action was taken`, run
+  // together, on the one finding that was already the hardest to read. So the body is trimmed, its
+  // trailing space removed, and the two joined with exactly one space. The budget reserves that
+  // separator too, or the join would put the reason one character over the cap.
+  const reason = `${truncateReason(
+    body,
+    MAX_REASON_LENGTH - NO_ACTION_TAKEN.length - 1
+  ).trimEnd()} ${NO_ACTION_TAKEN}`;
   return {
     userId: member.userId,
     confidence: score.confidence,

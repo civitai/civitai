@@ -573,7 +573,8 @@ export async function runBotAccountDetection(
         `data. That is not evidence that no accounts uploaded files under the same name.`) +
     (signals.sources.filenameBudgetExhausted
       ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +
+        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} ` +
+        `${plural(cohort.members.length, 'member')}. ` +
         `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
         `window and scored 0 on filename clustering for want of data.`
       : '') +
@@ -594,7 +595,8 @@ export async function runBotAccountDetection(
         `that these accounts published what they uploaded.`) +
     (signals.sources.stagedImageBudgetExhausted
       ? ` 🔴 THE STAGED-IMAGE BUDGET (${maxStagedImageSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} members. ` +
+        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} ` +
+        `${plural(cohort.members.length, 'member')}. ` +
         `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
         `window and scored 0 on asset staging for want of data.`
       : '') +

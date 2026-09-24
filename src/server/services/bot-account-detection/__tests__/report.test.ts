@@ -156,7 +156,8 @@ describe('buildFinding', () => {
     //
     // 🔴 THE CARVE-OUT IS NO LONGER PART OF THIS PIN, AND ITS ABSENCE IS ASSERTED SEPARATELY BELOW.
     // It — and the definition of both on-site categories — used to be appended to EVERY finding,
-    // ~260 characters of identical prose repeated per row. It lives in `POST_COUNT_LEGEND` on the
+    // 115 characters of identical prose repeated per row on this branch (226 on the other). The
+    // enumeration half of it lives in `POST_COUNT_LEGEND` on the
     // run summary now, which the board renders once above the findings table. Nothing was dropped;
     // `sibling case: the legend still states it` pins that.
     expect(renderPostCounts(posts({ comments: 2, models: 1, images: 3 }))).toBe(
@@ -174,7 +175,9 @@ describe('buildFinding', () => {
     // renders the summary above the findings table, while
     // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders `{f.reason}`
     // alone — `getAbuseFindingsForUser` never joins the run. So anything on the summary is
-    // UNREACHABLE from User Lookup. The ENUMERATION of which states fall where can live there; the
+    // not on the User Lookup screen — one click away via that panel's `run #{f.runId}` link, which
+    // is the distinction the split turns on. The ENUMERATION of which states fall where can live
+    // there; the
     // scan-pending CAVEAT cannot, because without it "All 3 are still on the site" sends a moderator
     // to look at three items none of which they can open.
     const row = renderPostCounts(posts({ comments: 2, models: 1, images: 3 }));
@@ -272,6 +275,32 @@ describe('truncateReason', () => {
     const cut = truncateReason('x'.repeat(50), 10);
     expect(cut).toHaveLength(10);
     expect(cut.endsWith('…')).toBe(true);
+  });
+
+  it('🔴 a TRUNCATED reason still ends with the disclaimer, and still reads as two sentences', () => {
+    // 🔴 THE CASE THE ORDINARY FIXTURES CANNOT REACH. Moving `NO_ACTION_TAKEN` to the END put it in
+    // `truncateReason`'s cut zone — a prefix-keeping trim drops the LAST clause first — so on the
+    // one finding that ran long the sentence saying nothing was done would simply vanish. The
+    // budget is reserved instead. Exercised with an unbounded username, which is the real input
+    // that can push a reason over: `member.username` has no cap anywhere upstream.
+    const finding = buildFinding(member({ username: 'n'.repeat(4_000) }), score(), STARTED);
+    expect(finding.reason.length).toBeLessThanOrEqual(2_000);
+    expect(finding.reason.endsWith(NO_ACTION_TAKEN)).toBe(true);
+    // The body really was cut — otherwise this case proves nothing about the truncating path.
+    expect(finding.reason).toContain('…');
+    // 🔴 AND THE JOIN KEPT A SEPARATOR. A naive `body + NO_ACTION_TAKEN` yields `…No action was
+    // taken`, run together, because a truncated body ends in the ellipsis rather than a space.
+    expect(finding.reason).toContain(`… ${NO_ACTION_TAKEN}`);
+    expect(finding.reason).not.toContain(`…${NO_ACTION_TAKEN}`);
+    // The contract accepts it, which is the only thing that decides whether the run lands.
+    expect(() =>
+      abuseReportInput.parse({
+        detector: BOT_ACCOUNT_DETECTOR,
+        startedAt: STARTED.toISOString(),
+        finishedAt: FINISHED.toISOString(),
+        findings: [finding],
+      })
+    ).not.toThrow();
   });
 
   it('keeps a generated reason within the contract’s own bound', () => {
