@@ -15,7 +15,12 @@ vi.mock('$lib/server/axiom', () => ({
   safeError: (e: unknown) => ({ message: String(e) }),
 }));
 
-import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha';
+import {
+  isCaptchaEnabled,
+  captchaSiteKey,
+  captchaManagedSiteKey,
+  verifyCaptchaToken,
+} from '../captcha';
 import { register, captchaVerificationsTotal } from '$lib/server/metrics';
 
 /** The single `captcha-reject` row a call emitted, or undefined when it emitted none. */
@@ -66,6 +71,47 @@ describe('captchaSiteKey', () => {
   it('coerces an empty-string key to undefined (no widget rendered)', () => {
     process.env.CF_INVISIBLE_TURNSTILE_SITEKEY = '';
     expect(captchaSiteKey()).toBeUndefined();
+  });
+});
+
+describe('captchaManagedSiteKey', () => {
+  it('returns the key only when its own secret is also configured', () => {
+    process.env.CF_MANAGED_TURNSTILE_SITEKEY = 'managed-site-key';
+    expect(
+      captchaManagedSiteKey(),
+      'the managed sitekey shipped to the page without the secret that verifies its tokens'
+    ).toBeUndefined();
+
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'managed-secret';
+    expect(captchaManagedSiteKey()).toBe('managed-site-key');
+  });
+
+  it('is undefined with a secret but no sitekey, and with neither', () => {
+    expect(captchaManagedSiteKey()).toBeUndefined();
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'managed-secret';
+    expect(captchaManagedSiteKey()).toBeUndefined();
+  });
+
+  // The half-provisioned state is what this guard exists for, so the consequence is asserted end to
+  // end rather than left to the reader: with the sitekey alone, the page would have rendered a visible
+  // challenge whose solved token the action then refuses. A refusal is what the user retries forever,
+  // because a managed solve clears captchaUnavailable and so they get the RETRYABLE copy, not the
+  // blocked note. Same env, both halves: the sitekey is withheld AND the token would have been refused.
+  it('withholds the sitekey in exactly the configuration whose solved token would be refused', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret'; // captcha enabled
+    process.env.CF_MANAGED_TURNSTILE_SITEKEY = 'managed-site-key'; // …but no managed secret
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(captchaManagedSiteKey()).toBeUndefined();
+    expect(await verifyCaptchaToken('a-solved-managed-token', undefined, { mode: 'managed' })).toBe(
+      false
+    );
+    expect(
+      fetchSpy,
+      'a token was sent to Cloudflare with no secret to verify it against'
+    ).not.toHaveBeenCalled();
+    expect(rejectRow()).toMatchObject({ reason: 'no-secret', mode: 'managed' });
   });
 });
 

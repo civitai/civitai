@@ -67,12 +67,10 @@
   let fallbackActive = $state(false);
   let managedEl = $state<HTMLDivElement>();
   let managedWidgetId: string | undefined;
-  // Reactive mirror of managedWidgetId, which is a plain `let`, so reading it registers no dependency
-  // and the template cannot react to it at all: what the markup needs to know is whether the widget is
-  // ON SCREEN, and only a $state can drive that. INVARIANT, deliberately unguarded
-  // because nothing clears either one today: anything that clears managedWidgetId to allow a fresh
-  // render must clear this too, or the prompt and the reserved box go on claiming a widget that is gone.
-  // The slot's unmount clears neither — `managedEl` is the only thing it takes with it.
+  // Reactive mirror of managedWidgetId, which is a plain `let` the template cannot react to.
+  // INVARIANT, deliberately unguarded because nothing clears either one today: anything that clears
+  // managedWidgetId to allow a fresh render must clear this too, or the prompt and the reserved box go
+  // on claiming a widget that is gone.
   let managedWidgetShown = $state(false);
   // A COUNTER, not a flag. The grace effect below can only re-run when its dependency changes, and Svelte
   // short-circuits a write of an equal value — so a second failure setting a boolean `true` again would
@@ -86,49 +84,42 @@
     captchaUnavailable = true;
   };
 
-  // Hand the commitment back. EVERY exit of the managed effect that leaves the slot EMPTY must call this:
-  // `fallbackActive` gates that effect AND short-circuits triggerFallback, and the effect's dependencies
-  // (fallbackActive, managedEl) do not move on a later failure, so a `true` left standing with no widget
-  // behind it is a state nothing can reach — no token, no verdict, submit disabled for the rest of the
-  // session with no note explaining it. A RENDERED widget keeps the commitment instead: that one is
-  // recoverable on its own (its error-callback re-derives a verdict, resetTurnstile() re-solves it) and
-  // unmounting it would not be. Hence the guard, not an unconditional release.
+  // THE COMMITMENT RULE, stated once: `fallbackActive` gates the managed effect below AND short-circuits
+  // triggerFallback, while that effect's dependencies do not move on a later failure — so EVERY exit of
+  // it that leaves the slot EMPTY must hand the commitment back here, or the page reaches a state
+  // nothing can move. A RENDERED widget keeps it: that one recovers through its own error-callback, and
+  // the unmount would not. Pinned by the ledger in login-captcha.test.ts.
   const releaseFallbackIfEmpty = () => {
     if (managedWidgetId === undefined) fallbackActive = false;
   };
 
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
-  // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide). The
-  // `fallbackActive` short-circuit here is retakeable, not a one-way door: every exit that leaves the
-  // slot empty hands it back. It stays taken only while a widget is actually on screen, and that case
-  // recovers on its own through the widget's error-callback.
-  // `captchaUnavailable` is in the guard because the exits that CONCLUDE it also hand the commitment
-  // back, which opens re-entry while the verdict stands. Without the term: the script lands late,
-  // auto-renders the invisible widget, that errors, and this re-offers the managed challenge — putting a
-  // live solvable check on screen with its prompt suppressed and its box collapsed (both gated on
-  // captchaBlocked) under a note that says email login cannot complete. It also overwrites the reason,
-  // downgrading an unrecoverable submit to a recoverable one in the server's split. The term traps
-  // nobody: captchaPending is false whenever this is true, so the submit is already released, and both
-  // success callbacks clear the verdict — a token proving the check CAN run re-opens re-entry at once.
+  // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
+  // `captchaUnavailable` is in the guard because releasing at a verdict-concluding exit opens re-entry
+  // while the verdict stands: a late-landing script can re-offer a SOLVABLE managed challenge under a
+  // note saying login cannot complete. It traps nobody — captchaPending is false whenever this is true.
   function triggerFallback(reason: string) {
     if (captchaToken || fallbackActive || captchaUnavailable) return;
     captchaFailReason = reason;
-    // The second arm is reachable whenever no managed sitekey is configured, which is a live case.
+    // The second arm is live: it runs whenever no managed sitekey is configured.
     if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM
     else scriptWatch += 1;
   }
 
   // No managed key: there is no second widget, so the script's presence decides nothing a token does not
   // already decide — and a script that arrived just before the deadline has not had time to solve.
-  // COST of that second look, accepted deliberately: a genuinely blocked user waits the 8s deadline AND
-  // the grace — ~13s behind a disabled "Verifying…" button — before the gate opens. Bounded and
-  // self-clearing, and the price of not telling a merely-slow browser that login cannot complete.
+  // COST of that second look, accepted: a genuinely blocked user stays behind a disabled "Verifying…"
+  // button for the onMount deadline PLUS TURNSTILE_SCRIPT_GRACE_MS, not the deadline alone.
   $effect(() => {
     if (scriptWatch === 0) return;
     return decideAfterGrace({ tokenArrived: () => !!captchaToken, decide: concludeUnavailable });
   });
 
   // Render the managed widget once (after its slot mounts). Solving it sets the gate token + mode=managed.
+  // This effect WRITES one of its own dependencies — probeTurnstile calls onScriptPresent synchronously,
+  // so a render producing no widget reaches releaseFallbackIfEmpty inside this body. It terminates only
+  // because `!fallbackActive` is the FIRST term of the guard below: keep it first. Measured on svelte
+  // 5.56.3, two effect runs on a successful render and three on a released one.
   $effect(() => {
     if (!fallbackActive || !managedEl || managedWidgetId !== undefined) return;
     return probeTurnstile({
@@ -152,10 +143,10 @@
   function renderManagedWidget() {
     const ts = turnstileApi();
     // KNOWN OPEN: this early return leaves the commitment taken with an empty slot — the dead end
-    // releaseFallbackIfEmpty closes everywhere else. NO ROUTE TO IT HAS BEEN ESTABLISHED, and none is
-    // claimed: the only caller reaches here having already proved the global, and the effect above
-    // proved managedEl and managedWidgetId. Adding a release here is a change to the pinned list of
-    // release sites, not a free fix — update the ledger in login-captcha.test.ts with it.
+    // releaseFallbackIfEmpty closes everywhere else. Unreached today, and no route to it is established.
+    // It stays closed only because `managedEl` is a $state dependency of the effect above, so an unmount
+    // re-runs that effect and its teardown cancels the grace before the second look can fire on a stale
+    // element. Adding a release here is a change to the pinned list of sites, not a free fix.
     if (!ts || !managedEl || managedWidgetId !== undefined) return;
     let id: string | null | undefined;
     try {
@@ -335,10 +326,7 @@
                spends the form's gap on every login page that never fills it, and the removals available
                from inside are hiding it (the no-announce shape again) or `display: contents`, whose
                effect on the accessibility tree is a browser fact nothing here can check. Out here an
-               empty div is simply zero-height. Keep it unconditional relative to the form, and never
-               chain it onto the fallbackActive block below: that unmounts .managed-slot, and a late
-               invisible token would re-create an empty div the $effect never fills (managedWidgetId
-               is set). -->
+               empty div is simply zero-height. Keep it unconditional relative to the form. -->
           <div class="live-region" role="status">
             {#if captchaBlocked}
               <p class="captcha-fallback-note">
@@ -391,11 +379,14 @@
             {#if fallbackActive}
               <!-- Interactive fallback: shown only after the invisible widget fails. The managed widget is
                    rendered imperatively into this slot (see the $effect) so it can carry data-action + callbacks. -->
-              {#if managedWidgetShown && !captchaBlocked}
+              {#if managedWidgetShown && !captchaBlocked && !captchaToken}
                 <!-- Gated on the widget being ON SCREEN, not on fallbackActive: the slot mounts a grace
                      period before the widget can render, and asking someone to complete a check that is
-                     not there yet is an instruction with no target. The prompt must not outlive the
-                     widget either — it is the thing that failed. -->
+                     not there yet is an instruction with no target. It must not outlive the widget — it
+                     is the thing that failed — nor the GATE: a late invisible token releases the submit
+                     while this managed widget sits there unsolved, and without !captchaToken the page
+                     demands a ~50%-solve challenge beside an already-enabled button. The sibling
+                     class:collapsed only sets a height; this is the one that gives an instruction. -->
                 <p class="captcha-fallback-note">
                   Couldn't verify you automatically. Complete this quick check to continue.
                 </p>
@@ -660,10 +651,9 @@
     margin: 0;
     line-height: 1.4;
   }
-  /* The region itself carries no box: as a plain block sibling of .email-form an empty one is
-     zero-height and costs the layout nothing, so only its content is spaced. Nothing may take the
-     region out of flow — `display: contents` would buy a gap against an accessibility-tree claim
-     nothing here can settle. */
+  /* There is deliberately NO `.live-region` rule: out of .email-form's flex flow it needs no box of
+     its own, so an empty one is zero-height, and `display: contents` would buy a gap back against an
+     accessibility-tree claim nothing here can settle. Only its content is spaced. */
   .live-region > .captcha-fallback-note {
     margin-bottom: 0.6rem;
   }

@@ -118,10 +118,7 @@ const NO_WIDGET_BRANCH = RENDER_BODY.match(
 const blockedNoteClasses = (liveRegionInner.match(/<p class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
   .filter(Boolean);
-// INVARIANT: this set must cover BOTH the region and the note inside it. Hiding the note empties the
-// announcement exactly as completely as hiding the region, and the note is the likelier target of a
-// responsive edit — it is the element carrying the padding and the background. A set narrowed to the
-// region alone is walkable by one rule on `.captcha-fallback-note`.
+// Covers BOTH the region and the note; each half is asserted non-empty where the ban is applied.
 const announcementClasses = [...liveRegionClasses, ...blockedNoteClasses];
 const styleStart = pageSource.indexOf('<style');
 // indexOf returns -1 the moment the tag gains an attribute, and slice(-1) then yields the file's LAST
@@ -153,18 +150,44 @@ const SUBJECT_PSEUDO = /^::?(?:is|where|matches|global)\(/;
 // stays the safe default there. It is WRONG only for the subject pseudos above: `:global(svg)` and
 // `:is(.foo)` do name what the compound matches, and every such rule in the sheet was being reported as
 // reaching the region. Those, and only those, are decided from the argument.
+// Split OUTSIDE parens and brackets. Both splits below are structural, and `String.split` is blind to
+// nesting: on `:not(.a, .b)` it tears the compound at the comma, and the fragment `:not(.a` then reads
+// as the plain class `.a` because the strip pattern's optional argument group needs a closing paren
+// that is now on the other fragment. The combinator split has the identical hole at the SPACE after
+// that comma. Either one makes the multi-argument spelling of an inverting pseudo answer "cannot
+// reach" for a rule that does hide the region — the one answer this must never give — and that
+// spelling is the natural one for a "hide everything except these" compaction edit.
+const splitTopLevel = (text: string, isSeparator: (c: string) => boolean): string[] => {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '(' || c === '[') depth += 1;
+    else if (c === ')' || c === ']') depth -= 1;
+    else if (depth === 0 && isSeparator(c)) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+};
+
 const canReachAnnouncement = (selectorList: string): boolean =>
-  selectorList.split(',').some((selector) => {
+  splitTopLevel(selectorList, (c) => c === ',').some((selector) => {
     const compound =
-      selector
-        .trim()
-        .split(/[\s>+~]+/)
+      splitTopLevel(selector.trim(), (c) => /[\s>+~]/.test(c))
         .filter(Boolean)
         .pop() ?? '';
     const tokens = compound.replace(/::?[\w-]+(\([^)]*\))?/g, '').match(/[#.]?[\w*-]+|\[[^\]]*\]/g);
     if (!tokens?.length) {
       const fns = [...compound.matchAll(/::?[\w-]+\([^)]*\)/g)].map((m) => m[0]);
-      if (!fns.length || !fns.every((fn) => SUBJECT_PSEUDO.test(fn))) return true;
+      // `[^)]*` cannot span a nested `(`, so a compound these do not fully reassemble was never
+      // parsed — answer from the safe side rather than from a fragment. That also makes any future
+      // disagreement between this pattern and the strip pattern above fail toward "reaches".
+      if (!fns.length || fns.join('') !== compound || !fns.every((fn) => SUBJECT_PSEUDO.test(fn)))
+        return true;
       return canReachAnnouncement(fns.map((fn) => fn.slice(fn.indexOf('(') + 1, -1)).join(','));
     }
     return tokens.every((t) =>
@@ -177,6 +200,16 @@ const canReachAnnouncement = (selectorList: string): boolean =>
         : t === 'div' || t === 'p' || t === '*'
     );
   });
+
+// Every rule in the sheet whose body declares `prop` AND whose selector can reach the announcement.
+// ONE mechanism for both property bans below: the alternative — a bespoke regex per property, matched
+// against the region's own classes — cannot see `[role='status']` or `.card > *`, and once a ban asserts
+// ABSENCE every shape its regex cannot see becomes a silent pass rather than a loud red.
+const rulesDeclaring = (prop: RegExp) =>
+  [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, , body]) => prop.test(body))
+    .map(([, selector]) => selector.trim().replace(/\s+/g, ' '))
+    .filter(canReachAnnouncement);
 
 // Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
 // the matched line, so a declaration is its own scope. Trailing comments are stripped: a ledger pins
@@ -279,19 +312,15 @@ describe('login copy when the verification check cannot run', () => {
       (between.match(/\{[#/]/g) ?? []).length,
       'a Svelte block opens or closes between the live region and the form it explains'
     ).toBe(0);
-    // …and no rule may put it back in the flow of a flex container it is no longer inside.
+    // …and no rule may put it back out of flow. Same reach query as the hiding ban below, deliberately:
+    // a bespoke regex over the region's own classes cannot see `[role='status']` or `.card > *`, and an
+    // ABSENCE assertion turns each shape it cannot see into a silent pass.
+    expect(styles, '<style> block not found').not.toBe('');
     expect(
-      liveRegionClasses,
-      'the live region carries no class, so no rule in this file can be checked against it'
-    ).not.toHaveLength(0);
-    const putBackInFlow = liveRegionClasses.some((cls) =>
-      new RegExp(`\\.${cls}\\b[^{}]*\\{[^}]*display:\\s*contents`).test(styles)
-    );
-    expect(
-      putBackInFlow,
+      rulesDeclaring(/display:\s*contents/),
       '`display: contents` is back on the live region. It buys 0.6rem of gap against an accessibility-tree ' +
-        'claim this repo cannot verify; moving the region out of .email-form costs nothing instead.'
-    ).toBe(false);
+        'claim this repo cannot verify; keeping the region out of .email-form costs nothing instead.'
+    ).toEqual([]);
   });
 
   it('never hides the live region while it is empty', () => {
@@ -311,9 +340,6 @@ describe('login copy when the verification check cannot run', () => {
 
     // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
     // banning it reds a legitimate `:not(:empty) { margin… }`.
-    const hidingRules = [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-      .filter(([, , body]) => /display:\s*none|visibility:\s*hidden/.test(body))
-      .map(([, selector]) => selector.trim().replace(/\s+/g, ' '));
     // LIMIT, stated precisely because the assertion's name over-sells it: only rules whose FINAL
     // COMPOUND can match the region or the note are searched (see canReachAnnouncement above). A rule
     // hiding an ANCESTOR — `.card`, `main` — empties the announcement just as completely and is NOT
@@ -321,11 +347,14 @@ describe('login copy when the verification check cannot run', () => {
     // it, which nobody can ship without noticing, whereas banning the pair across the whole stylesheet
     // reds on an ordinary responsive edit — a `@media` rule hiding the divider — under a name that
     // blames the live region. The tag-level assertion above covers the inline spelling.
-    expect(announcementClasses, 'neither the region nor the note carries a class').not.toHaveLength(
-      0
-    );
+    // BOTH preconditions, separately: the reach set must cover the region AND the note. Hiding the note
+    // empties the announcement exactly as completely, and it is the likelier target of a responsive
+    // edit — it carries the padding and the background. A single "the union is non-empty" check passes
+    // on the region alone, which is one `.captcha-fallback-note` rule away from walking the whole ban.
+    expect(liveRegionClasses, 'the live region carries no class').not.toHaveLength(0);
+    expect(blockedNoteClasses, 'the blocked note carries no class').not.toHaveLength(0);
     expect(
-      hidingRules.filter(canReachAnnouncement),
+      rulesDeclaring(/display:\s*none|visibility:\s*hidden/),
       'a CSS rule that can match the live region or the note inside it hides it. While the region is ' +
         'empty that is the same no-announce shape as never rendering it. Narrow the selector so it ' +
         'cannot reach either element, or use a non-hiding property.'
@@ -360,6 +389,17 @@ describe('login copy when the verification check cannot run', () => {
     expect(canReachAnnouncement('.card > :not(.divider)')).toBe(true);
     expect(canReachAnnouncement('.card :has(.divider)')).toBe(true);
     expect(canReachAnnouncement(`.card :is(.divider):not(.${regionClass})`)).toBe(true);
+    // …including the MULTI-ARGUMENT spelling, which is the natural one for "hide everything except
+    // these". A naive `split(',')` tears these in half and both halves answer "cannot reach".
+    expect(canReachAnnouncement('.card > :not(.divider, .socials)')).toBe(true);
+    expect(canReachAnnouncement('.card > :has(.divider, .socials)')).toBe(true);
+    // …and a nested functional pseudo, which the flat `[^)]*` grammar cannot parse, answers safely.
+    expect(canReachAnnouncement('.badge :global(:not(.divider))')).toBe(true);
+    // A genuine multi-selector list still splits: neither side reaches.
+    expect(canReachAnnouncement('.badge svg, .divider span')).toBe(false);
+    // …and a subject pseudo with several arguments still decides from them.
+    expect(canReachAnnouncement(`.card :is(.divider, .${noteClass})`)).toBe(true);
+    expect(canReachAnnouncement('.card :is(.divider, .socials)')).toBe(false);
     // Does not reach: an unrelated element, an id, an ancestor-only compound.
     expect(canReachAnnouncement('.badge svg')).toBe(false);
     expect(canReachAnnouncement('div.divider')).toBe(false);
@@ -527,11 +567,18 @@ describe('login copy when the verification check cannot run', () => {
     expect(guard).toBe('if (captchaToken || fallbackActive || captchaUnavailable) return;');
   });
 
-  it('asks nobody to solve a challenge that is not on screen', () => {
+  it('asks nobody to solve a challenge that is not on screen, or that they are already past', () => {
+    // Three terms. ON SCREEN, because the slot mounts a grace period before the widget can render.
+    // NOT BLOCKED, because the prompt must not outlive the widget. And NO TOKEN: a late invisible token
+    // releases the submit while this managed widget sits there unsolved, so without it the page demands
+    // a ~50%-solve interactive challenge beside an already-enabled "Email me a login link" button.
     const guarded = markup.match(
-      /\{#if managedWidgetShown && !captchaBlocked\}([\s\S]*?)\{\/if\}/
+      /\{#if managedWidgetShown && !captchaBlocked && !captchaToken\}([\s\S]*?)\{\/if\}/
     )?.[1];
-    expect(guarded, 'the fallback prompt is not gated on the widget being on screen').toBeDefined();
+    expect(
+      guarded,
+      'the fallback prompt is not gated on the widget being on screen AND the gate still being shut'
+    ).toBeDefined();
     expect(guarded).toContain('Complete this quick check to continue.');
     expect(markup.split('Complete this quick check to continue.')).toHaveLength(2);
     expect(markup, 'the slot reserves height before the widget exists').toMatch(

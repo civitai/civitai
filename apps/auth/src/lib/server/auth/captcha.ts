@@ -68,8 +68,17 @@ export function captchaSiteKey(): string | undefined {
 
 /** Managed (interactive) widget sitekey — the fallback the client renders ONLY after the invisible widget
  *  fails. Undefined when unprovisioned, so the client never renders the fallback (behavior == pre-fallback).
- *  Uses the CF forced-challenge test key under CAPTCHA_DEV. */
+ *  Uses the CF forced-challenge test key under CAPTCHA_DEV.
+ *
+ *  Gated on the managed SECRET as well as its sitekey, for the same reason isCaptchaEnabled() is keyed on
+ *  the secret: the page must not offer a check the action cannot honour. A sitekey configured without its
+ *  secret renders a visible challenge, the user solves it, and verifyCaptchaToken returns false on
+ *  `no_secret` — and because a solve CLEARS captchaUnavailable, the copy they get is the retryable
+ *  "please try again" rather than the blocked note, so every retry re-solves and re-fails identically.
+ *  That is an unbreakable login loop for exactly the population the fallback exists to rescue, and the
+ *  two keys are separate env vars, so the half-provisioned state is one missing value wide. */
 export function captchaManagedSiteKey(): string | undefined {
+  if (!secretFor('managed')) return undefined;
   return env.CF_MANAGED_TURNSTILE_SITEKEY || (devCaptcha() ? TEST_MANAGED_SITEKEY : undefined);
 }
 
