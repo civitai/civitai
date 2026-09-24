@@ -2662,6 +2662,10 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
+// Every challenge lookup behind an entry gate reads a missing row as "no rule applies", so it must
+// not come from a replica that can lag the challenge's creation or a status change.
+const challengeGateDb = dbWrite;
+
 // Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
 // Idempotent per (challenge, image) — see chargeEntryFees. No-op for empty input or collections
 // without an Active fee challenge. Returns the paid/unpaid partition when a charge ran; entry
@@ -2686,7 +2690,7 @@ const chargeContestEntryFeesForCollection = async ({
   // returning every image as paid — so behavior is unchanged for the caller, which still commits
   // when unpaidImageIds is empty). System/Mod (daily) + community-contest collections have no
   // source=User row → null → undefined (unchanged, no metric).
-  const feeChallenge = await dbRead.challenge.findFirst({
+  const feeChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: 'User', status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
   });
@@ -2756,7 +2760,7 @@ export const validateContestCollectionEntry = async ({
   // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
   // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
   // community-contest collections have no such row, so this is null for them.
-  const userChallenge = await dbRead.challenge.findFirst({
+  const userChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: ChallengeSource.User },
     select: { id: true, createdById: true, status: true },
   });
@@ -2772,7 +2776,7 @@ export const validateContestCollectionEntry = async ({
   // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
   // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
-    const ownChallenge = await dbRead.challenge.findFirst({
+    const ownChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, createdById: userId },
       select: { id: true },
     });
@@ -2797,14 +2801,20 @@ export const validateContestCollectionEntry = async ({
   // challenge collections (target has a linked Challenge) so community contests are
   // unaffected. Scoped to genuine re-adds: an image still present as an entry is excluded,
   // so editing a post that re-saves its images doesn't fail.
-  if (imageIds.length > 0 && !isModerator) {
+  const isChallengeCollection =
+    imageIds.length > 0 &&
+    !isModerator &&
+    !!(await challengeGateDb.challenge.findFirst({
+      where: { collectionId },
+      select: { id: true },
+    }));
+  if (isChallengeCollection) {
     const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
       SELECT DISTINCT th."imageId"
       FROM "Thread" th
       JOIN "CommentV2" cm ON cm."threadId" = th.id
       JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
       WHERE th."imageId" IN (${Prisma.join(imageIds)})
-        AND EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."collectionId" = ${collectionId})
         AND NOT EXISTS (
           SELECT 1 FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
@@ -3034,7 +3044,7 @@ export const validateContestCollectionEntry = async ({
   // existing participants may keep adding entries up to maxEntriesPerUser. Checked before any
   // charge so a capped-out user is never charged.
   if (!isModerator) {
-    const cappedChallenge = await dbRead.challenge.findFirst({
+    const cappedChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', maxParticipants: { not: null } },
       select: { maxParticipants: true },
     });
@@ -3061,7 +3071,7 @@ export const validateContestCollectionEntry = async ({
   // promotion, after the fee already ran, and entry fees are never refunded (see
   // challenge-funding.ts) — so an off-resource submission was charged then silently rejected.
   if (imageIds.length > 0 && !isModerator) {
-    const resourceChallenge = await dbRead.challenge.findFirst({
+    const resourceChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', modelVersionIds: { isEmpty: false } },
       select: { modelVersionIds: true },
     });
