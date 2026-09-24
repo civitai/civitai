@@ -82,9 +82,10 @@ export const useToggleNotificationSetting = () => {
 };
 
 export const usePushNotificationSettings = (enabled = true) => {
+  // staleTime 0 (app default Infinity): per-type push rows change from other devices too.
   const { data: pushTypes = [], isLoading } = trpc.notification.getPushSettings.useQuery(
     undefined,
-    { enabled }
+    { enabled, staleTime: 0 }
   );
   return { pushTypes, isLoading };
 };

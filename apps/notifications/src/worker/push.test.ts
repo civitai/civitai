@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EnvModule from '../env';
 
 // Behavioral coverage for the push dispatcher: subscription targeting, the daily cap, and the
 // push-service response table (410 delete / 429 keep / 413 truncate / 5xx failure streak). Same
@@ -11,6 +12,7 @@ const h = vi.hoisted(() => {
     writeQueries: { sql: string; params: any[] }[];
     redisCounters: Map<string, number>;
     redisAvailable: boolean;
+    writeFails: boolean;
     sendResults: (Error | null)[]; // per sendNotification call, in order; null = accept
     sends: { endpoint: string; body: string }[];
     renderResponse: { ok: boolean; results?: any[] };
@@ -21,6 +23,7 @@ const h = vi.hoisted(() => {
     writeQueries: [],
     redisCounters: new Map(),
     redisAvailable: true,
+    writeFails: false,
     sendResults: [],
     sends: [],
     renderResponse: { ok: true, results: [{ title: 'T', body: 'B', url: '/x' }] },
@@ -39,6 +42,7 @@ vi.mock('../lib/server/clients/db', () => ({
   mainDbWrite: () => ({
     cancellableQuery: async (sql: string, params: any[]) => {
       h.state.writeQueries.push({ sql, params });
+      if (h.state.writeFails) throw new Error('main DB write down');
       return { result: async () => [] };
     },
   }),
@@ -59,12 +63,12 @@ vi.mock('../lib/server/clients/redis', () => ({
 }));
 
 vi.mock('../lib/server/clients/axiom', () => ({
-  logToAxiom: vi.fn(async () => {}),
-  logAxiomError: vi.fn(() => {}),
+  logToAxiom: vi.fn(async () => undefined),
+  logAxiomError: vi.fn(() => undefined),
 }));
 
 vi.mock('../env', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../env')>()),
+  ...(await importOriginal<typeof EnvModule>()),
   pushEnabled: true,
   pushDailyCap: 3,
   vapidPublicKey: 'test-public',
@@ -105,6 +109,7 @@ beforeEach(() => {
   h.state.writeQueries = [];
   h.state.redisCounters = new Map();
   h.state.redisAvailable = true;
+  h.state.writeFails = false;
   h.state.sendResults = [];
   h.state.sends = [];
   h.state.renderResponse = { ok: true, results: [{ title: 'T', body: 'B', url: '/x' }] };
@@ -229,6 +234,14 @@ describe('dispatchPush', () => {
       await dispatchPush('new-mention', { n: i }, [10]);
     }
     expect(h.state.sends).toHaveLength(5);
+  });
+
+  it('a bookkeeping write failure on one device does not suppress the remaining sends', async () => {
+    h.state.subscriptionRows = [sub(1, 10), sub(2, 20), sub(3, 30)];
+    h.state.writeFails = true;
+    await dispatchPush('new-mention', {}, [10, 20, 30]);
+    // Every send still went out even though every recordSuccess write threw.
+    expect(h.state.sends).toHaveLength(3);
   });
 
   it('never throws — a render endpoint outage is swallowed', async () => {

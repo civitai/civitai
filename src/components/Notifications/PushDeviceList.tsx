@@ -1,4 +1,14 @@
-import { ActionIcon, Badge, Divider, Group, Paper, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Divider,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
+} from '@mantine/core';
 import type { Icon } from '@tabler/icons-react';
 import {
   IconBrandChrome,
@@ -54,7 +64,10 @@ function parseDevice(userAgent: string | null): DeviceInfo {
 export function PushDeviceList() {
   const { currentEndpoint, disable } = usePushSubscription();
   const queryUtils = trpc.useUtils();
-  const { data: devices = [] } = trpc.notification.getPushSubscriptions.useQuery();
+  // staleTime 0 (app default Infinity): a revoke from another device must show on the next visit.
+  const { data: devices = [] } = trpc.notification.getPushSubscriptions.useQuery(undefined, {
+    staleTime: 0,
+  });
   const unsubscribeMutation = trpc.notification.unsubscribePush.useMutation({
     onSuccess: () => queryUtils.notification.getPushSubscriptions.invalidate(),
   });
@@ -119,6 +132,9 @@ export function PushDeviceList() {
                   <ActionIcon
                     variant="subtle"
                     color="red"
+                    aria-label={
+                      isThisDevice ? 'Turn off push on this device' : 'Remove this device'
+                    }
                     loading={unsubscribeMutation.isPending}
                     onClick={() => remove(device.endpoint)}
                   >

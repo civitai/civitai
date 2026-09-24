@@ -65,8 +65,11 @@ export function usePushSubscription() {
   // The server list is the truth about whether THIS browser's subscription is live. The browser
   // can hold an orphaned subscription (a subscribe call that never reached the server, a device
   // revoked from another browser) — trusting it renders an "on" toggle that delivers nothing.
+  // staleTime 0 (the app-wide default is Infinity): reconciliation only works if a settings visit
+  // actually re-fetches — a device revoked from another browser must read as off here.
   const { data: serverSubscriptions } = trpc.notification.getPushSubscriptions.useQuery(undefined, {
     enabled: !!currentUser && permission === 'granted' && !!currentEndpoint,
+    staleTime: 0,
   });
   const serverKnowsThisDevice = currentEndpoint
     ? serverSubscriptions?.some((s) => s.endpoint === currentEndpoint)

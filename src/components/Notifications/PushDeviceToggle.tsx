@@ -22,6 +22,7 @@ export function PushDeviceToggle() {
         </Text>
       </Stack>
       <Switch
+        aria-label="Push on this device"
         checked={active}
         disabled={busy}
         onChange={(e) => (e.target.checked ? enable() : disable())}

@@ -6,6 +6,7 @@
 // Payload rendering happens in the main app (POST /api/internal/notifications/render-push) — the
 // processor registry that turns type+details into title/body/url only exists there.
 
+import { chunk } from 'lodash-es';
 import webPush from 'web-push';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
@@ -25,6 +26,20 @@ import { pushDeliveryTotal } from '../lib/server/metrics';
 const MAX_CONSECUTIVE_FAILURES = 10;
 /** Body ceiling for the 413 retry — push services reject payloads past ~4KB. */
 const TRUNCATED_BODY_LENGTH = 500;
+/**
+ * The poll loop awaits dispatch before signals and the next pending row, so sends are bounded in
+ * both directions: at most this many in flight (a high-fanout notification can't open thousands of
+ * sockets), and each send hard-capped by `timeout` (web-push otherwise has none — one hung push
+ * service socket would stall ALL fan-out).
+ */
+const SEND_CONCURRENCY = 10;
+const SEND_OPTIONS = { TTL: 60 * 60 * 24, timeout: 10_000 };
+
+/** Bookkeeping is best-effort: a transient main-DB write failure on one device must not abort the
+ *  remaining sends for the notification. */
+function bestEffort(promise: Promise<unknown>) {
+  return promise.catch((e) => logAxiomError(e as Error));
+}
 
 let vapidConfigured = false;
 function ensureVapid() {
@@ -88,7 +103,7 @@ async function renderPayload(
         type: 'error',
         message: 'push render endpoint failed',
         data: { status: res.status, notificationType: type },
-      }).catch(() => {});
+      }).catch(() => null);
       return null;
     }
     const data = (await res.json()) as { results: (PushPayload | null)[] };
@@ -143,15 +158,15 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
   };
   const body = JSON.stringify(payload);
   try {
-    await webPush.sendNotification(subscription, body, { TTL: 60 * 60 * 24 });
+    await webPush.sendNotification(subscription, body, SEND_OPTIONS);
     pushDeliveryTotal.inc({ outcome: 'accepted' });
-    await recordSuccess(sub.id);
+    await bestEffort(recordSuccess(sub.id));
   } catch (e: any) {
     const status: number | undefined = e?.statusCode;
     if (status === 404 || status === 410) {
       // The subscription is gone (permission revoked, browser reinstalled). Normal, not an incident.
       pushDeliveryTotal.inc({ outcome: 'expired' });
-      await deleteSubscription(sub.id);
+      await bestEffort(deleteSubscription(sub.id));
     } else if (status === 429) {
       // Rate limited by the push service — drop this send, keep the subscription.
       pushDeliveryTotal.inc({ outcome: 'rate_limited' });
@@ -161,20 +176,21 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
         type: 'error',
         message: 'push payload too large — payload bug, not a subscription bug',
         data: { bytes: body.length },
-      }).catch(() => {});
+      }).catch(() => null);
       try {
         await webPush.sendNotification(
           subscription,
           JSON.stringify({ ...payload, body: payload.body.slice(0, TRUNCATED_BODY_LENGTH) }),
-          { TTL: 60 * 60 * 24 }
+          SEND_OPTIONS
         );
-        await recordSuccess(sub.id);
+        pushDeliveryTotal.inc({ outcome: 'accepted' });
+        await bestEffort(recordSuccess(sub.id));
       } catch {
-        await recordFailure(sub.id);
+        await bestEffort(recordFailure(sub.id));
       }
     } else {
       pushDeliveryTotal.inc({ outcome: 'failure' });
-      await recordFailure(sub.id);
+      await bestEffort(recordFailure(sub.id));
     }
   }
 }
@@ -204,6 +220,7 @@ export async function dispatchPush(
       byUser.set(sub.userId, list);
     }
 
+    const jobs: { sub: SubscriptionRow; payload: PushPayload }[] = [];
     for (const [userId, subs] of byUser) {
       const quota = await checkQuota(userId);
       if (quota === 'skip') {
@@ -218,9 +235,10 @@ export async function dispatchPush(
               url: '/user/notifications',
             }
           : payload;
-      for (const sub of subs) {
-        await sendToSubscription(sub, effective);
-      }
+      for (const sub of subs) jobs.push({ sub, payload: effective });
+    }
+    for (const batch of chunk(jobs, SEND_CONCURRENCY)) {
+      await Promise.all(batch.map((job) => sendToSubscription(job.sub, job.payload)));
     }
   } catch (e) {
     logAxiomError(e as Error);

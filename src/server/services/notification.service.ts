@@ -7,6 +7,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
+import { isPushableNotificationType } from '~/server/notifications/utils.notifications';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   notificationSingleRowFull,
   type DeletePushSubscriptionInput,
@@ -224,6 +226,11 @@ export const togglePushSetting = async ({
   userId,
 }: TogglePushSettingInput & { userId: number }) => {
   if (enabled) {
+    // Only the insert is gated — deleting a row is always allowed (a type could stop being
+    // pushable after rows for it exist, and those must remain removable).
+    const invalid = type.filter((t) => !isPushableNotificationType(t));
+    if (invalid.length > 0)
+      throw throwBadRequestError(`Not a push-capable notification type: ${invalid.join(', ')}`);
     await dbWrite.userPushSetting.createMany({
       data: type.map((t) => ({ userId, type: t })),
       skipDuplicates: true,

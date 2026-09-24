@@ -17,7 +17,9 @@ export const toggleNotificationSettingInput = z.object({
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
 export const upsertPushSubscriptionInput = z.object({
-  endpoint: z.url(),
+  // Browser push endpoints are always https; anything else is a caller fabricating a row the
+  // dispatcher would then try to deliver to.
+  endpoint: z.url({ protocol: /^https$/ }),
   keys: z.object({
     p256dh: z.string().min(1),
     auth: z.string().min(1),
