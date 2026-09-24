@@ -3563,7 +3563,6 @@ export const getCollectionCoverImages = async ({
     ), articleItemSrc AS MATERIALIZED (
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
-          AND a."coverId" IS NULL
     )
     SELECT
         target."collectionId" id,
