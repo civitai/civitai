@@ -4,6 +4,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
 import type { blocksRouter } from '~/server/routers/blocks.router';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { blockBearerToken } from '~/server/utils/block-bearer';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -73,10 +74,14 @@ import type { SessionUser } from '~/types/session';
  * disarmed a gate because "the middleware already did it" is how a control ends up
  * depending on its caller. Cost is one ES256 verify, one Redis revocation read and
  * one replica `appBlock` lookup — the price of the two transports being one path.
+ *
+ * The header parsing itself now lives in `~/server/utils/block-bearer`, shared
+ * with the `/app-storage/*` routes. This wrapper is kept only so the four
+ * workflow route modules' imports and this docblock stay where reviewers expect
+ * them; it adds no behaviour of its own.
  */
 export function blockWorkflowBearer(req: NextApiRequest): string {
-  const auth = req.headers.authorization ?? '';
-  return auth.toLowerCase().startsWith('bearer ') ? auth.slice('bearer '.length).trim() : '';
+  return blockBearerToken(req);
 }
 
 /**

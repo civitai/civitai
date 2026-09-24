@@ -1379,13 +1379,21 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'api',
   'v1',
   'append',
+  // The per-viewer app-storage surface. Note what is NOT here: a KEY. All five
+  // routes carry the key in the POST body precisely so it never becomes a path
+  // segment (it is one viewer's private data — see app-storage/get.ts), so there
+  // is no `:seg` position on this surface to lose and no per-key value that could
+  // fragment the `endpoint` column.
+  'app-storage',
   'blocks',
   'buzz',
   'cancel',
   'collections',
   'counts',
+  'delete',
   'estimate',
   'follow',
+  'get',
   'generation-resources',
   'images',
   'increment',
@@ -1394,7 +1402,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'me',
   'models',
   'poll',
+  'quota',
   'report',
+  'set',
   'shared-storage',
   'submit',
   'tip',

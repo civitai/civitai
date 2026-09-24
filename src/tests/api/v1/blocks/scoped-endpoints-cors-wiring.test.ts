@@ -292,6 +292,41 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'ai:write:budgeted',
     allowOpaqueOrigin: true,
   },
+  // The five PER-VIEWER app-storage routes. Same CORS reasoning as every entry
+  // above — an unverified block direct-fetches these from an opaque origin.
+  //
+  // The scope half is the load-bearing claim here, and it is a READ/WRITE SPLIT
+  // rather than one scope for the surface: `get`/`list`/`quota` assert
+  // `apps:storage:read`, `set`/`delete` assert `apps:storage:write`. A route that
+  // silently took the read scope for a write would still pass a CORS-only check,
+  // and would let a block approved for read-only access mutate the viewer's
+  // store — which is precisely the ambient-capability failure (audit A5 /
+  // design-gaps H4) that made these two scopes exist in the first place.
+  {
+    module: '~/pages/api/v1/blocks/app-storage/get',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/set',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/delete',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/list',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/quota',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
 ];
 
 /**
