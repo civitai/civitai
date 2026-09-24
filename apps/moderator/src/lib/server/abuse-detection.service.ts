@@ -48,6 +48,25 @@ export type AbuseRun = {
   actionedCount: number;
 };
 
+/**
+ * A run as the BOARD'S LIST renders it: the header, plus how much of it a human has ruled on.
+ *
+ * 🔴 A SEPARATE TYPE FROM `AbuseRun` BECAUSE ONLY THE LIST CAN ANSWER IT CHEAPLY. The detail page
+ * already has `getAbuseVerdictSummary` for the one run it is showing; widening `AbuseRun` would
+ * oblige `getAbuseRun` to compute a number its caller does not use and cannot degrade as cleanly.
+ */
+export type AbuseRunListRow = AbuseRun & {
+  /**
+   * Findings on this run carrying a moderator's ruling, or `null` where a ruling cannot EXIST.
+   *
+   * 🔴 `null` IS NOT ZERO AND MUST NOT RENDER AS ONE. Zero means nobody has looked at this run yet —
+   * which is the whole point of showing the number. `null` means this deployment has no verdict
+   * columns, so no run here has been ruled or can be, and a "0 of 40" would present a missing
+   * capability as a backlog.
+   */
+  ruledCount: number | null;
+};
+
 export type AbuseFinding = {
   id: number;
   runId: number;
@@ -565,10 +584,46 @@ export async function getAbuseRun(runId: number): Promise<AbuseRun | null> {
   };
 }
 
+/**
+ * How many findings on each of these runs carry a ruling, or `null` where a ruling cannot exist.
+ *
+ * 🔴 ITS OWN QUERY, AND THE SEPARATION IS THE DEGRADATION — the same shape, for the same reason, as
+ * `getAbuseVerdictSummary`. This is the ONLY read behind the list page that names `verdict`, so it
+ * is the only one that can raise `42703` on a deployment whose DDL has not been applied. Folding the
+ * count into the list query would put that failure on the read the entire page is, and
+ * `routes/abuse/+page.server.ts` would then report a database it is happily reading from as
+ * `unreachable` — the exact misdiagnosis its status discrimination exists to prevent.
+ *
+ * A run nobody has ruled on produces NO ROW here, not a zero row: the caller resolves an absent run
+ * to 0, which is a different claim from the whole answer being `null`.
+ */
+async function ruledCountsByRun(
+  db: AbuseDb,
+  runIds: number[]
+): Promise<Map<number, number> | null> {
+  // No runs means no question to ask — and an empty `in ()` is not valid SQL. An empty map is the
+  // honest answer: nothing is ruled because nothing is there, which is NOT the `null` degradation.
+  if (runIds.length === 0) return new Map();
+  try {
+    const rows = await db
+      .selectFrom('abuse_detection_finding')
+      .select(({ fn }) => ['run_id', fn.count<string>('id').as('ruled')])
+      .where('run_id', 'in', runIds)
+      .where('verdict', 'is not', null)
+      .groupBy('run_id')
+      .execute();
+    return new Map(rows.map((r) => [r.run_id, Number(r.ruled)]));
+  } catch (e) {
+    // The DDL has not been applied here. Read-only is the correct state, not an error.
+    if (isUndefinedColumnError(e)) return null;
+    throw e;
+  }
+}
+
 /** Newest runs, optionally for one detector. */
 export async function getAbuseRuns(
   opts: { detector?: string; limit?: number } = {}
-): Promise<AbuseRun[]> {
+): Promise<AbuseRunListRow[]> {
   const db = abuseDb();
   let q = db
     .selectFrom('abuse_detection_run as r')
@@ -598,6 +653,10 @@ export async function getAbuseRuns(
   if (opts.detector) q = q.where('r.detector', '=', opts.detector);
 
   const rows = await q.execute();
+  const ruled = await ruledCountsByRun(
+    db,
+    rows.map((r) => r.id)
+  );
   return rows.map((r) => ({
     id: r.id,
     detector: r.detector,
@@ -608,6 +667,9 @@ export async function getAbuseRuns(
     receivedAt: r.received_at,
     findingCount: Number(r.finding_count),
     actionedCount: Number(r.actioned_count),
+    // Absent from the grouped count means nobody has ruled on this run — 0. `null` propagates only
+    // from the whole answer being unavailable, which is a different statement entirely.
+    ruledCount: ruled === null ? null : ruled.get(r.id) ?? 0,
   }));
 }
 
