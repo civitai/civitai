@@ -3,11 +3,72 @@ export type UploadPartError = {
   retryAfter?: string | null;
   networkError?: boolean;
   aborted?: boolean;
+  partNumber?: number;
 };
 
 export const MAX_PART_ATTEMPTS = 5;
 const MAX_BACKOFF_MS = 60_000;
 const MIN_RETRY_AFTER_MS = 1000;
+
+/** The relay route's body cap (Next's 10 MB truncation point) mirrored client-side. */
+export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * The bounded, serializable reason a multipart upload gave up, carried in the
+ * `/api/upload/abort` body so the server-side `s3-upload-abort` event can say WHY the
+ * client stopped — the field whose absence forced the 2026-09 image-upload investigation
+ * to ask users for devtools screenshots. Caller-shaped input is sanitized again
+ * server-side (see `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`); this
+ * side only ever produces the three shapes below.
+ *
+ * A user cancel maps to `client-aborted` ahead of every other reading: the cancel trips
+ * the workers, which can race a status-0 `loadend` onto the same fatal slot, and user
+ * churn must not read as upload failures in the abort stream.
+ */
+export type PartFailureReason =
+  | { kind: 'client-aborted' }
+  | { kind: 'network-error'; partNumber?: number }
+  | { kind: 'part-status'; partNumber?: number; status: number };
+
+export function describePartFailure(
+  err: UploadPartError | null | undefined
+): PartFailureReason | undefined {
+  if (!err) return undefined;
+  if (err.aborted) return { kind: 'client-aborted' };
+  if (err.networkError) {
+    return err.partNumber === undefined
+      ? { kind: 'network-error' }
+      : { kind: 'network-error', partNumber: err.partNumber };
+  }
+  if (err.status !== null) {
+    return err.partNumber === undefined
+      ? { kind: 'part-status', status: err.status }
+      : { kind: 'part-status', partNumber: err.partNumber, status: err.status };
+  }
+  return undefined;
+}
+
+/**
+ * Whether a fatal part failure qualifies for the relay fallback — re-sending the whole
+ * file through our own origin when the direct PUT cannot reach the storage host at all.
+ *
+ * 🔴 ONLY a network-layer failure qualifies. A status failure means the backend was
+ * REACHED and rejected us; replaying the bytes through a second route would mask a real
+ * fault rather than route around an unreachable host (the same rule the single-PUT
+ * relay fallback in `useCFImageUpload` follows). The other gates: the relay writes to
+ * the image bucket, so only image-type uploads on the image backend qualify; the file
+ * must fit the relay's body cap; and a cancelled upload has an owner, not a fallback.
+ */
+export function shouldRelayOnPartFailure(
+  err: UploadPartError | null | undefined,
+  opts: { type: string; backend?: string; fileSize: number; signalAborted: boolean }
+): boolean {
+  if (!err || opts.signalAborted) return false;
+  if (!err.networkError || err.aborted) return false;
+  if (opts.type !== 'image') return false;
+  if (opts.backend !== 'backblaze') return false;
+  return opts.fileSize <= RELAY_FALLBACK_MAX_BYTES;
+}
 
 /** A presigned part URL that outlived its expiry — retrying the same URL can never succeed. */
 export function isExpiredPartError(err: UploadPartError) {

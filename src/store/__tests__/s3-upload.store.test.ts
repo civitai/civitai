@@ -31,7 +31,7 @@ const UPLOAD_IDENTITY = {
   backend: 'b2',
 };
 
-type PartResponse = { status: number; etag?: string; retryAfter?: string };
+type PartResponse = { status: number; etag?: string; retryAfter?: string; networkError?: boolean };
 
 /** Body shape `POST /api/upload/abort` is called with. */
 type AbortBody = {
@@ -40,6 +40,7 @@ type AbortBody = {
   type: string;
   uploadId: string;
   backend: string;
+  failure?: { kind: string; partNumber?: number; status?: number };
 };
 
 let partHandler: (url: string, partNumber: number) => PartResponse;
@@ -52,6 +53,8 @@ let completeCalls: number;
 let abortCalls: AbortBody[];
 /** Simulates the abort request itself failing at the network layer. */
 let abortShouldReject: boolean;
+/** Part numbers whose PUT stays in-flight forever, so a test can cancel mid-upload. */
+let hangPartNumbers: number[];
 /** Fires when `/api/upload/complete` is requested, to mutate state mid-flight. */
 let onCompleteRequest: (() => void) | null;
 /** Fires when `/api/upload/abort` is requested, so a test can order it against other effects. */
@@ -90,12 +93,14 @@ class FakeXHR {
     this.readyState = 4;
     this.status = 0;
     this.emit('abort');
+    this.emit('loadend');
   }
   send(body: Blob) {
     setTimeout(() => {
       if (this.settled) return;
-      this.settled = true;
       const partNumber = Number(new URL(this.url, 'https://b2.test').searchParams.get('part'));
+      if (hangPartNumbers.includes(partNumber)) return; // in-flight forever until aborted
+      this.settled = true;
       const res = partHandler(this.url, partNumber);
       this.readyState = 4;
       this.status = res.status;
@@ -103,6 +108,15 @@ class FakeXHR {
       if (res.retryAfter) this.headers['Retry-After'] = res.retryAfter;
       this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
       this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
+      if (res.networkError) {
+        // A network-layer failure fires `error` (the listener that rejects with
+        // `{ status: null, networkError: true }`) followed by `loadend` in the same
+        // dispatch — the same order the real browser emits, and the order that makes
+        // the `error` rejection win the race against `loadend`'s status-0 reject.
+        this.emit('error');
+        this.emit('loadend');
+        return;
+      }
       this.emit('load');
       this.emit('loadend');
     }, 0);
@@ -216,6 +230,7 @@ beforeEach(() => {
   completeCalls = 0;
   abortCalls = [];
   abortShouldReject = false;
+  hangPartNumbers = [];
   onCompleteRequest = null;
   onAbortRequest = null;
   partHandler = () => ({ status: 200, etag: 'etag' });
@@ -414,7 +429,9 @@ describe('useS3UploadStore.upload multipart teardown', () => {
   });
 
   // Invariant guard, not regression cover: this path already aborted. It pins the
-  // behaviour the completion path above was made to match.
+  // behaviour the completion path above was made to match. The `failure` expectation is
+  // the 2026-09 abort-reason plumbing: a part that answered 400 must say so in the abort
+  // body, with its part number.
   it('aborts the upload when a part fails terminally', async () => {
     vi.stubGlobal('fetch', makeFetch(2));
     partHandler = (_url, partNumber) =>
@@ -423,7 +440,12 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
 
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([
+      {
+        ...expectedAbort,
+        failure: { kind: 'part-status', partNumber: 2, status: 400 },
+      },
+    ]);
   });
 
   // Negative control: proves these assertions can distinguish abort from no-abort,
@@ -461,7 +483,12 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([
+      {
+        ...expectedAbort,
+        failure: { kind: 'part-status', partNumber: 1, status: 400 },
+      },
+    ]);
   });
 
   it('does not let a failed abort mask the original failure', async () => {
@@ -534,5 +561,66 @@ describe('useS3UploadStore.upload teardown ordering', () => {
     }
 
     expect(timeline).toEqual(['status', 'abort']);
+  });
+});
+
+/**
+ * WHY the abort body carries a `failure` object: the server-side `s3-upload-abort` event
+ * could not say WHY a client gave up — the 2026-09 image-upload investigation (Kayot +
+ ~136 others, browser PUTs to Backblaze reset at the network layer) had to ask users for
+ * devtools screenshots because the abort row carried no reason. These pin the reason
+ * plumbing on the store client; `useS3Upload` shares the same helpers from
+ * ~/utils/upload-retry.
+ */
+describe('useS3UploadStore.upload abort failure reason', () => {
+  it('reports the failing part number and status when a part answers with an HTTP status', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    partHandler = (_url, partNumber) =>
+      partNumber === 2 ? { status: 400 } : { status: 200, etag: 'etag' };
+
+    await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0].failure).toEqual({ kind: 'part-status', partNumber: 2, status: 400 });
+  });
+
+  it('reports network-error with the part number when the PUT dies at the network layer', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+
+    await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0].failure).toEqual({ kind: 'network-error', partNumber: 1 });
+  });
+
+  it('reports client-aborted — not a failure — when the user cancels mid-upload', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    hangPartNumbers = [1];
+
+    const promise = useS3UploadStore
+      .getState()
+      .upload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+    // Let the multipart init and the first PUT start, then cancel the way the UI does.
+    await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
+    useS3UploadStore.getState().items[0].abort();
+    await promise;
+
+    expect(useS3UploadStore.getState().items[0].status).toBe('aborted');
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0].failure).toEqual({ kind: 'client-aborted' });
+  });
+
+  it('sends no failure object when the abort is teardown after a failed completion', async () => {
+    // The complete endpoint already logs the server-side reason; the part-failure
+    // object must not be invented for a path that never saw a failed part.
+    vi.stubGlobal('fetch', makeFetch(1));
+    completeStatus = 503;
+
+    await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0].failure).toBeUndefined();
   });
 });
