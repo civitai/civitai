@@ -94,7 +94,10 @@
             </TableCell>
             <TableCell>{num(run.findingCount)}</TableCell>
             <TableCell>{actionedLabel(run.actionedCount, run.findingCount)}</TableCell>
-            <TableCell class="max-w-xl">{run.summary ?? ''}</TableCell>
+            <!-- Same opt-in as the run page's reason cell: `TableCell`'s `whitespace-nowrap` is
+                 wrong for prose, and a one-line summary overruns the width this `max-w-xl` asks
+                 for. -->
+            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary ?? ''}</TableCell>
           </TableRow>
         {/each}
       </TableBody>

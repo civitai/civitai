@@ -191,7 +191,13 @@
           <!-- "No" is the common and important case: detected, scored, deliberately left alone. It is
                spelled out rather than shown as a blank, which would read as missing data. -->
           <TableCell>{d.lead.actioned ? d.lead.action : 'No'}</TableCell>
-          <TableCell class="max-w-2xl">{d.lead.reason}</TableCell>
+          <!-- 🔴 `whitespace-normal` UNDOES THE PRIMITIVE'S DEFAULT, and without it this cell paints
+               over the column beside it. `TableCell` ships `whitespace-nowrap`, which is right for
+               an id or a date and wrong for a multi-sentence paragraph: the text renders on one
+               line, ignores `max-w-2xl`, and overlaps whatever is to its right — every row, at any
+               viewport, from roughly ninety characters up. Any container this text moves into needs
+               the same explicit opt-in. -->
+          <TableCell class="max-w-2xl break-words whitespace-normal">{d.lead.reason}</TableCell>
           <TableCell>
             {#if shown !== null}
               <div class="text-xs font-semibold">
