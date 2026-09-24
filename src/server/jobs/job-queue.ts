@@ -186,7 +186,7 @@ const updateNsfwLevelsCollectionsJob = createJob(
           // rare side effect of it, and gating on it left documents stale.
           //
           // Ahead of the recompute, not after it: the recompute is two EXISTS
-          // subqueries over four LEFT JOINs per collection and collections of ~191k
+          // subqueries over five LEFT JOINs per collection and collections of ~191k
           // items exist, so it can time out — and a batch that fails deterministically
           // would otherwise never tell the index about any of its 20 collections. On
           // retry the duplicate costs nothing; the queue is a Redis set.

@@ -2595,10 +2595,10 @@ export const updateCollectionItemsStatus = async ({
  * it; it samples instead (`getCollectionPlayableSample`).
  *
  * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
- * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,
- * so model / post / article collections are counted here too. `nsfwLevel` lives on
- * `Image`, so an INNER `JOIN "Image"` would silently return 0 for every one of
- * those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId` OR
+ * `model3dId`, so model / post / article / 3D model collections are counted here
+ * too. `nsfwLevel` lives on `Image`, so an INNER `JOIN "Image"` would silently
+ * return 0 for every one of those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
  * escape: a non-image item has no image maturity to test and is kept
  * unconditionally.
  *
@@ -2644,7 +2644,7 @@ export function getCollectionItemCount({
     FROM "CollectionItem" ci
     ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL OR ci."model3dId" IS NOT NULL)
     GROUP BY ci."collectionId"
   `;
 }
@@ -3551,9 +3551,27 @@ export const getCollectionCoverImages = async ({
               AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
-    ), articleItemImage as MATERIALIZED (
-        SELECT a.id, a.cover image FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target)
+    ), articleItemImage AS MATERIALIZED (
+        SELECT
+          a.id,
+          ${imageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT
+          m3.id,
+          ${imageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
     )
     SELECT
         target."collectionId" id,
@@ -3561,9 +3579,11 @@ export const getCollectionCoverImages = async ({
           (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
           NULL
         ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
     FROM target
   `
       : [];
