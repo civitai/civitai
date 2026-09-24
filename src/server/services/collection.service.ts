@@ -1510,6 +1510,10 @@ export const upsertCollection = async ({
     throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
+  // No flow can add a 3D model to a collection, so one of this type could only ever be empty.
+  if (type === CollectionType.Model3D)
+    throw throwBadRequestError('3D model collections are not supported yet.');
+
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: {
