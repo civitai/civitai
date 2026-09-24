@@ -25,15 +25,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * exclude-id, and that only a reported delete marks the row.
  */
 
-const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget } = vi.hoisted(() => ({
-  mockDeleteModelFileObject: vi.fn(),
-  mockIsFlipt: vi.fn(),
-  mockResolveTarget: vi.fn(),
-}));
+const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget, mockGetQuarantineBucket } =
+  vi.hoisted(() => ({
+    mockDeleteModelFileObject: vi.fn(),
+    mockIsFlipt: vi.fn(),
+    mockResolveTarget: vi.fn(),
+    // Default: quarantine IS configured. The unconfigured case is its own test rather than the
+    // ambient default, because as the default it would silently turn every dry-run case below
+    // into a would-skip and they would still pass for the wrong reason.
+    mockGetQuarantineBucket: vi.fn(() => 'civitai-quarantine'),
+  }));
 
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
   resolveModelFileDeleteTarget: mockResolveTarget,
+  getQuarantineBucket: mockGetQuarantineBucket,
 }));
 
 vi.mock('~/server/flipt/client', () => ({
@@ -83,6 +89,12 @@ beforeEach(() => {
   // case would pass vacuously over a job that did nothing.
   // Purge ON, dry-run OFF, for every case except the ones that are about those switches.
   mockIsFlipt.mockImplementation(async (flag: string) => flag === 'training-data-purge');
+  // 🔴 RE-ASSERTED HERE, not left to the `vi.fn(() => …)` default above. `vi.clearAllMocks()`
+  // clears CALL DATA and leaves IMPLEMENTATIONS in place, so the one case that points this at
+  // `undefined` would otherwise leak an unconfigured quarantine into every case after it — and
+  // those cases would go on passing, as would-skip assertions about a job that can no longer
+  // delete anything.
+  mockGetQuarantineBucket.mockReturnValue('civitai-quarantine');
   // Deletable by default; the would-skip arm says so explicitly.
   mockResolveTarget.mockReturnValue({ ok: true, backend: 'b2', bucket: 'b', key: 'k' });
 });
@@ -97,9 +109,15 @@ describe('delete-old-training-data routes its deletes through the ModelFile help
     // without its own id excluded the refcount guard inside the helper finds the row as a live
     // reference to its own url and vetoes the delete — forever, and without an error. Passing
     // one argument satisfies the call but reinstates that, which is why the id is asserted.
+    // 🔴 The THIRD argument is load-bearing too, and it is the destructiveness of this job in
+    // one option. Without `quarantine: true` the helper removes the object outright and the only
+    // recovery is a backup nobody has rehearsed; with it the object is copied and verified into
+    // the quarantine bucket first, so the recovery window is that bucket's retention rule. A
+    // two-argument call still type-checks and still deletes — it just deletes for keeps.
     expect(mockDeleteModelFileObject).toHaveBeenCalledWith(
       'https://example.invalid/bucket/key-101',
-      101
+      101,
+      { quarantine: true }
     );
   });
 
@@ -355,6 +373,35 @@ describe('the dry run stops short of the delete', () => {
 
     expect(mockDeleteModelFileObject).toHaveBeenCalledTimes(1);
     expect(dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 reports would-SKIP when no quarantine bucket is configured', async () => {
+    // The preview has to model the quarantine refusal, not just whether the url is deletable in
+    // principle. On a deployment with no quarantine bucket the real pass can delete NOTHING, so
+    // a preview built on the resolver alone would label every row would-delete — not merely
+    // optimistic but exactly inverted, and inverted in the direction that gets a night of
+    // "would delete" read as a drain forecast.
+    mockIsFlipt.mockImplementation(async () => true);
+    mockGetQuarantineBucket.mockReturnValue(undefined as unknown as string);
+    selects([row(507)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const calls = loggingMock.logToAxiom.mock.calls.map(
+      ([arg]) =>
+        arg as {
+          message?: string;
+          data?: { reason?: string; dryRunWouldDelete?: number; dryRunWouldSkip?: number };
+        }
+    );
+    const skip = calls.find((a) => a?.message === 'Dry run, would skip');
+    expect(skip?.data?.reason).toBe('quarantine-not-configured');
+
+    const fin = calls.find((a) => a?.message === 'Finished');
+    expect(fin?.data?.dryRunWouldSkip).toBe(1);
+    // Asserted as well as the skip count, because a preview that counted the row in BOTH
+    // columns would satisfy the line above on its own.
+    expect(fin?.data?.dryRunWouldDelete).toBe(0);
   });
 
   it('gates the dry run on its OWN flag, not the purge flag', async () => {
