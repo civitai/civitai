@@ -356,6 +356,11 @@ export const registrationClusterHeuristic: BotAccountHeuristic = {
     // already-banned marking this sentence cannot carry — and the abuse board is a wider audience
     // than that tool.
     if (ip.size > IP_ZERO_AT)
+      // ⚠️ THE SINGULAR IS UNREACHABLE HERE, AND SAYING SO IS THE POINT. This clause is gated on
+      // `ip.size > IP_ZERO_AT` (2), so a cluster of one never renders it and `plural`'s singular
+      // branch cannot be taken. The agreement is written for uniformity with the other three
+      // heuristics' notes and because `explain` is a pure function anyone may call — NOT because it
+      // fixes anything a moderator sees today. Do not cite it as a behaviour change.
       clauses.push(
         `${ip.size} new posting ${plural(ip.size, 'account')} ` +
           `${plural(ip.size, 'shares', 'share')} its registration IP`

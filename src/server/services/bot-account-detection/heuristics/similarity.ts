@@ -192,6 +192,9 @@ export const contentTemplatingHeuristic: BotAccountHeuristic = {
     const value = unprefixFingerprint(fingerprint ?? '');
     const quote = value.slice(0, QUOTE_CHARS);
     const ellipsis = value.length > QUOTE_CHARS ? '…' : '';
+    // ⚠️ THE SINGULAR IS UNREACHABLE — `score` is `rampScore(size, CLUSTER_ZERO_AT, …)` with
+    // `CLUSTER_ZERO_AT` at 2, and `explain` returns null at a score of 0, so a cluster of one never
+    // reaches this line. Agreed anyway for uniformity with the other notes; it is not a fix.
     return (
       `${size} new ${plural(size, 'account')} uploaded a file with the same name — ` +
       `“${quote}${ellipsis}”`
