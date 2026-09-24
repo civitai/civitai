@@ -220,8 +220,9 @@ describe('isClickHouseConnectionError — the syscall-spelling match must not fi
   });
 
   // Defeats the $query-wrapper requirement ONLY: the token is a standalone word in a
-  // message that never came from ClickHouse. A Redis/undici transport fault must not be
-  // reported as a ClickHouse brownout — that would count the wrong dependency's outage.
+  // message that never came from ClickHouse, so counting it would attribute the wrong
+  // dependency's outage. Scoped to the TEXT route — these carry no `.code`; an error
+  // object that does is still matched by shape 1 whatever raised it, by design.
   it.each([
     'request to redis failed, reason: connect ECONNREFUSED',
     'fetch failed: read ECONNRESET',
