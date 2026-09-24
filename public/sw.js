@@ -38,15 +38,29 @@ self.addEventListener('notificationclick', (event) => {
 
 // The push service can rotate the subscription; re-subscribe and tell the server, or pushes go
 // to an endpoint nobody holds anymore.
+//
+// `oldSubscription.options` is required, not a nicety: Chrome rejects `subscribe()` without an
+// `applicationServerKey`, and a SW has no access to NEXT_PUBLIC_VAPID_PUBLIC_KEY (this file is
+// static, served from /public, and never goes through the bundler). The previous
+// `?? { userVisibleOnly: true }` fallback therefore could not succeed — it threw straight into the
+// catch below. Without the options there is nothing useful to attempt, so bail loudly-ish rather
+// than pretend.
+//
+// `oldEndpoint` is sent so the server can drop the row the push service just rotated away from. It
+// would otherwise linger until it accrued 10 consecutive delivery failures (or 180 days of the
+// cleanup job), and every one of those sends is wasted work against a dead endpoint.
 self.addEventListener('pushsubscriptionchange', (event) => {
+  const options = event.oldSubscription?.options;
+  if (!options) return;
+  const oldEndpoint = event.oldSubscription?.endpoint ?? null;
   event.waitUntil(
     self.registration.pushManager
-      .subscribe(event.oldSubscription?.options ?? { userVisibleOnly: true })
+      .subscribe(options)
       .then((subscription) =>
         fetch('/api/push/resubscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(subscription.toJSON()),
+          body: JSON.stringify({ ...subscription.toJSON(), oldEndpoint }),
         })
       )
       .catch(() => {})

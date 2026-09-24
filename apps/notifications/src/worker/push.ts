@@ -34,6 +34,13 @@ const TRUNCATED_BODY_LENGTH = 500;
  */
 const SEND_CONCURRENCY = 10;
 const SEND_OPTIONS = { TTL: 60 * 60 * 24, timeout: 10_000 };
+/**
+ * The render call is the one outbound request in the awaited path that `SEND_OPTIONS.timeout`
+ * does NOT cover — node's fetch has no default timeout, so a main-app instance that accepts the
+ * connection and never answers would stall `run()` before signals and before the next pending
+ * row, i.e. all fan-out, not just push. Same ceiling as a send.
+ */
+const RENDER_TIMEOUT_MS = 10_000;
 
 /** Bookkeeping is best-effort: a transient main-DB write failure on one device must not abort the
  *  remaining sends for the notification. */
@@ -91,11 +98,17 @@ async function renderPayload(
 ): Promise<PushPayload | null> {
   try {
     const res = await fetch(
-      `${mainAppUrl}/api/internal/notifications/render-push?token=${mainAppWebhookToken}`,
+      // encodeURIComponent, not raw: a token containing `&`, `#`, `+` or `%` would otherwise be
+      // truncated or mangled into a value the endpoint rejects, and the only symptom is push
+      // silently never rendering (renderPayload returns null on !ok).
+      `${mainAppUrl}/api/internal/notifications/render-push?token=${encodeURIComponent(
+        mainAppWebhookToken
+      )}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notifications: [{ type, details }] }),
+        signal: AbortSignal.timeout(RENDER_TIMEOUT_MS),
       }
     );
     if (!res.ok) {
@@ -126,28 +139,41 @@ async function getTargetSubscriptions(userIds: number[], type: string): Promise<
   return await query.result();
 }
 
-async function deleteSubscription(id: number) {
-  await mainDbWrite().cancellableQuery(`DELETE FROM "PushSubscription" WHERE id = $1`, [id]);
+// Every bookkeeping write below re-asserts `"userId" = <the owner we targeted>` alongside the row
+// id. A `PushSubscription` row is keyed on the browser's endpoint, and `upsertPushSubscription`
+// REASSIGNS that row to a new `userId` when the same browser subscribes under a different account
+// (same device, new login). The dispatcher read its target list before sending, so between the read
+// and these writes the row can already belong to someone else — an unqualified `WHERE id = $1`
+// would then stamp `lastSuccessAt`, bump a failure streak, or DELETE the new owner's live
+// subscription on the strength of a send made for the previous owner. Scoping by userId makes the
+// write a no-op in exactly that case, which is the correct outcome: the row is no longer ours.
+
+async function deleteSubscription(id: number, userId: number) {
+  await mainDbWrite().cancellableQuery(
+    `DELETE FROM "PushSubscription" WHERE id = $1 AND "userId" = $2`,
+    [id, userId]
+  );
 }
 
-async function recordSuccess(id: number) {
+async function recordSuccess(id: number, userId: number) {
   await mainDbWrite().cancellableQuery(
-    `UPDATE "PushSubscription" SET "lastSuccessAt" = NOW(), "failureCount" = 0 WHERE id = $1`,
-    [id]
+    `UPDATE "PushSubscription" SET "lastSuccessAt" = NOW(), "failureCount" = 0
+     WHERE id = $1 AND "userId" = $2`,
+    [id, userId]
   );
 }
 
 /** Increments the failure streak; deletes the row once it hits the ceiling. */
-async function recordFailure(id: number) {
+async function recordFailure(id: number, userId: number) {
   await mainDbWrite().cancellableQuery(
     `WITH bumped AS (
        UPDATE "PushSubscription" SET "failureCount" = "failureCount" + 1
-       WHERE id = $1
+       WHERE id = $1 AND "userId" = $3
        RETURNING id, "failureCount"
      )
      DELETE FROM "PushSubscription"
      WHERE id IN (SELECT id FROM bumped WHERE "failureCount" >= $2)`,
-    [id, MAX_CONSECUTIVE_FAILURES]
+    [id, MAX_CONSECUTIVE_FAILURES, userId]
   );
 }
 
@@ -160,13 +186,13 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
   try {
     await webPush.sendNotification(subscription, body, SEND_OPTIONS);
     pushDeliveryTotal.inc({ outcome: 'accepted' });
-    await bestEffort(recordSuccess(sub.id));
+    await bestEffort(recordSuccess(sub.id, sub.userId));
   } catch (e: any) {
     const status: number | undefined = e?.statusCode;
     if (status === 404 || status === 410) {
       // The subscription is gone (permission revoked, browser reinstalled). Normal, not an incident.
       pushDeliveryTotal.inc({ outcome: 'expired' });
-      await bestEffort(deleteSubscription(sub.id));
+      await bestEffort(deleteSubscription(sub.id, sub.userId));
     } else if (status === 429) {
       // Rate limited by the push service — drop this send, keep the subscription.
       pushDeliveryTotal.inc({ outcome: 'rate_limited' });
@@ -184,13 +210,13 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload) {
           SEND_OPTIONS
         );
         pushDeliveryTotal.inc({ outcome: 'accepted' });
-        await bestEffort(recordSuccess(sub.id));
+        await bestEffort(recordSuccess(sub.id, sub.userId));
       } catch {
-        await bestEffort(recordFailure(sub.id));
+        await bestEffort(recordFailure(sub.id, sub.userId));
       }
     } else {
       pushDeliveryTotal.inc({ outcome: 'failure' });
-      await bestEffort(recordFailure(sub.id));
+      await bestEffort(recordFailure(sub.id, sub.userId));
     }
   }
 }

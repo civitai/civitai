@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { usePushSubscriptionStore } from '~/store/push-subscription.store';
+import type { PushSupport } from '~/store/push-subscription.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export type PushSupport =
-  | 'supported'
-  | 'needs-standalone' // iOS Safari tab: PushManager only exists after Add to Home Screen
-  | 'unsupported';
+export type { PushSupport };
 
 function getPushSupport(): PushSupport {
   if (typeof window === 'undefined') return 'unsupported';
@@ -39,28 +38,34 @@ async function getSubscription() {
 export function usePushSubscription() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  // One store for the whole browser, not per-hook state: this hook is mounted independently by
+  // PushDeviceToggle and PushDeviceList, and per-instance copies drift apart the moment either one
+  // subscribes or revokes (see the store's own comment).
+  const support = usePushSubscriptionStore((s) => s.support);
+  const permission = usePushSubscriptionStore((s) => s.permission);
+  const subscribed = usePushSubscriptionStore((s) => s.subscribed);
+  const currentEndpoint = usePushSubscriptionStore((s) => s.currentEndpoint);
+  const busy = usePushSubscriptionStore((s) => s.busy);
+  const setState = usePushSubscriptionStore((s) => s.set);
+
   // Effect, not render-time: SSR always computes 'unsupported', so deriving during render would
   // hydrate-mismatch on any browser where push exists.
-  const [support, setSupport] = useState<PushSupport>('unsupported');
-  const [permission, setPermission] = useState<NotificationPermission | null>(null);
-  const [subscribed, setSubscribed] = useState(false);
-  const [currentEndpoint, setCurrentEndpoint] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
   useEffect(() => {
-    setSupport(getPushSupport());
-  }, []);
+    setState({ support: getPushSupport() });
+  }, [setState]);
 
   useEffect(() => {
     if (support !== 'supported' || !currentUser) return;
-    setPermission(Notification.permission);
+    setState({ permission: Notification.permission });
     // Only look for an existing registration — never create one from an effect.
     navigator.serviceWorker.getRegistration('/sw.js').then(async (registration) => {
       const subscription = await registration?.pushManager.getSubscription();
-      setSubscribed(!!subscription);
-      setCurrentEndpoint(subscription?.endpoint ?? null);
+      setState({
+        subscribed: !!subscription,
+        currentEndpoint: subscription?.endpoint ?? null,
+      });
     });
-  }, [support, currentUser]);
+  }, [support, currentUser, setState]);
 
   // The server list is the truth about whether THIS browser's subscription is live. The browser
   // can hold an orphaned subscription (a subscribe call that never reached the server, a device
@@ -88,10 +93,10 @@ export function usePushSubscription() {
   /** Ask for browser permission (native prompt) and register the subscription server-side. */
   const enable = useCallback(async () => {
     if (support !== 'supported' || busy) return false;
-    setBusy(true);
+    setState({ busy: true });
     try {
       const result = await Notification.requestPermission();
-      setPermission(result);
+      setState({ permission: result });
       if (result !== 'granted') return false;
 
       const { registration } = await getSubscription();
@@ -106,8 +111,7 @@ export function usePushSubscription() {
         endpoint: json.endpoint,
         keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
       });
-      setSubscribed(true);
-      setCurrentEndpoint(json.endpoint);
+      setState({ subscribed: true, currentEndpoint: json.endpoint });
       return true;
     } catch (error) {
       showErrorNotification({
@@ -116,14 +120,14 @@ export function usePushSubscription() {
       });
       return false;
     } finally {
-      setBusy(false);
+      setState({ busy: false });
     }
-  }, [support, busy, subscribeMutation]);
+  }, [support, busy, subscribeMutation, setState]);
 
   /** Drop this browser's subscription (server row + browser-side subscription). */
   const disable = useCallback(async () => {
     if (busy) return;
-    setBusy(true);
+    setState({ busy: true });
     try {
       const registration = await navigator.serviceWorker.getRegistration('/sw.js');
       const subscription = await registration?.pushManager.getSubscription();
@@ -131,12 +135,11 @@ export function usePushSubscription() {
         await unsubscribeMutation.mutateAsync({ endpoint: subscription.endpoint });
         await subscription.unsubscribe();
       }
-      setSubscribed(false);
-      setCurrentEndpoint(null);
+      setState({ subscribed: false, currentEndpoint: null });
     } finally {
-      setBusy(false);
+      setState({ busy: false });
     }
-  }, [busy, unsubscribeMutation]);
+  }, [busy, unsubscribeMutation, setState]);
 
   return {
     support,

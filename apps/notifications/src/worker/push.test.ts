@@ -16,7 +16,7 @@ const h = vi.hoisted(() => {
     sendResults: (Error | null)[]; // per sendNotification call, in order; null = accept
     sends: { endpoint: string; body: string }[];
     renderResponse: { ok: boolean; results?: any[] };
-    fetchCalls: { url: string; body: any }[];
+    fetchCalls: { url: string; body: any; signal: any }[];
   } = {
     subscriptionRows: [],
     readQueries: [],
@@ -75,7 +75,7 @@ vi.mock('../env', async (importOriginal) => ({
   vapidPrivateKey: 'test-private',
   vapidSubject: 'mailto:test@test',
   mainAppUrl: 'http://main.test',
-  mainAppWebhookToken: 'tok',
+  mainAppWebhookToken: 'tok&n v',
 }));
 
 vi.mock('web-push', () => ({
@@ -115,7 +115,11 @@ beforeEach(() => {
   h.state.renderResponse = { ok: true, results: [{ title: 'T', body: 'B', url: '/x' }] };
   h.state.fetchCalls = [];
   global.fetch = vi.fn(async (url: any, init: any) => {
-    h.state.fetchCalls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+    h.state.fetchCalls.push({
+      url: String(url),
+      body: init?.body ? JSON.parse(init.body) : null,
+      signal: init?.signal ?? null,
+    });
     return {
       ok: h.state.renderResponse.ok,
       status: h.state.renderResponse.ok ? 200 : 500,
@@ -169,7 +173,7 @@ describe('dispatchPush', () => {
 
     const deletes = h.state.writeQueries.filter((q) => q.sql.trim().startsWith('DELETE'));
     expect(deletes).toHaveLength(1);
-    expect(deletes[0]!.params).toEqual([1]);
+    expect(deletes[0]!.params).toEqual([1, 10]);
     expect(h.state.writeQueries.filter((q) => q.sql.includes('failureCount'))).toHaveLength(0);
   });
 
@@ -179,7 +183,7 @@ describe('dispatchPush', () => {
     await dispatchPush('new-mention', {}, [10]);
     const deletes = h.state.writeQueries.filter((q) => q.sql.trim().startsWith('DELETE'));
     expect(deletes).toHaveLength(1);
-    expect(deletes[0]!.params).toEqual([7]);
+    expect(deletes[0]!.params).toEqual([7, 10]);
   });
 
   it('keeps the subscription untouched on 429', async () => {
@@ -211,7 +215,7 @@ describe('dispatchPush', () => {
 
     const failureWrites = h.state.writeQueries.filter((q) => q.sql.includes('"failureCount" + 1'));
     expect(failureWrites).toHaveLength(1);
-    expect(failureWrites[0]!.params).toEqual([1, 10]);
+    expect(failureWrites[0]!.params).toEqual([1, 10, 10]);
   });
 
   it('caps a user at pushDailyCap, then sends exactly one summary push', async () => {
@@ -249,5 +253,69 @@ describe('dispatchPush', () => {
     h.state.renderResponse = { ok: false };
     await expect(dispatchPush('new-mention', {}, [10])).resolves.toBeUndefined();
     expect(h.state.sends).toHaveLength(0);
+  });
+
+  describe('render request', () => {
+    it('percent-encodes the webhook token into the query string', async () => {
+      h.state.subscriptionRows = [sub(1, 10)];
+      await dispatchPush('new-mention', {}, [10]);
+
+      // The mocked token is `tok&n v`. Interpolated raw, the `&` would start a second query
+      // parameter and the space would be an invalid character — the endpoint would see the token
+      // as `tok`, reject it, and push would silently never render.
+      const { url } = h.state.fetchCalls[0];
+      expect(url).toContain('token=tok%26n%20v');
+      expect(url).not.toContain('token=tok&n');
+    });
+
+    it('carries an abort signal so a hung render cannot stall fan-out', async () => {
+      h.state.subscriptionRows = [sub(1, 10)];
+      await dispatchPush('new-mention', {}, [10]);
+
+      // node's fetch has no default timeout, and the poll loop awaits dispatchPush before signals
+      // and the next pending row — an unbounded render would stall all fan-out, not just push.
+      const { signal } = h.state.fetchCalls[0];
+      expect(signal).toBeInstanceOf(AbortSignal);
+    });
+  });
+
+  describe('bookkeeping is scoped to the owner the send targeted', () => {
+    // A PushSubscription row is keyed on the browser endpoint and gets REASSIGNED to a new userId
+    // when the same browser subscribes under a different account. The dispatcher reads its targets
+    // before sending, so an unqualified `WHERE id = $1` could stamp, streak or DELETE the new
+    // owner's live row off the back of the previous owner's send.
+    const ownerScoped = (sql: string) => /"userId"\s*=\s*\$\d/.test(sql);
+
+    it('scopes the success stamp by userId', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      await dispatchPush('new-mention', {}, [42]);
+
+      const write = h.state.writeQueries.find((q) => q.sql.includes('lastSuccessAt'));
+      expect(write).toBeDefined();
+      expect(ownerScoped(write!.sql)).toBe(true);
+      expect(write!.params).toContain(42);
+    });
+
+    it('scopes the 410 delete by userId', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      h.state.sendResults = [statusError(410)];
+      await dispatchPush('new-mention', {}, [42]);
+
+      const write = h.state.writeQueries.find((q) => q.sql.trimStart().startsWith('DELETE'));
+      expect(write).toBeDefined();
+      expect(ownerScoped(write!.sql)).toBe(true);
+      expect(write!.params).toContain(42);
+    });
+
+    it('scopes the failure streak by userId', async () => {
+      h.state.subscriptionRows = [sub(7, 42)];
+      h.state.sendResults = [statusError(500)];
+      await dispatchPush('new-mention', {}, [42]);
+
+      const write = h.state.writeQueries.find((q) => q.sql.includes('failureCount" + 1'));
+      expect(write).toBeDefined();
+      expect(ownerScoped(write!.sql)).toBe(true);
+      expect(write!.params).toContain(42);
+    });
   });
 });
