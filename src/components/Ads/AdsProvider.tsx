@@ -133,7 +133,7 @@ export function AdsProvider({
   // Also gated on CIPA consent: in regions where consent is required, the Snigel
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
-    ? true
+    ? false
     : !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
