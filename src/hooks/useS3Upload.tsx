@@ -196,18 +196,33 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         teardownController.abort();
         for (const x of activeXhrs) x.abort();
       };
-      // The only user-initiated cancel. It is handed to the UI on the tracked file, and
-      // the cancel buttons in `FileInputUpload` and `MultiFileInputUpload`'s `UploadItem`
-      // are what call it. `removeFile(file, true)` routes here too, though no caller
-      // passes that second argument today.
+      // The only user-initiated cancel. It is handed to the UI on the tracked file.
+      // Exactly ONE live caller reaches it: the cancel button in `FileInputUpload`
+      // (`onClick={() => abort()}`). `removeFile(file, true)` routes here too, but no
+      // caller passes that second argument today.
       //
-      // ⚠ Two things that look like cancels and are NOT, so nobody reads this as wider
-      // cover than it is: `FileUploadProvider`'s unmount effect closes over the `files`
-      // from its first render with `[]` deps, so it always iterates an empty array and
-      // aborts nothing; and neither of the two call sites above can reach the relay
-      // (both upload model/training files, and the relay is image-only). So on the one
-      // path that CAN relay, nothing cancels an upload today — the `userAborted` gate
-      // below is correct and tested, but it is not currently exercised in production.
+      // ⚠ Three things that look like cancels and are NOT, so nobody reads this as
+      // wider cover than it is:
+      //   - `MultiFileInputUpload`'s `UploadItem` cancel button calls
+      //     `cancelUpload(file.file)`, which is `removeFile` with NO second argument —
+      //     `removeFile` only aborts when that argument is truthy, so it drops the row
+      //     from the UI while the part PUTs run on to completion. It does NOT come here.
+      //   - `FileUploadProvider`'s unmount effect closes over the `files` from its first
+      //     render with `[]` deps, so it always iterates an empty array and aborts
+      //     nothing.
+      //   - The one live caller uploads model/training files, and the relay is
+      //     image-only, so it cannot reach the relay either.
+      // So on the one path that CAN relay, nothing cancels an upload today — the
+      // `userAborted` gate below is correct and tested, but it is not currently
+      // exercised in production.
+      //
+      // 🔴 That makes the relay's own cancellability an UNREACHABLE guard, and the
+      // store twin's comment argues such a guard should be deleted rather than shipped.
+      // Kept here deliberately, and the asymmetry is the point: that guard sits on THIS
+      // fix's critical path. Removing it restores the shape the whole PR exists to
+      // undo — handing the relay a signal that has already fired — so the cost of a
+      // wrong deletion is a silently inert fallback, which is exactly the defect being
+      // fixed. The store's reverted guard had no such failure mode.
       const abort = () => {
         userAbortController.abort();
         teardown();
