@@ -214,10 +214,13 @@ describe('safeProfilePicture', () => {
     ['scanned PG', pic('Scanned', 1), true],
     ['scanned PG-13', pic('Scanned', 2), true],
     ['scanned R', pic('Scanned', 4), false],
+    ['scanned X', pic('Scanned', 8), false],
+    ['scanned XXX', pic('Scanned', 16), false],
+    ['scanned, level Blocked', pic('Scanned', 32), false],
     ['scanned PG with an R bit', pic('Scanned', 1 | 4), false],
     ['scanned but unrated', pic('Scanned', 0), false],
     ['pending', pic('Pending', 1), false],
-    ['blocked', pic('Blocked', 1), false],
+    ['ingestion Blocked', pic('Blocked', 1), false],
     ['none', null, false],
   ])('%s -> kept: %s', (_, picture, kept) => {
     expect(safeProfilePicture(picture)).toBe(kept ? picture : null);
