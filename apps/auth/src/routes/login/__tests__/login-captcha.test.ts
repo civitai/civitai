@@ -100,19 +100,83 @@ const liveRegionTagText = markup.match(LIVE_REGION_TAG)?.[0] ?? '';
 const liveRegionClasses = (liveRegionTagText.match(/class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
   .filter(Boolean);
+// The whole region element, extracted ONCE: its position, its inner text and its length all come off
+// this. Three separate near-identical extractions is the duplicated-anchor trap this file warns about
+// two comments up — tighten one copy and the others quietly point at nothing.
+const LIVE_REGION = markup.match(new RegExp(LIVE_REGION_TAG.source + '([\\s\\S]*?)<\\/div>'));
+const liveRegionInner = LIVE_REGION?.[1] ?? '';
+// Same rule, same reason: three tests read renderManagedWidget's body and two read its no-widget
+// branch. A rename or a change to the closing indentation would otherwise empty whichever copies the
+// edit missed, and an emptied anchor yields `undefined`, not a red, at most of the sites.
+const RENDER_BODY = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n {2}\}/)?.[0] ?? '';
+const NO_WIDGET_BRANCH = RENDER_BODY.match(
+  /if \(typeof id !== 'string'\) \{([\s\S]*?)\n {4}\}/
+)?.[1];
 // The note element itself, not only its wrapper. Hiding `.captcha-fallback-note` empties the region
 // just as completely as hiding the region, and it is the more natural thing for a responsive edit to
 // reach for — it is the element with the padding and the background.
-const blockedNoteClasses = (
-  markup.match(new RegExp(LIVE_REGION_TAG.source + '[\\s\\S]*?<p class="([^"]*)"'))?.[1] ?? ''
-)
+const blockedNoteClasses = (liveRegionInner.match(/<p class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
   .filter(Boolean);
+// INVARIANT: this set must cover BOTH the region and the note inside it. Hiding the note empties the
+// announcement exactly as completely as hiding the region, and the note is the likelier target of a
+// responsive edit — it is the element carrying the padding and the background. A set narrowed to the
+// region alone is walkable by one rule on `.captcha-fallback-note`.
 const announcementClasses = [...liveRegionClasses, ...blockedNoteClasses];
 const styleStart = pageSource.indexOf('<style');
 // indexOf returns -1 the moment the tag gains an attribute, and slice(-1) then yields the file's LAST
 // CHARACTER — a guard that passes forever against a 1-char string.
-const styles = styleStart > -1 ? pageSource.slice(styleStart) : '';
+// CSS comments come out for the same reason script comments come out of `markup`: the rules below ban
+// a property by reading the text, and the comments most likely to spell `display: contents` are the
+// ones explaining why it is banned.
+const styles = (styleStart > -1 ? pageSource.slice(styleStart) : '').replace(
+  /\/\*[\s\S]*?\*\//g,
+  ''
+);
+
+// Only these name the SUBJECT of the compound they sit in, so only their argument can rule a rule out.
+// `:not()` names what it EXCLUDES and `:has()` names a descendant — read either as a subject and the
+// answer inverts, turning a rule that DOES hide the region into one reported as unable to reach it.
+// Everything outside this set therefore counts as reaching, deliberately erring toward a FALSE BLOCK:
+// an unrelated `:not()` hide can red under this ban's name, which is loud and fixable by narrowing the
+// selector, while the error in the other direction is this guard silently passing a hidden announcement.
+const SUBJECT_PSEUDO = /^::?(?:is|where|matches|global)\(/;
+
+// Can this selector list match the live region, or the note inside it? Reach is decided on the FINAL
+// compound — the part that has to match the element itself. A token heuristic misses `.card :empty`
+// (names no element yet matches) and false-positives on `div.foo` (names `div` yet cannot match).
+// Pseudo-classes are dropped from the compound: these elements can satisfy `:empty` and friends, so a
+// bare pseudo never rules anything out.
+// A compound that is ENTIRELY pseudo therefore strips to nothing, and `[].every(...)` is vacuously TRUE.
+// That answer is RIGHT for anything whose argument does not name the subject — an argument-less pseudo
+// names no element at all, and `:not()`/`:has()` name something other than what they match — so reach
+// stays the safe default there. It is WRONG only for the subject pseudos above: `:global(svg)` and
+// `:is(.foo)` do name what the compound matches, and every such rule in the sheet was being reported as
+// reaching the region. Those, and only those, are decided from the argument.
+const canReachAnnouncement = (selectorList: string): boolean =>
+  selectorList.split(',').some((selector) => {
+    const compound =
+      selector
+        .trim()
+        .split(/[\s>+~]+/)
+        .filter(Boolean)
+        .pop() ?? '';
+    const tokens = compound.replace(/::?[\w-]+(\([^)]*\))?/g, '').match(/[#.]?[\w*-]+|\[[^\]]*\]/g);
+    if (!tokens?.length) {
+      const fns = [...compound.matchAll(/::?[\w-]+\([^)]*\)/g)].map((m) => m[0]);
+      if (!fns.length || !fns.every((fn) => SUBJECT_PSEUDO.test(fn))) return true;
+      return canReachAnnouncement(fns.map((fn) => fn.slice(fn.indexOf('(') + 1, -1)).join(','));
+    }
+    return tokens.every((t) =>
+      t.startsWith('.')
+        ? announcementClasses.includes(t.slice(1))
+        : t.startsWith('[')
+        ? /^\[\s*role\b/.test(t)
+        : t.startsWith('#')
+        ? false
+        : t === 'div' || t === 'p' || t === '*'
+    );
+  });
 
 // Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
 // the matched line, so a declaration is its own scope. Trailing comments are stripped: a ledger pins
@@ -162,24 +226,29 @@ describe('login copy when the verification check cannot run', () => {
     expect(blockedNote.toLowerCase()).not.toContain('try again');
   });
 
-  // SCOPE for the two tests below: a source-text suite can show the region is not inside a Svelte block
-  // opened within the form, and that nothing in this file hides it. It CANNOT see an ancestor ELEMENT
-  // wrapped around it, so that hole stays open by construction rather than by oversight.
-  it('keeps the live region out of the block that conditions its content', () => {
+  // SCOPE for the two tests below: a source-text suite can show the region is a sibling of the form
+  // rather than a child of it, and that nothing in this file hides it. It CANNOT see an ancestor ELEMENT
+  // wrapped around the pair, so that hole stays open by construction rather than by oversight.
+  it('keeps the live region beside the form, out of its flex flow and out of its blocks', () => {
     // A role="status" created together with its text does not announce, and the note appears with no
-    // user action behind it. THREE claims, each with its own way of going green while broken:
+    // user action behind it. FOUR claims, each with its own way of going green while broken:
     //  - the note must be INSIDE the region (ordering alone survives moving the note below it),
     //  - the region must open NO block before the note (containment alone survives a nested
     //    `{#if captchaBlocked}{#if form}`, which is the wasted-submit regression by another spelling),
-    //  - the region must be UNCONDITIONAL (containment alone survives wrapping the whole region in
-    //    {#if fallbackActive} — the very fold the markup comment forbids — which hides the note
-    //    entirely in the no-managed-key config, where fallbackActive is never set).
+    //  - the region must sit OUTSIDE .email-form. As a flex child, an always-mounted empty region spends
+    //    the form's 0.6rem gap on every login page that never fills it, and the removals available from
+    //    inside are hiding (the no-announce shape) or `display: contents`, whose accessibility-tree
+    //    effect is a browser fact no test here can settle. Out of the container the empty div costs
+    //    nothing and the announcement rests on an ordinary in-flow role="status".
+    //  - the region must be exactly as conditional as the form it explains: no block may open or close
+    //    between the two, so anything that hides the region hides the form with it. (A block wrapping
+    //    BOTH is not caught and does not need to be — it takes the form away too, so no user is left
+    //    looking at a form with no explanation.)
     // Every anchor is read from the comment-stripped copy: a comment can spell any token a guard looks
     // for, the comment forbidding the fold included, and that comment is what an edit folding it rewrites.
     expect(markup, 'no role="status" wrapper found').toMatch(LIVE_REGION_TAG);
 
-    const region =
-      markup.match(new RegExp(LIVE_REGION_TAG.source + '([\\s\\S]*?)<\\/div>'))?.[1] ?? '';
+    const region = liveRegionInner;
     expect(region, 'live region is present but empty').toContain('{#if captchaBlocked}');
     // The note sits at depth 1 inside the region: exactly ONE block opened before it and none closed.
     // A prefix match is not enough — `{#if captchaBlocked}{#if form}` still starts with the right
@@ -190,18 +259,39 @@ describe('login copy when the verification check cannot run', () => {
     expect((beforeNote.match(/\{#/g) ?? []).length, 'extra block opened before the note').toBe(1);
     expect((beforeNote.match(/\{\//g) ?? []).length).toBe(0);
 
-    // Unconditional == every block opened since the form tag is also closed before the region. Block
-    // counting runs over the unquoted text: stripping quoted spans pairs the apostrophe in "Couldn't"
-    // with the next quote and swallows a {/if}, and the prose that would justify stripping lives in
-    // comments, which are already gone.
+    // Sibling, above the form. Block counting runs over the unquoted text: stripping quoted spans pairs
+    // the apostrophe in "Couldn't" with the next quote and swallows a {/if}, and the prose that would
+    // justify stripping lives in comments, which are already gone.
     const formStart = markup.search(EMAIL_FORM_ANCHOR);
-    const regionStart = markup.search(LIVE_REGION_TAG);
-    // Without these the slice can silently go empty (anchor lost → -1, or region moved above the
+    // Without these the slice can silently go empty (anchor lost → -1, or the region moved below the
     // form → start > end), and `0 === 0` would pass with the region wrapped in a condition.
     expect(formStart, 'email-form anchor not found').toBeGreaterThan(-1);
-    expect(regionStart).toBeGreaterThan(formStart);
-    const between = markup.slice(formStart, regionStart);
-    expect((between.match(/\{#/g) ?? []).length).toBe((between.match(/\{\//g) ?? []).length);
+    expect(LIVE_REGION, 'live region has no closing tag').not.toBeNull();
+    const regionStart = LIVE_REGION?.index ?? -1;
+    expect(regionStart, 'live region not found in the markup').toBeGreaterThan(-1);
+    expect(
+      regionStart,
+      'the live region is not above the email form. Inside or after it, the region is a flex child of ' +
+        '.email-form and spends a 0.6rem gap on every login page that never fills it.'
+    ).toBeLessThan(formStart);
+    const between = markup.slice(regionStart + (LIVE_REGION?.[0].length ?? 0), formStart);
+    expect(
+      (between.match(/\{[#/]/g) ?? []).length,
+      'a Svelte block opens or closes between the live region and the form it explains'
+    ).toBe(0);
+    // …and no rule may put it back in the flow of a flex container it is no longer inside.
+    expect(
+      liveRegionClasses,
+      'the live region carries no class, so no rule in this file can be checked against it'
+    ).not.toHaveLength(0);
+    const putBackInFlow = liveRegionClasses.some((cls) =>
+      new RegExp(`\\.${cls}\\b[^{}]*\\{[^}]*display:\\s*contents`).test(styles)
+    );
+    expect(
+      putBackInFlow,
+      '`display: contents` is back on the live region. It buys 0.6rem of gap against an accessibility-tree ' +
+        'claim this repo cannot verify; moving the region out of .email-form costs nothing instead.'
+    ).toBe(false);
   });
 
   it('never hides the live region while it is empty', () => {
@@ -221,38 +311,16 @@ describe('login copy when the verification check cannot run', () => {
 
     // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
     // banning it reds a legitimate `:not(:empty) { margin… }`.
-    // Only rules that can REACH this region are searched. Banning the pair across the whole stylesheet
-    // reds on an ordinary responsive edit — a `@media` rule hiding the divider — under a name that
-    // blames the live region. The tag-level assertion above already covers the inline spelling.
     const hidingRules = [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
       .filter(([, , body]) => /display:\s*none|visibility:\s*hidden/.test(body))
       .map(([, selector]) => selector.trim().replace(/\s+/g, ' '));
-    // Reach is decided on the FINAL compound — the part that has to match the element itself. A token
-    // heuristic misses `.email-form :empty` (names no element yet matches) and false-positives on
-    // `div.foo` (names `div` yet cannot match). Pseudo-classes are dropped: these elements can satisfy
-    // `:empty` and friends, so they never rule anything out. The set covers BOTH the region and the
-    // note inside it — hiding either leaves nothing to announce.
-    const canReachAnnouncement = (selectorList: string) =>
-      selectorList.split(',').some((selector) => {
-        const compound =
-          selector
-            .trim()
-            .split(/[\s>+~]+/)
-            .filter(Boolean)
-            .pop() ?? '';
-        const tokens = compound
-          .replace(/::?[\w-]+(\([^)]*\))?/g, '')
-          .match(/[#.]?[\w*-]+|\[[^\]]*\]/g);
-        return (tokens ?? []).every((t) =>
-          t.startsWith('.')
-            ? announcementClasses.includes(t.slice(1))
-            : t.startsWith('[')
-            ? /^\[\s*role\b/.test(t)
-            : t.startsWith('#')
-            ? false
-            : t === 'div' || t === 'p' || t === '*'
-        );
-      });
+    // LIMIT, stated precisely because the assertion's name over-sells it: only rules whose FINAL
+    // COMPOUND can match the region or the note are searched (see canReachAnnouncement above). A rule
+    // hiding an ANCESTOR — `.card`, `main` — empties the announcement just as completely and is NOT
+    // searched. That is left open on purpose: an ancestor hide takes the entire login card down with
+    // it, which nobody can ship without noticing, whereas banning the pair across the whole stylesheet
+    // reds on an ordinary responsive edit — a `@media` rule hiding the divider — under a name that
+    // blames the live region. The tag-level assertion above covers the inline spelling.
     expect(announcementClasses, 'neither the region nor the note carries a class').not.toHaveLength(
       0
     );
@@ -264,21 +332,38 @@ describe('login copy when the verification check cannot run', () => {
     ).toEqual([]);
   });
 
-  it('keeps the always-mounted live region out of the form layout', () => {
-    // The region is mounted for every visitor, including the overwhelming majority who never see a
-    // note, and as a flex child of .email-form an empty one still spends a 0.6rem gap — every login
-    // page laid out around content that is not there. `display: contents` is the only removal that
-    // leaves the element in the accessibility tree; the alternatives are the hiding the test above
-    // bans. Whether the announcement survives it is a browser fact no test here can reach — that
-    // claim belongs to a manual check with a screen reader, not to this guard.
-    expect(
-      liveRegionClasses,
-      'the live region carries no class, so no rule can take it out of the flex flow'
-    ).not.toHaveLength(0);
-    const removedFromFlow = liveRegionClasses.some((cls) =>
-      new RegExp(`\\.${cls}\\b[^{}]*\\{[^}]*display:\\s*contents`).test(styles)
-    );
-    expect(removedFromFlow, 'no `display: contents` rule reaches the live region').toBe(true);
+  // INSTRUMENT CONTROL, not component coverage: this exercises the reach test above, which is the thing
+  // deciding whether the ban ever fires. A reassuring empty `hidingRules.filter(...)` is indistinguishable
+  // from a filter wired to nothing, so it is pinned against cases that MUST match and cases that must not.
+  // It does NOT read the stylesheet, so no CSS edit can red it — but it DOES read the two class names off
+  // the markup, so removing the class from the region or the note reds it here as well as elsewhere.
+  it('decides reach from the element the rule can actually match', () => {
+    const [regionClass] = liveRegionClasses;
+    const [noteClass] = blockedNoteClasses;
+    expect(regionClass, 'live region class not found').toBeTruthy();
+    expect(noteClass, 'blocked note class not found').toBeTruthy();
+    // Reaches: the region, the note, the role, and an argument-less pseudo, which names no element.
+    expect(canReachAnnouncement(`.${regionClass}`)).toBe(true);
+    expect(canReachAnnouncement(`.${noteClass}`)).toBe(true);
+    expect(canReachAnnouncement('[role="status"]')).toBe(true);
+    expect(canReachAnnouncement('.card :empty')).toBe(true);
+    expect(canReachAnnouncement(`.nope, .${regionClass}`)).toBe(true);
+    // A purely-pseudo final compound strips to NO tokens, where `every` is vacuously true. A SUBJECT
+    // pseudo is decided from its argument instead: `svg` cannot be the region or the note, the region's
+    // own class inside `:is()` can. Without that branch the first of these is a false positive.
+    expect(canReachAnnouncement('.badge :global(svg)')).toBe(false);
+    expect(canReachAnnouncement(`.badge :is(.${regionClass})`)).toBe(true);
+    // …and the INVERTING pseudos must NOT be read that way. `.card > :not(.divider)` genuinely hides
+    // the region (a direct child of .card — Svelte blocks create no elements), and `:has()` names a
+    // descendant, not the subject. Reading either argument as a subject filter reports both as unable
+    // to reach, which is the one answer this ban must never give about a rule that does hide it.
+    expect(canReachAnnouncement('.card > :not(.divider)')).toBe(true);
+    expect(canReachAnnouncement('.card :has(.divider)')).toBe(true);
+    expect(canReachAnnouncement(`.card :is(.divider):not(.${regionClass})`)).toBe(true);
+    // Does not reach: an unrelated element, an id, an ancestor-only compound.
+    expect(canReachAnnouncement('.badge svg')).toBe(false);
+    expect(canReachAnnouncement('div.divider')).toBe(false);
+    expect(canReachAnnouncement('#something')).toBe(false);
   });
 
   it('clears the unavailable verdict when the managed widget finally solves', () => {
@@ -375,22 +460,71 @@ describe('login copy when the verification check cannot run', () => {
     );
   });
 
-  it('releases the fallback commitment when its grace ends with a token', () => {
-    // probeTurnstile's withdrawal exit resolves to neither outcome, so whatever the caller committed
-    // to on the way in is left standing with nothing behind it. Here that commitment is
-    // `fallbackActive`, which gates the managed effect AND short-circuits triggerFallback — so a
-    // latched `true` holding no widget is a state no later failure can move: the token that caused
-    // the withdrawal is cleared by resetTurnstile() on the next submit, and the page keeps a disabled
-    // submit with no note for the rest of the session.
-    const writers = ledger('fallbackActive = (?:true|false)');
-    expect(writers).toEqual([
-      ['triggerFallback', 'if (data.turnstileManagedSiteKey) fallbackActive = true;'],
-      // Released only with no widget to destroy — unmounting a rendered one is unrecoverable.
-      ['$effect', 'if (managedWidgetId === undefined) fallbackActive = false;'],
-    ]);
+  it('hands the fallback commitment back at every exit that leaves the slot empty', () => {
+    // `fallbackActive` gates the managed effect AND short-circuits triggerFallback, while that effect's
+    // dependencies (fallbackActive, managedEl) do not move on a later failure — so a latched `true`
+    // holding no widget is a state nothing can reach. The token that let the page get there is cleared
+    // by resetTurnstile() on the next submit, and what is left is a disabled submit with no note, for
+    // the rest of the session. THREE exits reach it, and the suite pins all three together because
+    // fixing one and leaving the others is exactly what happened before:
+    //  - probeTurnstile's withdrawal, which resolves to neither outcome by design,
+    //  - the script being absent after the grace,
+    //  - a render() that produced no widget.
+    // A RENDERED widget must keep the commitment instead: that one re-derives a verdict through its own
+    // error-callback and is re-solved by resetTurnstile(), while the unmount would be unrecoverable.
+    // The three exits are asserted ONE BY ONE and BEFORE the ledgers, so a red names which regressed —
+    // the ledgers below fail identically for all three and would mask them behind one diff.
     const grace = markup.match(/probeTurnstile\(\{[\s\S]*?\n {4}\}\);/)?.[0] ?? '';
     expect(grace, 'the managed probe not found').not.toBe('');
-    expect(grace, 'the managed probe does not handle a withdrawal').toContain('onWithdrawn:');
+    expect(grace, 'the withdrawal exit does not hand the commitment back').toMatch(
+      /onWithdrawn: releaseFallbackIfEmpty,/
+    );
+    const absent = grace.match(/onScriptAbsent: \(\) => \{([\s\S]*?)\n {6}\},/)?.[1];
+    expect(absent, 'the script-absent handler not found').toBeDefined();
+    expect(absent ?? '', 'the script-absent exit does not hand the commitment back').toContain(
+      'releaseFallbackIfEmpty();'
+    );
+    expect(NO_WIDGET_BRANCH, 'no branch for a render that produced no widget').toBeDefined();
+    expect(
+      NO_WIDGET_BRANCH ?? '',
+      'the no-widget render exit does not hand the commitment back'
+    ).toContain('releaseFallbackIfEmpty();');
+
+    // ONE WRITER of the release, so the guard on "no widget to destroy" cannot be dropped at one site
+    // only, and no fourth route can set the commitment behind the ledger.
+    expect(ledger('fallbackActive = (?:true|false)')).toEqual([
+      ['releaseFallbackIfEmpty', 'if (managedWidgetId === undefined) fallbackActive = false;'],
+      ['triggerFallback', 'if (data.turnstileManagedSiteKey) fallbackActive = true;'],
+    ]);
+    // …and the complete list of call sites, in FILE ORDER. This is what catches an EXTRA release (one
+    // added on a path that does hold a widget) and a release MOVED between handlers of the same effect,
+    // which the scope column alone cannot see — every handler there reports `$effect`.
+    expect(ledger('releaseFallbackIfEmpty')).toEqual([
+      ['releaseFallbackIfEmpty', 'const releaseFallbackIfEmpty = () => {'],
+      ['$effect', 'onWithdrawn: releaseFallbackIfEmpty,'],
+      ['$effect', 'releaseFallbackIfEmpty();'],
+      ['renderManagedWidget', 'releaseFallbackIfEmpty();'],
+    ]);
+  });
+
+  it('does not re-offer the fallback while an unavailable verdict stands', () => {
+    // The two exits that CONCLUDE the verdict also hand the commitment back, so re-entry is open while
+    // the verdict is on screen — and nothing clears the verdict except a token. Reachable: api.js is
+    // `async defer`, so it can land after the grace, auto-render the invisible widget, and have that
+    // widget error. Re-entering then renders a live, SOLVABLE managed challenge with its prompt
+    // suppressed and its box collapsed (both gated on captchaBlocked) directly under a role="status"
+    // note telling the user email login cannot complete and to reload — the screen contradicting
+    // itself about the user's own situation. The same re-entry overwrites captchaFailReason, recording
+    // an unrecoverable submit as recoverable in the server's no_token split.
+    // The term cannot trap anyone, which is the constraint every guard here answers to: captchaPending
+    // is false whenever captchaUnavailable is true, so the submit is already released and the server is
+    // the sole gate; and both success callbacks clear the verdict, so a token — the one thing that
+    // proves the check CAN run here — re-opens re-entry immediately.
+    const guard = normalize(
+      markup.match(/function triggerFallback\(reason: string\) \{\n([^\n]*)/)?.[1] ?? ''
+    );
+    expect(guard, 'triggerFallback does not open with a short-circuit').not.toBe('');
+    expect(guard).toBe('if (captchaToken || fallbackActive || captchaUnavailable) return;');
   });
 
   it('asks nobody to solve a challenge that is not on screen', () => {
@@ -412,10 +546,9 @@ describe('login copy when the verification check cannot run', () => {
     expect(ledger('managedWidgetShown = true')).toEqual([
       ['renderManagedWidget', 'managedWidgetShown = true;'],
     ]);
-    const renderBody = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n  \}/)?.[0] ?? '';
-    expect(renderBody, 'renderManagedWidget body not found').not.toBe('');
-    expect(renderBody.indexOf('managedWidgetShown = true')).toBeGreaterThan(
-      renderBody.indexOf('ts.render(managedEl')
+    expect(RENDER_BODY, 'renderManagedWidget body not found').not.toBe('');
+    expect(RENDER_BODY.indexOf('managedWidgetShown = true')).toBeGreaterThan(
+      RENDER_BODY.indexOf('ts.render(managedEl')
     );
   });
 
@@ -423,14 +556,13 @@ describe('login copy when the verification check cannot run', () => {
     expect(markup, 'the render() return type is declared as always-a-string').toMatch(
       /render: \([^)]*\) => string \| null \| undefined;/
     );
-    const renderBody = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n  \}/)?.[0] ?? '';
-    expect(renderBody, 'renderManagedWidget body not found').not.toBe('');
+    expect(RENDER_BODY, 'renderManagedWidget body not found').not.toBe('');
     // A throw out of render() is the same outcome by a quieter route, so it lands in the same branch.
     // The call being inside a try is the claim; how the catch spells it is not — an empty body is safe,
     // because `let id` with no initializer is already undefined. What is NOT safe is a catch that
     // assigns a STRING: that walks past the branch below and reaches the mirror with an id naming no
     // widget, which is the trap again with a container-only check satisfied.
-    const catchBody = renderBody.match(/\} catch \{([\s\S]*?)\n    \}/)?.[1];
+    const catchBody = RENDER_BODY.match(/\} catch \{([\s\S]*?)\n {4}\}/)?.[1];
     expect(catchBody, 'render() is not called inside a try').toBeDefined();
     expect(catchBody ?? '', 'the catch leaves a string in `id`').not.toMatch(
       /\bid\s*=\s*(?!undefined\b|null\b)\S/
@@ -438,19 +570,13 @@ describe('login copy when the verification check cannot run', () => {
     // A bare `return` is the other spelling that passes a container-only check and skips the branch,
     // leaving no widget, no verdict and a gated submit.
     expect(catchBody ?? '', 'the catch returns before the branch below').not.toMatch(/\breturn\b/);
-    // …and managedWidgetId must stay a plain let. The effect guards on it and renderManagedWidget writes
-    // it, so as $state that effect would depend on a value it writes and re-attempt the render.
-    expect(markup, 'managedWidgetId is reactive').toMatch(
-      /^ {2}let managedWidgetId: string \| undefined;$/m
-    );
-    const failure = renderBody.match(/if \(typeof id !== 'string'\) \{([\s\S]*?)\n    \}/)?.[1];
-    expect(failure, 'no branch for a render that produced no widget').toBeDefined();
-    expect(failure).toContain("captchaFailReason = 'fallback-error';");
-    expect(failure).toContain('concludeUnavailable();');
-    expect(failure).toContain('return;');
+    expect(NO_WIDGET_BRANCH, 'no branch for a render that produced no widget').toBeDefined();
+    expect(NO_WIDGET_BRANCH).toContain("captchaFailReason = 'fallback-error';");
+    expect(NO_WIDGET_BRANCH).toContain('concludeUnavailable();');
+    expect(NO_WIDGET_BRANCH).toContain('return;');
     // …and the mirror must be set only past that branch, or it claims a widget that does not exist.
-    expect(renderBody.indexOf('managedWidgetShown = true')).toBeGreaterThan(
-      renderBody.indexOf("if (typeof id !== 'string')")
+    expect(RENDER_BODY.indexOf('managedWidgetShown = true')).toBeGreaterThan(
+      RENDER_BODY.indexOf("if (typeof id !== 'string')")
     );
   });
 
@@ -458,15 +584,16 @@ describe('login copy when the verification check cannot run', () => {
     // Gating it on `form` would mean the user learns only after spending a rate-limit slot.
     const condition = pageSource.match(/\{#if captchaBlocked[^}]*\}/)?.[0] ?? '';
     expect(condition).toBe('{#if captchaBlocked}');
-    // …and it sits inside the email form, above the submit button, so it is read before the click.
-    // Anchor on the email submit's own markup: the logout form has a `<button type="submit">` too.
-    const formStart = markup.search(EMAIL_FORM_ANCHOR);
+    // …and it is read before the click. Anchor on the email submit's own markup: the logout form has a
+    // `<button type="submit">` too. The region's own placement relative to the form is pinned by the
+    // test above, from a different anchor; this one only has to put the NOTE ahead of the button.
     const noteStart = markup.indexOf('{#if captchaBlocked}');
     const submitStart = markup.indexOf('disabled={submitting || captchaPending}');
-    expect(formStart).toBeGreaterThan(-1);
-    expect(submitStart).toBeGreaterThan(-1);
-    expect(noteStart).toBeGreaterThan(formStart);
-    expect(noteStart).toBeLessThan(submitStart);
+    expect(noteStart, 'the blocked note is not in the markup').toBeGreaterThan(-1);
+    expect(submitStart, 'the email submit button was not found').toBeGreaterThan(-1);
+    expect(noteStart, 'the blocked note is not above the submit button it explains').toBeLessThan(
+      submitStart
+    );
   });
 
   it('replaces the generic "try again" message on the blocked path, and keeps it otherwise', () => {
