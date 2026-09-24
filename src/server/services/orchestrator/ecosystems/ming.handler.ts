@@ -10,5 +10,10 @@ export const createMingInput = defineHandler<MingCtx, [ImageGenStepTemplate]>((d
   for (const resource of data.resources ?? []) {
     loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
   }
-  return [buildMingStep(data, Object.keys(loras).length ? loras : undefined)];
+  return [
+    buildMingStep(data, {
+      loras: Object.keys(loras).length ? loras : undefined,
+      diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+    }),
+  ];
 });

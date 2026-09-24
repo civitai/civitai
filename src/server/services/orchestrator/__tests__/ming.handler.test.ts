@@ -12,6 +12,11 @@ const ext: GenerationCtx = {
   flags: {},
   gateRules: [],
 };
+/**
+ * The locked default from `ecosystemSettings` → ECO.Ming. Written out rather than imported: the
+ * point is that changing which version the generator bills against has to be deliberate.
+ */
+const mingVersionId = 3355635;
 const image = { url: 'https://example.com/reference.png', width: 1200, height: 800 };
 const base = { workflow: 'txt2img', ecosystem: 'Ming', prompt: 'A teal poster', seed: 42 };
 const parsers = {
@@ -28,9 +33,9 @@ describe.each(Object.entries(parsers))('Ming %s graph and request', (_lane, pars
     return result.data;
   }
 
-  it('uses the built-in checkpoint without a model card or stale model ID', () => {
+  it('locks the checkpoint to the official version and rejects a stale model ID', () => {
     const parsed = data({ model: { id: 123, baseModel: 'SD 1.5' } });
-    expect(parsed).not.toHaveProperty('model');
+    expect(parsed.model).toEqual({ id: mingVersionId, model: { type: 'Checkpoint' } });
     expect(buildMingStep(parsed)).toEqual({
       $type: 'imageGen',
       input: {
@@ -50,6 +55,14 @@ describe.each(Object.entries(parsers))('Ming %s graph and request', (_lane, pars
         outputFormat: 'jpeg',
       },
     });
+  });
+
+  // Without the AIR the orchestrator still picks the right checkpoint, but the job reports no
+  // resource, so the version's generation count never moves.
+  it('carries the checkpoint AIR so generations are attributed to the version', () => {
+    const diffusionModel = `urn:air:ming:checkpoint:civitai:2961930@${mingVersionId}`;
+    expect(buildMingStep(data(), { diffusionModel }).input).toMatchObject({ diffusionModel });
+    expect(buildMingStep(data()).input).not.toHaveProperty('diffusionModel');
   });
 
   it.each(mingResolutions)('sends supported dimensions for every %s aspect ratio', (resolution) => {
@@ -135,7 +148,7 @@ describe.each(Object.entries(parsers))('Ming %s graph and request', (_lane, pars
       outputFormat: 'png',
     });
     const loras = { 'urn:air:ming:lora:civitai:1@2': 0.75 };
-    expect(buildMingStep(parsed, loras).input).toMatchObject({
+    expect(buildMingStep(parsed, { loras }).input).toMatchObject({
       prompt,
       cfgScale: 3,
       steps: 33,

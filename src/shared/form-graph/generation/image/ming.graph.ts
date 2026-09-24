@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { mingAspectRatios, mingResolutions } from '~/shared/constants/ming.constants';
+import { checkpointDef } from '../checkpoint';
 import { SEED, aspectRatioDef, img2imgImages, resourcesDef, sliderDef } from '../defs';
 import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
-/** Uses the built-in Design checkpoint without depending on an official model card. */
+// The locked default version comes from `ecosystemSettings` rather than an argument here, so the
+// id the picker shows and the AIR the handler bills against cannot drift apart.
 export const ming = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('model', ({ _ext }) =>
+    checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
+  )
   .field('resources', ({ _ext }) =>
     resourcesDef({
       ecosystem: _ext.ecosystem,

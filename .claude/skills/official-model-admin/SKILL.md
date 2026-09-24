@@ -94,11 +94,19 @@ downloads to anyone's machine. Then:
 
 ```bash
 node .claude/skills/official-model-admin/model.mjs hf-imports --repo <owner/name>
-node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --writable
+node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --fp bf16 --writable
 ```
 
 `hf-imports` lists each transferred file with its size, state, group and a suggested type;
 `attach-import` creates the model file on your version, and scanning and hashing follow on their own.
+
+**`--fp` names the precision**, one of `constants.modelFileFp`, and `--optional` marks a file the
+version does not need (`metadata.isRequired: false`). The attach itself writes only `format`, so
+without `--fp` a repo that ships several quantizations lists them all as untyped precision and the
+download picker cannot tell them apart. It is **not** inferable from the filename — `w4a8` is
+`int4` — so read the publisher's own naming. A repackaged Comfy-Org repo is the common case; see
+Qwen Image 2.1 (version 3352534) for a worked set: `bf16` / `int8` diffusion models, one `bf16` VAE,
+and text encoders at `bf16` / `int8` / `int4`.
 
 Both filters run on the server. `--repo` is an **exact** match against the repo id Hugging Face
 returned rather than what was pasted, so its casing must be HF's; `--group` is a case-insensitive
@@ -140,6 +148,7 @@ A new version can't be generated until it has coverage. Add that with the `gener
 ## Other commands
 
 - **`create-model --name <n> --description-file <html> [--type Checkpoint]`** creates a `Draft` model owned by you, because `model.upsert` always makes the caller the owner. It then transfers it to CivitaiOfficial (`--owner-id` overrides the target). If the transfer fails, the model still exists under your account, and the script prints a `transfer` command to retry with.
+  - It sets the **`base model` category tag** and, for a `Checkpoint`, **checkpoint type `Trained`**, which is what every CivitaiOfficial mirror carries. A mirror is someone else's trained weights, never a merge, so there is no flag to pick `Merge` here.
 - **`update-description --model-id <id> --description-file <html>`** sends the model's current `name`, `type`, `uploadType` and `status` together with the new description.
   - On an update, `model.upsert` ignores `status` and leaves every optional field it isn't sent untouched, so tags, licensing and NSFW settings survive.
   - It reads the description back afterwards, and warns if the server's sanitizing or blurb expansion changed it.

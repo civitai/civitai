@@ -1059,7 +1059,6 @@ const sdxlSiblingAddonTypes = [
 ];
 
 export const ecosystemSupport: EcosystemSupport[] = [
-  { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
   // SD1 - full addon support
   { ecosystemId: ECO.SD1, supportType: 'generation', modelTypes: fullAddonTypes },
   { ecosystemId: ECO.SD1, supportType: 'training', modelTypes: loraOnly },
@@ -1254,6 +1253,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
 
+  // Ming - checkpoint and LORA; the Layer checkpoint has no backend route yet
+  { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // Boogu - checkpoint and LORA (training upcoming per orchestrator)
   { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1300,7 +1302,6 @@ export const ecosystemSupport: EcosystemSupport[] = [
 // =============================================================================
 
 export const ecosystemSettings: EcosystemSettings[] = [
-  { ecosystemId: ECO.Ming, defaults: { modelLocked: true, engine: 'comfy' } },
   {
     ecosystemId: ECO.SD1,
     defaults: {
@@ -1793,6 +1794,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MageFlow,
     defaults: {
       model: { id: 3172038 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Ming,
+    defaults: {
+      model: { id: 3355635 },
       modelLocked: true,
     },
   },
@@ -2766,24 +2774,6 @@ export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f
 // =============================================================================
 
 export const baseModelRecords: BaseModelRecord[] = [
-  // Ming Image: separate checkpoints for generation and layer decomposition.
-  {
-    id: BM.Ming,
-    name: 'Ming Image Design 0.1',
-    description: "inclusionAI's image generation and editing model for graphic design",
-    type: 'image',
-    ecosystemId: ECO.Ming,
-    licenseId: 19,
-  },
-  {
-    id: BM.MingLayer,
-    name: 'Ming Image Design Layer 0.1',
-    description: "inclusionAI's model for decomposing designs into transparent RGBA layers",
-    type: 'image',
-    ecosystemId: ECO.MingLayer,
-    licenseId: 19,
-  },
-
   // Anima
   {
     id: BM.Anima,
@@ -3670,6 +3660,24 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.ZImageBase,
     licenseId: 13,
+  },
+
+  // Ming Image: separate checkpoints for generation and layer decomposition.
+  {
+    id: BM.Ming,
+    name: 'Ming Image Design 0.1',
+    description: "inclusionAI's image generation and editing model for graphic design",
+    type: 'image',
+    ecosystemId: ECO.Ming,
+    licenseId: 19,
+  },
+  {
+    id: BM.MingLayer,
+    name: 'Ming Image Design Layer 0.1',
+    description: "inclusionAI's model for decomposing designs into transparent RGBA layers",
+    type: 'image',
+    ecosystemId: ECO.MingLayer,
+    licenseId: 19,
   },
 
   // Vidu Q1

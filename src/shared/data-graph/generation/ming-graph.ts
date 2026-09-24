@@ -4,6 +4,7 @@ import { mingAspectRatios, mingResolutions } from '~/shared/constants/ming.const
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
   negativePromptGraph,
@@ -14,9 +15,10 @@ import {
   triggerWordsGraph,
 } from './common';
 
-// The backend owns the built-in Design checkpoint. A Civitai model card can be
-// linked later without inventing a version ID or requiring one to generate.
+// The locked default version comes from `ecosystemSettings` rather than an argument here, so the
+// id the picker shows and the AIR the handler bills against cannot drift apart.
 export const mingGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+  .merge(createCheckpointGraph())
   .merge(createResourcesGraph({ resourceTypes: ['LORA'] }))
   .node('resolution', {
     input: z.enum(mingResolutions).optional(),

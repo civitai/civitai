@@ -1,27 +1,13 @@
-import type { ComfyImageGenInput, ImageGenStepTemplate } from '@civitai/orchestration-client';
+import type {
+  ComfyMingDesignCreateImageGenInput,
+  ComfyMingDesignEditImageGenInput,
+  ComfyImageGenInput,
+  ImageGenStepTemplate,
+} from '@civitai/orchestration-client';
 import type { MingResolution } from '~/shared/constants/ming.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
-// The published client predates Ming. Extend its open Comfy input with the
-// fields in ComfyMingDesignCreateImageGenInput / ComfyMingDesignEditImageGenInput.
-// This uses the actual route contract without casting to another model's input.
-type MingCommonInput = ComfyImageGenInput & {
-  ecosystem: 'ming';
-  model: 'design';
-  prompt: string;
-  negativePrompt?: string;
-  cfgScale?: number;
-  steps?: number;
-  seed?: number;
-  quantity: number;
-  scheduler: 'simple';
-  loras?: Record<string, number>;
-};
-type MingInput = MingCommonInput &
-  (
-    | { operation: 'createImage'; sampler: 'euler'; width: number; height: number }
-    | { operation: 'editImage'; sampler: 'lcm'; images: string[]; resolution: number }
-  );
+type MingInput = ComfyMingDesignCreateImageGenInput | ComfyMingDesignEditImageGenInput;
 
 export type MingRequestData = {
   workflow?: string;
@@ -39,13 +25,14 @@ export type MingRequestData = {
 
 export function buildMingStep(
   data: MingRequestData,
-  loras?: Record<string, number>
+  options?: { loras?: Record<string, number>; diffusionModel?: string }
 ): ImageGenStepTemplate {
-  const common: MingCommonInput = {
+  const common = {
     engine: 'comfy',
     ecosystem: 'ming',
     model: 'design',
     prompt: data.prompt ?? '',
+    // Ming runs at cfgScale 1, where the negative prompt has no effect at all.
     negativePrompt: (data.cfgScale ?? 1) === 1 ? undefined : data.negativePrompt,
     cfgScale: data.cfgScale,
     steps: data.steps,
@@ -53,8 +40,12 @@ export function buildMingStep(
     quantity: data.quantity ?? 1,
     scheduler: 'simple',
     outputFormat: data.outputFormat,
-    loras,
-  };
+    loras: options?.loras,
+    // The `model` string alone selects the checkpoint; the AIR is what makes the job count
+    // against our model version's generations. Same reasoning as the Mage Flow handler.
+    diffusionModel: options?.diffusionModel,
+  } as const;
+
   let input: MingInput;
   if (data.workflow === 'img2img:edit') {
     if (!data.images?.length || data.images.length > 3)
@@ -65,7 +56,9 @@ export function buildMingStep(
       sampler: 'lcm',
       images: data.images.map((image) => image.url),
       resolution: data.resolution === '2K' ? 2048 : 1024,
-    };
+      // `width`/`height` are `readonly` on the edit input: the route derives them from the first
+      // reference image's aspect ratio, so the cast is asserting we deliberately send neither.
+    } as ComfyMingDesignEditImageGenInput;
   } else {
     if (data.workflow !== 'txt2img') throw new Error('Unsupported Ming Image workflow.');
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for Ming Image generation.');
