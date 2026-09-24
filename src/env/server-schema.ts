@@ -892,6 +892,22 @@ export const serverSchema = z
     // versioning enabled, that rule would hide objects rather than remove them and the
     // bucket would still grow without limit.
     S3_UPLOAD_B2_QUARANTINE_BUCKET: z.string().optional(),
+    // 🔴 A SEPARATE CREDENTIAL, AND IT HAS TO BE ACCOUNT-WIDE — WHICH IS EXACTLY WHY IT IS NOT
+    // THE UPLOAD CREDENTIAL. A server-side copy reads one bucket and writes another in a single
+    // call, so one credential must be authorised for both; B2 pins a restricted key to exactly
+    // one bucket, so no bucket-scoped key can ever perform it. Rather than widen the key used by
+    // every model-file upload, download and presign from one bucket to the whole account, the
+    // wide credential is confined to the quarantine path and nothing else reads these.
+    //
+    // 🔴 Grant it FILE capabilities only — read/write/delete/list. It needs nothing that can
+    // create, delete or reconfigure a bucket, and nothing that can mint another key. It is
+    // account-wide in SCOPE out of necessity; it should not be account-wide in POWER.
+    //
+    // Endpoint and region are deliberately NOT duplicated — `getQuarantineS3Client` reuses
+    // `S3_UPLOAD_B2_ENDPOINT`/`_REGION`, because it is the same B2 account and a second copy of
+    // those values is a second thing to get wrong.
+    S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY: z.string().optional(),
+    S3_UPLOAD_B2_QUARANTINE_SECRET_KEY: z.string().optional(),
 
     // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
     S3_IMAGE_B2_ENDPOINT: z.string().optional(),

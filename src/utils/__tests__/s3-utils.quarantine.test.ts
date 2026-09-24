@@ -27,6 +27,8 @@ const envState = vi.hoisted(
       S3_UPLOAD_B2_SECRET_KEY: 'b2-secret',
       S3_UPLOAD_B2_BUCKET: 'civitai-modelfiles-b2',
       S3_UPLOAD_B2_QUARANTINE_BUCKET: 'civitai-quarantine',
+      S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY: 'quarantine-key',
+      S3_UPLOAD_B2_QUARANTINE_SECRET_KEY: 'quarantine-secret',
     } as Record<string, unknown>)
 );
 
@@ -37,9 +39,14 @@ vi.mock('~/env/server', () => ({
 }));
 
 const mocks = vi.hoisted(() => {
-  const copies: { bucket: string; key: string; copySource: string }[] = [];
-  const deletes: { bucket: string; key: string; versionId?: string }[] = [];
-  const heads: { bucket: string; key: string }[] = [];
+  // 🔴 `via` records WHICH CREDENTIAL made each call, and it is the only way a test can see the
+  // seam this change is about. Every S3Client here is the same class, so a copy captured by
+  // (bucket, key) alone looks identical whether it went out under the account-wide quarantine
+  // credential or the bucket-scoped upload one — and only the former can copy across buckets.
+  // Without this field, a regression that reverted the copy to the upload client would pass.
+  const copies: { bucket: string; key: string; copySource: string; via?: string }[] = [];
+  const deletes: { bucket: string; key: string; versionId?: string; via?: string }[] = [];
+  const heads: { bucket: string; key: string; via?: string }[] = [];
   // (bucket/key) -> ContentLength, or 'absent' for a 404, or null for "reported no size".
   const headSizes = new Map<string, number | null | 'absent'>();
   const state = { copyThrows: false, copySourceVersionId: undefined as string | undefined };
@@ -51,8 +58,8 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const mocked = {
     ...actual,
     S3Client: class {
-      cfg: { endpoint?: string };
-      constructor(cfg: { endpoint?: string } = {}) {
+      cfg: { endpoint?: string; credentials?: { accessKeyId?: string } };
+      constructor(cfg: { endpoint?: string; credentials?: { accessKeyId?: string } } = {}) {
         this.cfg = cfg;
       }
       // 🔴 DISPATCHES ON THE COMMAND TYPE rather than on which fields happen to be present.
@@ -65,9 +72,10 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
           const name = cmd?.constructor?.name;
           const bucket = input.Bucket ?? '';
           const key = input.Key ?? '';
+          const via = this.cfg?.credentials?.accessKeyId;
 
           if (name === 'HeadObjectCommand') {
-            mocks.heads.push({ bucket, key });
+            mocks.heads.push({ bucket, key, via });
             const v = mocks.headSizes.get(`${bucket}/${key}`);
             if (v === 'absent' || v === undefined) {
               const e = new Error('NotFound') as Error & { name: string };
@@ -78,11 +86,11 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
           }
           if (name === 'CopyObjectCommand') {
             if (mocks.state.copyThrows) throw new Error('copy exploded');
-            mocks.copies.push({ bucket, key, copySource: input.CopySource ?? '' });
+            mocks.copies.push({ bucket, key, copySource: input.CopySource ?? '', via });
             return { CopySourceVersionId: mocks.state.copySourceVersionId };
           }
           if (name === 'DeleteObjectCommand') {
-            mocks.deletes.push({ bucket, key, versionId: input.VersionId });
+            mocks.deletes.push({ bucket, key, versionId: input.VersionId, via });
             return {};
           }
           return {};
@@ -114,6 +122,8 @@ beforeEach(() => {
   mocks.state.copyThrows = false;
   mocks.state.copySourceVersionId = undefined;
   envState.S3_UPLOAD_B2_QUARANTINE_BUCKET = 'civitai-quarantine';
+  envState.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY = 'quarantine-key';
+  envState.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY = 'quarantine-secret';
   dbMock.dbWrite.modelFile.findMany.mockReset();
   refcountAllows();
 });
@@ -160,7 +170,10 @@ describe('deleteModelFileObject — quarantine opt-out (default)', () => {
     const out = await deleteModelFileObject(B2_URL, 1);
     expect(out).toEqual({ deleted: true });
     expect(mocks.copies).toHaveLength(0);
-    expect(mocks.deletes).toEqual([{ bucket: SRC, key: KEY, versionId: undefined }]);
+    // 🔴 The UPLOAD credential. Existing callers must keep the bucket-scoped key they have —
+    // routing them through the account-wide quarantine credential would silently widen the
+    // authority of every model-file delete in the product.
+    expect(mocks.deletes).toEqual([{ bucket: SRC, key: KEY, versionId: undefined, via: 'b2-key' }]);
   });
 
   it('issues no HeadObject either', async () => {
@@ -186,12 +199,21 @@ describe('deleteModelFileObject — quarantine enabled', () => {
         bucket: 'civitai-quarantine',
         key: QKEY,
         copySource: `${SRC}/${KEY}`.split('/').map(encodeURIComponent).join('/'),
+        // 🔴 The QUARANTINE credential, not the upload one. Measured against live B2: the
+        // bucket-scoped upload key HEADs its own bucket fine and its cross-bucket CopyObject is
+        // refused `not entitled`, so a copy issued under it cannot work in production no matter
+        // how the call is shaped.
+        via: 'quarantine-key',
       },
     ]);
     // 🔴 THE ASSERTION THIS WHOLE FILE EXISTS FOR. A delete carrying no VersionId against a
     // versioned bucket writes a delete marker and frees nothing, so quarantine would hold the
     // bytes in two places and release them from neither — while still reporting success.
-    expect(mocks.deletes).toEqual([{ bucket: SRC, key: KEY, versionId: 'ver-abc' }]);
+    expect(mocks.deletes).toEqual([
+      // Same credential as the copy. A delete predicated on that copy but authorised
+      // separately could be permitted while the copy was refused, or the reverse.
+      { bucket: SRC, key: KEY, versionId: 'ver-abc', via: 'quarantine-key' },
+    ]);
   });
 
   it('passes VersionId undefined when the backend reports no source version', async () => {
@@ -202,7 +224,9 @@ describe('deleteModelFileObject — quarantine enabled', () => {
 
     const out = await deleteModelFileObject(B2_URL, 1, { quarantine: true });
     expect(out).toEqual({ deleted: true });
-    expect(mocks.deletes).toEqual([{ bucket: SRC, key: KEY, versionId: undefined }]);
+    expect(mocks.deletes).toEqual([
+      { bucket: SRC, key: KEY, versionId: undefined, via: 'quarantine-key' },
+    ]);
   });
 
   it('refuses and deletes NOTHING when no quarantine bucket is configured', async () => {
@@ -214,6 +238,22 @@ describe('deleteModelFileObject — quarantine enabled', () => {
     expect(out).toEqual({ deleted: false, reason: 'quarantine-not-configured' });
     expect(mocks.deletes).toHaveLength(0);
     expect(mocks.copies).toHaveLength(0);
+  });
+
+  it('🔴 refuses when the quarantine CREDENTIAL is missing, even with a bucket configured', async () => {
+    // The bucket and the credential are separate config, and a bucket without a key is a
+    // half-configured deployment. Falling back to the upload client here would be the worst
+    // outcome available: that key cannot copy across buckets, so the copy would fail — but if the
+    // fallback were to the plain-delete path instead, the object would be removed with no copy
+    // behind it at all.
+    envState.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY = undefined;
+    mocks.headSizes.set(`${SRC}/${KEY}`, 1024);
+
+    const out = await deleteModelFileObject(B2_URL, 1, { quarantine: true });
+
+    expect(out).toEqual({ deleted: false, reason: 'quarantine-not-configured' });
+    expect(mocks.copies).toHaveLength(0);
+    expect(mocks.deletes).toHaveLength(0);
   });
 
   it('🔴 refuses when the quarantine bucket is the SOURCE bucket', async () => {

@@ -408,6 +408,44 @@ export function getQuarantineBucket(backend: 'b2' | 'default'): string | undefin
 }
 
 /**
+ * A client for the quarantine path, or `undefined` when one is not configured.
+ *
+ * 🔴 WHY THIS IS NOT `getB2S3Client()`, WHICH WOULD HAVE BEEN ONE LINE INSTEAD OF THIS BLOCK.
+ * A server-side copy is a single call that reads from one bucket and writes to another, so ONE
+ * credential has to be authorised for both. B2 pins a restricted application key to exactly one
+ * bucket, so no bucket-scoped key can ever perform this copy — the copying credential is
+ * necessarily account-wide.
+ *
+ * The upload credential is bucket-scoped, and it is used by every model-file upload, download and
+ * presign in the application. Reusing it here is impossible; widening IT to account-wide to make
+ * this work would broaden the hottest storage path in the product from one bucket to the whole
+ * account, to enable a nightly cleanup job. So the wide credential is confined to this path
+ * instead, and it is the only thing that uses it.
+ *
+ * 🔴 The whole quarantine sequence uses this one client — head source, copy, head copy, delete
+ * source. Mixing clients mid-sequence would mean the delete ran under a different authorisation
+ * than the copy it is predicated on, which is how a verified copy ends up paired with a delete
+ * that was never actually permitted to be conditional on it.
+ *
+ * Endpoint and region are shared with the upload client deliberately: it is the same B2 account,
+ * and a second copy of those values is a second thing to get wrong.
+ */
+export function getQuarantineS3Client(): S3Client | undefined {
+  if (!env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY || !env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY)
+    return undefined;
+  if (!env.S3_UPLOAD_B2_ENDPOINT) return undefined;
+  return new S3Client({
+    credentials: {
+      accessKeyId: env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY,
+      secretAccessKey: env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY,
+    },
+    region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+    endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+    forcePathStyle: true,
+  });
+}
+
+/**
  * Where an object lands in quarantine: its source bucket, then its original key.
  *
  * 🔴 THE SOURCE BUCKET PREFIX IS LOAD-BEARING, NOT DECORATION. Keys are only unique WITHIN a
@@ -574,10 +612,15 @@ export async function deleteModelFileObject(
   const { safe } = await urlsSafeToDelete([url], excludeId);
   if (safe.length === 0) return { deleted: false, reason: 'still-referenced' };
 
-  const s3 = target.backend === 'b2' ? getB2S3Client() : getS3Client();
-
   if (!quarantine) {
-    await deleteObject(target.bucket, target.key, s3);
+    // Constructed inside the branch: both client factories THROW on unconfigured credentials, and
+    // the quarantine path below does not use this client at all. Building it up-front would let a
+    // missing UPLOAD credential fail a quarantine delete that never needed it.
+    await deleteObject(
+      target.bucket,
+      target.key,
+      target.backend === 'b2' ? getB2S3Client() : getS3Client()
+    );
     return { deleted: true };
   }
 
@@ -591,8 +634,20 @@ export async function deleteModelFileObject(
   if (!quarantineBucket || quarantineBucket === target.bucket)
     return { deleted: false, reason: 'quarantine-not-configured' };
 
+  // 🔴 A DIFFERENT CLIENT FROM `s3` ABOVE, AND NOT AN OPTIMISATION — THE COPY IS IMPOSSIBLE
+  // WITHOUT IT. `s3` is the upload client, which B2 pins to a single bucket; a server-side copy
+  // needs one credential authorised for both source and destination. Measured against the live
+  // account: the upload key HEADs its own bucket fine and its CopyObject to another bucket is
+  // refused `not entitled`.
+  //
+  // Absent config lands on the same refusal as an absent bucket, for the same reason: there is no
+  // usable quarantine path, and guessing by falling back to the upload client would produce a
+  // delete with no copy behind it.
+  const quarantineS3 = getQuarantineS3Client();
+  if (!quarantineS3) return { deleted: false, reason: 'quarantine-not-configured' };
+
   const copied = await copyToQuarantine({
-    s3,
+    s3: quarantineS3,
     sourceBucket: target.bucket,
     key: target.key,
     quarantineBucket,
@@ -621,7 +676,13 @@ export async function deleteModelFileObject(
   //
   // `undefined` is the correct value for an UNVERSIONED backend — there the plain delete already
   // removes the bytes — so this one call is right for both without branching on the backend.
-  await s3.send(
+  //
+  // 🔴 `quarantineS3`, the SAME client that made the copy — not `s3`. The delete is predicated on
+  // that copy, so running it under a different authorisation splits one conditional action across
+  // two credentials: the copy could be permitted and the delete refused, or vice versa, and which
+  // half survives would depend on config nobody was looking at. One client for the whole
+  // sequence keeps "verified copy, then remove the source" a single decision.
+  await quarantineS3.send(
     new DeleteObjectCommand({
       Bucket: target.bucket,
       Key: target.key,
