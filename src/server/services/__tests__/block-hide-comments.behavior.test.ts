@@ -266,24 +266,24 @@ describe('THREAD_CONTENT_OWNERS agrees with getContentOwnerIdForComment', () => 
       : unquote(table)[0].toLowerCase() + unquote(table).slice(1);
 
   it.each(THREAD_CONTENT_OWNERS.map((o, i) => [o.column, i] as const))('%s', async (_, i) => {
-    const read = dbMock.dbRead as any;
+    const db = dbMock.dbWrite as any;
     const entry = THREAD_CONTENT_OWNERS[i];
 
-    read.commentV2.findUnique.mockResolvedValue({ hidden: false, threadId: 1 });
-    read.$queryRaw.mockResolvedValue([{ id: 2, rooted: true }]);
-    read.thread.findUnique.mockResolvedValue({
+    db.commentV2.findUnique.mockResolvedValue({ hidden: false, threadId: 1 });
+    db.$queryRaw.mockResolvedValue([{ id: 2, rooted: true }]);
+    db.thread.findUnique.mockResolvedValue({
       ...Object.fromEntries(Object.keys(threadContentSelect).map((key) => [key, null])),
       ...Object.fromEntries(THREAD_CONTENT_OWNERS.slice(i).map((o) => [o.column, 555])),
     });
     for (const other of THREAD_CONTENT_OWNERS) {
-      const finder = read[delegateOf(other.table)].findUnique;
+      const finder = db[delegateOf(other.table)].findUnique;
       finder.mockClear();
       finder.mockResolvedValue({ [camel(other.owner)]: other === entry ? 777 : 888 });
     }
 
     const { ownerId } = await getContentOwnerIdForComment(1);
 
-    expect(read[delegateOf(entry.table)].findUnique).toHaveBeenCalledWith({
+    expect(db[delegateOf(entry.table)].findUnique).toHaveBeenCalledWith({
       where: { [camel(entry.key)]: 555 },
       select: { [camel(entry.owner)]: true },
     });

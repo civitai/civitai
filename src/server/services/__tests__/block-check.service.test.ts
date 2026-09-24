@@ -26,7 +26,7 @@ import {
 } from '~/server/services/block-check.service';
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const mockDb = dbMock.dbRead;
+const mockDb = dbMock.dbWrite;
 
 const OWNER = 100;
 const VIEWER = 7;
@@ -45,6 +45,17 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
   it('resolves the post owner', async () => {
     mockDb.post.findUnique.mockResolvedValueOnce({ userId: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'post', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it.each([
+    ['article', 'article'],
+    ['question', 'question'],
+    ['answer', 'answer'],
+    ['bounty', 'bounty'],
+    ['bountyEntry', 'bountyEntry'],
+  ] as const)('resolves the %s owner', async (entityType, table) => {
+    mockDb[table].findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType, entityId: 1 })).toEqual([OWNER]);
   });
 
   it('resolves the model owner', async () => {
@@ -542,6 +553,123 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
       expect(await getBlockCheckOwnerIds({ entityType: 'comment', entityId: commentId })).toEqual([
         PARENT_AUTHOR,
       ]);
+    });
+  });
+});
+
+/**
+ * Every target here exists on the primary and not yet on the replica, as in the moments after it
+ * was written. The check must still find its owner.
+ */
+describe('block targets resolve from the primary, where the guarded write lands', () => {
+  const PARENT_AUTHOR = 55;
+  const PARENT = 10;
+  const REPLY = 11;
+  const MISSING = 12;
+  const IMAGE = 1;
+  const primaryComments: Record<number, { userId: number; threadId: number }> = {
+    [PARENT]: { userId: PARENT_AUTHOR, threadId: 50 },
+    [REPLY]: { userId: 56, threadId: 52 },
+  };
+  const primaryThreads: Record<number, { imageId?: number; commentId?: number }> = {
+    50: { imageId: IMAGE },
+    52: { commentId: PARENT },
+  };
+
+  beforeEach(() => {
+    const replica = dbMock.dbRead;
+    for (const fn of [
+      mockDb.$queryRaw,
+      mockDb.commentV2.findUnique,
+      mockDb.thread.findUnique,
+      mockDb.image.findUnique,
+      mockDb.post.findUnique,
+      mockDb.article.findUnique,
+      replica.$queryRaw,
+      replica.commentV2.findUnique,
+      replica.thread.findUnique,
+      replica.image.findUnique,
+      replica.post.findUnique,
+      replica.article.findUnique,
+    ])
+      fn.mockReset();
+    replica.$queryRaw.mockResolvedValue([] as never);
+    for (const table of ['commentV2', 'thread', 'image', 'post', 'article'] as const)
+      replica[table].findUnique.mockResolvedValue(null as never);
+
+    mockDb.commentV2.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => {
+      const c = primaryComments[where.id];
+      return c
+        ? { ...c, thread: { commentId: primaryThreads[c.threadId]?.commentId ?? null } }
+        : null;
+    }) as never);
+    // Every thread here tops out at 50, which is rooted on the image.
+    mockDb.$queryRaw.mockResolvedValue([{ id: 50, rooted: true }] as never);
+    mockDb.thread.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+      primaryThreads[where.id] ? { imageId: null, ...primaryThreads[where.id] } : null) as never);
+    mockDb.image.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+      where.id === IMAGE ? { userId: OWNER } : null) as never);
+  });
+
+  it('a reply to a comment the replica has not seen yet checks its author and content owner', async () => {
+    expect(await getBlockCheckOwnerIdsForReply(PARENT)).toEqual([PARENT_AUTHOR, OWNER]);
+  });
+
+  it('an edit of a reply the replica has not seen yet checks the parent author and content owner', async () => {
+    expect(await getBlockCheckOwnerIdsForComment(REPLY)).toEqual([PARENT_AUTHOR, OWNER]);
+  });
+
+  it('a write on content the replica has not seen yet is refused when its owner blocks', async () => {
+    amIBlockedByUser.mockImplementation(
+      async (args) => (args as { targetUserId: number }).targetUserId === OWNER
+    );
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: IMAGE })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it.each(['post', 'article'] as const)(
+    'a %s the replica has not seen yet resolves its owner from the primary',
+    async (entityType) => {
+      mockDb[entityType].findUnique.mockResolvedValue({ userId: OWNER } as never);
+      expect(await getBlockCheckOwnerIds({ entityType, entityId: IMAGE })).toEqual([OWNER]);
+    }
+  );
+
+  // Reactions on these are the highest-volume writes this guards, and the replica answers nearly all
+  // of them. Only a miss may cost a primary read: reading the primary first puts every one on it.
+  it.each(['image', 'post', 'article'] as const)(
+    'a %s the replica already has costs no primary read',
+    async (entityType) => {
+      dbMock.dbRead[entityType].findUnique.mockResolvedValue({ userId: OWNER } as never);
+      expect(await getBlockCheckOwnerIds({ entityType, entityId: IMAGE })).toEqual([OWNER]);
+      expect(mockDb[entityType].findUnique).not.toHaveBeenCalled();
+    }
+  );
+
+  // Reactions share the reply's lookup, so a reaction on a comment that does not exist is refused
+  // too, rather than reaching the write.
+  it('refuses a reaction on a comment the primary does not have', async () => {
+    await expect(
+      getBlockCheckOwnerIds({ entityType: 'comment', entityId: MISSING })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // Read from the primary, a missing comment does not exist. Refusing costs nothing on these paths
+  // and does not depend on the write failing later.
+  it('refuses a reply to a comment the primary does not have', async () => {
+    await expect(getBlockCheckOwnerIdsForReply(MISSING)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('refuses an edit of a comment the primary does not have', async () => {
+    await expect(getBlockCheckOwnerIdsForComment(MISSING)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
     });
   });
 });

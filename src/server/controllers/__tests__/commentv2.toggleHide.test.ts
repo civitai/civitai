@@ -116,7 +116,7 @@ const ctx = (id: number, isModerator = false) => ({ user: { id, isModerator } } 
 // Answers the stored-chain walk and, for a revert control, the previous `rootThreadId` read too.
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.commentV2.findUnique.mockImplementation((async ({
+  dbMock.dbWrite.commentV2.findUnique.mockImplementation((async ({
     where,
   }: {
     where: { id: number };
@@ -124,15 +124,18 @@ beforeEach(() => {
     const c = comments[where.id];
     return c ? { ...c, thread: threads[c.threadId] } : null;
   }) as never);
-  dbMock.dbRead.$queryRaw.mockImplementation((async (
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => runChainWalk(renderedSql(strings, values))) as never);
-  dbMock.dbRead.thread.findUnique.mockImplementation(
+  dbMock.dbWrite.thread.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) => threads[where.id] ?? null) as never
   );
-  dbMock.dbRead.image.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
-    imageOwners[where.id] ? { userId: imageOwners[where.id] } : null) as never);
+  dbMock.dbWrite.image.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => (imageOwners[where.id] ? { userId: imageOwners[where.id] } : null)) as never);
 });
 
 const toggle = (id: number, userId: number) =>
@@ -244,7 +247,7 @@ describe('commentv2 toggleHide: who may hide a single comment', () => {
   // The walk must follow the stored comment edge, never a pointer the first replier wrote.
   it('walks the stored Thread.commentId edge and ignores the client-written pointers', async () => {
     await hideReply(CONTENT_OWNER);
-    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as unknown as [
+    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[]
     ];
