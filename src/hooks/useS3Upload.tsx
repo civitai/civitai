@@ -196,25 +196,31 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         teardownController.abort();
         for (const x of activeXhrs) x.abort();
       };
-      // The only user-initiated cancel. It is handed to the UI on the tracked file.
-      // Exactly ONE live caller reaches it: the cancel button in `FileInputUpload`
-      // (`onClick={() => abort()}`). `removeFile(file, true)` routes here too, but no
-      // caller passes that second argument today.
+      // The only user-initiated cancel. It is handed to the UI on the tracked file, and
+      // TWO live cancel buttons reach it:
+      //   - `FileInputUpload` — `onClick={() => abort()}`.
+      //   - `MultiFileInputUpload`'s `UploadItem` — it receives this `abort` through the
+      //     `{...file}` TrackedFile spread and its own `onClick` runs `abort()` first,
+      //     then `onCancel?.()` (which is `removeFile` WITHOUT the abort argument, so it
+      //     only drops the row). The part PUTs are killed.
+      // `removeFile(file, true)` routes here too, but no caller passes that second
+      // argument today.
       //
-      // ⚠ Three things that look like cancels and are NOT, so nobody reads this as
-      // wider cover than it is:
-      //   - `MultiFileInputUpload`'s `UploadItem` cancel button calls
-      //     `cancelUpload(file.file)`, which is `removeFile` with NO second argument —
-      //     `removeFile` only aborts when that argument is truthy, so it drops the row
-      //     from the UI while the part PUTs run on to completion. It does NOT come here.
-      //   - `FileUploadProvider`'s unmount effect closes over the `files` from its first
-      //     render with `[]` deps, so it always iterates an empty array and aborts
-      //     nothing.
-      //   - The one live caller uploads model/training files, and the relay is
-      //     image-only, so it cannot reach the relay either.
-      // So on the one path that CAN relay, nothing cancels an upload today — the
-      // `userAborted` gate below is correct and tested, but it is not currently
-      // exercised in production.
+      // 🔴 THE SECOND ONE HAS BEEN GOT WRONG ONCE ALREADY, in this PR, by reading only
+      // the `onCancel={() => cancelUpload(file.file)}` prop at the call site and not the
+      // `onClick` inside the component it is passed to. The `abort` arrives by SPREAD,
+      // so the call site does not mention it. Read `UploadItem` itself before revising
+      // this, and do not re-derive "it never aborts" from the prop alone.
+      //
+      // ⚠ One thing that looks like a cancel and is NOT: `FileUploadProvider`'s unmount
+      // effect closes over the `files` from its first render with `[]` deps, so it
+      // always iterates an empty array and aborts nothing.
+      //
+      // Neither live caller can reach the relay — `FileInputUpload` uploads
+      // model/training files and `MultiFileInputUpload` uploads `type: 'default'`, while
+      // the relay is image-only. So on the one path that CAN relay, nothing cancels an
+      // upload today: the `userAborted` gate below is correct and tested, but it is not
+      // currently exercised in production.
       //
       // 🔴 That makes the relay's own cancellability an UNREACHABLE guard, and the
       // store twin's comment argues such a guard should be deleted rather than shipped.
@@ -440,7 +446,23 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             defaultRetryAfterSeconds: 2,
           });
           if (relayedKey) {
-            updateFile({ status: 'success' });
+            // 🔴 `progress` MUST be written here, unlike the ordinary success path below.
+            // There, `updateProgress()` has already driven progress to 100 from the part
+            // xhr's own events. Here the part died at the NETWORK layer, which is exactly
+            // the case that fires little or no `upload.progress` — and `updateProgress`
+            // early-returns on `!uploaded`, so the row would settle `success` at a
+            // progress it never left. `useMediaUpload` clears finished rows only when
+            // EVERY tracked file reads `progress === 100`, so one relayed row pins that
+            // false for the life of the component and the upload UI never goes away —
+            // for every later upload in that session too.
+            updateFile({
+              status: 'success',
+              progress: 100,
+              uploaded: size,
+              size,
+              speed: 0,
+              timeRemaining: 0,
+            });
             // The multipart session is now orphaned (its key holds no bytes) — tear it
             // down best-effort, after the success write so a teardown failure cannot
             // mask the outcome.

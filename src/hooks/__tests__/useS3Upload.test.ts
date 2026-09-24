@@ -110,15 +110,25 @@ class FakeXHR {
       this.readyState = 4;
       this.status = res.status;
       if (res.etag) this.headers['ETag'] = res.etag;
-      this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
-      this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
       if (res.networkError) {
-        // The order the browser emits: `error` then `loadend` in the same dispatch, which
-        // is what lets the `error` rejection win the race against `loadend`'s status-0.
+        // 🔴 NO `upload.progress` ON THIS PATH, and that is the point of the branch
+        // sitting ABOVE the progress emission rather than below it. A transport failure
+        // — DNS, TLS, connection reset — is precisely the case where the request body
+        // never leaves, so the browser fires little or no upload progress. Emitting a
+        // full-size `progress` here (which this fake used to do unconditionally) made
+        // every relayed row read `progress: 100` in tests while the real one sits at 0,
+        // and that single line silently disarmed the assertion guarding it: removing the
+        // relay branch's `progress: 100` left this file GREEN. Measured, not reasoned.
+        //
+        // The order below is the order the browser emits: `error` then `loadend` in the
+        // same dispatch, which is what lets the `error` rejection win the race against
+        // `loadend`'s status-0.
         this.emit('error');
         this.emit('loadend');
         return;
       }
+      this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
+      this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
       this.emit('load');
       this.emit('loadend');
     }, 0);
@@ -202,6 +212,12 @@ function makeFetch(partCount: number) {
 type Harness = {
   upload: (file: File, type: UploadType) => Promise<{ url: string | null; key: string }>;
   statuses: () => string[];
+  /**
+   * The tracked rows' `progress`. `useMediaUpload` gates row-clearing on every file
+   * reading exactly 100, so a row that is `success` at a lower number is still, to the
+   * UI, an upload in flight.
+   */
+  progresses: () => number[];
   /** Cancel the way the UI does: the `abort` the hook hands out on the tracked file. */
   cancel: () => void;
   unmount: () => void;
@@ -222,6 +238,7 @@ async function mountHook(): Promise<Harness> {
     upload: (file, type) =>
       api!.uploadToS3(file, type) as Promise<{ url: string | null; key: string }>,
     statuses: () => api!.files.map((f) => f.status),
+    progresses: () => api!.files.map((f) => f.progress),
     cancel: () => api!.files[0].abort(),
     unmount: () => act(() => root.unmount()),
   };
@@ -336,7 +353,19 @@ describe('useS3Upload relay fallback', () => {
     expect(relayCalls).toBe(1);
     // The relay mints its OWN key, so the upload must report the id that holds the bytes.
     expect(result.key).toBe(RELAY_KEY);
+    // 🔴 `url` as well as `key`, because `url` is the field the ONLY caller that can
+    // reach the relay actually branches on: `useMediaUpload` does
+    // `if (!url) throw new Error('Failed to upload image')` and reports the upload as
+    // failed. Asserting `key` alone left `url: null` a SURVIVING mutant with this whole
+    // file green — a one-token change that makes a successful relay report as a failure,
+    // which is the inertness this PR exists to end, on the field nothing was pinning.
+    expect(result.url).toBe(RELAY_KEY);
     expect(h.statuses()).toEqual(['success']);
+    // A relayed row must read as FINISHED, not merely successful. The part died at the
+    // network layer, so almost no `upload.progress` fired; `useMediaUpload` clears rows
+    // only when every file reads `progress === 100`, and one row short of that leaves
+    // the upload UI on screen for the rest of the session.
+    expect(h.progresses()).toEqual([100]);
     // 🔴 The multipart session the relay bypassed is now orphaned — its key holds no
     // bytes and nothing else will ever close it. Without this assertion, deleting the
     // teardown entirely leaves every case in this file green: a relayed upload would leak
