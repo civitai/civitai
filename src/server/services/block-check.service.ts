@@ -19,7 +19,7 @@ export type BlockCheckEntityType = CommentConnectorInput['entityType'] | Reactio
 
 // Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
 // root owner for replies in that kind of thread, silently skipping the block.
-const threadContentSelect = {
+export const threadContentSelect = {
   imageId: true,
   postId: true,
   articleId: true,

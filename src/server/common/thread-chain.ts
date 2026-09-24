@@ -79,3 +79,18 @@ export const muteableThreadsCte = (seedExpression: string) => `WITH RECURSIVE mu
               JOIN "CommentV2" pc ON pc.id = th."commentId"
               WHERE mt."depth" < ${MAX_THREAD_CHAIN_DEPTH}
             )`;
+
+/**
+ * `muteableThreadsCte` for many seeds at once: the same edge and cap, with each row carrying the
+ * seed it climbed from. `seedSelect` must project `"seedId"` and `"threadId"`. `UNION ALL` stays
+ * right here because rows from different seeds differ in `"seedId"`, so none is a duplicate.
+ */
+export const seededThreadChainCte = (seedSelect: string) => `WITH RECURSIVE seeded_chain AS (
+              SELECT s."seedId", s."threadId" "id", 0 "depth" FROM (${seedSelect}) s
+              UNION ALL
+              SELECT sc."seedId", pc."threadId", sc."depth" + 1
+              FROM seeded_chain sc
+              JOIN "Thread" th ON th.id = sc."id"
+              JOIN "CommentV2" pc ON pc.id = th."commentId"
+              WHERE sc."depth" < ${MAX_THREAD_CHAIN_DEPTH}
+            )`;
