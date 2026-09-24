@@ -114,7 +114,8 @@ picker reads the index's `versions.generatorLoaded`, which **carries readiness, 
 writers compose it through `isGeneratorReady`, and the field was deliberately not renamed because
 renaming means re-applying filterable attributes on a live index. So they render with the page rather
 than flickering in after it, they cover whichever version is selected, and they trail the orchestrator
-by the 5-minute sync (plus the index queue, for the picker). An indexed yes/no cannot tell `loaded`
+by whatever `/api/webhooks/resource-availability` has not yet delivered — seconds in the normal case,
+and at worst one run of the 15-minute backstop (plus the index queue, for the picker). An indexed yes/no cannot tell `loaded`
 from `external`, so the picker marks both **Ready** and only the live read says **No download needed**.
 `no-divergent-generator-readiness` keeps the derivation single-sourced.
 
@@ -487,7 +488,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
 | 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
-| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded` (readiness: the column, synced every 5 minutes by `sync-generator-loaded-resources`, **or** an `ExternalGeneration` version); what is left is the display decision. | Justin | a decision |
+| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded` (readiness: the column, written by `/api/webhooks/resource-availability` as the orchestrator reports each change with `sync-generator-loaded-resources` as a 15-minute backstop, **or** an `ExternalGeneration` version); what is left is the display decision. | Justin | a decision |
 | — | **The `covered` field in `/api/v1/model-versions/mini/[id]` changed meaning** for third-party consumers, unannounced. | Briant / team | announced, or judged not worth it |
 | C11 | **Retire auctions.** Paid loading replaces the cluster-residency half; the featuring half needs rehoming, and that is 868gtq1kt's answer first. ~89 files. | unscoped | 868gtq1kt answers |
 | — | **Phase A ratifications:** the fifth `unknown` state, `estimate` returning `{ cost, priced }`, and `currencies: getAllowedAccountTypes(...)` deciding which Buzz account pays. All live, all cheap to reverse now. | Briant / team | "fine", or name the one to change |

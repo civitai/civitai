@@ -3,8 +3,9 @@
 What a round of external testing on the download-boost feature found, and what was decided about each
 item. Feature: [paid-model-loading.md](paid-model-loading.md).
 
-**Round 1: 2026-09-23**, three testers against a preview build. Six of the eight checklist lines came
-back clean; the two that did not are items 1–3 below.
+**Round 1: 2026-09-23 to 2026-09-24**, four testers against a preview build. Two worked the checklist
+line by line; between them every line came back clean except the loaded indicator, which three of the
+four raised in some form.
 
 Provenance — who reported what, and where — is kept out of this file on purpose; the items and the
 decisions are the part worth keeping. Items are numbered so they can be referred to across rounds.
@@ -29,26 +30,37 @@ already-boosted workflow, which cannot be verified from this repo. A tester's ch
 boosted lane — both ETAs were measured before the boost, so they still read as a saving and the lane
 is the only signal that the purchase already happened.
 
-*Closes when:* a repeat of the steps confirms the panel stops offering, and that no second charge
-occurred.
+**No money was lost.** A tester tried the second purchase deliberately and was refunded immediately,
+which matches the re-price-and-refuse path in `boostWorkflow`. Worth noting the refund is observed as
+a refund rather than as a charge that never happened — a charge and its reversal are two rows in a
+Buzz history, which bears on item 7.
+
+*Closes when:* a tester confirms the panel no longer offers a second boost on the next build.
 
 ### 2. Loaded indicator on the model page reads "Not loaded" for a loaded model
 
-The model page's load indicator trails the generator by the 5-minute
-`sync-generator-loaded-resources` cycle, plus the search-index queue for the resource picker. This is
-the documented behaviour and the tester brief lists it as expected.
+The model page's load indicator trailed the generator by the `sync-generator-loaded-resources`
+cycle, plus the search-index queue for the resource picker. That was the documented behaviour, and the
+tester brief listed it as expected.
 
-**Two of three testers reported it as a bug anyway**, one of whom retracted after watching it update.
-That makes it a design problem rather than a reporting one: the page states a stale answer
-confidently, and nothing on screen indicates it trails.
+**Three of four testers raised it anyway**, one of whom retracted after watching it update. That makes
+it a design problem rather than a reporting one: the page states a stale answer confidently, and
+nothing on screen indicates it trails.
 
-**Being fixed at the source.** The orchestrator is adding a webhook that fires when a model enters or
-leaves the cluster, so the column can be updated on the event instead of waiting for the 5-minute
-cron. That was chosen over per-resource subscriptions, which would have meant subscribing to every
-already-loaded resource.
+The sharpest report locates it *inside a single page*: the version-details **Generation** row is a
+live residency read and updates quickly, while the version strip beside it is fed by the
+`generatorLoaded` column and waits for the cron. Two indicators on one screen, disagreeing, for
+minutes.
 
-*Closes when:* the site updates `ModelVersion.generatorLoaded` from that webhook, and a model loaded
-in the generator reads as loaded on its model page without waiting out the cron.
+**Fixed at the source, shipped.** The orchestrator now posts every residency change to
+`/api/webhooks/resource-availability`, and the column is written as the news arrives rather than on a
+cycle. That was chosen over per-resource subscriptions, which would have meant subscribing to every
+already-loaded resource. Residency is taken from `workersAvailable`, not the `loaded` flag beside it
+in the payload. The sync job remains as a backstop for a delivery that never arrived, at 15 minutes
+rather than 5.
+
+*Closes when:* a tester confirms a model loaded in the generator reads as loaded on its model page
+without a wait.
 
 ### 3. Queue card download details disappear after the generation
 
@@ -84,12 +96,15 @@ Raised twice, with a suggestion of explicit warning text. The reporter assumed t
 deliberate; the complaint is that it is unstated. Buying a boost and then cancelling is the case where
 a user loses Buzz with nothing to show for it, which makes this the highest-value item in this group.
 
-**Fixed.** All three purchase points — the queue-card panel, the pre-submit alert and the mobile
-confirm — now render one shared line (`BOOST_NON_REFUNDABLE` in `download-lanes.tsx`) stating that
-the fee is not refunded if the generation is cancelled.
+**Fixed, with the styling still open.** All three purchase points — the queue-card panel, the
+pre-submit alert and the mobile confirm — now render one shared line (`BOOST_NON_REFUNDABLE` in
+`download-lanes.tsx`) stating that the fee is not refunded if the generation is cancelled. It ships
+as small dimmed text; two testers asked for it to be coloured, one of them twice, and the argument
+offered was support load — people who did not mean to click it will arrive in help asking for the
+Buzz back.
 
-*Closes when:* a tester confirms the line is visible before each purchase, or a ruling that
-cancelling should refund the fee supersedes it.
+*Closes when:* the note is coloured, or a ruling that dimmed is enough is recorded here, and a tester
+confirms it is visible before each purchase.
 
 ### 7. Generation and boost fee arrive as one transaction
 
@@ -108,7 +123,9 @@ Observed on a preview build, and possibly an artifact of that environment rather
 ### 9. Boost price reads expensive in one Buzz type and reasonable in another
 
 A data point for whoever sets the price, not a work item — the price is the orchestrator's, not the
-site's. Performance once boosted was reported as matching expectations.
+site's. Two testers said the same thing independently, one citing roughly 1.3k for a Krea 2 boost, and
+both noted the alternatives are waiting or paying in a cheaper Buzz type. Performance once boosted was
+reported as matching expectations.
 
 *Closes when:* nothing. Drop this entry at the next triage if no one picks it up.
 

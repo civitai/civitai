@@ -1,38 +1,22 @@
--- GenerationCoverageNext — a checkpoint must carry a SafeTensor weight file, and a model a moderator
--- has taken down or archived is not covered at all.
+-- GenerationCoverageNext — a checkpoint must carry a SafeTensor weight file.
 --
--- 🔴 AMENDED IN PLACE 2026-09-11 (the `Model.mode` conjunct). This file was already applied by hand,
--- so production still runs the previous body until it is APPLIED AGAIN. The view is amended here
--- rather than in a new migration because a `CREATE OR REPLACE VIEW` file IS the definition: a chain of
--- migrations each restating the whole body is harder to read and easier to apply out of order.
+-- Replaces the body created by 20260908120000_generation_coverage_next. One conjunct changes; the
+-- rest is reproduced verbatim so the view has a single readable definition.
 --
--- Replaces the body created by 20260908120000_generation_coverage_next.
+-- WHY: paid model loading serves a checkpoint by loading its weights on demand, and the cluster
+-- loads SafeTensor only. A checkpoint with no SafeTensor file therefore cannot generate at all —
+-- so `covered` must be false for it, not merely "covered but never offered a load". That is what
+-- puts this in the view rather than in `hasLoadableFile` alone: the model detail page's Create
+-- button reads `canGenerate`, which composes this view.
 --
--- WHY THE SAFETENSOR RULE: paid model loading serves a checkpoint by loading its weights on demand,
--- and the cluster loads SafeTensor only. A checkpoint with no SafeTensor file therefore cannot
--- generate at all — so `covered` must be false for it, not merely "covered but never offered a load".
--- That is what puts this in the view rather than in `hasLoadableFile` alone: the model detail page's
--- Create button reads `canGenerate`, which composes this view.
+-- 🔴 SCOPED TO CHECKPOINTS ON PURPOSE. The condition sits on the checkpoint disjunct, NOT on the
+-- shared `EXISTS` above it, because loading is a checkpoint-only feature. Putting it in the shared
+-- clause would apply it to every type, and measured on 2026-09-09 that removes 3,287 covered
+-- textual inversions carrying 1.39 BILLION lifetime generations — more than every SafeTensor TI
+-- combined. Embeddings ship as `.pt` (PickleTensor), are not served by the loader, and generate
+-- fine. LoRA/LoCon/DoRA/VAE/Upscaler are untouched for the same reason.
 --
--- 🔴 THE SAFETENSOR RULE IS SCOPED TO CHECKPOINTS ON PURPOSE. The condition sits on the checkpoint
--- disjunct, NOT on the shared `EXISTS` above it, because loading is a checkpoint-only feature. Putting
--- it in the shared clause would apply it to every type, and measured on 2026-09-09 that removes 3,287
--- covered textual inversions carrying 1.39 BILLION lifetime generations — embeddings ship as `.pt`
--- (PickleTensor), are not served by the loader, and generate fine. LoRA/LoCon/DoRA/VAE/Upscaler are
--- untouched for the same reason.
---
--- WHY `Model.mode`: `Archived` and `TakenDown` are the moderation switches, and nothing on the
--- generation path read them — only the model page's Create button, client-side. Blocking them on the
--- SERVER is the point (decided 2026-09-11), so the conjunct is TOP-LEVEL and applies to every branch,
--- including the ecosystem defaults and the external/API models.
---
--- COST of the `Model.mode` conjunct, measured 2026-09-11 against the production replica: **1,955
--- covered versions lose coverage** — 1,730 Archived LoRAs, 148 Archived Checkpoints, 39 LoCon, 21
--- TakenDown LoRAs, 12 TextualInversion, 5 DoRA. Only the 148 checkpoints are new to this view; the
--- other 1,807 are covered under the LIVE view today, so this also closes a gap that predates paid
--- model loading.
---
--- COST of the SafeTensor rule, measured 2026-09-09 against the production replica:
+-- COST, measured 2026-09-09 against the production replica:
 --   * 2,242 covered checkpoint versions lose coverage (33,811 -> 31,569; total view rows 933,851 -> 931,609,
 --     every row of the delta a checkpoint; textual inversions unchanged at 6,299 and all 514
 --     auction rows retained)
@@ -62,9 +46,12 @@
 -- rescues 6 versions and changes nothing else. It is scaffolding for the auction's retirement;
 -- delete this disjunct when the auction stops writing that table.
 --
+-- Branch 1 (`EcosystemCheckpoints`) still bypasses this, as it bypasses the file check entirely.
+-- Those are the generator's own per-ecosystem defaults; leaving them is the existing deliberate
+-- choice, not an oversight.
+--
 -- 🔴 NARROWING TAKES EFFECT THE MOMENT THIS RUNS. Unlike an additive change there is no safe
--- window: apply it when the readers of `covered` are ready for 2,242 fewer checkpoints and 1,955
--- fewer moderated versions.
+-- window: apply it when the readers of `covered` are ready for 2,242 fewer checkpoints.
 --
 -- `checkLoadable` in src/server/services/resource-load.service.ts applies the same checkpoint-scoped
 -- SafeTensor rule at purchase time with a specific reason — except it has no CoveredCheckpoint
@@ -79,68 +66,64 @@ SELECT
 FROM "ModelVersion" mv
 JOIN "Model" m ON m.id = mv."modelId"
 WHERE
-  -- Taken down or archived by a moderator: never generatable, whichever branch would cover it.
-  m.mode IS NULL
-  AND (
-    -- Branch 1: the generator's per-ecosystem default models.
-    mv.id IN (SELECT "EcosystemCheckpoints".id FROM "EcosystemCheckpoints")
+  -- Branch 1: the generator's per-ecosystem default models.
+  mv.id IN (SELECT "EcosystemCheckpoints".id FROM "EcosystemCheckpoints")
 
-    -- Branch 2: file-less external/API generation. Covered, never loadable.
-    OR (
-      mv."usageControl" = 'ExternalGeneration'::"ModelUsageControl"
-      AND mv.status = 'Published'::"ModelStatus"
-      AND NOT m.poi
+  -- Branch 2: file-less external/API generation. Covered, never loadable.
+  OR (
+    mv."usageControl" = 'ExternalGeneration'::"ModelUsageControl"
+    AND mv.status = 'Published'::"ModelStatus"
+    AND NOT m.poi
+  )
+
+  -- Branch 3: the ordinary path — licensed, scanned, on a supported base model.
+  OR (
+    NOT m.poi
+    AND (
+      mv.status = 'Published'::"ModelStatus"
+      OR m.availability = 'Private'::"Availability"
+      OR m."uploadType" = 'Trained'::"ModelUploadType"
     )
-
-    -- Branch 3: the ordinary path — licensed, scanned, on a supported base model.
-    OR (
-      NOT m.poi
-      AND (
-        mv.status = 'Published'::"ModelStatus"
-        OR m.availability = 'Private'::"Availability"
-        OR m."uploadType" = 'Trained'::"ModelUploadType"
-      )
-      AND m."allowCommercialUse" && ARRAY['RentCivit'::"CommercialUse"]
-      AND EXISTS (
-        SELECT 1
-        FROM "ModelFile" mf
-        WHERE mf."modelVersionId" = mv.id
-          AND (
-            (
-              mf."scannedAt" IS NOT NULL
-              AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
-              AND COALESCE(mf.metadata ->> 'format'::text, ''::text) <> ALL (ARRAY['Core ML'::text, 'ONNX'::text])
-            )
-            OR (mf.metadata -> 'trainingResults'::text) IS NOT NULL
+    AND m."allowCommercialUse" && ARRAY['RentCivit'::"CommercialUse"]
+    AND EXISTS (
+      SELECT 1
+      FROM "ModelFile" mf
+      WHERE mf."modelVersionId" = mv.id
+        AND (
+          (
+            mf."scannedAt" IS NOT NULL
+            AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
+            AND COALESCE(mf.metadata ->> 'format'::text, ''::text) <> ALL (ARRAY['Core ML'::text, 'ONNX'::text])
           )
-      )
-      AND (
-        mv."baseModel" IN (SELECT "GenerationBaseModel"."baseModel" FROM "GenerationBaseModel")
-        OR m.type = 'Upscaler'::"ModelType"
-      )
-      AND (
-        (
-          m.type = 'Checkpoint'::"ModelType"
-          AND mv."baseModelType" = 'Standard'
-          AND (
-            -- The loader serves SafeTensor only, so a checkpoint without one cannot be loaded...
-            EXISTS (
-              SELECT 1
-              FROM "ModelFile" mf2
-              WHERE mf2."modelVersionId" = mv.id
-                AND mf2."scannedAt" IS NOT NULL
-                AND mf2.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
-                AND mf2.metadata ->> 'format'::text = 'SafeTensor'
-            )
-            -- ...unless the weekly auction already put it in the cluster, in which case it needs no
-            -- load to generate. Kept INSIDE the checkpoint disjunct rather than made a fourth
-            -- top-level branch, so auction membership still cannot bypass the RentCivit licence, the
-            -- supported-base-model list or the scanned-file check the way branches 1 and 2 do.
-            OR mv.id IN (SELECT "CoveredCheckpoint".version_id FROM "CoveredCheckpoint")
-          )
+          OR (mf.metadata -> 'trainingResults'::text) IS NOT NULL
         )
-        OR m.type = ANY (ARRAY['LORA'::"ModelType", 'TextualInversion'::"ModelType", 'VAE'::"ModelType", 'LoCon'::"ModelType", 'DoRA'::"ModelType"])
-        OR m.type = 'Upscaler'::"ModelType"
+    )
+    AND (
+      mv."baseModel" IN (SELECT "GenerationBaseModel"."baseModel" FROM "GenerationBaseModel")
+      OR m.type = 'Upscaler'::"ModelType"
+    )
+    AND (
+      (
+        m.type = 'Checkpoint'::"ModelType"
+        AND mv."baseModelType" = 'Standard'
+        AND (
+          -- The loader serves SafeTensor only, so a checkpoint without one cannot be loaded...
+          EXISTS (
+            SELECT 1
+            FROM "ModelFile" mf2
+            WHERE mf2."modelVersionId" = mv.id
+              AND mf2."scannedAt" IS NOT NULL
+              AND mf2.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
+              AND mf2.metadata ->> 'format'::text = 'SafeTensor'
+          )
+          -- ...unless the weekly auction already put it in the cluster, in which case it needs no
+          -- load to generate. Kept INSIDE the checkpoint disjunct rather than made a fourth
+          -- top-level branch, so auction membership still cannot bypass the RentCivit licence, the
+          -- supported-base-model list or the scanned-file check the way branches 1 and 2 do.
+          OR mv.id IN (SELECT "CoveredCheckpoint".version_id FROM "CoveredCheckpoint")
+        )
       )
+      OR m.type = ANY (ARRAY['LORA'::"ModelType", 'TextualInversion'::"ModelType", 'VAE'::"ModelType", 'LoCon'::"ModelType", 'DoRA'::"ModelType"])
+      OR m.type = 'Upscaler'::"ModelType"
     )
   );

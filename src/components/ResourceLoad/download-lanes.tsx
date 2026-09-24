@@ -23,7 +23,7 @@ export const BOOST_NON_REFUNDABLE = "The boost fee isn't refunded if you cancel 
 
 export function BoostFeeNote({ className }: { className?: string }) {
   return (
-    <Text size="xs" c="dimmed" className={className}>
+    <Text size="xs" c="yellow.6" className={className}>
       {BOOST_NON_REFUNDABLE}
     </Text>
   );
