@@ -714,6 +714,15 @@ export async function promoteFeedbackToBug(input: {
   id: number;
   title: string;
   summary: string;
+  /**
+   * The ClickUp task this issue tracks, or null when the moderator left the box blank.
+   *
+   * 🔴 VALIDATED BY THE CALLER, AND IT HAS TO BE. This column is what the main app's ClickUp
+   * webhook matches on to auto-close the entry, so a value it cannot parse a task id out of is an
+   * issue that will never close itself — silently. The action refuses one before reaching here;
+   * this signature only records that null is the "no task" spelling, not the empty string.
+   */
+  clickupUrl: string | null;
   moderatorId: number;
 }): Promise<PromoteResult> {
   try {
@@ -725,6 +734,7 @@ export async function promoteFeedbackToBug(input: {
           title: input.title,
           summary: input.summary,
           status: BUG_INITIAL_STATUS,
+          clickupUrl: input.clickupUrl,
           // Derived, not hardcoded null: with a fixed 'Open' this is always null, and a future
           // status control on the form would make that assumption wrong silently.
           resolvedAt: isBugClosed(BUG_INITIAL_STATUS) ? now : null,

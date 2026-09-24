@@ -152,6 +152,7 @@ describe('triageFeedback', () => {
       id,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -178,6 +179,7 @@ describe('triageFeedback', () => {
       id: first,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -201,6 +203,7 @@ describe('triageFeedback', () => {
       id,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -262,6 +265,7 @@ describe('promoteFeedbackToBug', () => {
       id,
       title: 'Sort resets on back',
       summary: 'The store loses ?sort on Back.',
+      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -300,17 +304,67 @@ describe('promoteFeedbackToBug', () => {
   });
 
   /**
+   * 🔴 AGAINST THE REAL COLUMN, NOT A MOCK, AND THAT IS THE POINT OF PUTTING IT HERE. The action
+   * test already pins that the URL reaches this service — but "the service was called with it" and
+   * "the column holds it" are different claims, and only the second one is what the main app's
+   * ClickUp webhook reads. `resolveBugsByClickupTaskId` finds the entry to close by matching this
+   * column, so an insert that dropped the field would leave an issue that can never auto-close,
+   * and every mock-level test would still be green.
+   */
+  it('persists the ClickUp URL on the real column the completion webhook matches', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j',
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBe('https://app.clickup.com/t/8459928/868kfwm3j');
+  });
+
+  /**
+   * The other half, and it is not the same test: a promotion with no task linked must leave the
+   * column NULL rather than an empty string, so "no task" has one spelling on the column the
+   * webhook reads.
+   */
+  it('leaves the ClickUp column NULL when no task was linked', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      clickupUrl: null,
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBeNull();
+  });
+
+  /**
    * 🔴 `AND "bugId" IS NULL` makes double-promotion impossible — and the Bug insert must roll back
    * WITH it, or a second click leaves an orphan row on the table the public board reads.
    */
   it('refuses a second promotion and leaves no orphan Bug behind', async () => {
     const id = await seedFeedback(db, { userId: reporter });
-    await service.promoteFeedbackToBug({ id, title: 'a', summary: 'b', moderatorId: moderator });
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      clickupUrl: null,
+      moderatorId: moderator,
+    });
 
     const result = await service.promoteFeedbackToBug({
       id,
       title: 'a second one',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -328,6 +382,7 @@ describe('promoteFeedbackToBug', () => {
       id: 9999,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -344,6 +399,7 @@ describe('linkFeedbackToBug', () => {
       id: first,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the first promotion should have succeeded');
@@ -365,6 +421,7 @@ describe('linkFeedbackToBug', () => {
       id,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -543,6 +600,7 @@ describe('reads', () => {
       id: first,
       title: 'a',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -565,6 +623,7 @@ describe('reads', () => {
       id,
       title: 'Sort resets',
       summary: 'b',
+      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');

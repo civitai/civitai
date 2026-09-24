@@ -495,9 +495,85 @@ describe('promote action', () => {
       id: 5,
       title: 'Sort resets on back',
       summary: 'The store loses ?sort on Back.',
+      // The box was not posted at all, which is the same outcome as posting it blank: no task
+      // linked. NULL rather than '' so the column carries one spelling of absent.
+      clickupUrl: null,
       moderatorId: 7,
     });
     expect(result).toMatchObject({ success: true, bugId: 99 });
+  });
+
+  /**
+   * 🔴 THE WHOLE POINT OF THE BOX. The main app's ClickUp webhook closes a board entry by finding
+   * the entry whose `clickupUrl` holds the id of the task that completed. Every issue promoted from
+   * a report used to be stored with no link at all, so none of them could ever auto-close. Passing
+   * the URL through is what puts a promoted issue on the same footing as one raised on the board.
+   */
+  it('stores the ClickUp task URL so the completion webhook can find the issue', async () => {
+    await actions.promote(
+      event({
+        id: '5',
+        mode: 'create',
+        title: 'Sort resets on back',
+        summary: 'The store loses ?sort on Back.',
+        clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j',
+      })
+    );
+
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith(
+      expect.objectContaining({ clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j' })
+    );
+  });
+
+  /**
+   * 🔴 REFUSED AT THE FORM, BECAUSE NOTHING DOWNSTREAM EVER REPORTS IT. A URL the matcher cannot
+   * parse a task id out of is stored as a link that renders fine and matches nothing — the issue
+   * just never closes itself, with no error anywhere. The moment it is typed is the only point at
+   * which a human is present to fix it.
+   */
+  it('refuses a URL the completion webhook could never match, without inserting anything', async () => {
+    const result = await actions.promote(
+      event({
+        id: '5',
+        mode: 'create',
+        title: 't',
+        summary: 's',
+        clickupUrl: 'https://app.clickup.com/',
+      })
+    );
+
+    expect(failure(result).status).toBe(400);
+    expect(failure(result).error).toMatch(/ClickUp task URL/);
+    expect(promoteFeedbackToBug).not.toHaveBeenCalled();
+  });
+
+  it('treats a blank ClickUp box as no task linked rather than an empty string', async () => {
+    await actions.promote(
+      event({ id: '5', mode: 'create', title: 't', summary: 's', clickupUrl: '   ' })
+    );
+
+    expect(promoteFeedbackToBug).toHaveBeenCalledWith(
+      expect.objectContaining({ clickupUrl: null })
+    );
+  });
+
+  /**
+   * ⚠️ ATTACH MUST NOT CARRY IT. Attaching links this report to an issue that already exists and
+   * already has whatever ClickUp link it has; re-posting one here would let the promote form
+   * silently overwrite another issue's task link. `linkFeedbackToBug` has no such parameter, and
+   * this pins that it is not quietly added later.
+   */
+  it('ignores a ClickUp URL posted alongside an attach, which links an existing issue', async () => {
+    await actions.promote(
+      event({
+        id: '5',
+        mode: 'attach',
+        bugId: '42',
+        clickupUrl: 'https://app.clickup.com/t/868kfwm3j',
+      })
+    );
+
+    expect(linkFeedbackToBug).toHaveBeenCalledWith({ id: 5, bugId: 42, moderatorId: 7 });
   });
 
   it('attaches to an existing issue instead of filing a second one', async () => {

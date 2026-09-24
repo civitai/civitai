@@ -224,6 +224,27 @@
           </Label>
           <Textarea id={`summary-${row.id}`} name="summary" rows={2} bind:value={draft.summary} />
         </div>
+        <div class="flex flex-col gap-1">
+          <Label for={`clickup-${row.id}`} class="text-xs text-dark-2">
+            ClickUp task URL — optional
+          </Label>
+          <Input id={`clickup-${row.id}`} name="clickupUrl" bind:value={draft.clickupUrl} />
+          <!-- 🔴 WHAT THIS BOX BUYS, stated because an empty optional box otherwise reads as
+               decoration. The ClickUp webhook closes a board entry by looking up the entry whose
+               `clickupUrl` holds the id of the task that completed. An entry created here with the
+               box left blank has no link to match, so it never auto-closes and someone has to
+               notice by hand — which is the state every issue promoted from a report has been in
+               until now. Filling it in is what puts the report on the same footing as an issue
+               raised directly on the board.
+
+               🔴 The server REFUSES a URL it cannot read a task id out of, rather than storing it.
+               A link that looks right on screen but does not parse is the failure this box exists
+               to prevent, and it is completely silent: the entry would sit there looking linked. -->
+          <p class="text-xs text-dark-2">
+            Paste it and the issue closes itself when the task is completed. Leave it blank and it
+            will not — you can add it on the issue board later.
+          </p>
+        </div>
       {/if}
 
       <div class="flex flex-wrap items-center gap-2">
@@ -242,9 +263,12 @@
           {draft.attachMode ? 'Create a new issue instead' : 'Attach to an existing issue instead'}
         </Button>
       </div>
+      <!-- 🔴 THIS PARAGRAPH RENDERS IN BOTH MODES, so it must read correctly with no ClickUp box on
+           screen — the box is on the create branch only. Hence "nothing here creates one" rather
+           than a sentence pointing at a field that is not always there. -->
       <p class="text-xs text-dark-2">
         The issue lands unpublished, so nothing reaches the public board until someone publishes it
-        there. The ClickUp task is still made by hand.
+        there. The ClickUp task is still made by hand — nothing here creates one.
       </p>
     </form>
   {:else}
