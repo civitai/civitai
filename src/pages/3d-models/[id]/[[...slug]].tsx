@@ -499,11 +499,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               <Collection
                 items={model3d.tags ?? []}
                 renderItem={(tag) => (
-                  <Link
-                    legacyBehavior
-                    href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                    passHref
-                  >
+                  <Link legacyBehavior href={`/3d-models?tags=${tag.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
