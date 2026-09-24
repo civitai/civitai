@@ -13,10 +13,19 @@ export const TURNSTILE_SCRIPT_GRACE_MS = 5000;
 export function decideAfterGrace(opts: {
   tokenArrived: () => boolean;
   decide: () => void;
+  /**
+   * A token turned up, so there is nothing to decide. A caller that COMMITTED to something on the way
+   * in must undo it here: this is the one exit that resolves to neither outcome, and a commitment left
+   * standing behind it is a state no later failure can move.
+   */
+  onWithdrawn?: () => void;
   graceMs?: number;
 }): () => void {
   const timer = setTimeout(() => {
-    if (opts.tokenArrived()) return;
+    if (opts.tokenArrived()) {
+      opts.onWithdrawn?.();
+      return;
+    }
     opts.decide();
   }, opts.graceMs ?? TURNSTILE_SCRIPT_GRACE_MS);
   return () => clearTimeout(timer);
@@ -28,6 +37,7 @@ export type TurnstileProbe = {
   tokenArrived: () => boolean;
   onScriptPresent: () => void;
   onScriptAbsent: () => void;
+  onWithdrawn?: () => void;
   graceMs?: number;
 };
 
@@ -43,6 +53,7 @@ export function probeTurnstile(probe: TurnstileProbe): () => void {
   return decideAfterGrace({
     tokenArrived: probe.tokenArrived,
     decide: () => (probe.scriptPresent() ? probe.onScriptPresent() : probe.onScriptAbsent()),
+    onWithdrawn: probe.onWithdrawn,
     graceMs: probe.graceMs,
   });
 }

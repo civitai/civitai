@@ -115,7 +115,8 @@ const styleStart = pageSource.indexOf('<style');
 const styles = styleStart > -1 ? pageSource.slice(styleStart) : '';
 
 // Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
-// the matched line, so a declaration is its own scope.
+// the matched line, so a declaration is its own scope. Trailing comments are stripped: a ledger pins
+// what the code does, and rewording a comment beside it is not a change to that.
 const ledger = (identifier: string) => {
   const scopeOf = (end: number) => {
     const opener = [
@@ -125,7 +126,7 @@ const ledger = (identifier: string) => {
   };
   return [...markup.matchAll(new RegExp(`^.*${identifier}.*$`, 'gm'))].map((m) => [
     scopeOf((m.index ?? 0) + m[0].length),
-    m[0].trim(),
+    m[0].replace(/\s*\/\/.*$/, '').trim(),
   ]);
 };
 
@@ -374,6 +375,24 @@ describe('login copy when the verification check cannot run', () => {
     );
   });
 
+  it('releases the fallback commitment when its grace ends with a token', () => {
+    // probeTurnstile's withdrawal exit resolves to neither outcome, so whatever the caller committed
+    // to on the way in is left standing with nothing behind it. Here that commitment is
+    // `fallbackActive`, which gates the managed effect AND short-circuits triggerFallback — so a
+    // latched `true` holding no widget is a state no later failure can move: the token that caused
+    // the withdrawal is cleared by resetTurnstile() on the next submit, and the page keeps a disabled
+    // submit with no note for the rest of the session.
+    const writers = ledger('fallbackActive = (?:true|false)');
+    expect(writers).toEqual([
+      ['triggerFallback', 'if (data.turnstileManagedSiteKey) fallbackActive = true;'],
+      // Released only with no widget to destroy — unmounting a rendered one is unrecoverable.
+      ['$effect', 'if (managedWidgetId === undefined) fallbackActive = false;'],
+    ]);
+    const grace = markup.match(/probeTurnstile\(\{[\s\S]*?\n {4}\}\);/)?.[0] ?? '';
+    expect(grace, 'the managed probe not found').not.toBe('');
+    expect(grace, 'the managed probe does not handle a withdrawal').toContain('onWithdrawn:');
+  });
+
   it('asks nobody to solve a challenge that is not on screen', () => {
     const guarded = markup.match(
       /\{#if managedWidgetShown && !captchaBlocked\}([\s\S]*?)\{\/if\}/
@@ -416,6 +435,9 @@ describe('login copy when the verification check cannot run', () => {
     expect(catchBody ?? '', 'the catch leaves a string in `id`').not.toMatch(
       /\bid\s*=\s*(?!undefined\b|null\b)\S/
     );
+    // A bare `return` is the other spelling that passes a container-only check and skips the branch,
+    // leaving no widget, no verdict and a gated submit.
+    expect(catchBody ?? '', 'the catch returns before the branch below').not.toMatch(/\breturn\b/);
     // …and managedWidgetId must stay a plain let. The effect guards on it and renderManagedWidget writes
     // it, so as $state that effect would depend on a value it writes and re-attempt the render.
     expect(markup, 'managedWidgetId is reactive').toMatch(

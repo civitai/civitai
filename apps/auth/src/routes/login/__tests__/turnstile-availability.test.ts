@@ -118,6 +118,51 @@ describe('deferred verdict with no interactive fallback to offer', () => {
     expect(decided).toBe(false);
   });
 
+  it('tells the caller when it withdrew, so a commitment can be released', () => {
+    // This is the ONE exit that resolves to neither outcome. A caller that committed on the way in
+    // (the login page latches `fallbackActive` to mount the managed slot) is left holding that
+    // commitment with nothing behind it, and every later failure short-circuits on it.
+    let decided = false;
+    let withdrawn = false;
+    decideAfterGrace({
+      tokenArrived: () => true,
+      decide: () => (decided = true),
+      onWithdrawn: () => (withdrawn = true),
+    });
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS);
+    expect(withdrawn, 'a withdrawal is silent, so the caller cannot release anything').toBe(true);
+    expect(decided).toBe(false);
+  });
+
+  it('does not report a withdrawal when it did decide', () => {
+    let withdrawn = false;
+    let decided = false;
+    decideAfterGrace({
+      tokenArrived: () => false,
+      decide: () => (decided = true),
+      onWithdrawn: () => (withdrawn = true),
+    });
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS);
+    expect(decided).toBe(true);
+    expect(withdrawn).toBe(false);
+  });
+
+  it('forwards a withdrawal through the script probe too', () => {
+    // The managed slot reaches the same exit via probeTurnstile, which must not swallow it.
+    let withdrawn = false;
+    const seen: string[] = [];
+    probeTurnstile({
+      scriptPresent: () => false,
+      tokenArrived: () => true,
+      onScriptPresent: () => seen.push('present'),
+      onScriptAbsent: () => seen.push('absent'),
+      onWithdrawn: () => (withdrawn = true),
+    });
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS);
+    expect(withdrawn).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
   it('decides nothing after teardown', () => {
     let decided = false;
     const teardown = decideAfterGrace({

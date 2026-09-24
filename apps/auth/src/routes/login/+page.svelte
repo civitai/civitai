@@ -86,12 +86,10 @@
 
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
   // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
+  // `fallbackActive` is a COMMITMENT, and the managed probe below releases it again if its grace ends
+  // with a token rather than a widget. Without that release this guard is a one-way door onto a state
+  // holding no widget, and a later failure could never produce a verdict.
   function triggerFallback(reason: string) {
-    // KNOWN OPEN, pre-dates this page's blocked-copy work: `fallbackActive` latches, so once the managed
-    // arm has been taken a later failure cannot re-derive a verdict. Reachable — the managed widget fails
-    // (note shown, button released), a late invisible token clears the verdict, then resetTurnstile()
-    // wipes that token on the next submit, leaving no token and no verdict. The no-managed-key arm below
-    // was fixed by counting rather than latching; this one still needs the same treatment.
     if (captchaToken || fallbackActive) return;
     captchaFailReason = reason;
     if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM
@@ -112,6 +110,14 @@
       scriptPresent: () => !!turnstileApi(),
       tokenArrived: () => !!captchaToken,
       onScriptPresent: renderManagedWidget,
+      onWithdrawn: () => {
+        // The grace ended with a token, so nothing was rendered and nothing needs to be. Release the
+        // commitment rather than leave it standing: `fallbackActive` gates this effect, so a latched
+        // `true` with no widget behind it is a dead end — resetTurnstile() clears that token on the
+        // next submit, triggerFallback then early-returns on the latch, and the gate stays shut with
+        // no note. Only safe because there is no widget to destroy, which the guard checks.
+        if (managedWidgetId === undefined) fallbackActive = false;
+      },
       onScriptAbsent: () => {
         // Script never ran, so the interactive fallback cannot reach this user either. Soft-release;
         // the server stays the sole gate.
