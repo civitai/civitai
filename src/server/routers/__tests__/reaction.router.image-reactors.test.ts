@@ -51,12 +51,20 @@ describe('reaction.getImageReactors', () => {
 
   // Deliberately no `requiredScope`: the narrow scopes' consent text ("Read profile, settings & email", "View
   // images...") does not tell a user an app can list who reacted to their content. Adding one widens that.
-  it('refuses a scoped API key that lacks full access', async () => {
-    const scoped = caller({ apiKeyId: 1, tokenScope: TokenScope.UserRead | TokenScope.MediaRead });
+  const fullBits = Array.from({ length: 25 }, (_, i) => 1 << i).filter(
+    (bit) => (TokenScope.Full & bit) !== 0
+  );
+  it.each(fullBits)(
+    'refuses a key holding every scope except bit %i: any requiredScope short of Full lets one through',
+    async (bit) => {
+      const scoped = caller({ apiKeyId: 1, tokenScope: TokenScope.Full & ~bit });
 
-    await expect(scoped.getImageReactors({ id: 42 })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(getImageReactors).not.toHaveBeenCalled();
-  });
+      await expect(scoped.getImageReactors({ id: 42 })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(getImageReactors).not.toHaveBeenCalled();
+    }
+  );
 
   it('serves a full-access key', async () => {
     await caller({ apiKeyId: 1, tokenScope: TokenScope.Full }).getImageReactors({ id: 42 });

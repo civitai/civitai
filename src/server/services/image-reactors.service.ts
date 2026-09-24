@@ -4,7 +4,7 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 // Dislike is retired from the UI, same exclusion as Creator Studio's "Who reacted".
@@ -29,8 +29,9 @@ export function groupReactorRows(rows: ReactorRow[], limit = IMAGE_REACTORS_LIMI
 
 // Same rule as Creator Studio's "Who reacted": only a scanned, safe-level picture leaves the server.
 export function safeProfilePicture(picture: ProfileImage | null | undefined) {
-  if (!picture || picture.ingestion !== 'Scanned' || picture.nsfwLevel <= 0) return null;
-  return (picture.nsfwLevel & ~sfwBrowsingLevelsFlag) === 0 ? picture : null;
+  return picture?.ingestion === 'Scanned' && getIsSafeBrowsingLevel(picture.nsfwLevel)
+    ? picture
+    : null;
 }
 
 /**
