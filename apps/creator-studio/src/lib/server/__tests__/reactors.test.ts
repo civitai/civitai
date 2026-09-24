@@ -210,8 +210,9 @@ describe('getReactors page', () => {
 });
 
 describe('getReactors follows', () => {
-  const fullPage = (from: number) =>
-    Array.from({ length: REACTORS_PAGE_SIZE + 1 }, (_, i) => reactorRow(from - i));
+  // One keyset fetch: PAGE_SIZE + 1 ids stepping from `from`, in the fetch's own order.
+  const fetched = (from: number, step: -1 | 1) =>
+    Array.from({ length: REACTORS_PAGE_SIZE + 1 }, (_, i) => from + i * step);
   const probe = () => {
     const probes = state.queries.filter(isFollowProbe);
     expect(probes).toHaveLength(1);
@@ -232,17 +233,30 @@ describe('getReactors follows', () => {
     database([reactorRow(30)], undefined, [30]);
     await getReactors({} as never, OWNER, 'image', IMAGE, firstPage);
     expect(probe()[0]).toBe(OWNER);
+    expect(state.queries.find(isFollowProbe)?.text).toMatch(
+      /WHERE "targetUserId" = \$1 AND "type" = 'Follow' AND "userId" = ANY\(\$2\)$/
+    );
   });
 
   // The probe is one pkey lookup per id, so its cost stays flat only while it is handed the shown page and never
   // the reaction list; a deep page is where a widening would cost the most.
   it.each([
-    ['the first page', null, 1000],
-    ['a deep page', { dir: 'after', userId: 40_001 } as const, 40_000],
-  ])('probes only the rows %s shows, never the look-ahead row', async (_, cursor, top) => {
-    database(fullPage(top));
-    await getReactors({} as never, OWNER, 'image', IMAGE, { reaction: 'Like', cursor });
-    const shown = Array.from({ length: REACTORS_PAGE_SIZE }, (_, i) => top - i);
+    ['the first page', null, fetched(1000, -1)],
+    ['a deep page', { dir: 'after', userId: 40_001 } as const, fetched(40_000, -1)],
+    [
+      'a page back towards newer accounts',
+      { dir: 'before', userId: 39_999 } as const,
+      fetched(40_000, 1),
+    ],
+  ])('probes only the rows %s shows, never the look-ahead row', async (_, cursor, ids) => {
+    database(ids.map((id) => reactorRow(id)));
+    const page = await getReactors({} as never, OWNER, 'image', IMAGE, {
+      reaction: 'Like',
+      cursor,
+    });
+    const shown = page?.reactors.map((r) => r.userId) ?? [];
+    expect(shown).toHaveLength(REACTORS_PAGE_SIZE);
+    expect(shown).not.toContain(ids.at(-1));
     expect(probe()[1]).toEqual(shown);
   });
 
