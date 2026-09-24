@@ -52,7 +52,9 @@ beforeEach(() => {
   state.hoverCapable = false;
 });
 
-describe('ImageReactorsPreview — owner only, never on page load', () => {
+// Server render only: Mantine's Portal renders nothing here, so opening the dropdowns is covered by
+// ImageReactorsPreview.browser.test.tsx, not by this file.
+describe('ImageReactorsPreview — owner only, nothing fetched at render', () => {
   it.each([
     ['signed out, touch', null, false],
     ['signed out, hover', null, true],
@@ -69,7 +71,7 @@ describe('ImageReactorsPreview — owner only, never on page load', () => {
     expect(state.useQuery).not.toHaveBeenCalled();
   });
 
-  it('owner on touch: a "Who reacted" button beside the bar, and nothing fetched until it opens', () => {
+  it('owner on touch: a "Who reacted" button beside the bar, and nothing fetched at render', () => {
     state.currentUser = { id: OWNER };
 
     const html = renderPreview();
@@ -79,7 +81,7 @@ describe('ImageReactorsPreview — owner only, never on page load', () => {
     expect(state.useQuery).not.toHaveBeenCalled();
   });
 
-  it('owner on hover: the bar is the hover target, and nothing fetched until it opens', () => {
+  it('owner on hover: the bar is the hover target, and nothing fetched at render', () => {
     state.currentUser = { id: OWNER };
     state.hoverCapable = true;
 

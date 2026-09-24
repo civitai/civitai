@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 import { getBasicDataForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { isImageOwner } from '~/server/services/util.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 // Dislike is retired from the UI, same exclusion as Creator Studio's "Who reacted".
@@ -24,16 +27,20 @@ export function groupReactorRows(rows: ReactorRow[], limit = IMAGE_REACTORS_LIMI
   return [...byUser].map(([userId, reactions]) => ({ userId, reactions }));
 }
 
+// Same rule as Creator Studio's "Who reacted": only a scanned, safe-level picture leaves the server.
+export function safeProfilePicture(picture: ProfileImage | null | undefined) {
+  if (!picture || picture.ingestion !== 'Scanned' || picture.nsfwLevel <= 0) return null;
+  return (picture.nsfwLevel & ~sfwBrowsingLevelsFlag) === 0 ? picture : null;
+}
+
 /**
  * The newest accounts that reacted to one of the caller's images. Not reaction-time order: only the
  * `(imageId, userId) INCLUDE (reaction)` index serves this at constant cost; no index covers `createdAt` with
  * `userId`, so ordering by it reads every reaction on the image.
  */
 export async function getImageReactors({ imageId, userId }: { imageId: number; userId: number }) {
-  const [owned] = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
-  `;
-  if (!owned) throw throwNotFoundError(`No image with id ${imageId}`);
+  if (!(await isImageOwner({ userId, imageId, allowMods: false })))
+    throw throwNotFoundError(`No image with id ${imageId}`);
 
   const rows = await dbRead.$queryRaw<ReactorRow[]>`
     SELECT "userId", reaction FROM "ImageReaction"
@@ -59,7 +66,7 @@ export async function getImageReactors({ imageId, userId }: { imageId: number; u
       reactions,
       username: deleted ? null : user.username,
       deletedAt: user?.deletedAt ?? null,
-      profilePicture: deleted ? null : profilePictures[userId] ?? null,
+      profilePicture: deleted ? null : safeProfilePicture(profilePictures[userId]),
     };
   });
 }

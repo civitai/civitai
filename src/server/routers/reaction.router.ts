@@ -38,9 +38,11 @@ export const reactionRouter = router({
     .query(({ input, ctx }) =>
       getUserReactionsForImages({ imageIds: input.imageIds, userId: ctx.user.id })
     ),
-  /** Owner-only: anyone else gets NOT_FOUND, the same as a missing image. Reactor identities are never public. */
+  /**
+   * Owner-only: anyone else gets NOT_FOUND, the same as a missing image. No `requiredScope`, so only a full-access
+   * key reaches it: no narrower scope's consent text covers "who reacted to your content".
+   */
   getImageReactors: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(({ input, ctx }) => getImageReactors({ imageId: input.id, userId: ctx.user.id })),
 });
