@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { probeTurnstile, TURNSTILE_SCRIPT_GRACE_MS } from '../turnstile-availability';
+import {
+  decideAfterGrace,
+  probeTurnstile,
+  TURNSTILE_SCRIPT_GRACE_MS,
+} from '../turnstile-availability';
 
-// The login page cannot be rendered here — the app's vitest project is `environment: 'node'` with no
-// browser project, so nothing can mount a Svelte component. What IS executable is the decision the page
-// delegates to, so the slow-script timeline is played against the real function rather than asserted
-// from source text. The seam — that the page routes its absence-shaped evidence through this function —
-// is pinned in ./login-captcha.test.ts.
+// The login page cannot be rendered here: the app's vitest project is `environment: 'node'` with no
+// browser project. The decision it delegates to IS executable, so the slow-script timeline is played
+// against the real function. The seam is pinned in ./login-captcha.test.ts.
 
-// Mirrors the page's call site. `captchaBlocked` there is
+// Mirrors the page's managed-slot call site. `captchaBlocked` there is
 // `turnstileEnforced && captchaUnavailable && !captchaToken` (pinned verbatim in login-captcha.test.ts),
 // so on a deployment that enforces, with no token in hand, `captchaUnavailable` IS whether the blocked
 // note is on screen and announced.
@@ -37,8 +39,7 @@ describe('turnstile availability probe', () => {
     const { page } = mountFallbackSlot(browser);
     expect(page.captchaUnavailable, 'concluded from the first look').toBe(false);
 
-    // t=10s: the script lands. Measured on both sides of the grace, because a probe that fires early
-    // would be indistinguishable from one that waits when only the far side is checked.
+    // t=10s: the script lands. Both sides of the grace.
     browser.scriptLoaded = true;
     vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS - 1);
     expect(page.captchaUnavailable).toBe(false);
@@ -90,5 +91,43 @@ describe('turnstile availability probe', () => {
 
     expect(page.captchaUnavailable).toBe(false);
     expect(page.managedWidgetRendered).toBe(false);
+  });
+});
+
+// The no-managed-key call site. There is no widget to render, so the script's presence answers nothing
+// a token does not — a script that arrived a moment before the deadline has had no time to solve — and
+// the verdict waits on the token alone.
+describe('deferred verdict with no interactive fallback to offer', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('decides only after the grace, never in the same tick as the deadline', () => {
+    let decided = false;
+    decideAfterGrace({ tokenArrived: () => false, decide: () => (decided = true) });
+    expect(decided, 'decided in the same tick the deadline fired').toBe(false);
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS - 1);
+    expect(decided).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(decided).toBe(true);
+  });
+
+  it('does not decide at all when a token arrives during the grace', () => {
+    let decided = false;
+    let token = '';
+    decideAfterGrace({ tokenArrived: () => !!token, decide: () => (decided = true) });
+    token = 'late-invisible-token';
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS * 2);
+    expect(decided).toBe(false);
+  });
+
+  it('decides nothing after teardown', () => {
+    let decided = false;
+    const teardown = decideAfterGrace({
+      tokenArrived: () => false,
+      decide: () => (decided = true),
+    });
+    teardown();
+    vi.advanceTimersByTime(TURNSTILE_SCRIPT_GRACE_MS * 2);
+    expect(decided).toBe(false);
   });
 });

@@ -98,8 +98,15 @@ export async function verifyCaptchaToken(
   // Pass-through when captcha is disabled — NOT counted (no verification actually happened).
   if (!isCaptchaEnabled()) return true;
   // Single assembly site for the label pair, so `mode` cannot be left off one branch (see the
-  // counter's declaration for why an omission is silent).
-  const count = (result: string) => captchaVerificationsTotal.inc({ result, mode });
+  // counter's declaration for why an omission is silent). One verification is one increment: the outer
+  // catch counts too, so anything throwing after a branch has already counted — an Axiom writer, a
+  // console hitting EPIPE — would otherwise record the same verification twice under two results.
+  let counted = false;
+  const count = (result: string) => {
+    if (counted) return;
+    counted = true;
+    captchaVerificationsTotal.inc({ result, mode });
+  };
   if (!token) {
     count('no_token');
     // failReason (client-supplied) splits no_token into widget-error / timeout / fallback-error, so we can size
@@ -124,7 +131,7 @@ export async function verifyCaptchaToken(
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
       count('http_error');
-      logRejectAxiom({ reason: 'http_error', status: res.status, ip });
+      logRejectAxiom({ reason: 'http_error', mode, status: res.status, ip });
       return false;
     }
     const outcome = (await res.json()) as {
@@ -181,12 +188,11 @@ export async function verifyCaptchaToken(
     count('success');
     return true;
   } catch (e) {
-    // Every siteverify network failure and every malformed-response parse failure lands here. Counting
-    // nothing made an upstream verification outage look like a volume drop with no reason attached, and
-    // it also left the denominator the mode split is read against open-ended. Through `count` like every
-    // other branch, so `mode` cannot be omitted. Never logs the token or the secret.
+    // Every siteverify network failure and every malformed-response parse failure lands here. Uncounted,
+    // an upstream verification outage is a volume drop with no reason beside it. Never logs the token or
+    // the secret.
     console.error('captcha verify rejected', {
-      reason: 'verify-error',
+      reason: 'verify_error',
       error: e instanceof Error ? e.message : String(e),
     });
     count('verify_error');

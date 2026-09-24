@@ -6,8 +6,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // is covered separately in captcha-dev.test.ts (which keeps the default dev=true).
 vi.mock('$app/environment', () => ({ dev: false }));
 
+// The Axiom sink is the breakdown an operator queries, so the rows it emits are assertable state, not a
+// side effect to ignore. Stubbed rather than left live so a suite never writes to a real datastream.
+const logToAxiom = vi.fn(async () => undefined);
+vi.mock('$lib/server/axiom', () => ({
+  logToAxiom: (...args: unknown[]) => logToAxiom(...(args as [])),
+  logAxiomError: async () => undefined,
+  safeError: (e: unknown) => ({ message: String(e) }),
+}));
+
 import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha';
 import { register, captchaVerificationsTotal } from '$lib/server/metrics';
+
+/** The single `captcha-reject` row a call emitted, or undefined when it emitted none. */
+const rejectRow = () =>
+  logToAxiom.mock.calls.map((c) => (c as unknown as [Record<string, unknown>])[0]).at(-1);
 
 beforeEach(() => {
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
@@ -276,6 +289,34 @@ describe('captcha verification counter — result x widget mode', () => {
     ]);
   });
 
+  it('carries the mode into the http_error Axiom row too, not only the counter', async () => {
+    // A verification outage that answers 500 rather than refusing the connection lands here, so this is
+    // the reject the mode split most needs to be able to break down. The counter gets `mode` from the
+    // shared assembly site; the Axiom row is hand-built and had no such binding.
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    logToAxiom.mockClear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(rejectRow()).toMatchObject({ reason: 'http_error', mode: 'managed' });
+  });
+
+  it('counts one verification once, even when a sink throws after the count', async () => {
+    // The outer catch counts now, so a throw from a log line after a branch has already counted would
+    // record the same verification twice under two different results.
+    logToAxiom.mockImplementationOnce(() => {
+      throw new Error('axiom exploded');
+    });
+    stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'siteverify_failed', mode: 'invisible' }, value: 1 },
+    ]);
+    logToAxiom.mockImplementation(async () => undefined);
+  });
+
   it('counts siteverify_failed with the mode', async () => {
     stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
     expect(await verifyCaptchaToken('tok')).toBe(false);
@@ -294,9 +335,8 @@ describe('captcha verification counter — result x widget mode', () => {
   });
 
   it('counts a siteverify NETWORK failure, with the mode', async () => {
-    // Uncounted, this class is invisible: during an upstream verification outage every email login
-    // fails while the counter shows only a volume drop with no reason beside it — and the drop lands
-    // in the denominator the mode split is read against.
+    // Uncounted, this class is invisible: an upstream verification outage shows as a volume drop with
+    // no reason beside it, inside the denominator the mode split is read against.
     process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
     vi.stubGlobal(
       'fetch',
@@ -333,7 +373,7 @@ describe('captcha verification counter — result x widget mode', () => {
     expect(await verifyCaptchaToken('tok-abc')).toBe(false);
     expect(errSpy).toHaveBeenCalledWith(
       'captcha verify rejected',
-      expect.objectContaining({ reason: 'verify-error', error: 'network down' })
+      expect.objectContaining({ reason: 'verify_error', error: 'network down' })
     );
     // The reject log is the one place a caught exception could carry credentials into an aggregator.
     const logged = JSON.stringify(errSpy.mock.calls);
