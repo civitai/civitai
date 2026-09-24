@@ -112,10 +112,13 @@ const RENDER_BODY = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n {2}
 const NO_WIDGET_BRANCH = RENDER_BODY.match(
   /if \(typeof id !== 'string'\) \{([\s\S]*?)\n {4}\}/
 )?.[1];
-// The note element itself, not only its wrapper. Hiding `.captcha-fallback-note` empties the region
-// just as completely as hiding the region, and it is the more natural thing for a responsive edit to
-// reach for — it is the element with the padding and the background.
-const blockedNoteClasses = (liveRegionInner.match(/<p class="([^"]*)"/)?.[1] ?? '')
+// The note element itself, not only its wrapper — extracted ONCE, same rule as above: two readers now
+// (its classes, and the inline-hide ban), and two hand-written patterns for one element disagree the
+// moment an attribute is added before `class`. Hiding `.captcha-fallback-note` empties the region just
+// as completely as hiding the region, and it is the more natural thing for a responsive edit to reach
+// for — it is the element with the padding and the background.
+const NOTE_TAG_TEXT = liveRegionInner.match(/<p\b[^>]*>/)?.[0] ?? '';
+const blockedNoteClasses = (NOTE_TAG_TEXT.match(/class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
   .filter(Boolean);
 // Covers BOTH the region and the note; each half is asserted non-empty where the ban is applied.
@@ -215,11 +218,18 @@ const canReachAnnouncement = (selectorList: string): boolean =>
 // ABSENCE every shape its regex cannot see becomes a silent pass rather than a loud red.
 // The body is NORMALISED before matching, for that same reason: `display : none`, `DISPLAY:NONE` and
 // `display:none` are one declaration to a browser, and `prop` is written in the tightest spelling.
-const rulesDeclaring = (prop: RegExp) =>
-  [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+// Its OWN contract is asserted here, not restated at each caller: this returns [] both when nothing
+// reaches the announcement and when it had no stylesheet to read or no class to compare, and a caller
+// asserting an ABSENCE cannot tell those apart. Every ban built on it inherits the check for free.
+const rulesDeclaring = (prop: RegExp) => {
+  expect(styles, '<style> block not found').not.toBe('');
+  expect(liveRegionClasses, 'the live region carries no class').not.toHaveLength(0);
+  expect(blockedNoteClasses, 'the blocked note carries no class').not.toHaveLength(0);
+  return [...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter(([, , body]) => prop.test(body.toLowerCase().replace(/\s*:\s*/g, ':')))
     .map(([, selector]) => selector.trim().replace(/\s+/g, ' '))
     .filter(canReachAnnouncement);
+};
 
 // Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
 // the matched line, so a declaration is its own scope. Trailing comments are stripped: a ledger pins
@@ -240,7 +250,7 @@ const ledger = (identifier: string) => {
 describe('login copy when the verification check cannot run', () => {
   it('derives the blocked state from ENFORCEMENT, an unavailable widget, and no token', () => {
     // All three terms are load-bearing, and each has its own way of producing a false note:
-    //  - the 8s timeout sets captchaUnavailable even with captcha switched off entirely, and a bare
+    //  - the token deadline sets captchaUnavailable even with captcha switched off entirely, and a bare
     //    sitekey test is wrong on both edges (a sitekey can exist where the action does not enforce);
     //  - captchaUnavailable is never cleared on the managed path, so without !captchaToken a fallback
     //    widget that errors and then solves keeps claiming login is blocked while a submit would pass.
@@ -325,11 +335,6 @@ describe('login copy when the verification check cannot run', () => {
     // …and no rule may put it back out of flow. Same reach query as the hiding ban below, deliberately:
     // a bespoke regex over the region's own classes cannot see `[role='status']` or `.card > *`, and an
     // ABSENCE assertion turns each shape it cannot see into a silent pass.
-    expect(styles, '<style> block not found').not.toBe('');
-    // The reach query answers nothing useful about an element whose class it never found, and this
-    // assertion reads an ABSENCE — so both halves are checked here as well as at the hiding ban.
-    expect(liveRegionClasses, 'the live region carries no class').not.toHaveLength(0);
-    expect(blockedNoteClasses, 'the blocked note carries no class').not.toHaveLength(0);
     expect(
       rulesDeclaring(/display:contents/),
       '`display: contents` is back on the live region or the note inside it. It buys 0.6rem of gap ' +
@@ -355,9 +360,22 @@ describe('login copy when the verification check cannot run', () => {
     const INLINE_HIDE =
       /\bhidden\b|class:|aria-live=['"]off|style:(display|visibility)|style=["{][^>]*?(display|visibility)/;
     expect(liveRegionTagText, 'the region tag can hide or mute itself').not.toMatch(INLINE_HIDE);
-    const noteTagText = liveRegionInner.match(/<p\b[^>]*>/)?.[0] ?? '';
-    expect(noteTagText, 'no note element found inside the live region').not.toBe('');
-    expect(noteTagText, 'the note tag can hide or mute itself').not.toMatch(INLINE_HIDE);
+    expect(NOTE_TAG_TEXT, 'no note element found inside the live region').not.toBe('');
+    expect(NOTE_TAG_TEXT, 'the note tag can hide or mute itself').not.toMatch(INLINE_HIDE);
+    // …and NEITHER may carry an id. The reach test answers a hard `false` for an `#id` compound, which
+    // is only sound while these elements have no id to select — and an id is one ordinary edit away
+    // (aria-describedby, a scroll anchor, a test hook). Measured: with an id on the region and a
+    // matching `#id { display: none }` in the sheet, every guard here stays green while the
+    // announcement is hidden. Pinning the precondition is cheaper than widening `#` to "reaches",
+    // which would red on any unrelated id-scoped hide.
+    expect(
+      liveRegionTagText,
+      'the region tag carries an id, which the reach test cannot see'
+    ).not.toMatch(/\bid=/);
+    expect(
+      NOTE_TAG_TEXT,
+      'the note tag carries an id, which the reach test cannot see'
+    ).not.toMatch(/\bid=/);
     expect(styles, '<style> block not found').not.toBe('');
 
     // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
@@ -369,12 +387,6 @@ describe('login copy when the verification check cannot run', () => {
     // it, which nobody can ship without noticing, whereas banning the pair across the whole stylesheet
     // reds on an ordinary responsive edit — a `@media` rule hiding the divider — under a name that
     // blames the live region. The tag-level assertion above covers the inline spelling.
-    // BOTH preconditions, separately: the reach set must cover the region AND the note. Hiding the note
-    // empties the announcement exactly as completely, and it is the likelier target of a responsive
-    // edit — it carries the padding and the background. A single "the union is non-empty" check passes
-    // on the region alone, which is one `.captcha-fallback-note` rule away from walking the whole ban.
-    expect(liveRegionClasses, 'the live region carries no class').not.toHaveLength(0);
-    expect(blockedNoteClasses, 'the blocked note carries no class').not.toHaveLength(0);
     expect(
       rulesDeclaring(/display:none|visibility:hidden/),
       'a CSS rule that can match the live region or the note inside it hides it. While the region is ' +
@@ -419,14 +431,16 @@ describe('login copy when the verification check cannot run', () => {
     expect(canReachAnnouncement('.badge :global(:not(.divider))')).toBe(true);
     // …and ATTRIBUTE selectors, in every spelling that matches these two elements while naming no class
     // token the reach test can compare. An allowlist of `role` answered "cannot reach" for all of them.
+    // One case is enough: the branch is an unconditional `true`, so `[class~=…]`, `[class*=…]` and
+    // `[class]` all exercise the same line. What the old `role`-only allowlist got wrong was answering
+    // `false` for every attribute that is not `role`.
     expect(canReachAnnouncement(`[class~='${regionClass}']`)).toBe(true);
-    expect(canReachAnnouncement(`p[class~="${noteClass}"]`)).toBe(true);
-    expect(canReachAnnouncement("[class*='live']")).toBe(true);
-    expect(canReachAnnouncement('[class]')).toBe(true);
-    // …and attribute and type names are case-INSENSITIVE for HTML, unlike class names.
-    expect(canReachAnnouncement('[ROLE="status"]')).toBe(true);
+    // …and type names are case-INSENSITIVE for HTML, while class names are not.
     expect(canReachAnnouncement('DIV[role]')).toBe(true);
     expect(canReachAnnouncement(`.${regionClass.toUpperCase()}`)).toBe(false);
+    // The `#` branch stays a hard `false`, which is sound only because neither element carries an id —
+    // asserted in the hiding ban above, not here.
+    expect(canReachAnnouncement('#anything')).toBe(false);
     // A genuine multi-selector list still splits: neither side reaches.
     expect(canReachAnnouncement('.badge svg, .divider span')).toBe(false);
     // …and a subject pseudo with several arguments still decides from them.
@@ -475,7 +489,7 @@ describe('login copy when the verification check cannot run', () => {
   // ./turnstile-availability.test.ts; this side pins that the component routes its absence-shaped
   // evidence through it.
   it('reaches the unavailable verdict only through the probe or a Turnstile error callback', () => {
-    // The 8s deadline with no token, and an absent `turnstile` global, are the same evidence a SLOW
+    // The token deadline with no token, and an absent `turnstile` global, are the same evidence a SLOW
     // connection produces — the api.js tag is `async defer`. A site that concludes from either without
     // a second look announces "email login can't complete" to a user whose login completes seconds later.
     const setter = normalize(
@@ -588,16 +602,20 @@ describe('login copy when the verification check cannot run', () => {
     // filter is blocking a check that was never offered. That claim is not merely unhedgeable there,
     // it is refutable from `data` alone. The other two routes to the verdict sit behind fallbackActive,
     // which only a managed sitekey sets, so guarding the deadline closes the class at its root — which
-    // is why captchaBlocked itself carries no captchaOffered term.
+    // is why captchaBlocked itself carries no captchaConfigured term.
     const mount = markup.match(/onMount\(\(\) => \{[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
     expect(mount, 'the onMount block was not found').not.toBe('');
     const armed = mount.match(/const timeout = ([\s\S]*?);\n {4}return \(\) => \{/)?.[1] ?? '';
     expect(armed, 'the deadline is not assigned to `timeout` before the teardown').not.toBe('');
+    // The DEPENDENCY, not the operator: a ternary, a `&&`, or anything else that makes the arming
+    // expression read captchaConfigured satisfies this, and an unconditional arm does not. LIMIT: the
+    // extraction below assumes `const timeout = <expr>;`, so rewriting this as a bare `if` statement
+    // reds here — widen the extraction with that change rather than dropping the guard.
     expect(
-      normalize(armed),
-      'the token deadline is armed unconditionally, so it concludes "this browser is blocking the ' +
-        'check" in a configuration that never offered one'
-    ).toMatch(/^captchaOffered\s*\?/);
+      armed,
+      'the token deadline is armed without consulting captchaConfigured, so it concludes "this ' +
+        'browser is blocking the check" in a configuration that never offered one'
+    ).toContain('captchaConfigured');
     expect(armed, 'the deadline does not call triggerFallback').toContain(
       "triggerFallback('timeout')"
     );
@@ -624,7 +642,7 @@ describe('login copy when the verification check cannot run', () => {
       markup.match(/function triggerFallback\(reason: string\) \{\n([^\n]*)/)?.[1] ?? ''
     );
     expect(guard, 'triggerFallback does not open with a short-circuit').not.toBe('');
-    expect(guard).toBe('if (captchaToken || fallbackActive || captchaUnavailable) return;');
+    expect(guard).toBe('if (fallbackActive || !captchaPending) return;');
   });
 
   it('asks nobody to solve a challenge that is not on screen, or that nothing is waiting on', () => {
@@ -644,8 +662,10 @@ describe('login copy when the verification check cannot run', () => {
     ).toBeDefined();
     expect(guarded).toContain('Complete this quick check to continue.');
     expect(markup.split('Complete this quick check to continue.')).toHaveLength(2);
-    expect(markup, 'the slot reserves height before the widget exists').toMatch(
-      /class:collapsed=\{captchaBlocked \|\| !managedWidgetShown\}/
+    // The slot's height and the prompt read ONE rule, negated — they diverged once already, leaving a
+    // bare Cloudflare challenge in an expanded box with no copy beside it.
+    expect(markup, 'the slot reserves height for a widget nothing is waiting on').toMatch(
+      /class:collapsed=\{!managedWidgetShown \|\| !captchaPending\}/
     );
     expect(markup, 'the button invites a solve before the widget exists').toMatch(
       /\? managedWidgetShown\s*\n\s*\? 'Verify to continue'\s*\n\s*: 'Verifying…'/
@@ -706,10 +726,56 @@ describe('login copy when the verification check cannot run', () => {
     );
   });
 
-  it('replaces the generic "try again" message on the blocked path, and keeps it otherwise', () => {
-    // A rejected-but-working token (expired / reused) is genuinely retryable and must keep the generic copy.
-    expect(pageSource).toMatch(/\{#if form\?\.captcha && !captchaBlocked\}/);
+  it('replaces the generic "try again" message on BOTH unusable paths, and keeps it otherwise', () => {
+    // A rejected-but-working token (expired / reused) is genuinely retryable and must keep the generic
+    // copy. The two states where a retry CANNOT work are different in cause and identical in that
+    // respect, so the suppression reads the union rather than one of them: gating on captchaBlocked
+    // alone leaves the misconfigured state inviting a doomed retry, five of which spend the
+    // rate-limit budget and turn into "Too many attempts".
+    expect(pageSource).toMatch(/\{#if form\?\.captcha && !emailUnusable\}/);
     expect(pageSource).toContain('Captcha verification failed. Please try again.');
+    const union = normalize(
+      pageSource.match(/const emailUnusable = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    );
+    expect(union).toBe('const emailUnusable = $derived(captchaBlocked || captchaMisconfigured);');
+  });
+
+  it('tells a user whose page was never given a check, without blaming their browser', () => {
+    // captchaBlocked cannot be reached where nothing was offered — the deadline that would set the
+    // verdict is not armed there — so that configuration had NO copy at all and fell through to the
+    // generic retry. It is a real state: enforcement is keyed on the invisible SECRET and the widget on
+    // the invisible SITEKEY, two separate values, so setting one without the other reaches it.
+    const decl = normalize(
+      pageSource.match(/const captchaMisconfigured = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    );
+    expect(decl).toBe(
+      'const captchaMisconfigured = $derived(data.turnstileEnforced && !captchaConfigured);'
+    );
+    // It must never gate the submit: the server is the sole gate, exactly as on the blocked path.
+    expect(
+      pageSource.match(/disabled=\{([^}]*)\}/g)?.join(' '),
+      'the misconfigured state reached the submit gate'
+    ).not.toContain('captchaMisconfigured');
+    // The copy, pinned whole. It names NO cause — the page cannot honestly attribute a key it was
+    // never given — and offers the one route that still works. The browser-blame vocabulary of the
+    // sibling note is banned outright: reaching for it here is the regression this replaced.
+    const note = normalize(
+      pageSource.match(
+        /\{:else if captchaMisconfigured\}[\s\S]*?<p class="captcha-fallback-note">([\s\S]*?)<\/p>/
+      )?.[1] ?? ''
+    );
+    expect(note, 'no note for the misconfigured state').not.toBe('');
+    expect(note).toBe(
+      "{#if form?.captcha}That didn't go through.{/if} Email login isn't available right now. " +
+        '{#if data.providers.length > 0}Sign in with one of the buttons above instead.{/if}'
+    );
+    expect(note.toLowerCase()).not.toContain('try again');
+    for (const blame of ['browser', 'extension', 'vpn', 'filter', 'reload']) {
+      expect(
+        note.toLowerCase(),
+        `the misconfigured note blames the reader ("${blame}")`
+      ).not.toContain(blame);
+    }
   });
 
   // INVARIANT GUARD (green before this change too): the blocked path must never re-gate the button. The
@@ -726,7 +792,7 @@ describe('login copy when the verification check cannot run', () => {
       pageSource.match(/const captchaPending = \$derived\([\s\S]*?\);/)?.[0] ?? ''
     );
     expect(pending).toBe(
-      'const captchaPending = $derived( data.turnstileEnforced && captchaOffered && !captchaToken && !captchaUnavailable );'
+      'const captchaPending = $derived( data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable );'
     );
     // The two config terms are what make this gate honest, and each can only RELEASE the button:
     //  - turnstileEnforced, or a deployment with a sitekey and no secret makes every user wait on a
@@ -736,10 +802,21 @@ describe('login copy when the verification check cannot run', () => {
     // Both read only `data`, so neither can become true because captcha FAILED — the one property this
     // expression must keep.
     const offered = normalize(
-      pageSource.match(/const captchaOffered = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+      pageSource.match(/const captchaConfigured = \$derived\([\s\S]*?\);/)?.[0] ?? ''
     );
+    // …and the predicate is expressed ONCE. The `<svelte:head>` gate on api.js asks the same question,
+    // and it is the physical precondition for everything captchaConfigured claims — a hand-spelled copy
+    // there can answer the old question after this declaration is changed, and nothing would say so.
+    expect(
+      markup.match(/<svelte:head>[\s\S]*?\{#if ([^}]*)\}/)?.[1],
+      'the api.js gate hand-spells the predicate instead of reading captchaConfigured'
+    ).toBe('captchaConfigured');
+    expect(
+      markup.match(/data\.turnstileSiteKey \|\| !?!?data\.turnstileManagedSiteKey/g) ?? [],
+      'the two-sitekey disjunction is written in more than one place'
+    ).toHaveLength(1);
     expect(offered).toBe(
-      'const captchaOffered = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);'
+      'const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);'
     );
   });
 });

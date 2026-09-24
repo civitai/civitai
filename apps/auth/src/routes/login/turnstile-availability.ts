@@ -3,6 +3,13 @@
 // from a single look: a verdict about the user's environment waits for a second one. An explicit
 // Turnstile error callback is different evidence and does not come through here.
 
+/**
+ * How long the invisible widget gets to auto-solve before the login page offers the fallback.
+ * Lives here, beside the grace, because the wait a blocked user actually sees is the SUM of the two:
+ * split across two files, an edit to either cannot see the budget it is changing.
+ */
+export const TURNSTILE_TOKEN_DEADLINE_MS = 8000;
+
 /** How long the second look waits. */
 export const TURNSTILE_SCRIPT_GRACE_MS = 5000;
 
