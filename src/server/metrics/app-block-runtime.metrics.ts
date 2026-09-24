@@ -145,6 +145,18 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The per-viewer GATED image read (`/api/v1/blocks/gated-images`) — the v1
+  // replacement for the `GET_IMAGES_BY_IDS` bridge message. Its OWN label rather
+  // than folding into 'images', because the two share a noun and nothing else:
+  // 'images' is a Meilisearch catalog SEARCH over the whole public corpus, whose
+  // RED series is dominated by search latency and Meili brownouts, while this is
+  // a bounded `id = ANY(...)` row read on the replica, scoped to ONE app's own
+  // published rows. Merging them would drop a constant-shape point read into the
+  // p95 of the only block route that can be slow for an external reason — and, in
+  // the direction an operator actually reads these, a rising error rate here (a
+  // grid rendering blanks for every viewer) would vanish into the volume of
+  // catalog searches. Same bucket, different question when it fails.
+  | 'gated_images'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that

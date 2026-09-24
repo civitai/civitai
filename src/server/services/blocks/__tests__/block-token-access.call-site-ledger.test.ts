@@ -77,9 +77,15 @@ const NAME_COLLISION_MODULE = 'src/server/services/apps/app-storage.service.ts';
  */
 const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> = {
   'src/server/routers/blocks.router.ts': {
-    calls: 17,
+    calls: 16,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject.',
+    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until `getImagesByIds` moved its post-authorization half into block-gated-images-read.service.ts to share it with the REST twin — the call did not disappear, it MOVED, and the entry below is where it went.',
+  },
+  'src/server/services/blocks/block-gated-images-read.service.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims verified by the caller — authorizeBlockBridgeToken on the bridge, withBlockScope on REST',
+    why: 'The shared body of the per-viewer gated image read, called by BOTH blocks.getImagesByIds and GET /api/v1/blocks/gated-images. It is the first entry here that is neither a router nor a route: the gate sits in the shared body precisely so the two transports cannot disagree about whether the kill-switch ran. The subject is still self-bound — the function takes CLAIMS, never a user id, and derives the subject itself, so no caller can pass one in.',
   },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
@@ -163,7 +169,7 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // walk reached a meaningful number of files, and that the detector fires on a known
     // consumer's actual source.
     expect(files.length).toBeGreaterThan(500);
-    expect(consumers.length).toBe(2);
+    expect(consumers.length).toBe(3);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

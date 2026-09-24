@@ -133,6 +133,25 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // match cannot silently swallow a future sibling route.
   if (endpoint === '/api/v1/blocks/app-storage/set') return 'Wrote app-local storage (API)';
   if (endpoint === '/api/v1/blocks/app-storage/delete') return 'Deleted app-local storage (API)';
+  // The per-viewer gated image read (`/api/v1/blocks/gated-images`). It declares
+  // NO `requiredScope`, so `withBlockScope` records the `(any-token)` sentinel as
+  // this row's scope — a string that is in neither `READ_SCOPE_LABELS` nor
+  // `SCOPE_ACTION_LABELS`, so without this arm the row falls all the way through
+  // and renders the literal `(any-token)` to the viewer. That is the
+  // no-label-at-all failure the app-storage pair above describes, not the
+  // wrong-label one the workflow arms fix.
+  //
+  // ⚠️ THE THREE OTHER ANY-TOKEN ROUTES STILL RENDER `(any-token)` — `blocks/images`,
+  // `blocks/models` and `blocks/tools` have no arm here and this change does not
+  // give them one. Stated rather than quietly fixed: giving them labels is a
+  // separate, uncontroversial edit, and doing it inside this PR would mean
+  // changing three live rows' rendering for reasons unrelated to the route being
+  // added. (`blocks/generation-resources` is in the same position.)
+  //
+  // `===`, not a prefix: `gated-images` is in KNOWN_STATIC_ENDPOINT_SEGMENTS and
+  // the ids ride the query string, which `normalizeEndpoint` strips — so the
+  // value is exactly this literal for every call, with or without ids.
+  if (endpoint === '/api/v1/blocks/gated-images') return 'Read moderated images';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   // Prefix (not `===`) so BOTH the bounded template written today
   // (`storage:set`) and the historical per-key value (`storage:set:<key>`)

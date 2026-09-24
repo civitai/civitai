@@ -1394,6 +1394,11 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'estimate',
   'follow',
   'get',
+  // The per-viewer gated image read. Note what is NOT here: an IMAGE ID. The ids
+  // ride the query string (`?ids=1,2,3`), which `normalizeEndpoint` strips
+  // wholesale, so this surface has no `:seg` position at all and nothing that
+  // could fragment the `endpoint` column.
+  'gated-images',
   'generation-resources',
   'images',
   'increment',
