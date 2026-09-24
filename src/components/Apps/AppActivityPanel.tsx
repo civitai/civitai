@@ -90,10 +90,10 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // covers both set and delete). The endpoint string is the source of
   // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
-  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All four routes are
+  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All FIVE routes are
   // wrapped with `requiredScope: 'ai:write:budgeted'`, so WITHOUT an arm here
   // their access rows fall past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and
-  // render as 'Submit AI workflow' — false for these three, and at the SDK's
+  // render as 'Submit AI workflow' — false for these four, and at the SDK's
   // poll cadence roughly thirty times per generation.
   // `===`, not a prefix: `normalizeEndpoint` strips the query string and leaves
   // these segments literal (they are in KNOWN_STATIC_ENDPOINT_SEGMENTS), so the
@@ -104,6 +104,12 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   if (endpoint === '/api/v1/blocks/workflows/poll') return 'Checked an AI workflow';
   if (endpoint === '/api/v1/blocks/workflows/estimate') return 'Priced an AI workflow';
   if (endpoint === '/api/v1/blocks/workflows/cancel') return 'Canceled an AI workflow';
+  // `/workflows/query` — the app-subqueue read. It is a LIST, not a read of one
+  // workflow, so it is deliberately not worded like `/poll`'s 'Checked an AI
+  // workflow': the two would otherwise be indistinguishable in this column while
+  // describing very different reads (one workflow the app already knows about,
+  // versus every generation the app has ever made for this viewer).
+  if (endpoint === '/api/v1/blocks/workflows/query') return 'Listed your AI workflows';
   // The REST app-storage WRITE twins (`/api/v1/blocks/app-storage/{set,delete}`).
   // Both routes are wrapped with `requiredScope: 'apps:storage:write'`, which is
   // in NEITHER `READ_SCOPE_LABELS` nor `SCOPE_ACTION_LABELS` — so WITHOUT an arm

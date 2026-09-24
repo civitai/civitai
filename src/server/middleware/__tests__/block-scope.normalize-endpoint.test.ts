@@ -306,10 +306,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // withBlockScope REST route (it had been retired in favour of the
       // page-host bridge, which a non-page-hosted block cannot reach).
       'buzz',
-      // `cancel` / `estimate` / `poll` / `submit` / `workflows` — the WORKFLOW
-      // surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
-      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW bridge messages. Five
-      // new STATIC segments, pinned for the same reason the shared ones are:
+      // `cancel` / `estimate` / `poll` / `query` / `submit` / `workflows` — the
+      // WORKFLOW surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
+      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL,QUERY_APP}_WORKFLOW(S) bridge
+      // messages. Six STATIC segments, pinned for the same reason the shared ones are:
       // without them `normalizeEndpoint` collapses the last segment to a
       // placeholder and the audit log stops distinguishing a SPEND from a price
       // quote from a status poll — which on this surface is the only thing the
@@ -335,6 +335,9 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'me',
       'models',
       'poll',
+      // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
+      // page size ride the POST body, so there is no `:seg` position to lose.
+      'query',
       'quota',
       'report',
       'set',

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
 /**
- * ADAPTER-level coverage for the four `/api/v1/blocks/workflows/*` routes.
+ * ADAPTER-level coverage for the five `/api/v1/blocks/workflows/*` routes.
  *
  * SCOPE OF THIS FILE, stated because it is narrower than it looks: every control
  * on this surface — the `ai:write:budgeted` assertion, the anon refusal, the
@@ -70,15 +70,23 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockSubmit, mockEstimate, mockPoll, mockCancel, mockBearer, mockHandleEndpointError } =
-  vi.hoisted(() => ({
-    mockSubmit: vi.fn(),
-    mockEstimate: vi.fn(),
-    mockPoll: vi.fn(),
-    mockCancel: vi.fn(),
-    mockBearer: vi.fn(),
-    mockHandleEndpointError: vi.fn(),
-  }));
+const {
+  mockSubmit,
+  mockEstimate,
+  mockPoll,
+  mockCancel,
+  mockQuery,
+  mockBearer,
+  mockHandleEndpointError,
+} = vi.hoisted(() => ({
+  mockSubmit: vi.fn(),
+  mockEstimate: vi.fn(),
+  mockPoll: vi.fn(),
+  mockCancel: vi.fn(),
+  mockQuery: vi.fn(),
+  mockBearer: vi.fn(),
+  mockHandleEndpointError: vi.fn(),
+}));
 
 vi.mock('~/server/services/blocks/block-workflow-rest', () => ({
   blockWorkflowBearer: (...a: unknown[]) => mockBearer(...a),
@@ -87,6 +95,7 @@ vi.mock('~/server/services/blocks/block-workflow-rest', () => ({
     estimateWorkflow: mockEstimate,
     pollWorkflow: mockPoll,
     cancelWorkflow: mockCancel,
+    queryAppWorkflows: mockQuery,
   }),
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -97,6 +106,7 @@ import submitHandler from '~/pages/api/v1/blocks/workflows/submit';
 import estimateHandler from '~/pages/api/v1/blocks/workflows/estimate';
 import pollHandler from '~/pages/api/v1/blocks/workflows/poll';
 import cancelHandler from '~/pages/api/v1/blocks/workflows/cancel';
+import queryHandler from '~/pages/api/v1/blocks/workflows/query';
 
 /**
  * 🔴 PAIRWISE-DISTINCT, NON-ZERO FIXTURES. Every id, cost and token below differs
@@ -113,6 +123,10 @@ const ESTIMATE_COST = 241;
 const POLL_COST = 353;
 const CANCEL_COST = 467;
 const IDEMPOTENCY_KEY = 'a7f3c1e9-2b4d-4a68-9c01-5e7d3f2b8a10';
+const QUERY_WORKFLOW_ID = '31-20260923110000004';
+const QUERY_COST = 571;
+const QUERY_CURSOR = 'cur_01JQ8XG7YV2K4M6P8R0T2W4Y71';
+const QUERY_NEXT_CURSOR = 'cur_01JQ8XG7YV2K4M6P8R0T2W4Y72';
 
 /** A minimal, valid `kind: 'textToImage'` body for the shared wire schema. */
 const TXT2IMG_BODY = {
@@ -154,7 +168,8 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
 }
 
 beforeEach(() => {
-  for (const fn of [mockSubmit, mockEstimate, mockPoll, mockCancel, mockBearer]) fn.mockReset();
+  for (const fn of [mockSubmit, mockEstimate, mockPoll, mockCancel, mockQuery, mockBearer])
+    fn.mockReset();
   mockHandleEndpointError.mockReset();
   mockBearer.mockReturnValue(BEARER);
   claimsBox.claims = fakeClaims();
@@ -171,9 +186,12 @@ const ROUTES = [
   { name: 'estimate', handler: estimateHandler, body: { body: TXT2IMG_BODY } },
   { name: 'poll', handler: pollHandler, body: { workflowId: POLL_WORKFLOW_ID } },
   { name: 'cancel', handler: cancelHandler, body: { workflowId: CANCEL_WORKFLOW_ID } },
+  // `query` takes no required field at all — its whole input is two optional
+  // paging knobs, which is itself the trust-boundary statement (see query.ts).
+  { name: 'query', handler: queryHandler, body: {} },
 ] as const;
 
-describe('workflow routes — the guards every one of the four carries', () => {
+describe('workflow routes — the guards every one of the five carries', () => {
   it.each(ROUTES)('$name rejects a non-POST with 405 and an Allow header', async ({ handler }) => {
     const { req, res } = createMocks({ method: 'GET' });
     await (handler as any)(req, res);
@@ -197,7 +215,7 @@ describe('workflow routes — the guards every one of the four carries', () => {
     expect(res._status()).toBe(400);
     expect((res._json() as { error: string }).error).toBe('Invalid request body');
     // The procedure must never be reached — a rejected body costs no delegation.
-    for (const fn of [mockSubmit, mockEstimate, mockPoll, mockCancel])
+    for (const fn of [mockSubmit, mockEstimate, mockPoll, mockCancel, mockQuery])
       expect(fn).not.toHaveBeenCalled();
   });
 });
@@ -438,5 +456,118 @@ describe('POST /api/v1/blocks/workflows/cancel', () => {
     const { req, res } = createMocks({ body: { workflowId: CANCEL_WORKFLOW_ID } });
     await (cancelHandler as any)(req, res);
     expect(mockHandleEndpointError).toHaveBeenCalledWith(res, refusal);
+  });
+});
+
+describe('POST /api/v1/blocks/workflows/query', () => {
+  const PAGE = {
+    workflows: [
+      {
+        workflowId: QUERY_WORKFLOW_ID,
+        status: 'succeeded',
+        images: [{ url: 'https://orch.test/i/71.jpeg' }],
+        cost: { total: QUERY_COST },
+        createdAt: '2026-09-23T12:00:00.000Z',
+      },
+    ],
+    cursor: QUERY_NEXT_CURSOR,
+  };
+
+  it('forwards the bearer with NO paging keys when the body is empty, and returns the page verbatim', async () => {
+    mockQuery.mockResolvedValue(PAGE);
+    const { req, res } = createMocks({ body: {}, url: '/api/v1/blocks/workflows/query' });
+    await (queryHandler as any)(req, res);
+
+    // Exactly ONE key. The absent `cursor`/`limit` are OMITTED rather than sent as
+    // `undefined`, so the procedure's own `?? 20` default owns the page size —
+    // one constant, one place — and there is no second spelling of it to drift.
+    expect(mockQuery).toHaveBeenCalledWith({ blockToken: BEARER });
+    expect(res._status()).toBe(200);
+    expect(res._json()).toEqual(PAGE);
+  });
+
+  it('forwards cursor and limit when given', async () => {
+    mockQuery.mockResolvedValue(PAGE);
+    const { req, res } = createMocks({ body: { cursor: QUERY_CURSOR, limit: 13 } });
+    await (queryHandler as any)(req, res);
+    expect(mockQuery).toHaveBeenCalledWith({
+      blockToken: BEARER,
+      cursor: QUERY_CURSOR,
+      limit: 13,
+    });
+  });
+
+  it('rejects a limit above the wire bound without delegating', async () => {
+    const { req, res } = createMocks({ body: { limit: 51 } });
+    await (queryHandler as any)(req, res);
+    expect(res._status()).toBe(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE TRUST BOUNDARY, at the adapter layer. `bodySchema` is a
+   * `z.strictObject` — the only one on this surface — so a `tags` key is
+   * `unrecognized_keys` at the door rather than silently stripped. The end-to-end
+   * half of this claim (a forged tag cannot broaden the RESULT SET, and the tag
+   * the orchestrator sees is `appBlockTag(claims.appId)`) is in
+   * `workflows-controls-seam.test.ts`, which is the only file that can see it.
+   *
+   * REACHABILITY: the body is otherwise entirely valid — POST, claims present,
+   * `limit: 4` inside 1..50 — so nothing earlier can reject it and `fieldErrors`
+   * must be empty. If some other check got there first, this case would have
+   * stopped measuring the strict schema.
+   *
+   * MUTATION RESULT (measured, `z.strictObject` → `z.object` in query.ts):
+   * `expected 200 to be 400`.
+   */
+  it('REFUSES a body-supplied `tags`, naming the key, and never delegates', async () => {
+    const { req, res } = createMocks({
+      body: { limit: 4, tags: ['app-block:oac_someone_else', 'civitai'] },
+    });
+    await (queryHandler as any)(req, res);
+
+    expect(res._status()).toBe(400);
+    const json = res._json() as {
+      error: string;
+      details: { formErrors: string[]; fieldErrors: Record<string, unknown> };
+    };
+    expect(json.error).toBe('Invalid request body');
+    expect(json.details.formErrors.join(' ')).toContain('tags');
+    expect(json.details.fieldErrors).toEqual({});
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it.each([['appId'], ['userId'], ['blockToken'], ['hideMatureContent']])(
+    'REFUSES a body-supplied `%s` the same way',
+    async (key) => {
+      const { req, res } = createMocks({ body: { [key]: 'forged' } });
+      await (queryHandler as any)(req, res);
+      expect(res._status()).toBe(400);
+      expect(mockQuery).not.toHaveBeenCalled();
+    }
+  );
+
+  it('routes a THROWN refusal through handleEndpointError, never a hand-rolled envelope', async () => {
+    const refusal = new Error('block lacks ai:write:budgeted scope');
+    mockQuery.mockRejectedValue(refusal);
+    const { req, res } = createMocks({ body: {} });
+    await (queryHandler as any)(req, res);
+    expect(mockHandleEndpointError).toHaveBeenCalledTimes(1);
+    expect(mockHandleEndpointError).toHaveBeenCalledWith(res, refusal);
+  });
+
+  /**
+   * An EMPTY page is a legitimate 200 — a viewer who has generated nothing through
+   * this app. Every refusal on this procedure THROWS (scope, anon, kill-switch,
+   * rate limit), so it reaches the wire non-2xx through `handleEndpointError`, and
+   * there is no path that answers "no workflows" for an authorization failure.
+   */
+  it('returns an empty page as a 200, and does not route it through handleEndpointError', async () => {
+    mockQuery.mockResolvedValue({ workflows: [], cursor: null });
+    const { req, res } = createMocks({ body: {} });
+    await (queryHandler as any)(req, res);
+    expect(res._status()).toBe(200);
+    expect(res._json()).toEqual({ workflows: [], cursor: null });
+    expect(mockHandleEndpointError).not.toHaveBeenCalled();
   });
 });

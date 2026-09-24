@@ -1402,6 +1402,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'me',
   'models',
   'poll',
+  // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging
+  // cursor and page size ride the POST body, so there is no `:seg` position on
+  // this route and nothing per-viewer that could fragment the `endpoint` column.
+  'query',
   'quota',
   'report',
   'set',

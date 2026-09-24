@@ -250,6 +250,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Reads one of the VIEWER’s own workflows — its live status, its cost and its output image urls and generated text, scoped by assertBlockWorkflowMintedForViewer (the id must name this viewer) and assertBlockWorkflowTaggedForApp (the record must carry this app’s provenance tag). A suspended app left reachable here would keep harvesting the outputs of generations it had already started on a signed-in user’s behalf, which is precisely the retained per-user data a takedown exists to stop; with the optional waitSeconds hold it also keeps an origin request slot open per call.',
   },
+  'src/pages/api/v1/blocks/workflows/query.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Pages the VIEWER’s own generation workflows, narrowed to the calling app’s subqueue by a host-forced app-block:<appId> tag built from the verified token — so the body is a list of that viewer’s statuses, costs and output image urls, up to 50 per call, and an anonymous caller receives none of it. A suspended app left reachable here would keep harvesting the full history of everything it ever generated on a signed-in user’s behalf, in BULK rather than one workflow at a time like poll.ts, which is the same retained per-user data a takedown exists to stop at the worst rows-per-call ratio on this surface.',
+  },
   'src/pages/api/v1/blocks/workflows/submit.ts': {
     exposure: 'SPEND',
     why: 'Runs a generation that debits the VIEWER’s Buzz — irreversible once the orchestrator accepts it. The highest-value entry in this table alongside tip.ts, and the one with the largest per-call ceiling: a tip is bounded by BLOCK_TIP_MAX_PER_TIP, a generation by whatever per-call buzzBudget the viewer consented to. A suspended app left reachable here could keep spending a signed-in user’s balance, keep accruing an author fee payable to the suspended app’s own publisher, and keep consuming the per-app velocity allowance every other viewer of that app shares.',
@@ -1319,14 +1323,15 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
-    // The four workflow routes. `submit.ts` is the second SPEND route this table
-    // has ever carried; the other three are WRITE / READ_VIEWER_SCOPED. None may
+    // The five workflow routes. `submit.ts` is the second SPEND route this table
+    // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
     // opt out: a suspended app reaching any of them keeps spending, stopping or
     // harvesting a signed-in viewer's generations, which is the whole exposure
     // the gate removes.
     'src/pages/api/v1/blocks/workflows/cancel.ts',
     'src/pages/api/v1/blocks/workflows/estimate.ts',
     'src/pages/api/v1/blocks/workflows/poll.ts',
+    'src/pages/api/v1/blocks/workflows/query.ts',
     'src/pages/api/v1/blocks/workflows/submit.ts',
   ];
 

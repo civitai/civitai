@@ -119,6 +119,16 @@ export type AppBlockEndpoint =
   | 'workflows_estimate'
   | 'workflows_poll'
   | 'workflows_cancel'
+  // The app-generator SUBQUEUE read (`/api/v1/blocks/workflows/query`) — the REST
+  // twin of QUERY_APP_WORKFLOWS. Its own label for the same reason the four above
+  // are split: it is a paged orchestrator LIST returning up to 50 projections per
+  // call, so its duration is a function of PAGE SIZE and of how much the viewer
+  // has generated through this app, which no other label here varies with. It
+  // also charges the CATALOG rate-limit bucket and — unlike `poll`, which sheds a
+  // 429 by RESOLVING a non-terminal snapshot — surfaces that refusal as a real
+  // error, so it is the one workflow label whose error rate reads as "blocks are
+  // being throttled on the subqueue" rather than disappearing into a 200.
+  | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
   // bridge messages, and the per-viewer counterpart to the `shared_storage_*`
