@@ -349,6 +349,17 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'top',
       'unvote',
       'update',
+      // `user-checkpoint` — the per-viewer checkpoint override write
+      // (`v1/blocks/user-checkpoint/set.ts`), the REST twin of the
+      // SET_USER_CHECKPOINT bridge message. One new STATIC segment; `set` was
+      // already in the vocabulary, earned by `app-storage/set.ts`. Pinned for the
+      // OVER-templating reason this file's docblock names: without it
+      // `normalizeEndpoint` yields `/api/v1/blocks/:seg/set`, which does not merely
+      // lose the name — it COLLIDES with `app-storage/set.ts` under the same
+      // template, so the `topEndpoints` rollup would sum a checkpoint write and a
+      // storage write into one row and the Activity panel would have no value to
+      // match its label arm on.
+      'user-checkpoint',
       'v1',
       'vote',
       'withdraw',

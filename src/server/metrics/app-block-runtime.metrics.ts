@@ -145,6 +145,13 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The per-viewer checkpoint override write — the REST twin of the
+  // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
+  // into a settings-shaped bucket: it is the only REST route that writes
+  // `block_user_settings`, and its error rate is how "viewers cannot pin a
+  // checkpoint right now" becomes visible — a product question an operator
+  // asks on its own, not one to read out of a shared series.
+  | 'user_checkpoint_set'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that

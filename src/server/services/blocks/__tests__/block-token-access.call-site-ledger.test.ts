@@ -77,9 +77,19 @@ const NAME_COLLISION_MODULE = 'src/server/services/apps/app-storage.service.ts';
  */
 const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> = {
   'src/server/routers/blocks.router.ts': {
-    calls: 17,
+    // 17 → 16: `updateUserSettings` no longer calls the gate inline. Its whole body was
+    // extracted to `user-settings.service.ts` (below) so the new REST twin
+    // `POST /api/v1/blocks/user-checkpoint/set` reaches the SAME gates; the call moved
+    // WITH the body rather than being dropped. Net production call sites are unchanged.
+    calls: 16,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
     why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject.',
+  },
+  'src/server/services/blocks/user-settings.service.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken — taken by the CALLER (the router proc, or this module’s own token-taking wrapper) and passed in as verified claims, never as a client-supplied id',
+    why: 'The per-viewer block-settings write, shared by BOTH transports: the tRPC bridge proc blocks.updateUserSettings and the REST route /api/v1/blocks/user-checkpoint/set. Sharing this exact function is what makes the two doors agree about the kill switch — the same reason me.ts is in this set. The subject it binds to is also the subject the write is KEYED on (block_user_settings.user_id), so a gate evaluated against anything else would be checking a different person than the row belongs to.',
   },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
@@ -163,7 +173,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // walk reached a meaningful number of files, and that the detector fires on a known
     // consumer's actual source.
     expect(files.length).toBeGreaterThan(500);
-    expect(consumers.length).toBe(2);
+    // 2 → 3 with `user-settings.service.ts`, the extracted viewer-settings write body.
+    expect(consumers.length).toBe(3);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

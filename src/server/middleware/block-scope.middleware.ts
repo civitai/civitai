@@ -1413,6 +1413,14 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'top',
   'unvote',
   'update',
+  // The per-viewer checkpoint override write. Like `app-storage`, nothing
+  // identifying is in the path: the install and the viewer both come from the
+  // JWT, and the only body field is a bounded integer — so there is no `:seg`
+  // position on this surface to lose. Without this entry the audit row records
+  // `/api/v1/blocks/:seg/set`, which collides with the app-storage `set` route
+  // in the `topEndpoints` rollup and leaves the Activity panel with nothing to
+  // match on.
+  'user-checkpoint',
   'vote',
   'withdraw',
   'workflows',
