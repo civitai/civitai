@@ -21,23 +21,25 @@ producer → apps/notifications POST /notifications     (opt-out filter, queue r
          → public/sw.js `push` handler → OS notification → `notificationclick` → deep link
 ```
 
-| Piece | Where | Notes |
-|---|---|---|
-| `PushSubscription` | main DB | one row per browser; `endpoint` unique; `userAgent` for the device list |
-| `UserPushSetting` | main DB | PK `(userId, type)`; **row = push ON, absence = no push** |
-| Dispatcher | `apps/notifications/src/worker/push.ts` | called from `run()` in `poll-loop.ts`, never throws |
-| Render endpoint | `src/pages/api/internal/notifications/render-push.ts` | `WEBHOOK_TOKEN`-gated; the processor registry (`prepareMessage`) only exists in the monolith |
-| Service worker | `public/sw.js` | `push`, `notificationclick`, `pushsubscriptionchange` — nothing else |
-| Client state | `src/components/Notifications/usePushSubscription.ts` | single owner of permission/registration/subscribe |
-| UI | `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`, `NotificationTypeControl` | rendered by BOTH `NotificationsCard` (legacy) and `NotificationsPane` (accountSettingsV2) |
-| tRPC | `notification.router.ts` | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings` |
-| SW re-subscribe | `src/pages/api/push/resubscribe.ts` | session-authed REST — a SW can't speak tRPC |
-| Cleanup | `src/server/jobs/push-subscription-cleanup.ts` | weekly; no successful delivery in 180 days |
-| Metrics | `notifications_push_delivery_total{outcome}` | `accepted` = push service took it — **not** that a user saw it |
+| Piece              | Where                                                                          | Notes                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `PushSubscription` | main DB                                                                        | one row per browser; `endpoint` unique; `userAgent` for the device list                                                       |
+| `UserPushSetting`  | main DB                                                                        | PK `(userId, type)`; **row = push ON, absence = no push**                                                                     |
+| Dispatcher         | `apps/notifications/src/worker/push.ts`                                        | called from `run()` in `poll-loop.ts`, never throws                                                                           |
+| Render endpoint    | `src/pages/api/internal/notifications/render-push.ts`                          | `WEBHOOK_TOKEN`-gated; the processor registry (`prepareMessage`) only exists in the monolith                                  |
+| Service worker     | `public/sw.js`                                                                 | `push`, `notificationclick`, `pushsubscriptionchange` — nothing else                                                          |
+| Client state       | `src/components/Notifications/usePushSubscription.ts`                          | the only caller of subscribe/unsubscribe in the app bundle (sw.js also subscribes, on rotation); reads/writes the store below |
+| Browser push state | `src/store/push-subscription.store.ts`                                         | module-level singleton — permission/subscribed/endpoint/busy, shared by all five mounting components                          |
+| UI                 | `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`, `NotificationTypeControl` | rendered by BOTH `NotificationsCard` (legacy) and `NotificationsPane` (accountSettingsV2)                                     |
+| tRPC               | `notification.router.ts`                                                       | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings`                       |
+| SW re-subscribe    | `src/pages/api/push/resubscribe.ts`                                            | session-authed REST — a SW can't speak tRPC                                                                                   |
+| Cleanup            | `src/server/jobs/push-subscription-cleanup.ts`                                 | weekly; no successful delivery in 180 days                                                                                    |
+| Metrics            | `notifications_push_delivery_total{outcome}`                                   | `accepted` = push service took it — **not** that a user saw it                                                                |
 
 Delivery response table (dispatcher, pinned by `worker/push.test.ts`): 404/410 → delete the row
 (normal churn, not an incident) · 429 → keep the row, drop the send · 413 → log + retry truncated ·
-5xx/network → failure streak, delete at 10 consecutive · 201 → `lastSuccessAt = now()`, streak reset.
+5xx/network → failure streak, delete at 10 consecutive (see invariant 9 — the implementation
+was inert until 2026-09-24, though push was never enabled in that window) · 201 → `lastSuccessAt = now()`, streak reset.
 
 ## Invariants — do not move these
 
@@ -61,16 +63,29 @@ Delivery response table (dispatcher, pinned by `worker/push.test.ts`): 404/410 �
    can hold an orphaned subscription (failed subscribe call, device revoked elsewhere) and will
    happily report "on" while nothing delivers.
 6. **A type set Off never pushes even if a stale `UserPushSetting` row exists** — the dispatcher
-   receives the recipient list *after* the opt-out filter. Don't "optimize" the dispatcher onto a
+   receives the recipient list _after_ the opt-out filter. Don't "optimize" the dispatcher onto a
    pre-filter list.
 7. **Registration only happens inside `enable()`** (and `PushRegistrationManager` only calls
    `update()` on an already-existing registration). Never register a SW on page load.
+8. **On resubscribe, the upsert runs BEFORE the old endpoint is reaped.** `upsertPushSubscription`
+   materializes `DEFAULT_PUSH_TYPES` only while the user holds zero subscriptions, so deleting
+   first makes a rotating browser that held exactly one subscription look brand new and silently
+   re-creates every type the user had turned off — the failure invariant 3 exists to prevent,
+   reached by a different route. The ordering is asserted in
+   `src/server/__tests__/push-resubscribe-endpoint.test.ts`; nothing about the handler reads as
+   order-dependent, which is exactly why it is pinned.
+9. **The failure-streak reap is TWO statements and must stay that way.** A data-modifying CTE
+   cannot delete the row its own `UPDATE` just modified — sub-statements share one snapshot and one
+   command id, so Postgres skips it and reports `DELETE 0`. It was one statement until
+   2026-09-24, so the ceiling could never have reaped anything — untriggered in practice only
+   because push was not enabled in production during that window.
 
 ## What to change, per task
 
 - **Add a default push type** → append to `DEFAULT_PUSH_TYPES`; the guard test validates it.
   Remember invariant 3: existing subscribers do not get it.
-- **Change the daily cap** → `PUSH_DAILY_CAP` env on the worker (default 20). Past the cap: exactly
+- **Change the daily cap** → `PUSH_DAILY_CAP` env on the worker (default 20; anything that is not a
+  non-negative integer falls back to that default rather than disabling push). Past the cap: exactly
   one summary push, then silence until the UTC day rolls. No redis → cap fails open (send).
 - **Change payload contents** → three places move together: the render endpoint (what's produced),
   `worker/push.ts` `PushPayload` (what's sent), `public/sw.js` (what's displayed). The SW ships via
@@ -128,17 +143,17 @@ cd apps/notifications && cp .env.example .env
 
 Set in `apps/notifications/.env`:
 
-| Key | Value |
-|---|---|
-| `PORT` | `3010` (default 3000 collides with the main app) |
-| `WORKER_ENABLED` | `true` — safe locally; it polls only your local queue |
-| `NOTIFICATION_DB_URL` (+`_REPLICA_URL`) | `postgres://postgres:postgres@localhost:15434/postgres` |
-| `NOTIFICATION_DB_SSL` | `disable` — the compose container has no SSL and `@civitai/db` forces `sslmode=no-verify` otherwise; every create then fails, **swallowed**, as "The server does not support SSL connections" |
-| `DATABASE_URL` / `DATABASE_REPLICA_URL` | same values as the root `.env` (push tables + opt-out filter live in the main DB) |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | the pair from step 1 — public half must equal `NEXT_PUBLIC_VAPID_PUBLIC_KEY` |
-| `MAIN_APP_URL` | `http://localhost:3000` |
-| `MAIN_APP_WEBHOOK_TOKEN` | the root `.env`'s `WEBHOOK_TOKEN` |
-| `NOTIFICATIONS_TOKEN` | empty (disables producer auth; dev only) |
+| Key                                      | Value                                                                                                                                                                                         |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                                   | `3010` (default 3000 collides with the main app)                                                                                                                                              |
+| `WORKER_ENABLED`                         | `true` — safe locally; it polls only your local queue                                                                                                                                         |
+| `NOTIFICATION_DB_URL` (+`_REPLICA_URL`)  | `postgres://postgres:postgres@localhost:15434/postgres`                                                                                                                                       |
+| `NOTIFICATION_DB_SSL`                    | `disable` — the compose container has no SSL and `@civitai/db` forces `sslmode=no-verify` otherwise; every create then fails, **swallowed**, as "The server does not support SSL connections" |
+| `DATABASE_URL` / `DATABASE_REPLICA_URL`  | same values as the root `.env` (push tables + opt-out filter live in the main DB)                                                                                                             |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | the pair from step 1 — public half must equal `NEXT_PUBLIC_VAPID_PUBLIC_KEY`                                                                                                                  |
+| `MAIN_APP_URL`                           | `http://localhost:3000`                                                                                                                                                                       |
+| `MAIN_APP_WEBHOOK_TOKEN`                 | the root `.env`'s `WEBHOOK_TOKEN`                                                                                                                                                             |
+| `NOTIFICATIONS_TOKEN`                    | empty (disables producer auth; dev only)                                                                                                                                                      |
 
 🔴 **Run the built bundle, not `tsx watch`:**
 
@@ -199,5 +214,15 @@ showing "on" in its own UI until it next loads settings and reconciles.
 
 Monolith: `NEXT_PUBLIC_VAPID_PUBLIC_KEY`. Worker: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
 `VAPID_SUBJECT`, `MAIN_APP_URL`, `MAIN_APP_WEBHOOK_TOKEN`, optional `PUSH_DAILY_CAP`.
-`NOTIFICATION_DB_SSL` is a local-dev knob — never set it in production. All push code no-ops
-until its side's variables are set, so code can deploy ahead of keys.
+`NOTIFICATION_DB_SSL` is a local-dev knob — never set it in production.
+
+Push code no-ops until its side's variables are set, so code can deploy ahead of keys — with one
+exception on the worker: once the VAPID pair, `MAIN_APP_URL` and `MAIN_APP_WEBHOOK_TOKEN` are all
+set, `DATABASE_URL` becomes REQUIRED and `assertRequiredEnv()` throws at boot without it. That is
+deliberate (bookkeeping writes go to the main DB and every one of them is best-effort, so a missing
+URL would otherwise be invisible), but it means the worker's keys and its `DATABASE_URL` must land
+together.
+
+⚠️ The monolith's half is **build-time**: `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is inlined by Next into the
+client bundle, so setting it only in the runtime environment does nothing — it has to be present
+when the image is built, and a rebuild is required to change it.
