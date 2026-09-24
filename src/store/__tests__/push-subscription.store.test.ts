@@ -55,8 +55,44 @@ describe('push subscription store', () => {
 });
 
 /**
- * The store's own comment calls SSR-safety "a property a future edit can silently break". This is
- * the guard for exactly that property, pinned structurally because there is no runtime moment at
+ * Blanks out the body of every `useEffect(...)` / `useCallback(...)` call by matching balanced
+ * parens, so whatever `setState(` survives in the remainder is reachable during RENDER.
+ *
+ * Deliberately not a "is there a useEffect earlier in the file" check. That was the first version
+ * of this guard and it was positional, not structural: the hook's first `useEffect(` is near the
+ * top, so every write below it passed unconditionally and a render-phase write added anywhere
+ * lower survived the guard untouched.
+ */
+function stripHookBodies(source: string): string {
+  let out = source;
+  for (const fn of ['useEffect', 'useCallback']) {
+    let from = 0;
+    for (;;) {
+      const start = out.indexOf(`${fn}(`, from);
+      if (start === -1) break;
+      let depth = 0;
+      let end = -1;
+      for (let i = start + fn.length; i < out.length; i++) {
+        if (out[i] === '(') depth++;
+        else if (out[i] === ')') {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end === -1) break; // unbalanced — leave the rest intact rather than silently eat it
+      out = out.slice(0, start) + ' '.repeat(end - start + 1) + out.slice(end + 1);
+      from = start + 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The store documents its SSR-safety as something a future edit can silently break. This is the
+ * guard for exactly that property, pinned structurally because there is no runtime moment at
  * which a cross-request leak would be observable in a unit test.
  *
  * The module is a singleton shared by every request the node process serves, so any write that can
@@ -66,24 +102,20 @@ describe('push subscription store', () => {
 describe('SSR safety (structural)', () => {
   const read = (rel: string) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 
-  it('is mutated from exactly one module', () => {
-    const importers = [
-      'src/components/Notifications',
-      'src/components/Account',
-      'src/pages',
-      'src/store',
-    ]
-      .flatMap((dir) => walk(path.join(REPO_ROOT, dir)))
+  it('is imported by exactly one module across all of src/', () => {
+    // Scans src/ ENTIRELY. An earlier version listed four directories, so a second importer under
+    // src/hooks/ or src/components/AppLayout/ — both of which exist — would have been missed.
+    const importers = walk(path.join(REPO_ROOT, 'src'))
       .filter((f) => /\.tsx?$/.test(f))
       .filter((f) => !f.endsWith(path.normalize(STORE_FILE)))
       .filter((f) => !f.includes('__tests__'))
-      .filter((f) => fs.readFileSync(f, 'utf8').includes('usePushSubscriptionStore'));
+      .filter((f) => fs.readFileSync(f, 'utf8').includes('usePushSubscriptionStore'))
+      .map((f) => path.relative(REPO_ROOT, f).split(path.sep).join('/'))
+      .sort();
 
-    // Exactly one: the hook. If a component starts writing the store directly, it is no longer
-    // provable that every write is browser-only, and this must be re-reasoned rather than updated.
-    expect(importers.map((f) => path.relative(REPO_ROOT, f).split(path.sep).join('/'))).toEqual([
-      HOOK_FILE,
-    ]);
+    // Exactly one: the hook. A second importer — even a read-only one — means every write is no
+    // longer provably browser-only from one file, so this must be RE-REASONED, not just updated.
+    expect(importers).toEqual([HOOK_FILE]);
   });
 
   it('never calls the imperative setState/getState escape hatches outside tests', () => {
@@ -95,22 +127,13 @@ describe('SSR safety (structural)', () => {
 
   it('reaches every store write from an effect or a callback, never from render', () => {
     const hook = read(HOOK_FILE);
-    // Strip the hook body's nested function bodies is overkill; instead assert the shape that
-    // makes the property hold: every `setState({` call site sits inside a useEffect/useCallback.
-    const lines = hook.split('\n');
-    const writeLines = lines
-      .map((line, i) => ({ line, i }))
-      .filter(({ line }) => /\bsetState\s*\(/.test(line));
-    expect(writeLines.length).toBeGreaterThan(0); // positive control: we found the writes
 
-    for (const { i } of writeLines) {
-      const preceding = lines.slice(0, i).join('\n');
-      const lastEffect = Math.max(
-        preceding.lastIndexOf('useEffect('),
-        preceding.lastIndexOf('useCallback(')
-      );
-      expect(lastEffect).toBeGreaterThan(-1);
-    }
+    // Positive control: the writes exist and this guard can see them. Without it, a rename of
+    // `setState` would make the assertion below pass over an empty set.
+    expect(hook.match(/\bsetState\s*\(/g)?.length ?? 0).toBeGreaterThan(0);
+
+    const renderReachable = stripHookBodies(hook).match(/\bsetState\s*\(/g) ?? [];
+    expect(renderReachable).toEqual([]);
   });
 });
 

@@ -21,25 +21,25 @@ producer → apps/notifications POST /notifications     (opt-out filter, queue r
          → public/sw.js `push` handler → OS notification → `notificationclick` → deep link
 ```
 
-| Piece              | Where                                                                          | Notes                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `PushSubscription` | main DB                                                                        | one row per browser; `endpoint` unique; `userAgent` for the device list                                 |
-| `UserPushSetting`  | main DB                                                                        | PK `(userId, type)`; **row = push ON, absence = no push**                                               |
-| Dispatcher         | `apps/notifications/src/worker/push.ts`                                        | called from `run()` in `poll-loop.ts`, never throws                                                     |
-| Render endpoint    | `src/pages/api/internal/notifications/render-push.ts`                          | `WEBHOOK_TOKEN`-gated; the processor registry (`prepareMessage`) only exists in the monolith            |
-| Service worker     | `public/sw.js`                                                                 | `push`, `notificationclick`, `pushsubscriptionchange` — nothing else                                    |
-| Client state       | `src/components/Notifications/usePushSubscription.ts`                          | the only caller of subscribe/unsubscribe; reads and writes the store below                              |
-| Browser push state | `src/store/push-subscription.store.ts`                                         | module-level singleton — permission/subscribed/endpoint/busy, shared by all five mounting components    |
-| UI                 | `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`, `NotificationTypeControl` | rendered by BOTH `NotificationsCard` (legacy) and `NotificationsPane` (accountSettingsV2)               |
-| tRPC               | `notification.router.ts`                                                       | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings` |
-| SW re-subscribe    | `src/pages/api/push/resubscribe.ts`                                            | session-authed REST — a SW can't speak tRPC                                                             |
-| Cleanup            | `src/server/jobs/push-subscription-cleanup.ts`                                 | weekly; no successful delivery in 180 days                                                              |
-| Metrics            | `notifications_push_delivery_total{outcome}`                                   | `accepted` = push service took it — **not** that a user saw it                                          |
+| Piece              | Where                                                                          | Notes                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `PushSubscription` | main DB                                                                        | one row per browser; `endpoint` unique; `userAgent` for the device list                                                       |
+| `UserPushSetting`  | main DB                                                                        | PK `(userId, type)`; **row = push ON, absence = no push**                                                                     |
+| Dispatcher         | `apps/notifications/src/worker/push.ts`                                        | called from `run()` in `poll-loop.ts`, never throws                                                                           |
+| Render endpoint    | `src/pages/api/internal/notifications/render-push.ts`                          | `WEBHOOK_TOKEN`-gated; the processor registry (`prepareMessage`) only exists in the monolith                                  |
+| Service worker     | `public/sw.js`                                                                 | `push`, `notificationclick`, `pushsubscriptionchange` — nothing else                                                          |
+| Client state       | `src/components/Notifications/usePushSubscription.ts`                          | the only caller of subscribe/unsubscribe in the app bundle (sw.js also subscribes, on rotation); reads/writes the store below |
+| Browser push state | `src/store/push-subscription.store.ts`                                         | module-level singleton — permission/subscribed/endpoint/busy, shared by all five mounting components                          |
+| UI                 | `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`, `NotificationTypeControl` | rendered by BOTH `NotificationsCard` (legacy) and `NotificationsPane` (accountSettingsV2)                                     |
+| tRPC               | `notification.router.ts`                                                       | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings`                       |
+| SW re-subscribe    | `src/pages/api/push/resubscribe.ts`                                            | session-authed REST — a SW can't speak tRPC                                                                                   |
+| Cleanup            | `src/server/jobs/push-subscription-cleanup.ts`                                 | weekly; no successful delivery in 180 days                                                                                    |
+| Metrics            | `notifications_push_delivery_total{outcome}`                                   | `accepted` = push service took it — **not** that a user saw it                                                                |
 
 Delivery response table (dispatcher, pinned by `worker/push.test.ts`): 404/410 → delete the row
 (normal churn, not an incident) · 429 → keep the row, drop the send · 413 → log + retry truncated ·
-5xx/network → failure streak, delete at 10 consecutive (see invariant 9 — this was inert until
-2026-09-24) · 201 → `lastSuccessAt = now()`, streak reset.
+5xx/network → failure streak, delete at 10 consecutive (see invariant 9 — the implementation
+was inert until 2026-09-24, though push was never enabled in that window) · 201 → `lastSuccessAt = now()`, streak reset.
 
 ## Invariants — do not move these
 
@@ -77,7 +77,8 @@ Delivery response table (dispatcher, pinned by `worker/push.test.ts`): 404/410 �
 9. **The failure-streak reap is TWO statements and must stay that way.** A data-modifying CTE
    cannot delete the row its own `UPDATE` just modified — sub-statements share one snapshot and one
    command id, so Postgres skips it and reports `DELETE 0`. It was one statement until
-   2026-09-24 and the ceiling therefore never reaped anything.
+   2026-09-24, so the ceiling could never have reaped anything — untriggered in practice only
+   because push was not enabled in production during that window.
 
 ## What to change, per task
 

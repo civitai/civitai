@@ -176,8 +176,18 @@ describe('dispatchPush', () => {
     expect(h.state.readQueries[0]!.params).toEqual([[10, 20, 30], 'new-mention']);
     // Renders exactly once per notification, not per subscription.
     expect(h.state.fetchCalls).toHaveLength(1);
-    // Every accepted send stamps lastSuccessAt.
-    expect(h.state.writeQueries.filter((q) => q.sql.includes('lastSuccessAt'))).toHaveLength(3);
+    // Every accepted send stamps lastSuccessAt — scoped to the owner it targeted, like every other
+    // bookkeeping write. Counting the writes is NOT enough on its own: a `recordSuccess` narrowed
+    // to `WHERE id = $1` leaves the count at 3 and survives, which is exactly what happened when
+    // this assertion was briefly only a length check.
+    const stamps = h.state.writeQueries.filter((q) => q.sql.includes('lastSuccessAt'));
+    expect(stamps).toHaveLength(3);
+    expect(stamps.map((q) => q.params)).toEqual([
+      [1, 10],
+      [2, 10],
+      [3, 20],
+    ]);
+    for (const stamp of stamps) expect(ownerScoped(stamp.sql)).toBe(true);
   });
 
   it('sends nothing when no affected user has a push setting row', async () => {
@@ -346,10 +356,12 @@ describe('dispatchPush', () => {
     expect(h.state.writeResultCalls).toBe(1); // ...and it was actually awaited
   });
 
+  // INVARIANT GUARD, not a regression test: this is green at the pre-fix tip too, because that
+  // code never called result() so the fake's failure never fired. It pins that a mid-flight
+  // bookkeeping failure does not stop the other devices; it does NOT pin the unhandled-rejection
+  // behaviour, which lives in the pool helper's discarded .finally() chain and is not modelled by
+  // this fake at all (see packages/civitai-db/src/db-helpers.ts).
   it('a bookkeeping failure raised from result() does not suppress the remaining sends', async () => {
-    // The production failure shape: cancellableQuery dispatches and resolves, then the statement
-    // fails. Awaiting only cancellableQuery would leave this rejection unhandled rather than
-    // routing it into bestEffort — which on node >=15 exits the worker process.
     h.state.subscriptionRows = [sub(1, 10), sub(2, 20), sub(3, 30)];
     h.state.writeFailsOnResult = true;
 

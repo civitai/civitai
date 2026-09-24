@@ -139,7 +139,10 @@ export function PushDeviceList() {
                       isThisDevice ? 'Turn off push on this device' : 'Remove this device'
                     }
                     loading={unsubscribeMutation.isPending}
-                    disabled={busy}
+                    // Only THIS device's revoke routes through disable(), which early-returns on
+                    // the shared `busy`. A remote row goes straight to the mutation and was never
+                    // a silent no-op, so disabling it too would block a control that works.
+                    disabled={busy && isThisDevice}
                     onClick={() => remove(device.endpoint)}
                   >
                     <IconTrash size={16} />

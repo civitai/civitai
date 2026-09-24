@@ -130,7 +130,9 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
   if (perConnectionStatementTimeout) {
     pool.on('connect', (client) => {
-      client.query(`SET statement_timeout = ${Number(perConnectionStatementTimeout)}`).catch(() => {});
+      client
+        .query(`SET statement_timeout = ${Number(perConnectionStatementTimeout)}`)
+        .catch(() => {});
     });
   }
 
@@ -154,7 +156,10 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       const cb = args[0] as (err: Error | undefined, client: any, done: any) => void;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (originalConnect as any)((err: Error | undefined, client: any, done: any) => {
-        pgPoolAcquireHistogram.observe({ pool: label, result: err ? 'err' : 'ok' }, elapsedSeconds());
+        pgPoolAcquireHistogram.observe(
+          { pool: label, result: err ? 'err' : 'ok' },
+          elapsedSeconds()
+        );
         cb(err, client, done);
       });
     }
@@ -209,10 +214,20 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       queryParams !== undefined
         ? connection.query<R>(queryText, queryParams)
         : connection.query<R>(queryText);
-    query.finally(() => {
-      done = true;
-      connection.release();
-    });
+    // 🔴 The trailing `.catch` swallows ONLY this cleanup chain's copy of a rejection — the real
+    // rejection still reaches whoever awaits `query` or `result()`. Without it the promise that
+    // `.finally()` DERIVES has no handler on any path, so a failing statement raises
+    // `unhandledRejection` and Node >=15 exits the process by default. Awaiting `result()` does not
+    // prevent that: it handles `query`, while the derived promise is a separate object nothing
+    // holds. Measured — a failing write killed the notifications fan-out worker before its caller's
+    // own `.catch` ran. Same fix and same reasoning as the `inFlight` chain in
+    // `apps/notifications/src/lib/server/operations.ts`.
+    query
+      .finally(() => {
+        done = true;
+        connection.release();
+      })
+      .catch(() => {});
 
     const cancel = async () => {
       if (done) return;
