@@ -825,7 +825,9 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
           key: key,
         },
         STORAGE_LOG
-      ).catch(() => {});
+      ).catch(() => {
+        // swallow — best-effort logging must never break the quota refusal it is observing.
+      });
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'app quota exceeded',
@@ -926,7 +928,10 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       // opens (the quota round trip, the pool checkout, token resolution).
       // Counting here as well would double-count exactly the faults that do
       // reach the write.
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => {
+        // swallow — the transaction is already failing; a ROLLBACK fault must not mask the
+        // original error rethrown below.
+      });
       throw err;
     } finally {
       client.release();
@@ -949,7 +954,9 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
         isInsert,
       },
       STORAGE_LOG
-    ).catch(() => {});
+    ).catch(() => {
+      // swallow — best-effort logging must never break the write it is observing.
+    });
     // User-facing audit: unify the W4 storage feed into the same Activity
     // tab that surfaces workflow + scope events. Axiom log above stays
     // for ops/debug visibility; this row populates /apps/activity.
@@ -971,7 +978,10 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
         // W13 richer detail — structured ref for the render-time sentence.
         detail: { action: 'storage.set', key: key, outcome: 'ok' },
       });
-    })().catch(() => {});
+    })().catch(() => {
+      // swallow — the user-facing audit row is best-effort; it must never break the write
+      // it records.
+    });
     return { ok: true as const, sizeBytes: byteSize };
   } catch (err) {
     countStorageFault('set', err);
@@ -1024,7 +1034,9 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
             key: key,
           },
           STORAGE_LOG
-        ).catch(() => {});
+        ).catch(() => {
+          // swallow — best-effort logging must never break the delete it is observing.
+        });
         // User-facing audit row — only on actual deletion (a no-op
         // delete shouldn't appear in the user's activity feed).
         void (async () => {
@@ -1043,13 +1055,19 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
             // W13 richer detail — structured ref for the render-time sentence.
             detail: { action: 'storage.delete', key: key, outcome: 'ok' },
           });
-        })().catch(() => {});
+        })().catch(() => {
+          // swallow — the user-facing audit row is best-effort; it must never break the delete
+          // it records.
+        });
       }
       return { ok: true as const, deleted };
     } catch (err) {
       // ROLLBACK only; the `error` outcome is counted once by the catch-all
       // below (see the same note on `set`).
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => {
+        // swallow — the transaction is already failing; a ROLLBACK fault must not mask the
+        // original error rethrown below.
+      });
       throw err;
     } finally {
       client.release();
