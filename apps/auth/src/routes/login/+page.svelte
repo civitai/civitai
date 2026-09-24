@@ -67,8 +67,10 @@
   let fallbackActive = $state(false);
   let managedEl = $state<HTMLDivElement>();
   let managedWidgetId: string | undefined;
-  // Reactive mirror of managedWidgetId, which is a plain let the template cannot track. These two are the
-  // only things that survive the slot's unmount, so a future reset of either must reset the other.
+  // Reactive mirror of managedWidgetId, which must STAY a plain let: the $effect below guards on it and
+  // renderManagedWidget writes it, so promoting it to $state makes that effect depend on a value it
+  // writes and re-attempt the render. These two are the only things that survive the slot's unmount, so
+  // a future reset of either must reset the other.
   let managedWidgetShown = $state(false);
   // A COUNTER, not a flag. The grace effect below can only re-run when its dependency changes, and Svelte
   // short-circuits a write of an equal value — so a second failure setting a boolean `true` again would
@@ -85,6 +87,11 @@
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
   // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
   function triggerFallback(reason: string) {
+    // KNOWN OPEN, pre-dates this page's blocked-copy work: `fallbackActive` latches, so once the managed
+    // arm has been taken a later failure cannot re-derive a verdict. Reachable — the managed widget fails
+    // (note shown, button released), a late invisible token clears the verdict, then resetTurnstile()
+    // wipes that token on the next submit, leaving no token and no verdict. The no-managed-key arm below
+    // was fixed by counting rather than latching; this one still needs the same treatment.
     if (captchaToken || fallbackActive) return;
     captchaFailReason = reason;
     if (data.turnstileManagedSiteKey) fallbackActive = true; // $effect renders it once the slot is in the DOM

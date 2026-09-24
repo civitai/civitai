@@ -407,8 +407,20 @@ describe('login copy when the verification check cannot run', () => {
     const renderBody = markup.match(/function renderManagedWidget\(\)[\s\S]*?\n  \}/)?.[0] ?? '';
     expect(renderBody, 'renderManagedWidget body not found').not.toBe('');
     // A throw out of render() is the same outcome by a quieter route, so it lands in the same branch.
-    // The call being inside a try is the claim; how the catch spells it is not.
-    expect(renderBody, 'render() can throw past the guard').toMatch(/\} catch \{/);
+    // The call being inside a try is the claim; how the catch spells it is not — an empty body is safe,
+    // because `let id` with no initializer is already undefined. What is NOT safe is a catch that
+    // assigns a STRING: that walks past the branch below and reaches the mirror with an id naming no
+    // widget, which is the trap again with a container-only check satisfied.
+    const catchBody = renderBody.match(/\} catch \{([\s\S]*?)\n    \}/)?.[1];
+    expect(catchBody, 'render() is not called inside a try').toBeDefined();
+    expect(catchBody ?? '', 'the catch leaves a string in `id`').not.toMatch(
+      /\bid\s*=\s*(?!undefined\b|null\b)\S/
+    );
+    // …and managedWidgetId must stay a plain let. The effect guards on it and renderManagedWidget writes
+    // it, so as $state that effect would depend on a value it writes and re-attempt the render.
+    expect(markup, 'managedWidgetId is reactive').toMatch(
+      /^ {2}let managedWidgetId: string \| undefined;$/m
+    );
     const failure = renderBody.match(/if \(typeof id !== 'string'\) \{([\s\S]*?)\n    \}/)?.[1];
     expect(failure, 'no branch for a render that produced no widget').toBeDefined();
     expect(failure).toContain("captchaFailReason = 'fallback-error';");
