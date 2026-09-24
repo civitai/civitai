@@ -179,13 +179,20 @@ describe('describePartFailure', () => {
  * real fault, and replaying the bytes through a second route would mask it. Only
  * `networkError` — DNS, TLS, connection reset, the ERR_CONNECTION_RESET class the
  * investigation traced — qualifies.
+ *
+ * 🔴 EVERY FIXTURE BELOW PASSES `userAborted: false`, AND THAT IS ONLY MEANINGFUL BECAUSE
+ * THE CALLER CAN NOW PRODUCE IT. The option used to be the caller's abort signal, which
+ * the caller's own teardown had always tripped by the time this gate was reached — so this
+ * suite was exercising a state production could never reach, and every case in it passed
+ * while the feature was inert. What proves the gate is REACHED at all lives at the seam,
+ * in `src/hooks/__tests__/useS3Upload.test.ts`; these pin the rules once it is.
  */
 describe('shouldRelayOnPartFailure', () => {
   const base = {
     type: 'image',
     backend: 'backblaze',
     fileSize: 5 * 1024 * 1024,
-    signalAborted: false,
+    userAborted: false,
   };
 
   it('relays a network-layer failure on the image backend', () => {
@@ -201,12 +208,9 @@ describe('shouldRelayOnPartFailure', () => {
     expect(shouldRelayOnPartFailure(err as never, base)).toBe(false);
   });
 
-  it('does not relay when the caller already cancelled', () => {
+  it('does not relay when the user already cancelled', () => {
     expect(
-      shouldRelayOnPartFailure(
-        { status: null, networkError: true },
-        { ...base, signalAborted: true }
-      )
+      shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, userAborted: true })
     ).toBe(false);
   });
 

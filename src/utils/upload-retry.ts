@@ -58,12 +58,19 @@ export function describePartFailure(
  * relay fallback in `useCFImageUpload` follows). The other gates: the relay writes to
  * the image bucket, so only image-type uploads on the image backend qualify; the file
  * must fit the relay's body cap; and a cancelled upload has an owner, not a fallback.
+ *
+ * 🔴 `userAborted` MEANS "THE PERSON PRESSED CANCEL" — never "this upload's abort signal
+ * has been tripped". The two are not the same thing and confusing them made this whole
+ * predicate inert: the multipart worker tears its own upload down (cancelling the signal
+ * and every in-flight part xhr) BEFORE the caller reaches this gate, so a caller passing
+ * its abort signal here reports `true` on every failure, including the network-layer ones
+ * this exists for. Pass a flag the internal teardown does not set.
  */
 export function shouldRelayOnPartFailure(
   err: UploadPartError | null | undefined,
-  opts: { type: string; backend?: string; fileSize: number; signalAborted: boolean }
+  opts: { type: string; backend?: string; fileSize: number; userAborted: boolean }
 ): boolean {
-  if (!err || opts.signalAborted) return false;
+  if (!err || opts.userAborted) return false;
   if (!err.networkError || err.aborted) return false;
   if (opts.type !== 'image') return false;
   if (opts.backend !== 'backblaze') return false;

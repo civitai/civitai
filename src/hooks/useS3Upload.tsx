@@ -177,10 +177,29 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const chunkSize: number = data.chunkSize ?? FILE_CHUNK_SIZE;
 
       const activeXhrs = new Set<XMLHttpRequest>();
-      const abortController = new AbortController();
-      const abort = () => {
-        abortController.abort();
+      // TWO cancellations, deliberately not one.
+      //
+      // `teardownController` is INTERNAL: the worker trips it on the first fatal part
+      // failure so sleeping workers stop and in-flight part xhrs die.
+      // `userAbortController` records that the PERSON asked to cancel, and is tripped
+      // only by the `abort` handed to the UI below.
+      //
+      // 🔴 Collapsing them is what made the relay fallback inert. The teardown always
+      // fires before the relay gate below is reached, so a gate reading it saw "already
+      // cancelled" on every failure — including the network-layer ones the relay exists
+      // for — and the fallback could never run. The terminal status line had the mirror
+      // of the same bug: every failed multipart upload reported as a user cancel.
+      const teardownController = new AbortController();
+      const userAbortController = new AbortController();
+      const teardown = () => {
+        teardownController.abort();
         for (const x of activeXhrs) x.abort();
+      };
+      // The only user-initiated cancel: handed to the UI on the tracked file, and reached
+      // by `removeFile(file, true)` and by FileUploadProvider's unmount.
+      const abort = () => {
+        userAbortController.abort();
+        teardown();
       };
       setFiles((x) => {
         if (x.some((y) => y.file === file)) {
@@ -319,7 +338,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
       const runWorker = async () => {
         while (queue.length > 0 && !fatalErrorRef.value) {
-          if (abortController.signal.aborted) {
+          if (teardownController.signal.aborted) {
             fatalErrorRef.value = { status: null, aborted: true };
             return;
           }
@@ -328,7 +347,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
           let partError: UploadPartError | null = null;
           for (let attempt = 0; attempt < MAX_PART_ATTEMPTS; attempt++) {
-            if (abortController.signal.aborted) {
+            if (teardownController.signal.aborted) {
               partError = { status: null, aborted: true };
               break;
             }
@@ -339,8 +358,11 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             } catch (err) {
               partError = err as UploadPartError;
               if (attempt === MAX_PART_ATTEMPTS - 1 || !shouldRetryPartError(partError)) break;
-              await cancellableSleep(getPartRetryDelay(partError, attempt), abortController.signal);
-              if (abortController.signal.aborted) {
+              await cancellableSleep(
+                getPartRetryDelay(partError, attempt),
+                teardownController.signal
+              );
+              if (teardownController.signal.aborted) {
                 partError = { status: null, aborted: true };
                 break;
               }
@@ -349,8 +371,11 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           if (partError) {
             // First failure wins so we don't mask a real error with a later abort
             if (!fatalErrorRef.value) fatalErrorRef.value = partError;
-            // Cancel any in-flight part xhrs - signal alone won't kill them
-            abort();
+            // Cancel any in-flight part xhrs - signal alone won't kill them.
+            // 🔴 `teardown()`, NOT `abort()`: this is the upload giving up on itself, and
+            // calling the user-facing cancel here is exactly what left the relay fallback
+            // and the terminal status unable to tell a failure from a cancel.
+            teardown();
             return;
           }
         }
@@ -376,12 +401,16 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             type,
             backend,
             fileSize: size,
-            signalAborted: abortController.signal.aborted,
+            userAborted: userAbortController.signal.aborted,
           })
         ) {
           const relayedKey = await relayImageFallback(file, {
-            signal: abortController.signal,
-            sleep: (ms) => cancellableSleep(ms, abortController.signal),
+            // 🔴 The USER's signal, not the teardown's — which by here has ALWAYS fired.
+            // Handing the teardown signal to the relay aborts its POST on the first tick,
+            // so the fallback stays inert even once the gate above opens. A cancel during
+            // the relay still cancels it, which is the behaviour this signal is for.
+            signal: userAbortController.signal,
+            sleep: (ms) => cancellableSleep(ms, userAbortController.signal),
             defaultRetryAfterSeconds: 2,
           });
           if (relayedKey) {
@@ -398,8 +427,13 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           }
         }
 
+        // 🔴 Only a genuine cancel is `aborted`. Reading the teardown signal here made
+        // EVERY failed multipart upload report as one, so a user whose connection died
+        // saw the row they would have seen if they had pressed cancel themselves.
+        // `userAborted` is also checked, not just `fatal.aborted`: a cancel that races a
+        // part failure onto the fatal slot is still a cancel.
         const status: TrackedFile['status'] =
-          fatal.aborted || abortController.signal.aborted ? 'aborted' : 'error';
+          fatal.aborted || userAbortController.signal.aborted ? 'aborted' : 'error';
         updateFile({ status, file: undefined });
         await abortUpload(describePartFailure(fatal));
         return { url: null, bucket, key, backend };

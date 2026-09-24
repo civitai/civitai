@@ -444,6 +444,19 @@ export const useS3UploadStore = create<StoreProps>()(
           // Shared cancellation: trips on user abort or first fatal failure so sleeping
           // retry workers don't fire zombie PUTs after the upload has been torn down.
           const cancelController = new AbortController();
+          // 🔴 Whether the PERSON cancelled — not whether `cancelController` has tripped.
+          // Both a user cancel and the worker's own teardown trip that signal and abort
+          // the same in-flight xhrs, so neither it nor the resulting `{ aborted: true }`
+          // part errors can tell the two apart. Set in exactly one place: the `abort`
+          // handed out on the tracked row below.
+          //
+          // The sibling client `useS3Upload` had the same confusion with a worse
+          // consequence — its relay fallback was gated on the shared signal and could
+          // never run. This client has no relay (the relay route writes to the image
+          // bucket; this one serves model/training uploads), so here it is the terminal
+          // status that was wrong: a cancel racing a non-retryable part failure reported
+          // as an upload error.
+          let userAborted = false;
           const cancellableSleep = (ms: number) =>
             new Promise<void>((resolve) => {
               if (cancelController.signal.aborted) return resolve();
@@ -460,6 +473,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                userAborted = true;
                 cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
@@ -517,8 +531,14 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+          // `userAborted` as well as `fatalErrorRef.value.aborted`: a non-retryable part
+          // failure lands on the fatal slot immediately, so a cancel in the same tick can
+          // never overwrite it, and the row then reported a failure for an upload the
+          // person stopped. The abort body still carries the REAL reason — the row's
+          // status answers "what did the user do", the failure reason answers "why did the
+          // transfer stop", and they are not the same question.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? fatalErrorRef.value.aborted
+            ? userAborted || fatalErrorRef.value.aborted
               ? 'aborted'
               : 'error'
             : null;
