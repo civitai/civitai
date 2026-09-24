@@ -4,7 +4,7 @@ import {
   threadIsRooted,
   UNRESOLVED_THREAD_CHAIN_MESSAGE,
 } from '~/server/common/thread-chain';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -17,9 +17,14 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
  */
 export type BlockCheckEntityType = CommentConnectorInput['entityType'] | ReactionEntityType;
 
-// Every lookup here guards a write that lands on the primary. On the replica a row written moments
-// ago is not there yet, and a target that resolves no owner is allowed through.
+// These lookups guard writes that land on the primary, and the replica can lag behind a row written
+// moments ago, so they read the primary.
 const guardDb = dbWrite;
+
+// For the highest-volume targets the replica answers first, and only a miss there reads the primary.
+async function readGuardRow<T>(read: (db: typeof guardDb) => Promise<T | null>): Promise<T | null> {
+  return (await read(dbRead)) ?? (await read(guardDb));
+}
 
 // Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
 // root owner for replies in that kind of thread, silently skipping the block.
@@ -317,24 +322,21 @@ export async function getBlockCheckOwnerIds({
 }): Promise<number[]> {
   switch (entityType) {
     case 'image': {
-      const r = await guardDb.image.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
+      const r = await readGuardRow((db) =>
+        db.image.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
       return r ? [r.userId] : [];
     }
     case 'post': {
-      const r = await guardDb.post.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
+      const r = await readGuardRow((db) =>
+        db.post.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
       return r ? [r.userId] : [];
     }
     case 'article': {
-      const r = await guardDb.article.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
+      const r = await readGuardRow((db) =>
+        db.article.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
       return r ? [r.userId] : [];
     }
     case 'model': {

@@ -31,9 +31,8 @@ const { amIBlockedByUser, throwOnBlockedCommentContent, tx } = vi.hoisted(() => 
   },
 }));
 
-// The block check resolves every owner on dbWrite, where the write it guards lands; so do the
-// service's own thread lookup and previous-content read. `getThreadEntityOwnerId` reads `image` on
-// dbRead, which is why `image` is seeded on both.
+// The block check resolves every owner on dbWrite; so do the service's own thread lookup and
+// previous-content read. Nothing is seeded on dbRead, so a guard read moved there resolves no one.
 const db = {
   tx,
   image: dbMock.dbWrite.image,
@@ -43,7 +42,6 @@ const db = {
 };
 
 db.image.findUnique.mockResolvedValue({ userId: 100 });
-dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: 100 });
 // The comment being edited lives on a top-level thread hanging off the image owned by 100.
 db.commentV2.findUnique.mockResolvedValue({
   threadId: 1,
@@ -52,8 +50,9 @@ db.commentV2.findUnique.mockResolvedValue({
 });
 // By id is the block check's root-content read; by entity key is the service's own thread lookup,
 // which finds no thread yet.
-db.thread.findUnique.mockImplementation((async ({ where }: { where: { id?: number } }) =>
-  where.id != null ? { imageId: 1 } : null) as never);
+const installThreadLookup = () =>
+  db.thread.findUnique.mockImplementation((async ({ where }: { where: { id?: number } }) =>
+    where.id != null ? { imageId: 1 } : null) as never);
 const isOwnerWalk = (strings: TemplateStringsArray) =>
   strings.join('?').includes('muteable_threads');
 dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
@@ -79,6 +78,9 @@ const baseCreate = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A reset, not a clear: a `…Once` a refusing test queued and never consumed must not outlive it.
+  db.thread.findUnique.mockReset();
+  installThreadLookup();
   amIBlockedByUser.mockResolvedValue(false);
   throwOnBlockedCommentContent.mockResolvedValue(undefined);
 });
@@ -170,10 +172,11 @@ describe('upsertComment — block enforcement on create', () => {
       entityId: 999,
     } as Parameters<typeof upsertComment>[0]);
 
-    // Reads the comment being edited...
-    expect(db.commentV2.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 5 } })
-    );
+    // The guard reads the comment being edited...
+    expect(db.commentV2.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { threadId: true, thread: { select: { commentId: true } } },
+    });
     // ...and never resolves the entity the request named.
     expect(db.challenge.findUnique).not.toHaveBeenCalled();
   });
@@ -204,8 +207,5 @@ describe('upsertComment — block enforcement on a reply create', () => {
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(isOwnerWalk(dbMock.dbWrite.$queryRaw.mock.calls[0][0])).toBe(true);
     expect(db.tx.commentV2.create).not.toHaveBeenCalled();
-    // Queued only to make the lock walk reachable if the block check stops refusing; unconsumed here,
-    // and `clearAllMocks` would leave it for whatever test runs next.
-    db.thread.findUnique.mockReset();
   });
 });

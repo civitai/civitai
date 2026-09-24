@@ -47,6 +47,17 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(await getBlockCheckOwnerIds({ entityType: 'post', entityId: 1 })).toEqual([OWNER]);
   });
 
+  it.each([
+    ['article', 'article'],
+    ['question', 'question'],
+    ['answer', 'answer'],
+    ['bounty', 'bounty'],
+    ['bountyEntry', 'bountyEntry'],
+  ] as const)('resolves the %s owner', async (entityType, table) => {
+    mockDb[table].findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType, entityId: 1 })).toEqual([OWNER]);
+  });
+
   it('resolves the model owner', async () => {
     mockDb.model.findUnique.mockResolvedValueOnce({ userId: OWNER });
     expect(await getBlockCheckOwnerIds({ entityType: 'model', entityId: 1 })).toEqual([OWNER]);
@@ -547,8 +558,8 @@ describe('CommentV2 block targets — root owner from the stored thread chain', 
 });
 
 /**
- * Every target here exists on the primary and not yet on the replica: the moments after it was
- * written. A guard reading the replica resolves no owner for it, and no owner means allow.
+ * Every target here exists on the primary and not yet on the replica, as in the moments after it
+ * was written. The check must still find its owner.
  */
 describe('block targets resolve from the primary, where the guarded write lands', () => {
   const PARENT_AUTHOR = 55;
@@ -572,16 +583,19 @@ describe('block targets resolve from the primary, where the guarded write lands'
       mockDb.commentV2.findUnique,
       mockDb.thread.findUnique,
       mockDb.image.findUnique,
+      mockDb.post.findUnique,
+      mockDb.article.findUnique,
       replica.$queryRaw,
       replica.commentV2.findUnique,
       replica.thread.findUnique,
       replica.image.findUnique,
+      replica.post.findUnique,
+      replica.article.findUnique,
     ])
       fn.mockReset();
     replica.$queryRaw.mockResolvedValue([] as never);
-    replica.commentV2.findUnique.mockResolvedValue(null as never);
-    replica.thread.findUnique.mockResolvedValue(null as never);
-    replica.image.findUnique.mockResolvedValue(null as never);
+    for (const table of ['commentV2', 'thread', 'image', 'post', 'article'] as const)
+      replica[table].findUnique.mockResolvedValue(null as never);
 
     mockDb.commentV2.findUnique.mockImplementation((async ({
       where,
@@ -615,6 +629,30 @@ describe('block targets resolve from the primary, where the guarded write lands'
     );
     await expect(
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: IMAGE })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it.each(['post', 'article'] as const)(
+    'a %s the replica has not seen yet resolves its owner from the primary',
+    async (entityType) => {
+      mockDb[entityType].findUnique.mockResolvedValue({ userId: OWNER } as never);
+      expect(await getBlockCheckOwnerIds({ entityType, entityId: IMAGE })).toEqual([OWNER]);
+    }
+  );
+
+  // Image reactions are ~650k writes a day, and the replica answers nearly all of them. Only a miss
+  // may cost a primary read: reading the primary first puts every reaction on it.
+  it('an image the replica already has costs no primary read', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    expect(await getBlockCheckOwnerIds({ entityType: 'image', entityId: IMAGE })).toEqual([OWNER]);
+    expect(mockDb.image.findUnique).not.toHaveBeenCalled();
+  });
+
+  // Reactions share the reply's lookup, so a reaction on a comment that does not exist is refused
+  // too, rather than reaching the write.
+  it('refuses a reaction on a comment the primary does not have', async () => {
+    await expect(
+      getBlockCheckOwnerIds({ entityType: 'comment', entityId: MISSING })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 

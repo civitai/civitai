@@ -74,12 +74,14 @@ function arrange({ storedComment = false }: { storedComment?: boolean } = {}) {
     [REQUEST_MODEL]: REQUEST_MODEL_OWNER,
     [STORED_MODEL]: STORED_MODEL_OWNER,
   };
-  const model = async (args: unknown) => {
-    const id = (args as { where: { id: number } }).where.id;
-    return modelOwners[id] ? { id, userId: modelOwners[id], modelVersions: [{ id: 1 }] } : null;
-  };
-  guardDb.model.findUnique.mockImplementation(model);
-  handlerDb.model.findUnique.mockImplementation(model);
+  const idOf = (args: unknown) => (args as { where: { id: number } }).where.id;
+  guardDb.model.findUnique.mockImplementation(async (args: unknown) =>
+    modelOwners[idOf(args)] ? { userId: modelOwners[idOf(args)] } : null
+  );
+  // No owner here, so the guard can only find one on the primary.
+  handlerDb.model.findUnique.mockImplementation(async (args: unknown) =>
+    modelOwners[idOf(args)] ? { id: idOf(args), modelVersions: [{ id: 1 }] } : null
+  );
   guardDb.comment.findUnique.mockImplementation(async (args: unknown) => {
     const id = (args as { where: { id: number } }).where.id;
     if (id === PARENT_ID) return { userId: PARENT_AUTHOR, modelId: REQUEST_MODEL };
