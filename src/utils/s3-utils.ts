@@ -434,15 +434,23 @@ export function getQuarantineS3Client(): S3Client | undefined {
   if (!env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY || !env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY)
     return undefined;
   if (!env.S3_UPLOAD_B2_ENDPOINT) return undefined;
-  return new S3Client({
-    credentials: {
-      accessKeyId: env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY,
-      secretAccessKey: env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY,
-    },
-    region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
-    endpoint: env.S3_UPLOAD_B2_ENDPOINT,
-    forcePathStyle: true,
-  });
+  // 🔴 INSTRUMENTED, LIKE `getB2S3Client()` — and this is not symmetry for its own sake.
+  // `opForCommand` in the B2 PUT metrics middleware counts `CopyObjectCommand` explicitly, and a
+  // copy is the ONE write this client exists to make. An uninstrumented client here would leave
+  // the B2 write metrics blind to a capped batch of copies every night — the operation would be
+  // the largest single source of B2 writes outside user uploads, and would appear in the counters
+  // as nothing at all. The middleware self-guards and cannot throw into the operation.
+  return instrumentB2Client(
+    new S3Client({
+      credentials: {
+        accessKeyId: env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY,
+        secretAccessKey: env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY,
+      },
+      region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+      endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+      forcePathStyle: true,
+    })
+  );
 }
 
 /**

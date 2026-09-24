@@ -47,10 +47,11 @@ const mocks = vi.hoisted(() => {
   const copies: { bucket: string; key: string; copySource: string; via?: string }[] = [];
   const deletes: { bucket: string; key: string; versionId?: string; via?: string }[] = [];
   const heads: { bucket: string; key: string; via?: string }[] = [];
+  const middlewares: { via?: string; name?: string }[] = [];
   // (bucket/key) -> ContentLength, or 'absent' for a 404, or null for "reported no size".
   const headSizes = new Map<string, number | null | 'absent'>();
   const state = { copyThrows: false, copySourceVersionId: undefined as string | undefined };
-  return { copies, deletes, heads, headSizes, state };
+  return { copies, deletes, heads, headSizes, state, middlewares };
 });
 
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
@@ -59,6 +60,15 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
     ...actual,
     S3Client: class {
       cfg: { endpoint?: string; credentials?: { accessKeyId?: string } };
+      // 🔴 A REAL middlewareStack, because `instrumentB2Client` swallows its own failures. Without
+      // this the `add` call throws, is caught internally, and the client comes back UNinstrumented
+      // — so a test asserting instrumentation would fail for the mock's reasons rather than the
+      // code's, and one not asserting it would never notice the middleware was dropped.
+      middlewareStack = {
+        add: vi.fn((_mw: unknown, opts?: { name?: string }) => {
+          mocks.middlewares.push({ via: this.cfg?.credentials?.accessKeyId, name: opts?.name });
+        }),
+      };
       constructor(cfg: { endpoint?: string; credentials?: { accessKeyId?: string } } = {}) {
         this.cfg = cfg;
       }
@@ -118,6 +128,7 @@ beforeEach(() => {
   mocks.copies.length = 0;
   mocks.deletes.length = 0;
   mocks.heads.length = 0;
+  mocks.middlewares.length = 0;
   mocks.headSizes.clear();
   mocks.state.copyThrows = false;
   mocks.state.copySourceVersionId = undefined;
@@ -238,6 +249,19 @@ describe('deleteModelFileObject — quarantine enabled', () => {
     expect(out).toEqual({ deleted: false, reason: 'quarantine-not-configured' });
     expect(mocks.deletes).toHaveLength(0);
     expect(mocks.copies).toHaveLength(0);
+  });
+
+  it('🔴 instruments the quarantine client, so the copies reach the B2 write metrics', async () => {
+    // The PUT-metrics middleware counts `CopyObjectCommand` explicitly, and a copy is the one
+    // write this client exists to make. Uninstrumented, a capped batch of copies every night —
+    // the largest source of B2 writes outside user uploads — would appear in the counters as
+    // nothing at all, and nothing else in the suite would notice.
+    mocks.headSizes.set(`${SRC}/${KEY}`, 1024);
+    mocks.headSizes.set(`civitai-quarantine/${QKEY}`, 1024);
+
+    await deleteModelFileObject(B2_URL, 1, { quarantine: true });
+
+    expect(mocks.middlewares).toEqual([{ via: 'quarantine-key', name: 'civitaiB2PutMetrics' }]);
   });
 
   it('🔴 refuses when the quarantine CREDENTIAL is missing, even with a bucket configured', async () => {
