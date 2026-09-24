@@ -75,7 +75,8 @@ export function captchaManagedSiteKey(): string | undefined {
 
 /** The verify secret for a given widget mode, with the CF dummy-pass secret as the dev default. */
 function secretFor(mode: CaptchaMode): string | undefined {
-  const real = mode === 'managed' ? env.CF_MANAGED_TURNSTILE_SECRET : env.CF_INVISIBLE_TURNSTILE_SECRET;
+  const real =
+    mode === 'managed' ? env.CF_MANAGED_TURNSTILE_SECRET : env.CF_INVISIBLE_TURNSTILE_SECRET;
   return real || (devCaptcha() ? TEST_SECRET_PASS : undefined);
 }
 
@@ -179,7 +180,17 @@ export async function verifyCaptchaToken(
 
     count('success');
     return true;
-  } catch {
+  } catch (e) {
+    // Every siteverify network failure and every malformed-response parse failure lands here. Counting
+    // nothing made an upstream verification outage look like a volume drop with no reason attached, and
+    // it also left the denominator the mode split is read against open-ended. Through `count` like every
+    // other branch, so `mode` cannot be omitted. Never logs the token or the secret.
+    console.error('captcha verify rejected', {
+      reason: 'verify-error',
+      error: e instanceof Error ? e.message : String(e),
+    });
+    count('verify_error');
+    logRejectAxiom({ reason: 'verify_error', mode, ip });
     return false;
   }
 }

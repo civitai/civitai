@@ -156,7 +156,10 @@ describe('verifyCaptchaToken', () => {
   it('returns false on a non-2xx siteverify response', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
     expect(await verifyCaptchaToken('good-token')).toBe(false);
     expect(errSpy).toHaveBeenCalledWith(
       'captcha verify rejected',
@@ -263,7 +266,10 @@ describe('captcha verification counter — result x widget mode', () => {
   });
 
   it('counts http_error with the mode', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
     expect(await verifyCaptchaToken('tok')).toBe(false);
     expect(await captchaSamples()).toEqual([
       { labels: { result: 'http_error', mode: 'invisible' }, value: 1 },
@@ -285,6 +291,54 @@ describe('captcha verification counter — result x widget mode', () => {
     expect(await captchaSamples()).toEqual([
       { labels: { result: 'hostname_mismatch', mode: 'managed' }, value: 1 },
     ]);
+  });
+
+  it('counts a siteverify NETWORK failure, with the mode', async () => {
+    // Uncounted, this class is invisible: during an upstream verification outage every email login
+    // fails while the counter shows only a volume drop with no reason beside it — and the drop lands
+    // in the denominator the mode split is read against.
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      })
+    );
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'verify_error', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts a MALFORMED siteverify body as the same class', async () => {
+    // A 200 that is not JSON throws out of res.json(), inside the same try — same outage, same reason.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<html>502</html>', { status: 200 }))
+    );
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'verify_error', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('logs the network failure, without the token or the secret', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      })
+    );
+    expect(await verifyCaptchaToken('tok-abc')).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      'captcha verify rejected',
+      expect.objectContaining({ reason: 'verify-error', error: 'network down' })
+    );
+    // The reject log is the one place a caught exception could carry credentials into an aggregator.
+    const logged = JSON.stringify(errSpy.mock.calls);
+    expect(logged).not.toContain('tok-abc');
+    expect(logged).not.toContain('inv-secret');
   });
 
   it('counts action_mismatch with the mode', async () => {
