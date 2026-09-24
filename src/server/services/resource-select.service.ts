@@ -10,8 +10,9 @@ import {
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { nextCoverageEnabled } from '~/server/services/generation/coverage-source';
-import { coverageIndexField } from '~/shared/generation/coverage-fields';
+
+import { coverageFilter } from '~/shared/generation/coverage-fields';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GetResourceSelectInput } from '~/server/schema/model.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -37,7 +38,8 @@ import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prism
 import { parseAIRSafe } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type ServiceUser = { id: number } | undefined;
+/** Dropping `tier`/`isModerator` here silently makes `coverageAudience` read every user as free. */
+type ServiceUser = { id: number; tier?: string; isModerator?: boolean } | undefined;
 
 const FEATURED_LIMIT = 1000;
 
@@ -120,6 +122,7 @@ export function buildFilter({
   tabIds,
   excludeIds,
   coverageNext,
+  member,
 }: {
   input: GetResourceSelectInput;
   user: ServiceUser;
@@ -127,6 +130,8 @@ export function buildFilter({
   tabIds: number[] | null;
   /** Which indexed coverage field is live — the index carries both. */
   coverageNext?: boolean;
+  /** Whether this user gets the expansion; a non-member also keeps what is already resident. */
+  member: boolean;
   // Ids pinned to the front from Postgres — excluded from the Meili stream so a
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
@@ -187,7 +192,7 @@ export function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    canGenerate !== undefined && eq(coverageIndexField(coverageNext), canGenerate),
+    coverageFilter({ canGenerate, coverageNext: !!coverageNext, member }),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),
     featuredIds.length > 0 && inArray('id', featuredIds),
@@ -283,7 +288,7 @@ export async function getResourceSelectModels(
     tagName,
   } = input;
 
-  const coverageNext = await nextCoverageEnabled();
+  const { next: coverageNext, member } = await coverageAudience(user);
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 
@@ -324,6 +329,7 @@ export async function getResourceSelectModels(
     tabIds,
     excludeIds: officialIdsForType,
     coverageNext,
+    member,
   });
 
   const results = await searchModels(
@@ -370,5 +376,5 @@ export async function getResourceSelectModels(
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
 
-  return { items, nextCursor, coverageNext };
+  return { items, nextCursor, coverageNext, member };
 }

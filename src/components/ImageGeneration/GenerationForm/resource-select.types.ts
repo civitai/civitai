@@ -1,4 +1,4 @@
-import { versionCanGenerate } from '~/shared/generation/coverage-fields';
+import { versionGeneratableFor } from '~/shared/generation/coverage-fields';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
@@ -63,6 +63,8 @@ export function selectableVersions<V extends SelectableVersion>(
   {
     canGenerate,
     coverageNext,
+    member,
+    isCheckpoint,
     loadedOnly,
     skipBaseModel,
     modelBaseModels,
@@ -71,6 +73,9 @@ export function selectableVersions<V extends SelectableVersion>(
     canGenerate?: boolean;
     /** Which indexed coverage field the server gated this page on. */
     coverageNext?: boolean;
+    /** Whether this user gets the expansion — the server resolved it for the same page. */
+    member?: boolean;
+    isCheckpoint?: boolean;
     loadedOnly?: boolean;
     skipBaseModel: boolean;
     modelBaseModels: string[];
@@ -79,7 +84,14 @@ export function selectableVersions<V extends SelectableVersion>(
 ) {
   return versions.filter(
     (version) =>
-      (canGenerate ? canGenerate === versionCanGenerate(version, coverageNext) : true) &&
+      (canGenerate
+        ? canGenerate ===
+          versionGeneratableFor(version, {
+            coverageNext,
+            member: !!member,
+            isCheckpoint: !!isCheckpoint,
+          })
+        : true) &&
       (!loadedOnly || !!version.generatorLoaded) &&
       (skipBaseModel ||
         modelBaseModels.length === 0 ||

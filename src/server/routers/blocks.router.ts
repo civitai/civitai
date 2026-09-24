@@ -274,6 +274,7 @@ import {
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
@@ -8045,7 +8046,13 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
     select: { id: true, isModerator: true, email: true, username: true },
   });
   if (!row) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'user not found' });
-  return row as unknown as SessionUser;
+  // `tier` is session-derived, not a User column, so the select above cannot carry it and the cast
+  // below would leave it undefined — reading every paying member as free once anything gates on it.
+  //
+  // Skipped for moderators: they outrank every tier on the gates that read this, and the Private
+  // belt's exemption is asserted by the subscription NOT being queried.
+  const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
+  return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8280,7 +8287,7 @@ async function submitCustomComfyWorkflow(opts: {
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({
       airs: inlineBody.resources,
-      user: { id: userId, isModerator: !!user.isModerator },
+      user: { id: userId, isModerator: !!user.isModerator, tier: user.tier },
     });
     // (c) The MODERATION SWEEP — collected here, audited in the shared audit call
     //     below. An inline graph carries its prompts inside `CLIPTextEncode`

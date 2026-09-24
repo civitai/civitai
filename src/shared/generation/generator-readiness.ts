@@ -2,7 +2,7 @@ import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 
 export type GeneratorReadiness = 'loaded' | 'external' | 'cold';
 
-type VersionReadiness = { generatorLoaded?: boolean | null; usageControl?: string | null };
+export type VersionReadiness = { generatorLoaded?: boolean | null; usageControl?: string | null };
 
 /**
  * `ModelVersion.generatorLoaded` is false forever for an `ExternalGeneration` version: a third party

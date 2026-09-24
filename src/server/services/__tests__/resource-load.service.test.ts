@@ -3,6 +3,8 @@ import type * as Models from '~/server/services/orchestrator/models';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
 import type * as AssertOwner from '~/server/services/orchestrator/assert-workflow-owner';
 
+const MEMBER = { next: true, member: true };
+
 const queryResources = vi.fn();
 const getModelClient = vi.fn();
 const submitWorkflow = vi.fn();
@@ -74,7 +76,7 @@ describe('getResourceLoadState', () => {
   it('asks the orchestrator for the AIR built from the version and its primary file', async () => {
     orchestratorReturns({ status: 'available', workers: 2 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(getModelClient).toHaveBeenCalledWith(expect.objectContaining({ air: versionAir }));
     expect(state).toMatchObject({ modelVersionId: 501, modelId: 42, air: versionAir, size: 1024 });
@@ -86,7 +88,7 @@ describe('getResourceLoadState', () => {
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([externalVersion]);
     orchestratorReturns({ status: 'unavailable' });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'external' });
     expect(getModelClient).not.toHaveBeenCalled();
@@ -95,7 +97,7 @@ describe('getResourceLoadState', () => {
   it('keeps queuePosition, which lives on `unavailable` and not on `loading`', async () => {
     orchestratorReturns({ status: 'unavailable', queuePosition: 7 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unavailable', queuePosition: 7 });
   });
@@ -103,7 +105,7 @@ describe('getResourceLoadState', () => {
   it('reports a status this build does not know as `unknown` rather than guessing', async () => {
     orchestratorReturns({ status: 'evicting', someNewField: 1 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unknown' });
   });
@@ -111,7 +113,7 @@ describe('getResourceLoadState', () => {
   it('reports `unknown` when the orchestrator returns no data at all', async () => {
     getModelClient.mockResolvedValue({ data: undefined, error: { status: 500 } });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unknown' });
   });
@@ -126,7 +128,7 @@ describe('getResourceLoadState', () => {
     };
     orchestratorReturns(queued);
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual(queued);
   });
@@ -308,7 +310,7 @@ describe('the purchase path refuses before it submits', () => {
       },
     ]);
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
     expect(state.loadable).toBe(false);
     expect(state.unloadableReason).toBe('unsupported-format');
   });
@@ -327,7 +329,7 @@ describe('the purchase path refuses before it submits', () => {
         },
       ]);
 
-      const [state] = await getResourceLoadState([501]);
+      const [state] = await getResourceLoadState([501], MEMBER);
       expect(state.loadable).toBe(true);
       expect(state.unloadableReason).toBeUndefined();
     }
@@ -342,7 +344,7 @@ describe('the purchase path refuses before it submits', () => {
       },
     ]);
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
     expect(state.unloadableReason).toBe('no-weights');
   });
 

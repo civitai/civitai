@@ -19,21 +19,22 @@ const ALLOWLIST = [
   'src/pages/api/webhooks/resource-availability.ts',
   'src/pages/api/testing/generator-loaded.ts',
   'src/pages/api/testing/orchestrator-loaded.ts',
-  // Prisma/Meili field declarations, not readings.
+  // Field declarations and raw projections, not readings.
   'src/server/redis/resource-data.redis.ts',
-  'src/shared/types/generation.types.ts',
+  // An inline Prisma select, same as the selector modules below it — declaring the field so
+  // `coveredByForUser` can read it, not deciding anything with it.
+  'src/server/controllers/model-version.controller.ts',
   'src/server/selectors/model.selector.ts',
   'src/server/selectors/modelVersion.selector.ts',
   'src/server/search-index/filterable-attributes.ts',
   // Both index writers, which compose the field through the helper — pinned by the last test.
   'src/server/search-index/models.search-index.ts',
   'src/pages/api/mod/search/models-update.ts',
-  // Names the column in a type it hands to generatorReadiness; the call is asserted below.
-  'src/shared/data-graph/generation/gates.ts',
-  // Hands the column to the gate condition, which resolves it through the helper; it decides
-  // nothing itself.
-  'src/server/services/orchestrator/orchestration-new.service.ts',
+  // Restates the rule in SQL, where the helper cannot be called — pinned by 'the SQL restatement
+  // keeps both halves of the readiness rule' below.
+  'src/server/services/generation/coverage-source.ts',
   // These read the INDEXED field, which already carries readiness.
+  'src/shared/generation/coverage-fields.ts',
   'src/server/services/resource-select.service.ts',
   'src/components/ImageGeneration/GenerationForm/resource-select.types.ts',
   'src/components/ImageGeneration/GenerationForm/ResourceSelectModal/ResourceSelectCard.tsx',
@@ -104,6 +105,25 @@ describe('generator readiness is derived in one place', () => {
     ).toEqual([]);
   });
 
+  /**
+   * `coveredForUserSql` is the one place the readiness rule is restated in SQL, because a predicate
+   * sent to Postgres cannot call `generatorReadiness`. Dropping the `ExternalGeneration` half is
+   * the exact divergence this guard exists for, and it would be invisible: the column really is
+   * false for those versions, so the SQL would simply gate every API checkpoint.
+   */
+  it('the SQL restatement keeps both halves of the readiness rule', () => {
+    const text =
+      sourceFiles.find((f) => f.rel === 'src/server/services/generation/coverage-source.ts')
+        ?.text ?? '';
+    expect(text, 'coverage-source.ts must still build the SQL predicate').toMatch(
+      /export function coveredForUserSql/
+    );
+    expect(text, 'the SQL must accept a resident version').toMatch(/"generatorLoaded"/);
+    expect(text, 'the SQL must also accept an ExternalGeneration version').toMatch(
+      /ExternalGeneration/
+    );
+  });
+
   it('the allowlisted index writers compose the field through the helper', () => {
     for (const rel of [
       'src/server/search-index/models.search-index.ts',
@@ -114,19 +134,5 @@ describe('generator readiness is derived in one place', () => {
         /generatorLoaded:\s*isGeneratorReady\(/
       );
     }
-  });
-
-  // Allowlisted because it names the column in `GateSelectionVersion`, not because it may read it:
-  // a gate condition deciding residency for itself is the divergence this guard exists to stop.
-  it('the gate conditions ask the helper rather than the column', () => {
-    const text =
-      sourceFiles.find((f) => f.rel === 'src/shared/data-graph/generation/gates.ts')?.text ?? '';
-    expect(text, 'gates.ts must resolve readiness through generatorReadiness').toContain(
-      'generatorReadiness(version)'
-    );
-    expect(
-      /version\.generatorLoaded\s*(===|!==)|!\s*version\.generatorLoaded/.test(text),
-      'gates.ts must not test the column directly'
-    ).toBe(false);
   });
 });

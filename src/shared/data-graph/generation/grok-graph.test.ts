@@ -20,7 +20,6 @@ const v2Hidden: GenerationCtx = {
       ecosystems: [],
       workflows: [],
       modelVersionIds: [grokVersionIds['v2.0']],
-      conditions: [],
     },
   ],
 };

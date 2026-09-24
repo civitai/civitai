@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
 /**
  * Pure-helper coverage for the block workflow service. Snapshot mapping and
@@ -15,6 +16,16 @@ const { mockDbRead } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
+
+/**
+ * `nextCoverageEnabled` reads Flipt, so on a machine with FLIPT_URL set these fixtures answered
+ * under whichever rule was live remotely — the suite went red when the flag was turned on, with
+ * nothing in the diff to blame. Pin the live rule; the fixtures below state `covered` only.
+ */
+vi.mock('~/server/services/generation/coverage-source', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverageSource>()),
+  nextCoverageEnabled: async () => false,
+}));
 
 import {
   appBlockTag,

@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import {
-  coveredBy,
-  pickCovered,
+  coverageAudience,
+  coveredByForUser,
   nextCoverageEnabled,
+  pickCovered,
 } from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
@@ -257,7 +258,7 @@ export const getModelHandler = async ({
     const modelCategories = await getCategoryTags('model');
 
     const sfwOnly = !!features.isGreen;
-    const useNext = await nextCoverageEnabled();
+    const { next: useNext, member } = await coverageAudience(ctx.user ?? undefined);
     const versionGenStates = await resolveCanGenerateForVersions(
       filteredVersions.map((v) => ({
         id: v.id,
@@ -265,7 +266,9 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered: coveredBy(v, useNext) ?? false,
+        covered:
+          coveredByForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }) ??
+          false,
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,

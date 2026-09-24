@@ -58,7 +58,6 @@ import {
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor, gatedSelectionRefusal } from '~/shared/data-graph/generation/gates';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
 import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
 import {
   createModelSubstitutionCollector,
@@ -619,18 +618,12 @@ type ResourceValidationResult = {
  */
 async function validateAndEnrichResources(
   resourceRefs: ResourceRef[],
-  user?: { id?: number; isModerator?: boolean },
+  user?: { id?: number; isModerator?: boolean; tier?: string },
   rawAir?: {
     resources: RawAirResource[];
     orchestratorToken?: string;
     requestEcosystem?: string;
-  },
-  /**
-   * Already narrowed to the rules that gate THIS user (`applicableRulesFor`, where the context was
-   * built), so no membership is resolved here — only the resource facts a condition needs, which
-   * exist at this point and not at `refuseGatedSelection`.
-   */
-  gateRules?: GateRule[]
+  }
 ): Promise<ResourceValidationResult> {
   const rawAirResources = rawAir?.resources ?? [];
   if (resourceRefs.length === 0 && rawAirResources.length === 0) {
@@ -697,16 +690,6 @@ async function validateAndEnrichResources(
         .join(', ')}`
     );
   }
-
-  const conditionRefusal = gatedSelectionRefusal(gateRules ?? [], {
-    versions: resources.map((r) => ({
-      id: r.id,
-      modelType: r.model.type,
-      generatorLoaded: r.generatorLoaded,
-      usageControl: r.usageControl,
-    })),
-  });
-  if (conditionRefusal) throw throwBadRequestError(conditionRefusal);
 
   const enrichedResources: EnrichedResource[] = resources;
 
@@ -1261,7 +1244,6 @@ export async function createWorkflowStepsFromGraph({
   sourceImageIds,
   isGreen,
   orchestratorToken,
-  gateRules,
 }: {
   data: GenerationGraphOutput;
   /**
@@ -1271,9 +1253,7 @@ export async function createWorkflowStepsFromGraph({
    */
   computedKeys?: Set<string>;
   isWhatIf?: boolean;
-  user?: { id?: number; isModerator?: boolean };
-  /** Audience-filtered gate rules, for the condition gates resolved during enrichment. */
-  gateRules?: GateRule[];
+  user?: { id?: number; isModerator?: boolean; tier?: string };
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   remixOfId?: number;
@@ -1313,16 +1293,11 @@ export async function createWorkflowStepsFromGraph({
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
   const { enrichedResources, rawAirResources, isPrivateGeneration, hasPoiResource } =
     await withSpan('gen:createSteps:validateResources', () =>
-      validateAndEnrichResources(
-        resourceIds,
-        user,
-        {
-          resources: collectRawAirResources(data),
-          orchestratorToken,
-          requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-        },
-        gateRules
-      )
+      validateAndEnrichResources(resourceIds, user, {
+        resources: collectRawAirResources(data),
+        orchestratorToken,
+        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+      })
     );
 
   // Check for POI in prompt
@@ -1593,9 +1568,8 @@ export async function createWorkflowStepsFromGraphInput({
   // the App-Blocks submit path can carry it; the normal path bakes it in directly.
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
-    gateRules: externalCtx.gateRules,
     computedKeys,
-    user,
+    user: user && { ...user, tier: externalCtx.user.tier },
     isWhatIf,
     sourceImageIds,
     isGreen,
@@ -1926,9 +1900,8 @@ export async function generateFromGraph({
     tags: assemblyTags,
   } = await createWorkflowStepsFromGraph({
     data,
-    gateRules: externalCtx.gateRules,
     computedKeys,
-    user: { id: userId, isModerator },
+    user: { id: userId, isModerator, tier: externalCtx.user.tier },
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
@@ -2116,10 +2089,9 @@ export async function whatIfFromGraph({
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
   const { steps } = await createWorkflowStepsFromGraph({
     data,
-    gateRules: externalCtx.gateRules,
     computedKeys,
     isWhatIf: true,
-    user: userId ? { id: userId, isModerator } : undefined,
+    user: userId ? { id: userId, isModerator, tier: externalCtx.user.tier } : undefined,
     orchestratorToken: token,
   });
 

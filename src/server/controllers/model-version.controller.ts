@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { coveredBy, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
+import { coverageAudience, coveredByForUser } from '~/server/services/generation/coverage-source';
 
 import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
@@ -149,6 +149,7 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        generatorLoaded: true,
         availability: true,
         licensingFee: true,
         licensingFeeType: true,
@@ -281,6 +282,7 @@ const loadModelVersion = async ({
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
+    const { next, member } = await coverageAudience(ctx.user ?? undefined);
     const genStates = await resolveCanGenerateForVersions(
       [
         {
@@ -289,7 +291,11 @@ const loadModelVersion = async ({
           availability: version.availability,
           usageControl: version.usageControl,
           baseModel: version.baseModel,
-          covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
+          covered:
+            coveredByForUser(version, next, {
+              member,
+              isCheckpoint: version.model.type === 'Checkpoint',
+            }) ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
           flags: version.flags,

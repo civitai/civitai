@@ -4,10 +4,16 @@ Any model the generator supports can be generated with, whether or not it is res
 generation cluster. A job whose resources are not loaded **waits** while they download; downloads are
 **free**, and the cost to the user is the generation queue slot the waiting job holds. Paying buys
 **priority**, not access: a **boost** moves that workflow's pending downloads into the fastest
-download lane.
+download lane. The one exception, built and not yet switched on, is the members gate on the
+coverage expansion: [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
 
 **Companion:** [paid-model-loading-coverage.md](paid-model-loading-coverage.md) — the coverage model,
 the audit behind it, and every measured number.
+
+**Successor design (proposed, nothing built):**
+[paid-model-loading-boost-workflow.md](paid-model-loading-boost-workflow.md) — boosting as its own
+workflow, what it would change in the decisions below, and why `BOOST_NON_REFUNDABLE` becomes wrong
+the day it ships.
 
 **Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs
 (2026-09-04, 09-07, 09-10), the `@civitai/client` and `@civitai/orchestration-client` SDKs, and the
@@ -22,7 +28,10 @@ orchestrator source at `9306e7333`.
 
 ## How it works
 
-- **Generation is always accepted.** A cold checkpoint no longer blocks a submit.
+- **Generation is always accepted**, with one exception: a non-member is refused a checkpoint only
+  the `coveredNext` expansion covers, until it is resident
+  ([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)) — built, and inert until
+  `generation-coverage-next` is on. Otherwise a cold checkpoint does not block a submit.
 - **Downloads are free.** Lanes, the queue slot, and cancellation removing a job's downloads are the
   abuse controls — not a price.
 - **Boost = the high lane.** `PUT /v2/consumer/workflows/{id}` with `{ downloadPriority: "high" }`,
@@ -151,9 +160,10 @@ per-tier caps, the `resource-load:update` signal and the load-complete toast. Ke
 `coveredNext` (staged), and the Flipt boolean `generation-coverage-next` decides which one answers.
 It is **default off**, so the staged rule — the thing that lets a normal user pick a checkpoint that
 is not loaded — ships dark and is turned on deliberately. Server-side the choice is made once per
-request in `coverage-source.ts`; the models index writes both `canGenerate` and `canGenerateNext`
-from the two columns, and the picker filters on whichever `coverageIndexField()` names, passing the
-answer to the client so the hit list re-checks the same field. `no-divergent-coverage-read` keeps
+request in `coverage-source.ts`, together with the audience for it (`coverageAudience`, the members
+gate); the models index writes both `canGenerate` and `canGenerateNext` from the two columns, and the
+picker's filter is built by `coverageFilter()` from the flag **and** the viewer's membership, with
+both passed to the client so the hit list re-checks the same rule. `no-divergent-coverage-read` keeps
 both halves single-sourced. Both fields, and the flag, go at the cutover.
 
 **Money-path properties worth keeping true:**
@@ -392,14 +402,19 @@ Everything here is the deploying engineer's, before this branch merges.
       versions of `Archived`/`TakenDown` models (measured on the replica 2026-09-23) lose coverage.
       Coverage is cached, so follow the steps in the migration header — capture the affected ids
       first, purge `packed:generation:resource-data-*` and `packed:caches:data-for-model*` **by key**,
-      then re-queue those models into the models index. The two cache key versions were bumped in this
-      change (`…resource-data-4`, `…data-for-model-2`), so entries written by the previous build are
-      not read either way.
+      then re-queue those models into the models index. Both cache key versions were bumped ahead of
+      this migration (`…data-for-model-2`, and `…resource-data-5` since `generatorLoaded` joined the
+      resource-data row), so entries written by an earlier build are not read either way.
       *Closes when:* `SELECT count(*) FROM "GenerationCoverage" gc JOIN "Model" m ON m.id = gc."modelId"
       WHERE m.mode IS NOT NULL AND gc.covered` returns 0, and the affected models are back in the index.
 - [ ] **Confirm `generation-coverage-next` exists in Flipt and is OFF.** It is boolean-only and
       global. An unknown key evaluates false, which is the same answer as "off" — so verify the key is
       present rather than inferring it from the site behaving as expected.
+      *Closes when:* the flag is listed in Flipt with its default off.
+- [ ] **Create `generation-loading-open-to-all` in Flipt, OFF, before `generation-coverage-next` goes
+      on.** An absent key evaluates false, which is the same answer as off — so this step buys the
+      ability to ramp, not the gate itself. Steps and ramp semantics:
+      [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
       *Closes when:* the flag is listed in Flipt with its default off.
 - [x] **`pnpm run db:check-generated`** after `GenerationCoverage` gained `coveredNext` — passes; the
       generated change is the new column on the Kysely type and the model list.
@@ -500,7 +515,9 @@ Everything here is the deploying engineer's, before this branch merges.
 ### The model
 
 All of it is in [How it works](#how-it-works), and all of it is decided — none of those bullets is
-open. The one thing not stated there: **one paid lane, so a boost is never outbid.**
+open, except *who* may start a download, which the members gate reopened deliberately
+([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)). The one thing not stated
+there: **one paid lane, so a boost is never outbid.**
 
 ### Coverage
 

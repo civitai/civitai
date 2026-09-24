@@ -124,7 +124,21 @@ vi.mock('@civitai/client', () => {
   `
     .split(/\s+/)
     .filter(Boolean);
-  return Object.fromEntries(names.map((n) => [n, stub]));
+  const mod: Record<string, unknown> = Object.fromEntries(names.map((n) => [n, stub]));
+  // The only export actually CONSTRUCTED by the code under test:
+  // `new TimeSpan(0, 20, 0)` then `.addMinutes(n)` then `.toString([...])`,
+  // used to compute a submit timeout. Nothing here asserts on the value.
+  mod.TimeSpan = class {
+    constructor(public h = 0, public m = 0, public s = 0) {}
+    addMinutes(n: number) {
+      this.m += n;
+      return this;
+    }
+    toString() {
+      return `${this.h}:${this.m}:${this.s}`;
+    }
+  };
+  return mod;
 });
 
 // `vi.hoisted` because `vi.mock` factories are lifted above every top-level
@@ -216,7 +230,6 @@ import {
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
-import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   createModelSubstitutionCollector,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
@@ -478,77 +491,5 @@ describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
     expect(deleteWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: strangersWorkflow, throwOnError: true })
     );
-  });
-});
-
-// The members-only launch gate: a rule targeting `coldCheckpoint` rather than a list of ids, since
-// which checkpoints are resident changes as models load and evict. The facts it needs — model type
-// and residency — exist only once resources are enriched, which is why the refusal lives there and
-// not beside the id-targeted one.
-describe('gate rules — a cold checkpoint is refused for the gated audience', () => {
-  const coldRule = {
-    id: 'gate-cold',
-    name: 'members load models',
-    availableTo: 'members',
-    presentation: 'disabled',
-    ecosystems: [],
-    workflows: [],
-    modelVersionIds: [],
-    conditions: ['coldCheckpoint'],
-  };
-
-  const resource = (overrides: Record<string, unknown> = {}) => ({
-    id: QWEN_DEFAULT,
-    name: 'Qwen',
-    baseModel: 'Qwen',
-    trainedWords: [],
-    minStrength: -1,
-    maxStrength: 2,
-    strength: 1,
-    canGenerate: true,
-    hasAccess: true,
-    model: { id: 1, name: 'Qwen', type: 'Checkpoint' },
-    generatorLoaded: false,
-    ...overrides,
-  });
-
-  beforeEach(() => {
-    vi.mocked(getResourceData).mockResolvedValue([resource()] as never);
-  });
-
-  it('🔴 refuses the submit, with the members copy rather than the generic one', async () => {
-    await expect(
-      generateFromGraph({
-        input: input(QWEN_DEFAULT),
-        externalCtx: ctx({ gateRules: [coldRule] }),
-        ...common,
-      } as never)
-    ).rejects.toThrow('only available to members');
-  });
-
-  it('lets the same submit through once the model is resident', async () => {
-    vi.mocked(getResourceData).mockResolvedValue([resource({ generatorLoaded: true })] as never);
-    await expect(
-      generateFromGraph({
-        input: input(QWEN_DEFAULT),
-        externalCtx: ctx({ gateRules: [coldRule] }),
-        ...common,
-      } as never)
-    ).resolves.toBeDefined();
-  });
-
-  // An ExternalGeneration checkpoint has no weights to become resident, so its column is false
-  // forever. Gating it would tell an API model's user to wait for a download that never comes.
-  it('lets an API checkpoint through though its column says cold', async () => {
-    vi.mocked(getResourceData).mockResolvedValue([
-      resource({ generatorLoaded: false, usageControl: 'ExternalGeneration' }),
-    ] as never);
-    await expect(
-      generateFromGraph({
-        input: input(QWEN_DEFAULT),
-        externalCtx: ctx({ gateRules: [coldRule] }),
-        ...common,
-      } as never)
-    ).resolves.toBeDefined();
   });
 });

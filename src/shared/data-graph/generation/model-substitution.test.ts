@@ -178,7 +178,6 @@ describe('records a silent substitution on the REAL graph path', () => {
       ecosystems: [],
       workflows: [],
       modelVersionIds: [QWEN_TXT2IMG_ALT],
-      conditions: [],
     };
     const { ctx, collector } = ctxWithCollector({ gateRules: [rule] });
     const result = parse(txt2imgInput('Qwen', QWEN_TXT2IMG_ALT), ctx);

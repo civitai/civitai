@@ -105,6 +105,9 @@ export default MixedAuthEndpoint(async function handler(
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
+  // 🔴 NO audience here. The ORCHESTRATOR reads this endpoint with no user to decide what it may
+  // load (see the coverage flag in flipt/client.ts), so deriving membership from the caller
+  // would answer `member: false` to it and refuse the expansion for everyone, members included.
   const coverage = Prisma.raw(`"${coverageColumn(await nextCoverageEnabled())}"`);
 
   const [modelVersion] = await dbWrite.$queryRaw<VersionRow[]>`

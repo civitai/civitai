@@ -17,9 +17,6 @@ export type GenerationResourceBase = {
   baseModel: string;
   paidAccess?: { endsAt: Date | null; terms: ModelVersionTerms } | null;
   canGenerate: boolean;
-  /** Residency and how it is served — the facts a `coldCheckpoint` gate condition needs. */
-  generatorLoaded?: boolean;
-  usageControl?: string;
   hasAccess: boolean;
   air?: string;
   additionalResourceCost?: boolean;

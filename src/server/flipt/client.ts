@@ -169,6 +169,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF is the safe failure: an unreachable Flipt narrows generation to what the cluster
   // already holds rather than opening on-demand loading nobody is watching.
   GENERATION_COVERAGE_NEXT = 'generation-coverage-next',
+
+  // Who may START a download by generating with a checkpoint only the EXPANSION covers. Named for
+  // the OPEN state: `isFlipt` answers false for an unknown flag or an unreachable Flipt, so the
+  // default and the failure both land on the narrower audience. Evaluate with the user id as
+  // entity, or a percentage hashes the literal 'global' and answers the same for everyone. Read it
+  // through `coverageAudience`, which is where it meets the tier.
+  // docs/features/paid-model-loading-members-gate.md
+  GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

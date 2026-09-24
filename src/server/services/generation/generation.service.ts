@@ -1,8 +1,9 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
+  coverageAudience,
   coverageColumn,
   coveredBy,
-  pickCovered,
+  coveredForUser,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
@@ -1233,7 +1234,7 @@ export async function getResourceData(
     withPreview = false,
     browsingLevel,
   }: {
-    user?: { id?: number; isModerator?: boolean };
+    user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
@@ -1244,7 +1245,7 @@ export async function getResourceData(
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const next = await nextCoverageEnabled();
+  const { next, member } = await coverageAudience(user);
 
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
@@ -1269,7 +1270,10 @@ export async function getResourceData(
         availability: item.availability,
         usageControl: item.usageControl,
         baseModel: item.baseModel,
-        covered: pickCovered(item, next),
+        covered: coveredForUser(item, next, {
+          member,
+          isCheckpoint: item.model.type === 'Checkpoint',
+        }),
         modelUserId: item.model.userId,
         flags: item.flags,
       },

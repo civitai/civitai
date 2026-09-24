@@ -1,3 +1,4 @@
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { CacheTTL } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
@@ -84,7 +85,9 @@ export const resourceLoadRouter = router({
   getState: publicProcedure
     .use(isFlagProtected('resourceLoad'))
     .input(getResourceLoadStateSchema)
-    .query(({ input }) => getResourceLoadState(input.modelVersionIds)),
+    .query(async ({ input, ctx }) =>
+      getResourceLoadState(input.modelVersionIds, await coverageAudience(ctx.user ?? undefined))
+    ),
   getResidency: protectedProcedure
     .use(
       rateLimit([{ limit: 120, period: 60 }], undefined, { sharedKey: 'resource-load:residency' })

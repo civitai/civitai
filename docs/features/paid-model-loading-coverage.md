@@ -11,15 +11,20 @@ This audit matters more under the boost model, not less: the swap to the new vie
 normal user pick a checkpoint that is not loaded, and so reach the download queue and the boost at
 all.
 
-**One view, two columns, one flag.** `GenerationCoverage` carries both rules as booleans — `covered`
+**One view, two columns, two flags.** `GenerationCoverage` carries both rules as booleans — `covered`
 (live: a checkpoint needs a `CoveredCheckpoint` row) and `coveredNext` (staged: community checkpoints
 qualify on a scanned SafeTensor weight file and load on demand) — and the Flipt boolean
 `generation-coverage-next` decides which column answers, per request, globally, default **off**
 (`20260923140000_generation_coverage_two_rules_one_view`). Choosing a rule is now choosing a column,
-not a table name. `src/server/services/generation/coverage-source.ts` is the only place that choice is
-made server-side (`nextCoverageEnabled` / `coverageColumn` / `pickCovered` / `coveredBy`), and
-`src/shared/generation/coverage-fields.ts` is its indexed half; `no-divergent-coverage-read` keeps the
-ternary out of the rest of `src/`.
+not a table name. A second flag, `generation-loading-open-to-all`, decides **who** gets the staged rule
+once it is on, so the per-request answer is also per-user —
+[paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
+`src/server/services/generation/coverage-source.ts` is the only place either choice is made
+server-side (`nextCoverageEnabled` / `coverageColumn` / `pickCovered` / `coveredBy`, plus
+`coverageAudience` / `coveredForUser` / `coveredForUserSql` / `coveredByForUser`), and
+`src/shared/generation/coverage-fields.ts` is its indexed half (`coverageIndexField` /
+`versionCanGenerate`, plus `versionGeneratableFor` / `coverageFilter`); `no-divergent-coverage-read`
+keeps both out of the rest of `src/`.
 
 🔴 **A row exists when EITHER rule covers, so row existence is no longer a coverage test.** Both old
 views emitted rows only for covered versions, so `EXISTS (SELECT 1 FROM "GenerationCoverage" …)`
@@ -356,10 +361,12 @@ this widens exactly the surface that has no way to express the difference.
 The index carries both fields: `canGenerate` / `versions.canGenerate` from
 `generationCoverage.covered` and `canGenerateNext` / `versions.canGenerateNext` from
 `generationCoverage.coveredNext`, each composed with the type check by `isGenerationEligible`. There
-is no raw SQL leg any more — the relation carries both columns. Which field the picker filters on is
-`coverageIndexField()` (`src/shared/generation/coverage-fields.ts`), driven by the same Flipt flag and
-passed to the client so the hit list re-checks the same field it was filtered by. Both fields collapse
-to one at the cutover.
+is no raw SQL leg any more — the relation carries both columns. The picker's filter is built by
+`coverageFilter()` (`src/shared/generation/coverage-fields.ts`): for a member it is
+`coverageIndexField()`'s single field, and for a non-member with the staged rule on it widens to
+`canGenerate = true OR (canGenerateNext = true AND (type != "Checkpoint" OR versions.generatorLoaded
+= true))`. The server passes both the flag answer and `member` to the client, so the hit list
+re-checks the same rule through `versionGeneratableFor()`. Both fields collapse to one at the cutover.
 
 ### C — display
 

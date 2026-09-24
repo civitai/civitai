@@ -96,15 +96,14 @@ Raised twice, with a suggestion of explicit warning text. The reporter assumed t
 deliberate; the complaint is that it is unstated. Buying a boost and then cancelling is the case where
 a user loses Buzz with nothing to show for it, which makes this the highest-value item in this group.
 
-**Fixed, with the styling still open.** All three purchase points — the queue-card panel, the
-pre-submit alert and the mobile confirm — now render one shared line (`BOOST_NON_REFUNDABLE` in
-`download-lanes.tsx`) stating that the fee is not refunded if the generation is cancelled. It ships
-as small dimmed text; two testers asked for it to be coloured, one of them twice, and the argument
-offered was support load — people who did not mean to click it will arrive in help asking for the
-Buzz back.
+**Fixed.** All three purchase points — the queue-card panel, the pre-submit alert and the mobile
+confirm — now render one shared line (`BOOST_NON_REFUNDABLE` in `download-lanes.tsx`) stating that
+the fee is not refunded if the generation is cancelled. Two testers asked for it to be coloured, one
+of them twice, and the argument offered was support load — people who did not mean to click it will
+arrive in help asking for the Buzz back. It is **yellow**, not red: it matches the Buzz and boost
+colour already on those controls, where red would read as an error state at three purchase points.
 
-*Closes when:* the note is coloured, or a ruling that dimmed is enough is recorded here, and a tester
-confirms it is visible before each purchase.
+*Closes when:* a tester confirms the note is visible before each purchase.
 
 ### 7. Generation and boost fee arrive as one transaction
 

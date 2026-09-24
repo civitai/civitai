@@ -1,159 +1,183 @@
-# Members-only loading for cold checkpoints — implementation plan
+# Members-only loading for the coverage expansion
 
-Only members may **start a download** by generating with a checkpoint that is not resident. Anything
-already loaded stays available to everyone, and every other resource type — LoRAs, embeddings, VAEs —
-is untouched whether it is resident or not.
+Only members may **start a download** by generating with a checkpoint that only the *expansion* covers.
+Everything in the live coverage rule stays available to everyone, as does anything already resident, and
+every other resource type is untouched.
 
-Status: **planned, not built.** Feature it extends:
-[paid-model-loading.md](paid-model-loading.md).
+Status: **built, not switched on.** Feature it extends: [paid-model-loading.md](paid-model-loading.md).
 
 ---
 
-## The decision
+## The rule
 
-**A Flipt flag owns the audience; a generation gate rule owns how the gate looks.**
+| | non-member | member |
+| --- | --- | --- |
+| **Checkpoint** | `covered` OR (`coveredNext` AND already resident) | `coveredNext` |
+| **everything else** | `coveredNext` | `coveredNext` |
 
-`src/shared/data-graph/generation/gates.ts` already carries an audience, a presentation and a refusal
-path; what it cannot express is the target, because "checkpoints that are not currently resident" is a
-predicate rather than a list. So we add one condition to the rules model and reuse the rest.
+**Moderators count as members**, whatever their tier — the same rule `isGatedFor.members` applies in
+`gates.ts` ("mods + members keep access"). Leaving them out made a moderator unable to see the feature
+they were asked to test, and put this gate out of step with the one beside it. A consequence worth
+knowing: a moderator cannot observe the refusal as themselves, so testing the non-member path needs a
+non-mod account.
 
-What the rule cannot do is **ramp**. `availableTo` is an enum — moderators, testers, members, nobody —
-with no "members plus 10% of everyone else". The launch plan is member-only at first and open to
-everyone once loading has proved itself, with the option of closing it again quickly if it has not, so
-the audience belongs on a flag:
+They are refused only on an expansion checkpoint nobody has loaded yet — which is exactly the case
+where saying yes means starting a download.
 
-`GENERATION_LOADING_MEMBERS_ONLY = 'generation-loading-members-only'`
+**`covered` is never gated.** For a checkpoint, `GenerationCoverage.covered` reduces to
+`eco OR ext OR (common AND live_file AND ckpt AND auction)` — the `other_type` branch cannot be true
+for a Checkpoint. So a covered checkpoint is an ecosystem checkpoint, an auction winner, or served
+externally. An auction winner has **already been paid for**; gating it behind a membership would
+charge twice for the same thing and take back what the auction sold.
 
-- **On** → the condition rule applies → cold checkpoints are members-only.
-- **Off** → the rule stops applying → everyone can start a download.
-- **Percentage** → that share of non-members is exempt, which is the ramp a rule cannot give.
+**The non-checkpoint half of the expansion is not gated.** For a LoRA, embedding or VAE the
+`covered` → `coveredNext` delta is only the file predicate: `next` accepts `Diffusers`, `live` does
+not — and every non-checkpoint version the expansion adds is a Diffusers file
+([the count and the query](paid-model-loading-coverage.md)). That is file-format support, not
+download cost, so gating it would charge for a format fix.
 
-One operational switch, in the same system as `generation-coverage-next`, which remains the wider
-control: coverage off means nobody gets cold checkpoints at all, flag on means only members do.
-The rule stays a mod-editable home for the presentation and the copy.
+⚠️ That last argument rests on today's data and nothing pins it. The first non-Diffusers
+non-checkpoint to enter the expansion opens a download to non-members with no test failing.
 
-Default **on**, so the members-only state survives an unreachable Flipt — the safe failure for a
-launch gate is the narrower audience, not the wider one.
+---
 
-## What already exists
+## Where it lives
 
-| Need | Already in `gates.ts` |
+This is **not** a generation gate rule. Gate rules are for moderators to hide or kill-switch *named*
+things — an unreleased ecosystem, a specific broken version. This is a policy over a derived set,
+driven by a flag, with no authoring surface and nothing for a moderator to edit. An earlier draft did
+build it on the rules model; that was reuse for its own sake, and it dragged in a moderator editor that
+could silently delete the rule.
+
+It rides on the coverage switch instead, which already had exactly the right shape — one decision, made
+once per request, with a guard keeping it in one place per side.
+
+| Concern | Where |
 | --- | --- |
-| Audience | `availableTo: 'members'` — members + mods keep access |
-| Show it but say why | `presentation: 'disabled'` — "keeps a MODEL VERSION selectable so the form can say why" |
-| Hide it instead | `presentation: 'hidden'`, switchable per rule |
-| Upsell copy | `message`, layered on the standard UI |
-| Refusal at submit | `gatedSelectionRefusal`, called from `orchestration-new.service.ts:848` |
-| Audience stays server-side | `applicableRulesFor` on the server; `rulesToStates` in the graph |
+| Audience, resolved once per request | `coverageAudience` (`coverage-source.ts`) |
+| The rule, over database columns | `coveredForUser` (`coverage-source.ts`) |
+| The rule, as a SQL predicate | `coveredForUserSql` (`coverage-source.ts`) |
+| The rule, over the indexed pair | `versionGeneratableFor` (`coverage-fields.ts`) |
+| The rule, as a Meili page filter | `coverageFilter` (`coverage-fields.ts`) |
+| Enforcement | none of its own — `canGenerate` goes false and the existing refusal fires |
 
-The module already states the behaviour this plan wants: *"A disabled or members-only target stays
-selectable; its generation requests are refused instead."*
+A non-member submitting an expansion checkpoint that is cold gets the same refusal as any uncovered
+resource.
 
-## The one new concept
+**The explicit load path opts out.** `resolveLoadable` (`resource-load.service.ts`) calls
+`getResourceLoadState` with `member: true` on purpose: that path *is* the purchase the gate exists to
+ask for, so narrowing it there would refuse someone's money. A non-member can still **buy** a load.
 
-A **condition target** — a rule that applies to resources matching a predicate rather than to a named
-list:
+⚠️ **The model feed is not gated yet.** `model.service.ts` derives each card's `canGenerate` from the
+ungated column, so a non-member browsing `/models` still sees a Create button on a cold expansion
+checkpoint and meets the refusal after composing a prompt. Gating it needs residency added to the
+model-version Redis cache and that cache's key bumped — a hot-path change that wants its own
+measurement, so it is deliberately not in this change.
 
-```ts
-conditions: z.array(z.enum(['coldCheckpoint'])).default([])
-```
+`no-divergent-coverage-read` pins all of it: that each side derives the audience in one place, that no
+other module pairs an expansion column with residency itself, and that only `coverage-source.ts` reads
+either flag.
 
-`coldCheckpoint` is `model.type === 'Checkpoint'` and `generatorReadiness(version) === 'cold'`. It
-needs no new Meilisearch field: `type` and `versions.generatorLoaded` are both already filterable and
-were applied to the live index on 2026-09-23. Deriving it anywhere else would be a second encoding of
-residency, which is what `no-divergent-generator-readiness` exists to prevent.
+### Residency is read through `generatorReadiness`, never the column
 
----
-
-## Phases
-
-### 0. Prerequisite — event-driven residency. **Done.**
-
-A gate keyed on residency that trails by five minutes would refuse models that are in fact loaded —
-a support ticket, where the same staleness in a *label* is only an annoyance. That risk is gone:
-`src/pages/api/webhooks/resource-availability.ts` is on `main` and writes `generatorLoaded` as each
-batch arrives, with `sync-generator-loaded-resources` left as the backstop. Residency is read from
-`workersAvailable` rather than the `loaded` flag beside it, since a resource with no worker cannot
-serve a generation whatever the flag says.
-
-**This branch is behind `main` and does not have it yet** — merge before building, or the gate will be
-written against the five-minute world.
-
-### 1. Membership — nothing to do
-
-An earlier draft of this plan called for un-hardcoding `isMember`. That was wrong, and the correction
-matters because it removes a phase.
-
-Membership is already resolved for real on both paths that carry a gate: the graph context passes
-`isMember` (`generation.service.ts:967`) and the submit passes `userTier !== 'free'`
-(`orchestration-new.service.ts:382`). So `availableTo: 'members'` works end to end today, for display
-and for server-side enforcement.
-
-The one `isMember: true` literal, in `getCanGenerateHiddenGates` (`generation.service.ts:1044`), is
-deliberate and documented: that function computes only the targets that **hide**, the sole state that
-hard-blocks `canGenerate`, and passing `true` drops member-restricted rules from that set so the
-lookup needs no tier read on a hot path.
-
-It only matters if the members rule is given `presentation: 'hidden'` — a member-restricted hidden
-rule would be dropped there and would never hide anything. That is a second reason to prefer
-`disabled`, which needs no change to that function at all.
-
-### 2. Condition targets in the rules model
-
-- `gateRuleSchema` gains `conditions`.
-- `rulesToStates` resolves condition rules alongside the three target maps, keeping `pickStrongerGate`
-  so an overlapping version-id rule still wins where it is stronger.
-- The per-version lookup applies condition rules where the resource satisfies the predicate.
-- `CanGenerateBlockedTargets` keeps its rule that only `hidden` hard-blocks `canGenerate`; a
-  `hidden` condition rule has to reach it too.
-
-Tests: a condition rule gates a cold checkpoint and not a resident one, not a cold LoRA, and not a
-member; `pickStrongerGate` still resolves an overlapping rule; and — per the repo's revert rule — each
-assertion fails legibly when the condition is dropped.
-
-### 3. The surfaces
-
-Three doors, and they do not behave the same today:
-
-- **Generator form** — consumes gate states already. A `disabled` condition rule works here as soon as
-  phase 2 lands: the version stays selectable and the form says why.
-- **Submit** — `gatedSelectionRefusal` must evaluate conditions. Without this the gate is cosmetic.
-- **Resource picker** — consumes **no** gate state at all (verified). Wire it to the resolved state
-  rather than re-deriving the predicate from the index, which would be the same divergence phase 2
-  avoids.
-- **Model page Create button** — reads `canGenerate` only, and `disabled` rules deliberately do not
-  affect `canGenerate`. So a non-member would press Create and meet the refusal later, in the
-  generator. Either thread the gate state to the button, or accept that the generator is where the
-  upsell is made — the resource arrives pre-selected and the form explains, which is arguably the
-  better placement. **Decide before building phase 3.**
-
-### 4. Copy and rollout
-
-Create the rule with `availableTo: 'members'`, `presentation: 'disabled'` and a message that says a
-membership starts the download — not that the model is unavailable, which is what a non-member would
-otherwise read. Test on preview with a non-member account, then decide whether to keep `disabled` or
-switch to `hidden`; that is a per-rule change, no deploy.
+`ModelVersion.generatorLoaded` is false forever for an `ExternalGeneration` version, so reading it raw
+would gate every API checkpoint behind a download that never comes. `coveredForUser` calls
+`isGeneratorReady`. `coveredForUserSql` cannot — a predicate sent to Postgres has no helper to call — so
+it restates the rule in SQL and `no-divergent-generator-readiness` pins that both halves survive.
 
 ---
 
-## Deliberately not covered
+## The two flags
 
-- **Boosting.** A non-member who cannot start a cold checkpoint never reaches its boost. They can
-  still boost a workflow whose LoRA is downloading, which is fine and stays as it is.
-- **The moderator load tool** (`resourceLoad.submit`) keeps its own path.
-- **The "Loaded only" chip** needs no change: nothing is implicitly filtered under `disabled`, so it
-  keeps working and becomes the non-member's own way to narrow to what they can use now.
+`generation-coverage-next` decides whether the expansion exists at all.
+`generation-loading-open-to-all` decides who gets it.
 
-## Open decisions
+| coverage-next | open-to-all | result |
+| --- | --- | --- |
+| off | — | nobody gets the expansion (today's behaviour) |
+| on | off | members get the expansion; non-members get live + resident |
+| on | on | everyone gets the expansion |
 
-1. `disabled` or `hidden` at launch — recommendation: `disabled`. Hiding a model only inside the
-   generator, while it stays visible everywhere else on the site, produces the confusion this feature
-   set out to end; and `hidden` additionally requires teaching `getCanGenerateHiddenGates` to read a
-   real tier (phase 1), which `disabled` does not.
-2. Whether the model page Create button carries the reason, or defers to the generator (phase 3).
+`generation-loading-open-to-all` is named for the **open** state on purpose: `isFlipt` answers false for
+an unknown flag or an unreachable Flipt, so both the default and the failure land on the narrower
+audience. A **percentage** rollout exempts that share of non-members, which is the ramp the old
+`availableTo` enum could not express — it is evaluated with the user id as the entity, or Flipt hashes
+the literal `'global'` and answers the same for everyone.
 
-## Why this is a rollout stage, not a takeaway
+The members gate is meaningless while `generation-coverage-next` is off, so it ships behind that one.
 
-Before paid model loading, a non-resident checkpoint blocked the submit for everyone. A non-member
-under this rule lands on approximately that behaviour, while members get the new one. Worth saying in
-the copy.
+---
+
+## What a non-member sees
+
+Nothing new. An expansion checkpoint that is cold is simply not generatable for them — the same state as
+any uncovered model: no Create button on the model or version page, and filtered out of the generation
+picker. The model **feed** is the exception, and still shows one; see the caveat under Where it lives.
+
+**There is no upsell.** They are not told that a membership would unlock it. That is a deliberate
+consequence of putting the rule in coverage rather than in the gate-rules system, which had a `message`
+field. If an upsell is wanted it is an additive piece on top — a surface that notices
+`coveredNext && !covered && !resident && !member` and says so — not a reason to move the rule back.
+
+---
+
+## Residency freshness
+
+The gate's answer depends on whether a version is resident **right now**, so a stale read refuses
+someone a model that has already loaded.
+
+Three things keep it fresh, and they are not interchangeable:
+
+- `ModelVersion.generatorLoaded` — written by `/api/webhooks/resource-availability` within seconds, and
+  by `sync-generator-loaded-resources` every 15 minutes as the backstop.
+- The models search index — both writers `queueUpdate` after their writes.
+- `resourceDataCache` — the Redis row the **submit path** reads, on a one-hour TTL. Both writers bust it
+  for the versions they flipped.
+
+That third one is the one that bites: updating the column and the index leaves the submit reading an
+hour-old snapshot, so the gate keeps refusing a resource that has loaded. The repo already stated this
+rule for `paidAccess` (`generation.service.ts`): gating terms do not belong in that cache without a bust.
+
+---
+
+## Rollout
+
+1. Create `generation-loading-open-to-all` in Flipt, **off**. Off is also what an absent flag means, so
+   this step only buys the ability to ramp later.
+2. Turn `generation-coverage-next` on. The expansion appears for members; non-members see what they see
+   today plus whatever is resident.
+3. Watch download volume and queue depth. Ramp `generation-loading-open-to-all` by percentage to open it
+   to non-members; set it on for everyone, or off to close it again, without a deploy.
+
+`generation-coverage-next` is global — it is evaluated with no entity, so it moves whole environments
+at once. Only `generation-loading-open-to-all` is per-user, which is what makes step 3 a ramp rather
+than a second switch. Signed-out visitors all evaluate as entity `'0'`, so for them a percentage is
+all-or-nothing rather than a share.
+
+---
+
+## When this goes away
+
+**The intent is that it does.** The gate exists to keep download volume controllable while on-demand
+loading proves itself, not to make the expansion a membership perk permanently. Once step 3 has
+`generation-loading-open-to-all` on for everyone and the numbers have held, the flag and everything
+keyed to it should be deleted — `coverageAudience`'s second read, the `member` argument threaded
+through `coveredForUser` / `versionGeneratableFor` / `coveredForUserSql` / `coverageFilter`, the
+`member` field on the picker payload, and the audience half of `no-divergent-coverage-read`. What
+remains is `pickCovered` and `versionCanGenerate`, which then retire with the coverage flag at its own
+cutover.
+
+That is also why the **model feed is not gated** (see above): gating it needs residency in the
+model-version Redis cache and that cache's key bumped, on the busiest surface on the site. Worth
+paying for a permanent rule; not worth paying for one we plan to delete. If the gate is still on
+months from now, that trade flips and the feed should be done properly.
+
+*Closes when:* the flag is on for everyone, the listed code is removed, and this section goes with it.
+
+## Open
+
+**The upsell.** Whether a non-member should be told a membership unlocks the model, and in what words.
+Deliberately out of scope above; it is additive — and moot if the gate retires first.
+
+*Closes when:* a decision is recorded here — either copy plus the surface that shows it, or a ruling
+that no upsell ships — and @justin signs off on the wording if one does.

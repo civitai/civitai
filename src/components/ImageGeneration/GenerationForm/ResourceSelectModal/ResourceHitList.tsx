@@ -95,6 +95,7 @@ export function ResourceHitList({ query }: { query: string }) {
   const {
     items,
     coverageNext,
+    member,
     isLoading,
     isFetching,
     isFetchingNextPage,
@@ -129,13 +130,15 @@ export function ResourceHitList({ query }: { query: string }) {
       return selectableVersions(model.versions, {
         canGenerate,
         coverageNext,
+        member,
+        isCheckpoint: model.type === 'Checkpoint',
         loadedOnly,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
       });
     },
-    [canGenerate, coverageNext, loadedOnly, resources, excludedIds, tab, selectSource]
+    [canGenerate, coverageNext, member, loadedOnly, resources, excludedIds, tab, selectSource]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();

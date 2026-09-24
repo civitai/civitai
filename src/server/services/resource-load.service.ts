@@ -14,7 +14,10 @@ import {
 } from '~/server/schema/resource-load.schema';
 import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
-import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
+import {
+  coveredForUserSql,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -98,12 +101,15 @@ async function getVersionsForAir(modelVersionIds: number[]) {
   })) as VersionForAir[];
 }
 
-async function getCoveredVersionIds(modelVersionIds: number[]) {
+async function getCoveredVersionIds(
+  modelVersionIds: number[],
+  audience: { next: boolean; member: boolean }
+) {
   if (!modelVersionIds.length) return new Set<number>();
-  const column = Prisma.raw(`"${coverageColumn(await nextCoverageEnabled())}"`);
+  const covered = coveredForUserSql(audience);
   const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
     SELECT "modelVersionId" FROM "GenerationCoverage"
-    WHERE ${column} AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
+    WHERE ${covered} AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
   `;
   return new Set(rows.map((r) => r.modelVersionId));
 }
@@ -120,12 +126,16 @@ function parseAvailability(availability: unknown): ResourceLoadAvailability {
  * and throws `availability` away, so it looks like it already has this and does not.
  */
 export async function getResourceLoadState(
-  modelVersionIds: number[]
+  modelVersionIds: number[],
+  audience: { next: boolean; member: boolean }
 ): Promise<ResourceLoadState[]> {
   const versions = await getVersionsForAir(modelVersionIds);
   if (!versions.length) return [];
 
-  const coveredIds = await getCoveredVersionIds(versions.map((v) => v.id));
+  const coveredIds = await getCoveredVersionIds(
+    versions.map((v) => v.id),
+    audience
+  );
 
   const results: ResourceLoadState[] = [];
   const tasks = versions.map((version) => async () => {
@@ -292,7 +302,11 @@ export async function getLiveResourceResidency(
 /** Refuses `available` too: the orchestrator accepts an already-resident prepare and completes it
  *  instantly, so the user would pay for nothing. */
 async function resolveLoadable(modelVersionId: number) {
-  const [state] = await getResourceLoadState([modelVersionId]);
+  // `member: true`: this is the PAID load path — the purchase IS what the gate asks for.
+  const [state] = await getResourceLoadState([modelVersionId], {
+    next: await nextCoverageEnabled(),
+    member: true,
+  });
   if (!state) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
 
   if (!state.eligible)

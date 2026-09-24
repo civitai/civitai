@@ -94,6 +94,68 @@ describe('which coverage rule answers is decided in one place', () => {
     ).toEqual([]);
   });
 
+  /**
+   * Who gets the `coveredNext` expansion is a second decision on top of which rule answers, and it
+   * has the same failure: one surface deciding it differently is a Create button the submit
+   * refuses. Both halves derive it in one place, and the audience itself is resolved in one place.
+   */
+  it('who gets the expansion is derived in one place per side', () => {
+    expect(fileText(COLUMN_HELPER)).toMatch(/export function coveredForUser/);
+    expect(fileText(INDEX_HELPER)).toMatch(/export function versionGeneratableFor/);
+  });
+
+  /**
+   * The tell is an expansion column weighed against residency. Either order, across newlines, and
+   * residency in any of its spellings — the helper form is what the readiness guard pushes you
+   * toward, so a restatement written that way would otherwise slip both guards at once.
+   */
+  const READY = 'generatorLoaded|isGeneratorReady|generatorReadiness';
+  const NEXT = 'coveredNext|canGenerateNext';
+  // One statement, with a boolean operator between them: that is a DECISION. A Prisma select or a
+  // field list names the same identifiers across separate lines and must not trip this.
+  const RESTATED = [
+    new RegExp(`(${NEXT})[^;\n]*(&&|\\|\\|)[^;\n]*(${READY})`),
+    new RegExp(`(${READY})[^;\n]*(&&|\\|\\|)[^;\n]*(${NEXT})`),
+  ];
+
+  /**
+   * The control. Without it a rename of either column makes the prohibition below vacuously green
+   * — it would report "nobody restates the rule" because the pattern no longer matches anything.
+   */
+  it('the two helpers themselves match the restatement pattern', () => {
+    for (const rel of [COLUMN_HELPER, INDEX_HELPER]) {
+      expect(
+        RESTATED.some((r) => r.test(fileText(rel) ?? '')),
+        `${rel} no longer pairs an expansion column with residency — if either was renamed, the ` +
+          `prohibition below is now checking nothing`
+      ).toBe(true);
+    }
+  });
+
+  it('no other module restates the members rule', () => {
+    const offenders = sourceFiles
+      .filter((f) => f.rel !== COLUMN_HELPER && f.rel !== INDEX_HELPER)
+      .filter((f) => RESTATED.some((r) => r.test(f.text)))
+      .map((f) => f.rel);
+    expect(
+      offenders,
+      `These pair the expansion column with residency themselves instead of calling ` +
+        `coveredForUser / versionGeneratableFor. A second copy is a surface that keeps gating ` +
+        `after the rollout opens, or stops gating before it does.`
+    ).toEqual([]);
+  });
+
+  it('the rollout flag is read only where the audience is resolved', () => {
+    const readers = sourceFiles
+      .filter((f) => f.text.includes('GENERATION_LOADING_OPEN_TO_ALL'))
+      .map((f) => f.rel)
+      .sort();
+    expect(
+      readers,
+      `only ${FLAG_DECL} (declaration) and ${COLUMN_HELPER} (coverageAudience) may name it`
+    ).toEqual([COLUMN_HELPER, FLAG_DECL].sort());
+  });
+
   it('the flag is read only where the per-request answer is resolved', () => {
     // Resolved once per request and passed down: a second reader could evaluate differently
     // mid-request and have one surface covering a version another refuses.

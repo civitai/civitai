@@ -15,12 +15,17 @@ const input = (overrides: Partial<GetResourceSelectInput> = {}): GetResourceSele
   ...overrides,
 });
 
-const filterFor = (overrides?: Partial<GetResourceSelectInput>, coverageNext = true) =>
+const filterFor = (
+  overrides?: Partial<GetResourceSelectInput>,
+  coverageNext = true,
+  member = true
+) =>
   buildFilter({
     input: input(overrides),
     user: { id: 1, isModerator: false },
     tabIds: null,
     coverageNext,
+    member,
   }) ?? '';
 
 describe('the picker’s loaded-only filter', () => {
@@ -37,6 +42,24 @@ describe('the picker’s loaded-only filter', () => {
     const filter = filterFor({ canGenerate: true }, true);
     expect(filter).toContain('canGenerateNext = true');
     expect(filter).not.toContain('canGenerate = true');
+  });
+
+  /**
+   * A non-member keeps the live set plus anything already resident, so both fields appear. The
+   * `canGenerate = true` half is what stops the expansion gate hiding an auction winner from them.
+   */
+  it('keeps the live set and resident versions for a non-member', () => {
+    const filter = filterFor({ canGenerate: true }, true, false);
+    expect(filter).toContain('canGenerate = true');
+    expect(filter).toContain('canGenerateNext = true');
+    expect(filter).toContain('versions.generatorLoaded = true');
+  });
+
+  it('does not widen for a non-member while the expansion is off', () => {
+    const filter = filterFor({ canGenerate: true }, false, false);
+    expect(filter).toContain('canGenerate = true');
+    expect(filter).not.toContain('canGenerateNext');
+    expect(filter).not.toContain('generatorLoaded');
   });
 
   it('gates on the live rule when the flag is off', () => {

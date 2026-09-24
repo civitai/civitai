@@ -23,8 +23,6 @@
 
 import { z } from 'zod';
 
-import { generatorReadiness } from '~/shared/generation/generator-readiness';
-
 // WHO keeps access — everyone else is gated. Positive ("available to") framing,
 // matching the legacy allow-list model ("testers have it; others hidden"):
 //   - `moderators` → mod-only.
@@ -43,12 +41,6 @@ export type GateAvailableTo = z.infer<typeof gateAvailableToSchema>;
 export const gatePresentationSchema = z.enum(['disabled', 'hidden', 'experimental']);
 export type GatePresentation = z.infer<typeof gatePresentationSchema>;
 
-// WHAT a rule can target besides a named list. A condition is a property of the
-// resource, evaluated per version, for a set that cannot be enumerated: every
-// checkpoint that is not resident changes as models load and evict.
-export const gateConditionSchema = z.enum(['coldCheckpoint']);
-export type GateCondition = z.infer<typeof gateConditionSchema>;
-
 export const gateRuleSchema = z.object({
   id: z.string(),
   /** Mod-facing name, e.g. "Maintenance window", "Premium tier". */
@@ -65,8 +57,6 @@ export const gateRuleSchema = z.object({
   ecosystems: z.array(z.string()).default([]),
   workflows: z.array(z.string()).default([]),
   modelVersionIds: z.array(z.number().int().positive()).default([]),
-  /** Targets by property rather than by id — see `gateConditionSchema`. */
-  conditions: z.array(gateConditionSchema).default([]),
 });
 export type GateRule = z.infer<typeof gateRuleSchema>;
 
@@ -125,7 +115,6 @@ export type ResolvedGates = {
   ecosystems: Map<string, GateResolution>;
   workflows: Map<string, GateResolution>;
   modelVersionIds: Map<number, GateResolution>;
-  conditions: Map<GateCondition, GateResolution>;
 };
 
 // Precedence when an item is gated by several sources/rules: the more
@@ -186,7 +175,6 @@ export function rulesToStates(rules: GateRule[]): ResolvedGates {
   const ecosystems = new Map<string, GateResolution>();
   const workflows = new Map<string, GateResolution>();
   const modelVersionIds = new Map<number, GateResolution>();
-  const conditions = new Map<GateCondition, GateResolution>();
 
   for (const rule of rules) {
     if (rule.presentation === 'experimental') continue;
@@ -200,13 +188,9 @@ export function rulesToStates(rules: GateRule[]): ResolvedGates {
       workflows.set(w, pickStrongerGate(workflows.get(w), resolution));
     for (const id of rule.modelVersionIds)
       modelVersionIds.set(id, pickStrongerGate(modelVersionIds.get(id), resolution));
-    // `?? []` because a rule reaching here has usually not been through the schema: stored rules
-    // and fixtures predate this field, so the default never fired for them.
-    for (const c of rule.conditions ?? [])
-      conditions.set(c, pickStrongerGate(conditions.get(c), resolution));
   }
 
-  return { ecosystems, workflows, modelVersionIds, conditions };
+  return { ecosystems, workflows, modelVersionIds };
 }
 
 export type CanGenerateBlockedTargets = { ecosystems: Set<string>; versionIds: Set<number> };
@@ -239,41 +223,7 @@ export function unselectableVersionIds(rules: GateRule[]): number[] {
 }
 
 export type GateSubject = 'ecosystem' | 'workflow' | 'modelVersion';
-/**
- * What a condition needs to know about one version. `versionIds` alone cannot answer
- * `coldCheckpoint`, so a caller that wants condition rules applied passes `versions` instead.
- */
-export type GateSelectionVersion = {
-  id: number;
-  modelType?: string | null;
-  generatorLoaded?: boolean | null;
-  usageControl?: string | null;
-};
-
-/**
- * Whether one version matches a condition. Readiness comes from `generatorReadiness`, never from
- * `generatorLoaded` alone: an `ExternalGeneration` version has no weights to become resident, so
- * reading the column here would gate every API model as though it were waiting for a download.
- */
-export function matchesGateCondition(
-  condition: GateCondition,
-  version: GateSelectionVersion
-): boolean {
-  switch (condition) {
-    case 'coldCheckpoint':
-      return version.modelType === 'Checkpoint' && generatorReadiness(version) === 'cold';
-    default:
-      return false;
-  }
-}
-
-export type GateSelection = {
-  ecosystem?: string;
-  workflow?: string;
-  versionIds?: number[];
-  /** Versions with enough detail for condition rules; `versionIds` gets id-targeted rules only. */
-  versions?: GateSelectionVersion[];
-};
+export type GateSelection = { ecosystem?: string; workflow?: string; versionIds?: number[] };
 export type SelectionGate = { subject: GateSubject; state: GateState; message?: string };
 
 /** Every gate the current selection hits, most-restrictive target first. */
@@ -286,12 +236,6 @@ export function selectionGates(rules: GateRule[], selection: GateSelection): Sel
   add('ecosystem', selection.ecosystem ? states.ecosystems.get(selection.ecosystem) : undefined);
   add('workflow', selection.workflow ? states.workflows.get(selection.workflow) : undefined);
   for (const id of selection.versionIds ?? []) add('modelVersion', states.modelVersionIds.get(id));
-  for (const version of selection.versions ?? []) {
-    let gate = states.modelVersionIds.get(version.id);
-    for (const [condition, resolution] of states.conditions)
-      if (matchesGateCondition(condition, version)) gate = pickStrongerGate(gate, resolution);
-    add('modelVersion', gate);
-  }
   return gates;
 }
 
