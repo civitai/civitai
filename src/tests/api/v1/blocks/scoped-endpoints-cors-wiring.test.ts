@@ -268,10 +268,14 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // bites hardest of all here: a block whose catalog renders but whose Generate
   // button 405s on the preflight is the most confusing failure this platform can
   // produce, and it would be diagnosed anywhere except in a missing CORS opt-in.
-  // The scope half of each entry is the authorization claim — all four take
-  // `ai:write:budgeted`, INCLUDING the two reads, because that is the scope their
-  // bridge twins assert, and a route that silently downgraded to something weaker
-  // would still pass a CORS-only check.
+  // The scope half of each entry is the authorization claim — all five take
+  // `ai:write:budgeted`, INCLUDING the three reads, because that is the scope
+  // their bridge twins assert, and a route that silently downgraded to something
+  // weaker would still pass a CORS-only check. `query` in particular: its bridge
+  // twin `blocks.queryAppWorkflows` asserts `ai:write:budgeted` on the stated
+  // grounds that "an app authorized to spend the viewer's Buzz on generation can
+  // read the subqueue of gens it produced", and weakening it here would decouple
+  // the two transports on exactly that judgement.
   {
     module: '~/pages/api/v1/blocks/workflows/submit',
     requiredScope: 'ai:write:budgeted',
@@ -289,6 +293,11 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   },
   {
     module: '~/pages/api/v1/blocks/workflows/cancel',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/query',
     requiredScope: 'ai:write:budgeted',
     allowOpaqueOrigin: true,
   },

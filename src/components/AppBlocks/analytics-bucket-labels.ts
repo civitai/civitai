@@ -18,8 +18,9 @@ import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
  *   2. PASS-THROUGH. A substantial share of `topEndpoints` is REST paths from
  *      `normalizeEndpoint(req.url)` (proportion not measured — it depends entirely on
  *      what the app does), which that function has no arm for — with the exception,
- *      since #5068, of three EXACT `/api/v1/blocks/workflows/*` paths that now have
- *      their own arms. An arbitrary REST path is still unmapped and would fall to its
+ *      since #5068, of four EXACT `/api/v1/blocks/workflows/*` paths that now have
+ *      their own arms (the fourth, `/workflows/query`, arrived with the REST
+ *      app-subqueue read). An arbitrary REST path is still unmapped and would fall to its
  *      scope→label map and, called with no meaningful scope, yield '' — a blank row. It
  *      also cannot distinguish the legacy per-id buckets below.
  *   3. INCOMPLETE SYNTHETIC COVERAGE. It has arms for FOUR of the FIVE synthetic tokens

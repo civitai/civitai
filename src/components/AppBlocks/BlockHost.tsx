@@ -16,8 +16,17 @@ interface BlockHostProps {
  * so v2 can light it up without a structural refactor.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, terminal, pending, missingScopes, domain, maxBrowsingLevel, refresh } =
-    useBlockToken(blockInstall, slotContext);
+  const {
+    token,
+    expiresAt,
+    kind,
+    terminal,
+    pending,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    refresh,
+  } = useBlockToken(blockInstall, slotContext);
 
   // TERMINAL token-mint failure → collapse (render null, take no space) rather
   // than show a visible "authorization error" card. Matches the IframeHost
@@ -70,6 +79,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       context={slotContext}
       token={token}
       expiresAt={expiresAt}
+      tokenKind={kind}
       missingScopes={missingScopes}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}

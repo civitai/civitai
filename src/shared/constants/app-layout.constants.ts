@@ -85,3 +85,17 @@ export const tourClickThroughZIndex = tourOverlayZIndex + tourTooltipZIndexOffse
  * on mount order. This clears a few levels of dialog stacking outright.
  */
 export const remixMenuZIndex = 310;
+
+/**
+ * The bottom sheet `MobileMenuDrawer` opens into on touch. It has to clear
+ * everything a sheet can be opened from inside: the generation panel, which goes
+ * fullscreen at `z-[210]` on a phone (`GenerationSidebar`), that panel's own menus
+ * at `imageGenerationDrawerZIndex + 2`, and routed dialogs, which stack at
+ * `300 + index` (`DialogProvider`).
+ *
+ * 🔴 It only works through Mantine's `zIndex` PROP. A `classNames.root` rule is
+ * inert — the Drawer root is `position: static` and carries nothing but custom
+ * properties, while the stacking lives on `inner` and `overlay` via
+ * `var(--mb-z-index)`. A sheet styled that way reads as lifted and is not.
+ */
+export const mobileMenuSheetZIndex = 400;

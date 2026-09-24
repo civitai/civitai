@@ -56,6 +56,8 @@ interface RawManifest {
   name?: unknown;
   contentRating?: unknown;
   renderMode?: unknown;
+  /** Credential the host hands the block; absent means `block-token`. */
+  auth?: unknown;
   trustTier?: unknown;
   scopes?: unknown;
   /**
@@ -168,6 +170,8 @@ interface RawManifest {
 export const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
 export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
 export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
+export type ManifestAuthMode = 'block-token' | 'oauth';
+export const ALLOWED_AUTH_MODES = new Set<ManifestAuthMode>(['block-token', 'oauth']);
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
 
@@ -426,6 +430,13 @@ export class BlockManifestValidator {
 
     if ((renderMode === 'inline' || renderMode === 'hybrid') && trustTier === 'unverified') {
       errors.push('INLINE_REQUIRES_VERIFIED_TIER');
+    }
+
+    if (
+      m.auth !== undefined &&
+      (typeof m.auth !== 'string' || !ALLOWED_AUTH_MODES.has(m.auth as ManifestAuthMode))
+    ) {
+      errors.push(`auth must be one of ${[...ALLOWED_AUTH_MODES].join(', ')}`);
     }
 
     // Optional marketplace `category`. When present it must be one of the known

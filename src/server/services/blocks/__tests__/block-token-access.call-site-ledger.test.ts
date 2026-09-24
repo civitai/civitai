@@ -77,13 +77,21 @@ const NAME_COLLISION_MODULE = 'src/server/services/apps/app-storage.service.ts';
  */
 const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> = {
   'src/server/routers/blocks.router.ts': {
-    // 17 → 16: `updateUserSettings` no longer calls the gate inline. Its whole body was
-    // extracted to `user-settings.service.ts` (below) so the new REST twin
-    // `POST /api/v1/blocks/user-checkpoint/set` reaches the SAME gates; the call moved
-    // WITH the body rather than being dropped. Net production call sites are unchanged.
-    calls: 16,
+    // 17 → 15, in TWO independent extractions that each moved one inline call out of this
+    // router and into a body shared with a new REST twin. Neither dropped a gate:
+    //   -1  `getImagesByIds`      → block-gated-images-read.service.ts (GET /gated-images)
+    //   -1  `updateUserSettings`  → user-settings.service.ts          (POST /user-checkpoint/set)
+    // Both landed as their own ledger entries below, so net production call sites are
+    // unchanged — the count moved between rows, it did not leave the table.
+    calls: 15,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject.',
+    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
+  },
+  'src/server/services/blocks/block-gated-images-read.service.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims verified by the caller — authorizeBlockBridgeToken on the bridge, withBlockScope on REST',
+    why: 'The shared body of the per-viewer gated image read, called by BOTH blocks.getImagesByIds and GET /api/v1/blocks/gated-images. It is the first entry here that is neither a router nor a route: the gate sits in the shared body precisely so the two transports cannot disagree about whether the kill-switch ran. The subject is still self-bound — the function takes CLAIMS, never a user id, and derives the subject itself, so no caller can pass one in.',
   },
   'src/server/services/blocks/user-settings.service.ts': {
     calls: 1,
@@ -173,8 +181,9 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // walk reached a meaningful number of files, and that the detector fires on a known
     // consumer's actual source.
     expect(files.length).toBeGreaterThan(500);
-    // 2 → 3 with `user-settings.service.ts`, the extracted viewer-settings write body.
-    expect(consumers.length).toBe(3);
+    // 2 → 4: `block-gated-images-read.service.ts` (the extracted gated-image read body)
+    // and `user-settings.service.ts` (the extracted viewer-settings write body).
+    expect(consumers.length).toBe(4);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

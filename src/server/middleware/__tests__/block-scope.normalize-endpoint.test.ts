@@ -150,6 +150,14 @@ describe('normalizeEndpoint — leaves genuinely static segments intact', () => 
     ['/api/v1/blocks/app-storage/delete', '/api/v1/blocks/app-storage/delete'],
     ['/api/v1/blocks/app-storage/list', '/api/v1/blocks/app-storage/list'],
     ['/api/v1/blocks/app-storage/quota', '/api/v1/blocks/app-storage/quota'],
+    // The PER-VIEWER gated image read, listed by hand for the same reason. The
+    // image ids are deliberately NOT path segments — they ride the query string,
+    // which `normalizeEndpoint` strips wholesale — so the second row here is the
+    // load-bearing one: it states that a request carrying ids still lands on the
+    // SAME bounded `endpoint` value as one without, rather than fragmenting the
+    // column per id set.
+    ['/api/v1/blocks/gated-images', '/api/v1/blocks/gated-images'],
+    ['/api/v1/blocks/gated-images?ids=1,2,3', '/api/v1/blocks/gated-images'],
     ['/api/v1/models/4201', '/api/v1/models/:id'],
   ])('%s survives as %s', (url, expected) => {
     expect(normalizeEndpoint(url)).toBe(expected);
@@ -306,10 +314,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // withBlockScope REST route (it had been retired in favour of the
       // page-host bridge, which a non-page-hosted block cannot reach).
       'buzz',
-      // `cancel` / `estimate` / `poll` / `submit` / `workflows` — the WORKFLOW
-      // surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
-      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW bridge messages. Five
-      // new STATIC segments, pinned for the same reason the shared ones are:
+      // `cancel` / `estimate` / `poll` / `query` / `submit` / `workflows` — the
+      // WORKFLOW surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
+      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL,QUERY_APP}_WORKFLOW(S) bridge
+      // messages. Six STATIC segments, pinned for the same reason the shared ones are:
       // without them `normalizeEndpoint` collapses the last segment to a
       // placeholder and the audit log stops distinguishing a SPEND from a price
       // quote from a status poll — which on this surface is the only thing the
@@ -326,6 +334,15 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'delete',
       'estimate',
       'follow',
+      // `gated-images` — the PER-VIEWER gated image read
+      // (`v1/blocks/gated-images.ts`), the v1 replacement for the
+      // `GET_IMAGES_BY_IDS` postMessage message. ONE new static segment, and the
+      // only one this surface needs: the image ids ride the QUERY STRING, which
+      // `normalizeEndpoint` strips wholesale, so there is no `:seg` position here
+      // to lose. Without the entry the route's rows read `/api/v1/blocks/:seg`
+      // and merge with every other unlisted sibling — the over-templating half
+      // this file's docblock calls the easy one to ship unnoticed.
+      'gated-images',
       'generation-resources',
       'get',
       'images',
@@ -335,6 +352,9 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'me',
       'models',
       'poll',
+      // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
+      // page size ride the POST body, so there is no `:seg` position to lose.
+      'query',
       'quota',
       'report',
       'set',

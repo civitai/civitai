@@ -29,6 +29,7 @@ const {
   mockVerifyBlockToken,
   mockGetOrchestratorToken,
   mockGetWorkflow,
+  mockQueryWorkflows,
   mockCancelWorkflow,
   mockOrchSubmitWorkflow,
   mockGetUserById,
@@ -47,6 +48,7 @@ const {
   mockVerifyBlockToken: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockGetWorkflow: vi.fn(),
+  mockQueryWorkflows: vi.fn(),
   mockCancelWorkflow: vi.fn(),
   mockOrchSubmitWorkflow: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -82,7 +84,11 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mockGetOrchestratorToken,
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
-  queryWorkflows: vi.fn(),
+  // 🔴 A NAMED HOISTED MOCK, NOT A BARE `vi.fn()`. This is the exact call the
+  // `/workflows/query` trust-boundary case below inspects: the whole claim is
+  // about WHICH `tags` reach the orchestrator LIST, and a throwaway `vi.fn()`
+  // records them nowhere.
+  queryWorkflows: mockQueryWorkflows,
   getWorkflow: mockGetWorkflow,
   cancelWorkflow: mockCancelWorkflow,
   submitWorkflow: mockOrchSubmitWorkflow,
@@ -175,6 +181,7 @@ import pollHandler from '~/pages/api/v1/blocks/workflows/poll';
 import cancelHandler from '~/pages/api/v1/blocks/workflows/cancel';
 import estimateHandler from '~/pages/api/v1/blocks/workflows/estimate';
 import submitHandler from '~/pages/api/v1/blocks/workflows/submit';
+import queryHandler from '~/pages/api/v1/blocks/workflows/query';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -303,6 +310,7 @@ beforeEach(() => {
     mockVerifyBlockToken,
     mockGetOrchestratorToken,
     mockGetWorkflow,
+    mockQueryWorkflows,
     mockCancelWorkflow,
     mockOrchSubmitWorkflow,
     mockGetUserById,
@@ -331,6 +339,7 @@ beforeEach(() => {
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
   mockCheckBlockPollRateLimit.mockResolvedValue({ allowed: true });
   mockGetWorkflow.mockResolvedValue(workflowFixture());
+  mockQueryWorkflows.mockResolvedValue({ items: [], nextCursor: null });
   mockCancelWorkflow.mockResolvedValue(undefined);
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
   mockResolveVersionContext.mockResolvedValue({
@@ -379,6 +388,16 @@ const ALL_ROUTES = [
     handler: submitHandler,
     url: '/api/v1/blocks/workflows/submit',
     body: { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY } as unknown,
+  },
+  // The app-subqueue READ. It is not in `READ_ROUTES` — that list means "reads ONE
+  // workflow by id", i.e. the population the two by-id ownership gates apply to, and
+  // this route takes no id at all. Its own scoping boundary is the host-forced tag,
+  // which has its own describe below.
+  {
+    name: 'query',
+    handler: queryHandler,
+    url: '/api/v1/blocks/workflows/query',
+    body: {} as unknown,
   },
 ];
 
@@ -667,5 +686,216 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).not.toBe('failed');
     // whatIf THEN the real submit — two calls, and the second carries no `whatif`.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 🔴 THE TRUST BOUNDARY ON `/workflows/query`, PROVED END TO END.
+ *
+ * The app scope on this read is a HOST-FORCED positive tag filter, built inside
+ * `blocks.queryAppWorkflows` from `claims.appId` off the VERIFIED token. The
+ * bridge's contract is that the block can never widen it, and the reason this file
+ * — not the adapter file — is where it has to be proved is the seam: the adapter
+ * suite mocks the caller away, so it can see that the route sends no `tags` and
+ * nothing at all about what the ORCHESTRATOR is asked for. Only the combined state
+ * answers "could a forged tag broaden the result set".
+ *
+ * ⚠️ THE SUBSTITUTE THAT MOTIVATES THIS SUITE — STATED AT ITS TRUE WIDTH, WHICH IS
+ * NARROWER THAN AN EARLIER DRAFT OF THIS PARAGRAPH CLAIMED. `app.orchestration
+ * .queryWorkflows({ tags })` in `@civitai/sdk` does take `tags` FROM THE CALLER,
+ * and adopting it in place of this route really does move a server-enforced
+ * boundary into the iframe while type-checking and passing tests.
+ *
+ * 🔴 BUT THIS ROUTE DOES NOT INTERCEPT THAT CLIENT, AND THE RETRACTION LIVES IN
+ * `query.ts` — read it before re-deriving the wider claim from this file. That
+ * client is a GET to a DIFFERENT HOST with `tags` in the query string; aimed here
+ * it meets the 405 method guard, so the strict schema never sees a `tags` at all.
+ * What these cases prove is the reachable half: a POST *to this route* carrying a
+ * forged `tags` cannot broaden the result set, and the tag the orchestrator is
+ * asked for is `appBlockTag(claims.appId)` off the verified token. That is worth a
+ * suite of its own; it is not the same claim as "the SDK substitute is caught".
+ *
+ * `mockQueryWorkflows` is given a FILTERING implementation here rather than a
+ * constant, which is the positive control: it genuinely returns a different app's
+ * row when asked for a different app's tag (`the fake orchestrator CAN return the
+ * other app's workflow` below), so "the forged request did not broaden" cannot be
+ * satisfied by a fake that returns nothing whatever it is asked.
+ */
+describe('/workflows/query — the app tag is TOKEN-derived and the body cannot reach it', () => {
+  const OTHER_APP_TAG = `app-block:${OTHER_APP_ID}`;
+  const OWN_ROW_ID = `${VIEWER}-20260923120000001`;
+  const OTHER_APP_ROW_ID = `${VIEWER}-20260923120000002`;
+  const OWN_ROW_COST = 419;
+  const OTHER_ROW_COST = 523;
+
+  /** Two rows in one viewer's orchestrator queue, belonging to two DIFFERENT apps. */
+  const ORCH_ROWS = [
+    {
+      id: OWN_ROW_ID,
+      status: 'succeeded',
+      createdAt: '2026-09-23T12:00:00.000Z',
+      cost: { total: OWN_ROW_COST },
+      steps: [],
+      tags: ['civitai', APP_TAG],
+    },
+    {
+      id: OTHER_APP_ROW_ID,
+      status: 'succeeded',
+      createdAt: '2026-09-23T12:00:01.000Z',
+      cost: { total: OTHER_ROW_COST },
+      steps: [],
+      tags: ['civitai', OTHER_APP_TAG],
+    },
+  ];
+
+  beforeEach(() => {
+    // A fake orchestrator that actually honours the tag AND-match, so the returned
+    // SET is a function of what was asked for. This is what turns every assertion
+    // below from "the argument was X" into "the rows the block received were Y".
+    mockQueryWorkflows.mockImplementation(async ({ tags = [] }: { tags?: string[] } = {}) => ({
+      items: ORCH_ROWS.filter((row) => tags.every((t) => row.tags.includes(t))),
+      nextCursor: null,
+    }));
+  });
+
+  /** The workflow ids a `/workflows/query` reply carried, in order. */
+  function idsFrom(json: any): string[] {
+    return (json?.workflows ?? []).map((w: { workflowId: string }) => w.workflowId);
+  }
+
+  /**
+   * 🔴 THE POSITIVE CONTROL, and it runs FIRST on purpose. Every assertion after
+   * this one is a claim that a row did NOT come back; a zero is indistinguishable
+   * from a fake wired to nothing until something makes the number move. Here the
+   * token names the OTHER app and the other app's row — and only it — comes back.
+   */
+  it('the fake orchestrator CAN return the other app’s workflow, when the TOKEN says so', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ appId: OTHER_APP_ID }));
+    const out = await call(queryHandler, {}, '/api/v1/blocks/workflows/query');
+    expect(out.status).toBe(200);
+    expect(idsFrom(out.json)).toEqual([OTHER_APP_ROW_ID]);
+    expect(mockQueryWorkflows.mock.calls[0][0].tags).toEqual([OTHER_APP_TAG]);
+  });
+
+  /**
+   * The ordinary path, and the other half of the pair above: the SAME fake, the
+   * SAME two rows, a different verified token — a different single row back. The
+   * tag therefore tracks `claims.appId` and is not a constant the implementation
+   * could have hardcoded (the two app ids differ in the fixture, deliberately).
+   */
+  it('a clean request gets ONLY this app’s row, under the token-derived tag', async () => {
+    const out = await call(queryHandler, {}, '/api/v1/blocks/workflows/query');
+    expect(out.status).toBe(200);
+    expect(idsFrom(out.json)).toEqual([OWN_ROW_ID]);
+    expect(mockQueryWorkflows).toHaveBeenCalledTimes(1);
+    // ONE tag, and it is the token's. Not `toContain` — a filter that also carried
+    // a caller tag would satisfy that and would be the defect.
+    expect(mockQueryWorkflows.mock.calls[0][0].tags).toEqual([APP_TAG]);
+  });
+
+  /**
+   * 🔴 THE GUARD ITSELF: `bodySchema` is a `z.strictObject`, so a `tags` key in the
+   * body is `unrecognized_keys` at the door.
+   *
+   * REACHABILITY IS PART OF THE CLAIM, so the body is otherwise entirely valid —
+   * POST, claims present, `limit: 3` inside 1..50. No earlier check can reject it,
+   * which is why `fieldErrors` must be EMPTY: a non-empty one would mean some other
+   * rejection got there first and this assertion had stopped being about the strict
+   * schema at all.
+   *
+   * MUTATION RESULT (measured, `z.strictObject` → `z.object` in query.ts, nothing
+   * else changed): this case FAILS with `expected 200 to be 400`, i.e. the widened
+   * body was accepted and forwarded. Its sibling below stays green under that same
+   * mutation — by design; that one is the defence-in-depth layer, and the two
+   * failing together would mean one of them was not measuring what it says.
+   */
+  it('REFUSES a body carrying `tags`, by name, without reaching the orchestrator', async () => {
+    const out = await call(
+      queryHandler,
+      { limit: 3, tags: [OTHER_APP_TAG, 'civitai'] },
+      '/api/v1/blocks/workflows/query'
+    );
+    expect(out.status).toBe(400);
+    expect(out.json.error).toBe('Invalid request body');
+    expect(out.json.details.formErrors.join(' ')).toContain('tags');
+    // Nothing else objected — this IS the strict-key refusal, not a bound check.
+    expect(out.json.details.fieldErrors).toEqual({});
+    // The refusal is at the door: no token minted, no LIST issued, no row read.
+    expect(mockQueryWorkflows).not.toHaveBeenCalled();
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['appId', { appId: OTHER_APP_ID }],
+    ['userId', { userId: STRANGER }],
+    ['blockToken', { blockToken: 'tok_forged' }],
+  ])('REFUSES a body carrying a forged `%s` the same way', async (_name, extra) => {
+    const out = await call(queryHandler, extra, '/api/v1/blocks/workflows/query');
+    expect(out.status).toBe(400);
+    expect(mockQueryWorkflows).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 DEFENCE IN DEPTH, AND IT IS THE LAYER THAT SURVIVES LOSING THE ONE ABOVE.
+   * `parsed.data` is forwarded field by field — never `...req.body` — and the
+   * procedure's own input schema declares no `tags`, so a `tags` that somehow
+   * reached the caller is stripped before the resolver and the orchestrator is
+   * still asked for `[appBlockTag(claims.appId)]` alone.
+   *
+   * This drives the caller the way a widened route would: the request body is
+   * spread into the seam through the tRPC caller, bypassing the strict schema
+   * entirely, and the result set is asserted to be unchanged.
+   *
+   * MUTATION RESULT (same `z.strictObject` → `z.object` mutation): this case stays
+   * GREEN, which is the point — it is measuring the second layer, and it would go
+   * red only if the procedure started reading a caller `tags`.
+   */
+  it('a `tags` smuggled PAST the schema still cannot broaden the set', async () => {
+    const { blockWorkflowCaller } = await import('~/server/services/blocks/block-workflow-rest');
+    const { req, res } = createMocks({
+      body: {},
+      url: '/api/v1/blocks/workflows/query',
+    });
+    const caller = await blockWorkflowCaller(req as any, res as any);
+    const result = await caller.queryAppWorkflows({
+      blockToken: 'tok_seam',
+      // @ts-expect-error — `tags` is NOT part of the procedure's input contract.
+      // Passing it anyway is the whole experiment: zod must strip it.
+      tags: [OTHER_APP_TAG, 'civitai'],
+    });
+
+    expect(result.workflows.map((w) => w.workflowId)).toEqual([OWN_ROW_ID]);
+    expect(mockQueryWorkflows).toHaveBeenCalledTimes(1);
+    expect(mockQueryWorkflows.mock.calls[0][0].tags).toEqual([APP_TAG]);
+  });
+
+  /**
+   * The rate-limit posture, stated because it differs from `/poll`'s and a block
+   * that got them confused would misread a throttle as a drained queue: this
+   * procedure THROWS `TOO_MANY_REQUESTS`, so it reaches the wire as a 429 rather
+   * than as an empty, successful page.
+   */
+  it('surfaces the catalog rate-limit refusal as a 429, not an empty page', async () => {
+    mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: false });
+    const out = await call(queryHandler, {}, '/api/v1/blocks/workflows/query');
+    expect(out.status).toBe(429);
+    expect(out.json).not.toHaveProperty('workflows');
+    expect(mockQueryWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('passes cursor and limit through, and returns the orchestrator cursor verbatim', async () => {
+    mockQueryWorkflows.mockResolvedValue({ items: [], nextCursor: 'cur_next_7' });
+    const out = await call(
+      queryHandler,
+      { cursor: 'cur_prev_3', limit: 7 },
+      '/api/v1/blocks/workflows/query'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.cursor).toBe('cur_next_7');
+    expect(mockQueryWorkflows.mock.calls[0][0]).toMatchObject({
+      cursor: 'cur_prev_3',
+      take: 7,
+      tags: [APP_TAG],
+    });
   });
 });

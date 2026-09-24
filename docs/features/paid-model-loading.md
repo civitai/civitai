@@ -317,10 +317,11 @@ deciding anything.
    instrument we have, and nothing yet watches it.
 5. **Search does not show load state**, deliberately deferred. Justin: "maybe we won't, for
    initially." The data exists: `sync-generator-loaded-resources` sets `ModelVersion.generatorLoaded`
-   from the orchestrator's loaded list every 5 minutes, and the models index carries it as the
-   filterable `versions.generatorLoaded` (inert on the live index until the filterable list is
-   applied). What stays deferred is any surface that reads it. It is display state, up to 5 minutes
-   stale; the generation-time check stays the orchestrator's.
+   from the orchestrator's loaded list, and the models index carries it as the filterable
+   `versions.generatorLoaded` (inert on the live index until the filterable list is applied). What
+   stays deferred is any surface that reads it. The orchestrator posts each change to
+   `/api/webhooks/resource-availability` within seconds, and the job is the backstop behind that at
+   15 minutes; the generation-time check stays the orchestrator's.
 6. **Queue-position boosting** is out for v1, and Justin expects it back if bot armies defeat the
    rate limits.
 
