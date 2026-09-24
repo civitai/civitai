@@ -1,5 +1,5 @@
 import type { AutocompleteProps } from '@mantine/core';
-import { Group, Select } from '@mantine/core';
+import { Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { withUserHydration } from '~/components/Search/userHydration';
@@ -35,8 +35,14 @@ import {
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
+import { emptySearchClient } from '~/components/Search/emptySearchClient';
+import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
+
+// Sentinel option value for the "image search is in maintenance" dropdown item. Not a numeric id,
+// so `hitIds`/`onHits` filter it out and `onItemSelected` is never called with it.
+const IMAGE_SEARCH_MAINTENANCE_VALUE = '__image-search-maintenance__';
 
 // Wrapped so a Meili outage degrades this dropdown to an empty result set
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
@@ -181,6 +187,10 @@ export const QuickSearchDropdown = ({
 
   const indexName = searchIndexMap[targetIndex];
 
+  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
+  // swap to a client that returns nothing (no request to the deleted index) and show a notice.
+  const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
+
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
   // once here because the render below reads it twice — as `data`, and in the `value` expression
   // that blanks the label when the target is not one of these.
@@ -192,7 +202,7 @@ export const QuickSearchDropdown = ({
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
-        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+        (features.imageSearchEntry ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
         (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
         (features.articles ? true : value !== 'articles')
     )
@@ -257,7 +267,13 @@ export const QuickSearchDropdown = ({
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={indexName}
-        searchClient={disableInitialSearch ? searchClient : meilisearch}
+        searchClient={
+          imageSearchMaintenance
+            ? emptySearchClient
+            : disableInitialSearch
+            ? searchClient
+            : meilisearch
+        }
         indexName={indexName}
         future={{ preserveSharedStateOnUnmount: true }}
       >
@@ -272,6 +288,7 @@ export const QuickSearchDropdown = ({
           indexName={targetIndex}
           dropdownItemLimit={dropdownItemLimit}
           carriedSearchText={carriedSearchText}
+          imageSearchMaintenance={imageSearchMaintenance}
         />
       </InstantSearch>
     </Group>
@@ -287,10 +304,12 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   placeholder,
   onHits,
   carriedSearchText,
+  imageSearchMaintenance,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
   carriedSearchText: React.MutableRefObject<string>;
+  imageSearchMaintenance: boolean;
 }) {
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
@@ -312,6 +331,9 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   });
 
   const items = useMemo(() => {
+    if (imageSearchMaintenance) {
+      return [{ hit: null as any, value: IMAGE_SEARCH_MAINTENANCE_VALUE, label: 'Maintenance' }];
+    }
     const items = filtered.map((hit) => ({
       // key: String(hit.id),
       hit,
@@ -328,7 +350,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           : '',
     }));
     return items;
-  }, [filtered]);
+  }, [filtered, imageSearchMaintenance]);
 
   // Report what is on offer. Keyed on the joined id list rather than on `items`, whose identity
   // changes on every re-render of the memo's inputs — re-firing on an unchanged set would make a
@@ -356,6 +378,13 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
 
   const renderOption = useCallback<NonNullable<AutocompleteProps['renderOption']>>(
     ({ option }) => {
+      if (option.value === IMAGE_SEARCH_MAINTENANCE_VALUE) {
+        return (
+          <Text size="sm" ta="center">
+            {IMAGE_SEARCH_MAINTENANCE_MESSAGE}
+          </Text>
+        );
+      }
       const item = getItemFromValue(option.value);
       if (!item) return null;
 
@@ -366,17 +395,21 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   );
 
   useEffect(() => {
+    // Image search is retired and its index deleted — never send a query to it.
+    if (imageSearchMaintenance) return;
+
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query)) return;
 
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query]);
+  }, [debouncedSearch, query, imageSearchMaintenance]);
 
   // Covers both halves of the wait: the 300ms debounce before the query is even sent, and the
   // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
-  const loading = search.length > 0 && (search !== query || isSearchStalled);
+  const loading =
+    !imageSearchMaintenance && search.length > 0 && (search !== query || isSearchStalled);
 
   return (
     <ClearableAutoComplete
@@ -412,6 +445,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
       onClear={() => setSearch('')}
       // onBlur={() => (!isMobile ? onClear?.() : undefined)}
       onOptionSubmit={(value) => {
+        if (value === IMAGE_SEARCH_MAINTENANCE_VALUE) return;
         const item = getItemFromValue(value);
         if (item) {
           // Set flag before calling onItemSelected to prevent onChange from overwriting
