@@ -188,7 +188,8 @@ async function recordSuccess(id: number, userId: number) {
  * 🔴 TWO statements, deliberately — this was one data-modifying CTE and the delete half NEVER
  * FIRED. Sub-statements of a single statement share one snapshot and one command id, so an outer
  * `DELETE` cannot remove the row the CTE's `UPDATE` just modified: Postgres skips it and reports
- * `DELETE 0`. Measured on PG 17.11: a row at `failureCount` 9 reaches 10 and then survives
+ * `DELETE 0`. Measured on PG 17.11 (and independently on 18.6 in review): a row at
+ * `failureCount` 9 reaches 10 and then survives
  * indefinitely, so the ceiling would reap nothing and a permanently-dead endpoint would cost one
  * send per fan-out until the 180-day cleanup job. Conditional, not historical: the CTE shipped in
  * #5043 but push has never been enabled in production, so no send was ever actually wasted. It

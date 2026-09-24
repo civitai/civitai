@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePushSubscriptionStore } from '~/store/push-subscription.store';
 
@@ -55,50 +56,58 @@ describe('push subscription store', () => {
 });
 
 /**
- * Blanks out the body of every `useEffect(...)` / `useCallback(...)` call by matching balanced
- * parens, so whatever `setState(` survives in the remainder is reachable during RENDER.
- *
- * Deliberately not a "is there a useEffect earlier in the file" check. That was the first version
- * of this guard and it was positional, not structural: the hook's first `useEffect(` is near the
- * top, so every write below it passed unconditionally and a render-phase write added anywhere
- * lower survived the guard untouched.
+ * Names that make a call's body run OUTSIDE render. Kept explicit rather than pattern-matched on
+ * `/^use.*Effect$/` so adding one is a deliberate act: a hook wrongly listed here would make a
+ * render-phase write invisible to the guard below.
  */
-function stripHookBodies(source: string): string {
-  let out = source;
-  for (const fn of ['useEffect', 'useCallback']) {
-    let from = 0;
-    for (;;) {
-      const start = out.indexOf(`${fn}(`, from);
-      if (start === -1) break;
-      let depth = 0;
-      let end = -1;
-      for (let i = start + fn.length; i < out.length; i++) {
-        if (out[i] === '(') depth++;
-        else if (out[i] === ')') {
-          depth--;
-          if (depth === 0) {
-            end = i;
-            break;
-          }
-        }
-      }
-      if (end === -1) break; // unbalanced — leave the rest intact rather than silently eat it
-      out = out.slice(0, start) + ' '.repeat(end - start + 1) + out.slice(end + 1);
-      from = start + 1;
-    }
-  }
-  return out;
-}
+const DEFERRED_HOOKS = new Set([
+  'useEffect',
+  'useLayoutEffect',
+  'useInsertionEffect',
+  'useCallback',
+  'useMemo',
+]);
 
 /**
- * The store documents its SSR-safety as something a future edit can silently break. This is the
- * guard for exactly that property, pinned structurally because there is no runtime moment at
- * which a cross-request leak would be observable in a unit test.
+ * Returns the `setState(...)` calls that are reachable during RENDER — i.e. not lexically inside
+ * one of DEFERRED_HOOKS' callbacks.
  *
- * The module is a singleton shared by every request the node process serves, so any write that can
- * run during a server render would leak one user's push state into another user's HTML. Writes are
- * safe only while they are reachable solely from an effect or a user callback.
+ * Parsed with the TypeScript compiler rather than scanned for balanced parens. The paren-matching
+ * version this replaces could not tell code from data: a single unmatched `(` inside an ordinary
+ * string (`'push support (beta'`) or the token `useCallback(` inside a COMMENT desynchronised the
+ * scan, which then abandoned every remaining body and reported its legitimate in-effect writes as
+ * render-phase. The failure text pointed at SSR leakage, which was not what had happened. It also
+ * knew only two hook names, so a `useLayoutEffect` body counted as render.
  */
+function renderPhaseWrites(fileName: string, source: string): string[] {
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+
+  const isDeferred = (node: ts.Node): boolean => {
+    for (let cur = node.parent; cur; cur = cur.parent) {
+      if (ts.isCallExpression(cur) && ts.isIdentifier(cur.expression)) {
+        if (DEFERRED_HOOKS.has(cur.expression.text)) return true;
+      }
+    }
+    return false;
+  };
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'setState' &&
+      !isDeferred(node)
+    ) {
+      const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      found.push(`${fileName}:${line + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
 describe('SSR safety (structural)', () => {
   const read = (rel: string) => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 
@@ -125,15 +134,53 @@ describe('SSR safety (structural)', () => {
     expect(hook).not.toMatch(/usePushSubscriptionStore\s*\.\s*getState\s*\(/);
   });
 
-  it('reaches every store write from an effect or a callback, never from render', () => {
+  it('reaches every store write from a deferred hook, never from render', () => {
     const hook = read(HOOK_FILE);
-
-    // Positive control: the writes exist and this guard can see them. Without it, a rename of
-    // `setState` would make the assertion below pass over an empty set.
+    // Positive control on the SOURCE: the writes exist at all.
     expect(hook.match(/\bsetState\s*\(/g)?.length ?? 0).toBeGreaterThan(0);
+    expect(renderPhaseWrites(HOOK_FILE, hook)).toEqual([]);
+  });
 
-    const renderReachable = stripHookBodies(hook).match(/\bsetState\s*\(/g) ?? [];
-    expect(renderReachable).toEqual([]);
+  // Controls on the INSTRUMENT, not on the hook. A guard that has only ever been run against
+  // passing input is a claim about that input: these pin that it can go red, and — the direction
+  // the previous version got wrong — that it does NOT go red on legitimate code.
+  it('flags a write that is genuinely reachable during render', () => {
+    const src = [
+      'export function useThing() {',
+      '  const setState = useStore((s) => s.set);',
+      '  setState({ busy: true });',
+      '  useEffect(() => setState({ busy: false }), []);',
+      '  return null;',
+      '}',
+    ].join('\n');
+    expect(renderPhaseWrites('fixture.ts', src)).toEqual(['fixture.ts:3']);
+  });
+
+  it.each([
+    ['an unbalanced paren inside a string', "  const note = 'push support (beta';"],
+    ['a hook name inside a comment', '  // TODO: hoist into a useCallback( later'],
+    ['a regex containing a paren', '  const re = /\\((\\d+)/;'],
+  ])('does not flag legitimate code containing %s', (_label, line) => {
+    const src = [
+      'export function useThing() {',
+      '  const setState = useStore((s) => s.set);',
+      '  useEffect(() => {',
+      line,
+      '    setState({ busy: false });',
+      '  }, []);',
+      '}',
+    ].join('\n');
+    expect(renderPhaseWrites('fixture.ts', src)).toEqual([]);
+  });
+
+  it('treats useLayoutEffect as deferred, not as render', () => {
+    const src = [
+      'export function useThing() {',
+      '  const setState = useStore((s) => s.set);',
+      '  useLayoutEffect(() => setState({ busy: false }), []);',
+      '}',
+    ].join('\n');
+    expect(renderPhaseWrites('fixture.ts', src)).toEqual([]);
   });
 });
 

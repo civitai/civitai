@@ -214,13 +214,20 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       queryParams !== undefined
         ? connection.query<R>(queryText, queryParams)
         : connection.query<R>(queryText);
-    // 🔴 The trailing `.catch` swallows ONLY this cleanup chain's copy of a rejection — the real
-    // rejection still reaches whoever awaits `query` or `result()`. Without it the promise that
-    // `.finally()` DERIVES has no handler on any path, so a failing statement raises
+    // 🔴 The trailing `.catch` keeps this cleanup chain's copy of a rejection from going unhandled.
+    // The rejection callers care about still reaches whoever awaits `query` or `result()`. Without
+    // it the promise `.finally()` DERIVES has no handler on any path, so a failing statement raises
     // `unhandledRejection` and Node >=15 exits the process by default. Awaiting `result()` does not
     // prevent that: it handles `query`, while the derived promise is a separate object nothing
-    // holds. Measured — a failing write killed the notifications fan-out worker before its caller's
-    // own `.catch` ran. Same fix and same reasoning as the `inFlight` chain in
+    // holds. Measured on node 24 — a failing write took the notifications fan-out worker down after
+    // its caller's `.catch` had been ENTERED but before it finished and before dispatch resumed, so
+    // the symptom is a worker that vanishes mid-notification, not a logged error.
+    //
+    // It also swallows anything the cleanup callback itself throws. Not reachable today —
+    // `connection.release()` is called once per `cancellableQuery` and `done` is already set before
+    // it, so `cancel()`'s `if (done) return` is unaffected — but if that ever changes the failure
+    // becomes a silently leaked pool connection where this code used to crash loudly. Pinned by
+    // db-helpers.rejection.test.ts. Same fix and reasoning as the `inFlight` chain in
     // `apps/notifications/src/lib/server/operations.ts`.
     query
       .finally(() => {
