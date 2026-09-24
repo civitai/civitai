@@ -142,6 +142,20 @@ export function endpointBucketLabel(endpoint: string): string {
 const WRITE_SCOPE_LABELS = new Map<string, string>([
   ['ai:write:budgeted', 'AI workflow submits'],
   ['apps:storage', 'App-local storage calls'],
+  // The scope the REST twins (`/api/v1/blocks/app-storage/{set,delete}`) write,
+  // via `withBlockScope`'s verbatim `requiredScope`. DISTINCT from the
+  // `apps:storage` row above even though both describe the same datastore,
+  // because they are written by different transports and a range spanning the
+  // REST rollout would otherwise merge a bridge bucket with a REST one and hide
+  // exactly the migration this surface exists to enable.
+  //
+  // 🔴 Its ABSENCE was a live gap, caught mechanically by this map's own drift
+  // guard the moment the routes landed — the guard's docblock names this exact
+  // shape ("adding a `requiredScope` to a route could never fail a test", which
+  // is why the guard exists). Without it the scopes card rendered the raw string
+  // `apps:storage:write`. The READ twins needed no new entry: `apps:storage:read`
+  // is already in READ_SCOPE_LABELS.
+  ['apps:storage:write', 'App-local storage writes'],
   ['apps:storage:shared:write', 'Shared storage writes'],
   ['collections:write:self', 'Collection updates'],
   ['user-settings:write', 'Block settings saves'],

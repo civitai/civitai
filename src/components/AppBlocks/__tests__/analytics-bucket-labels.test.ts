@@ -261,6 +261,86 @@ describe('the Activity panel labellers cannot serve an aggregate card', () => {
     }
   });
 
+  /**
+   * The app-storage twin of the workflow guard above, enumerated off disk for the
+   * same reason: a hardcoded list would name exactly the routes the positive
+   * assertions already pin and would be structurally blind to a SIXTH route added
+   * later with no arm.
+   *
+   * 🔴 THE FAILURE THIS PINS IS DIFFERENT FROM THE WORKFLOW ONE. There, a missing
+   * arm produced a WRONG label ('Submit AI workflow' on a poll). Here a missing
+   * arm produces NO label: `apps:storage:write` is in neither `READ_SCOPE_LABELS`
+   * nor `SCOPE_ACTION_LABELS`, so `humaniseScopeInvocation` falls all the way
+   * through its ladder and renders the RAW SCOPE STRING `apps:storage:write` into
+   * the viewer's activity feed. Watched RED at `origin/main` + the routes without
+   * the two `AppActivityPanel` arms; green with them.
+   */
+  it('every app-storage REST route on disk renders a real label, never a raw scope', () => {
+    const base = '/api/v1/blocks/app-storage';
+    // Same predicate as the workflow guard above — rooted at `__dirname`,
+    // recursive, `/\.(t|j)sx?$/`, `__tests__` excluded. See its docblock for why
+    // each of those three is load-bearing; copying half its shape is what left a
+    // gap there three revisions running.
+    const dir = path.resolve(__dirname, '../../../..', 'src/pages/api/v1/blocks/app-storage');
+    const collect = (d: string, prefix = ''): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        if (e.isDirectory()) {
+          if (e.name === '__tests__') return [];
+          return collect(path.join(d, e.name), prefix ? `${prefix}/${e.name}` : e.name);
+        }
+        if (!/\.(t|j)sx?$/.test(e.name)) return [];
+        if (/\.test\.(t|j)sx?$/.test(e.name) || e.name.endsWith('.d.ts')) return [];
+        const stem = e.name.replace(/\.(t|j)sx?$/, '');
+        const rel = stem === 'index' ? prefix : prefix ? `${prefix}/${stem}` : stem;
+        return rel ? [rel] : [];
+      });
+    const routes = collect(dir);
+
+    // Positive control: the enumeration actually found the routes. Without this a
+    // wrong `dir` yields an empty list and every assertion below passes vacuously.
+    expect(routes).toEqual(expect.arrayContaining(['get', 'set', 'delete', 'list', 'quota']));
+
+    // The WRITE pair carries `apps:storage:write`, which has no map entry — so
+    // without an arm each of these IS the raw scope string.
+    const WRITE_ROUTES = new Set(['set', 'delete']);
+    for (const route of routes) {
+      const scope = WRITE_ROUTES.has(route) ? 'apps:storage:write' : 'apps:storage:read';
+      const label = humaniseScopeInvocation(scope, `${base}/${route}`);
+      expect(label, `${route} renders its own scope string as a label`).not.toBe(scope);
+      expect(label.startsWith('apps:storage'), `${route} leaked a scope-shaped label`).toBe(false);
+    }
+
+    // The exact labels, so this is a contract and not merely "something non-empty".
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/set`)).toBe(
+      'Wrote app-local storage (API)'
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/delete`)).toBe(
+      'Deleted app-local storage (API)'
+    );
+    // The three READS need NO arm — `apps:storage:read` IS in READ_SCOPE_LABELS,
+    // and that label is true for all three. Pinning it here is what stops someone
+    // "completing the set" with three redundant arms, and what makes the absence
+    // of those arms a decision rather than an omission.
+    for (const route of ['get', 'list', 'quota']) {
+      expect(humaniseScopeInvocation('apps:storage:read', `${base}/${route}`)).toBe(
+        'Read your app storage'
+      );
+    }
+
+    // 🔴 The two WRITE labels must NOT equal the labels the shared body's OWN
+    // activity row renders ('Wrote app-local storage' / 'Deleted app-local
+    // storage'). A REST write emits BOTH rows, so identical text would render one
+    // action as two identical entries — the specific noise the '(API)' suffix
+    // exists to prevent. This is the assertion that fails if someone "tidies" the
+    // suffix away.
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/set`)).not.toBe(
+      humaniseScopeInvocation('apps:storage:write', 'storage:set')
+    );
+    expect(humaniseScopeInvocation('apps:storage:write', `${base}/delete`)).not.toBe(
+      humaniseScopeInvocation('apps:storage:write', 'storage:delete')
+    );
+  });
+
   it('but /workflows/submit still DOES — that label is true for that one route', () => {
     // Pins the deliberate asymmetry so a later reader does not "complete the set"
     // by adding a submit arm and silently relabel a real submission.

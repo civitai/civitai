@@ -119,6 +119,32 @@ export type AppBlockEndpoint =
   | 'workflows_estimate'
   | 'workflows_poll'
   | 'workflows_cancel'
+  // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
+  // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
+  // bridge messages, and the per-viewer counterpart to the `shared_storage_*`
+  // labels above. FIVE labels, split on the same grounds those were: these are
+  // not one workload.
+  //
+  // `get` and `delete` are single-row primary-key operations against
+  // (block_instance, user, key) — constant time, and the only two here that
+  // structurally cannot be slow. `list` is the paged prefix scan and the only one
+  // that paginates, so it is the only one whose duration grows with how much a
+  // viewer has stored. `set` is the heaviest by a wide margin AND the only one
+  // that can refuse for a reason other than authorization: it runs a pre-flight
+  // quota read, a size-prediction round trip and then the insert.
+  // `quota` is a counter read that touches no `kv` row at all.
+  //
+  // Merging them would make the RED series unreadable in the direction an
+  // operator reads it: a prefix scan over a large keyspace sharing a series with
+  // a point read leaves the p95 meaningless, and — the one that actually matters
+  // — a rising `set` error rate is how an app hitting its 50MB app ceiling or a
+  // viewer hitting their 2MB sub-budget becomes visible, and that signal would
+  // vanish into the volume of reads.
+  | 'app_storage_get'
+  | 'app_storage_set'
+  | 'app_storage_delete'
+  | 'app_storage_list'
+  | 'app_storage_quota'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that

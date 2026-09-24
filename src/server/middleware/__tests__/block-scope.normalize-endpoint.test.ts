@@ -135,6 +135,21 @@ describe('normalizeEndpoint — leaves genuinely static segments intact', () => 
     ['/api/v1/blocks/workflows/estimate', '/api/v1/blocks/workflows/estimate'],
     ['/api/v1/blocks/workflows/poll', '/api/v1/blocks/workflows/poll'],
     ['/api/v1/blocks/workflows/cancel', '/api/v1/blocks/workflows/cancel'],
+    // The five PER-VIEWER app-storage routes, listed by hand for the same reason.
+    // The `key` is deliberately NOT a path segment on any of them — it is one
+    // viewer's private data and rides in the POST body (see app-storage/get.ts) —
+    // so there is no `:seg` position here to lose and no per-key value that could
+    // fragment the column. That is also why the under-templating half of this
+    // guard matters here: `get`, `set`, `delete` and `quota` are short, generic
+    // words, and without their entries in KNOWN_STATIC_ENDPOINT_SEGMENTS they
+    // would each degrade to `:seg` and collapse all five routes onto ONE row
+    // (`/api/v1/blocks/app-storage/:seg`), which is the over-templating failure
+    // this file's docblock warns is the easy one to ship unnoticed.
+    ['/api/v1/blocks/app-storage/get', '/api/v1/blocks/app-storage/get'],
+    ['/api/v1/blocks/app-storage/set', '/api/v1/blocks/app-storage/set'],
+    ['/api/v1/blocks/app-storage/delete', '/api/v1/blocks/app-storage/delete'],
+    ['/api/v1/blocks/app-storage/list', '/api/v1/blocks/app-storage/list'],
+    ['/api/v1/blocks/app-storage/quota', '/api/v1/blocks/app-storage/quota'],
     ['/api/v1/models/4201', '/api/v1/models/:id'],
   ])('%s survives as %s', (url, expected) => {
     expect(normalizeEndpoint(url)).toBe(expected);
@@ -260,6 +275,18 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
   it('pins the current set, so adding a route is a deliberate act', () => {
     expect(staticSegmentsFromRoutes()).toEqual([
       'api',
+      // `app-storage` / `get` / `set` / `delete` / `quota` — the PER-VIEWER app
+      // storage surface (`v1/blocks/app-storage/*.ts`), the v1 replacement for
+      // the postMessage APP_STORAGE_* bridge messages. (`list` was already in the
+      // vocabulary, earned by `shared-storage/list.ts`.) Pinned for the same
+      // reason as every surface below, with one extra edge: `get`, `set`,
+      // `delete` and `quota` are SHORT GENERIC WORDS, so without these entries
+      // `normalizeEndpoint` templates all four to `:seg` and collapses the whole
+      // surface onto ONE row, `/api/v1/blocks/app-storage/:seg`. That is the
+      // OVER-templating half this file's docblock calls the easy one to ship
+      // unnoticed — nothing looks broken, the panel just stops saying which
+      // storage operation an app performed.
+      'app-storage',
       // `append` / `report` / `unvote` / `update` / `vote` / `withdraw` — the
       // shared-storage WRITE surface (`v1/blocks/shared-storage/*.ts`), the v1
       // replacement for the postMessage SHARED_* bridge writes. Six new STATIC
@@ -296,9 +323,11 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // them to a placeholder and the audit log would stop distinguishing a feed
       // scan from a point read.
       'counts',
+      'delete',
       'estimate',
       'follow',
       'generation-resources',
+      'get',
       'images',
       'increment',
       'item',
@@ -306,7 +335,9 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'me',
       'models',
       'poll',
+      'quota',
       'report',
+      'set',
       'shared-storage',
       'submit',
       'tip',

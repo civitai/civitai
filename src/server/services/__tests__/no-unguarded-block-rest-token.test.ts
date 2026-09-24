@@ -134,6 +134,26 @@ type RestExposure =
  * reader concludes the REST surface was already covered.
  */
 const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string }> = {
+  'src/pages/api/v1/blocks/app-storage/delete.ts': {
+    exposure: 'WRITE',
+    why: 'DELETEs a row of the viewer’s OWN per-app KV. Destructive and unrecoverable from anything left behind — there is no tombstone and no undo, so a suspended app left reachable here could erase a signed-in user’s saved state in a loop, one key per call, faster than they could notice. It also frees their quota, which makes the damage invisible in the usage numbers afterwards. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/get.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'One key of the viewer’s OWN per-app KV, keyed on (block_instance, verified token subject, key). This is private per-user application state — whatever the app chose to persist about that person — and no anonymous caller receives any of it (anon is refused outright by enforceContextBinding on this transport). A suspended app left reachable here would keep reading a signed-in user’s stored data after the takedown. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/list.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN key list for this block instance, paged. Same viewer-scoped data as get.ts but it discloses the SHAPE of the whole keyspace rather than one value, and it is the enumeration primitive: a caller that does not know what to ask for uses this to find out, then reads each key with get.ts. A suspended app left reachable here could therefore exfiltrate a signed-in user’s entire per-app store in 200-row batches, which is exactly the retained per-user data a takedown exists to stop. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/quota.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN { usedBytes, rowCount } against their own caps — deliberately NOT the app-wide aggregate, which was removed from this procedure precisely because summing other users’ rows is a cross-user readout on the one surface whose whole invariant is that a caller sees only their own data. It names no key and no value, but it is still a live per-user counter that moves with what that person stores, so it is a retained activity signal rather than a static fact. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts a row of the viewer’s OWN per-app KV, and the only route on this surface that CONSUMES A BUDGET: it spends the viewer’s 2MB / per-user row sub-budget and the app’s 50MB / 1M-row ceiling. A suspended app left reachable here could keep writing into a signed-in user’s store after the takedown and, worse, could fill their per-user quota so that the app they actually want to use cannot write — a denial that outlives the suspension and that the victim cannot diagnose. It is NOT classed SPEND: it moves no Buzz and no money ledger, only a storage budget.',
+  },
   'src/pages/api/v1/blocks/buzz.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The viewer’s own spendable Buzz balances — getUserBuzzAccounts keyed on the verified token subject, projected to { blue, green, yellow }. A suspended app would otherwise keep reading a signed-in user’s live wallet: how much free Buzz they hold, how much purchased Buzz they hold, and therefore what they can afford. No anonymous caller receives any of that, and the numbers move with the viewer’s spending, so a retained balance read is also a per-user activity signal a takedown is meant to stop.',
@@ -1269,6 +1289,18 @@ describe('no unguarded block-REST token verification', () => {
    * this file objected to opting any of them in.
    */
   const MUST_FAIL_CLOSED = [
+    // The five PER-VIEWER app-storage routes. All five are READ_VIEWER_SCOPED or
+    // WRITE — there is no READ_PUBLIC among them, because there is no public half
+    // of this datastore at all: every row is keyed on (block_instance, viewer) and
+    // an anonymous caller receives none of it. None may opt out. A suspended app
+    // reaching any of them keeps reading, rewriting or DELETING a signed-in
+    // viewer's saved state after the takedown, and `delete` in particular destroys
+    // data that nothing left behind can reconstruct.
+    'src/pages/api/v1/blocks/app-storage/delete.ts',
+    'src/pages/api/v1/blocks/app-storage/get.ts',
+    'src/pages/api/v1/blocks/app-storage/list.ts',
+    'src/pages/api/v1/blocks/app-storage/quota.ts',
+    'src/pages/api/v1/blocks/app-storage/set.ts',
     'src/pages/api/v1/blocks/buzz.ts',
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
@@ -1446,8 +1478,8 @@ const BACKING_ROW_LOOKUP_RE = /\bappId_blockId\b/;
 const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
   'src/server/services/blocks/block-approval.service.ts':
     'THE PREDICATE. The one place the row is resolved from token claims and compared against `approved`. Both halves of the runtime — withBlockScope (REST) and assertAppBlockApproved (the tRPC bridge) — resolve their verdict here. Its exemptions are THREE named cases, not the bare `dev` claim (clawgate #571): a signed reviewRunForReal review token, a synthetic id with no backing row, and the owner-dev-tunnel case re-derived from the row owner plus an ACTIVE tunnel. A new approval check belongs in this file or calling it, not beside it.',
-  'src/server/routers/apps.router.ts':
-    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have.',
+  'src/server/services/apps/app-storage.service.ts':
+    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have. (This lived in `routers/apps.router.ts` until the `/api/v1/blocks/app-storage/*` REST twins landed; it moved so a route module could import the implementation without module-evaluating `appsRouter`. Same function, same single call site, new file.)',
   'src/server/routers/apps-shared.router.ts':
     'resolveSharedContext — shared, app-global KV. Same shape, exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all, so there is no case to exempt. Stricter than both the predicate and resolveStorageContext, for a reason about its target rather than about approval.',
   'src/pages/api/v1/developer/block-manifests.ts':
