@@ -3,6 +3,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as CivitaiAuth from '@civitai/auth';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => 60);
 const mockDbWrite = dbMock.dbWrite;
 
 /**
@@ -10,40 +15,34 @@ const mockDbWrite = dbMock.dbWrite;
  * tokens (`auth: "oauth"`), behind APP_BLOCK_OAUTH_TOKENS_ENABLED.
  */
 
-const { mockEnv, mockRedis, mockSession, mockTokenService, mockBlockRegistry, mockHub } =
-  vi.hoisted(() => ({
-    mockEnv: {
-      NEXTAUTH_URL: 'https://civitai.com',
-      TRPC_ORIGINS: [] as string[],
-      BLOCK_TOKEN_PRIVATE_KEY: 'fake-private',
-      BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
-      APP_BLOCK_OAUTH_TOKENS_ENABLED: false,
-    },
-    mockRedis: {
-      incrBy: vi.fn(async () => 1),
-      expire: vi.fn(async () => true),
-      ttl: vi.fn(async () => 60),
-    },
-    mockSession: { value: null as unknown },
-    mockTokenService: {
-      sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
-        token: 'jwt.signed.value',
-        expiresAt: '2099-01-01T00:00:00Z',
-        jti: 'j',
-      })),
-      checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
-    },
-    mockBlockRegistry: {
-      resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
-      resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
-      resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-      resolveOwnedNonApprovedPageBlock: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    },
-    mockHub: {
-      mintAppToken: vi.fn<(...args: any[]) => Promise<any>>(),
-      syncOauthConsentFromGrant: vi.fn<(...args: any[]) => Promise<any>>(),
-    },
-  }));
+const { mockEnv, mockSession, mockTokenService, mockBlockRegistry, mockHub } = vi.hoisted(() => ({
+  mockEnv: {
+    NEXTAUTH_URL: 'https://civitai.com',
+    TRPC_ORIGINS: [] as string[],
+    BLOCK_TOKEN_PRIVATE_KEY: 'fake-private',
+    BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: false,
+  },
+  mockSession: { value: null as unknown },
+  mockTokenService: {
+    sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      token: 'jwt.signed.value',
+      expiresAt: '2099-01-01T00:00:00Z',
+      jti: 'j',
+    })),
+    checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
+  },
+  mockBlockRegistry: {
+    resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
+    resolvePageBlock: vi.fn<(...args: any[]) => Promise<any>>(),
+    resolveDevPageBlockForAuthor: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+    resolveOwnedNonApprovedPageBlock: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+  },
+  mockHub: {
+    mintAppToken: vi.fn<(...args: any[]) => Promise<any>>(),
+    syncOauthConsentFromGrant: vi.fn<(...args: any[]) => Promise<any>>(),
+  },
+}));
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
@@ -53,10 +52,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 vi.mock('~/server/services/block-token.service', () => ({ BlockTokenService: mockTokenService }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: mockBlockRegistry,
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
