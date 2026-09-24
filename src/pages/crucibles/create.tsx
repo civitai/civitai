@@ -148,7 +148,14 @@ const defaultValues: FormValues = {
 
 const stepFields: Record<number, (keyof FormValues)[]> = {
   1: ['name', 'description', 'duration', 'startAt', 'nsfwLevel'],
-  2: ['contentType', 'entryFee', 'entryLimit', 'maxTotalEntries', 'minViewSeconds', 'maxClipSeconds'],
+  2: [
+    'contentType',
+    'entryFee',
+    'entryLimit',
+    'maxTotalEntries',
+    'minViewSeconds',
+    'maxClipSeconds',
+  ],
   3: ['seededPrizePool'],
 };
 
@@ -802,15 +809,11 @@ export default function CrucibleCreate() {
             <>
               <Group justify="space-between">
                 <Text c="dimmed">Minimum View Time</Text>
-                <Text fw={500}>
-                  {minViewSeconds ? formatSeconds(minViewSeconds) : 'None'}
-                </Text>
+                <Text fw={500}>{minViewSeconds ? formatSeconds(minViewSeconds) : 'None'}</Text>
               </Group>
               <Group justify="space-between">
                 <Text c="dimmed">Maximum Clip Length</Text>
-                <Text fw={500}>
-                  {maxClipSeconds ? formatSeconds(maxClipSeconds) : 'Unlimited'}
-                </Text>
+                <Text fw={500}>{maxClipSeconds ? formatSeconds(maxClipSeconds) : 'Unlimited'}</Text>
               </Group>
             </>
           )}

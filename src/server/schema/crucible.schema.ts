@@ -96,11 +96,9 @@ const createCrucibleInputBaseSchema = z.object({
   ),
   prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
-  duration: z
-    .number()
-    .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
-      message: 'Unsupported crucible duration',
-    }), // duration in hours
+  duration: z.number().refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
+    message: 'Unsupported crucible duration',
+  }), // duration in hours
   // Absent or already past means "start now"; a start that went stale while the creator sat on the
   // review step should not fail the submit.
   startAt: z

@@ -161,23 +161,23 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
               }}
             />
             {status === CrucibleStatus.Active && endAt && new Date(endAt) > now && (
-                <IconBadge
-                  icon={<IconClockHour4 size={14} />}
-                  color="dark"
-                  className={cardClasses.chip}
-                  style={{
-                    backgroundColor: 'rgba(0, 0, 0, 0.31)',
-                  }}
-                  radius="xl"
-                  px={8}
-                  h={26}
-                  variant="filled"
-                >
-                  <Text fw="bold" size="xs">
-                    <DaysFromNow date={endAt} withoutSuffix />
-                  </Text>
-                </IconBadge>
-              )}
+              <IconBadge
+                icon={<IconClockHour4 size={14} />}
+                color="dark"
+                className={cardClasses.chip}
+                style={{
+                  backgroundColor: 'rgba(0, 0, 0, 0.31)',
+                }}
+                radius="xl"
+                px={8}
+                h={26}
+                variant="filled"
+              >
+                <Text fw="bold" size="xs">
+                  <DaysFromNow date={endAt} withoutSuffix />
+                </Text>
+              </IconBadge>
+            )}
           </div>
           <IconBadge
             icon={<IconFlame size={14} />}
