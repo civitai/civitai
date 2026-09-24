@@ -16,6 +16,7 @@ const ALLOWLIST = [
   HELPER,
   // Write or report the column itself — the raw fact, before the rule.
   'src/server/jobs/sync-generator-loaded-resources.ts',
+  'src/pages/api/webhooks/resource-availability.ts',
   'src/pages/api/testing/generator-loaded.ts',
   'src/pages/api/testing/orchestrator-loaded.ts',
   // Prisma/Meili field declarations, not readings.
@@ -25,6 +26,8 @@ const ALLOWLIST = [
   // Both index writers, which compose the field through the helper — pinned by the last test.
   'src/server/search-index/models.search-index.ts',
   'src/pages/api/mod/search/models-update.ts',
+  // Names the column in a type it hands to generatorReadiness; the call is asserted below.
+  'src/shared/data-graph/generation/gates.ts',
   // These read the INDEXED field, which already carries readiness.
   'src/server/services/resource-select.service.ts',
   'src/components/ImageGeneration/GenerationForm/resource-select.types.ts',
@@ -106,5 +109,19 @@ describe('generator readiness is derived in one place', () => {
         /generatorLoaded:\s*isGeneratorReady\(/
       );
     }
+  });
+
+  // Allowlisted because it names the column in `GateSelectionVersion`, not because it may read it:
+  // a gate condition deciding residency for itself is the divergence this guard exists to stop.
+  it('the gate conditions ask the helper rather than the column', () => {
+    const text =
+      sourceFiles.find((f) => f.rel === 'src/shared/data-graph/generation/gates.ts')?.text ?? '';
+    expect(text, 'gates.ts must resolve readiness through generatorReadiness').toContain(
+      'generatorReadiness(version)'
+    );
+    expect(
+      /version\.generatorLoaded\s*(===|!==)|!\s*version\.generatorLoaded/.test(text),
+      'gates.ts must not test the column directly'
+    ).toBe(false);
   });
 });

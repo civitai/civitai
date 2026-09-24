@@ -79,17 +79,24 @@ serve a generation whatever the flag says.
 **This branch is behind `main` and does not have it yet** — merge before building, or the gate will be
 written against the five-minute world.
 
-### 1. Stop hard-coding membership
+### 1. Membership — nothing to do
 
-`getCanGenerateHiddenGates` (`generation.service.ts:1044`) passes `isMember: true` unconditionally, so
-every member-scoped rule currently applies to everyone as though they were a member. Pass the real
-value from `SessionUser.tier`.
+An earlier draft of this plan called for un-hardcoding `isMember`. That was wrong, and the correction
+matters because it removes a phase.
 
-**Verified safe as of 2026-09-24:** all seven live gate rules are `available to moderators`; none is
-`members`, so fixing this changes nobody's behaviour today. Re-check before landing — if a `members`
-rule exists by then, this commit starts gating people.
+Membership is already resolved for real on both paths that carry a gate: the graph context passes
+`isMember` (`generation.service.ts:967`) and the submit passes `userTier !== 'free'`
+(`orchestration-new.service.ts:382`). So `availableTo: 'members'` works end to end today, for display
+and for server-side enforcement.
 
-Own commit, separate from the rest.
+The one `isMember: true` literal, in `getCanGenerateHiddenGates` (`generation.service.ts:1044`), is
+deliberate and documented: that function computes only the targets that **hide**, the sole state that
+hard-blocks `canGenerate`, and passing `true` drops member-restricted rules from that set so the
+lookup needs no tier read on a hot path.
+
+It only matters if the members rule is given `presentation: 'hidden'` — a member-restricted hidden
+rule would be dropped there and would never hide anything. That is a second reason to prefer
+`disabled`, which needs no change to that function at all.
 
 ### 2. Condition targets in the rules model
 
@@ -139,9 +146,10 @@ switch to `hidden`; that is a per-rule change, no deploy.
 
 ## Open decisions
 
-1. `disabled` or `hidden` at launch — recommendation: `disabled`, since hiding a model only inside the
+1. `disabled` or `hidden` at launch — recommendation: `disabled`. Hiding a model only inside the
    generator, while it stays visible everywhere else on the site, produces the confusion this feature
-   set out to end.
+   set out to end; and `hidden` additionally requires teaching `getCanGenerateHiddenGates` to read a
+   real tier (phase 1), which `disabled` does not.
 2. Whether the model page Create button carries the reason, or defers to the generator (phase 3).
 
 ## Why this is a rollout stage, not a takeaway

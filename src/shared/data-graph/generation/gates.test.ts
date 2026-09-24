@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { GateRule } from './gates';
+import type { GateSelectionVersion } from './gates';
 import {
   applicableRulesFor,
   canGenerateBlockedTargets,
   disabledSelectionGates,
   experimentalTargets,
   gatedSelectionRefusal,
+  matchesGateCondition,
+  selectionGates,
   mergeGateStates,
   rulesToStates,
   unselectableVersionIds,
@@ -17,6 +20,7 @@ const rule = (overrides: Partial<GateRule>): GateRule => ({
   availableTo: 'nobody',
   presentation: 'disabled',
   message: undefined,
+  conditions: [],
   ecosystems: [],
   workflows: [],
   modelVersionIds: [],
@@ -128,6 +132,85 @@ describe('unselectableVersionIds', () => {
     expect(
       unselectableVersionIds([rule({ presentation: 'experimental', modelVersionIds: [1] })])
     ).toEqual([]);
+  });
+});
+
+describe('condition rules', () => {
+  const coldCheckpointRule = rule({
+    id: 'members-load',
+    availableTo: 'members',
+    presentation: 'disabled',
+    conditions: ['coldCheckpoint'],
+  });
+
+  const version = (overrides: Partial<GateSelectionVersion> = {}): GateSelectionVersion => ({
+    id: 501,
+    modelType: 'Checkpoint',
+    generatorLoaded: false,
+    ...overrides,
+  });
+
+  it('gates a checkpoint that is not resident', () => {
+    expect(matchesGateCondition('coldCheckpoint', version())).toBe(true);
+  });
+
+  it('leaves a resident checkpoint alone — the whole point is that loaded models stay open', () => {
+    expect(matchesGateCondition('coldCheckpoint', version({ generatorLoaded: true }))).toBe(false);
+  });
+
+  it('leaves every other type alone, resident or not', () => {
+    for (const modelType of ['LORA', 'TextualInversion', 'VAE'])
+      expect(matchesGateCondition('coldCheckpoint', version({ modelType }))).toBe(false);
+  });
+
+  // An ExternalGeneration version has no weights to become resident, so the column is false for it
+  // forever. Reading it directly here would gate every API model behind a download that never comes.
+  it('leaves an API checkpoint alone, though its column says cold', () => {
+    expect(
+      matchesGateCondition(
+        'coldCheckpoint',
+        version({ generatorLoaded: false, usageControl: 'ExternalGeneration' })
+      )
+    ).toBe(false);
+  });
+
+  it('refuses a selection carrying a cold checkpoint, with the members copy', () => {
+    const refusal = gatedSelectionRefusal([coldCheckpointRule], { versions: [version()] });
+    expect(refusal).toContain('only available to members');
+  });
+
+  it('does not refuse the same selection once the model is resident', () => {
+    expect(
+      gatedSelectionRefusal([coldCheckpointRule], {
+        versions: [version({ generatorLoaded: true })],
+      })
+    ).toBeUndefined();
+  });
+
+  // `versionIds` cannot answer a condition — it carries no type and no residency — so a caller that
+  // passes ids only must not be silently gated by a rule it cannot evaluate.
+  it('ignores condition rules for a selection that passes bare ids', () => {
+    expect(gatedSelectionRefusal([coldCheckpointRule], { versionIds: [501] })).toBeUndefined();
+  });
+
+  it('takes the stronger of a condition and an id rule on the same version', () => {
+    const hiddenById = rule({
+      id: 'hide-501',
+      availableTo: 'nobody',
+      presentation: 'hidden',
+      modelVersionIds: [501],
+    });
+    const [gate] = selectionGates([coldCheckpointRule, hiddenById], { versions: [version()] });
+    expect(gate.state).toBe('hidden');
+  });
+  // Rules reach the graph from Redis and from fixtures without passing through the schema, so a
+  // field added later is simply absent on every rule stored before it — `.default([])` never fires.
+  // Iterating it unguarded threw `rule.conditions is not iterable` across 2,535 tests.
+  it('tolerates a rule stored before conditions existed', () => {
+    const stored = { ...rule({ ecosystems: ['Qwen'] }) } as Partial<GateRule>;
+    delete stored.conditions;
+    expect(() => rulesToStates([stored as GateRule])).not.toThrow();
+    expect(rulesToStates([stored as GateRule]).ecosystems.get('Qwen')?.state).toBe('disabled');
   });
 });
 
