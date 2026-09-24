@@ -977,8 +977,8 @@ describe('the chokepoints that pay for whole populations', () => {
 
           // Channel 3: a `.module.scss` handed to this element via `classNames`.
           // Resolved from the file's own imports rather than guessed from the
-          // filename — `SelectMenu.tsx` imports `SelectMenu.module.scss`, but
-          // nothing makes that a rule.
+          // filename — `NotificationsDrawer.tsx` imports
+          // `NotificationsDrawer.module.scss`, but nothing makes that a rule.
           if (/\bclassNames=\{/.test(head)) {
             for (const [, rel] of src.matchAll(
               /import\s+\w+\s+from\s+'(\.[^']*\.module\.s?css)'/g
