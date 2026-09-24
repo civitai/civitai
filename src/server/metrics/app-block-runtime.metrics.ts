@@ -136,22 +136,42 @@ export type AppBlockEndpoint =
   // `civitai_app_block_requests_total`, and 400 is exactly the class this route
   // makes easiest to hit (its `unrecognized_keys` refusals). Compounding it,
   // `queryAppWorkflows` does not call `recordBlockBridgeRateLimitRefusal`, so the
-  // subqueue throttle has NO dedicated signal on either surface. That gap is
-  // pre-existing in the procedure and is filed rather than fixed here
-  // (civitai/civitai#5095); this label is for per-endpoint ATTRIBUTION and
-  // latency, which it does give.
+  // subqueue throttle has NO dedicated signal on either surface. This label is for
+  // per-endpoint ATTRIBUTION and latency, which it does give.
   //
-  // ⚠ AND IT IS **TWO** PROCEDURES, NOT ONE — stated as a count because the first
-  // draft of this paragraph said `queryAppWorkflows` was "the ONE rate-limited
-  // procedure in this family" missing the recorder, and that was false in the
-  // direction that would have under-scoped the fix. `cancelAppWorkflow` charges
-  // the SAME `catalog` bucket (its own comment says it "MUST be bounded exactly
-  // like the sibling queryAppWorkflows") and is equally silent. Measured by
-  // enumerating every `recordBlockBridgeRateLimitRefusal(` call site in
-  // `blocks.router.ts`: four, in `pollWorkflow`, `cancelWorkflow`,
-  // `estimateWorkflow` and `getMyBuzzBalance` — none in either app-subqueue proc.
-  // Closing only `queryAppWorkflows` would leave the catalog bucket's refusal
-  // signal blind and this comment reading as though the gap were shut.
+  // 🔴 THE MISSING RECORDER IS NOT A `queryAppWorkflows` PROBLEM, OR A TWO-
+  // PROCEDURE ONE. IT IS THE `catalog` BUCKET'S, AND YOU ARE READING THE FOURTH
+  // ATTEMPT AT THIS SENTENCE — the three before it were each wrong in the same
+  // direction, each written while fixing the one before:
+  //   1. "the one workflow label whose error rate reads as blocks being throttled"
+  //      — false; `statusToRequestResult` collapses 429 into `client_error`.
+  //   2. "`queryAppWorkflows` is the ONE rate-limited procedure in this family"
+  //      missing the recorder — false; `cancelAppWorkflow` is silent too.
+  //   3. "it is TWO procedures, not one" — false, and WIDER than draft 2 while
+  //      reading as a correction: dropping "in this family" made a bare count
+  //      router-wide, on evidence (an enumeration of RECORDERS) that cannot
+  //      establish a claim about the RATE-LIMITED population at all.
+  // 🔴 SO DO NOT REACH FOR A FIFTH NUMBER FROM THE RECORDER SIDE. The population
+  // is owned by `RATE_LIMIT_DECISION_LEDGER` in
+  // `services/__tests__/no-unlimited-block-bridge-proc.test.ts`, which is asserted
+  // as a SET against an AST walk of `blocks.router.ts` — read it there, do not
+  // re-count here.
+  //
+  // MEASURED against that ledger (2026-09-24): of 17 bridge procedures, 14 are
+  // rate-limited and 11 of those charge `catalog`. Exactly FOUR call sites record
+  // a refusal — `pollWorkflow` (`poll`), `cancelWorkflow`, `estimateWorkflow` and
+  // `getMyBuzzBalance` (`catalog`). So **10 of 14 rate-limited procedures are
+  // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
+  // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
+  // self-reads that reach the limiter through `authorizeBlockBuzzRead`.
+  // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
+  // refusal branch of each limiter site", which is a third in-tree claim this
+  // count contradicts — 4 of 14, not each.
+  //
+  // WHAT THAT MEANS FOR THE FILED FOLLOW-UP (civitai/civitai#5095): closing it
+  // delivers two of the eight. That is worth doing and does not make the
+  // `catalog` refusal series readable. Do not read this comment, or that issue,
+  // as saying the gap is shut.
   | 'workflows_query'
   // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
   // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
