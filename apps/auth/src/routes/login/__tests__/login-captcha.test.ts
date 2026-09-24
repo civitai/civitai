@@ -76,3 +76,210 @@ describe('login interactive fallback wiring', () => {
     expect(pageSource).toMatch(/disabled=\{submitting \|\| captchaPending\}/);
   });
 });
+
+// The artifact under test here is PROSE, so the copy is pinned as a whole normalised string rather than by
+// keyword — a reword can keep any keyword you grep for while dropping the cause or the way out.
+const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+// Structural guards read THIS, not pageSource. A comment can spell any token a guard looks for, and the
+// comments most likely to be rewritten are the ones warning against the very edit being guarded.
+const markup = pageSource
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .split('\n')
+  .filter((line) => !line.trim().startsWith('//'))
+  .join('\n');
+const blockedNote = normalize(
+  pageSource.match(
+    /\{#if captchaBlocked\}[\s\S]*?<p class="captcha-fallback-note"[^>]*>([\s\S]*?)<\/p>/
+  )?.[1] ?? ''
+);
+
+describe('login copy when the verification check cannot run', () => {
+  it('derives the blocked state from ENFORCEMENT, an unavailable widget, and no token', () => {
+    // All three terms are load-bearing, and each has its own way of producing a false note:
+    //  - the 8s timeout sets captchaUnavailable even with captcha switched off entirely, and a bare
+    //    sitekey test is wrong on both edges (a sitekey can exist where the action does not enforce);
+    //  - captchaUnavailable is never cleared on the managed path, so without !captchaToken a fallback
+    //    widget that errors and then solves keeps claiming login is blocked while a submit would pass.
+    const decl = normalize(
+      pageSource.match(/const captchaBlocked = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    );
+    expect(decl).toBe(
+      'const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);'
+    );
+  });
+
+  it('names the cause as LIKELY (not certain), gives both ways out, and never says "try again"', () => {
+    // Hedged deliberately: captchaUnavailable cannot separate a blocked browser from our own sitekey
+    // misconfiguration, and asserting the former turns a config outage into user self-blame.
+    expect(blockedNote, 'captchaBlocked note not found').not.toBe('');
+    expect(blockedNote).toBe(
+      "{#if form?.captcha}That didn't go through.{/if} Something is preventing the verification " +
+        'check from running in this browser — often a browser extension, privacy or VPN tool, or a ' +
+        "network filter — so email login can't complete. " +
+        '{#if data.providers.length > 0}Sign in with one of the buttons above instead.{/if} To use ' +
+        'email, turn off whatever is blocking the check and reload this page.'
+    );
+    // The leading `{#if form?.captcha}` prefix pinned above is the ONLY acknowledgement a refused
+    // submit gets on this path: the generic message is suppressed and nothing else here reads `form`,
+    // so without it the DOM after a refused click is identical to the DOM before it.
+    expect(blockedNote.toLowerCase()).not.toContain('try again');
+  });
+
+  // SCOPE for the two tests below: a source-text suite can show the region is not inside a Svelte block
+  // opened within the form, and that nothing in this file hides it. It CANNOT see an ancestor ELEMENT
+  // wrapped around it, so that hole stays open by construction rather than by oversight.
+  it('keeps the live region out of the block that conditions its content', () => {
+    // A role="status" created together with its text does not announce, and the note appears with no
+    // user action behind it. THREE claims, each with its own way of going green while broken:
+    //  - the note must be INSIDE the region (ordering alone survives moving the note below it),
+    //  - the region must open NO block before the note (containment alone survives a nested
+    //    `{#if captchaBlocked}{#if form}`, which is the wasted-submit regression by another spelling),
+    //  - the region must be UNCONDITIONAL (containment alone survives wrapping the whole region in
+    //    {#if fallbackActive} — the very fold the markup comment forbids — which hides the note
+    //    entirely in the no-managed-key config, where fallbackActive is never set).
+    // EVERY anchor comes from the comment-stripped copy: stripping only the counted slice left the
+    // anchors walkable by rewriting the comment that forbids the fold, which is the edit that folds it.
+    const openTag = /<div\b[^>]*role="status"[^>]*>/;
+    expect(markup, 'no role="status" wrapper found').toMatch(openTag);
+
+    const region = markup.match(new RegExp(openTag.source + '([\\s\\S]*?)<\\/div>'))?.[1] ?? '';
+    expect(region, 'live region is present but empty').toContain('{#if captchaBlocked}');
+    // The note sits at depth 1 inside the region: exactly ONE block opened before it and none closed.
+    // A prefix match is not enough — `{#if captchaBlocked}{#if form}` still starts with the right
+    // literal while putting the note behind a second condition, which is the wasted-submit regression.
+    const noteStart = region.indexOf('<p');
+    expect(noteStart, 'no note element inside the live region').toBeGreaterThan(-1);
+    const beforeNote = region.slice(0, noteStart);
+    expect((beforeNote.match(/\{#/g) ?? []).length, 'extra block opened before the note').toBe(1);
+    expect((beforeNote.match(/\{\//g) ?? []).length).toBe(0);
+
+    // Unconditional == every block opened since the form tag is also closed before the region.
+    // The anchor is a regex, not indexOf: an ordinary second class would otherwise red this with a
+    // bare "expected 3 to be 4" for no defect. No quote-stripping — it paired the apostrophe in
+    // "Couldn't" with the next quote and ate a {/if}, and prose lives in comments, already stripped.
+    const formStart = markup.search(/class="[^"]*\bemail-form\b/);
+    const regionStart = markup.search(openTag);
+    // Without these the slice can silently go empty (anchor lost → -1, or region moved above the
+    // form → start > end), and `0 === 0` would pass with the region wrapped in a condition.
+    expect(formStart, 'email-form anchor not found').toBeGreaterThan(-1);
+    expect(regionStart).toBeGreaterThan(formStart);
+    const between = markup.slice(formStart, regionStart);
+    expect((between.match(/\{#/g) ?? []).length).toBe((between.match(/\{\//g) ?? []).length);
+  });
+
+  it('never hides the live region while it is empty', () => {
+    // A region that is display:none until it fills is the same no-announce shape as one that is
+    // absent, and the motive is real: the region is a flex child, so while empty it costs one 0.6rem
+    // gap. Pin the MECHANISM, not a selector spelling — `[role='status']:empty`, `.live-region:empty`
+    // and `.email-form div:empty` are the same defect, and only the first names the role.
+    const openTagText = markup.match(/<div\b[^>]*role="status"[^>]*>/)?.[0];
+    expect(openTagText, 'no role="status" wrapper found').toBeDefined();
+    // `display: contents` is a legitimate way to drop the gap, so only inline hiding is banned here.
+    // `style:` is in the ban because it is the sibling directive of `class:` — already used on the
+    // slot one element up — and an expression-valued `style:display={…}` hides the region while
+    // spelling none of the words a literal-only ban looks for.
+    expect(openTagText, 'the region tag can hide or mute itself').not.toMatch(
+      /\bhidden\b|class:|aria-live=['"]off|style:(display|visibility)|style=["{][^>]*?(display|visibility)/
+    );
+
+    // indexOf('<style>') returns -1 the moment the tag gains an attribute, and slice(-1) then yields
+    // the file's LAST CHARACTER — a guard that passes forever against a 1-char string, silently.
+    const styleStart = pageSource.indexOf('<style');
+    expect(styleStart, '<style> block not found').toBeGreaterThan(-1);
+    const styles = pageSource.slice(styleStart);
+    // The DECLARATION is the mechanism, not the selector: `:empty` hides nothing on its own, and
+    // banning it reds a legitimate `:not(:empty) { margin… }`. Free today — this block contains
+    // neither declaration, so any future hide anywhere in this page's CSS gets a named red.
+    // The message names the real scope: the ban is the WHOLE page's CSS, not just rules that mention
+    // the region. Narrowing it to a role/class selector is what round 6 measured as walkable.
+    expect(
+      styles,
+      'no display:none / visibility:hidden anywhere in this page CSS — any such rule could hide the ' +
+        'live region. Scope the rule into a child component, or use a non-hiding property.'
+    ).not.toMatch(/display:\s*none|visibility:\s*hidden/);
+  });
+
+  it('clears the unavailable verdict when the managed widget finally solves', () => {
+    // Without this the flag latches for the session, and because resetTurnstile() wipes captchaToken
+    // after every submit, the !captchaToken term cannot mask it once any form result is on screen.
+    // Pin the whole statement list, not the line: a line-anchored match is walkable by commenting the
+    // statement out OR by re-indenting it under a guard (`if (!data.turnstileEnforced) { … }`), which
+    // leaves the clear unreachable on exactly the deployments that enforce captcha.
+    // The `\n      },` terminator is the callback's OWN closer — a nested `}` is indented deeper, so a
+    // re-wrapped body is captured whole and shows up here as extra entries.
+    // Anchored on ts.render(managedEl, …): without that, the statements can be left intact in an
+    // options object that is never handed to Turnstile, so the widget renders with no callbacks at all.
+    // Two separate failures, so a red says which: the call site is gone, or its body no longer parses
+    // at the pinned indentation (a re-indent silently swallows the next callback's statements).
+    const callSite = /ts\.render\(managedEl, \{[\s\S]*?callback: \(t: string\) => \{/;
+    expect(markup, 'ts.render(managedEl, …) with a (t: string) success callback not found').toMatch(
+      callSite
+    );
+    const body = markup.match(new RegExp(callSite.source + '([\\s\\S]*?)\\n      \\},'))?.[1];
+    expect(body, 'managed success callback body not closed at the expected indentation').toBeDefined();
+    const statements = (body ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('//'));
+    expect(statements).toEqual([
+      'managedToken = t;',
+      'captchaToken = t;',
+      "captchaMode = 'managed';",
+      'captchaUnavailable = false;',
+    ]);
+  });
+
+  it('surfaces the note proactively, not only after a wasted submit', () => {
+    // Gating it on `form` would mean the user learns only after spending a rate-limit slot.
+    const condition = pageSource.match(/\{#if captchaBlocked[^}]*\}/)?.[0] ?? '';
+    expect(condition).toBe('{#if captchaBlocked}');
+    // …and it sits inside the email form, above the submit button, so it is read before the click.
+    // Anchor on the email submit's own markup: the logout form has a `<button type="submit">` too.
+    // Regex, not indexOf: an ordinary second class on the form would otherwise red this for no defect.
+    const formStart = markup.search(/class="[^"]*\bemail-form\b/);
+    const noteStart = markup.indexOf('{#if captchaBlocked}');
+    const submitStart = markup.indexOf('disabled={submitting || captchaPending}');
+    expect(formStart).toBeGreaterThan(-1);
+    expect(submitStart).toBeGreaterThan(-1);
+    expect(noteStart).toBeGreaterThan(formStart);
+    expect(noteStart).toBeLessThan(submitStart);
+  });
+
+  it('replaces the generic "try again" message on the blocked path, and keeps it otherwise', () => {
+    // A rejected-but-working token (expired / reused) is genuinely retryable and must keep the generic copy.
+    expect(pageSource).toMatch(/\{#if form\?\.captcha && !captchaBlocked\}/);
+    expect(pageSource).toContain('Captcha verification failed. Please try again.');
+  });
+
+  it('drops the "complete this quick check" prompt once the check itself is blocked', () => {
+    // The managed widget is what failed, so inviting the user to solve it is an unfollowable instruction.
+    // Assert CONTAINMENT, not adjacency: `{#if !captchaBlocked}` followed by an unbounded match would
+    // still pass with the prompt moved BELOW the closing {/if}, which is the regression being named.
+    // `markup`, like the twin count below: reading the block from pageSource while counting from
+    // markup let a comment inside the guard stand in for the prompt moved out of it.
+    const guarded = markup.match(/\{#if !captchaBlocked\}([\s\S]*?)\{\/if\}/)?.[1] ?? '';
+    expect(guarded, '{#if !captchaBlocked} block not found').not.toBe('');
+    expect(guarded).toContain('Complete this quick check to continue.');
+    // …and it must appear nowhere else, or the guarded copy has a twin that ignores the guard.
+    // `markup`, not pageSource: a comment naming the copy it guards would otherwise red this.
+    expect(markup.split('Complete this quick check to continue.')).toHaveLength(2);
+  });
+
+  // INVARIANT GUARD (green before this change too): the blocked path must never re-gate the button. The
+  // soft-release is the whole reason a broken widget cannot trap a user, and the server stays the sole gate.
+  it('never disables the submit button on the blocked path', () => {
+    // The logout form also has a `<button type="submit">`, so anchor on the email submit's own class.
+    const disabledExpr = pageSource.match(
+      /<button type="submit" class="social email" disabled=\{([^}]*)\}/
+    )?.[1];
+    expect(disabledExpr).toBe('submitting || captchaPending');
+    // Pinning the `disabled=` expression alone is not the guard the name claims: the realistic break is
+    // folding captchaBlocked into captchaPending's own definition, which leaves `disabled=` untouched.
+    const pending = normalize(
+      pageSource.match(/const captchaPending = \$derived\([\s\S]*?\);/)?.[0] ?? ''
+    );
+    expect(pending).toBe(
+      'const captchaPending = $derived(!!data.turnstileSiteKey && !captchaToken && !captchaUnavailable);'
+    );
+  });
+});

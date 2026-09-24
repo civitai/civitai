@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('$app/environment', () => ({ dev: false }));
 
 import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha';
+import { register, captchaVerificationsTotal } from '$lib/server/metrics';
 
 beforeEach(() => {
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
@@ -200,5 +201,111 @@ describe('verifyCaptchaToken — managed (interactive fallback) mode', () => {
     vi.stubGlobal('fetch', fetchSpy);
     expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Every sample of hub_captcha_verifications_total with its FULL label set. Asserting the whole set (not a
+// subset) is the point: an inc that omits `mode` still exports — prom-client drops the label instead of
+// throwing — so a subset match would pass over exactly the defect these tests exist to catch.
+async function captchaSamples(): Promise<{ labels: Record<string, string>; value: number }[]> {
+  const metric = (await register.getMetricsAsJSON()).find(
+    (m) => m.name === 'hub_captcha_verifications_total'
+  );
+  return (metric?.values ?? []).map((v) => ({
+    labels: (v.labels ?? {}) as Record<string, string>,
+    value: v.value,
+  }));
+}
+
+// Two properties per case, and the closure in verifyCaptchaToken only makes the second structural:
+// the `result` SPELLING each branch records (the dash→underscore mapping especially), and that the
+// `mode` travelling with it is the one the caller asked for rather than a default.
+describe('captcha verification counter — result x widget mode', () => {
+  beforeEach(() => {
+    captchaVerificationsTotal.reset();
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('counts a SUCCESS from the invisible widget as mode=invisible', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok')).toBe(true);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'success', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts a SUCCESS from the interactive fallback as mode=managed', async () => {
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(true);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'success', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts no_token with the mode the submit claimed', async () => {
+    expect(await verifyCaptchaToken(undefined, undefined, { mode: 'managed' })).toBe(false);
+    expect(await verifyCaptchaToken(undefined)).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'no_token', mode: 'managed' }, value: 1 },
+      { labels: { result: 'no_token', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts no_secret as mode=managed (the only mode that can reach it)', async () => {
+    // Invisible secret set, managed one absent → a managed submit has nothing to verify against.
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'no_secret', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts http_error with the mode', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'http_error', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts siteverify_failed with the mode', async () => {
+    stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'siteverify_failed', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts hostname_mismatch with the mode', async () => {
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    stubSiteverify({ success: true, hostname: 'civitai.com', action: 'login' });
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'hostname_mismatch', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts action_mismatch with the mode', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'signup' });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'action_mismatch', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  // The dashboard aggregates `sum by (result) (rate(hub_captcha_verifications_total[5m]))`, so the
+  // metric name and the `result` label are a contract with a consumer outside this repo: this pins
+  // the whole label set, so dropping `result` or renaming the metric fails here by name rather than
+  // as a confusing empty-sample assertion elsewhere. Asserted on the label SET, not the exposition
+  // string — prom-client emits labels in insertion order, so a string match would go red for
+  // reordering `{ result, mode }`, which no consumer can observe.
+  it('keeps the metric name and the result label (external consumers aggregate on them)', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    await verifyCaptchaToken('tok');
+    const samples = await captchaSamples(); // empty if the metric were renamed
+    expect(samples).toHaveLength(1);
+    expect(Object.keys(samples[0].labels).sort()).toEqual(['mode', 'result']);
   });
 });

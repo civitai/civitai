@@ -36,8 +36,14 @@
   // behind a permanently-disabled button.
   let captchaToken = $state('');
   let captchaUnavailable = $state(false);
-  // Gate the email submit only while captcha is configured, still loading, and not known-broken.
+  // Gates the email submit while captcha is configured, still loading, and not known-broken.
+  // THIS is the expression a broken widget must never reach: no term may be added here that is true
+  // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
+  // being trapped behind a permanently disabled button, and the server stays the sole gate.
   const captchaPending = $derived(!!data.turnstileSiteKey && !captchaToken && !captchaUnavailable);
+  // Each term guards a false claim: the 8s timeout sets captchaUnavailable even where the action does
+  // not enforce, and a token in hand contradicts "blocked" whatever the flag still says.
+  const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);
 
   // INTERACTIVE FALLBACK: when the invisible widget can't issue a token, render the MANAGED (visible,
   // interactive) widget instead of un-gating a doomed tokenless submit. `captchaToken` stays the single gate —
@@ -85,6 +91,11 @@
         managedToken = t;
         captchaToken = t;
         captchaMode = 'managed';
+        // Mirrors onAuthCaptcha: a solve FALSIFIES the unavailable verdict. Without this the flag
+        // latches for the session after one transient widget error, and every later form result —
+        // a typo'd email, a rejected token — renders the "your browser is blocking this" note
+        // beside it, because resetTurnstile() clears captchaToken after every submit.
+        captchaUnavailable = false;
       },
       'expired-callback': () => {
         managedToken = '';
@@ -270,11 +281,33 @@
             {#if fallbackActive}
               <!-- Interactive fallback: shown only after the invisible widget fails. The managed widget is
                    rendered imperatively into this slot (see the $effect) so it can carry data-action + callbacks. -->
-              <p class="captcha-fallback-note">
-                Couldn't verify you automatically. Complete this quick check to continue.
-              </p>
-              <div class="managed-slot" bind:this={managedEl}></div>
+              {#if !captchaBlocked}
+                <!-- The managed widget is the thing that failed, so this prompt must not outlive it. -->
+                <p class="captcha-fallback-note">
+                  Couldn't verify you automatically. Complete this quick check to continue.
+                </p>
+              {/if}
+              <!-- Only drops the reservation where the slot is EMPTY (script never loaded). A widget
+                   that rendered and then errored keeps Cloudflare's own error UI, which min-height
+                   cannot shrink. -->
+              <div class="managed-slot" class:collapsed={captchaBlocked} bind:this={managedEl}></div>
             {/if}
+            <!-- Do NOT fold this block and the fallback one above into a single if/else-if chain:
+                 that unmounts .managed-slot, and a late invisible token clears captchaUnavailable and
+                 re-creates an empty div the $effect will never fill (managedWidgetId is already set).
+                 The live region must also pre-exist its content — a role="status" inserted together
+                 with its text is the no-announce shape, and this note appears with no user action. -->
+            <div role="status">
+              {#if captchaBlocked}
+                <p class="captcha-fallback-note">
+                  {#if form?.captcha}That didn't go through.{/if} Something is preventing the verification
+                  check from running in this browser — often a browser extension, privacy or VPN tool, or
+                  a network filter — so email login can't complete.
+                  {#if data.providers.length > 0}Sign in with one of the buttons above instead.{/if} To
+                  use email, turn off whatever is blocking the check and reload this page.
+                </p>
+              {/if}
+            </div>
             <!-- Token carriers: the invisible widget auto-injects `cf-turnstile-response`; the managed fallback
                  rides `managed-turnstile-response` + `captchaMode`. `captchaFailReason` tags a tokenless submit. -->
             <input type="hidden" name="captchaMode" value={captchaMode} />
@@ -296,7 +329,11 @@
             {#if form?.rateLimited}
               <p class="error">Too many attempts. Please wait a few minutes and try again.</p>
             {/if}
-            {#if form?.captcha}<p class="error">Captcha verification failed. Please try again.</p>{/if}
+            <!-- "try again" only where a retry can work — a rejected (expired/reused) token, not a
+                 check that cannot run. Dropping the second term re-invites a doomed retry. -->
+            {#if form?.captcha && !captchaBlocked}
+              <p class="error">Captcha verification failed. Please try again.</p>
+            {/if}
             {#if form?.blockedDomain}
               <p class="error">That email domain isn't allowed. Try a different address.</p>
             {/if}
@@ -526,5 +563,8 @@
   /* Reserve the managed widget's footprint so the card doesn't jump when it renders. */
   .managed-slot {
     min-height: 65px;
+  }
+  .managed-slot.collapsed {
+    min-height: 0;
   }
 </style>
