@@ -5193,6 +5193,35 @@ export const blocksRouter = router({
    * + blocked-users/tags bind to a real viewer.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   *
+   * 🔴 THE POST-AUTHORIZATION HALF OF THIS BODY NOW LIVES IN
+   * `resolveGatedImagesForBlockClaims`, SHARED VERBATIM WITH THE REST TWIN
+   * `GET /api/v1/blocks/gated-images` (added for apps porting onto
+   * `@civitai/sdk`). Everything that decides WHAT A VIEWER MAY SEE — the anon
+   * refusal, the App-Blocks kill-switch on the TOKEN SUBJECT, the
+   * `maxBrowsingLevel` maturity clamp and the app-scoped read — is in that one
+   * function, so the REST route cannot hold a second, drifting copy of it.
+   *
+   * 🔴 WHAT DELIBERATELY DID *NOT* MOVE, AND WHY IT LOOKS LIKE DUPLICATION.
+   * `authorizeBlockBridgeToken` and `checkBlockCatalogRateLimit` stay spelled
+   * HERE, and their counterparts stay spelled at the REST route, because those
+   * two are TRANSPORT-ACQUISITION steps rather than policy: over REST the token
+   * is verified by `withBlockScope` (which `no-unguarded-block-rest-token.test.ts`
+   * requires — a page route must never call `verifyBlockToken` itself), and the
+   * 429 needs a `Retry-After` header that has no meaning on a tRPC mutation.
+   * Pushing them into the shared body would also make BOTH bridge guards read
+   * this procedure as unguarded and unlimited: `no-unguarded-block-bridge-token`
+   * and `no-unlimited-block-bridge-proc` compute reachability by walking THIS
+   * FILE'S AST one helper level deep, so a call that leaves the router is invisible
+   * to them — fail-closed by design, and not something to disarm for a refactor.
+   * The rate limiter is a cost ceiling, not an authority control (see that
+   * ledger's own note), which is what makes two call sites acceptable for it and
+   * would NOT make two copies of the clamp acceptable.
+   *
+   * The `.max(100)` bound below stays an inline literal on purpose — it is the
+   * AUTHORITATIVE copy of the batch cap, and `image-ids-batch-cap-parity.test.ts`
+   * reads it out of this source to hold `IMAGE_IDS_BATCH_MAX` and
+   * `BLOCK_GATED_IMAGES_MAX_IDS` equal to it.
    */
   getImagesByIds: publicProcedure
     .input(
@@ -5203,16 +5232,6 @@ export const blocksRouter = router({
     )
     .mutation(async ({ input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'gated image read requires an authenticated viewer',
-        });
-      }
-      // App-blocks runtime/visibility gate (the token subject) — NOT the author
-      // gate: a viewer of the app can read images the app published.
-      await assertAppBlocksEnabledForTokenUser(userId);
       // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. Pre-existing;
       // a site comment was added in clawgate #569 only because that card's decision
       // ledger promises each entry's argument lives at its procedure, and this was the
@@ -5225,20 +5244,10 @@ export const blocksRouter = router({
           message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      const { getBlockGatedImagesByIds, resolveViewerBrowsingLevel } = await import(
-        '~/server/services/blocks/block-gated-images.service'
+      const { resolveGatedImagesForBlockClaims } = await import(
+        '~/server/services/blocks/block-gated-images-read.service'
       );
-      // The AUTHORITATIVE per-viewer ceiling for a block surface is the token's
-      // maxBrowsingLevel claim (platform-computed at mint), failed closed to PG.
-      const browsingLevel = resolveViewerBrowsingLevel(claims.maxBrowsingLevel);
-      // Scope the read to THIS app's published images (claims.appId) + bind the
-      // blocked-users/tags clamp to the viewer (userId).
-      return getBlockGatedImagesByIds({
-        imageIds: input.imageIds,
-        browsingLevel,
-        appId: claims.appId,
-        userId,
-      });
+      return resolveGatedImagesForBlockClaims({ claims, imageIds: input.imageIds });
     }),
 
   /**
