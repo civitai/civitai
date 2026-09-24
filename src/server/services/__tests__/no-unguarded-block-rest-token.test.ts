@@ -134,6 +134,26 @@ type RestExposure =
  * reader concludes the REST surface was already covered.
  */
 const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string }> = {
+  'src/pages/api/v1/blocks/app-storage/delete.ts': {
+    exposure: 'WRITE',
+    why: 'DELETEs a row of the viewer’s OWN per-app KV. Destructive and unrecoverable from anything left behind — there is no tombstone and no undo, so a suspended app left reachable here could erase a signed-in user’s saved state in a loop, one key per call, faster than they could notice. It also frees their quota, which makes the damage invisible in the usage numbers afterwards. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/get.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'One key of the viewer’s OWN per-app KV, keyed on (block_instance, verified token subject, key). This is private per-user application state — whatever the app chose to persist about that person — and no anonymous caller receives any of it (anon is refused outright by enforceContextBinding on this transport). A suspended app left reachable here would keep reading a signed-in user’s stored data after the takedown. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/list.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN key list for this block instance, paged. Same viewer-scoped data as get.ts but it discloses the SHAPE of the whole keyspace rather than one value, and it is the enumeration primitive: a caller that does not know what to ask for uses this to find out, then reads each key with get.ts. A suspended app left reachable here could therefore exfiltrate a signed-in user’s entire per-app store in 200-row batches, which is exactly the retained per-user data a takedown exists to stop. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/quota.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN { usedBytes, rowCount } against their own caps — deliberately NOT the app-wide aggregate, which was removed from this procedure precisely because summing other users’ rows is a cross-user readout on the one surface whose whole invariant is that a caller sees only their own data. It names no key and no value, but it is still a live per-user counter that moves with what that person stores, so it is a retained activity signal rather than a static fact. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts a row of the viewer’s OWN per-app KV, and the only route on this surface that CONSUMES A BUDGET: it spends the viewer’s 2MB / per-user row sub-budget and the app’s 50MB / 1M-row ceiling. A suspended app left reachable here could keep writing into a signed-in user’s store after the takedown and, worse, could fill their per-user quota so that the app they actually want to use cannot write — a denial that outlives the suspension and that the victim cannot diagnose. It is NOT classed SPEND: it moves no Buzz and no money ledger, only a storage budget.',
+  },
   'src/pages/api/v1/blocks/buzz.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The viewer’s own spendable Buzz balances — getUserBuzzAccounts keyed on the verified token subject, projected to { blue, green, yellow }. A suspended app would otherwise keep reading a signed-in user’s live wallet: how much free Buzz they hold, how much purchased Buzz they hold, and therefore what they can afford. No anonymous caller receives any of that, and the numbers move with the viewer’s spending, so a retained balance read is also a per-user activity signal a takedown is meant to stop.',
@@ -149,6 +169,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/collections/index.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Collection discovery AND the viewer’s own collection list — the second half is viewer data an anonymous caller does not receive.',
+  },
+  'src/pages/api/v1/blocks/gated-images.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
   },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     exposure: 'READ_PUBLIC',
@@ -166,6 +190,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
   },
+  'src/pages/api/v1/blocks/shared-storage/append.ts': {
+    exposure: 'WRITE',
+    why: 'Creates a cross-user shared_kv row: PUBLIC, moderated, user-authored text that every other user of the app reads. The highest-consequence of the six shared writes — a takedown that left it reachable would let a suspended app keep publishing into a community feed on a signed-in viewer’s behalf, and every row published would outlive the suspension. It also spends that viewer’s per-user row cap and the app’s byte quota. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts: it goes through resolveSharedContext, which reads app_blocks.status itself.',
+  },
   'src/pages/api/v1/blocks/shared-storage/counts.ts': {
     exposure: 'READ_APP_SCOPED',
     why: 'Batch vote tallies for up to 100 keys of this app’s shared KV. App-private state no caller outside the app can reach and no anonymous caller receives, so refusing it DOES remove exposure even though it names no viewer — a suspended app would otherwise keep reading how its community is voting. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts: it goes through resolveSharedContext, which reads app_blocks.status itself.',
@@ -182,9 +210,33 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The paged shared feed — author ids, stored values and tallies for this app’s cross-user rows, each carrying `viewerVoted` for the token subject. Same viewer-scoped field as item.ts but in BULK: a suspended app would otherwise page the viewer’s entire voting record out of the app in 100-row batches, which is exactly the retained per-user activity signal a takedown is meant to stop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
+  'src/pages/api/v1/blocks/shared-storage/report.ts': {
+    exposure: 'WRITE',
+    why: 'Files a shared_kv_reports row against another user’s post and raises an alertable moderation event, in the viewer’s name. A suspended app left reachable here could keep manufacturing moderator work and keep attributing accusations to a signed-in user who never made them — which is a reputational write, not merely a row. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
   'src/pages/api/v1/blocks/shared-storage/top.ts': {
     exposure: 'READ_APP_SCOPED',
     why: 'Top-N shared counters — app-global KV that no caller outside this app can read, so refusing it DOES remove exposure even though it names no viewer. ALREADY refused before this gate, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/unvote.ts': {
+    exposure: 'WRITE',
+    why: 'Deletes the viewer’s own vote row and decrements the public tally. The removal half of the vote pair, and the one that DESTROYS state rather than adding it: a suspended app left reachable here could silently strip a signed-in user’s votes off a community feed, which is not recoverable from the row it deleted. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/update.ts': {
+    exposure: 'WRITE',
+    why: 'Rewrites the stored value of a shared row the viewer authored — public, moderated text other users have already read. A suspended app left reachable here could rewrite content its users had published under their own names, retroactively, which is a worse failure than the create it edits: the audience for the original text has already seen it and will not see the change. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/vote.ts': {
+    exposure: 'WRITE',
+    why: 'Inserts the viewer’s vote row and moves a PUBLIC tally other users of the app see. A suspended app left reachable here would keep casting votes attributed to a signed-in user and keep ranking its own feed — the brigading vector the min-trust gate and the 30/min bucket exist for. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/shared-storage/withdraw.ts': {
+    exposure: 'WRITE',
+    why: 'DELETEs the viewer’s own shared_kv row, cascading away its votes, counter and reports. The most destructive route on the whole shared surface: what it removes cannot be reconstructed from anything left behind, so a suspended app left reachable here could erase a user’s published history in a loop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
+  },
+  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
   },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
@@ -193,6 +245,26 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/tip.ts': {
     exposure: 'SPEND',
     why: 'createBuzzTipTransactionHandler, a real irreversible Buzz transfer. The highest-value entry in this table and the reason the gate was added.',
+  },
+  'src/pages/api/v1/blocks/workflows/cancel.ts': {
+    exposure: 'WRITE',
+    why: 'Stops a RUNNING generation on the orchestrator — a real server-side kill, not a client-side "stop watching". A suspended app left reachable here could terminate generations a signed-in viewer is paying for and waiting on, one call at a time, and the work destroyed cannot be recovered from anything left behind: the orchestrator prorates the refund by undelivered output, so a cancel late in a run returns only part of the Buzz. It also triggers the post-paid settle and the author-fee reversal, so it moves the money ledger as well as the queue.',
+  },
+  'src/pages/api/v1/blocks/workflows/estimate.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'A whatIf price quote for a generation, computed against the VIEWER’s own orchestrator token and their entitlement to the requested resources — so the answer discloses what this viewer in particular would be charged, including early-access and Private-subscription resolution an anonymous caller receives nothing of. It queues nothing and spends nothing, which is why it is not SPEND, but a suspended app left reachable here would keep running priced, entitlement-resolving origin work on a signed-in user’s behalf, once per parameter change, with no money counter bounding it.',
+  },
+  'src/pages/api/v1/blocks/workflows/poll.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Reads one of the VIEWER’s own workflows — its live status, its cost and its output image urls and generated text, scoped by assertBlockWorkflowMintedForViewer (the id must name this viewer) and assertBlockWorkflowTaggedForApp (the record must carry this app’s provenance tag). A suspended app left reachable here would keep harvesting the outputs of generations it had already started on a signed-in user’s behalf, which is precisely the retained per-user data a takedown exists to stop; with the optional waitSeconds hold it also keeps an origin request slot open per call.',
+  },
+  'src/pages/api/v1/blocks/workflows/query.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Pages the VIEWER’s own generation workflows, narrowed to the calling app’s subqueue by a host-forced app-block:<appId> tag built from the verified token — so the body is a list of that viewer’s statuses, costs and output image urls, up to 50 per call, and an anonymous caller receives none of it. A suspended app left reachable here would keep harvesting the full history of everything it ever generated on a signed-in user’s behalf, in BULK rather than one workflow at a time like poll.ts, which is the same retained per-user data a takedown exists to stop at the worst rows-per-call ratio on this surface.',
+  },
+  'src/pages/api/v1/blocks/workflows/submit.ts': {
+    exposure: 'SPEND',
+    why: 'Runs a generation that debits the VIEWER’s Buzz — irreversible once the orchestrator accepts it. The highest-value entry in this table alongside tip.ts, and the one with the largest per-call ceiling: a tip is bounded by BLOCK_TIP_MAX_PER_TIP, a generation by whatever per-call buzzBudget the viewer consented to. A suspended app left reachable here could keep spending a signed-in user’s balance, keep accruing an author fee payable to the suspended app’s own publisher, and keep consuming the per-app velocity allowance every other viewer of that app shares.',
   },
   'src/pages/api/v1/blocks/tools.ts': {
     exposure: 'READ_PUBLIC',
@@ -1229,18 +1301,61 @@ describe('no unguarded block-REST token verification', () => {
    * this file objected to opting any of them in.
    */
   const MUST_FAIL_CLOSED = [
+    // The five PER-VIEWER app-storage routes. All five are READ_VIEWER_SCOPED or
+    // WRITE — there is no READ_PUBLIC among them, because there is no public half
+    // of this datastore at all: every row is keyed on (block_instance, viewer) and
+    // an anonymous caller receives none of it. None may opt out. A suspended app
+    // reaching any of them keeps reading, rewriting or DELETING a signed-in
+    // viewer's saved state after the takedown, and `delete` in particular destroys
+    // data that nothing left behind can reconstruct.
+    'src/pages/api/v1/blocks/app-storage/delete.ts',
+    'src/pages/api/v1/blocks/app-storage/get.ts',
+    'src/pages/api/v1/blocks/app-storage/list.ts',
+    'src/pages/api/v1/blocks/app-storage/quota.ts',
+    'src/pages/api/v1/blocks/app-storage/set.ts',
     'src/pages/api/v1/blocks/buzz.ts',
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
+    // The per-viewer gated image read. It sits NEXT TO images.ts in the route
+    // tree and on the opposite side of this line from it, which is the pairing
+    // worth noticing: images.ts is READ_PUBLIC and opts out, this one may not.
+    // The corpus is the calling app's OWN published rows rather than the public
+    // catalog, every verdict is computed against the verified subject, and a
+    // `visible` entry hands out a minted edge url for bytes that are otherwise
+    // unreachable — so a suspended app left serving it keeps delivering its
+    // users' generated images after the takedown.
+    'src/pages/api/v1/blocks/gated-images.ts',
     'src/pages/api/v1/blocks/me.ts',
+    'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',
     'src/pages/api/v1/blocks/shared-storage/item.ts',
     'src/pages/api/v1/blocks/shared-storage/list.ts',
+    'src/pages/api/v1/blocks/shared-storage/report.ts',
     'src/pages/api/v1/blocks/shared-storage/top.ts',
+    'src/pages/api/v1/blocks/shared-storage/unvote.ts',
+    'src/pages/api/v1/blocks/shared-storage/update.ts',
+    'src/pages/api/v1/blocks/shared-storage/vote.ts',
+    'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
+    // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
+    // suspended app reaching it keeps steering which Checkpoint a signed-in
+    // viewer's future generations anchor to, and the row it writes OUTLIVES the
+    // takedown — `resolveBlockCheckpoint` consults the viewer override ahead of
+    // the publisher's own default on every subsequent submit.
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+    // The five workflow routes. `submit.ts` is the second SPEND route this table
+    // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
+    // opt out: a suspended app reaching any of them keeps spending, stopping or
+    // harvesting a signed-in viewer's generations, which is the whole exposure
+    // the gate removes.
+    'src/pages/api/v1/blocks/workflows/cancel.ts',
+    'src/pages/api/v1/blocks/workflows/estimate.ts',
+    'src/pages/api/v1/blocks/workflows/poll.ts',
+    'src/pages/api/v1/blocks/workflows/query.ts',
+    'src/pages/api/v1/blocks/workflows/submit.ts',
   ];
 
   it('the money, write and viewer-scoped routes fail CLOSED — the option is absent from all of them', () => {
@@ -1391,8 +1506,8 @@ const BACKING_ROW_LOOKUP_RE = /\bappId_blockId\b/;
 const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
   'src/server/services/blocks/block-approval.service.ts':
     'THE PREDICATE. The one place the row is resolved from token claims and compared against `approved`. Both halves of the runtime — withBlockScope (REST) and assertAppBlockApproved (the tRPC bridge) — resolve their verdict here. Its exemptions are THREE named cases, not the bare `dev` claim (clawgate #571): a signed reviewRunForReal review token, a synthetic id with no backing row, and the owner-dev-tunnel case re-derived from the row owner plus an ACTIVE tunnel. A new approval check belongs in this file or calling it, not beside it.',
-  'src/server/routers/apps.router.ts':
-    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have.',
+  'src/server/services/apps/app-storage.service.ts':
+    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have. (This lived in `routers/apps.router.ts` until the `/api/v1/blocks/app-storage/*` REST twins landed; it moved so a route module could import the implementation without module-evaluating `appsRouter`. Same function, same single call site, new file.)',
   'src/server/routers/apps-shared.router.ts':
     'resolveSharedContext — shared, app-global KV. Same shape, exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all, so there is no case to exempt. Stricter than both the predicate and resolveStorageContext, for a reason about its target rather than about approval.',
   'src/pages/api/v1/developer/block-manifests.ts':

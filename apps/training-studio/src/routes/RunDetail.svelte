@@ -12,6 +12,7 @@
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
   import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
@@ -344,7 +345,6 @@
   let confirming = $state(false);
   let continuing = $state(false);
   let continueError = $state('');
-  let quote = $state<{ cost: number | null; eta: number | null } | null>(null);
   let quoteError = $state('');
 
   // Primitive keys for the quote/ancestor derivations: `detail` (and so `d` and `publishTarget`) gets
@@ -379,34 +379,40 @@
     return chain;
   }
 
-  // Re-quote when the epoch count changes (debounced) so the confirm always shows the current price.
-  $effect(() => {
+  // Re-quote when the epoch count changes so the confirm always shows the current price;
+  // debounce/blank/latest-wins live in `debouncedQuote`. The fetcher owns the error string.
+  // The key runs inside a $derived, so it must stay pure — the inactive-clears-error rule
+  // lives in the effect below instead.
+  const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
-    const wf = workflowIdKey;
-    const from = quoteFromEpoch;
-    if (!browser || !runComplete || from === null || epochs < 1) {
-      quote = null;
-      quoteError = '';
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      try {
-        const q = await backend().continueQuote(wf, from, epochs);
-        if (cancelled) return;
-        quote = { cost: q.cost, eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null };
-        quoteError = '';
-      } catch (err) {
-        if (cancelled) return;
-        quote = null;
-        quoteError = err instanceof Error ? err.message : 'Could not price this';
-      }
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}`;
   });
+  $effect(() => {
+    // A stale "could not price" must not linger after the panel closes or the input empties.
+    if (continueQuoteKey === null) quoteError = '';
+  });
+  const continueQuoteState = debouncedQuote(
+    () => continueQuoteKey,
+    async () => {
+      try {
+        const q = await backend().continueQuote(
+          workflowIdKey,
+          quoteFromEpoch!,
+          Number(furtherEpochs) || 0
+        );
+        quoteError = '';
+        return {
+          cost: q.cost,
+          eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null,
+        };
+      } catch (err) {
+        quoteError = err instanceof Error ? err.message : 'Could not price this';
+        return null;
+      }
+    }
+  );
+  const quote = $derived(continueQuoteState.value ?? null);
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
@@ -474,7 +480,7 @@
     viewer = null;
     confirming = false;
     continueError = '';
-    quote = null;
+    // The quote itself blanks via debouncedQuote (workflowIdKey is part of its key).
     quoteError = '';
     downloadError = '';
     showLineage = false;

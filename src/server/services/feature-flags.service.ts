@@ -332,6 +332,11 @@ const featureFlags = createFeatureFlags({
   // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
   // So: treat re-enabling as a planned project, not a flag flip.
   imageSearch: { availability: [], fliptKey: 'image-search' },
+  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
+  // (which gates whether image search actually RUNS) so the entry can stay visible with a
+  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
+  // Set to [] to hide the entry entirely again and redirect /search/images to /search/models.
+  imageSearchEntry: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {

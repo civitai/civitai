@@ -273,6 +273,7 @@ const ECOSYSTEMS = [
   'Lens',
   'Qwen',
   'Qwen2',
+  'Qwen21',
   'Qwen3',
   'NanoBanana',
   'WanImage27',
@@ -292,6 +293,17 @@ const port = {
 const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
   NanoBanana: NANOBANANA_ONLY_SHAPES,
   Qwen: QWEN_ONLY_SHAPES,
+  Qwen21: [
+    { prompt: 'a cat', resolution: '2K', aspectRatio: '16:9', cfgScale: 2.5, steps: 37 },
+    { prompt: 'a cat', images: Array.from({ length: 10 }, () => IMG), resolution: '2K' },
+    {
+      prompt: 'a cat',
+      resources: [
+        { id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 },
+        { id: 136, baseModel: 'Qwen', model: { type: 'LORA' }, strength: 0.8 },
+      ],
+    },
+  ],
   OpenAI: OPENAI_ONLY_SHAPES,
   Lens: LENS_ONLY_SHAPES,
   HiDream: HIDREAM_ONLY_SHAPES,

@@ -104,6 +104,8 @@ export function CommentContent({
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
+  const [revealed, setRevealed] = useState(false);
+  const concealed = !!comment.hidden && !revealed;
 
   const seededThreads = useSeededReplyThreads();
   const seededThread = seededThreads.byCommentId.get(comment.id);
@@ -232,37 +234,58 @@ export function CommentContent({
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
         )} */}
-        <UserAvatar user={comment.user} size="sm" linkToProfile />
+        {concealed ? (
+          <div className="flex size-[26px] items-center justify-center">
+            <IconEyeOff size={16} className="text-dimmed" />
+          </div>
+        ) : (
+          <UserAvatar user={comment.user} size="sm" linkToProfile />
+        )}
       </Group>
 
       <Stack gap={0} style={{ flex: 1 }}>
         <Group justify="space-between">
-          {/* AVATAR */}
-          <Group gap={8} align="center">
-            <UserAvatar
-              user={comment.user}
-              size="md"
-              linkToProfile
-              includeAvatar={false}
-              withUsername
-              badge={badge ? <CommentBadge {...badge} /> : null}
-            />
-            <Text c="dimmed" size="xs" mt={2}>
-              <DaysFromNow date={comment.createdAt} />
-            </Text>
-            {comment.pinnedAt && (
-              <ThemeIcon size="sm" color="orange">
-                <IconPinned size={16} stroke={2} />
-              </ThemeIcon>
-            )}
-            {currentUser?.isModerator && comment.tosViolation && (
-              <Tooltip label="Has TOS Violation">
-                <ThemeIcon color="orange" size="xs">
-                  <IconExclamationCircle />
+          {concealed ? (
+            <Group gap={6} wrap="nowrap">
+              <Text size="sm" c="dimmed" fs="italic">
+                Hidden comment
+              </Text>
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                color="gray"
+                onClick={() => setRevealed(true)}
+              >
+                Show
+              </Button>
+            </Group>
+          ) : (
+            <Group gap={8} align="center">
+              <UserAvatar
+                user={comment.user}
+                size="md"
+                linkToProfile
+                includeAvatar={false}
+                withUsername
+                badge={badge ? <CommentBadge {...badge} /> : null}
+              />
+              <Text c="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
+              {comment.pinnedAt && (
+                <ThemeIcon size="sm" color="orange">
+                  <IconPinned size={16} stroke={2} />
                 </ThemeIcon>
-              </Tooltip>
-            )}
-          </Group>
+              )}
+              {currentUser?.isModerator && comment.tosViolation && (
+                <Tooltip label="Has TOS Violation">
+                  <ThemeIcon color="orange" size="xs">
+                    <IconExclamationCircle />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
+            </Group>
+          )}
 
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
@@ -394,35 +417,50 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
-              <Box my={5}>
-                <LineClamp className="text-sm" lineClamp={3} variant="block">
-                  <RenderHtml
-                    html={comment.content}
-                    allowCustomStyles={false}
-                    withMentions
-                    withProfanityFilter
-                    allowStickers
-                  />
-                </LineClamp>
-              </Box>
+              {!concealed && (
+                <Box my={5}>
+                  <LineClamp className="text-sm" lineClamp={3} variant="block">
+                    <RenderHtml
+                      html={comment.content}
+                      allowCustomStyles={false}
+                      withMentions
+                      withProfanityFilter
+                      allowStickers
+                    />
+                  </LineClamp>
+                </Box>
+              )}
               {/* COMMENT INTERACTION */}
-              <Group gap={4}>
-                <CommentReactions comment={comment} />
-                {canReply && !viewOnly && (
-                  <Button
-                    variant="subtle"
-                    radius="xl"
-                    onClick={() => setReplying(true)}
-                    size="compact-xs"
-                    color="gray"
-                  >
-                    <Group gap={4}>
-                      <IconArrowBackUp size={14} />
-                      Reply
-                    </Group>
-                  </Button>
-                )}
-              </Group>
+              {!concealed && (
+                <Group gap={4}>
+                  <CommentReactions comment={comment} />
+                  {comment.hidden && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      size="compact-xs"
+                      color="gray"
+                      onClick={() => setRevealed(false)}
+                    >
+                      Hide again
+                    </Button>
+                  )}
+                  {canReply && !viewOnly && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      onClick={() => setReplying(true)}
+                      size="compact-xs"
+                      color="gray"
+                    >
+                      <Group gap={4}>
+                        <IconArrowBackUp size={14} />
+                        Reply
+                      </Group>
+                    </Button>
+                  )}
+                </Group>
+              )}
             </>
           ) : (
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
@@ -469,6 +507,7 @@ export function CommentContent({
 function CommentReplies({ commentId, replyCount }: { commentId: number; replyCount: number }) {
   const { level, badges } = useCommentsContext();
   const { setRootThread } = useRootThreadContext();
+  const { resourceOwnerId } = useCommentV2Context();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -487,7 +526,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
           ) : (
             <Stack>
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
               {/* A thread too long to sit inline opens on its own rather than paging in place —
                   paging here grows an already-indented block with no end in sight, behind a
@@ -507,7 +546,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
                 </Group>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
             </Stack>
           )

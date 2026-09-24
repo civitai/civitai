@@ -458,6 +458,8 @@ model User {
   comments             Comment[]
   commentReactions     CommentReaction[]
   notificationSettings UserNotificationSettings[]
+  pushSubscriptions    PushSubscription[]
+  pushSettings         UserPushSetting[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -4133,6 +4135,37 @@ model UserNotificationSettings {
   @@unique([userId, type])
 }
 
+// One row per live browser push subscription (a user can hold several — one per browser/device).
+// Deleted from three places: the apps/notifications dispatcher (410/404 from the push service, or
+// 10 consecutive delivery failures), the push-subscription-cleanup job (no delivery in 180 days),
+// and user unsubscribe.
+model PushSubscription {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  lastSuccessAt DateTime?
+  failureCount  Int       @default(0)
+
+  @@index([userId])
+}
+
+// Row = push ON for this notification type; absence = no push. Single polarity for every type —
+// never add an `enabled` column (see the UserNotificationSettings polarity history).
+model UserPushSetting {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -7209,7 +7242,10 @@ model GenerationCoverage {
   model          Model        @relation(fields: [modelId], references: [id])
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  /// The live rule. A row exists when EITHER column is true, so test the column, not existence.
   covered        Boolean
+  /// The staged rule: community checkpoints qualify on their own and load on demand.
+  coveredNext    Boolean
 
   @@id([modelId, modelVersionId])
 }

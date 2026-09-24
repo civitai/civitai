@@ -50,11 +50,47 @@ install. Each app is served from its own platform-owned subdomain
 - Per-instance revocation via `BlockRevocation` service — uninstall and
   toggleEnabled(false) write a marker; toggleEnabled(true) clears it.
 
+### OAuth access tokens (manifest `auth: "oauth"`)
+
+A block that declares `"auth": "oauth"` in its manifest gets a real OAuth access
+token instead of the JWT when `APP_BLOCK_OAUTH_TOKENS_ENABLED` is on and the
+viewer is signed in. It is an `ApiKey` row for the block's `OauthClient`, minted
+by the auth hub (`POST /api/auth/oauth/app-token`, internal-only) against an
+`OauthConsent` row that `grantScopes` and the mint keep in step with the
+viewer's `AppUserScopeGrant` (`oauth-consent-sync.service.ts`). `/api/v1`, the
+orchestrator and the MCP accept it unchanged; `withBlockScope` also accepts it
+on the block routes, deriving the block claims from the grant. The mint
+response and `BLOCK_INIT.token` carry `kind: "block" | "oauth"` so
+`@civitai/sdk` can refuse a JWT for a signed-in viewer with a clear message.
+Anonymous viewers and blocks without the field keep the JWT path exactly as
+described above. Not yet covered for direct-to-orchestrator spend: the
+platform-wide per-user daily cap across blocks and the per-app aggregate cap,
+which still live in the `blocks.submitWorkflow` proxy; keep the flag off for
+spend-driving public apps until they do.
+
 ## Scopes
 
 See `src/shared/constants/block-scope.constants.ts`. Each block scope maps
 to an OAuth bitmask bit (registration-time gate), plus a context-binding
 check at request time (`enforceContextBinding`).
+
+⚠️ **The binding runs for the route's `requiredScope` only, not for every scope
+the token carries** (#5063). A binding is a statement about a request's shape —
+`models:read:self` wants a `modelId` in the query, `apps:storage:shared:write`
+wants a non-anon subject — so running all of them on every request 403'd
+unrelated routes: a manifest declaring `models:read:self` could not call
+`blocks/buzz`, and an anon token 403'd a shared-storage READ because the
+consent-exempt `apps:storage:shared:write` rode along on it. The one gate that
+is still swept across the WHOLE token is the unknown-scope deny-by-default.
+
+A handler that consults a SECOND scope off `claims.scopes` to widen its response
+owns that scope's own check. Today that is exactly one scope,
+`collections:read:private`, at `blocks/collections/index.ts:614` and
+`blocks/collections/[id]/index.ts:132`. Both are safe structurally, without
+relying on a test: the scope is consent-GATED so the anon mint strips it, and
+both routes require `collections:read:self`, whose non-anon binding still runs.
+A third such site has to make its own argument — see the note at the foot of
+`src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
 
 | Scope                            | Bind                                              | Notes                                                                                                                                                                   |
 | -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

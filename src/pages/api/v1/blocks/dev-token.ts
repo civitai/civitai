@@ -1003,6 +1003,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: 'block',
     scopes: granted,
     buzzBudget,
     maxBrowsingLevel: FORCED_SFW_CEILING,

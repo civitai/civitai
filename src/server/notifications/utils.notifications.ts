@@ -133,3 +133,13 @@ export const { notificationCategoryTypes, notificationTypes, optInNotificationTy
   getNotificationTypes();
 
 export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);
+
+/**
+ * Push may target exactly the types that render a control — registered and toggleable. Gates the
+ * `updatePushSettings` insert so a direct API client can't create rows for unknown or
+ * non-toggleable (system/moderation) types the UI never exposes.
+ */
+export const isPushableNotificationType = (type: string) => {
+  const processor = notificationProcessors[type];
+  return !!processor && processor.toggleable !== false;
+};

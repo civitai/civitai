@@ -12,7 +12,8 @@
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { portalProps } from '$lib/host';
+  import { backend, portalProps } from '$lib/host';
+  import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -25,16 +26,12 @@
     seenFor,
     TE_TRAINING_UNSUPPORTED,
     typesForMedia,
-    type FromPrices,
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
-    SAMPLE_RATE,
-    cardBaseQuote,
     defaultStepsFor,
     isCustom,
     runCard,
-    runCost,
     runVersion,
     runVersionLabel,
     type LaunchedRun,
@@ -45,7 +42,6 @@
 
   let {
     selection,
-    prices,
     imageCount,
     labels,
     trigger,
@@ -53,7 +49,6 @@
     onBack,
   }: {
     selection: Selection;
-    prices: FromPrices;
     imageCount: number;
     /** The dataset's per-image labels (joined tags / captions) — the sample prompts seed from these. */
     labels: string[];
@@ -132,11 +127,54 @@
   let openAdv = $state(-1);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
-  const sampleCost = $derived(prompts.length * SAMPLE_RATE);
-  // Per-run cost from the model's live quote; `null` for any run the orchestrator couldn't price, which
-  // makes the whole total `null` (shown as "—") rather than a total quietly missing a run.
-  const runCostAt = (i: number) =>
-    runCost(cardBaseQuote(prices, selection.runs[i]!.cardType), selection.runs[i]!, params[i]!.steps);
+
+  // REAL per-run quotes — a whatif of each run's exact config, not the linear "from"-quote scale
+  // the earlier steps preview with. Orchestrator pricing has a base fee and per-epoch terms, so
+  // the scale over-read by 90-190⚡ (and ignored the checkpoint count entirely); this number is
+  // what Start will actually charge. Sample images are NOT billed separately — the quote covers
+  // them — so nothing is added on top. Debounce/blank/latest-wins live in `debouncedQuote`.
+  const quoteInputAt = (i: number) => {
+    const run = selection.runs[i]!;
+    const v = runVersion(run);
+    const p = params[i]!;
+    return {
+      ecosystem: v.ecosystem,
+      modelVariant: v.modelVariant,
+      version: v.version,
+      engine: v.engine,
+      model: isCustom(run) ? run.customAir?.trim() || undefined : v.air,
+      steps: p.steps,
+      epochs: p.epochs > 0 ? p.epochs : undefined,
+      imageCount: imageCount > 0 ? imageCount : undefined,
+    };
+  };
+  // A cleared/zeroed Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
+  // prices an omitted steps at its default, which would show a confident total for a config that
+  // isn't on screen (submit-side validateRun rejects steps <= 0 anyway).
+  const stepsInvalid = (i: number) => !(params[i]!.steps > 0);
+  const quoteState = debouncedQuote(
+    () =>
+      JSON.stringify(
+        selection.runs.map((_, i) => (stepsInvalid(i) ? 'invalid' : quoteInputAt(i)))
+      ),
+    () =>
+      Promise.all(
+        selection.runs.map((_, i) =>
+          stepsInvalid(i)
+            ? Promise.resolve(null)
+            : backend()
+                .quoteRun(quoteInputAt(i))
+                .catch(() => null)
+        )
+      )
+  );
+  const quotes = $derived(quoteState.value);
+  const quoting = $derived(quotes === undefined);
+  const quoteFailed = (i: number) => !quoting && !stepsInvalid(i) && quotes?.[i] == null;
+
+  // `null` (unpriced/invalid) for any run blanks the whole total (shown as "—") rather than
+  // summing a total that quietly misses a run; `undefined` (still quoting) does the same, briefly.
+  const runCostAt = (i: number) => quotes?.[i] ?? null;
   const runTotal = $derived.by(() => {
     let sum = 0;
     for (let i = 0; i < selection.runs.length; i++) {
@@ -146,7 +184,7 @@
     }
     return sum;
   });
-  const total = $derived(runTotal == null ? null : runTotal + sampleCost);
+  const total = $derived(runTotal);
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
     return cost == null ? null : cost.toLocaleString();
@@ -210,7 +248,9 @@
   let spendDialogOpen = $state(false);
 
   function start() {
-    if (starting || (needsAttestation && !attestSfw)) return;
+    // total == null means a quote is in flight or failed — never submit without a shown price
+    // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
+    if (starting || total == null || (needsAttestation && !attestSfw)) return;
     const spend = nonBlueSpend(total, buzzMode.value);
     if (spend) {
       confirmSpend = spend;
@@ -319,7 +359,7 @@
               />
             </div>
             <span class="w-20 text-right font-mono text-sm text-buzz">
-              {runCostLabel(i)}
+              {#if quoting}…{:else}{runCostLabel(i) ?? '—'}{/if}
             </span>
           </div>
 
@@ -425,9 +465,7 @@
         {#if prompts.length < 6}
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
-        <p class="mt-2.5 font-mono text-xs text-dark-2">
-          Applied to every run. Extra prompts add a small per-image charge.
-        </p>
+        <p class="mt-2.5 font-mono text-xs text-dark-2">Applied to every run.</p>
       </div>
     </div>
   </div>
@@ -439,16 +477,20 @@
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
         <span class="truncate text-dark-2">{multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}</span>
         <span class="font-semibold text-dark-0">
-          {#if costLabel}<IconBoltFilled size={13} stroke={2} class="mb-px inline" /> {costLabel}{:else}—{/if}
+          {#if costLabel}<IconBoltFilled size={13} stroke={2} class="mb-px inline" /> {costLabel}
+          {:else if quoting}<span class="font-mono text-xs text-dark-2">pricing…</span>
+          {:else if quoteFailed(i)}
+            <button
+              type="button"
+              class="font-mono text-xs text-red-400 underline underline-offset-2"
+              onclick={() => quoteState.retry()}
+            >
+              couldn't price — retry
+            </button>
+          {:else}—{/if}
         </span>
       </div>
     {/each}
-    <div class="flex justify-between gap-2.5 py-2 text-sm">
-      <span class="text-dark-2">Sample images</span>
-      <span class="font-semibold text-dark-0">
-        <IconBoltFilled size={13} stroke={2} class="mb-px inline" /> {sampleCost.toLocaleString()}
-      </span>
-    </div>
     <div class="mt-2 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Total</span>
       <span class="font-mono text-2xl font-bold text-buzz">
@@ -477,7 +519,11 @@
       </div>
     {/if}
 
-    <Button class="mt-4 w-full" onclick={start} disabled={starting || (needsAttestation && !attestSfw)}>
+    <Button
+      class="mt-4 w-full"
+      onclick={start}
+      disabled={starting || total == null || (needsAttestation && !attestSfw)}
+    >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
       {:else}

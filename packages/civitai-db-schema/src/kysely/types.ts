@@ -2508,7 +2508,14 @@ export type GenerationBaseModel = {
 export type GenerationCoverage = {
   modelId: number;
   modelVersionId: number;
+  /**
+   * The live rule. A row exists when EITHER column is true, so test the column, not existence.
+   */
   covered: boolean;
+  /**
+   * The staged rule: community checkpoints qualify on their own and load on demand.
+   */
+  coveredNext: boolean;
 };
 export type GenerationPreset = {
   id: Generated<number>;
@@ -3672,6 +3679,18 @@ export type Purchase = {
   status: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type PushSubscription = {
+  id: Generated<number>;
+  userId: number;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastSuccessAt: Timestamp | null;
+  failureCount: Generated<number>;
+};
 export type Question = {
   id: Generated<number>;
   userId: number;
@@ -4381,6 +4400,11 @@ export type UserPurchasedRewards = {
   meta: Generated<unknown>;
   code: string;
 };
+export type UserPushSetting = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserRank = {
   userId: number;
   leaderboardRank: number | null;
@@ -4789,6 +4813,7 @@ export type DB = {
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
+  PushSubscription: PushSubscription;
   Question: Question;
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
@@ -4860,6 +4885,7 @@ export type DB = {
   UserPaymentConfiguration: UserPaymentConfiguration;
   UserProfile: UserProfile;
   UserPurchasedRewards: UserPurchasedRewards;
+  UserPushSetting: UserPushSetting;
   UserRank: UserRank;
   UserReferral: UserReferral;
   UserReferralCode: UserReferralCode;

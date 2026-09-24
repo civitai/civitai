@@ -184,3 +184,50 @@ export async function relayWithRetry<T extends RetryableResponse>(
 function abortError() {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
+
+/**
+ * Execute the multipart upload's relay fallback: POST the whole file through our own
+ * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or `null`.
+ *
+ * The DECISION to call this lives in `shouldRelayOnPartFailure` (~/utils/upload-retry);
+ * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
+ * same way `attachUploadSettlement` is — that hook has no test file, and the fallback is
+ * exactly the kind of path that must not rely on review alone.
+ *
+ * 🔴 `null` for EVERY failure, including throws. The caller falls through to the normal
+ * terminal-error path, so a broken fallback degrades to "the upload failed" (the
+ * pre-existing outcome) rather than replacing the user's real diagnosis with a fallback
+ * error. The 429 shed is retried once via `relayWithRetry`, honoured with the same
+ * clamp and cancellability the single-PUT path gets.
+ *
+ * The relay mints its OWN key server-side (an overwrite guard it enforces by accepting
+ * no caller key), so the returned id is NOT the presigned key the multipart session was
+ * opened with — callers must report the bytes under this id, and the orphaned session
+ * stays theirs to abort.
+ */
+export async function relayImageFallback(
+  file: File,
+  opts: {
+    signal: AbortSignal;
+    sleep: (ms: number) => Promise<void>;
+    defaultRetryAfterSeconds: number;
+  }
+): Promise<string | null> {
+  try {
+    const res = await relayWithRetry(
+      () =>
+        fetch('/api/v1/image-upload/relay', {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+          signal: opts.signal,
+        }),
+      opts
+    );
+    if (!res.ok) return null;
+    const data: { id?: unknown } = await res.json();
+    return typeof data.id === 'string' && data.id ? data.id : null;
+  } catch {
+    return null;
+  }
+}

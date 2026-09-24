@@ -112,7 +112,13 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  *     asserted from reading". Whether the case is even constructible depends on whether a
  *     token can carry `sub:'anon'` AND `user:read:self` at mint; nothing here tests it;
  *   - and `withBlockScope` runs `enforceContextBinding`, which the bridge has no
- *     equivalent of, so the REST door is STRICTER on a token carrying extra scopes.
+ *     equivalent of, so the REST door is STRICTER — but NOT, since #5063, "on a token
+ *     carrying extra scopes", which is what this line used to say. The binding's
+ *     request-shape half now runs for the route's own `requiredScope` only, so an extra
+ *     scope riding along on the token no longer refuses anything (that was the defect).
+ *     What survives as a REST-only refusal here is the UNKNOWN-scope sweep, which did
+ *     not narrow, plus `user:read:self`'s own non-anon binding — the same refusal the
+ *     bullet above describes.
  *
  * 🔴 A MALFORMED `sub` IS NOT ON THAT LIST, and an earlier revision of this header put it
  * there — claiming the bridge answers 500 where REST answers 403. That was wrong.

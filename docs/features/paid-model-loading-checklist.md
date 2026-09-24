@@ -184,8 +184,9 @@ every measured number are in [paid-model-loading-coverage.md](paid-model-loading
       calls it, so it widens what the orchestrator accepts without changing what a user sees).
 - [ ] **Decide what search shows.** The index derives `canGenerate` from `covered`, so the swap
       advertises tens of thousands more models as generatable. The index can now say "needs loading
-      first" — `versions.generatorLoaded`, synced every 5 minutes by
-      `sync-generator-loaded-resources` — so what is left is the display decision, not the data. Load
+      first" — `versions.generatorLoaded`, written by `/api/webhooks/resource-availability` as the
+      orchestrator reports each change, with `sync-generator-loaded-resources` as a 15-minute
+      backstop — so what is left is the display decision, not the data. Load
       state in search was deferred; this is the surface that deferral now collides with.
   - [x] **Searchable before the cutover, without moving `canGenerate`.** The models index also
         carries `canGenerateNext` (model level) and `versions.canGenerateNext`, the same

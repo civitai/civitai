@@ -31,6 +31,20 @@ export type BlockActionCode =
   | 'storage.set'
   | 'storage.delete'
   | 'storage.increment'
+  // The SHARED (cross-user, app-global) storage mutations, reachable over
+  // `/api/v1/blocks/shared-storage/{append,update,vote,unvote,withdraw,report}`.
+  // Six codes rather than one `storage.shared`, because they are six different
+  // consequences — publishing text other users read, editing it, moving a public
+  // tally, deleting a row, filing a moderator report — and the audit row's other
+  // two columns cannot tell them apart: `scope` is `apps:storage:shared:write`
+  // for all six and `endpoint` is only the route name. Distinguishing them is
+  // exactly what `detail` exists for.
+  | 'shared.append'
+  | 'shared.update'
+  | 'shared.vote'
+  | 'shared.unvote'
+  | 'shared.withdraw'
+  | 'shared.report'
   | 'post.create';
 
 export type BlockActionDetail = {
@@ -230,6 +244,25 @@ export function describeBlockAction(
       return detail.key ? `Deleted app storage "${detail.key}"` : 'Deleted app storage';
     case 'storage.increment':
       return detail.key ? `Bumped shared counter "${detail.key}"` : 'Bumped a shared counter';
+    // 🔴 The KEY IS DELIBERATELY NOT RENDERED for these six, unlike the three
+    // `storage.*` cases above. A per-user storage key is a name the app's author
+    // chose (`playcount:<id>`, `settings`) and reads as a label; a shared_kv key
+    // is a SERVER-GENERATED ULID, so putting it in the sentence would add 26
+    // characters of noise and no information. It is still STORED on the row —
+    // that is what makes a reported/withdrawn row traceable from the audit table
+    // — which is the design's "stores IDS, not display names" split.
+    case 'shared.append':
+      return 'Posted to shared app storage';
+    case 'shared.update':
+      return 'Edited your post in shared app storage';
+    case 'shared.vote':
+      return 'Up-voted a post in shared app storage';
+    case 'shared.unvote':
+      return 'Removed your up-vote in shared app storage';
+    case 'shared.withdraw':
+      return 'Withdrew your post from shared app storage';
+    case 'shared.report':
+      return 'Reported a post in shared app storage';
     case 'post.create': {
       // Named rather than generic: without a case here the Activity feed renders
       // "Performed an app action" for the single most consequential thing a block

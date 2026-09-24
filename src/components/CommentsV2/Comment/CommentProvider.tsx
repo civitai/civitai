@@ -13,6 +13,7 @@ type CommentV2State = {
   canPin?: boolean;
   badge?: CommentV2BadgeProps;
   comment: Comment;
+  resourceOwnerId?: number;
 };
 
 const CommentV2Context = createContext<CommentV2State | null>(null);
@@ -54,6 +55,7 @@ export function CommentProvider({
         canPin,
         badge,
         comment,
+        resourceOwnerId: resourcerOwnerId,
       }}
     >
       {children}

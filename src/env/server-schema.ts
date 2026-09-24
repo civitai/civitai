@@ -921,6 +921,7 @@ export const serverSchema = z
     BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
     BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
     BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: zc.booleanString.optional().default(false),
 
     // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
     // platform layer (PR previews without apps-pipeline wiring) still boot.

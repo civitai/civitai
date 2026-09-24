@@ -10,16 +10,31 @@ import { READ_SCOPE_LABELS } from '~/shared/constants/block-action-detail';
  *
  * 🔴 WHY THESE ARE NOT `humaniseScopeInvocation` (AppActivityPanel).
  * That is the real near-duplicate — the Activity feed's Action-column labeller. It is
- * prefix-based, needs no `detail`, and already maps all four endpoint tokens, so it is
- * the function a reader will reach for. Two reasons it cannot serve these cards:
+ * endpoint-arm based and needs no `detail`, so it is the function a reader will reach
+ * for. THREE reasons it cannot serve these cards:
  *   1. REGISTER. It names a single past event ("Generated an image"), which is wrong
  *      against a count — "Generated an image … 245" does not read. The WRITE labels here
  *      are plural nouns instead, so those strings differ BY DESIGN.
  *   2. PASS-THROUGH. A substantial share of `topEndpoints` is REST paths from
  *      `normalizeEndpoint(req.url)` (proportion not measured — it depends entirely on
- *      what the app does), which that function has no arm for: it would fall to its
+ *      what the app does), which that function has no arm for — with the exception,
+ *      since #5068, of four EXACT `/api/v1/blocks/workflows/*` paths that now have
+ *      their own arms (the fourth, `/workflows/query`, arrived with the REST
+ *      app-subqueue read). An arbitrary REST path is still unmapped and would fall to its
  *      scope→label map and, called with no meaningful scope, yield '' — a blank row. It
  *      also cannot distinguish the legacy per-id buckets below.
+ *   3. INCOMPLETE SYNTHETIC COVERAGE. It has arms for FOUR of the FIVE synthetic tokens
+ *      the server writes. The fifth, `post:create` (`blocks.router.ts`), has none: it
+ *      misses both label maps (`posts:write:self` is in neither) and returns the RAW
+ *      SCOPE. `ENDPOINT_LABELS` below covers all five.
+ *      ⚠ Stated as a COUNT that names the exception, deliberately. This clause has been
+ *      wrong twice: first as "already maps all four endpoint tokens", then as "maps the
+ *      synthetic endpoint tokens" — a correction that removed the falsifiable number and
+ *      KEPT the falsehood. If a sixth token is added, this count is what goes red in
+ *      review; a vaguer phrasing would not.
+ *      ⚠ Invisible on the Activity tab — `post:create` rows always carry a `detail`, so
+ *      they route to `describeBlockAction` and never reach this function. It is visible
+ *      only on the aggregate card, i.e. exactly what this module labels.
  * (`humaniseScopeEndpoint`, the Detail-column labeller, is unsuitable for a further
  * reason — it resolves a per-ROW id out of `detail`, which an aggregate bucket has
  * none of. Both are pinned by tests calling the real functions.)
@@ -128,6 +143,20 @@ export function endpointBucketLabel(endpoint: string): string {
 const WRITE_SCOPE_LABELS = new Map<string, string>([
   ['ai:write:budgeted', 'AI workflow submits'],
   ['apps:storage', 'App-local storage calls'],
+  // The scope the REST twins (`/api/v1/blocks/app-storage/{set,delete}`) write,
+  // via `withBlockScope`'s verbatim `requiredScope`. DISTINCT from the
+  // `apps:storage` row above even though both describe the same datastore,
+  // because they are written by different transports and a range spanning the
+  // REST rollout would otherwise merge a bridge bucket with a REST one and hide
+  // exactly the migration this surface exists to enable.
+  //
+  // 🔴 Its ABSENCE was a live gap, caught mechanically by this map's own drift
+  // guard the moment the routes landed — the guard's docblock names this exact
+  // shape ("adding a `requiredScope` to a route could never fail a test", which
+  // is why the guard exists). Without it the scopes card rendered the raw string
+  // `apps:storage:write`. The READ twins needed no new entry: `apps:storage:read`
+  // is already in READ_SCOPE_LABELS.
+  ['apps:storage:write', 'App-local storage writes'],
   ['apps:storage:shared:write', 'Shared storage writes'],
   ['collections:write:self', 'Collection updates'],
   ['user-settings:write', 'Block settings saves'],

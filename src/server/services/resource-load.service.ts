@@ -100,8 +100,8 @@ async function getVersionsForAir(modelVersionIds: number[]) {
 async function getNextCoveredVersionIds(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return new Set<number>();
   const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
-    SELECT "modelVersionId" FROM "GenerationCoverageNext"
-    WHERE "modelVersionId" IN (${Prisma.join(modelVersionIds)})
+    SELECT "modelVersionId" FROM "GenerationCoverage"
+    WHERE "coveredNext" AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
   `;
   return new Set(rows.map((r) => r.modelVersionId));
 }

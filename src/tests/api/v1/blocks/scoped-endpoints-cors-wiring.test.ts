@@ -37,6 +37,9 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
   // Imported by several endpoints; only referenced inside the (never-run)
   // handler bodies, but provide a stub so the named import resolves.
   parseSubjectUserId: () => null,
+  // Same: tip.ts, shared-storage/increment.ts and all six shared-storage WRITE
+  // routes take the audit-detail stash as a named import.
+  stashBlockActionDetail: () => undefined,
 }));
 
 // Mock the heavy service/db/router imports the endpoints pull at module load so
@@ -90,23 +93,50 @@ vi.mock('~/server/services/buzz.service', () => ({
   getDailyCompensationRewardByUser: vi.fn(),
 }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({ handleEndpointError: vi.fn() }));
-vi.mock('~/server/routers/apps-shared.router', () => ({
-  assertValidCounterKey: vi.fn(),
-  incrementSharedCounter: vi.fn(),
-  getTopSharedCounters: vi.fn(),
-  listSharedRows: vi.fn(),
-  getSharedRow: vi.fn(),
-  getSharedCounts: vi.fn(),
-  // The shared read routes import these BOUNDS at module scope to build their zod
-  // schemas, so the mock has to carry real numbers — `undefined` would make
-  // `z.string().max(undefined)` throw during the import under test.
-  SHARED_KEY_MAX: 64,
-  SHARED_PREFIX_MAX: 64,
-  SHARED_CURSOR_MAX: 200,
-  SHARED_LIST_LIMIT_MAX: 100,
-  SHARED_LIST_LIMIT_DEFAULT: 50,
-  SHARED_COUNTS_KEYS_MAX: 100,
+// The four workflow routes' delegation seam. Stubbed so importing them does not
+// drag the tRPC caller factory / blocks.router graph in at module eval — the same
+// reason every other heavy import here is stubbed. Never invoked (this file only
+// captures the options literal).
+vi.mock('~/server/services/blocks/block-workflow-rest', () => ({
+  blockWorkflowBearer: vi.fn(),
+  blockWorkflowCaller: vi.fn(),
 }));
+vi.mock('~/server/routers/apps-shared.router', async () => {
+  // ASYNC factory purely so the value schema below can be a REAL zod object.
+  // `append.ts` / `update.ts` do `z.object({ value: sharedValueInput })` at
+  // module scope, and a `vi.fn()` there throws during the import under test —
+  // the same failure mode the numeric bounds note below describes.
+  const z = await import('zod');
+  return {
+    assertValidCounterKey: vi.fn(),
+    incrementSharedCounter: vi.fn(),
+    getTopSharedCounters: vi.fn(),
+    listSharedRows: vi.fn(),
+    getSharedRow: vi.fn(),
+    getSharedCounts: vi.fn(),
+    appendSharedRow: vi.fn(),
+    updateSharedRow: vi.fn(),
+    voteSharedRow: vi.fn(),
+    unvoteSharedRow: vi.fn(),
+    withdrawSharedRow: vi.fn(),
+    reportSharedRow: vi.fn(),
+    // The shared read routes import these BOUNDS at module scope to build their zod
+    // schemas, so the mock has to carry real numbers — `undefined` would make
+    // `z.string().max(undefined)` throw during the import under test.
+    SHARED_KEY_MAX: 64,
+    SHARED_PREFIX_MAX: 64,
+    SHARED_CURSOR_MAX: 200,
+    SHARED_LIST_LIMIT_MAX: 100,
+    SHARED_LIST_LIMIT_DEFAULT: 50,
+    SHARED_COUNTS_KEYS_MAX: 100,
+    SHARED_REASON_MAX: 500,
+    sharedValueInput: z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().max(4096).optional(),
+      data: z.unknown().optional(),
+    }),
+  };
+});
 
 // The endpoint → expected requiredScope contract. Import order fixes the
 // `captured` index; asserting the scope proves the CORS change didn't drop it.
@@ -178,6 +208,43 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'apps:storage:shared:read',
     allowOpaqueOrigin: true,
   },
+  // The shared WRITE surface. Same opaque-origin argument again, and it bites
+  // HARDER here than on the reads: a block whose feed renders but whose submit
+  // button 405s on the preflight reads as an app bug, so a missing opt-in would
+  // be diagnosed anywhere except here. The scope is the WRITE scope on all six —
+  // that half of each entry is the authorization claim, not a transport one, and
+  // a route that silently downgraded to `:read` would still pass a CORS-only
+  // check.
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/append',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/update',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/vote',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/unvote',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/withdraw',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/shared-storage/report',
+    requiredScope: 'apps:storage:shared:write',
+    allowOpaqueOrigin: true,
+  },
   // Added by the DERIVED check below, which found it ABSENT: tip-allowance has
   // declared `requiredScope` + `allowOpaqueOrigin` since it was written and was
   // never listed here. It is the exact miss this file exists to prevent, and it
@@ -197,6 +264,78 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // loud. (me.ts's own header says "CORS: handled in withBlockScope from
   // BLOCK_ALLOWED_ORIGINS", which is consistent with omission rather than intent.)
   { module: '~/pages/api/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: false },
+  // The WORKFLOW surface. Same opaque-origin argument as the shared writes, and it
+  // bites hardest of all here: a block whose catalog renders but whose Generate
+  // button 405s on the preflight is the most confusing failure this platform can
+  // produce, and it would be diagnosed anywhere except in a missing CORS opt-in.
+  // The scope half of each entry is the authorization claim — all five take
+  // `ai:write:budgeted`, INCLUDING the three reads, because that is the scope
+  // their bridge twins assert, and a route that silently downgraded to something
+  // weaker would still pass a CORS-only check. `query` in particular: its bridge
+  // twin `blocks.queryAppWorkflows` asserts `ai:write:budgeted` on the stated
+  // grounds that "an app authorized to spend the viewer's Buzz on generation can
+  // read the subqueue of gens it produced", and weakening it here would decouple
+  // the two transports on exactly that judgement.
+  {
+    module: '~/pages/api/v1/blocks/workflows/submit',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/estimate',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/poll',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/cancel',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/workflows/query',
+    requiredScope: 'ai:write:budgeted',
+    allowOpaqueOrigin: true,
+  },
+  // The five PER-VIEWER app-storage routes. Same CORS reasoning as every entry
+  // above — an unverified block direct-fetches these from an opaque origin.
+  //
+  // The scope half is the load-bearing claim here, and it is a READ/WRITE SPLIT
+  // rather than one scope for the surface: `get`/`list`/`quota` assert
+  // `apps:storage:read`, `set`/`delete` assert `apps:storage:write`. A route that
+  // silently took the read scope for a write would still pass a CORS-only check,
+  // and would let a block approved for read-only access mutate the viewer's
+  // store — which is precisely the ambient-capability failure (audit A5 /
+  // design-gaps H4) that made these two scopes exist in the first place.
+  {
+    module: '~/pages/api/v1/blocks/app-storage/get',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/set',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/delete',
+    requiredScope: 'apps:storage:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/list',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/app-storage/quota',
+    requiredScope: 'apps:storage:read',
+    allowOpaqueOrigin: true,
+  },
 ];
 
 /**

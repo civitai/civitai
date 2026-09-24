@@ -70,12 +70,13 @@ const givenTrainingRow = (trainingDetailsExtra: Record<string, unknown>, fileMet
   ]);
 };
 
-const submit = () =>
+const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
   createTrainingWorkflow({
     modelVersionId: MODEL_VERSION_ID,
     token: 'tok',
     user: { id: USER_ID, isModerator: false } as never,
     features: { trainingStepsPricing: true } as never,
+    domain,
   } as never);
 
 const writtenOffset = () => {
@@ -133,5 +134,46 @@ describe('createTrainingWorkflow epoch offset', () => {
     await submit();
 
     expect(writtenOffset()).toBe(0);
+  });
+});
+
+describe('createTrainingWorkflow domain gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({ WEBHOOK_URL: 'https://webhook.test', WEBHOOK_TOKEN: 't' });
+    vi.mocked(submitWorkflow).mockResolvedValue({ id: 'wf-1', transactions: { list: [] } } as never);
+    dbMock.dbWrite.modelFile.update.mockResolvedValue({});
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
+  });
+
+  it('refuses a red-prepared dataset paid for on green, without submitting', async () => {
+    givenTrainingRow({}, { uploadDomain: 'red' });
+
+    await expect(submit('green')).rejects.toThrow('must be submitted there');
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('allows a red-prepared dataset to be submitted on red', async () => {
+    givenTrainingRow({}, { uploadDomain: 'red' });
+
+    await submit('red');
+
+    expect(submitWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('allows a green-prepared dataset on green', async () => {
+    givenTrainingRow({}, { uploadDomain: 'green' });
+
+    await submit('green');
+
+    expect(submitWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('allows a legacy dataset with no stamped domain on green', async () => {
+    givenTrainingRow({}, {});
+
+    await submit('green');
+
+    expect(submitWorkflow).toHaveBeenCalledOnce();
   });
 });

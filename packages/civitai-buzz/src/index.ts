@@ -10,3 +10,4 @@ export * from './pricing-allowance';
 export * from './rights-affirmation';
 export * from './media-type';
 export * from './monetization-limits';
+export * from './model-version-pricing';

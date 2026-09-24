@@ -19,7 +19,11 @@
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
   import type { ReuseItem } from '$lib/reuse';
 
-  let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
+  let {
+    prices,
+    enabledModelFlags = [],
+    onExit,
+  }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -145,6 +149,7 @@
   {#if step === 1}
     <SelectStep
       {prices}
+      {enabledModelFlags}
       initial={selection}
       onContinue={(sel) => {
         selection = sel;
@@ -170,7 +175,6 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {prices}
       {trigger}
       imageCount={trainableCount}
       labels={datasetLabels}

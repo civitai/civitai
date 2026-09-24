@@ -7,6 +7,7 @@ import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-chec
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
@@ -257,6 +258,7 @@ export const jobs: Job[] = [
   blurbFanoutJob,
   ...crucibleJobs,
   ...crucibleSyncJobs,
+  pushSubscriptionCleanupJob,
 ];
 
 const log = createLogger('jobs', 'green');

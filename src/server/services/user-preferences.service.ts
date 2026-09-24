@@ -5,6 +5,7 @@ import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import type { BlockHideCommentsResult } from '~/server/services/block-hide-comments.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
 import { toCompactHiddenPreferences } from '~/shared/hidden-preferences/compact';
@@ -312,6 +313,8 @@ interface HiddenPreferencesDiff {
    * empty diff means "this kind does not report", not "nothing happened".
    */
   hidden?: boolean;
+  /** Set only when a block asked to hide the blocked user's comments on the blocker's content. */
+  commentsHidden?: BlockHideCommentsResult;
 }
 
 export type HiddenPreferenceTypes = {
@@ -519,12 +522,10 @@ export async function getAllHiddenForUser({
   return compact ? toCompactHiddenPreferences(result) : result;
 }
 
-export async function toggleHidden({
-  kind,
-  data,
-  hidden,
-  userId,
-}: ToggleHiddenSchemaOutput & { userId: number }): Promise<HiddenPreferencesDiff> {
+export async function toggleHidden(
+  input: ToggleHiddenSchemaOutput & { userId: number }
+): Promise<HiddenPreferencesDiff> {
+  const { kind, data, hidden, userId } = input;
   switch (kind) {
     case 'image':
       return await toggleHideImage({ userId, imageId: data[0].id, setTo: hidden });
@@ -537,7 +538,12 @@ export async function toggleHidden({
     case 'tag':
       return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
     case 'blockedUser':
-      return await toggleBlockUser({ targetUserId: data[0].id, userId, setTo: hidden });
+      return await toggleBlockUser({
+        targetUserId: data[0].id,
+        userId,
+        setTo: hidden,
+        hideComments: input.kind === 'blockedUser' && input.hideComments === true,
+      });
     default:
       throw new Error('unsupported hidden toggle kind');
   }
@@ -851,10 +857,12 @@ async function toggleBlockUser({
   userId,
   targetUserId,
   setTo,
+  hideComments,
 }: {
   userId: number;
   targetUserId: number;
   setTo?: boolean;
+  hideComments?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   if (targetUserId === userId) throw new Error('Cannot block yourself');
   if (targetUserId === -1) throw new Error('Cannot block civitai account');
@@ -931,9 +939,23 @@ async function toggleBlockUser({
   // blocking again. Gating on the transition would have removed that retry.
   if (blocking) await cascadeBlockToPlacements({ userId, targetUserId });
 
+  // After the block has committed and outside any transaction: this can take seconds for a
+  // prolific commenter, and it reports failure instead of throwing, so it cannot undo the block.
+  // Only on a NEW block, so re-sending the same block cannot re-run seconds of replica work.
+  const commentsHidden: BlockHideCommentsResult | undefined = !(blocking && hideComments)
+    ? undefined
+    : alreadyBlocked
+    ? { status: 'skipped' }
+    : await import('~/server/services/block-hide-comments.service')
+        .then(({ hideBlockedUserCommentsOnOwnContent }) =>
+          hideBlockedUserCommentsOnOwnContent({ ownerId: userId, blockedUserId: targetUserId })
+        )
+        .catch((): BlockHideCommentsResult => ({ status: 'failed', count: 0 }));
+
   return {
     added: [],
     removed: [],
+    commentsHidden,
   };
 }
 

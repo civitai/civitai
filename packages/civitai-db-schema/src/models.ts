@@ -534,6 +534,8 @@ export interface User {
   comments?: Comment[];
   commentReactions?: CommentReaction[];
   notificationSettings?: UserNotificationSettings[];
+  pushSubscriptions?: PushSubscription[];
+  pushSettings?: UserPushSetting[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -2523,6 +2525,27 @@ export interface UserNotificationSettings {
   user?: User;
   type: string;
   disabledAt: Date;
+}
+
+export interface PushSubscription {
+  id: number;
+  userId: number;
+  user?: User;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastSeenAt: Date;
+  lastSuccessAt: Date | null;
+  failureCount: number;
+}
+
+export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
 }
 
 export interface Webhook {
@@ -4732,6 +4755,7 @@ export interface GenerationCoverage {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   covered: boolean;
+  coveredNext: boolean;
 }
 
 export interface UserProfile {

@@ -1,9 +1,10 @@
 import { useRouter } from 'next/router';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -19,12 +20,41 @@ declare global {
   }
 }
 
+const adEngineLoaders = {
+  production: 'https://cdn.snigelweb.com/adengine/civitai.com/loader.js',
+  staging: 'https://staging-cdn.snigelweb.com/adengine/civitai.com/loader.js',
+};
+
+type AdEngine = keyof typeof adEngineLoaders;
+
+export const AD_ENGINE_PARAM = 'adengine';
+const AD_ENGINE_SESSION_KEY = 'civitai:adengine';
+
+/** Sticky for the tab, so the switch survives navigation and full reloads without re-appending the
+ *  param. `?adengine=production` clears it; the loader installs a global, so this is read once per
+ *  page load rather than tracked per-route — a second loader would fight the first. */
+function resolveAdEngine(): AdEngine {
+  if (typeof window === 'undefined') return 'production';
+  const requested = new URLSearchParams(window.location.search).get(AD_ENGINE_PARAM);
+  const engine: AdEngine | null =
+    requested === 'staging' || requested === 'production' ? requested : null;
+  try {
+    if (engine) sessionStorage.setItem(AD_ENGINE_SESSION_KEY, engine);
+    return (engine ?? sessionStorage.getItem(AD_ENGINE_SESSION_KEY)) === 'staging'
+      ? 'staging'
+      : 'production';
+  } catch {
+    return engine ?? 'production';
+  }
+}
+
 const AdsContext = createContext<{
   ready: boolean;
   consent: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
   useDirectAds: boolean;
+  adEngine: AdEngine;
   username?: string;
   isMember: boolean;
 } | null>(null);
@@ -88,6 +118,7 @@ export function AdsProvider({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { allowed: consentAllowed } = useThirdPartyConsent();
+  const [adEngine] = useState(resolveAdEngine);
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
@@ -176,6 +207,7 @@ export function AdsProvider({
         // so the adhesive footer — rendered outside the page tree — is covered too.
         adsEnabled: adsEnabled && !((gated || gateBlocked) && !useDirectAds),
         useDirectAds,
+        adEngine,
         username: currentUser?.username,
         isMember,
       }}
@@ -221,11 +253,19 @@ export function AdsProvider({
       {adsEnabled && !useDirectAds && (
         <Script
           defer
-          src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
+          src={adEngineLoaders[adEngine]}
           onError={handleLoadedError}
           onLoad={handleLoaded}
         />
       )}
+      {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}
+      <IsClient>
+        {adEngine === 'staging' && (
+          <div className="pointer-events-none fixed bottom-2 left-2 z-50 rounded bg-red-6 px-2 py-1 text-xs font-bold uppercase text-white">
+            Snigel staging ad engine
+          </div>
+        )}
+      </IsClient>
       {/* Cleanup old ad tags */}
       {adsEnabled && !useDirectAds && (
         <Script

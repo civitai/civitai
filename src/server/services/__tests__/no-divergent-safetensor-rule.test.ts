@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(__dirname, '../../../..');
 const SERVICE = 'src/server/services/resource-load.service.ts';
 const MIGRATIONS = 'packages/civitai-db-schema/prisma/migrations';
-const VIEW_DDL = 'CREATE OR REPLACE VIEW "GenerationCoverageNext"';
+const VIEW_DDL = 'CREATE OR REPLACE VIEW "GenerationCoverage"';
 
 /**
  * The LAST migration that redefines the view is the one in force — anchoring on a filename would
@@ -52,10 +52,15 @@ function currentViewMigration() {
 const migration = currentViewMigration();
 const service = readFileSync(path.join(repoRoot, SERVICE), 'utf8');
 
-/** The `ARRAY[...]` inside the checkpoint disjunct's own EXISTS, keyed on its `mf2` alias. */
+/** The `ARRAY[...]` in the file test that computes the SafeTensor flag. */
 function migrationWeightTypes(sql: string) {
-  const block = /mf2\.type = ANY \(ARRAY\[([^\]]+)\]\)/.exec(sql);
+  const block = /type = ANY \(ARRAY\[([^\]]+)\]\)[\s\S]{0,300}?AS is_safetensor/.exec(sql);
   return block ? [...block[1].matchAll(/'([^']+)'::text/g)].map((m) => m[1]).sort() : null;
+}
+
+/** Where the SafeTensor flag is READ — every read must be gated on the checkpoint test. */
+function gatedSafetensorReads(sql: string) {
+  return [...sql.matchAll(/ckpt AND \w+\.safetensor/g)].length;
 }
 
 function serviceWeightTypes(text: string) {
@@ -64,7 +69,7 @@ function serviceWeightTypes(text: string) {
 }
 
 describe('the SafeTensor rule has one meaning in SQL and TypeScript', () => {
-  it('a migration defining GenerationCoverageNext exists', () => {
+  it('a migration defining GenerationCoverage exists', () => {
     // Without this the whole file passes vacuously once the migration is renamed or removed.
     expect(migration, `no migration under ${MIGRATIONS} contains \`${VIEW_DDL}\``).not.toBeNull();
   });
@@ -86,7 +91,8 @@ describe('the SafeTensor rule has one meaning in SQL and TypeScript', () => {
   it('both sides accept the same weight file types', () => {
     expect(
       migrationWeightTypes(migration!.sql),
-      `${migration!.name}: no mf2.type ARRAY found — the checkpoint EXISTS may have been reshaped`
+      `${migration!.name}: no weight-type ARRAY found beside the SafeTensor flag — the file test ` +
+        `may have been reshaped`
     ).toEqual(serviceWeightTypes(service));
   });
 
@@ -99,26 +105,25 @@ describe('the SafeTensor rule has one meaning in SQL and TypeScript', () => {
     ).toMatch(/modelType === 'Checkpoint' &&[\s\S]{0,120}LOADABLE_FORMAT/);
   });
 
-  it('the view applies the format rule inside the checkpoint disjunct, not the shared EXISTS', () => {
-    // The shared clause is keyed on `mf`; the checkpoint-only one on `mf2`. A SafeTensor test
-    // appearing against `mf` would mean the rule escaped onto every model type.
-    const shared = /mf\.metadata ->> 'format'::text = 'SafeTensor'/.test(migration!.sql);
+  it('the view reads the SafeTensor flag only under the checkpoint test', () => {
+    // The view computes the flag once per version; what keeps the rule checkpoint-scoped is where
+    // it is READ. An ungated read applies it to LoRA/TextualInversion/VAE/LoCon/DoRA and drops
+    // 3,287 covered embeddings.
+    const reads = [...migration!.sql.matchAll(/\w+\.safetensor\b/g)].length;
+    const gated = gatedSafetensorReads(migration!.sql);
     expect(
-      shared,
+      gated,
       `${
         migration!.name
-      }: SafeTensor must not be required in the shared EXISTS — that applies it ` +
-        `to LoRA/TextualInversion/VAE/LoCon/DoRA and drops 3,287 covered embeddings`
-    ).toBe(false);
-
-    const checkpointScoped =
-      /m\.type = 'Checkpoint'::"ModelType"[\s\S]{0,900}mf2\.metadata ->> 'format'::text = 'SafeTensor'/.test(
-        migration!.sql
-      );
+      }: no \`ckpt AND <alias>.safetensor\` found — the flag must be read under ` +
+        `the checkpoint test`
+    ).toBeGreaterThan(0);
     expect(
-      checkpointScoped,
-      `${migration!.name}: the SafeTensor EXISTS must sit inside the Checkpoint disjunct`
-    ).toBe(true);
+      reads - gated,
+      `${migration!.name}: the SafeTensor flag is read ${
+        reads - gated
+      } time(s) the checkpoint test does not gate`
+    ).toBe(0);
   });
 });
 

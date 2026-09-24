@@ -131,6 +131,16 @@ export const shellBackend: StudioBackend = {
   getFromPrices: () =>
     Promise.reject(new Error('from-prices come from the /new server load in the shell')),
 
+  quoteRun: async (input) => {
+    const res = await fetch('/api/quote', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { cost: number | null }).cost;
+  },
+
   getBuzz: async () => {
     const res = await fetch('/api/buzz');
     if (!res.ok) return null;

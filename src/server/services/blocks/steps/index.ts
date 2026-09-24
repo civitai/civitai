@@ -1247,18 +1247,10 @@ export type BoundedStepVariant = string & { readonly __boundedStepVariant: 'boun
  * `Error` also keeps this module import-light, which `workflow.schema` depends
  * on.
  *
- * 🔴 THE MESSAGE IS ECHOED TO THE UNTRUSTED IFRAME. `trpc.ts`'s `errorFormatter`
- * is pass-through (`({ shape }) => shape`), and `getTRPCErrorFromUnknown`
- * preserves an unrecognized throw's `message`, so everything below reaches the
- * block's own JS — INCLUDING `step.variants.join(', ')`, i.e. the entry's ENTIRE
- * declared allowlist. For `convert-image` that is the single word `default` and
- * discloses nothing. For the model-allowlisted entry this is groundwork for, it
- * would be the full model list, which may name a model that is not public yet.
- * 🔴 So an entry whose `variants` are not all public information must choose
- * this message deliberately — either by keeping unreleased ids out of
- * `variants`, or by making the resolution unreachable (a `z.enum` paramSchema
- * over the same set turns an out-of-set value into a BAD_REQUEST at parse,
- * before this guard is ever reached).
+ * The message never reaches the block: both tRPC's `errorFormatter` and REST's
+ * `handleEndpointError` replace a 5xx message with a generic one. 🔴 Turning this
+ * into a 4xx would change that — it would echo `step.variants`, the entry's whole
+ * allowlist (possibly naming unreleased models), to the untrusted iframe.
  */
 export function resolveStepVariant(step: AnyBlockStep, params: unknown): BoundedStepVariant {
   // Deliberately typed `unknown`: `resolveVariant`'s declared `string` return is
