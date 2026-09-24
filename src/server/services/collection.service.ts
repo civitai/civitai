@@ -2644,7 +2644,7 @@ export function getCollectionItemCount({
     FROM "CollectionItem" ci
     ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL OR ci."model3dId" IS NOT NULL)
     GROUP BY ci."collectionId"
   `;
 }
@@ -3563,6 +3563,15 @@ export const getCollectionCoverImages = async ({
     ), articleItemSrc AS MATERIALIZED (
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT
+          m3.id,
+          ${imageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
     )
     SELECT
         target."collectionId" id,
@@ -3571,6 +3580,7 @@ export const getCollectionCoverImages = async ({
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
           (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
           NULL
         ) image,
         (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
