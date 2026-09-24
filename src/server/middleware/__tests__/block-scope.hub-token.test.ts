@@ -14,6 +14,7 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: sessionMock }));
 
 import { dbMock } from '~/__tests__/mocks';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { withBlockScope, type BlockScopedNextApiRequest } from '../block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 
@@ -75,6 +76,7 @@ async function drive(bearer: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setEnv({ APP_BLOCK_OAUTH_TOKENS_ENABLED: true });
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
   dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
     id: APP_BLOCK_ID,
@@ -112,6 +114,16 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       appId: CLIENT_ID,
       status: 'approved',
     });
+  });
+
+  it('does not even look at an opaque bearer while the flag is off', async () => {
+    setEnv({ APP_BLOCK_OAUTH_TOKENS_ENABLED: false });
+
+    const { handler, claims } = await drive('civ_oauth_token');
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(claims).toBeUndefined();
+    expect(sessionMock).not.toHaveBeenCalled();
   });
 
   it('never elevates a personal API key to block claims', async () => {

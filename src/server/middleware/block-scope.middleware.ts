@@ -1079,7 +1079,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
 
     const claims = isJwt
       ? await verifyBlockToken(bearer)
-      : await resolveHubTokenClaims(bearer, req);
+      : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await resolveHubTokenClaims(bearer, req)
+      : null;
     if (!claims) {
       if (!isJwt) return handler(req, res);
       res.status(401).json({ error: 'invalid block token' });

@@ -3189,7 +3189,10 @@ export const blocksRouter = router({
           ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
           : {}),
       });
-      if ((block.manifest as { auth?: unknown }).auth === 'oauth') {
+      if (
+        env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
+        (block.manifest as { auth?: unknown }).auth === 'oauth'
+      ) {
         const { syncOauthConsentFromGrant } = await import(
           '~/server/services/blocks/oauth-consent-sync.service'
         );
