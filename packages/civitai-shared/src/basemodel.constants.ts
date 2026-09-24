@@ -990,6 +990,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ernie',
   'Lens',
   'HiDream-O1',
+  'Ming',
   // SdCppImageGenInput
   'ZImageTurbo',
   'ZImageBase',
@@ -1058,6 +1059,7 @@ const sdxlSiblingAddonTypes = [
 ];
 
 export const ecosystemSupport: EcosystemSupport[] = [
+  { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
   // SD1 - full addon support
   { ecosystemId: ECO.SD1, supportType: 'generation', modelTypes: fullAddonTypes },
   { ecosystemId: ECO.SD1, supportType: 'training', modelTypes: loraOnly },
@@ -1298,6 +1300,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 // =============================================================================
 
 export const ecosystemSettings: EcosystemSettings[] = [
+  { ecosystemId: ECO.Ming, defaults: { modelLocked: true, engine: 'comfy' } },
   {
     ecosystemId: ECO.SD1,
     defaults: {
