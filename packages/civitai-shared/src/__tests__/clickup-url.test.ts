@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clickupTaskIdFromUrl } from '../clickup-url';
+import { clickupTaskIdFromUrl, isClickupTaskUrl } from '../clickup-url';
 
 /**
  * The ONE parser two apps share. The main app's ClickUp webhook uses it to decide WHICH board entry
@@ -69,14 +69,59 @@ describe('clickupTaskIdFromUrl', () => {
   /**
    * ⚠️ NOT A URL PARSER, AND THE TEST SAYS SO RATHER THAN LEAVING IT TO BE DISCOVERED. It takes the
    * last path-ish segment of whatever it is handed, so a bare id and a non-ClickUp host both parse.
-   * That is deliberate — the webhook receives ids, not URLs — and it means "parses" must never be
-   * read as "is a ClickUp link".
+   * That is deliberate — this function READS values that already exist, including rows other tools
+   * wrote, and tightening it would stop matching links that work today.
+   *
+   * 🔴 It is ALSO why it must never be used as an INPUT gate. `isClickupTaskUrl` below is that
+   * gate, and the pair of expectations in each of these two cases is the whole point: the matcher
+   * accepts, the gate refuses.
    */
-  it('accepts a bare id, because the matcher compares ids rather than URLs', () => {
+  it('accepts a bare id for MATCHING, which the input gate refuses', () => {
     expect(clickupTaskIdFromUrl('868kfwm3j')).toBe('868kfwm3j');
+    expect(isClickupTaskUrl('868kfwm3j')).toBe(false);
   });
 
-  it('accepts a foreign host, which is why callers cannot treat this as host validation', () => {
+  it('accepts a foreign host for MATCHING, which the input gate refuses', () => {
     expect(clickupTaskIdFromUrl('https://example.com/t/868kfwm3j')).toBe('868kfwm3j');
+    expect(isClickupTaskUrl('https://example.com/t/868kfwm3j')).toBe(false);
+  });
+});
+
+/**
+ * The INPUT gate. It exists because the matcher above is deliberately permissive, and a new write
+ * path that inherited that permissiveness would be LOOSER than the board's own create form, which
+ * has always required `z.url()` on this column.
+ */
+describe('isClickupTaskUrl', () => {
+  it.each([
+    ['the canonical task URL', 'https://app.clickup.com/t/8459928/868kfwm3j'],
+    ['the short task URL', 'https://app.clickup.com/t/868kfwm3j'],
+    ['a custom task id', 'https://app.clickup.com/t/8459928/DEV-1234'],
+    ['a query string', 'https://app.clickup.com/t/868kfwm3j?comment=1'],
+    ['a fragment', 'https://app.clickup.com/t/868kfwm3j#activity'],
+    ['a trailing slash', 'https://app.clickup.com/t/868kfwm3j/'],
+    ['the apex host', 'https://clickup.com/t/868kfwm3j'],
+    ['a mixed-case host, which URL parsing normalises', 'https://App.ClickUp.com/t/868kfwm3j'],
+  ])('accepts %s', (_label, input) => {
+    expect(isClickupTaskUrl(input)).toBe(true);
+  });
+
+  /**
+   * 🔴 THE REFUSALS ARE WHAT THIS FUNCTION IS FOR. The first two are the cases the matcher accepts
+   * and the board's `z.url()` would have rejected — i.e. the regression this gate exists to stop.
+   */
+  it.each([
+    ['a bare task id', '868kfwm3j'],
+    ['a look-alike host', 'https://example.com/t/868kfwm3j'],
+    ['a host merely ENDING in the real one', 'https://evil-app.clickup.com.attacker.test/t/x'],
+    ['a ClickUp URL that is not a task link', 'https://app.clickup.com/868kfwm3j'],
+    ['a ClickUp origin with no task', 'https://app.clickup.com/'],
+    ['a non-http scheme', 'javascript:alert(1)//app.clickup.com/t/x'],
+    ['empty', ''],
+    ['undefined', undefined],
+    ['null', null],
+    ['prose', 'see the clickup task'],
+  ])('refuses %s', (_label, input) => {
+    expect(isClickupTaskUrl(input)).toBe(false);
   });
 });

@@ -234,15 +234,25 @@
                `clickupUrl` holds the id of the task that completed. An entry created here with the
                box left blank has no link to match, so it never auto-closes and someone has to
                notice by hand — which is the state every issue promoted from a report has been in
-               until now. Filling it in is what puts the report on the same footing as an issue
-               raised directly on the board.
+               until now.
 
-               🔴 The server REFUSES a URL it cannot read a task id out of, rather than storing it.
-               A link that looks right on screen but does not parse is the failure this box exists
-               to prevent, and it is completely silent: the entry would sit there looking linked. -->
+               🔴 THE COPY NAMES THE SYNCED LIST, AND MUST KEEP NAMING IT. The webhook subscription
+               is scoped to ONE ClickUp list, so a well-formed task URL from any other list stores
+               fine and still never auto-closes. An unconditional "paste it and it closes itself"
+               is FALSE for every task outside that list, and no server-side guard can catch it —
+               checking list membership needs a ClickUp API token this app does not have. The
+               sentence is the only thing standing between a moderator and a silent non-closure.
+
+               🔴 AND THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the
+               link on the issue board afterwards needs `bugsEdit`, which is a per-user grant and
+               NOT conferred by `isModerator`: 3 of 24 moderators hold it. For the other 21 this
+               box is the only chance to link the task, ever, which is why the sentence says "may
+               not be able to" rather than offering the board as a general second chance. -->
           <p class="text-xs text-dark-2">
-            Paste it and the issue closes itself when the task is completed. Leave it blank and it
-            will not — you can add it on the issue board later.
+            If the task is on the synced team list, pasting its URL lets the issue close itself when
+            the task is completed. A task on any other list will not auto-close. Leave it blank and
+            the issue never auto-closes — and unless you have issue-board edit access, you may not
+            be able to add the link afterwards.
           </p>
         </div>
       {/if}

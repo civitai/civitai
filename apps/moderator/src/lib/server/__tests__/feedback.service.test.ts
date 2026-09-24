@@ -152,7 +152,6 @@ describe('triageFeedback', () => {
       id,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -179,7 +178,6 @@ describe('triageFeedback', () => {
       id: first,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -203,7 +201,6 @@ describe('triageFeedback', () => {
       id,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -265,7 +262,6 @@ describe('promoteFeedbackToBug', () => {
       id,
       title: 'Sort resets on back',
       summary: 'The store loses ?sort on Back.',
-      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -330,15 +326,23 @@ describe('promoteFeedbackToBug', () => {
    * The other half, and it is not the same test: a promotion with no task linked must leave the
    * column NULL rather than an empty string, so "no task" has one spelling on the column the
    * webhook reads.
+   *
+   * 🔴 BOTH SPELLINGS OF "NO TASK", because the parameter is OPTIONAL and they reach the column
+   * by different routes — omitted goes through the `?? null` default, explicit null does not. A
+   * default that stopped applying would leave `undefined` heading for a NOT NULL-less column and
+   * only the omitted case would catch it.
    */
-  it('leaves the ClickUp column NULL when no task was linked', async () => {
+  it.each([
+    ['omitted entirely', {}],
+    ['passed as an explicit null', { clickupUrl: null }],
+  ])('leaves the ClickUp column NULL when the task link is %s', async (_label, extra) => {
     const id = await seedFeedback(db, { userId: reporter });
 
     await service.promoteFeedbackToBug({
       id,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
+      ...extra,
       moderatorId: moderator,
     });
 
@@ -356,7 +360,6 @@ describe('promoteFeedbackToBug', () => {
       id,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -364,7 +367,6 @@ describe('promoteFeedbackToBug', () => {
       id,
       title: 'a second one',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -382,7 +384,6 @@ describe('promoteFeedbackToBug', () => {
       id: 9999,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
 
@@ -399,7 +400,6 @@ describe('linkFeedbackToBug', () => {
       id: first,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the first promotion should have succeeded');
@@ -421,7 +421,6 @@ describe('linkFeedbackToBug', () => {
       id,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -600,7 +599,6 @@ describe('reads', () => {
       id: first,
       title: 'a',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');
@@ -623,7 +621,6 @@ describe('reads', () => {
       id,
       title: 'Sort resets',
       summary: 'b',
-      clickupUrl: null,
       moderatorId: moderator,
     });
     if (!promoted.ok) throw new Error('the promotion should have succeeded');

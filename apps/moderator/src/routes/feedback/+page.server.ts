@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
-import { clickupTaskIdFromUrl } from '@civitai/shared/clickup-url';
+import { isClickupTaskUrl } from '@civitai/shared/clickup-url';
 import { env } from '$env/dynamic/public';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
@@ -343,13 +343,22 @@ export const actions: Actions = {
      * NOWHERE — no error, no log, just an issue that stays open forever — so the only place it can
      * be caught is here, while the person who pasted it is still looking at the form.
      *
-     * Blank stays blank: the box is optional, and `clickupTaskIdFromUrl` already reads '' as null.
+     * 🔴 `isClickupTaskUrl`, NOT `clickupTaskIdFromUrl`. The matcher is deliberately permissive
+     * because it READS rows other tools wrote, and gating on it would have made this — the first
+     * path that can write this column from the moderator queue — looser than the board's own create
+     * form, which requires `z.url()`. A bare id and a foreign host both satisfy the matcher.
+     *
+     * ⚠️ This checks the URL's SHAPE and cannot check the webhook's SCOPE: the subscription covers
+     * one ClickUp list, so a well-formed task URL from any other list stores fine and still never
+     * auto-closes. The form copy says so; this guard must not be read as covering it.
+     *
+     * Blank stays blank: the box is optional, and both functions read '' as absent.
      */
     const clickupUrl = input.clickupUrl || '';
-    if (clickupUrl && !clickupTaskIdFromUrl(clickupUrl))
+    if (clickupUrl && !isClickupTaskUrl(clickupUrl))
       return fail(400, {
         error:
-          'That does not look like a ClickUp task URL — it needs to end in the task id, like https://app.clickup.com/t/868kfwm3j.',
+          'That does not look like a ClickUp task link — paste the task URL from ClickUp, like https://app.clickup.com/t/868kfwm3j.',
       });
 
     const promoted = await promoteFeedbackToBug({

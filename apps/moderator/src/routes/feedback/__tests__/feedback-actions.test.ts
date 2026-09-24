@@ -531,19 +531,19 @@ describe('promote action', () => {
    * just never closes itself, with no error anywhere. The moment it is typed is the only point at
    * which a human is present to fix it.
    */
-  it('refuses a URL the completion webhook could never match, without inserting anything', async () => {
+  it.each([
+    ['a ClickUp origin with no task segment', 'https://app.clickup.com/'],
+    // 🔴 The two the MATCHER accepts. Gating on `clickupTaskIdFromUrl` would let both through and
+    // make this path looser than the board's own create form, which requires `z.url()`.
+    ['a bare task id', '868kfwm3j'],
+    ['a look-alike host', 'https://example.com/t/868kfwm3j'],
+  ])('refuses %s, without inserting anything', async (_label, clickupUrl) => {
     const result = await actions.promote(
-      event({
-        id: '5',
-        mode: 'create',
-        title: 't',
-        summary: 's',
-        clickupUrl: 'https://app.clickup.com/',
-      })
+      event({ id: '5', mode: 'create', title: 't', summary: 's', clickupUrl })
     );
 
     expect(failure(result).status).toBe(400);
-    expect(failure(result).error).toMatch(/ClickUp task URL/);
+    expect(failure(result).error).toMatch(/ClickUp task link/);
     expect(promoteFeedbackToBug).not.toHaveBeenCalled();
   });
 
