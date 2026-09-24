@@ -143,6 +143,21 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // match cannot silently swallow a future sibling route.
   if (endpoint === '/api/v1/blocks/app-storage/set') return 'Wrote app-local storage (API)';
   if (endpoint === '/api/v1/blocks/app-storage/delete') return 'Deleted app-local storage (API)';
+  // The REST per-viewer checkpoint override write. It declares NO `requiredScope`
+  // (matching the bridge, which enforces no block scope on this write), so its
+  // access row carries the `'(any-token)'` sentinel — a scope that is in NEITHER
+  // label map. WITHOUT this arm the row falls all the way through and renders the
+  // literal string `(any-token)` to the viewer: the app-storage failure in its
+  // worst form, not a wrong label but a meaningless one.
+  //
+  // Same TWO-ROW shape as the app-storage writes above, and the same reason for the
+  // '(API)' suffix: the shared body writes its own richer row
+  // (`endpoint: 'user-settings:write'`, carrying `detail.action`) which the table
+  // renders through `describeBlockAction`, and `withBlockScope` then writes the
+  // access row for the HTTP call itself. The bridge produces only the first, so
+  // identical text would render one action as two identical entries.
+  if (endpoint === '/api/v1/blocks/user-checkpoint/set')
+    return 'Saved your checkpoint choice (API)';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   // Prefix (not `===`) so BOTH the bounded template written today
   // (`storage:set`) and the historical per-key value (`storage:set:<key>`)

@@ -199,6 +199,13 @@ export type AppBlockEndpoint =
   | 'app_storage_delete'
   | 'app_storage_list'
   | 'app_storage_quota'
+  // The per-viewer checkpoint override write — the REST twin of the
+  // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
+  // into a settings-shaped bucket: it is the only REST route that writes
+  // `block_user_settings`, and its error rate is how "viewers cannot pin a
+  // checkpoint right now" becomes visible — a product question an operator
+  // asks on its own, not one to read out of a shared series.
+  | 'user_checkpoint_set'
   // The per-viewer GATED image read (`/api/v1/blocks/gated-images`) — the v1
   // replacement for the `GET_IMAGES_BY_IDS` bridge message. Its OWN label rather
   // than folding into 'images', because the two share a noun and nothing else:

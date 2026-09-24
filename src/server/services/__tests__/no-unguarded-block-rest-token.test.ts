@@ -234,6 +234,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'DELETEs the viewer’s own shared_kv row, cascading away its votes, counter and reports. The most destructive route on the whole shared surface: what it removes cannot be reconstructed from anything left behind, so a suspended app left reachable here could erase a user’s published history in a loop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
+  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
+  },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
@@ -1336,6 +1340,12 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
+    // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
+    // suspended app reaching it keeps steering which Checkpoint a signed-in
+    // viewer's future generations anchor to, and the row it writes OUTLIVES the
+    // takedown — `resolveBlockCheckpoint` consults the viewer override ahead of
+    // the publisher's own default on every subsequent submit.
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
     // The five workflow routes. `submit.ts` is the second SPEND route this table
     // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
     // opt out: a suspended app reaching any of them keeps spending, stopping or

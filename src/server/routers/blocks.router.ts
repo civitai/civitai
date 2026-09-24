@@ -109,7 +109,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
-  isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
@@ -125,11 +124,11 @@ import {
   getMyAppAnalytics,
   resolveRange,
 } from '~/server/services/blocks/app-analytics.service';
-import {
-  getRepresentativeBaseModel,
-  resolveBlockCheckpoint,
-  validateBlockCheckpoint,
-} from '~/server/services/blocks/checkpoint.service';
+import { resolveBlockCheckpoint } from '~/server/services/blocks/checkpoint.service';
+// The viewer-settings write body, shared verbatim with its REST twin
+// `POST /api/v1/blocks/user-checkpoint/set`. `getRepresentativeBaseModel` and
+// `validateBlockCheckpoint` moved WITH it and are no longer reached from this file.
+import { updateBlockUserSettingsFromClaims } from '~/server/services/blocks/user-settings.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   computeListingProblems,
@@ -324,83 +323,22 @@ const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
 });
 
 /**
- * AUTHORING gate — the `appBlocksAuthor` capability (Flipt `app-blocks-author`,
- * static fallback mod-only), asserted against a BLOCK-TOKEN-resolved subject.
+ * 🔴 THE AUTHORING GATE `assertViewerIsAppDeveloper` NO LONGER LIVES IN THIS FILE.
  *
- * 🔴 EXACTLY ONE CALL SITE REMAINS: `updateUserSettings`. Read that as the whole
- * scope of this function, because it used to be fifteen.
+ * It moved to `~/server/services/blocks/user-settings.service.ts` when the viewer-settings
+ * write was extracted there to be shared with its REST twin
+ * (`POST /api/v1/blocks/user-checkpoint/set`). That write was its LAST call site in this
+ * router — the docblock here used to say "EXACTLY ONE CALL SITE REMAINS: updateUserSettings"
+ * — so leaving a copy behind would have been a second spelling of an AUTHZ gate, which is
+ * the duplication that made this gate wrong on 14 procs in the first place.
  *
- * WHY IT SHRANK. This is an AUTHORING capability, and it was standing in front of
- * RUNTIME procedures — generate, estimate, poll, cancel, read-my-balance,
- * read-my-viewer. The effect was that a user who was not an app AUTHOR could not
- * USE an app at all, which is not what an authoring capability is for and which
- * blocked the whole non-author cohort. The platform enforces the user's own
- * SCOPE GRANTS on those paths instead (`claims.scopes.includes(...)`, plus the
- * per-(user, app) consent budget) — consent is the right authority for "may this
- * app act on my behalf", and it is per-user rather than per-cohort.
- *
- * 🔴 THE REMAINING SITE IS A DELIBERATE EXCEPTION, NOT AN OVERSIGHT — do not
- * "unify" it. `updateUserSettings` writes the block INSTALL's persisted settings,
- * which is an authoring/publishing-shaped action rather than a runtime one, and
- * no block scope expresses it.
- *
- * These procs are `publicProcedure` authenticated by a block JWT that resolves to
- * a viewer userId rather than `ctx.user`, so the `appDeveloperProcedure`
- * middleware cannot gate them — hence the explicit re-assert here.
- *
- * Hydrates the subject IDENTICALLY to `assertAppBlocksEnabledForTokenUser` (the
- * enabled kill-switch that runs right before this) — `sessionClient
- * .getSessionUserById`, the authoritative hub-backed resolver, never a
- * client-supplied value — so `buildFliptContext` sees the subject's real
- * isModerator/tier and the mod floor / segment match can't be spoofed.
- *
- * 🔴 A VANISHED SUBJECT IS REFUSED BEFORE THE CAPABILITY IS EVALUATED. This
- * docblock used to say "a vanished user → undefined → no mod floor + global eval
- * (never matches a segment) → FORBIDDEN (fail-closed)", and that derivation was
- * wrong: a no-user eval cannot match a segment, but its answer is the flag's own
- * base `enabled` value, so a base-`enabled: true` widening of
- * `app-blocks-author` would have turned an unresolvable subject into a PASS on an
- * AUTHZ gate. The refusal is now structural — no subject, no capability, no Flipt
- * call — which is the same shape `apps.router.ts` already uses for its own
- * `assertViewerIsAppDeveloper`. It is not optional politeness: `user` is a
- * REQUIRED, non-nullable parameter of `isAppBlocksAuthorEnabled`, so this narrowing
- * is what makes the next line compile, and deleting it is a type error rather than
- * a silent re-opening. Mechanism + the measurement: see GLOBAL-EVAL SEMANTICS in
- * `app-blocks-flag.ts`.
- *
- * 🔴 Unlike its sibling `assertAppBlocksEnabledForTokenUser`, this refusal is NOT on
- * the compiled-branch watchlist, and that is measured rather than assumed: losing it
- * cannot silently re-open anything, because `isAppBlocksAuthorEnabled` takes a
- * non-nullable subject and dereferences it immediately, so a dropped guard yields a
- * `TypeError` (a 500) rather than a pass. The enabled gate's guard IS watchlisted,
- * because losing THAT one falls through to a global eval returning the flag's base
- * value. Its message text differs from this one's on purpose — two different
- * conditions, and an identical string under a different code is not separable in a
- * log. Both are also distinct APP-WIDE, which is the level that actually matters to
- * an operator: the kill-switch one was byte-identical to `apps.router.ts`'s
- * structurally-identical refusal until it was renamed to `'runtime block token
- * subject could not be resolved'`. If you add a fourth refusal of this shape, give
- * it text no other one uses — and note that this one doubles as a watchlist anchor.
- *
- * This is the AUTHZ half only; the `isAppBlocksEnabled` kill-switch
- * (`assertAppBlocksEnabledForTokenUser`) still runs first and is unchanged — it
- * is the kill-switch and it stays on EVERY block-token proc.
+ * Its full reasoning moved WITH it: why an authoring capability stopped gating the RUNTIME
+ * procedures (it blocked the entire non-author cohort from USING an app, and the platform
+ * enforces per-user SCOPE GRANTS there instead), why this one write is a deliberate
+ * exception rather than an oversight, and why an unhydratable subject is refused
+ * structurally before the capability is evaluated. Read it there before changing it, and do
+ * not re-add a copy here.
  */
-async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
-  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  if (!user) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'app-authoring subject could not be resolved',
-    });
-  }
-  if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Apps authoring is not enabled for this account',
-    });
-  }
-}
 
 /**
  * THE app-authoring access gate for this router's four owner-scoped procs
@@ -7107,143 +7045,52 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Persist a viewer's per-block-instance settings (currently just the
-   * checkpoint override). Gated on the block JWT — anon viewers don't get
-   * an override because there's no user row to key on. Setting
-   * `checkpoint_version_id: null` clears the override and falls back to
-   * the publisher default at next resolveBlockCheckpoint call.
+   * Persist a viewer's per-block-instance settings (currently just the checkpoint
+   * override) — the BRIDGE transport's entry point. `IframeHost` drives it from the
+   * `SET_USER_CHECKPOINT` → `USER_CHECKPOINT_SET` message pair.
    *
-   * Re-validates the checkpoint at write-time (ecosystem match etc.) so
-   * the persisted value is never something resolveBlockCheckpoint will
-   * later reject — the client gets a structured error inline instead of
-   * a "your saved override is invalid" failure at next generate.
+   * 🔴 THE BODY LIVES IN `user-settings.service.ts` AND IS SHARED WITH REST. This
+   * procedure parses the wire shape, takes the guard, and delegates. The REST twin
+   * `POST /api/v1/blocks/user-checkpoint/set` reaches the SAME body, so the two
+   * transports cannot disagree about the same viewer's setting — in particular about the
+   * model-bound `(block_instance_id, user_id)` keying, both halves of which the shared
+   * body takes from the VERIFIED TOKEN rather than from either wire format.
+   *
+   * Every gate that used to be spelled inline here — the anon refusal, the token-subject
+   * flag gate, the `assertViewerIsAppDeveloper` authoring exception, the hard
+   * modelId/slotId ctx requirement, the install re-resolution, the manifest filter, the
+   * write-time ecosystem re-validation, the audit row, and the deliberate absence of a
+   * rate limit — now lives there, once. Read that module's docblock before changing this.
+   *
+   * 🔴 THE `authorizeBlockBridgeToken` CALL STAYS IN THIS FILE ON PURPOSE, and passing
+   * claims onward is not an accident of style. `no-unguarded-block-bridge-token.test.ts`
+   * computes reachability TEXTUALLY within this router, so a proc that reached the guard
+   * only through an imported helper would read as UNGUARDED. Do not "simplify" this into
+   * a single `updateBlockUserSettings({ blockToken })` call — that turns the guard red.
    */
   updateUserSettings: publicProcedure
-    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
-    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
+    // Block-JWT-authed — this is a `publicProcedure` and dev:live carries no session, so
+    // its ctx has no user to evaluate a flag against. The App-Blocks flag is therefore
+    // evaluated against the TOKEN SUBJECT inside the shared body rather than by the
+    // `enforceAppBlocksFlag` middleware. Reason stated in full on that body; note it is
+    // NOT the general claim "ctx.user is undefined on a block-token transport", which
+    // #5087 records as refuted by `blockFliptUser`.
     .input(
       z.object({
         blockToken: z.string().min(1),
         // W3 v0 — accept any record; the manifest declaration is the
         // contract. Server-side validation is keyed on the appBlock's
-        // manifest fetched below, not a per-block-id zod schema. Generic
-        // settingsSchema enforces the 4KB / JSON-safety cap.
+        // manifest fetched in the shared body, not a per-block-id zod schema.
+        // Generic settingsSchema enforces the 4KB / JSON-safety cap.
+        //
+        // The REST twin deliberately does NOT reuse this shape: it accepts one bounded
+        // scalar (`versionId`), so it has no blob to cap and no second copy of this bound.
         settings: settingsSchema,
       })
     )
     .mutation(async ({ input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'anon viewers cannot persist block settings',
-        });
-      }
-      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
-      await assertAppBlocksEnabledForTokenUser(userId);
-      // RATE LIMIT: NONE, DELIBERATELY — the same reversal as `listMyWorkflows`, and
-      // the same tell. #569 added a catalog limit here whose stated justification was
-      // that the cadence is "a viewer changing a dropdown — single digits per session —
-      // against a ceiling of 120/10 s, so the margin is several orders of magnitude".
-      // That sentence argues against the limit it introduces. Removed in the round-0
-      // audit round.
-      //
-      // WHAT BOUNDS IT INSTEAD, and it is more than the read above has: this is a
-      // developer-only surface — `assertViewerIsAppDeveloper` below gates every call —
-      // the payload is capped by `settingsSchema` (4KB, JSON-safe), the write is a
-      // single upsert on a resolved install, and the fields that survive are filtered
-      // against the app block's own manifest. A block cannot make this call do more
-      // work by calling it differently.
-      await assertViewerIsAppDeveloper(userId);
-      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
-      if (!Number.isInteger(ctxModelId)) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
-      }
-      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
-      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
-      }
-
-      // Resolve the install (or synthetic source row) so we can pull the
-      // app block's manifest + scopes for the validator. Re-validation of
-      // the (modelId, slotId, viewer) tuple is handled inside
-      // resolveBlockInstance — synthetic ids fail-closed without it.
-      const resolved = await BlockRegistry.resolveBlockInstance({
-        blockInstanceId: claims.blockInstanceId,
-        modelId: ctxModelId,
-        slotId: ctxSlotId,
-        viewerUserId: userId,
-        db: 'read',
-      });
-      if (!resolved) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Block install not found' });
-      }
-
-      // Manifest-driven shape validation. Wrong-scope fields are silently
-      // skipped, so a viewer payload that accidentally includes publisher
-      // keys just drops them rather than failing the whole call.
-      const parsedManifestSettings = manifestSettingsSchema.safeParse(
-        (resolved.appBlock.manifest as Record<string, unknown>).settings ?? {}
-      );
-      const validatedSettings = parsedManifestSettings.success
-        ? validateBlockSettings({
-            manifestSettings: parsedManifestSettings.data,
-            inputSettings: input.settings,
-            declaredScopes: resolved.appBlock.approvedScopes,
-            forScope: 'viewer',
-          })
-        : input.settings;
-
-      // Cross-row validation for the resource_picker → checkpoint case
-      // (same known field name pattern as the publisher path in
-      // block-registry.validateInstallSettings). Skip when explicitly
-      // clearing (`null`) — that's just dropping the override.
-      if (typeof validatedSettings.checkpoint_version_id === 'number') {
-        const baseModel = await getRepresentativeBaseModel(ctxModelId);
-        if (!baseModel) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'cannot determine base model for the bound install',
-          });
-        }
-        await validateBlockCheckpoint({
-          checkpointVersionId: validatedSettings.checkpoint_version_id,
-          forBaseModel: baseModel,
-          reason: 'viewer-override',
-        });
-      }
-
-      await BlockRegistry.upsertUserSettings({
-        blockInstanceId: claims.blockInstanceId,
-        userId,
-        settings: validatedSettings,
-      });
-
-      // Audit — log every viewer-settings write (including checkpoint pin
-      // swaps via SET_CHECKPOINT) to the activity feed. Fire-and-forget.
-      void (async () => {
-        const { recordScopeInvocation } = await import(
-          '~/server/services/blocks/user-app-surface.service'
-        );
-        await recordScopeInvocation({
-          userId,
-          appBlockId: claims.appBlockId,
-          blockInstanceId: claims.blockInstanceId,
-          // This write is authorized by valid-token + app-developer + installer
-          // resolution above — NOT by a token block-scope. The audit row must not
-          // assert a scope that was never checked, so it labels the ACTION itself
-          // (matching `endpoint`) rather than claiming a `block:settings:write`
-          // scope (that scope was decorative/unenforced and has been removed).
-          scope: 'user-settings:write',
-          endpoint: 'user-settings:write',
-          statusCode: 200,
-          // W13 richer detail — structured code for the render-time sentence.
-          detail: { action: 'settings.update', outcome: 'ok' },
-        });
-      })().catch(() => {});
-
-      return { ok: true };
+      return updateBlockUserSettingsFromClaims({ claims, settings: input.settings });
     }),
 
   /**

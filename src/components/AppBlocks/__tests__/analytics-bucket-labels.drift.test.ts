@@ -33,6 +33,13 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const WRITER_FILES = [
   'src/server/routers/blocks.router.ts',
   'src/server/services/apps/app-storage.service.ts',
+  // The viewer-settings write body, EXTRACTED from `blocks.router.ts` when it grew a REST
+  // twin (`POST /api/v1/blocks/user-checkpoint/set`). The `user-settings:write` literal
+  // moved WITH it, and that move is exactly the drift this guard exists to notice: both
+  // checks below went red on it — the pinned literal set lost an entry whose label is
+  // still rendered, and the writer-file set gained a file — and neither was a false
+  // alarm. Same extract-to-a-service shape `app-storage.service.ts` above is here for.
+  'src/server/services/blocks/user-settings.service.ts',
 ];
 
 /** Repo-relative paths of files under `dir` whose contents match `re`. */
