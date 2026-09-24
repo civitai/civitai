@@ -640,13 +640,16 @@ describe('block targets resolve from the primary, where the guarded write lands'
     }
   );
 
-  // Image reactions are ~650k writes a day, and the replica answers nearly all of them. Only a miss
-  // may cost a primary read: reading the primary first puts every reaction on it.
-  it('an image the replica already has costs no primary read', async () => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ userId: OWNER } as never);
-    expect(await getBlockCheckOwnerIds({ entityType: 'image', entityId: IMAGE })).toEqual([OWNER]);
-    expect(mockDb.image.findUnique).not.toHaveBeenCalled();
-  });
+  // Reactions on these are the highest-volume writes this guards, and the replica answers nearly all
+  // of them. Only a miss may cost a primary read: reading the primary first puts every one on it.
+  it.each(['image', 'post', 'article'] as const)(
+    'a %s the replica already has costs no primary read',
+    async (entityType) => {
+      dbMock.dbRead[entityType].findUnique.mockResolvedValue({ userId: OWNER } as never);
+      expect(await getBlockCheckOwnerIds({ entityType, entityId: IMAGE })).toEqual([OWNER]);
+      expect(mockDb[entityType].findUnique).not.toHaveBeenCalled();
+    }
+  );
 
   // Reactions share the reply's lookup, so a reaction on a comment that does not exist is refused
   // too, rather than reaching the write.
