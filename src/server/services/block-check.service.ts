@@ -4,7 +4,7 @@ import {
   threadIsRooted,
   UNRESOLVED_THREAD_CHAIN_MESSAGE,
 } from '~/server/common/thread-chain';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -16,6 +16,10 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
  * `getBlockCheckOwnerIds` until an owner is resolved for it.
  */
 export type BlockCheckEntityType = CommentConnectorInput['entityType'] | ReactionEntityType;
+
+// Every lookup here guards a write that lands on the primary. On the replica a row written moments
+// ago is not there yet, and a target that resolves no owner is allowed through.
+const guardDb = dbWrite;
 
 // Must list EVERY owner-bearing FK on `Thread`. A column missing here resolves no
 // root owner for replies in that kind of thread, silently skipping the block.
@@ -59,36 +63,43 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
   if (!thread) return undefined;
   if (thread.imageId)
     return (
-      await dbRead.image.findUnique({ where: { id: thread.imageId }, select: { userId: true } })
+      await guardDb.image.findUnique({ where: { id: thread.imageId }, select: { userId: true } })
     )?.userId;
   if (thread.postId)
     return (
-      await dbRead.post.findUnique({ where: { id: thread.postId }, select: { userId: true } })
+      await guardDb.post.findUnique({ where: { id: thread.postId }, select: { userId: true } })
     )?.userId;
   if (thread.articleId)
     return (
-      await dbRead.article.findUnique({ where: { id: thread.articleId }, select: { userId: true } })
+      await guardDb.article.findUnique({
+        where: { id: thread.articleId },
+        select: { userId: true },
+      })
     )?.userId;
   if (thread.modelId)
     return (
-      await dbRead.model.findUnique({ where: { id: thread.modelId }, select: { userId: true } })
+      await guardDb.model.findUnique({ where: { id: thread.modelId }, select: { userId: true } })
     )?.userId;
   if (thread.reviewId)
     return (
-      await dbRead.resourceReview.findUnique({
+      await guardDb.resourceReview.findUnique({
         where: { id: thread.reviewId },
         select: { userId: true },
       })
     )?.userId;
   if (thread.bountyId)
     return (
-      (await dbRead.bounty.findUnique({ where: { id: thread.bountyId }, select: { userId: true } }))
-        ?.userId ?? undefined
+      (
+        await guardDb.bounty.findUnique({
+          where: { id: thread.bountyId },
+          select: { userId: true },
+        })
+      )?.userId ?? undefined
     );
   if (thread.bountyEntryId)
     return (
       (
-        await dbRead.bountyEntry.findUnique({
+        await guardDb.bountyEntry.findUnique({
           where: { id: thread.bountyEntryId },
           select: { userId: true },
         })
@@ -96,29 +107,32 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
     );
   if (thread.questionId)
     return (
-      await dbRead.question.findUnique({
+      await guardDb.question.findUnique({
         where: { id: thread.questionId },
         select: { userId: true },
       })
     )?.userId;
   if (thread.answerId)
     return (
-      await dbRead.answer.findUnique({ where: { id: thread.answerId }, select: { userId: true } })
+      await guardDb.answer.findUnique({ where: { id: thread.answerId }, select: { userId: true } })
     )?.userId;
   if (thread.model3dId)
     return (
-      await dbRead.model3D.findUnique({ where: { id: thread.model3dId }, select: { userId: true } })
+      await guardDb.model3D.findUnique({
+        where: { id: thread.model3dId },
+        select: { userId: true },
+      })
     )?.userId;
   if (thread.model3dReviewId)
     return (
-      await dbRead.model3DReview.findUnique({
+      await guardDb.model3DReview.findUnique({
         where: { id: thread.model3dReviewId },
         select: { userId: true },
       })
     )?.userId;
   if (thread.comicProjectId)
     return (
-      await dbRead.comicProject.findUnique({
+      await guardDb.comicProject.findUnique({
         where: { id: thread.comicProjectId },
         select: { userId: true },
       })
@@ -126,7 +140,7 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
   if (thread.challengeId)
     return (
       (
-        await dbRead.challenge.findUnique({
+        await guardDb.challenge.findUnique({
           where: { id: thread.challengeId },
           select: { createdById: true },
         })
@@ -134,7 +148,7 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
     );
   if (thread.appListingId)
     return (
-      await dbRead.appListing.findUnique({
+      await guardDb.appListing.findUnique({
         where: { serialId: thread.appListingId },
         select: { userId: true },
       })
@@ -152,14 +166,14 @@ type RootOwner = { resolved: false } | { resolved: true; ownerId: number | undef
  * comment, or the depth cap. What that means is the caller's decision.
  */
 async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
-  const [top] = await dbRead.$queryRaw<{ id: number; rooted: boolean }[]>`
+  const [top] = await guardDb.$queryRaw<{ id: number; rooted: boolean }[]>`
     ${Prisma.raw(muteableThreadsCte(String(Number(threadId))))}
     SELECT top."id", ${threadIsRooted('th')} "rooted"
     FROM (SELECT mt."id" FROM muteable_threads mt ORDER BY mt."depth" DESC LIMIT 1) top
     JOIN "Thread" th ON th.id = top."id"
   `;
   if (!top?.rooted) return { resolved: false };
-  const rootThread = await dbRead.thread.findUnique({
+  const rootThread = await guardDb.thread.findUnique({
     where: { id: top.id },
     select: threadContentSelect,
   });
@@ -172,7 +186,7 @@ async function rootOwnerOfThread(threadId: number): Promise<RootOwner> {
  * An unresolved chain has no owner, which leaves the comment to moderators.
  */
 export async function getContentOwnerIdForComment(commentId: number) {
-  const comment = await dbRead.commentV2.findUnique({
+  const comment = await guardDb.commentV2.findUnique({
     where: { id: commentId },
     select: { hidden: true, threadId: true },
   });
@@ -192,11 +206,11 @@ async function ownersForCommentV2(
   commentId: number,
   onUnresolved: 'refuse' | 'authorOnly'
 ): Promise<number[]> {
-  const comment = await dbRead.commentV2.findUnique({
+  const comment = await guardDb.commentV2.findUnique({
     where: { id: commentId },
     select: { userId: true, threadId: true },
   });
-  if (!comment) return [];
+  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
   const ids = new Set<number>([comment.userId]);
   const root = await rootOwnerOfThread(comment.threadId);
   if (!root.resolved && onUnresolved === 'refuse')
@@ -223,11 +237,11 @@ export async function getBlockCheckOwnerIdsForReply(parentCommentId: number): Pr
  * back among them — `throwIfBlockedByOwners` skips self.
  */
 export async function getBlockCheckOwnerIdsForComment(commentId: number): Promise<number[]> {
-  const comment = await dbRead.commentV2.findUnique({
+  const comment = await guardDb.commentV2.findUnique({
     where: { id: commentId },
     select: { threadId: true, thread: { select: { commentId: true } } },
   });
-  if (!comment) return [];
+  if (!comment) throw throwNotFoundError(`No comment with id ${commentId}`);
 
   const root = await rootOwnerOfThread(comment.threadId);
   if (!root.resolved) throw throwBadRequestError(UNRESOLVED_THREAD_CHAIN_MESSAGE);
@@ -235,7 +249,7 @@ export async function getBlockCheckOwnerIdsForComment(commentId: number): Promis
   const ids = new Set<number>();
   const parentCommentId = comment.thread?.commentId;
   if (parentCommentId) {
-    const parent = await dbRead.commentV2.findUnique({
+    const parent = await guardDb.commentV2.findUnique({
       where: { id: parentCommentId },
       select: { userId: true },
     });
@@ -270,7 +284,7 @@ export async function getBlockCheckOwnerIdsForModelComment({
   if (parentId) parentIds.add(parentId);
 
   if (commentId) {
-    const stored = await dbRead.comment.findUnique({
+    const stored = await guardDb.comment.findUnique({
       where: { id: commentId },
       select: { modelId: true, parentId: true },
     });
@@ -303,25 +317,28 @@ export async function getBlockCheckOwnerIds({
 }): Promise<number[]> {
   switch (entityType) {
     case 'image': {
-      const r = await dbRead.image.findUnique({
+      const r = await guardDb.image.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'post': {
-      const r = await dbRead.post.findUnique({ where: { id: entityId }, select: { userId: true } });
+      const r = await guardDb.post.findUnique({
+        where: { id: entityId },
+        select: { userId: true },
+      });
       return r ? [r.userId] : [];
     }
     case 'article': {
-      const r = await dbRead.article.findUnique({
+      const r = await guardDb.article.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'model': {
-      const r = await dbRead.model.findUnique({
+      const r = await guardDb.model.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
@@ -329,35 +346,35 @@ export async function getBlockCheckOwnerIds({
     }
     case 'review':
     case 'resourceReview': {
-      const r = await dbRead.resourceReview.findUnique({
+      const r = await guardDb.resourceReview.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'question': {
-      const r = await dbRead.question.findUnique({
+      const r = await guardDb.question.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'answer': {
-      const r = await dbRead.answer.findUnique({
+      const r = await guardDb.answer.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'bounty': {
-      const r = await dbRead.bounty.findUnique({
+      const r = await guardDb.bounty.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r?.userId ? [r.userId] : [];
     }
     case 'bountyEntry': {
-      const r = await dbRead.bountyEntry.findUnique({
+      const r = await guardDb.bountyEntry.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
@@ -367,7 +384,7 @@ export async function getBlockCheckOwnerIds({
       // Author AND the owner of the model the comment hangs off, mirroring `comment` above. The
       // author alone still let a blocked user interact under a blocker's model, as long as the
       // comment they aimed at belonged to somebody else.
-      const r = await dbRead.comment.findUnique({
+      const r = await guardDb.comment.findUnique({
         where: { id: entityId },
         select: { userId: true, modelId: true },
       });
@@ -378,28 +395,28 @@ export async function getBlockCheckOwnerIds({
       return [...ids];
     }
     case 'model3d': {
-      const r = await dbRead.model3D.findUnique({
+      const r = await guardDb.model3D.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'model3dReview': {
-      const r = await dbRead.model3DReview.findUnique({
+      const r = await guardDb.model3DReview.findUnique({
         where: { id: entityId },
         select: { userId: true },
       });
       return r ? [r.userId] : [];
     }
     case 'comicChapter': {
-      const r = await dbRead.comicChapter.findUnique({
+      const r = await guardDb.comicChapter.findUnique({
         where: { id: entityId },
         select: { project: { select: { userId: true } } },
       });
       return r?.project?.userId ? [r.project.userId] : [];
     }
     case 'challenge': {
-      const r = await dbRead.challenge.findUnique({
+      const r = await guardDb.challenge.findUnique({
         where: { id: entityId },
         select: { createdById: true },
       });
@@ -408,7 +425,7 @@ export async function getBlockCheckOwnerIds({
     case 'appListing': {
       // Threads key off the INTEGER surrogate, so `entityId` here is `serialId`,
       // not the listing's ULID `id`.
-      const r = await dbRead.appListing.findUnique({
+      const r = await guardDb.appListing.findUnique({
         where: { serialId: entityId },
         select: { userId: true },
       });

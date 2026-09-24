@@ -52,7 +52,9 @@ vi.mock('~/server/services/comment.service', () => ({
 import { upsertCommentHandler } from '../comment.controller';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const mockDb = dbMock.dbRead;
+// The guard resolves owners on the primary; the handler's own version-access read is on the replica.
+const guardDb = dbMock.dbWrite;
+const handlerDb = dbMock.dbRead;
 const REQUEST_MODEL_OWNER = 100;
 const STORED_MODEL_OWNER = 101;
 const PARENT_AUTHOR = 55;
@@ -72,11 +74,13 @@ function arrange({ storedComment = false }: { storedComment?: boolean } = {}) {
     [REQUEST_MODEL]: REQUEST_MODEL_OWNER,
     [STORED_MODEL]: STORED_MODEL_OWNER,
   };
-  mockDb.model.findUnique.mockImplementation(async (args: unknown) => {
+  const model = async (args: unknown) => {
     const id = (args as { where: { id: number } }).where.id;
     return modelOwners[id] ? { id, userId: modelOwners[id], modelVersions: [{ id: 1 }] } : null;
-  });
-  mockDb.comment.findUnique.mockImplementation(async (args: unknown) => {
+  };
+  guardDb.model.findUnique.mockImplementation(model);
+  handlerDb.model.findUnique.mockImplementation(model);
+  guardDb.comment.findUnique.mockImplementation(async (args: unknown) => {
     const id = (args as { where: { id: number } }).where.id;
     if (id === PARENT_ID) return { userId: PARENT_AUTHOR, modelId: REQUEST_MODEL };
     // The comment being edited lives on a DIFFERENT model than the request names, so an assertion
