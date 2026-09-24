@@ -272,10 +272,7 @@ describe('the checkpoint-override write is keyed on the VERIFIED TOKEN, not the 
     // the server graph into the browser bundle). That hand-spelling is the one place the two
     // transports could silently disagree about WHICH FIELD they write, which is the same class
     // of divergence the shared body exists to prevent — so it is pinned rather than trusted.
-    const src = readFileSync(
-      join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx'),
-      'utf8'
-    );
+    const src = readFileSync(join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx'), 'utf8');
     expect(src).toContain(`settings: { ${VIEWER_CHECKPOINT_SETTINGS_KEY}: versionId }`);
   });
 });
