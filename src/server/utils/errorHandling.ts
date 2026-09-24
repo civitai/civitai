@@ -418,6 +418,43 @@ export function isUpstreamServerOrNetworkError(args: {
   return false;
 }
 
+// Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
+// SUBSET of isUpstreamNetworkError's set — only true transport faults, no
+// DNS-resolution-style codes.)
+const TRANSPORT_SYSCALL_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+// ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
+// or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
+// overload. Strings, because ClickHouseError.code is a string.
+const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
+
+// Lowercased, anchored patterns for the same syscall codes, for the message-only match in
+// isClickHouseConnectionError.
+//
+// The anchor is load-bearing. A bare `includes` treats these codes as substrings, and
+// ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`, `etimedout`
+// inside `responseTimedOut` (this repo already spells `deadlineTimedOut` in
+// `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a column would
+// otherwise classify as a transport fault and be swallowed. Anchored on non-identifier
+// characters so a token only matches whole: `UND_ERR_SOCKET` must not match inside
+// `some_und_err_socket_thing`.
+const TRANSPORT_SYSCALL_MESSAGE_PATTERNS = [...TRANSPORT_SYSCALL_CODES].map(
+  (code) => new RegExp(`(?:^|[^a-z0-9_])${code.toLowerCase()}(?:$|[^a-z0-9_])`)
+);
+
+// Verbatim prefix and SQL separator that packages/civitai-clickhouse/src/client.ts
+// `$query` builds its rethrow from: `ClickHouse query failed: <original>\nQuery: <sql>`.
+const CH_QUERY_WRAPPER_PREFIX = 'clickhouse query failed:';
+const CH_QUERY_SQL_SEPARATOR = '\nquery:';
+
 /**
  * True ONLY for a TRANSIENT ClickHouse CONNECTION / TRANSPORT failure — the kind
  * that flaps when reaching ClickHouse Cloud (a socket reset / broken pipe / all
@@ -446,38 +483,24 @@ export function isUpstreamServerOrNetworkError(args: {
  *     for — a momentary CH Cloud overload, retryable, NOT a code bug). Query/schema
  *     codes (`60`, `349`, …) are NOT in the set.
  *  3. Our own `$query` wrapper flattens both of the above into a plain
- *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
- *     also string-match the transient signatures in the message (`Code: 279`/`210`/
- *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
- *     `too many simultaneous queries`, and every `TRANSPORT_SYSCALL_CODES` spelling).
- *     The message match is still transient-ONLY — `Code: 60` / `unknown table` never
- *     match.
+ *     `Error('ClickHouse query failed: <original message>\nQuery: <sql>')`, losing
+ *     `.code`, so we also string-match the transient signatures in the message
+ *     (`Code: 279`/`210`/`209`/`202`, `socket hang up`, `broken pipe`, `all connection
+ *     tries failed`, `too many simultaneous queries`, and — under three narrowing rules
+ *     below — every `TRANSPORT_SYSCALL_CODES` spelling).
+ *
+ * 🔴 THE MESSAGE THAT SHAPE 3 MATCHES CONTAINS THE SQL. `$query` appends
+ * `\nQuery: <sql>`, so an unrestricted substring match lets the *query text* decide the
+ * classification — the exact inversion of what this predicate is for. Three narrowing
+ * rules keep shape 3 transient-only; each is documented at the code that applies it, and
+ * each has a case only it rejects in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.
  */
 export function isClickHouseConnectionError(e: unknown): boolean {
-  // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
-  // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
-  // DNS-resolution-style codes.)
-  const TRANSPORT_SYSCALL_CODES = new Set([
-    'ECONNRESET',
-    'EPIPE',
-    'ETIMEDOUT',
-    'ECONNREFUSED',
-    'EHOSTUNREACH',
-    'ENETUNREACH',
-    'UND_ERR_SOCKET',
-    'UND_ERR_CONNECT_TIMEOUT',
-  ]);
-  // ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
-  // or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
-  // overload. Strings, because ClickHouseError.code is a string.
-  const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
-
-  let cur = e as
-    | { name?: string; message?: string; code?: unknown; cause?: unknown }
-    | undefined;
+  let cur = e as { name?: string; message?: string; code?: unknown; cause?: unknown } | undefined;
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
     const code = cur.code;
     if (typeof code === 'string') {
@@ -485,10 +508,19 @@ export function isClickHouseConnectionError(e: unknown): boolean {
       if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
       if (TRANSIENT_CH_CODES.has(code)) return true;
     }
-    const msg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    // `$query` APPENDS THE SQL to the message it throws, so the raw string carries the
+    // query text as well as the failure. Match only the part BEFORE that separator —
+    // otherwise any token appearing in the SQL (a column name, a quoted string literal)
+    // decides the classification, and a `Code: 60` UNKNOWN_TABLE on
+    // `… WHERE tag = 'ECONNRESET'` reads as a transport blip and gets swallowed.
+    const rawMsg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    const sqlAt = rawMsg.indexOf(CH_QUERY_SQL_SEPARATOR);
+    const msg = sqlAt === -1 ? rawMsg : rawMsg.slice(0, sqlAt);
     if (msg) {
       // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
-      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message.
+      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message. Every one
+      // contains a space or a colon, so no identifier can embed them and they need no
+      // anchoring; the truncation above is what keeps them off the SQL.
       if (
         msg.includes('socket hang up') ||
         msg.includes('broken pipe') ||
@@ -504,9 +536,18 @@ export function isClickHouseConnectionError(e: unknown): boolean {
       ) {
         return true;
       }
-      // Reads through $query arrive as a plain Error, so for those the .code branch never fires.
-      for (const code of TRANSPORT_SYSCALL_CODES) {
-        if (msg.includes(code.toLowerCase())) return true;
+      // Reads through $query arrive as a plain Error, so for those the .code branch never
+      // fires and the syscall name survives only as text. Restricted to OUR wrapper's
+      // message: a raw syscall error from any other dependency still carries `.code`, so
+      // nothing is lost — while an unrelated upstream's TEXT (a Redis
+      // `connect ECONNREFUSED` in a bare message) must not be reported as a ClickHouse
+      // brownout, or the fail-soft counter attributes the wrong dependency's outage here.
+      // Scoped to the text route only: an error OBJECT carrying `.code` is matched by
+      // shape 1 above regardless of which dependency raised it.
+      if (msg.includes(CH_QUERY_WRAPPER_PREFIX)) {
+        for (const pattern of TRANSPORT_SYSCALL_MESSAGE_PATTERNS) {
+          if (pattern.test(msg)) return true;
+        }
       }
     }
     cur = cur.cause as typeof cur;
@@ -534,6 +575,21 @@ export function isClickHouseConnectionError(e: unknown): boolean {
  *
  * `path` is a Prometheus label on `clickhouseFailSoftCounter`, so it must be a
  * per-call-site constant — anything request-derived multiplies the series.
+ *
+ * 🔴 THE `logToAxiom` CALL IS NOT REDUNDANT WITH THE COUNTER, AND NOT OPTIONAL. The
+ * central tRPC error handler (`src/pages/api/trpc/[trpc].ts`) returns EARLY on
+ * `SERVICE_UNAVAILABLE` and skips the Axiom ingest entirely, deliberately — a 503 wave is
+ * exactly when per-reject stringify+ingest costs the most. So re-mapping a transient CH
+ * read to a 503 converts a logged `ClickHouse query failed: …` line into a SILENT
+ * degradation. The counter records THAT it happened and where; only this line carries the
+ * message — which, for a `$query` read, is the one that embeds the failing SQL. The same
+ * counter+log pairing is at `image.service`'s `image-feed` fail-soft.
+ *
+ * Fire-and-forget with an explicit no-op rejection handler: telemetry must never change
+ * what this function throws, and must never delay it. `logToAxiom` already contains its
+ * own failures, so this handler is belt-and-braces — but a bare `.catch()` (no argument)
+ * would NOT contain one, since it passes the rejection straight through. (The
+ * `image-feed` site spells it `.catch()`; that is the shape to avoid, not to copy.)
  */
 export async function runClickHouseRead<T>(
   fn: () => Promise<T>,
@@ -544,6 +600,16 @@ export async function runClickHouseRead<T>(
   } catch (e) {
     if (isClickHouseConnectionError(e)) {
       clickhouseFailSoftCounter.inc({ path: options.path });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'clickhouse-failsoft',
+          message: 'ClickHouse transport error on an instrumented read — served 503',
+          path: options.path,
+          error: e instanceof Error ? e.message : String(e),
+        },
+        'clickhouse'
+      ).catch(() => undefined);
       throwServiceUnavailableError(
         options.message ?? 'This service is temporarily unavailable. Please try again.',
         e

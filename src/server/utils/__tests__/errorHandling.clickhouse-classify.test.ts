@@ -91,7 +91,9 @@ describe('isClickHouseConnectionError — TRUE for transient transport/infra fai
 describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUST still surface)', () => {
   it('does NOT match Code 60 UNKNOWN_TABLE (the missing-table deploy break)', () => {
     const err = Object.assign(
-      new Error("Code: 60. DB::Exception: Table default.buzzEvents does not exist. (UNKNOWN_TABLE)"),
+      new Error(
+        'Code: 60. DB::Exception: Table default.buzzEvents does not exist. (UNKNOWN_TABLE)'
+      ),
       { code: '60', type: 'UNKNOWN_TABLE' }
     );
     expect(isClickHouseConnectionError(err)).toBe(false);
@@ -106,7 +108,9 @@ describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUS
 
   it('does NOT match Code 349 (NULL into a non-Nullable column)', () => {
     const err = Object.assign(
-      new Error('Code: 349. DB::Exception: Cannot insert NULL value into a column. (CANNOT_INSERT_NULL_IN_ORDINARY_COLUMN)'),
+      new Error(
+        'Code: 349. DB::Exception: Cannot insert NULL value into a column. (CANNOT_INSERT_NULL_IN_ORDINARY_COLUMN)'
+      ),
       { code: '349' }
     );
     expect(isClickHouseConnectionError(err)).toBe(false);
@@ -121,7 +125,9 @@ describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUS
 
   it('does NOT match a real JS bug (TypeError reading undefined)', () => {
     expect(
-      isClickHouseConnectionError(new TypeError("Cannot read properties of undefined (reading 'id')"))
+      isClickHouseConnectionError(
+        new TypeError("Cannot read properties of undefined (reading 'id')")
+      )
     ).toBe(false);
   });
 
@@ -159,4 +165,70 @@ describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUS
     expect(isClickHouseConnectionError('socket hang up')).toBe(false); // bare string, no .message
     expect(isClickHouseConnectionError(42)).toBe(false);
   });
+});
+
+// The message the $query wrapper throws is `<original>\nQuery: <sql>` — the SQL TEXT is
+// part of the string being matched, and the original text can itself contain column or
+// table identifiers. The syscall-spelling match is narrowed by three independent rules
+// (see isClickHouseConnectionError); each one has at least one case below that ONLY it
+// rejects, so dropping any single rule turns this block red rather than leaving it green
+// on the other two.
+describe('isClickHouseConnectionError — the syscall-spelling match must not fire on the SQL or on another upstream', () => {
+  // Defeats the `\nQuery:` truncation ONLY: the token is quoted in the SQL, so it sits on
+  // non-word boundaries and the anchor cannot reject it.
+  it('does NOT match an UNKNOWN_TABLE whose QUERY TEXT quotes a syscall code as a literal', () => {
+    expect(
+      isClickHouseConnectionError(
+        flattened(
+          'Code: 60. DB::Exception: Table default.buzzEvents does not exist. (UNKNOWN_TABLE)',
+          "SELECT * FROM buzzEvents WHERE tag = 'ECONNRESET'"
+        )
+      )
+    ).toBe(false);
+  });
+
+  // Would defeat an unanchored match: `sourcePipeline` contains `epipe` and
+  // `responseTimedOut` contains `etimedout`, both flanked by word characters. Ordinary
+  // camelCase shapes — rule (a) also rejects these, since both sit in the SQL.
+  it.each([
+    [
+      'Code: 60. DB::Exception: Table foo does not exist. (UNKNOWN_TABLE)',
+      'SELECT sourcePipeline FROM foo',
+    ],
+    [
+      'Code: 62. DB::Exception: Syntax error: failed at position 8. (SYNTAX_ERROR)',
+      'SELECT FROM jobs WHERE responseTimedOut = 1',
+    ],
+  ])(
+    'does NOT match a query fault whose QUERY TEXT embeds a syscall token inside an identifier (%s)',
+    (message, query) => {
+      expect(isClickHouseConnectionError(flattened(message, query))).toBe(false);
+    }
+  );
+
+  // Also defeats the anchor ONLY, but with the identifier in the ClickHouse MESSAGE rather
+  // than the SQL — so `\nQuery:` truncation cannot save it.
+  it('does NOT match a query fault whose MESSAGE names a column embedding a syscall token', () => {
+    expect(
+      isClickHouseConnectionError(
+        flattened(
+          "Code: 47. DB::Exception: Missing columns: 'responseTimedOut' 'sourcePipeline'. (UNKNOWN_IDENTIFIER)",
+          'SELECT 1'
+        )
+      )
+    ).toBe(false);
+  });
+
+  // Defeats the $query-wrapper requirement ONLY: the token is a standalone word in a
+  // message that never came from ClickHouse. A Redis/undici transport fault must not be
+  // reported as a ClickHouse brownout — that would count the wrong dependency's outage.
+  it.each([
+    'request to redis failed, reason: connect ECONNREFUSED',
+    'fetch failed: read ECONNRESET',
+  ])(
+    'does NOT match a NON-ClickHouse upstream error carrying a syscall spelling ("%s")',
+    (message) => {
+      expect(isClickHouseConnectionError(new Error(message))).toBe(false);
+    }
+  );
 });
