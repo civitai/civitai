@@ -8,6 +8,10 @@ import { isClickHouseConnectionError } from '~/server/utils/errorHandling';
 // SCHEMA errors (UNKNOWN_TABLE, NULL-insert, syntax) must NOT match (so a real bug /
 // deploy break still 500s + alerts — the 2026-06-24 missing-table incident).
 
+// Verbatim rethrow shape of packages/civitai-clickhouse/src/client.ts `$query`.
+const flattened = (message: string, query = 'SELECT 1') =>
+  new Error(`ClickHouse query failed: ${message}\nQuery: ${query}`);
+
 describe('isClickHouseConnectionError — TRUE for transient transport/infra failures', () => {
   it('matches a bare "socket hang up" Error (the app-side CH brownout signature)', () => {
     expect(isClickHouseConnectionError(new Error('socket hang up'))).toBe(true);
@@ -64,6 +68,19 @@ describe('isClickHouseConnectionError — TRUE for transient transport/infra fai
     ).toBe(true);
   });
 
+  it.each([
+    'read ECONNRESET',
+    'write EPIPE',
+    'connect ETIMEDOUT 203.0.113.10:8443',
+    'connect ECONNREFUSED 203.0.113.10:8443',
+    'connect EHOSTUNREACH 203.0.113.10:8443',
+    'connect ENETUNREACH 203.0.113.10:8443',
+    'other side closed (UND_ERR_SOCKET)',
+    'Connect Timeout Error (UND_ERR_CONNECT_TIMEOUT)',
+  ])('matches the $query-flattened syscall spelling "%s"', (message) => {
+    expect(isClickHouseConnectionError(flattened(message))).toBe(true);
+  });
+
   it('walks the .cause chain (wrapped TRPCError / undici TypeError)', () => {
     const cause = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
     const wrapped = Object.assign(new Error('Image feed failed'), { cause });
@@ -105,6 +122,34 @@ describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUS
   it('does NOT match a real JS bug (TypeError reading undefined)', () => {
     expect(
       isClickHouseConnectionError(new TypeError("Cannot read properties of undefined (reading 'id')"))
+    ).toBe(false);
+  });
+
+  it('does NOT match the $query-flattened syntax error (Code: 62)', () => {
+    expect(
+      isClickHouseConnectionError(
+        flattened(
+          'Code: 62. DB::Exception: Syntax error: failed at position 8. (SYNTAX_ERROR)',
+          'SELECT FROM buzzEvents'
+        )
+      )
+    ).toBe(false);
+  });
+
+  it('does NOT match the $query-flattened UNKNOWN_TABLE error (Code: 60)', () => {
+    expect(
+      isClickHouseConnectionError(
+        flattened(
+          'Code: 60. DB::Exception: Table default.buzzEvents does not exist. (UNKNOWN_TABLE)',
+          'SELECT * FROM buzzEvents'
+        )
+      )
+    ).toBe(false);
+  });
+
+  it('does NOT match flattened "getaddrinfo EAI_AGAIN" (DNS codes are in neither set)', () => {
+    expect(
+      isClickHouseConnectionError(flattened('getaddrinfo EAI_AGAIN clickhouse-host.invalid'))
     ).toBe(false);
   });
 

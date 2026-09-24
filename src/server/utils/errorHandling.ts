@@ -448,8 +448,9 @@ export function isUpstreamServerOrNetworkError(args: {
  *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
  *     also string-match the transient signatures in the message (`Code: 279`/`210`/
  *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
- *     `too many simultaneous queries`). The message match is still transient-ONLY —
- *     `Code: 60` / `unknown table` never match.
+ *     `too many simultaneous queries`, and every `TRANSPORT_SYSCALL_CODES` spelling).
+ *     The message match is still transient-ONLY — `Code: 60` / `unknown table` never
+ *     match.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.
@@ -457,7 +458,7 @@ export function isUpstreamServerOrNetworkError(args: {
 export function isClickHouseConnectionError(e: unknown): boolean {
   // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
   // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
-  // DNS-resolution-style codes that wouldn't apply to a pooled CH connection.)
+  // DNS-resolution-style codes.)
   const TRANSPORT_SYSCALL_CODES = new Set([
     'ECONNRESET',
     'EPIPE',
@@ -501,6 +502,10 @@ export function isClickHouseConnectionError(e: unknown): boolean {
         msg.includes('code: 202')
       ) {
         return true;
+      }
+      // Reads through $query arrive as a plain Error, so for those the .code branch never fires.
+      for (const code of TRANSPORT_SYSCALL_CODES) {
+        if (msg.includes(code.toLowerCase())) return true;
       }
     }
     cur = cur.cause as typeof cur;
