@@ -66,6 +66,19 @@ A comment can pass the keep test and still be twice the length it needs. Judge s
 density, not length** — a long comment carrying four non-obvious facts earns its lines; three sentences
 carrying one does not.
 
+🔴 **Density does not excuse a fact that EXPIRES.** A row count, a percentage, a timing, a dated
+measurement is dense, non-obvious and unrecoverable from the code — so it passes every test above, and
+it is wrong within weeks. Nobody re-reads a comment, or an applied migration, to correct its numbers,
+so a stale figure is not merely out of date: it is read as current and reasoned from. Send it to the
+doc that owns it, where it carries a date and sits beside the query that produced it, and leave the
+comment saying what stays true — what the code does, the trap a future edit falls into, what an
+operator must do. Report these as **delete**, or **trim** keeping the non-varying half, even when
+every figure is correct today.
+
+Not hypothetical: a coverage migration reviewed by this agent carried thirteen such figures. The review
+caught a counting error *inside* the prose — "three things" above a list of two — and never asked
+whether the prose belonged there.
+
 Cut, in this order: throat-clearing (*"Note that…"*, *"It's worth mentioning…"*), restating the
 signature, hedging, and any sentence whose removal would not change what the next editor does. Most
 keepers are one or two lines.
