@@ -11,19 +11,7 @@ import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { modelsSearchIndex } from '~/server/search-index';
 import { versionIdFromAir } from '~/shared/utils/air';
 
-/**
- * The orchestrator tells us a resource entered or left the cluster, so the load indicators do not
- * wait out `sync-generator-loaded-resources`' five-minute cycle. That job stays, and stays
- * authoritative: this is an addition, so a delivery we miss self-heals within one cycle.
- *
- * Events arrive batched, buffered up to 2s on the orchestrator's side.
- */
-
-/**
- * 🔴 `workersAvailable`, not `loaded`. Koen (2026-09-24): "loaded is a stupid property in that sense,
- * should not have added it, perhaps just look at workersAvailable" — `loaded: true` with no workers
- * never happens, and a resource with no worker cannot serve a generation whatever the flag says.
- */
+/** `loaded` is in the payload and is NOT the answer: residency is `workersAvailable`. */
 const eventSchema = z.object({
   air: z.string(),
   workersAvailable: z.number(),
@@ -33,7 +21,6 @@ const eventSchema = z.object({
 
 const schema = z.object({ events: z.array(eventSchema) });
 
-/** Ids per statement, matching the sync job so one delivery cannot lock the table for long. */
 const BATCH = 5000;
 
 async function setLoaded(ids: number[], loaded: boolean) {
@@ -46,11 +33,6 @@ async function setLoaded(ids: number[], loaded: boolean) {
     `;
 }
 
-/**
- * `X-Webhook-Secret`, carrying the same `WEBHOOK_TOKEN` the orchestrator already presents to
- * image-scan-result and the training callbacks — as a header rather than `?token=`, which is how
- * every inbound third-party webhook here authenticates and keeps the secret out of request logs.
- */
 function authorized(req: NextApiRequest) {
   const secret = env.WEBHOOK_TOKEN;
   if (!secret) return false;
@@ -70,7 +52,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  // Absent secret refuses every call rather than accepting them, and 503 says it is us, not them.
   if (!env.WEBHOOK_TOKEN) return res.status(503).json({ error: 'Endpoint not configured' });
 
   if (!authorized(req)) return res.status(401).json({ error: 'Unauthorized' });
@@ -88,8 +69,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .map((event) => ({ id: versionIdFromAir(event.air), loaded: event.workersAvailable > 0 }))
     .filter((event): event is { id: number; loaded: boolean } => event.id != null);
 
-  // Rows we do not hold are not an error: the orchestrator serves resources from other sources, and
-  // an AIR this parser cannot read is one we could not have acted on anyway.
   const versions = resolved.length
     ? await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
         SELECT id, "modelId" FROM "ModelVersion" WHERE id = ANY(${resolved.map(
@@ -109,8 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     false
   );
 
-  // After the writes, for the reason the sync job gives: a models sync draining the queue mid-write
-  // would index the old value.
+  // After the writes: a models sync draining the queue mid-write would index the old value.
   const modelIds = uniq(
     acted.map((event) => known.get(event.id)).filter((id): id is number => !!id)
   );
