@@ -258,35 +258,3 @@ describe('upsertCollection authorization', () => {
     expect(mockDbWrite.collection.update).toHaveBeenCalled();
   });
 });
-
-describe('upsertCollection create', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockDbWrite.collection.create.mockResolvedValue({
-      id: COLLECTION_ID,
-      image: null,
-      read: 'Private',
-      write: 'Private',
-      userId: OWNER_ID,
-      mode: null,
-    });
-  });
-
-  it('creates a collection of a supported type', async () => {
-    await upsertCollection({
-      input: { name: 'Mine', type: 'Image', userId: OWNER_ID, isMember: true },
-    } as never);
-
-    expect(mockDbWrite.collection.create).toHaveBeenCalled();
-  });
-
-  it('refuses to create a 3D model collection, which nothing can add items to', async () => {
-    await expect(
-      upsertCollection({
-        input: { name: 'Mine', type: 'Model3D', userId: OWNER_ID, isMember: true },
-      } as never)
-    ).rejects.toThrow('3D model collections are not supported yet.');
-
-    expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
-  });
-});

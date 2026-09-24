@@ -222,12 +222,10 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 name="type"
                 label="Collection Type"
                 data={[
-                  ...Object.values(CollectionType)
-                    .filter((value) => value !== CollectionType.Model3D)
-                    .map((value) => ({
-                      value,
-                      label: getDisplayName(value),
-                    })),
+                  ...Object.values(CollectionType).map((value) => ({
+                    value,
+                    label: getDisplayName(value),
+                  })),
                 ]}
                 clearable
               />
