@@ -119,7 +119,14 @@ function partUrl(partNumber: number) {
 }
 
 function makeFetch(partCount: number) {
-  return vi.fn(async (url: string, init?: { body?: string }) => {
+  return vi.fn(async (url: string, init?: { body?: string; signal?: AbortSignal }) => {
+    // 🔴 HONOUR THE SIGNAL, because the browser does. A real `fetch` handed an
+    // already-aborted signal rejects without sending anything, and the relay POST is
+    // handed one. Without this the stub counts a request the browser would never have
+    // made: verified by mutation — reverting the relay's signal back to the upload's
+    // internal teardown signal (which has ALWAYS fired by the time the relay runs) left
+    // every case in this file green, i.e. the harness could not see half the fix.
+    if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
     if (url === '/api/upload') {
       return {
         ok: true,
