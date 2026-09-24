@@ -242,6 +242,10 @@ export const ECO = {
   // Meta
   MuseImage: 86,
 
+  // inclusionAI: distinct weights; addon compatibility is not established.
+  Ming: 89,
+  MingLayer: 90,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -851,6 +855,22 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'Other',
     displayName: 'Other',
     sortOrder: 999,
+  },
+
+  // inclusionAI
+  {
+    id: ECO.Ming,
+    key: 'Ming',
+    displayName: 'Ming Image Design',
+    familyId: 27,
+    sortOrder: 270,
+  },
+  {
+    id: ECO.MingLayer,
+    key: 'MingLayer',
+    displayName: 'Ming Image Design Layer',
+    familyId: 27,
+    sortOrder: 271,
   },
 
   // Audio ecosystems
@@ -2263,6 +2283,8 @@ export const BM = {
   MiniMaxMusic3: 104,
   MuseImage: 105,
   YuE2: 106,
+  Ming: 108,
+  MingLayer: 109,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2725,6 +2747,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'MiniMax',
     description: "MiniMax's video, image and music generation models",
   },
+  {
+    id: 27,
+    name: 'inclusionAI',
+    description: "inclusionAI's image generation and design models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2736,6 +2763,24 @@ export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f
 // =============================================================================
 
 export const baseModelRecords: BaseModelRecord[] = [
+  // Ming Image: separate checkpoints for generation and layer decomposition.
+  {
+    id: BM.Ming,
+    name: 'Ming Image Design 0.1',
+    description: "inclusionAI's image generation and editing model for graphic design",
+    type: 'image',
+    ecosystemId: ECO.Ming,
+    licenseId: 19,
+  },
+  {
+    id: BM.MingLayer,
+    name: 'Ming Image Design Layer 0.1',
+    description: "inclusionAI's model for decomposing designs into transparent RGBA layers",
+    type: 'image',
+    ecosystemId: ECO.MingLayer,
+    licenseId: 19,
+  },
+
   // Anima
   {
     id: BM.Anima,
