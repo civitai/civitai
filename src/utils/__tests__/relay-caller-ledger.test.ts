@@ -140,6 +140,8 @@ const HELPER_MODULE = 'src/utils/upload-settlement.ts';
  * gains a default that builds the request itself, it becomes an entry point.
  */
 const HELPER_EXPORTS = ['postImageUploadRelay', 'relayImageFallback'];
+/** The same names as a `Set`, for `collectIdentifierRefs`. */
+const HELPER_EXPORT_SET: ReadonlySet<string> = new Set(HELPER_EXPORTS);
 
 /**
  * Every OTHER export of the helper module, each with the reason it is not an entry point.
@@ -303,12 +305,9 @@ function isInertContext(node: ts.Node): boolean {
  * write a name, so this cannot be walked around by choosing a different call shape.
  */
 function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: number } {
-  let helper = false;
+  const helper = collectIdentifierRefs(sf, HELPER_EXPORT_SET).size > 0;
   let pathLiterals = 0;
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && HELPER_EXPORTS.includes(node.text) && !isInertContext(node)) {
-      helper = true;
-    }
     if (
       (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) &&
       node.getText(sf).includes(RELAY_PATH_TAIL) &&
@@ -329,6 +328,43 @@ function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: nu
  * Types are excluded because a type cannot make a request, and including them would make
  * the classification map a list of names with no bearing on reachability.
  */
+/**
+ * Every module-level identifier in `sf` whose text is in `names`, ignoring inert positions.
+ *
+ * 🔴 ONE WALK, THREE CALLERS, and a `Set` rather than an object — both halves are lessons
+ * this file paid for. It had three copies of this loop (references, path-constant count,
+ * narrowing consumers) and the third diverged: it tested membership with `node.text in
+ * found` over an object literal, so an identifier spelled `toString` or `constructor`
+ * anywhere in a scanned file crashed the guard with `…includes is not a function`. The
+ * module this file guards documents that exact hazard in its own docstring — "a `Set`, not
+ * an object literal … an object lookup would answer truthy for `toString`" — and the test
+ * guarding it reintroduced it. Consolidating is what made the divergence visible.
+ */
+function collectIdentifierRefs(sf: ts.SourceFile, names: ReadonlySet<string>): Set<string> {
+  const found = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && names.has(node.text) && !isInertContext(node)) {
+      found.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/** Every identifier a binding name introduces, through object and array patterns. */
+function collectBoundNames(name: ts.BindingName, out: string[]): void {
+  if (ts.isIdentifier(name)) {
+    out.push(name.text);
+    return;
+  }
+  // `{ a, b: { c } }` and `[a, , [b]]` — recurse to the leaves. An omitted array element
+  // is an `OmittedExpression` and binds nothing.
+  for (const el of name.elements) {
+    if (ts.isBindingElement(el)) collectBoundNames(el.name, out);
+  }
+}
+
 function exportedValueNames(sf: ts.SourceFile): string[] {
   const names: string[] = [];
   // 🔴 An unnamed default has no identifier to report, so it is spelled `default` — which
@@ -357,8 +393,20 @@ function exportedValueNames(sf: ts.SourceFile): string[] {
       names.push(DEFAULT);
     }
     if (ts.isVariableStatement(node) && isExported(node)) {
+      // 🔴 RECURSES BINDING PATTERNS, and that is round 7's defect one branch over. That
+      // round fixed an optional `name` on the function/class branches and left the
+      // identical shape here: `if (ts.isIdentifier(decl.name))` silently skipped
+      // `export const { go } = api;` and `export const [go] = arr;`. Measured: a
+      // destructured export of a relay caller, plus a consumer importing only that name,
+      // left all 135 tests green — a live third caller, invisible.
+      //
+      // This is the commonest export idiom in the repo after a plain const —
+      // `src/server/trpc.ts` does `export const { router, middleware } = t;` and the
+      // context-factory pattern (`export const [Provider, useCtx] = …`) is what a future
+      // upload helper would reach for. Fixing the SPELLINGS rather than the SHAPE is how
+      // this kept recurring; binding patterns are now walked to their leaves.
       for (const decl of node.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name)) names.push(decl.name.text);
+        collectBoundNames(decl.name, names);
       }
     }
     // `export { a, b }` — a re-export of local bindings.
@@ -375,6 +423,8 @@ function exportedValueNames(sf: ts.SourceFile): string[] {
 
 /** How many times this module names `IMAGE_UPLOAD_RELAY_PATH`. See `EXPECTED_HELPER_PATH_REFS`. */
 function countPathConstantRefs(sf: ts.SourceFile): number {
+  // ⚠ Not `collectIdentifierRefs`: this one needs the number of OCCURRENCES, where that
+  // helper answers which names appear at all. Different questions, so a different walk.
   let count = 0;
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && node.text === HELPER_PATH_CONSTANT && !isInertContext(node)) {
@@ -521,6 +571,7 @@ describe('the relay caller ledger', () => {
     };
     const DEFINING_MODULE = 'src/utils/image-upload-relay-producer.ts';
 
+    const narrowingNames = new Set(Object.keys(NARROWING_CONSUMERS));
     const found: Record<string, string[]> = {
       sanitizeImageUploadRelayProducer: [],
       isImageUploadRelayProducer: [],
@@ -529,15 +580,14 @@ describe('the relay caller ledger', () => {
       const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
       if (rel === DEFINING_MODULE) continue; // it declares both, by definition
       const text = fs.readFileSync(abs, 'utf8');
-      if (!Object.keys(found).some((n) => text.includes(n))) continue;
+      if (![...narrowingNames].some((n) => text.includes(n))) continue;
       const sf = parse(rel, text);
-      const visit = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && node.text in found && !isInertContext(node)) {
-          if (!found[node.text].includes(rel)) found[node.text].push(rel);
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(sf);
+      // 🔴 The SHARED walk, with a `Set`. The open-coded copy this replaced used
+      // `node.text in found` over an object literal, so an identifier spelled `toString`
+      // or `constructor` in any scanned file crashed the guard.
+      for (const name of collectIdentifierRefs(sf, narrowingNames)) {
+        if (!found[name].includes(rel)) found[name].push(rel);
+      }
     }
 
     for (const [fn, expected] of Object.entries(NARROWING_CONSUMERS)) {
@@ -567,6 +617,21 @@ describe('the relay caller ledger', () => {
       ['default anonymous function', 'export default function () {}', ['default']],
       ['default anonymous class', 'export default class {};', ['default']],
       ['default NAMED function', 'export default function j() {}', ['j']],
+      // 🔴 The destructured shapes, measured as a LIVE escape before this: a relay caller
+      // exported this way, with a consumer importing only that name, left every test green.
+      ['object destructure', 'const api = { go: 1 };\nexport const { go } = api;', ['go']],
+      [
+        'object destructure, renamed',
+        'const api = { go: 1 };\nexport const { go: away } = api;',
+        ['away'],
+      ],
+      ['array destructure', 'const arr = [1, 2];\nexport const [k, l] = arr;', ['k', 'l']],
+      ['array destructure with a hole', 'const arr = [1, 2];\nexport const [, m] = arr;', ['m']],
+      [
+        'nested destructure',
+        'const api = { a: { b: 1 } };\nexport const {\n  a: { b },\n} = api;',
+        ['b'],
+      ],
     ];
     for (const [name, source, expected] of shapes) {
       expect(exportedValueNames(parse('src/x.ts', source)).sort(), `shape "${name}"`).toEqual(

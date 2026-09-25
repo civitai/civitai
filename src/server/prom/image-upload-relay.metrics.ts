@@ -168,8 +168,8 @@ const HELP =
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
   'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
   'a closed set — the sanitiser rejects anything that is not one of the two declarable ' +
-  'producers (single_put, multipart) but cannot verify one that is; ' +
-  'inside it. To corroborate, read the USER IDS on the image-upload-relayed events and ' +
+  'producers (single_put, multipart) but cannot verify one that is. ' +
+  'To corroborate, read the USER IDS on the image-upload-relayed events and ' +
   'check the rescues belong to a plausible population; do NOT compare against those ' +
   'events producer field, which is the same derivation as this label and agrees by ' +
   'construction. Note those events cover SUCCESSFUL relays only, so there is no ' +

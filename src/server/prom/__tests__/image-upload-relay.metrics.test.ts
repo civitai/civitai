@@ -151,6 +151,62 @@ describe('civitai_image_upload_relay_total registration', () => {
   });
 });
 
+describe('the HELP string', () => {
+  /** The rendered HELP text, read off the registry the scrape serves. */
+  async function help(): Promise<string> {
+    ensureRegisterImageUploadRelayMetrics();
+    const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as {
+      get: () => Promise<{ help: string }>;
+    };
+    return (await metric.get()).help;
+  }
+
+  /**
+   * 🔴 THE WHOLE STRING, PINNED — and the two weaker guards this replaced are the reason.
+   *
+   * HELP is the operator-facing documentation for a signal whose entire purpose is to be
+   * read correctly under rollout pressure, and it is built by concatenating adjacent string
+   * literals. An edit that rewrites one line and leaves the tail of the next produces a
+   * sentence that is broken only once the pieces are JOINED — invisible to anyone reading
+   * the source. That shipped: the fragment `inside it.` sat orphaned mid-sentence, and a
+   * reviewer had to render the concatenation by hand to see it.
+   *
+   * ⚠ TWO WEAKER GUARDS WERE WRITTEN FIRST AND BOTH WERE VACUOUS, measured:
+   *   - "every label appears in HELP" (`toContain(producer)`) — satisfied by ANY occurrence
+   *     of the word, so deleting `unknown`'s definition still passed, because the sentence
+   *     "read a large unknown share as stale clients" contains it.
+   *   - "no sentence starts mid-thought" — the orphan is mid-sentence, not sentence-initial,
+   *     so the check never looked at it. Reinstating the exact shipped defect passed.
+   * Both are the same error: a guard on WORDS over an artifact that IS prose, walkable by
+   * rewording. The only machine-readable claim about prose is the prose itself.
+   *
+   * 🔴 SO A COSMETIC REWORD FAILS THIS TEST. That is the price and it is the point — the
+   * failure forces whoever edits HELP to read the RENDERED result and paste it back, which
+   * is exactly the step whose absence let the orphan through. Update it by running the
+   * suite and copying the actual value; do not hand-edit this constant to match.
+   */
+  const EXPECTED_HELP = `Invocations of the FALLBACK image-upload relay route, by terminal outcome and by the client that claims to have produced them. The relay exists for clients that cannot reach the storage host directly, so a non-zero success count is the only evidence that fallback is rescuing real uploads: a relayed 200 is not retained in the request-log stream, traces are head-sampled, and the media-location registry records the same backend for relayed and direct uploads. Exactly one increment per handler invocation. outcome: success = bytes stored and a key returned; method_not_allowed = not a POST; forbidden_origin = production cross-origin guard; unauthorized = no session or banned; busy = shed by the per-pod in-flight cap (429); too_large = over the size cap (413); truncated = body ended short of its declared Content-Length (400, never stored); empty = zero-length body (400); read_error = reading the body threw (400); store_error = the store write threw (500, or 499 on a client disconnect); handler_error = the invocation threw without naming an outcome — expected to stay 0, and a non-zero can be an upstream auth dependency failing rather than a bug in this route. producer: which client CLAIMS to have asked for the relay, sanitised server-side into a closed set — the sanitiser rejects anything that is not one of the two declarable producers (single_put, multipart) but cannot verify one that is. To corroborate, read the USER IDS on the image-upload-relayed events and check the rescues belong to a plausible population; do NOT compare against those events producer field, which is the same derivation as this label and agrees by construction. Note those events cover SUCCESSFUL relays only, so there is no corroborating event for the refusal outcomes. single_put = the single-PUT upload path; multipart = the multipart upload path; unknown = no header at all, EXPECTED to dominate while browsers still run a bundle older than the deploy that added the header, so read a large unknown share as stale clients rather than as a gap; other = a header arrived and was not recognised, which is a DIFFERENT population (a client that got it wrong, a caller probing the route, a caller declaring one of the server buckets, or — rarely — a value our own emitter failed to recognise, which is a bug on our side rather than a statement about the request) and is kept on its own row so neither hides in the other. Without this label a non-zero success count cannot be attributed to either caller. RARE per-pod counter, and prom-client counts die with the pod: for "has it ever helped?" read sum(increase(...[30d])) or sum(max_over_time(...[30d])); a bare sum() only sees pods that are alive right now. Do not alert on rate() of a single child.`;
+
+  it('🔴 matches the pinned text EXACTLY — see the note above before updating it', async () => {
+    expect(await help()).toBe(EXPECTED_HELP);
+  });
+
+  it('defines every label value a reader can filter by', async () => {
+    // Weaker than the pin, and kept for its FAILURE MESSAGE: the pin says "the string
+    // changed", this says WHICH label lost its definition. `%s = ` is the shape HELP uses
+    // for every one ("success = bytes stored…"), so this cannot be satisfied by an
+    // incidental mention of the word elsewhere in the text — which is precisely how the
+    // first version of this guard passed while a definition was missing.
+    const text = await help();
+    for (const producer of IMAGE_UPLOAD_RELAY_PRODUCERS) {
+      expect(text, `producer=${producer} must be DEFINED in HELP`).toContain(`${producer} = `);
+    }
+    for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) {
+      expect(text, `outcome=${outcome} must be DEFINED in HELP`).toContain(`${outcome} = `);
+    }
+  });
+});
+
 describe('recordImageUploadRelay', () => {
   it('increments the named outcome AND ONLY that one', async () => {
     // The "and only that one" half is what a hardcoded label value fails: a mutant
