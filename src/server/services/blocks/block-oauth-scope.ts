@@ -17,9 +17,12 @@ export function oauthScopeBitsFor(scopes: string[]): number {
   return bits;
 }
 
-export function manifestWantsOauthToken(manifest: unknown): boolean {
-  return (manifest as { auth?: unknown } | null | undefined)?.auth === 'oauth';
-}
+// MOVED to `~/shared/constants/block-scope.constants` and re-exported here so this
+// module's existing importers and its own test are untouched. It had to leave a
+// `~/server/**` path because `block-manifest-validator.service.ts` — which is imported by
+// `ManifestEditForm.tsx`, i.e. bundled for the CLIENT — now reads it to refuse
+// `auth: "oauth"` alongside an `apps:storage:*` scope. See the docblock at the definition.
+export { manifestWantsOauthToken } from '~/shared/constants/block-scope.constants';
 
 /**
  * The block scope that maps to `TokenScope.UserRead`, which EVERY OAuth app token

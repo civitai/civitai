@@ -56,14 +56,23 @@
 // `~/server/metrics/generation-model-substitution.metrics.ts` documents for the
 // unseeded case — do not "simplify" an alert by removing the seeding or its call.
 //
-// 🔴 CARDINALITY: ONE label over a code-owned union of 11 values, declared once below.
-// 11 series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
+// 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 11
+// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 11 x 4 = 44
+// series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
 // user id, NO object key, NO bucket, NO host, NO path, NO content type, NO byte size:
 // every one of those is caller-influenced or unbounded, and prom-client retains each
 // distinct label set in the Node heap for the life of the process. Attribution for an
 // individual relay belongs in the request log, not here — alert on the metric, then go
 // look. The bound rests on the runtime narrowing in `recordImageUploadRelay`, on code
 // rather than on erased types.
+//
+// 🔴 WHY `producer` IS WORTH A 4x IN SERIES COUNT. The relay has two callers and the
+// counter could not tell them apart, so a non-zero `success` — earned entirely by the
+// single-PUT path, which shipped first — read as evidence for BOTH. Grading the newer
+// multipart path on the undifferentiated counter returns a confident false positive, and
+// no amount of reading the number more carefully fixes that: the discriminating fact is
+// simply not in the series. 44 fixed series is a cheap price for a signal that can answer
+// the question it is consulted for. See that module for the header and the sanitiser.
 //
 // prom-client GOTCHA (same as the neighbouring metric modules): Next can evaluate a
 // module twice (HMR / route bundling) and prom-client throws on a duplicate name, so
@@ -76,6 +85,12 @@
 // pulled into the instrumentation graph first would register the counter somewhere
 // nothing scrapes, and it would silently read as a permanent zero.
 import client, { type Counter, type Registry } from 'prom-client';
+import {
+  IMAGE_UPLOAD_RELAY_PRODUCERS,
+  OTHER_IMAGE_UPLOAD_RELAY_PRODUCER,
+  isImageUploadRelayProducer,
+  type ImageUploadRelayProducer,
+} from '~/utils/image-upload-relay-producer';
 
 /**
  * Every terminal outcome of one relay-route invocation.
@@ -113,9 +128,11 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
    *  `relay.ts` records this and re-throws unchanged. Its presence is what makes "one
    *  increment per invocation" hold unconditionally, and it is expected to stay at 0.
    *
-   *  🔴 A non-zero is NOT necessarily a defect in THIS route. `runRelay` awaits three
-   *  things outside its inner `try` — the origin guard, `getServerAuthSession`, and the
-   *  in-flight bookkeeping — and the auth lookup is the one with a network dependency.
+   *  🔴 A non-zero is NOT necessarily a defect in THIS route. `runRelay` awaits exactly
+   *  ONE thing outside its inner `try` — `getServerAuthSession` — and it is the one step
+   *  there with a network dependency. (The origin guard is a synchronous predicate and
+   *  the in-flight bookkeeping is an increment; an earlier version of this paragraph
+   *  listed all three as awaits, which overstated the surface it is warning about.)
    *  `~/server/auth/get-server-auth-session.ts` fail-softs `getHubSession` and
    *  `getLegacySession` with `.catch(() => null)`, but awaits
    *  `getSessionFromBearerToken(token)` and `maybeRollHubCookie(...)` UNGUARDED — the
@@ -136,7 +153,8 @@ export function isImageUploadRelayOutcome(value: unknown): value is ImageUploadR
 export const IMAGE_UPLOAD_RELAY_METRIC = 'civitai_image_upload_relay_total';
 
 const HELP =
-  'Invocations of the FALLBACK image-upload relay route, by terminal outcome. ' +
+  'Invocations of the FALLBACK image-upload relay route, by terminal outcome and by the ' +
+  'client that claims to have produced them. ' +
   'The relay exists for clients that cannot reach the storage host directly, so a ' +
   'non-zero success count is the only evidence that fallback is rescuing real uploads: ' +
   'a relayed 200 is not retained in the request-log stream, traces are head-sampled, and ' +
@@ -150,12 +168,36 @@ const HELP =
   'store_error = the store write threw (500, or 499 on a client disconnect); ' +
   'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
+  'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
+  'a closed set — the sanitiser rejects anything that is not one of the two declarable ' +
+  'producers (single_put, multipart) but cannot verify one that is. ' +
+  'To corroborate, read the USER IDS on the image-upload-relayed events and ' +
+  'check the rescues belong to a plausible population; do NOT compare against those ' +
+  'events producer field, which is the same derivation as this label and agrees by ' +
+  'construction. Note those events cover SUCCESSFUL relays only, so there is no ' +
+  'corroborating event for the refusal outcomes. single_put = the single-PUT upload path; multipart = the multipart ' +
+  'upload path; unknown = no header at all, EXPECTED to dominate ' +
+  'while browsers still run a bundle older than the deploy that added the header, so read ' +
+  'a large unknown share as stale clients rather than as a gap; other = a header arrived ' +
+  'and was not recognised, which is a DIFFERENT population (a client that got it wrong, a ' +
+  'caller probing the route, a caller declaring one of the server buckets, or — rarely — a ' +
+  'value our own emitter failed to recognise, which is a bug on our side rather than a ' +
+  'statement about the request) and is kept on its own row so neither hides in the other. ' +
+  'Without this label a ' +
+  'non-zero success count cannot be attributed to either caller. ' +
   'RARE per-pod counter, and prom-client counts die with the pod: for "has it ever helped?" ' +
   'read sum(increase(...[30d])) or sum(max_over_time(...[30d])); a bare sum() only sees pods ' +
   'that are alive right now. Do not alert on rate() of a single child.';
 
 /**
- * Seed all 11 series at 0.
+ * Seed all 44 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
+ *
+ * 🔴 THE CROSS PRODUCT IS THE POINT, not the outcome list. Seeding only the outcomes
+ * (with some default producer) would restore the exact ambiguity this seeding exists to
+ * remove, one level down: `…{outcome="success",producer="multipart"}` would be absent
+ * until the multipart path's first rescue, so PromQL would answer `no data` — which is
+ * indistinguishable from "that caller was never wired up", which is the very question the
+ * producer label was added to settle.
  *
  * 🔴 NOT COSMETIC, AND THIS COUNTER IS THE CASE WHERE IT MATTERS MOST. prom-client only
  * materialises a child on its first `inc()`, so without this a pod exposes NOTHING for
@@ -168,7 +210,7 @@ const HELP =
  * every pod the honest, useful reading of this counter is a row of zeros. That reading
  * only exists if the zeros are emitted.
  *
- * Free by construction: 11 series is the counter's entire cardinality budget, so
+ * Free by construction: 44 series is the counter's entire cardinality budget, so
  * seeding costs exactly what a fully-exercised pod already costs and cannot grow.
  *
  * 🔴 SEEDING ALONE IS NOT ENOUGH. Something must CALL this at scrape time or the module
@@ -181,7 +223,8 @@ const HELP =
  * double-count anything.
  */
 function seedAllSeries(counter: Counter<string>): void {
-  for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) counter.inc({ outcome }, 0);
+  for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES)
+    for (const producer of IMAGE_UPLOAD_RELAY_PRODUCERS) counter.inc({ outcome, producer }, 0);
 }
 
 function getOrCreateCounter(reg: Registry): Counter<string> {
@@ -190,7 +233,7 @@ function getOrCreateCounter(reg: Registry): Counter<string> {
   return new client.Counter({
     name: IMAGE_UPLOAD_RELAY_METRIC,
     help: HELP,
-    labelNames: ['outcome'],
+    labelNames: ['outcome', 'producer'],
     registers: [reg],
   });
 }
@@ -216,15 +259,49 @@ export function ensureRegisterImageUploadRelayMetrics(reg: Registry = client.reg
  * must never propagate out of here, or observing the rescue would break it: the
  * observability turning a working request into the outage it was measuring.
  */
-export function recordImageUploadRelay(outcome: ImageUploadRelayOutcome): void {
+export function recordImageUploadRelay(
+  outcome: ImageUploadRelayOutcome,
+  producer: ImageUploadRelayProducer
+): void {
   try {
     // 🔴 The cardinality bound rests HERE, on code, not on the erased type above. An
     // unknown value is DROPPED — not passed through, and not relabelled to a plausible
     // default like `success` or `unknown`, either of which would make the fixed-series
     // claim a wish and could silently invent evidence that the relay worked.
     if (!isImageUploadRelayOutcome(outcome)) return;
+    // 🔴 The producer is NARROWED, not dropped — the opposite treatment to the outcome
+    // above, and deliberately so. BOTH are our own defect at this point: the route has
+    // already sanitised the header, so a value here that is not one of the four labels
+    // came from our code, not from a caller. What differs is the cost of dropping it.
+    // Dropping an unrecognised OUTCOME loses nothing we can trust anyway. Dropping an
+    // unrecognised PRODUCER would break the counter's load-bearing property that `sum()`
+    // equals the route's invocation count, so it is bucketed instead.
+    //
+    // ⚠ Do NOT restate the sanitiser's argument here — that a stale bundle is ordinary
+    // traffic that must not be dropped. True there, false here: a stale bundle arrives at
+    // this function as `unknown`, which IS a label and passes untouched, so it never
+    // reaches this fallback. The increments THIS BRANCH produces are our own defect, never
+    // client traffic.
+    //
+    // 🔴 That is the opposite of how the ROW reads as a whole, and conflating the two is a
+    // correction this comment has now made in both directions. The sanitiser sends every
+    // unrecognised HEADER to `other` as well, and that is the dominant population by far —
+    // so a moving `other` should be read as "a client got it wrong" first, not as our bug.
+    // The HELP string enumerates all four populations; read it before investigating.
+    //
+    // Re-sanitised here rather than trusting the call site, so the bound holds for every
+    // caller including a future one: see `~/utils/image-upload-relay-producer`.
+    // 🔴 NARROWED AGAINST THE LABEL SET, NOT THE CLIENT-DECLARABLE ONE. This value is
+    // server-derived — the route has already sanitised the header — so it legitimately IS
+    // `unknown` whenever no header arrived, which is most traffic during a rollout. Running
+    // the CLIENT narrowing here (which refuses the server's own buckets, correctly, for a
+    // header) rewrote every one of those to `other` and emptied the row the rollout is read
+    // from. Measured the moment the client subset was introduced.
+    const safeProducer = isImageUploadRelayProducer(producer)
+      ? producer
+      : OTHER_IMAGE_UPLOAD_RELAY_PRODUCER;
     const { imageUploadRelayTotal } = ensureRegisterImageUploadRelayMetrics();
-    imageUploadRelayTotal.inc({ outcome });
+    imageUploadRelayTotal.inc({ outcome, producer: safeProducer });
   } catch {
     /* instrument-only — never let a metrics error touch the upload path */
   }

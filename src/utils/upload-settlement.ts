@@ -10,7 +10,77 @@
  * the caller used to receive.
  *
  * The hook owns React state; this owns "who settles, and with what".
+ *
+ * It also owns the relay's EXECUTION half — `postImageUploadRelay`, `relayWithRetry` and
+ * `relayImageFallback` below. The DECISION half lives in `~/utils/upload-retry`
+ * (`shouldRelayOnPartFailure`, `RELAY_FALLBACK_MAX_BYTES`). That split is deliberate:
+ * a new relay constant belongs on the decide side if something reads it to choose whether
+ * to relay, and on this side if it shapes the request that gets sent.
  */
+
+import {
+  IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
+  type ClientDeclarableProducer,
+} from '~/utils/image-upload-relay-producer';
+
+/**
+ * The route both upload paths fall back to.
+ *
+ * Not exported: the only site that BUILDS a relay request is `postImageUploadRelay` below,
+ * and handing out the bare path would let a future caller build its own — which is exactly
+ * how the producer header goes missing at one of two sites.
+ *
+ * ⚠ That is not the same as "the only way to reach the relay". From outside this module
+ * there are TWO entry points — `postImageUploadRelay` and `relayImageFallback`, which
+ * reaches the relay without its caller ever naming the other — and the real multipart
+ * caller uses the second. Anything added here that reaches the relay `fetch` is a third,
+ * and must set the producer header for the counter's attribution to hold.
+ *
+ * ⚠ It is one literal for the two CALL SITES, not repo-wide: several test files still spell
+ * the path out, deliberately, so that renaming the route (whose real path comes from its
+ * filename, `src/pages/api/v1/image-upload/relay.ts`) turns them red rather than following
+ * the rename silently. Do not read this as a guarantee that the path exists in one place,
+ * and do not put a COUNT here — an earlier version said "three", which was already four by
+ * the time it was written and is the kind of number a later reader uses to decide a sweep
+ * is complete.
+ */
+const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
+
+/**
+ * Build and send the relay POST.
+ *
+ * 🔴 ONE CONSTRUCTION SITE FOR TWO CALLERS. The single-PUT path (`useCFImageUpload`) and
+ * the multipart path (`relayImageFallback`, below) previously each built a near-identical
+ * `fetch` — same URL, same method, same Content-Type fallback, same signal. Duplicated,
+ * the producer header is one caller away from being forgotten at exactly the site whose
+ * traffic nobody can currently see, which is the defect this whole discriminator exists
+ * to fix. Consolidating makes "the header is sent" a property of the function rather than
+ * a convention both call sites have to remember.
+ *
+ * `producer` is required, deliberately: a default would let a new caller inherit someone
+ * else's label silently, and TypeScript refusing to compile is a better reminder than a
+ * comment. The server re-sanitises whatever arrives regardless — see
+ * `~/utils/image-upload-relay-producer`.
+ *
+ * 🔴 Typed to `ClientDeclarableProducer`, the two real upload paths — NOT to the full label
+ * union. `unknown` and `other` are the server's own buckets, and `unknown` is the row a
+ * rollout is graded on; a caller able to declare it could make a rollout look finished.
+ * This used to accept the full union, so that call compiled.
+ */
+export function postImageUploadRelay(
+  file: File,
+  opts: { signal: AbortSignal; producer: ClientDeclarableProducer }
+): Promise<Response> {
+  return fetch(IMAGE_UPLOAD_RELAY_PATH, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: opts.producer,
+    },
+    body: file,
+    signal: opts.signal,
+  });
+}
 
 /** The surface of XMLHttpRequest this rule touches — so a test can supply a stub. */
 export type SettlementXhr = Pick<XMLHttpRequest, 'addEventListener' | 'readyState' | 'status'>;
@@ -221,13 +291,11 @@ export async function relayImageFallback(
 ): Promise<string | null> {
   try {
     const res = await relayWithRetry(
-      () =>
-        fetch('/api/v1/image-upload/relay', {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-          signal: opts.signal,
-        }),
+      // `multipart`: this is the execution half of the MULTIPART path's rescue. The
+      // label is what lets the usage counter answer "is the multipart fallback working?"
+      // — before it existed, every relay success was attributable to the single-PUT
+      // caller, which shipped first.
+      () => postImageUploadRelay(file, { signal: opts.signal, producer: 'multipart' }),
       opts
     );
     if (!res.ok) return null;

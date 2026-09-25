@@ -147,6 +147,75 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 
 /**
+ * The APP-STORAGE scope family — the one family whose runtime resolvers do NOT read
+ * the claims `withBlockScope` already resolved, but re-verify the caller's RAW bearer
+ * as a block JWS:
+ *
+ *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
+ *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
+ *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
+ *     back down after the middleware already verified it.
+ *
+ * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
+ * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
+ * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * for exactly this reason — see `oauthAppStorageConflictError`.
+ *
+ * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
+ * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
+ * The derived membership is pinned (on growth AND shrink) by the
+ * `APP_STORAGE_SCOPES (the auth:"oauth" conflict set)` suite in
+ * `src/shared/constants/__tests__/block-scope.constants.test.ts` — if that ledger fails
+ * because a new storage scope DOES read middleware-resolved claims, update the ledger and
+ * this docblock in the same commit.
+ *
+ * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
+ * first of those empties out, this family stops needing the manifest refusal at all.
+ */
+export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
+export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
+  (scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX)
+);
+
+/**
+ * The app-storage scopes present in a manifest's declared `scopes`, in the order the
+ * manifest declared them (so the error names them the way the author typed them).
+ * Non-string entries are ignored — the per-element `scopes` validation upstream already
+ * reports those, and this predicate must not turn one malformed entry into a second,
+ * confusing error.
+ */
+export function appStorageScopesIn(scopes: readonly unknown[]): string[] {
+  const storage = new Set(APP_STORAGE_SCOPES);
+  return scopes.filter((scope): scope is string => typeof scope === 'string' && storage.has(scope));
+}
+
+/**
+ * Does this manifest ask the host for an OAuth access token instead of a block JWT?
+ * `auth` is optional and absent means `block-token` (see `RawManifest.auth`).
+ *
+ * 🔴 ONE definition, read by BOTH the runtime and the gate. The two mint paths branch on
+ * this (`/api/v1/block-tokens` page mint at `manifestWantsOauthToken(block.manifest)`, and the
+ * dev-tunnel mint), and `BlockManifestValidator` refuses `auth: "oauth"` alongside any
+ * `APP_STORAGE_SCOPES` entry. If the gate and the mint ever disagreed about what
+ * `auth: "oauth"` means, the gate would pass a manifest the runtime cannot serve — which is
+ * the exact failure it exists to prevent.
+ *
+ * Lives HERE, in the client-safe shared module, rather than in
+ * `~/server/services/blocks/block-oauth-scope` (which now RE-EXPORTS it, so its existing
+ * callers and tests are untouched): `block-manifest-validator.service.ts` is imported by
+ * `ManifestEditForm.tsx`, so everything it pulls in lands in the client bundle. Same reason
+ * the SSRF hostname guards and the `repository` rule were extracted rather than imported
+ * from a server module — see that file's import block.
+ */
+export function manifestWantsOauthToken(manifest: unknown): boolean {
+  return (manifest as { auth?: unknown } | null | undefined)?.auth === 'oauth';
+}
+
+/**
  * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
  * ceiling a moderator's OWN account can spend across ALL run-for-real
  * generations of ONE pending publish request. This is the number surfaced in
