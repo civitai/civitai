@@ -84,6 +84,7 @@ import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
@@ -136,6 +137,8 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  storageUsageNightlyJob,
+  storageUsageMediaJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,
