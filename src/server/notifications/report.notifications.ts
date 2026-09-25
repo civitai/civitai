@@ -1,6 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { EntityType } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
   [EntityType.Image]: '/images',
@@ -59,13 +59,25 @@ export const reportNotifications = createNotificationProcessor({
     displayName: 'Entity appeal resolved',
     category: NotificationCategory.Other,
     toggleable: false,
-    prepareMessage: ({ details }) => ({
-      message: `Your appeal regarding your ${
-        details.entityType
-      } has been ${details.status.toLowerCase()}${
-        details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
-      }`,
-      url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      if (details.status === AppealStatus.Void) {
+        return {
+          message: `Your appeal regarding your ${
+            details.entityType
+          } was closed because the ${String(details.entityType).toLowerCase()} no longer exists.${
+            details.refunded ? ' Your appeal fee has been refunded.' : ''
+          }`,
+        };
+      }
+
+      return {
+        message: `Your appeal regarding your ${
+          details.entityType
+        } has been ${details.status.toLowerCase()}${
+          details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
+        }`,
+        url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
+      };
+    },
   },
 });

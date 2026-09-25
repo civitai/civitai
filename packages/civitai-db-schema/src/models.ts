@@ -190,7 +190,7 @@ export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audi
 
 export type TechniqueType = "Image" | "Video";
 
-export type AppealStatus = "Pending" | "Approved" | "Rejected";
+export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
