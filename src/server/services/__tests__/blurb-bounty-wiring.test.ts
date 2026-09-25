@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as AutoNsfw from '~/server/services/auto-nsfw';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
@@ -34,6 +36,11 @@ const {
   refreshUserBountyCount: vi.fn(async () => undefined),
 }));
 
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof AutoNsfw>()),
   evaluateAutoNsfw,
@@ -113,6 +120,7 @@ function descriptionSql() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   reconcileBlurbReferences.mockResolvedValue(undefined);
@@ -288,6 +296,17 @@ describe('applyBountyContentChange', () => {
 // The bypass this closes: `upsertBounty` evaluates the text a creator types, but this path
 // rewrites an already-published description with text that gate never saw.
 describe('applyBountyContentChange — the auto-NSFW gate', () => {
+  it('does not run once Bounty text scan is active; the rescan is the rating path', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+
+    expect(evaluateAutoNsfw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.bounty.update).not.toHaveBeenCalled();
+    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Bounty', entityId: BOUNTY_ID });
+  });
+
   const FLAGGED = {
     metaPatch: { profanityMatches: ['x'], profanityEvaluation: { reason: 'r', metrics: {} } },
     lock: true,

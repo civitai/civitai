@@ -51,6 +51,7 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { BlurbUse } from '~/server/services/blurb-materialize.service';
@@ -535,7 +536,7 @@ export const upsertBounty = async ({
   await throwOnBlockedUserContent(data.description, { isModerator, surface: 'bounty' });
 
   const addLockedProperties: string[] = [];
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -647,12 +648,14 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
-  const flagged = evaluateAutoNsfw({
-    name: stored.name,
-    description,
-    alreadyNsfw: stored.nsfw,
-    lockedProperties: stored.lockedProperties,
-  });
+  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
+    ? evaluateAutoNsfw({
+        name: stored.name,
+        description,
+        alreadyNsfw: stored.nsfw,
+        lockedProperties: stored.lockedProperties,
+      })
+    : null;
   if (flagged) {
     const details = {
       ...((stored.details as MixedObject | null) ?? {}),
