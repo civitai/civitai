@@ -87,10 +87,10 @@ describe('keysetCursorSchema — numeric bound', () => {
     expect(keysetCursorSchema.safeParse(BigInt(-5)).success).toBe(false);
   });
 
-  // A string cursor is deliberately unbounded here. Downstream, `parseCursor`
-  // checks the token COUNT and each token's PARSEABILITY — NOT that a token's
-  // type matches the column it will be compared against. See the documented
-  // residual in pagination-helpers.test.ts.
+  // A string cursor is deliberately unbounded HERE. Downstream, `parseCursor`
+  // checks the token COUNT, each token's PARSEABILITY and its MAGNITUDE against
+  // int4 (PR #5146) — but NOT that a token's type matches the column it will be
+  // compared against. See the documented residual in pagination-helpers.test.ts.
   it('leaves a composite string cursor untouched', () => {
     const result = keysetCursorSchema.safeParse('2024-01-15 12:00:00|2686725');
     expect(result.success).toBe(true);
