@@ -1606,7 +1606,10 @@ export const getDailyCompensationRewardByUser = async ({
       GROUP BY modelVersionId, accountType, date
       ORDER BY date DESC, total DESC
     `,
-    'Daily Buzz compensation is temporarily unavailable, please retry.'
+    {
+      path: 'buzz-compensation',
+      message: 'Daily Buzz compensation is temporarily unavailable, please retry.',
+    }
   );
 
   if (!generationData.length) return { resources: [], hasPublishedResources };
