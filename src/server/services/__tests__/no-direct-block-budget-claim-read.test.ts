@@ -1,6 +1,12 @@
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import {
+  blankComments,
+  declRegions,
+  enclosingDecl,
+  structuralQuoteRole,
+} from '~/test-utils/routerSourceRegions';
 
 /**
  * NO SUBMIT GATE READS `claims.buzzBudget` DIRECTLY — every one of them goes
@@ -67,66 +73,6 @@ const SRC = path.resolve(__dirname, '../../..');
 
 /** The claim this ledger governs. */
 const CLAIM = 'claims.buzzBudget';
-
-/**
- * Blank out every comment, preserving byte offsets and newlines so a violation's
- * line number survives.
- *
- * 🔴 PROSE MUST NOT BE ABLE TO TURN THIS RED. Half the files in the corpus
- * legitimately discuss `claims.buzzBudget` in a doc comment — this file does too
- * — and a ledger a comment can fail is a ledger someone loosens until it cannot
- * fail at all.
- *
- * A backslash always consumes the following character, in every context, so an
- * escaped slash inside a regex literal (`/\/\//`) cannot be mistaken for the
- * start of a line comment. That is the one case where a naive stripper would eat
- * real code — the fail-OPEN direction, which is why it is handled rather than
- * assumed. The positive controls below are what prove the stripper did not eat
- * anything: they assert the real allowed forms are still FOUND after stripping.
- */
-function blankComments(source: string): string {
-  const out = source.split('');
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let j = from; j < to && j < out.length; j += 1) {
-      if (out[j] !== '\n') out[j] = ' ';
-    }
-  };
-  while (i < source.length) {
-    const c = source[i];
-    if (c === '\\') {
-      i += 2;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') {
-      const quote = c;
-      i += 1;
-      while (i < source.length) {
-        if (source[i] === '\\') i += 2;
-        else if (source[i] === quote) {
-          i += 1;
-          break;
-        } else i += 1;
-      }
-      continue;
-    }
-    if (c === '/' && source[i + 1] === '/') {
-      const end = source.indexOf('\n', i);
-      blank(i, end === -1 ? source.length : end);
-      i = end === -1 ? source.length : end;
-      continue;
-    }
-    if (c === '/' && source[i + 1] === '*') {
-      const end = source.indexOf('*/', i + 2);
-      const stop = end === -1 ? source.length : end + 2;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-    i += 1;
-  }
-  return out.join('');
-}
 
 /**
  * THE ALLOWED FORMS — the complete list of ways production code may name this
@@ -393,20 +339,149 @@ describe('the four submit gates are routed through one helper', () => {
     expect(sites).toHaveLength(4);
   });
 
-  it('the fee-pricing population agrees with the fee call sites', () => {
+  it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
     // 🔴 THE RELATIONSHIP, not a component: a path that GROWS a fee without
     // flipping its flag, or flips a flag without wiring a fee, moves exactly one
     // of these two numbers. Both are read from the same file so neither can be
     // satisfied by the other's population.
+    //
+    // 🔴 THE POPULATION IS RESERVING QUOTES, NOT ALL QUOTES — AND COUNTING ALL OF
+    // THEM IS A BUG THIS GUARD BRIEFLY HAD. `quoteBlockAuthorFee` is now called
+    // from the two ESTIMATE arms as well, to DISCLOSE the fee in the price the
+    // block is shown. Those quotes reserve nothing and gate nothing, so they have
+    // no `blockPerCallBudget` call to flip a flag on: a raw count of quote sites
+    // compared against the `pricesAuthorFee: true` count is comparing two
+    // different populations and can only be made green by breaking one of them.
+    // `pricesAuthorFee` classifies BUDGET GATES, and only a submit path has one.
+    //
+    // The split is by ENCLOSING DECLARATION, which is the same discriminator
+    // `no-divergent-author-fee-base.test.ts` ledgers each site's role with — so
+    // a disclosing quote that moved into a submit path (or the reverse) is red in
+    // both files rather than silently re-partitioned here.
     const router = blankComments(
       readFileSync(path.join(SRC, 'server/routers/blocks.router.ts'), 'utf8')
     );
-    const feeQuotes = router.match(/quoteBlockAuthorFee\(\{/g) ?? [];
-    expect(feeQuotes.length, 'no fee quotes found — the matcher is wrong').toBeGreaterThan(0);
-    expect(feeQuotes).toHaveLength(2);
+    // 🔴 ONE DISCRIMINATOR, SHARED — this test's own comment above claims the
+    // split "is the same discriminator `no-divergent-author-fee-base.test.ts`
+    // ledgers each site's role with". Two independently-maintained copies of a
+    // regex cannot support that sentence: the first person to fix one leaves the
+    // other wrong and both stay green. `enclosingDecl` is that one copy, and it
+    // recognises ANY `*Procedure` spelling — the router also declares
+    // `moderatorProcedure` and `appDeveloperProcedure` handlers, and skipping
+    // them resolves an offset inside one to the PREVIOUS public/protected
+    // procedure.
+    const quoteOwners = [...router.matchAll(/quoteBlockAuthorFee\(\{/g)].map((m) =>
+      enclosingDecl(router, m.index)
+    );
+    expect(quoteOwners.length, 'no fee quotes found — the matcher is wrong').toBeGreaterThan(0);
+
+    // ── 🔴 CLASSIFIED BY WHAT THE PATH DOES, NOT BY WHAT IT IS CALLED ─────────
+    // This split read `owner.startsWith('submit')` / `'estimate'` — a guess about
+    // behaviour taken from an identifier. A RESERVING quote grown inside any
+    // `estimate*`-named function was therefore scored DISCLOSING, dropped from
+    // the `reserving` bucket, and silently removed from the comparison below,
+    // which is the one thing this test exists to make. The old "neither bucket"
+    // assertion did not help: it catches a name matching NO prefix and is blind
+    // to a name matching the WRONG one — and a reserving call on an estimate arm
+    // is exactly that shape, demonstrated reachable by mutation on the sibling
+    // guard (a `reserveBlockBuzzSpendForClaims` inserted into
+    // `estimateStepWorkflow` survived the whole battery).
+    //
+    // `structuralQuoteRole` reads the region's own MONEY PRIMITIVES instead: a
+    // region that calls ANY of them reserves, one that calls NONE discloses. The
+    // disclosing side is the exhaustive claim and it is the one that matters — an
+    // estimate arm must touch no reservation, charge, refund or settle at all.
+    const regions = declRegions(router);
+    const roleOf = (owner: string) => {
+      const region = regions.get(owner);
+      expect(region, `no region for ${owner} — the region slicer is wrong`).toBeDefined();
+      return structuralQuoteRole(region!);
+    };
+    const reserving = quoteOwners.filter((owner) => roleOf(owner) === 'reserving');
+    const disclosing = quoteOwners.filter((owner) => roleOf(owner) === 'disclosing');
+
+    // Positive control on the SPLIT itself: a discriminator that resolved
+    // everything to one bucket would make the comparison below vacuous. Both
+    // buckets must be non-empty, which is a fact about today's router and is
+    // exactly what makes the number on the left meaningful.
+    expect(reserving.length, 'no reserving quote — the discriminator is wrong').toBeGreaterThan(0);
+    expect(disclosing.length, 'no disclosing quote — the discriminator is wrong').toBeGreaterThan(
+      0
+    );
     expect(
-      (router.match(/pricesAuthorFee:\s*true\b/g) ?? []).length,
-      'a submit path priced a fee without flipping its gate flag, or the reverse'
-    ).toBe(feeQuotes.length);
+      reserving.length + disclosing.length,
+      'a fee quote sits in neither a reserving nor a disclosing region'
+    ).toBe(quoteOwners.length);
+
+    // 🔴 THE NAME IS KEPT AS A HINT AND CROSS-CHECKED, NEVER TRUSTED. The naming
+    // convention is real and worth holding, but it is EVIDENCE, not the
+    // classification: where the two disagree the structural answer wins and the
+    // disagreement is the failure. A `submit*` path that reserves nothing is as
+    // much of a defect as an `estimate*` path that reserves.
+    for (const owner of quoteOwners) {
+      const structural = roleOf(owner);
+      const byName = owner.startsWith('submit')
+        ? 'reserving'
+        : owner.startsWith('estimate')
+        ? 'disclosing'
+        : null;
+      expect(
+        byName,
+        `${owner} is neither a submit* nor an estimate* path — name it for what it does, or the ` +
+          'naming convention this cross-check relies on has been abandoned'
+      ).not.toBeNull();
+      expect(
+        structural,
+        `${owner} is named like a '${byName}' path but its body is '${structural}' — the name and ` +
+          'the money primitives disagree, and one of them is lying to the next reader'
+      ).toBe(byName);
+    }
+
+    expect(reserving).toHaveLength(2);
+
+    // 🔴 THE SET, NOT THE COUNT — AND THE COUNT WAS WALKABLE BY A SWAP. This read
+    // `count(/pricesAuthorFee:\s*true\b/) === reserving.length`, i.e. 2 === 2.
+    // Setting `pricesAuthorFee: false` on `submitStepWorkflow` (which DOES price a
+    // fee) and `true` on `submitPassThroughStepWorkflow` (which does not) flips
+    // two flags and moves neither number, so the ledger stayed green over an
+    // exactly-inverted classification. Nothing else can catch it: the flag's own
+    // consumer does not branch on it yet — that is the whole point of it, a place
+    // for a future ceiling decision to know WHICH gate is asking — so no
+    // behavioural test in the repo witnesses it either. A ledger that counts
+    // cannot attribute, and attribution is the entire content of this flag.
+    //
+    // So each gate's flag is resolved to its OWN enclosing path and the mapping is
+    // compared as a set against the reserving quote owners. A swap now names both
+    // paths it moved.
+    const feePricingGates = [...router.matchAll(/pricesAuthorFee:\s*(true|false)\b/g)].map((m) => ({
+      owner: enclosingDecl(router, m.index),
+      prices: m[1] === 'true',
+    }));
+    expect(
+      feePricingGates.length,
+      'no pricesAuthorFee gates found — the matcher is wrong'
+    ).toBeGreaterThan(0);
+    for (const { owner } of feePricingGates) {
+      expect(owner, 'a pricesAuthorFee gate sits at module scope').not.toBe('<module scope>');
+    }
+    expect(
+      feePricingGates
+        .filter((g) => g.prices)
+        .map((g) => g.owner)
+        .sort(),
+      'the paths whose budget gate declares `pricesAuthorFee: true` are not the paths that ' +
+        'actually take a RESERVING fee quote. A gate classified against the wrong path is a ' +
+        'ceiling decision made about the wrong money.'
+    ).toEqual([...reserving].sort());
+    // …and the false half is named too, so a gate that simply LOST its flag is
+    // red rather than silently leaving the true-set correct. These are the two
+    // post-paid paths: no pre-submit `cost.base`, so no fee can be priced on them.
+    expect(
+      feePricingGates
+        .filter((g) => !g.prices)
+        .map((g) => g.owner)
+        .sort(),
+      'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
+    ).toEqual(['submitCustomComfyWorkflow', 'submitPassThroughStepWorkflow']);
   });
 });

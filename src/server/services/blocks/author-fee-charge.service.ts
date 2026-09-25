@@ -131,6 +131,38 @@ export async function quoteBlockAuthorFee(args: {
   viewerUserId: number;
   /** Log-only; a whatIf has no workflow id, so callers pass a stable label. */
   workflowLabel: string;
+  /**
+   * DISCLOSURE-ONLY caller: the result is shown to a viewer and then discarded,
+   * never gated, reserved or charged against.
+   *
+   * 🔴 IT CHANGES NO PRICING, AND THAT IS THE POINT — every arm below runs
+   * identically, and the value RETURNED is byte-for-byte what an unflagged call
+   * returns. A variant that changed the return would re-create estimate/submit
+   * divergence one layer down, which is the exact defect the disclosure exists to
+   * remove; the flag is named for what it does so it cannot be mistaken for one.
+   *
+   * WHAT IT SUPPRESSES: every per-call log write on this quote path — the two
+   * SKIP lines inside `resolveBlockAuthorFeePayee`, and this function's OWN
+   * `catch` below. The estimate path is unbounded (per parameter change, no rate
+   * limit, no idempotency key) while a submit is once per real generation, so a
+   * write here is multiplied by an unknown factor and a write there is not.
+   *
+   * 🔴 THE `catch` IS THE ARM THAT MATTERS MOST, AND IT WAS LEFT OUT OF THE FIRST
+   * VERSION OF THIS FLAG — named `suppressSkipLogs`, which is why it reached only
+   * the skips. It is the arm reached when `resolveBlockAuthorFeePayee`'s
+   * `dbRead.oauthClient.findUnique` THROWS — a replica failure, pool exhaustion,
+   * a statement timeout — which that function deliberately propagates. So its
+   * firing rate is a function of how broken the database is, and before this
+   * change it put an unconditional `console.error` (a SYNCHRONOUS write when
+   * stderr is a pipe, which it is in a container) plus an HTTP ingest on an
+   * unbounded surface, at exactly the moment a pod can least afford either.
+   *
+   * Nothing diagnostic is lost. Both estimate arms quote the SAME row through the
+   * SAME query as the submit, so any failure visible here is visible there too —
+   * where it is logged unsuppressed, once per real generation, which is the
+   * better signal anyway because it cannot be drowned by estimate volume.
+   */
+  suppressQuoteLogs?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeQuote> {
   try {
@@ -172,6 +204,10 @@ export async function quoteBlockAuthorFee(args: {
       appId: args.appId,
       viewerUserId: args.viewerUserId,
       workflowId: args.workflowLabel,
+      // `resolveBlockAuthorFeePayee`'s own parameter stays named for what IT
+      // does — its two skip lines. This one is wider by exactly this function's
+      // `catch`, which is why the two names differ rather than one being reused.
+      suppressSkipLogs: args.suppressQuoteLogs,
     });
     if (!payee.payee) return { charge: false, reason: payee.reason };
 
@@ -182,17 +218,24 @@ export async function quoteBlockAuthorFee(args: {
       computation,
     };
   } catch (error) {
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'error',
-        message: 'fee quote failed — generation proceeds with no fee',
-        appId: args.appId,
-        workflowId: args.workflowLabel,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    // 🔴 SUPPRESSED FOR A DISCLOSURE-ONLY CALLER, AND ONLY THE WRITE IS — the
+    // return below is unconditional, so the fee degrades to "not charged" on
+    // every caller alike. See `suppressQuoteLogs` for why this arm in particular
+    // must not write on an unbounded surface: it fires when the database is
+    // already failing.
+    if (!args.suppressQuoteLogs) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'error',
+          message: 'fee quote failed — generation proceeds with no fee',
+          appId: args.appId,
+          workflowId: args.workflowLabel,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    }
     return { charge: false, reason: 'error' };
   }
 }
