@@ -79,11 +79,20 @@ describe('login interactive fallback wiring', () => {
 const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 // Structural guards read THIS, not pageSource. A comment can spell any token a guard looks for, and the
 // comments most likely to be rewritten are the ones warning against the very edit being guarded.
-const markup = pageSource
-  .replace(/<!--[\s\S]*?-->/g, '')
-  .split('\n')
-  .filter((line) => !line.trim().startsWith('//'))
-  .join('\n');
+// 🔴 THE `//` FILTER APPLIES TO THE SCRIPT HALF ONLY. In the TEMPLATE, `//` is not a comment — Svelte
+// renders it as literal text and still parses the markup on the line — so stripping such lines
+// everywhere made anything written on one invisible to every guard here WHILE IT RENDERED. Measured
+// with a matched pair: a third `<p class="captcha-fallback-note">Too many attempts. Please try
+// again.</p>` inside role="status" survived the whole suite with a `//` prefix and died without it,
+// the two slashes the only variable. The author believes the line is disabled and the suite agrees.
+const SCRIPT_END = pageSource.indexOf('</script>');
+const markup = (
+  pageSource
+    .slice(0, SCRIPT_END)
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n') + pageSource.slice(SCRIPT_END)
+).replace(/<!--[\s\S]*?-->/g, '');
 // One extraction for every note after a named condition, so the sibling pins cannot drift: written
 // twice, the two copies already disagreed, one tolerating attributes after `class` and one not.
 // Reads `markup`, NOT pageSource — measured, a note commented out keeps a pageSource-backed copy pin
@@ -821,11 +830,13 @@ describe('login copy when the verification check cannot run', () => {
     // there is no second reader here: that would have been the last structural read of this anchor
     // still on `pageSource`, where a comment spelling it keeps the check green after the markup
     // loses it.
-    // …and it is read before the click. Anchor on the email submit's own markup: the logout form has a
-    // `<button type="submit">` too. The region's own placement relative to the form is pinned by the
-    // test above, from a different anchor; this one only has to put the NOTE ahead of the button.
+    // …and it is read before the click. The region's own placement relative to the form is pinned by
+    // the test above, from a different anchor; this one only has to put the NOTE ahead of the button.
+    // Locating the button through the shared anchor, not its gate expression: that expression is
+    // pinned whole elsewhere, so spelling it here reds this ORDERING test under "button not found"
+    // whenever the gate changes — a second, misattributed red carrying no information.
     const noteStart = markup.indexOf('{#if captchaBlocked}');
-    const submitStart = markup.indexOf('disabled={submitting || captchaPending}');
+    const submitStart = markup.indexOf(EMAIL_SUBMIT_ANCHOR);
     expect(noteStart, 'the blocked note is not in the markup').toBeGreaterThan(-1);
     expect(submitStart, 'the email submit button was not found').toBeGreaterThan(-1);
     expect(noteStart, 'the blocked note is not above the submit button it explains').toBeLessThan(
@@ -848,9 +859,9 @@ describe('login copy when the verification check cannot run', () => {
   });
 
   it('tells a user whose page was never given a check, without blaming their browser', () => {
-    // captchaBlocked cannot be reached where nothing was offered — the deadline that would set the
-    // verdict is not armed there — so that configuration had NO copy at all and fell through to the
-    // generic retry. It is a real state: enforcement is keyed on the invisible SECRET and the widget on
+    // captchaBlocked cannot be reached where nothing was offered — every writer of the verdict sits
+    // behind triggerFallback, which refuses unless captchaPending, which requires captchaConfigured —
+    // so that configuration had NO copy at all and fell through to the generic retry. It is a real state: enforcement is keyed on the invisible SECRET and the widget on
     // the invisible SITEKEY, two separate values, so setting one without the other reaches it.
     const decl = normalize(
       pageSource.match(/const captchaMisconfigured = \$derived\([\s\S]*?\);/)?.[0] ?? ''
@@ -884,7 +895,6 @@ describe('login copy when the verification check cannot run', () => {
   // INVARIANT GUARD (green before this change too): the blocked path must never re-gate the button. The
   // soft-release is the whole reason a broken widget cannot trap a user, and the server stays the sole gate.
   it('never disables the submit button on the blocked path', () => {
-    // The logout form also has a `<button type="submit">`, so anchor on the email submit's own class.
     const disabledExpr = markup.match(new RegExp(EMAIL_SUBMIT_ANCHOR + '\\{([^}]*)\\}'))?.[1];
     expect(disabledExpr).toBe('submitting || captchaPending');
     // Pinning the `disabled=` expression alone is not the guard the name claims: the realistic break is

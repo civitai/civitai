@@ -42,9 +42,11 @@
   let captchaToken = $state('');
   let captchaUnavailable = $state(false);
   // Whether a widget can appear AT ALL — the two sitekeys are independent config, so neither alone
-  // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW: drop it there and every configuration that
-  // enforces with no sitekey disables the submit FOREVER, because nothing offers a token and nothing
-  // can reach captchaUnavailable to release it.
+  // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW, and re-derived against the CURRENT code: drop
+  // it there and, wherever enforcement is on with no sitekey, the deadline finds captchaPending true,
+  // triggerFallback passes, the grace concludes, and captchaBlocked tells every visitor that an
+  // extension or a VPN is blocking a check that was never offered. The submit does release ~13s in, so
+  // this is not a trap — it is the false-blame regression, reintroduced through the other door.
   const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);
   // THIS is the expression a broken widget must never reach: no term may be added here that is true
   // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
@@ -55,8 +57,10 @@
   const captchaPending = $derived(
     data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable
   );
-  // Each term guards a false claim: the deadline sets captchaUnavailable even where the action does
-  // not enforce, and a token in hand contradicts "blocked" whatever the flag still says.
+  // A token in hand contradicts "blocked" whatever the flag still says. `turnstileEnforced` is
+  // DEFENCE IN DEPTH, not currently load-bearing: every writer of captchaUnavailable now sits behind
+  // triggerFallback, which refuses unless captchaPending, which already requires enforcement — so with
+  // enforcement off the verdict is unreachable. Kept because that choke point is one edit from moving.
   const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);
   // The OTHER way email login cannot complete: enforcement on with no widget to produce a token, so
   // every submit is refused. Separate from captchaBlocked because it is provable from `data` and is
