@@ -55,7 +55,44 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
   if (!CLICKUP_HOSTS.has(parsed.hostname.toLowerCase())) return false;
-  // `/t/<id>` and `/t/<team>/<id>` are the two shapes ClickUp serves; both put the task id last.
-  if (!parsed.pathname.split('/').filter(Boolean).includes('t')) return false;
-  return clickupTaskIdFromUrl(url) !== null;
+
+  /**
+   * 🔴 POSITIONAL, NOT "CONTAINS A `t` SOMEWHERE". An `includes('t')` test plus "the last segment
+   * is id-shaped" guarantees only that the URL parses to SOMETHING — never that it parses to the
+   * TASK. `…/t/868kfwm3j/subtasks` satisfies both and yields `subtasks`; `…/9011/v/li/900/t/<id>/x`
+   * yields `x`; `…/blog/t/how-to-do-things` passes outright. Each stores, renders as a working
+   * link, opens the right page in a browser, and can NEVER be matched by the webhook — the exact
+   * silent non-closure this gate exists to prevent, arrived at through the gate itself.
+   *
+   * The two shapes ClickUp serves are `/t/<id>` and `/t/<team>/<id>`. Anything else is refused
+   * loudly, which is the better failure: a view-embedded or sub-tab URL is a real link the operator
+   * can trivially re-copy from the task itself, and the copy tells them to.
+   */
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  if (segments[0] !== 't' || segments.length < 2 || segments.length > 3) return false;
+  /**
+   * 🔴 THE 3-SEGMENT FORM IS AMBIGUOUS BY SHAPE ALONE, and that ambiguity is the whole bug.
+   * `/t/<team>/<id>` (canonical) and `/t/<id>/<subtab>` (a task sub-tab) are both "t plus two
+   * segments", and the matcher reads the LAST one — so the sub-tab form yields `subtasks` rather
+   * than the task. What separates them is that a ClickUp TEAM id is purely numeric while a task id
+   * is not, so requiring digits in the middle admits the canonical form and refuses the sub-tab.
+   */
+  if (segments.length === 3 && !/^\d+$/.test(segments[1])) return false;
+
+  const taskId = clickupTaskIdFromUrl(url);
+  if (!taskId) return false;
+
+  /**
+   * 🔴 CUSTOM TASK IDS ARE REFUSED HERE, AND THE MATCHER ABOVE STILL TOLERATES THEM — the same
+   * read/write asymmetry as the rest of this gate, for a measured reason. The webhook's deliveries
+   * carry ClickUp's INTERNAL task id, so an entry linked by a custom id (`DEV-1234`) never matches
+   * and never auto-closes. That is a documented limitation of the integration, recorded when it
+   * shipped: *"An entry linked by a ClickUp CUSTOM id (like DEV-1234) will not auto-close, because
+   * deliveries carry the internal task id instead. Use the normal task URL."*
+   *
+   * So accepting one would store a link that is silently inert — which is what this gate is for.
+   * The matcher keeps tolerating `-`/`_` because it READS rows written before this gate existed,
+   * and tightening it would stop matching links that work today.
+   */
+  return /^[a-z0-9]+$/i.test(taskId);
 };

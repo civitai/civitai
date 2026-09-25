@@ -96,7 +96,6 @@ describe('isClickupTaskUrl', () => {
   it.each([
     ['the canonical task URL', 'https://app.clickup.com/t/8459928/868kfwm3j'],
     ['the short task URL', 'https://app.clickup.com/t/868kfwm3j'],
-    ['a custom task id', 'https://app.clickup.com/t/8459928/DEV-1234'],
     ['a query string', 'https://app.clickup.com/t/868kfwm3j?comment=1'],
     ['a fragment', 'https://app.clickup.com/t/868kfwm3j#activity'],
     ['a trailing slash', 'https://app.clickup.com/t/868kfwm3j/'],
@@ -117,11 +116,50 @@ describe('isClickupTaskUrl', () => {
     ['a ClickUp URL that is not a task link', 'https://app.clickup.com/868kfwm3j'],
     ['a ClickUp origin with no task', 'https://app.clickup.com/'],
     ['a non-http scheme', 'javascript:alert(1)//app.clickup.com/t/x'],
+    // 🔴 The protocol guard's OWN case. The `javascript:` one above never reaches it — that URL
+    // parses to an empty hostname and dies on the host allowlist — so without this row the
+    // protocol line could be deleted with the whole suite still green. Measured.
+    ['a non-http scheme on the real host', 'ftp://app.clickup.com/t/868kfwm3j'],
     ['empty', ''],
     ['undefined', undefined],
     ['null', null],
     ['prose', 'see the clickup task'],
   ])('refuses %s', (_label, input) => {
     expect(isClickupTaskUrl(input)).toBe(false);
+  });
+
+  /**
+   * 🔴 THE POSITION-BLIND CASES. Each of these has a `t` segment and an id-shaped LAST segment, so
+   * a "contains `t` and parses to something" gate accepts all three — while the id the matcher
+   * reads back is the third element of each row below, none of which is the task. Stored, they
+   * render as working links and can never be matched by the webhook.
+   *
+   * The expected wrong id is a PARAMETER rather than prose precisely so it cannot go stale: an
+   * earlier draft of this sentence named a value the table no longer used.
+   */
+  it.each([
+    ['a task sub-tab', 'https://app.clickup.com/t/868kfwm3j/subtasks', 'subtasks'],
+    ['a task inside a view URL', 'https://app.clickup.com/9011/v/li/900/t/868kfwm3j/x', 'x'],
+    [
+      'a marketing page that happens to contain /t/',
+      'https://www.clickup.com/blog/t/how-to-do',
+      'how-to-do',
+    ],
+  ])('refuses %s, whose last segment is not the task id', (_label, input, wrongId) => {
+    // The matcher reads the WRONG id out of it — which is precisely why the gate must refuse it.
+    expect(clickupTaskIdFromUrl(input)).toBe(wrongId);
+    expect(isClickupTaskUrl(input)).toBe(false);
+  });
+
+  /**
+   * 🔴 A CUSTOM TASK ID IS A DOCUMENTED SILENT NON-CLOSURE, so the gate refuses it while the
+   * matcher — which reads rows written before this gate existed — still tolerates it. Recorded
+   * when the webhook shipped: deliveries carry ClickUp's internal task id, so an entry linked by
+   * `DEV-1234` never matches and never closes, with no error anywhere.
+   */
+  it('refuses a custom task id, which the matcher still reads', () => {
+    const url = 'https://app.clickup.com/t/8459928/DEV-1234';
+    expect(clickupTaskIdFromUrl(url)).toBe('DEV-1234');
+    expect(isClickupTaskUrl(url)).toBe(false);
   });
 });

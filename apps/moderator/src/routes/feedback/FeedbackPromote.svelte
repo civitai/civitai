@@ -58,11 +58,11 @@
      * paragraph in `FeedbackDetail.svelte` for the case that destroys the panel outright.)
      *
      * 🔴 `$bindable`, AND THE PARENT MUST PASS IT WITH `bind:draft=`. This section MUTATES the
-     * draft — three `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
+     * draft — four `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
      * ownership validator treats a mutation of a prop the parent did not BIND as a defect:
      * `create_ownership_validator`'s `is_bound_or_unset`
      * (`svelte@5.56.3/src/internal/client/dev/ownership.js:71-80`) looks for a SETTER on the props
-     * descriptor, a plain prop has only a getter, so every keystroke into title/summary/bugId
+     * descriptor, a plain prop has only a getter, so every keystroke into title/summary/bugId/clickupUrl
      * raised `ownership_invalid_mutation`. Measured in a compiled two-component repro of exactly
      * this shape: two keystrokes → 2 warnings as a plain prop, 0 with `$bindable` + `bind:draft`.
      * Production was never affected (`DEV` is false there) — the cost was a dev console nobody
@@ -243,6 +243,13 @@
                checking list membership needs a ClickUp API token this app does not have. The
                sentence is the only thing standing between a moderator and a silent non-closure.
 
+               🔴 "NEXT completed" IS LOAD-BEARING. The subscription is `taskStatusUpdated` and
+               nothing backfills, so linking a task that is ALREADY complete produces an issue that
+               never closes — a third silent non-closure beside the blank box and the wrong list.
+               A custom-id URL (`DEV-1234`) is a fourth, and that one IS caught: the input gate
+               refuses it, because deliveries carry ClickUp's internal id so a custom id can never
+               match. Recorded when the webhook shipped.
+
                🔴 AND THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the
                link on the issue board afterwards needs `bugsEdit`, which is a per-user grant and
                NOT conferred by `isModerator`: 3 of 24 moderators hold it. For the other 21 this
@@ -250,9 +257,9 @@
                not be able to" rather than offering the board as a general second chance. -->
           <p class="text-xs text-dark-2">
             If the task is on the synced team list, pasting its URL lets the issue close itself when
-            the task is completed. A task on any other list will not auto-close. Leave it blank and
-            the issue never auto-closes — and unless you have issue-board edit access, you may not
-            be able to add the link afterwards.
+            the task is <em>next</em> completed. It will not auto-close for a task on another list,
+            or one that is already complete. Leave it blank and it never auto-closes — and unless
+            you have issue-board edit access, you may not be able to add the link afterwards.
           </p>
         </div>
       {/if}

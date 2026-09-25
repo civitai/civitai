@@ -327,10 +327,15 @@ describe('promoteFeedbackToBug', () => {
    * column NULL rather than an empty string, so "no task" has one spelling on the column the
    * webhook reads.
    *
-   * 🔴 BOTH SPELLINGS OF "NO TASK", because the parameter is OPTIONAL and they reach the column
-   * by different routes — omitted goes through the `?? null` default, explicit null does not. A
-   * default that stopped applying would leave `undefined` heading for a NOT NULL-less column and
-   * only the omitted case would catch it.
+   * Both spellings of "no task", because the parameter is optional and a caller may write either.
+   *
+   * ⚠️ THEY DO NOT REACH THE COLUMN BY DIFFERENT ROUTES, AND AN EARLIER VERSION OF THIS DOCSTRING
+   * CLAIMED THEY DID. Kysely omits an `undefined` column from the INSERT entirely, so with or
+   * without the `?? null` default both spellings end as NULL — measured by deleting the default
+   * and watching all three ClickUp tests stay green. So this pair pins the OBSERVABLE (either way
+   * of saying "no task" lands as NULL, never ''), and pins the default itself NOT AT ALL. Said
+   * plainly rather than left implicit: a reader who believed the old sentence would think the
+   * default was covered.
    */
   it.each([
     ['omitted entirely', {}],
