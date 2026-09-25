@@ -1,7 +1,6 @@
 import type { XGuardModerationOutput } from '@civitai/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { Tracker } from '~/server/clickhouse/tracker';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
@@ -12,14 +11,16 @@ import {
   triggeredLabelKeys,
 } from '~/server/services/moderation-label-helpers';
 import { recordModelTextModerationOutcome } from '~/server/prom/model-moderation.metrics';
-import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
-import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  applyModelNsfwTextScan,
+  applySystemModelNsfwFlag,
+} from '~/server/services/text-scan/actions/model-nsfw';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { removeTags } from '~/utils/string-helpers';
 
-export const MODEL_MODERATION_ENTITY_TYPE = 'Model';
+export const MODEL_MODERATION_ENTITY_TYPE = 'Model' as const;
 
 /**
  * Every label submitted on a model scan. Twelve of them are recorded and not acted on —
@@ -192,14 +193,25 @@ export const modelModerationAdapter: ModerationAdapter = {
   // Pending rows, gets a declined submit back, and burns all nine attempts inside a couple
   // of hours — after which the rows are never retried again, including once the flag
   // returns.
-  isEnabled: ({ entityId }) => submitEnabled(entityId),
+  isEnabled: async ({ entityId }) =>
+    (await getTextScanMode(MODEL_MODERATION_ENTITY_TYPE, entityId)) === 'active' ||
+    submitEnabled(entityId),
 
-  submit: async ({ entityId, content }) => {
-    // Gated as well as `isEnabled`: a caller that reaches the hook directly must not be
-    // able to request a scan the flag has turned off. Undefined is contractual here —
-    // the same shape as a submit the helper itself declined.
-    if (!(await submitEnabled(entityId))) return undefined;
-    return submitModelScan({ entityId, content });
+  submit: ({ entityId, content }) =>
+    submitTextModerationOrScan({
+      entityType: MODEL_MODERATION_ENTITY_TYPE,
+      entityId,
+      // Gated as well as `isEnabled`: a caller that reaches the hook directly must not be
+      // able to request an XGuard scan the flag has turned off. Undefined is contractual
+      // here — the same shape as a submit the helper itself declined.
+      xguard: async () => {
+        if (!(await submitEnabled(entityId))) return undefined;
+        return submitModelScan({ entityId, content });
+      },
+    }),
+
+  applyTextScan: async (args) => {
+    await applyModelNsfwTextScan(args);
   },
 
   // `output.blocked` is deliberately unread. The submit sends fifteen labels this adapter
@@ -247,37 +259,9 @@ export const modelModerationAdapter: ModerationAdapter = {
     // reviewing a model they already ruled on still needs to see that the scan disagreed.
     await recordForensics({ entityId, matchedTerms, labels });
 
-    const stored = model.lockedProperties ?? [];
-    // A stored lock is a moderator's call: minor-flagging sets nsfw:false and locks it.
-    if (stored.includes('nsfw')) {
-      // A prior callback may have written nsfw:true and died before recomputing levels —
-      // EntityModeration is already Succeeded by then, so nothing else revisits the row.
-      // Gated on the level actually being wrong: `updateModelNsfwLevels` matches every
-      // `nsfw = true` row unconditionally, so calling it on a correct row still writes,
-      // fires the model row trigger, and queues a Meilisearch re-render.
-      if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag) {
-        await updateModelNsfwLevels([entityId]);
-        recordModelTextModerationOutcome('repaired');
-      } else {
-        recordModelTextModerationOutcome('skipped_locked');
-      }
-      return;
-    }
-
-    // Guarded in the WHERE, not by the read above. The lock check and this write are two
-    // statements, and a moderator ruling that lands between them would otherwise be
-    // overwritten. `array_append` in the database for the same reason — writing back the
-    // array we read would drop a concurrent lock on some other property.
-    const flipped = await dbWrite.$executeRaw`
-      UPDATE "Model" m
-      SET nsfw = TRUE,
-          "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')
-      WHERE m.id = ${entityId}
-        AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
-    `;
-
-    if (!flipped) {
-      recordModelTextModerationOutcome('declined_race');
+    const result = await applySystemModelNsfwFlag({ model, source: 'xguard-text-moderation' });
+    recordModelTextModerationOutcome(result);
+    if (result === 'declined_race') {
       logToAxiom({
         name: 'model-text-moderation',
         type: 'warning',
@@ -286,33 +270,7 @@ export const modelModerationAdapter: ModerationAdapter = {
       }).catch(() => null);
       return;
     }
-
-    await updateModelNsfwLevels([entityId]);
-    // The origin-side public response cache keys off browsing level and is otherwise only
-    // busted by `upsertModel`. Without this the pre-flip payload keeps being served for the
-    // whole TTL, including on the SFW-only key used for region-restricted requests.
-    await bustPublicModelResponseCache(entityId);
-
-    // Attribute the flip to the system rather than leaving it absent from the change
-    // history — this write has no actor at all, so nothing else can.
-    await new Tracker()
-      .entityChanges(
-        diffEntityChanges({
-          entityType: 'Model',
-          entityId,
-          ownerId: model.userId,
-          before: { nsfw: model.nsfw, lockedProperties: stored },
-          after: { nsfw: true, lockedProperties: [...stored, 'nsfw'] },
-          actorRole: 'system',
-          systemFields: {
-            nsfw: 'xguard-text-moderation',
-            lockedProperties: 'xguard-text-moderation',
-          },
-        })
-      )
-      .catch(() => null);
-
-    recordModelTextModerationOutcome('applied');
+    if (result !== 'applied') return;
 
     logToAxiom({
       name: 'model-text-moderation',
@@ -348,12 +306,15 @@ export async function submitModelTextModeration(model: {
   if (model.isModerator) return;
 
   const content = buildModelModerationText(model);
-  if (!content) return;
-
-  if (!(await submitEnabled(model.id))) return;
-
   try {
-    await submitModelScan({ entityId: model.id, content });
+    await submitTextModerationOrScan({
+      entityType: MODEL_MODERATION_ENTITY_TYPE,
+      entityId: model.id,
+      xguard: async () => {
+        if (!content || !(await submitEnabled(model.id))) return null;
+        return submitModelScan({ entityId: model.id, content });
+      },
+    });
   } catch (e) {
     logToAxiom({
       name: 'model-text-moderation',
@@ -395,14 +356,20 @@ export function resolveBackfillCursor({
  * are re-running after the apply flag goes up and re-running after a rollback, and both are
  * moments when the flags are down. `forceRescan` bypasses the contentHash dedup so a model
  * already scanned during the shadow phase gets a fresh verdict rather than the cached one,
- * which would never re-enter `applyResult`.
+ * which would never re-enter `applyResult`. Routed: once Model is `active` a forced text scan
+ * replaces the XGuard rescan, which would otherwise write an XGuard Pending over the text-scan row.
  */
-export function submitModelTextModerationBackfill(model: {
+export async function submitModelTextModerationBackfill(model: {
   id: number;
   name: string;
   description?: string | null;
 }) {
   const content = buildModelModerationText(model);
   if (!content) return null;
-  return submitModelScan({ entityId: model.id, content, forceRescan: true });
+  return submitTextModerationOrScan({
+    entityType: MODEL_MODERATION_ENTITY_TYPE,
+    entityId: model.id,
+    force: true,
+    xguard: () => submitModelScan({ entityId: model.id, content, forceRescan: true }),
+  });
 }

@@ -41,7 +41,7 @@ const ratedEntities: Record<
     },
   },
   Post: {
-    recompute: updatePostNsfwLevels,
+    recompute: (ids) => updatePostNsfwLevels(ids),
     read: async (id) => {
       const row = await dbWrite.post.findUnique({
         where: { id },
@@ -51,7 +51,7 @@ const ratedEntities: Record<
     },
   },
   Bounty: {
-    recompute: updateBountyNsfwLevels,
+    recompute: (ids) => updateBountyNsfwLevels(ids),
     read: async (id) => {
       const row = await dbWrite.bounty.findUnique({
         where: { id },
@@ -61,7 +61,7 @@ const ratedEntities: Record<
     },
   },
   BountyEntry: {
-    recompute: updateBountyEntryNsfwLevels,
+    recompute: (ids) => updateBountyEntryNsfwLevels(ids),
     read: async (id) => {
       const row = await dbWrite.bountyEntry.findUnique({
         where: { id },

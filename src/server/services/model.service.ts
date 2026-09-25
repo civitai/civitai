@@ -125,6 +125,7 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -4809,6 +4810,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  modelIds.forEach((entityId) => scanEntityInBackground({ entityType: 'Model', entityId }));
 
   return { ok: true };
 }
@@ -5113,6 +5115,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
+    if (!user.isModerator) scanEntityInBackground({ entityType: 'Model', entityId: result.id });
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({

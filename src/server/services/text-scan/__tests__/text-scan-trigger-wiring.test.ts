@@ -20,6 +20,13 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   ['src/server/services/challenge.service.ts', 'export async function upsertUserChallenge(', 'await pinModeratorNsfwLevel(tx, id);', 1],
   ['src/server/services/challenge.service.ts', 'export async function upsertUserChallenge(', 'await scanUserChallenge(', 2],
   ['src/server/services/challenge.service.ts', 'export async function scanUserChallenge(', 'onActiveSkip: (reason) => settleSkippedChallengeScan(challengeId, reason)', 1],
+  ['src/server/services/model.service.ts', 'export const upsertModel', 'submitModelTextModeration({', 1],
+  ['src/server/services/model.service.ts', 'export async function applyModelContentChange', 'submitModelTextModeration({', 1],
+  ['src/server/services/model-version.service.ts', 'export const upsertModelVersion', "scanEntityInBackground({ entityType: 'Model', entityId: version.modelId })", 2],
+  ['src/server/services/model-version.service.ts', 'export async function applyModelVersionContentChange', "if (!context) scanEntityInBackground({ entityType: 'Model', entityId: modelId })", 1],
+  ['src/server/services/model-version.service.ts', 'export const mergeVersions', "scanEntityInBackground({ entityType: 'Model', entityId: modelId })", 1],
+  ['src/server/services/model.service.ts', 'export const privateModelFromTraining', "scanEntityInBackground({ entityType: 'Model', entityId: result.id })", 1],
+  ['src/server/services/model.service.ts', 'export async function migrateResourceToCollection', "scanEntityInBackground({ entityType: 'Model', entityId })", 1],
 ];
 
 describe('text-scan write-path wiring', () => {
