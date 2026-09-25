@@ -243,12 +243,23 @@
                checking list membership needs a ClickUp API token this app does not have. The
                sentence is the only thing standing between a moderator and a silent non-closure.
 
-               🔴 "NEXT completed" IS LOAD-BEARING. The subscription is `taskStatusUpdated` and
-               nothing backfills, so linking a task that is ALREADY complete produces an issue that
-               never closes — a third silent non-closure beside the blank box and the wrong list.
-               A custom-id URL (`DEV-1234`) is a fourth, and that one IS caught: the input gate
-               refuses it, because deliveries carry ClickUp's internal id so a custom id can never
-               match. Recorded when the webhook shipped.
+               🔴 "NEXT completed" IS LOAD-BEARING, AND THE PRECISE CLAIM IS NARROWER THAN "ALREADY
+               COMPLETE NEVER CLOSES" — an earlier draft of this comment said that, and it is wrong
+               in the direction that costs the operator the link. The subscription is
+               `taskStatusUpdated` and nothing backfills, so the completion that ALREADY HAPPENED
+               cannot close anything. But `clickupDoneStatusFromPayload` has no "was already done"
+               guard: any later status move whose new status is done-typed — Complete → Closed, or a
+               reopen and re-complete — fires and DOES close the entry. So the honest statement is
+               "not retroactively", never "never".
+
+               That distinction matters because of the sentence below: told "it will not auto-close",
+               a moderator leaves the box blank, and 21 of 24 of them can never add the link
+               afterwards. Over-claiming here spends the one chance they get.
+
+               A custom-id URL (`DEV-1234`) is the one non-closure the gate actually catches, because
+               deliveries carry ClickUp's internal id. Source is the integration's own shipping
+               record — ClickUp task `868ktfupv`, not anything in this repo; its documented backstop
+               is `check-known-issues-sync.mjs` in the support-agent repo.
 
                🔴 AND THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the
                link on the issue board afterwards needs `bugsEdit`, which is a per-user grant and
@@ -256,10 +267,11 @@
                box is the only chance to link the task, ever, which is why the sentence says "may
                not be able to" rather than offering the board as a general second chance. -->
           <p class="text-xs text-dark-2">
-            If the task is on the synced team list, pasting its URL lets the issue close itself when
-            the task is <em>next</em> completed. It will not auto-close for a task on another list,
-            or one that is already complete. Leave it blank and it never auto-closes — and unless
-            you have issue-board edit access, you may not be able to add the link afterwards.
+            If the task is on the synced team list, pasting its URL lets the issue close itself the
+            <em>next</em> time the task moves to a done status — a completion that already happened
+            will not close it retroactively, and a task on another list will not close it at all.
+            Paste it anyway if in doubt: leaving it blank means the issue never auto-closes, and
+            unless you have issue-board edit access you may not be able to add the link later.
           </p>
         </div>
       {/if}

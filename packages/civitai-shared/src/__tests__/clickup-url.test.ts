@@ -162,4 +162,24 @@ describe('isClickupTaskUrl', () => {
     expect(clickupTaskIdFromUrl(url)).toBe('DEV-1234');
     expect(isClickupTaskUrl(url)).toBe(false);
   });
+
+  /**
+   * ⚠️ THE TWO PLACES THE GATE IS KNOWINGLY LOOSER THAN ITS OWN PROSE, pinned so they are visible
+   * as decisions rather than discovered later as bugs. Both are documented at the call site.
+   *
+   * 1. A separator-less custom id passes the charset rule — the code refuses the DOCUMENTED
+   *    `PREFIX-number` format, not provably every custom id.
+   * 2. A truncated paste of a team id passes the 2-segment branch, because refusing it needs the
+   *    premise "a native task id is never purely numeric", which is unverified.
+   *
+   * These assertions will FAIL if either is later tightened — which is the point: the change
+   * should be deliberate, and should come with the evidence these paragraphs say is missing.
+   */
+  it('accepts a separator-less id, the documented limit of the charset rule', () => {
+    expect(isClickupTaskUrl('https://app.clickup.com/t/8459928/ABC123')).toBe(true);
+  });
+
+  it('accepts a bare numeric segment, the documented limit of the 2-segment branch', () => {
+    expect(isClickupTaskUrl('https://app.clickup.com/t/8459928')).toBe(true);
+  });
 });

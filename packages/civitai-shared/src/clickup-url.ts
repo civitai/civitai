@@ -64,9 +64,12 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
    * link, opens the right page in a browser, and can NEVER be matched by the webhook — the exact
    * silent non-closure this gate exists to prevent, arrived at through the gate itself.
    *
-   * The two shapes ClickUp serves are `/t/<id>` and `/t/<team>/<id>`. Anything else is refused
-   * loudly, which is the better failure: a view-embedded or sub-tab URL is a real link the operator
-   * can trivially re-copy from the task itself, and the copy tells them to.
+   * The two shapes this gate ACCEPTS are `/t/<id>` and `/t/<team>/<id>`. That is not the same as
+   * the set ClickUp serves — a List view's address bar produces
+   * `/{team}/v/li/{list}?p={task}` (`.claude/skills/clickup/SKILL.md`), which is a real task URL
+   * and is refused here, correctly: the matcher would read the LIST id out of it. Anything outside
+   * the accepted pair is refused loudly, which is the better failure — the operator can re-copy the
+   * link from the task itself, and the refusal message names the shape to paste.
    */
   const segments = parsed.pathname.split('/').filter(Boolean);
   if (segments[0] !== 't' || segments.length < 2 || segments.length > 3) return false;
@@ -83,16 +86,29 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
   if (!taskId) return false;
 
   /**
-   * 🔴 CUSTOM TASK IDS ARE REFUSED HERE, AND THE MATCHER ABOVE STILL TOLERATES THEM — the same
-   * read/write asymmetry as the rest of this gate, for a measured reason. The webhook's deliveries
-   * carry ClickUp's INTERNAL task id, so an entry linked by a custom id (`DEV-1234`) never matches
-   * and never auto-closes. That is a documented limitation of the integration, recorded when it
-   * shipped: *"An entry linked by a ClickUp CUSTOM id (like DEV-1234) will not auto-close, because
-   * deliveries carry the internal task id instead. Use the normal task URL."*
+   * 🔴 A HYPHENATED/UNDERSCORED TASK ID IS REFUSED, WHICH COVERS CLICKUP'S DOCUMENTED CUSTOM-ID
+   * FORMAT — and the matcher above still tolerates it. Same read/write asymmetry as the rest of
+   * this gate: deliveries carry ClickUp's INTERNAL task id, so an entry linked by a custom id
+   * (`DEV-1234`) never matches and never auto-closes, and storing one would be silently inert.
    *
-   * So accepting one would store a link that is silently inert — which is what this gate is for.
+   * ⚠️ THE CODE IMPLEMENTS A CHARSET RULE; THE CLASS CLAIM IS WIDER THAN THE RULE. Custom ids are
+   * documented as `PREFIX-number`, so the charset test catches the documented shape — but a
+   * separator-less custom pattern (`ABC123`) would pass, and I could not confirm whether ClickUp's
+   * custom-ID pattern feature permits one. Stated rather than papered over: this refuses the
+   * documented format, not provably every custom id.
+   *
+   * ⚠️ AND IT IS NOT APPLIED TO THE 2-SEGMENT BRANCH, DELIBERATELY. The numeric-team premise above
+   * would also refuse `/t/8459928` — a truncated paste of a team id, which stores as a task link
+   * that can never match. It is left ACCEPTED because the premise needed to refuse it is "a native
+   * task id is never purely numeric", and that is unverified: native ids are 9-char base-36-ish and
+   * every one seen here begins `86`, but nothing rules out an all-digit id. Refusing on an
+   * unverified premise would block a legitimate link. The inconsistency is the deliberate half.
+   *
    * The matcher keeps tolerating `-`/`_` because it READS rows written before this gate existed,
-   * and tightening it would stop matching links that work today.
+   * and tightening it would stop matching links that work today. Source for the custom-id
+   * limitation: ClickUp task `868ktfupv`, the integration's shipping record — it is NOT recorded
+   * anywhere in this repo, and its named backstop is `check-known-issues-sync.mjs` in the
+   * support-agent repo.
    */
   return /^[a-z0-9]+$/i.test(taskId);
 };
