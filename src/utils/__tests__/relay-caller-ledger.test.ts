@@ -117,24 +117,17 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 /**
- * Roots that can hold production TypeScript reaching the relay.
+ * Where the sweep starts: the repo ROOT. `SKIP_DIRS` below is the only thing bounding it,
+ * so there is deliberately no list of roots to keep complete.
  *
- * `apps`, `packages` and `scripts` are swept as well as `src`: the relay is an ordinary
- * same-origin POST, so a workspace app could make one, and a caller nobody scans is a
- * caller nobody ledgers. ⚠ An earlier revision justified this by citing the settle ledger's
- * widening — whose stated reason is `scripts/` specifically — while omitting `scripts`
- * itself. Cited reasons have to match what the code does.
- *
- * 🔴 `event-engine-common` IS SWEPT, and its absence was a measured escape: a module there
- * importing and calling an entry point left every test in this file green, while the
- * identical file under `packages/` turned the ledger red — so the root list, and nothing
- * else, was the difference. It is a submodule rather than a workspace directory, which is
- * exactly why it did not come to mind; it holds production TypeScript that the server
- * imports, and a raw `fetch` to the path there needs no import at all and so has no second
- * gate. ⚠ A submodule can be UNPOPULATED in a fresh checkout, in which case `walkFiles`
- * tolerates the missing directory and scans nothing — so this root's coverage differs
- * between checkouts. That is a reason to populate it in CI, not a reason to leave it out:
- * scanning it sometimes strictly dominates scanning it never.
+ * ⚠ This docstring used to be that list's rationale and survived its deletion by a round,
+ * leaving a plural "roots that can hold production TypeScript" over a single dot — and,
+ * worse, a closing note claiming the submodule's coverage "differs between checkouts,
+ * silently". That was retracted in the same commit that wrote it: the submodule is in
+ * `MUST_SWEEP_DIRS` and an unpopulated one turns this file red, loudly, on top of the
+ * pre-existing `src/__tests__/submodules-checked-out.test.ts`. Two comments in one file
+ * disagreeing about whether coverage can silently vanish is the failure this change has
+ * now made in three separate places.
  */
 const SWEEP_ROOT = '.';
 
@@ -207,9 +200,22 @@ const MUST_SWEEP_DIRS = [
  *
  * ⚠ `.mts`/`.cts` were missing from the walker until measured: a plain named-import caller
  * in an `.mts` file — the STRONGEST reference shape, nothing clever about it — was invisible
- * purely because of its extension. The repo has `.mts` under both swept roots.
+ * purely because of its extension. The repo has `.mts` files in the tree.
+ *
+ * 🔴 `.html` IS CODE HERE, and leaving it out was the round after the directory walk went
+ * opt-out — the same escape, moved from the directory axis to the extension axis. Inverting
+ * the walk made `public/` reachable and left this list closed, so the only carrier in it the
+ * sweep admitted was `.js`. `public/reset.html` is a page served verbatim at the site's own
+ * origin with an inline `<script>` that already does awaited browser work; a relay caller
+ * planted in it was live and left every test green. Five more shipped shells sit beside it,
+ * including the SvelteKit document template rendered on EVERY page of four workspace apps.
+ *
+ * Such a file is parsed as TypeScript, which is wrong in general and adequate here for the
+ * same reason `.svelte` is: the parse still tokenises the string literals, which is what
+ * both the path scan and the reference scan read. Verified on the real file rather than a
+ * fixture — the planted call is found, and no existing HTML reads as a reference.
  */
-const WALKED_EXTENSIONS = ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs', 'svelte'];
+const WALKED_EXTENSIONS = ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs', 'svelte', 'html'];
 const EXTENSION_ALTERNATION = WALKED_EXTENSIONS.join('|');
 const WALKED_FILE_RE = new RegExp(`\\.(${EXTENSION_ALTERNATION})$`);
 const SPEC_FILE_RE = new RegExp(`\\.(test|spec)\\.(${EXTENSION_ALTERNATION})$`);
@@ -269,11 +275,15 @@ const HELPER_NON_ENTRY_POINTS: Record<string, string> = {
  * './relay'`, setting the producer header on the caller's behalf and forwarding, compiled
  * clean and left all 134 tests green.
  *
- * ⚠ The asymmetry is the trap for the next reviewer: the DYNAMIC form was already caught,
- * because `await import('~/pages/api/v1/image-upload/relay')` puts the path in a call
- * argument rather than an `ImportDeclaration`, so it counts as a path literal. Checking the
- * dynamic case and seeing red reads as "this class is covered". Only the static import
- * escaped.
+ * ⚠ The asymmetry that trapped the round which first closed this: the dynamic form looked
+ * already-caught, because `await import('~/pages/api/v1/image-upload/relay')` puts the
+ * path in a call argument and so counts as a path literal. That is true only of the
+ * spellings CARRYING THE PATH. `await import('./relay')` carries none — no hint, no tail,
+ * no `ImportDeclaration` — and a sibling in this directory is exactly who writes the
+ * relative form. Measured a round later: a second route doing that, setting the header and
+ * forwarding, typechecked clean and left 136 tests green. `require('./relay')` is the same
+ * hole. So the resolver below reads the static AND the call forms; checking one spelling of
+ * a class and seeing red is what made this look covered twice.
  *
  * ⚠ And it is not hypothetical practice: `src/pages/api/ready.ts` and
  * `src/pages/api/internal/get-jobs.ts` both already import from another route module.
@@ -362,7 +372,25 @@ function walkFiles(dir: string, out: string[]): string[] {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
+    // 🔴 A SYMLINK TO A DIRECTORY REPORTS `isDirectory() === false`, so it used to fall
+    // through to the file branch and get `readFileSync`'d. Two failure modes, and the loud
+    // one is the wrong kind of loud: the read throws EISDIR from `scan()`, which runs in
+    // the describe body, so the whole file collapses to `Tests no tests` — reporting
+    // nothing rather than reporting red. The quiet one is the escape: a symlinked directory
+    // inside a swept tree is recursed into by NEITHER branch, so it is silently unswept.
+    // Demonstrated by removing `node_modules` from `SKIP_DIRS`, where pnpm's links are
+    // named `chart.js`, `decimal.js`, `discord.js` — every one matching the walked-file
+    // regex. No tracked symlink exists here today, so this is latent, not live; `stat`
+    // follows the link and answers the question the walk is actually asking.
+    let isDir = entry.isDirectory();
+    if (entry.isSymbolicLink()) {
+      try {
+        isDir = fs.statSync(full).isDirectory();
+      } catch {
+        continue; // a broken link is neither a directory nor a readable file
+      }
+    }
+    if (isDir) {
       if (SKIP_DIRS.has(entry.name)) continue;
       walkFiles(full, out);
       // Not just `.ts(x)`: `apps/` is SvelteKit, so a workspace app would reach the relay
@@ -376,6 +404,29 @@ function walkFiles(dir: string, out: string[]): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Read a swept file, or `null` if it cannot be read.
+ *
+ * 🔴 TOLERANT FOR THE SAME REASON `readdirSync` IS, AND IT MATTERS MORE HERE: `scan()` runs
+ * in the describe body, so an uncaught throw collapses the whole file to `Tests no tests` —
+ * reporting NOTHING rather than reporting red, which is the shape this file exists to
+ * refuse. A file the sweep cannot read is one file skipped; every other assertion still
+ * holds.
+ *
+ * ⚠ ONE helper because there are TWO readers, and having tolerated only the first is how
+ * the symlink fix below became unprovable: reverting it produced an `EISDIR` from the
+ * OTHER reader, so the run went red for the wrong reason and the escape it was masking
+ * stayed invisible. A mutant that dies from a different error proves nothing about the
+ * guard you meant to exercise.
+ */
+function readOrSkip(abs: string): string | null {
+  try {
+    return fs.readFileSync(abs, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -457,9 +508,16 @@ function referencesRelay(
  * path, and either with or without an extension. A guard on the SPELLING would be walkable
  * by choosing another spelling, which is the mistake this file spent four revisions on.
  *
- * The route module importing ITSELF is not a thing, and the route module is not looking for
- * itself here — it is already the ledger's own subject, reached through the path literal it
- * necessarily contains.
+ * The route module is not looked for here because it is the ledger's TARGET, not a member.
+ *
+ * ⚠ The reason given for that used to be "it is reached through the path literal it
+ * necessarily contains", and two passing assertions in this file prove that false: the
+ * ledger set holds the two hooks and the helper, and the path-literal map holds the helper
+ * alone. `relay.ts` names its own path only in COMMENTS, which the AST walk never visits —
+ * so it contributes no literal and correctly stays out of the ledger, while that same
+ * comment text is what keeps it past the prefilter as a parsed candidate. Candidate is not
+ * reference. The false version mattered: it was the stated reason this resolver needed no
+ * route-module case at all, which is what made the escape above look already-considered.
  */
 function importsRelayRouteModule(sf: ts.SourceFile, rel: string): boolean {
   const dir = path.posix.dirname(rel);
@@ -486,6 +544,16 @@ function importsRelayRouteModule(sf: ts.SourceFile, rel: string): boolean {
         (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly) ||
         (ts.isExportDeclaration(node) && node.isTypeOnly);
       if (!typeOnly) check(node.moduleSpecifier.text);
+    }
+    // `await import('./relay')` and `require('./relay')` — a CallExpression, not a
+    // declaration, and with a relative specifier it carries no path for the literal scan
+    // to find either. Both are ordinary module loads that return the handler.
+    if (ts.isCallExpression(node)) {
+      const isLoader =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === 'require');
+      const arg = node.arguments[0];
+      if (isLoader && arg && ts.isStringLiteral(arg)) check(arg.text);
     }
     ts.forEachChild(node, visit);
   };
@@ -661,7 +729,8 @@ function scan(): {
   let helperExportNames: string[] = [];
   for (const abs of files) {
     const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
-    const text = fs.readFileSync(abs, 'utf8');
+    const text = readOrSkip(abs);
+    if (text === null) continue;
     // 🔴 PARSED UNCONDITIONALLY, both sets, for DIFFERENT reasons.
     //
     // Ledgered files: the prefilter must never be able to drop one, or losing a hint would
@@ -790,7 +859,8 @@ describe('the relay caller ledger', () => {
     for (const abs of allProductionFiles()) {
       const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
       if (rel === DEFINING_MODULE) continue; // it declares both, by definition
-      const text = fs.readFileSync(abs, 'utf8');
+      const text = readOrSkip(abs);
+      if (text === null) continue;
       if (![...narrowingNames].some((n) => text.includes(n))) continue;
       const sf = parse(rel, text);
       // 🔴 The SHARED walk, with a `Set`. The open-coded copy this replaced used
@@ -951,7 +1021,7 @@ describe('the relay caller ledger', () => {
     // 🔴 The shapes that defeated the three CALL-recognising versions of this guard, kept
     // as a control on the reference reading — every one of them writes the identifier or
     // the path, which is why this version does not have to understand any of them.
-    const shapes: [string, string][] = [
+    const shapes: [string, string, string?][] = [
       [
         'plain call',
         `import { postImageUploadRelay } from '~/utils/upload-settlement';\nexport const go = (f: File) => postImageUploadRelay(f, {} as never);`,
@@ -985,6 +1055,30 @@ describe('the relay caller ledger', () => {
         `export const go = async (f: File) => {\n  const { postImageUploadRelay: p } = await import('~/utils/upload-settlement');\n  return p(f, {} as never);\n};`,
       ],
       ['re-export barrel', `export { postImageUploadRelay } from '~/utils/upload-settlement';`],
+      // 🔴 THE ROUTE MODULE BY RELATIVE SPECIFIER, static and dynamic. Both were live
+      // escapes, one round apart, and the dynamic one survived the round that closed the
+      // static one — because the round checked the ALIASED dynamic spelling, which carries
+      // the path and was therefore already red. A relative specifier carries nothing: no
+      // hint, no path tail, and for `await import` not even an `ImportDeclaration`.
+      //
+      // The third element pins these inside the route's own directory, which is where a
+      // sibling naturally sits. Run from `src/x.ts` they would resolve to a module that
+      // does not exist and pass for the wrong reason.
+      [
+        'sibling route, static relative import',
+        `import relayHandler from './relay';\nexport default (q: never, s: never) => relayHandler(q, s);`,
+        'src/pages/api/v1/image-upload/relay-legacy.ts',
+      ],
+      [
+        'sibling route, DYNAMIC relative import',
+        `export default async (q: never, s: never) => {\n  const { default: h } = await import('./relay');\n  return h(q, s);\n};`,
+        'src/pages/api/v1/image-upload/relay-beta.ts',
+      ],
+      [
+        'sibling route, require',
+        `const h = require('./relay').default;\nexport default (q: never, s: never) => h(q, s);`,
+        'src/pages/api/v1/image-upload/relay-cjs.ts',
+      ],
       // 🔴 THE THREE STRING-SPELLED SHAPES, each a measured or one-character-adjacent
       // escape. The first was live: it compiled, ran, and left 847 tests green.
       [
@@ -1025,16 +1119,22 @@ describe('the relay caller ledger', () => {
       ],
     ];
 
-    for (const [name, source] of shapes) {
-      const sf = parse('src/x.ts', source);
-      const { helper, pathLiterals, routeModule } = referencesRelay(sf, 'src/x.ts');
+    for (const [name, source, at] of shapes) {
+      const rel = at ?? 'src/x.ts';
+      const sf = parse(rel, source);
+      const { helper, pathLiterals, routeModule } = referencesRelay(sf, rel);
       expect(
         helper || pathLiterals > 0 || routeModule,
         `shape "${name}" must be seen as a reference`
       ).toBe(true);
-      // And the prefilter must admit it too — a shape the parse can see but the prefilter
-      // skips is still invisible in a real sweep.
-      expect(isCandidateText(source), `shape "${name}" must survive the prefilter`).toBe(true);
+      // And the sweep must actually PARSE it, or a shape the reader can see is still
+      // invisible in a real run. Two different ways in, so both are accepted: the text
+      // prefilter, or sitting in the route's own directory — which is the only way in for
+      // a relative specifier, since it puts no hint in the file at all.
+      expect(
+        isCandidateText(source) || rel.startsWith(RELAY_ROUTE_DIR),
+        `shape "${name}" must be reached by the prefilter or by the route-directory rule`
+      ).toBe(true);
     }
   });
 
@@ -1073,12 +1173,26 @@ describe('the relay caller ledger', () => {
     ).toBeGreaterThan(0);
     // 🔴 NEGATIVE HALF: a walk that skipped nothing would satisfy every assertion above
     // while dragging in a dependency tree that dwarfs the repo, so the exclusion has to be
-    // asserted too. `node_modules` is the one that matters — it certainly contains files
-    // spelling these hints.
+    // asserted too.
+    //
+    // 🔴 AGAINST A HARD-CODED LIST, NOT `SKIP_DIRS` — and the first version was the
+    // self-referential one. It filtered the swept paths by `SKIP_DIRS.has(seg)`, so
+    // DELETING an entry moved both sides together: the directory started being swept and
+    // the filter simultaneously stopped looking for it. Measured — removing `coverage`
+    // from the skip list with a file sitting in `coverage/` left all 13 tests green. A
+    // guard built out of the constant it is checking cannot fail, which is the trap this
+    // file names twice about its own prefilter fixtures and then walked into here.
+    const MUST_NOT_SWEEP = ['node_modules', '.git', 'dist', 'coverage', '.next'];
     expect(
-      swept.filter((rel) => rel.split('/').some((seg) => SKIP_DIRS.has(seg))),
-      'no skipped directory may appear in the sweep'
+      swept.filter((rel) => rel.split('/').some((seg) => MUST_NOT_SWEEP.includes(seg))),
+      'a generated tree must never appear in the sweep'
     ).toEqual([]);
+    // And the list above must still be doing its job — every name on it has to be a name
+    // the walker is actually told to skip, or the assertion is about directories nobody
+    // excludes and passes because they are empty or absent.
+    for (const dir of MUST_NOT_SWEEP) {
+      expect(SKIP_DIRS, `"${dir}" must stay in the skip list`).toContain(dir);
+    }
   });
 
   it('POSITIVE CONTROL: a colocated spec is excluded in EVERY extension the walker admits', () => {
@@ -1101,7 +1215,7 @@ describe('the relay caller ledger', () => {
     // say which one, rather than showing up as a production file that is suddenly not one.
     // (`.svelte` was previously absent from this loop while the walker admitted it, so
     // `thing.test.svelte` counted as production — narrower body than the title claimed.)
-    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs', 'svelte']) {
+    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs', 'svelte', 'html']) {
       expect(WALKED_EXTENSIONS, `the walker must still admit *.${ext}`).toContain(ext);
       expect(isProductionFile(`src/utils/thing.test.${ext}`), `*.test.${ext}`).toBe(false);
       expect(isProductionFile(`src/utils/thing.spec.${ext}`), `*.spec.${ext}`).toBe(false);

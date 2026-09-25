@@ -43,11 +43,14 @@ export const IMAGE_UPLOAD_RELAY_PRODUCER_HEADER = 'x-civitai-upload-producer';
  *
  * ⚠ A value added here is automatically seeded and automatically EMITTABLE. It is NOT
  * automatically ACCEPTED from a client — that is `CLIENT_DECLARABLE_PRODUCERS` below, and
- * a label missing from that tuple is refused with `other`. Removing a value here stops it
- * being seeded and makes the emitter bucket it to `other`. (This paragraph claimed adding
- * a value made it "automatically accepted" for several rounds after acceptance was split
- * out into its own tuple. It pointed a future edit at the wrong declaration, which is the
- * one direction that matters: the two tuples are confusable by construction.)
+ * a label missing from that tuple is refused with `other`. Removing a value here does NOT
+ * silently change what is emitted — it breaks whichever declaration depends on it: the two
+ * client-declarable values break the `satisfies` clause below, and the two server buckets
+ * break their own typed constants. (Two corrections in one paragraph, a round apart. It
+ * first claimed adding a value made it "automatically accepted", pointing a future edit at
+ * the wrong one of two tuples that are confusable by construction; the sentence replacing
+ * that then described removal as a silent re-bucketing, which stopped being true in the
+ * same commit that added the `satisfies` clause. A correction is a claim like any other.)
  *
  * snake_case, deliberately, to match the outcome vocabulary on the SAME metric
  * (`method_not_allowed`, `too_large`, `store_error`, …). A reader filtering that counter
@@ -128,8 +131,8 @@ export type ImageUploadRelayProducer = (typeof IMAGE_UPLOAD_RELAY_PRODUCERS)[num
  */
 /**
  * 🔴 `satisfies` IS THE GUARD, NOT DECORATION — the subset above was stated as load-bearing
- * and enforced by nothing. Measured: adding a value to THIS tuple alone left all 138 tests
- * green while `sanitizeImageUploadRelayProducer` returned it verbatim, typed as a label it
+ * and enforced by nothing. Measured: adding a value to THIS tuple alone left the whole
+ * relay suite green while `sanitizeImageUploadRelayProducer` returned it verbatim, typed as a label it
  * is not; it then went into the log event's `producer` field as-is, and the counter bucketed
  * it to `other` — so the new caller was silently mis-attributed, forever, on the row it was
  * added to be graded on. The `as ImageUploadRelayProducer` cast in the sanitiser is what
@@ -217,8 +220,10 @@ export function isImageUploadRelayProducer(value: unknown): value is ImageUpload
  * exist; do not reason from it that duplicate custom headers reach us as arrays.
  *
  * 🔴 THE BOUND IS THIS SET, NOT THE ROUTE'S AUTH. The relay sanitises the header before
- * its origin guard and session lookup, so an unauthenticated or cross-origin caller still
- * chooses which producer series moves for `forbidden_origin` / `unauthorized`. That is
+ * its method check, its origin guard and its session lookup, so an unauthenticated
+ * cross-origin caller still chooses which producer series moves for every outcome
+ * reachable before that lookup — `method_not_allowed`, `forbidden_origin`, `unauthorized`.
+ * (The method check comes first of the three and this list omitted it.) That is
  * harmless only while the set is closed and every pair is pre-seeded. Anyone widening this
  * to a prefix match, a pattern, or a length-bounded passthrough would be letting
  * unauthenticated input drive cardinality on a public route — do not.

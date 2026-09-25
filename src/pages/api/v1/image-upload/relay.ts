@@ -375,11 +375,17 @@ async function runRelay(
           name: 'image-upload-relayed',
           userId,
           bytes: body.length,
-          // 🔴 UNCONDITIONAL, unlike `contentType` beside it. An absent or unrecognised
-          // header is already `unknown` by the time it gets here, and omitting the field
-          // for that case would make "an older bundle rescued this upload" and "the field
-          // was never added" the same observation in the event stream — the ambiguity
-          // this discriminator exists to remove.
+          // 🔴 UNCONDITIONAL, unlike `contentType` beside it. The sanitiser is TOTAL —
+          // an absent header is already `unknown` here and an unrecognised one `other` —
+          // so there is no falsy case to omit, and omitting the field would make "an
+          // older bundle rescued this upload" and "the field was never added" the same
+          // observation in the event stream, the ambiguity this discriminator exists to
+          // remove.
+          //
+          // ⚠ This said "absent OR UNRECOGNISED … is already `unknown`". It was written
+          // when the two shared a bucket and outlived the commit that split them by ten
+          // rounds — so the file that PERFORMS the split carried a sentence asserting the
+          // fold, on the one field an operator reads to reconcile a moving `other`.
           //
           // 🔴 The VALUE must stay this `producer` binding rather than a second read of
           // the header. Two derivations of one fact are two chances to disagree, and the

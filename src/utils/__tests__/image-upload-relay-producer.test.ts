@@ -263,11 +263,30 @@ describe('the producer contract itself', () => {
       ).toContain(declarable);
     }
     // STRICT, not merely a subset: the server's own buckets must stay undeclarable, which
-    // is the whole reason the two tuples are separate. Equality here would mean a client
-    // could write to `unknown` — the row a rollout is graded on.
+    // is the whole reason the two tuples are separate. A client able to declare `unknown`
+    // could write to the row a rollout is graded on.
+    //
+    // 🔴 NAMED, NOT COUNTED — and the count was this guard's own defect. A `length`
+    // comparison forbids only EQUALITY, so with `unknown` planted into the declarable
+    // tuple this case stayed GREEN (`unknown` is a label; three is still fewer than four)
+    // while carrying the message "the server buckets must stay undeclarable". The hazard
+    // was caught, by two other cases — which is the worse outcome, not the better one: a
+    // guard that reads as coverage while providing none is what stops the next person
+    // looking. Assert the thing the sentence says.
+    for (const serverBucket of [
+      UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER,
+      OTHER_IMAGE_UPLOAD_RELAY_PRODUCER,
+    ]) {
+      expect(
+        CLIENT_DECLARABLE_PRODUCERS as readonly string[],
+        `"${serverBucket}" must stay undeclarable — a client could otherwise write to a ` +
+          `row that is supposed to be a statement about the SERVER's reading`
+      ).not.toContain(serverBucket);
+    }
+    // And the partition is exhaustive, so nothing can be neither.
     expect(
-      CLIENT_DECLARABLE_PRODUCERS.length,
-      'the server buckets must stay undeclarable'
-    ).toBeLessThan(IMAGE_UPLOAD_RELAY_PRODUCERS.length);
+      IMAGE_UPLOAD_RELAY_PRODUCERS.length,
+      'every label must be either client-declarable or a server bucket'
+    ).toBe(CLIENT_DECLARABLE_PRODUCERS.length + 2);
   });
 });
