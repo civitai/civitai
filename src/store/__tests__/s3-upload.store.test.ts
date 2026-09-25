@@ -565,6 +565,57 @@ describe('useS3UploadStore.upload teardown ordering', () => {
 });
 
 /**
+ * A USER CANCEL AND THE STORE'S OWN TEARDOWN ARE DIFFERENT EVENTS, and only the first is
+ * something the person did.
+ *
+ * Both end up tripping the same `cancelController` and aborting the same in-flight part
+ * xhrs, so neither the signal nor the xhrs can tell them apart. `userAborted` records the
+ * intent at the one place it exists — the `abort` the store hands out on the tracked row.
+ *
+ * 🔴 The sibling client `useS3Upload` had the same confusion with much worse consequences:
+ * its relay fallback was gated on that shared signal and could therefore never run. This
+ * client has no relay (it serves model/training uploads, which the relay route does not
+ * write), so what was at stake here is only the row's terminal status — but it is the same
+ * defect, and keeping the two clients' answer to "did the user cancel?" identical is what
+ * stops the next reader re-deriving the wrong one.
+ */
+describe('useS3UploadStore.upload cancel versus teardown', () => {
+  it('reports a cancel that races a part failure as aborted, not as an upload error', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    // The part is refused in the same tick the person presses cancel. 400 is not
+    // retryable, so it lands on the fatal slot immediately and the cancel never gets to
+    // overwrite it — the row then reported a failure for an upload the user stopped.
+    partHandler = () => {
+      useS3UploadStore.getState().items[0].abort();
+      return { status: 400 };
+    };
+
+    const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(result).toBeUndefined();
+    expect(useS3UploadStore.getState().items[0].status).toBe('aborted');
+    // The abort body still describes what the UPLOAD hit, deliberately: the row's status
+    // answers "what did the user do", the failure reason answers "why did the transfer
+    // stop", and collapsing the second into the first would delete the diagnostic signal
+    // the reason field was added to carry.
+    expect(abortCalls.map((c) => c.failure)).toEqual([
+      { kind: 'part-status', partNumber: 1, status: 400 },
+    ]);
+  });
+
+  // Negative control: without this, the test above could pass against a client that had
+  // simply stopped reporting 'error' at all.
+  it('still reports a part failure with no cancel as an error', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 400 });
+
+    await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
+
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+  });
+});
+
+/**
  * WHY the abort body carries a `failure` object: the server-side `s3-upload-abort` event
  * could not say WHY a client gave up — the 2026-09 image-upload investigation (Kayot +
  ~136 others, browser PUTs to Backblaze reset at the network layer) had to ask users for

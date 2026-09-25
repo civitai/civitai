@@ -12,6 +12,7 @@ import {
   isExpiredPartError,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  resolveUploadRowStatus,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -444,6 +445,19 @@ export const useS3UploadStore = create<StoreProps>()(
           // Shared cancellation: trips on user abort or first fatal failure so sleeping
           // retry workers don't fire zombie PUTs after the upload has been torn down.
           const cancelController = new AbortController();
+          // 🔴 Whether the PERSON cancelled — not whether `cancelController` has tripped.
+          // Both a user cancel and the worker's own teardown trip that signal and abort
+          // the same in-flight xhrs, so neither it nor the resulting `{ aborted: true }`
+          // part errors can tell the two apart. Set in exactly one place: the `abort`
+          // handed out on the tracked row below.
+          //
+          // The sibling client `useS3Upload` had the same confusion with a worse
+          // consequence — its relay fallback was gated on the shared signal and could
+          // never run. This client has no relay (the relay route writes to the image
+          // bucket; this one serves model/training uploads), so here it is the terminal
+          // status that was wrong: a cancel racing a non-retryable part failure reported
+          // as an upload error.
+          let userAborted = false;
           const cancellableSleep = (ms: number) =>
             new Promise<void>((resolve) => {
               if (cancelController.signal.aborted) return resolve();
@@ -460,6 +474,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                userAborted = true;
                 cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
@@ -475,6 +490,15 @@ export const useS3UploadStore = create<StoreProps>()(
 
           const runWorker = async () => {
             while (queue.length > 0 && !fatalErrorRef.value) {
+              // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
+              // records `{ aborted: true }`. Neither is reachable today. This guard runs
+              // on first loop entry — synchronous with pool creation, with no `await`
+              // between registering `abort` on the row and `Promise.all`, so a click
+              // cannot land there — and thereafter only after a part SUCCEEDED, where the
+              // gap before it is a microtask, which a click also cannot land in. The two
+              // real macrotask windows inside the loop, the backoff sleep and the part
+              // re-sign, both re-enter at the `for`-loop top, whose guard DOES record.
+              // If this loop ever grows an `await` before this line, record here too.
               if (cancelController.signal.aborted) return;
               const item = queue.shift();
               if (!item) return;
@@ -517,10 +541,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+          // Shared with the hook client; the rules and the reason they are shared are on
+          // `resolveUploadRowStatus`.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? fatalErrorRef.value.aborted
-              ? 'aborted'
-              : 'error'
+            ? resolveUploadRowStatus(fatalErrorRef.value, { userAborted })
             : null;
 
           // No more progress events past this point; drop any queued frame so it can't
