@@ -292,7 +292,9 @@ describe('recordImageUploadRelay', () => {
       expect(() => recordImageUploadRelay('success', 'single_put')).not.toThrow();
       // Positive control: without this, a stub that was never reached at all would let
       // the case pass as "the error was swallowed" having thrown nothing.
-      expect(finalIncAttempts, 'the final inc({ outcome }) must have been reached').toBe(1);
+      expect(finalIncAttempts, 'the final inc({ outcome, producer }) must have been reached').toBe(
+        1
+      );
     } finally {
       metric.inc = realInc;
     }

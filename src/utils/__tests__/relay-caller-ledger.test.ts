@@ -27,9 +27,23 @@ import { describe, expect, it } from 'vitest';
  * every version of that game read as coverage while being walkable.
  *
  * A REFERENCE cannot be walked the same way. To reach the relay from a new module you must
- * either NAME `postImageUploadRelay` somewhere in it — an alias still writes it in the
- * import clause, a namespace call still writes it at the member access, `(0, f)` still
- * needs the binding — or write the PATH. So this asserts:
+ * either NAME ONE OF THE HELPER MODULE'S RELAY ENTRY POINTS somewhere in it — an alias
+ * still writes it in the import clause, a namespace call still writes it at the member
+ * access, `(0, f)` still needs the binding — or write the PATH. So this asserts:
+ *
+ * 🔴 ENTRY POINTS, PLURAL, AND GETTING THAT WRONG COST THE LEDGER ITS WHOLE CLAIM. An
+ * earlier revision tracked `postImageUploadRelay` alone and said so in this very paragraph.
+ * But `upload-settlement.ts` exports a SECOND way to reach the relay — `relayImageFallback`
+ * — which calls the first internally, so a module importing it reaches the relay while
+ * naming neither hint. That is not an exotic shape: it is how the REAL second caller
+ * already does it. `src/hooks/useS3Upload.tsx` imports `relayImageFallback`, and it was
+ * NOT IN THE LEDGER, so a test named "finds EVERY module that can reach the relay" was
+ * green while omitting one of the two callers this entire change is about — and a planted
+ * third caller written the same way was invisible.
+ *
+ * THE RULE, so the next entry point does not repeat it: every EXPORTED function in the
+ * helper module that transitively reaches the relay `fetch` is an entry point and belongs
+ * in `HELPER_EXPORTS`. Adding one without adding it here silently reopens this hole.
  *
  *   1. the set of production modules that reference the helper, or name the path in code,
  *      is exactly the ledger; and
@@ -72,14 +86,21 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 /**
  * Roots that can hold production TypeScript reaching the relay.
  *
- * `apps` and `packages` are swept as well as `src` for the same reason the settle ledger
- * widened past `src`: the relay is an ordinary same-origin POST, so a workspace app could
- * make one, and a caller nobody scans is a caller nobody ledgers.
+ * `apps`, `packages` and `scripts` are swept as well as `src`: the relay is an ordinary
+ * same-origin POST, so a workspace app could make one, and a caller nobody scans is a
+ * caller nobody ledgers. ⚠ An earlier revision justified this by citing the settle ledger's
+ * widening — whose stated reason is `scripts/` specifically — while omitting `scripts`
+ * itself. Cited reasons have to match what the code does.
  */
-const ROOTS = ['src', 'apps', 'packages'];
+const ROOTS = ['src', 'apps', 'packages', 'scripts'];
 
 const HELPER_MODULE = 'src/utils/upload-settlement.ts';
-const HELPER_EXPORT = 'postImageUploadRelay';
+/**
+ * Every exported name in the helper module that reaches the relay. See the entry-points
+ * note in the file docstring — this list being short by one is what let the real multipart
+ * caller sit outside the ledger.
+ */
+const HELPER_EXPORTS = ['postImageUploadRelay', 'relayImageFallback'];
 const RELAY_PATH = '/api/v1/image-upload/relay';
 /**
  * The tail, DERIVED rather than re-typed, so a route rename cannot leave two spellings
@@ -87,9 +108,11 @@ const RELAY_PATH = '/api/v1/image-upload/relay';
  * interpolated base — `` fetch(`${BASE}/image-upload/relay`) ``.
  */
 const RELAY_PATH_TAIL = RELAY_PATH.slice(RELAY_PATH.indexOf('/image-upload/'));
+/** The helper module's own unexported path constant. See `EXPECTED_HELPER_PATH_REFS`. */
+const HELPER_PATH_CONSTANT = 'IMAGE_UPLOAD_RELAY_PATH';
 
-/** Prefilter spellings, both derived from the constants above. See the limits list. */
-const TEXT_HINTS = [HELPER_EXPORT, RELAY_PATH_TAIL.slice(1)];
+/** Prefilter spellings, all derived from the constants above. See the limits list. */
+const TEXT_HINTS = [...HELPER_EXPORTS, RELAY_PATH_TAIL.slice(1)];
 
 /**
  * Does this file's raw text earn a parse?
@@ -105,14 +128,31 @@ function isCandidateText(text: string): boolean {
 /**
  * THE LEDGER. Compared in BOTH directions: a third module fails it, and so does losing one.
  *
- * Only the two real callers are here. The route, the metrics module and the producer module
- * all mention the path in PROSE and are correctly absent — that is the parse earning its
- * keep over a text scan.
+ * Only the real callers are here. Several other modules mention the path in PROSE and are
+ * correctly absent — that is the parse earning its keep over a text scan. (No count: two
+ * comments in this file gave different ones, which is the class of defect this change has
+ * already fixed twice.)
  */
-const CALLER_LEDGER = ['src/hooks/useCFImageUpload.tsx', HELPER_MODULE];
+const CALLER_LEDGER = [
+  'src/hooks/useCFImageUpload.tsx',
+  'src/hooks/useS3Upload.tsx',
+  HELPER_MODULE,
+];
 
-/** The helper module builds the one relay request there is. */
-const EXPECTED_HELPER_FETCH_CALLS = 1;
+/**
+ * How many times the helper module may name the relay path: the constant's declaration,
+ * plus the one use that builds the one request there is.
+ *
+ * 🔴 A REFERENCE COUNT, NOT A `fetch(` COUNT, and the difference is a measured escape. The
+ * previous version counted call expressions whose callee spelled `fetch` — so
+ * `globalThis.fetch(IMAGE_UPLOAD_RELAY_PATH, …)` added a second relay request and the
+ * assertion stayed green, reopening the hole it was written to close with four characters,
+ * in a shape (`window.fetch`) that is ordinary in browser code. It was also the one
+ * shape-recognising thing left in a file whose whole argument is that recognising shapes
+ * loses. Counting references to the path constant is shape-free, and it stops the
+ * assertion firing on an UNRELATED `fetch` added to this module — which the old one did.
+ */
+const EXPECTED_HELPER_PATH_REFS = 2;
 
 function parse(rel: string, source: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -137,7 +177,12 @@ function walkFiles(dir: string, out: string[]): string[] {
       if (entry.name === 'node_modules' || entry.name === '.next' || entry.name === 'dist')
         continue;
       walkFiles(full, out);
-    } else if (/\.tsx?$/.test(entry.name)) {
+      // Not just `.ts(x)`: `apps/` is SvelteKit, so a workspace app would reach the relay
+      // from a `<script>` block, and `.mjs`/`.js` exist under `packages/`. A `.svelte` file
+      // is admitted by the text prefilter and then parsed as TS, which is wrong in general
+      // but adequate for finding a `fetch` or an import in its script block. Measured: a
+      // production `.js` file with a raw relay `fetch` was invisible before this.
+    } else if (/\.(tsx?|jsx?|mjs|cjs|svelte)$/.test(entry.name)) {
       out.push(full);
     }
   }
@@ -174,6 +219,11 @@ function isInertContext(node: ts.Node): boolean {
       if (node === n.moduleSpecifier) return true;
       if (n.isTypeOnly) return true;
     }
+    // ⚠ The INLINE forms — `import { type postImageUploadRelay }` — bind nothing at
+    // runtime either, and were missed while the clause-level `isTypeOnly` above was
+    // handled. Measured as a false RED that named a caller binding nothing.
+    if (ts.isImportSpecifier(n) && n.isTypeOnly) return true;
+    if (ts.isExportSpecifier(n) && n.isTypeOnly) return true;
   }
   return false;
 }
@@ -182,16 +232,16 @@ function isInertContext(node: ts.Node): boolean {
  * Does this module REFERENCE the relay — by naming the helper, or by naming the path in
  * code?
  *
- * 🔴 An identifier ANYWHERE in the module counts, in any syntactic role. That is the point:
- * it does not matter whether the reference is a call, an alias, a re-export, a property, a
- * `.call` receiver or a comma sequence — all of them write the name, so this cannot be
- * walked around by choosing a different call shape.
+ * 🔴 An identifier ANYWHERE in the module counts, in any syntactic role, for ANY of the
+ * entry points. That is the point: it does not matter whether the reference is a call, an
+ * alias, a re-export, a property, a `.call` receiver or a comma sequence — all of them
+ * write a name, so this cannot be walked around by choosing a different call shape.
  */
 function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: number } {
   let helper = false;
   let pathLiterals = 0;
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && node.text === HELPER_EXPORT && !isInertContext(node)) {
+    if (ts.isIdentifier(node) && HELPER_EXPORTS.includes(node.text) && !isInertContext(node)) {
       helper = true;
     }
     if (
@@ -208,18 +258,12 @@ function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: nu
   return { helper, pathLiterals };
 }
 
-/** How many `fetch(...)` calls this module makes. See `EXPECTED_HELPER_FETCH_CALLS`. */
-function countFetchCalls(sf: ts.SourceFile): number {
+/** How many times this module names `IMAGE_UPLOAD_RELAY_PATH`. See `EXPECTED_HELPER_PATH_REFS`. */
+function countPathConstantRefs(sf: ts.SourceFile): number {
   let count = 0;
   const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      const name = ts.isIdentifier(callee)
-        ? callee.text
-        : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
-        ? callee.expression.text
-        : null;
-      if (name === 'fetch') count += 1;
+    if (ts.isIdentifier(node) && node.text === HELPER_PATH_CONSTANT && !isInertContext(node)) {
+      count += 1;
     }
     ts.forEachChild(node, visit);
   };
@@ -230,7 +274,7 @@ function countFetchCalls(sf: ts.SourceFile): number {
 function scan(): {
   referencing: string[];
   candidates: string[];
-  helperFetchCalls: number;
+  helperPathRefs: number;
   pathLiteralsByFile: Record<string, number>;
 } {
   const files: string[] = [];
@@ -239,7 +283,7 @@ function scan(): {
   const referencing: string[] = [];
   const candidates: string[] = [];
   const pathLiteralsByFile: Record<string, number> = {};
-  let helperFetchCalls = -1;
+  let helperPathRefs = -1;
   for (const abs of files) {
     const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
     if (!isProductionFile(rel)) continue;
@@ -252,13 +296,13 @@ function scan(): {
     const { helper, pathLiterals } = referencesRelay(sf);
     if (helper || pathLiterals > 0) referencing.push(rel);
     if (pathLiterals > 0) pathLiteralsByFile[rel] = pathLiterals;
-    if (rel === HELPER_MODULE) helperFetchCalls = countFetchCalls(sf);
+    if (rel === HELPER_MODULE) helperPathRefs = countPathConstantRefs(sf);
   }
-  return { referencing, candidates, helperFetchCalls, pathLiteralsByFile };
+  return { referencing, candidates, helperPathRefs, pathLiteralsByFile };
 }
 
 describe('the relay caller ledger', () => {
-  const { referencing, candidates, helperFetchCalls, pathLiteralsByFile } = scan();
+  const { referencing, candidates, helperPathRefs, pathLiteralsByFile } = scan();
 
   it('finds EVERY module that can reach the relay, and none outside the ledger', () => {
     expect(referencing.sort()).toEqual([...CALLER_LEDGER].sort());
@@ -278,16 +322,23 @@ describe('the relay caller ledger', () => {
     expect(pathLiteralsByFile).toEqual({ [HELPER_MODULE]: 1 });
   });
 
-  it('🔴 keeps the helper module to ONE fetch — the second-request shape that references nothing new', () => {
-    // 🔴 THE HOLE THIS CLOSES, and it was live until a round-4 review planted it. The path
-    // constant is module-local and unexported precisely so that no OTHER module can build
-    // its own request — but inside this file it is a few lines away, so
-    // `fetch(IMAGE_UPLOAD_RELAY_PATH, …)` adds a second relay request while naming no new
-    // identifier and writing no new path literal. Every reference-based check is blind to
-    // it by construction; counting the file's `fetch` calls is not.
-    expect(helperFetchCalls, `${HELPER_MODULE} must make exactly one fetch`).toBe(
-      EXPECTED_HELPER_FETCH_CALLS
-    );
+  it('🔴 keeps the helper module to ONE use of the path constant', () => {
+    // 🔴 THE HOLE THIS CLOSES, live until a round-4 review planted it. The path constant is
+    // module-local and unexported precisely so no OTHER module can build its own request —
+    // but inside this file it is a few lines away, so `fetch(IMAGE_UPLOAD_RELAY_PATH, …)`
+    // adds a second relay request while naming no new identifier and writing no new path
+    // literal. Every reference-based check above is blind to it by construction.
+    //
+    // ⚠ And this assertion is the SECOND attempt. The first counted `fetch(` call
+    // expressions, which is a call-shape matcher in a file whose argument is that
+    // recognising shapes loses — measured, `globalThis.fetch(IMAGE_UPLOAD_RELAY_PATH, …)`
+    // walked straight past it, and an UNRELATED `fetch` added to this module turned it red
+    // for no reason. Counting references to the constant fixes both.
+    expect(
+      helperPathRefs,
+      `${HELPER_MODULE} must name ${HELPER_PATH_CONSTANT} exactly ${EXPECTED_HELPER_PATH_REFS} ` +
+        `times (its declaration, and the one request it builds)`
+    ).toBe(EXPECTED_HELPER_PATH_REFS);
   });
 
   it('POSITIVE CONTROL: the sweep reaches real files and the parse finds real references', () => {
@@ -296,7 +347,7 @@ describe('the relay caller ledger', () => {
     // change exists to stop believing.
     expect(candidates).toEqual(expect.arrayContaining(CALLER_LEDGER));
     expect(referencing.length, 'the parse must actually find references').toBeGreaterThan(1);
-    expect(helperFetchCalls, 'the helper module must have been parsed at all').toBeGreaterThan(-1);
+    expect(helperPathRefs, 'the helper module must have been parsed at all').toBeGreaterThan(-1);
   });
 
   it('POSITIVE CONTROL: the prefilter admits a file on each hint, from a FIXED corpus', () => {
@@ -310,11 +361,25 @@ describe('the relay caller ledger', () => {
     // These fixtures are hard-coded and name no constant, so they go red if a hint is
     // deleted, renamed or garbled — and each is written the way a real third caller would
     // be, not as a bare token.
-    expect(
-      isCandidateText("import { postImageUploadRelay } from '~/utils/upload-settlement';"),
-      'a module importing the helper must be admitted — the only way in for a third caller ' +
-        'that names no path'
-    ).toBe(true);
+    // 🔴 ONE FIXTURE PER ENTRY POINT. A single fixture proves only that SOME hint works —
+    // measured: with only the `postImageUploadRelay` fixture here, deleting the
+    // `relayImageFallback` hint left all seven tests green, and that hint is the only way in
+    // for a caller written the way the REAL multipart caller is written. This is the same
+    // shape as the per-hint failure round 4 fixed, reappearing the moment a second entry
+    // point was added — so the loop is over the entry points, with a fixture each.
+    const entryPointFixtures: Record<string, string> = {
+      postImageUploadRelay: "import { postImageUploadRelay } from '~/utils/upload-settlement';",
+      relayImageFallback: "import { relayImageFallback } from '~/utils/upload-settlement';",
+    };
+    for (const entry of HELPER_EXPORTS) {
+      const fixture = entryPointFixtures[entry];
+      expect(fixture, `no prefilter fixture for entry point "${entry}"`).toBeDefined();
+      expect(
+        isCandidateText(fixture),
+        `a module importing "${entry}" must be admitted — for a caller that names no path ` +
+          `this hint is the only way in`
+      ).toBe(true);
+    }
     expect(
       isCandidateText("await fetch('/api/v1/image-upload/relay', { method: 'POST' });"),
       'a module building its own request must be admitted'
@@ -387,13 +452,13 @@ describe('the relay caller ledger', () => {
   });
 
   it('POSITIVE CONTROL: prose and type positions are NOT references', () => {
-    // The parse earning its keep over a text scan. Four production modules document the
+    // The parse earning its keep over a text scan. Several production modules document the
     // route in a comment; a text-only guard would report every one of them as a caller.
     const inert: [string, string][] = [
       ['line comment', `// see ${RELAY_PATH}\nexport const n = 1;`],
       [
         'block comment',
-        `/** calls \`${HELPER_EXPORT}\` at \`${RELAY_PATH}\` */\nexport const n = 1;`,
+        `/** calls \`${HELPER_EXPORTS[0]}\` at \`${RELAY_PATH}\` */\nexport const n = 1;`,
       ],
       ['type alias', `export type RelayRoute = '${RELAY_PATH}';`],
       [
