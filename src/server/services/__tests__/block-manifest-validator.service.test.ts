@@ -808,6 +808,45 @@ describe('BlockManifestValidator', () => {
       expect(message.toLowerCase()).not.toContain('never be supported');
     });
 
+    /**
+     * 🔴 THE APPROVE PATH IS **NOT** EXEMPT — a deliberate decision, pinned so it is not
+     * discovered by a moderator staring at an un-approvable request.
+     *
+     * `approveRequest` (`publish-request.service.ts`) re-validates the already-submitted
+     * manifest with `{ enforceSensitiveScopeJustification: false }`, the one grandfathering
+     * knob, so a LEGACY pending request with an unjustified sensitive scope stays approvable.
+     * This rule does NOT get the same treatment: unlike a missing justification, the
+     * combination is BROKEN AT RUNTIME. An already-submitted request carrying it describes an
+     * app that 401s for every signed-in viewer, and approving a new version would ship that.
+     * The moderator bounces it back and the message tells the author both ways out.
+     *
+     * If a pending request in the queue turns out to carry this pair, the fix is to have the
+     * author change `auth` or drop the scope — not to add a second knob here.
+     */
+    it('is NOT exempted by the moderator APPROVE relaxation', async () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        auth: 'oauth',
+        scopes: ['models:read:self', 'apps:storage:shared:read'],
+      };
+      // POSITIVE CONTROL that the knob is real and IS being passed: the sensitive-scope rule
+      // it governs really does stop firing under the same options object.
+      const sensitive = await BlockManifestValidator.validateSubmission(
+        { ...VALID_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
+        APP_CTX,
+        { enforceSensitiveScopeJustification: false }
+      );
+      expect(sensitive).toEqual({ valid: true });
+
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
+        enforceSensitiveScopeJustification: false,
+      });
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContain(expectedRefusal('apps:storage:shared:read'));
+      }
+    });
+
     // THE JWT PATH IS UNCHANGED — the regression this guard could plausibly cause. Every
     // storage scope stays declarable on the credential shape that actually serves it, and
     // an omitted `auth` (the default, and what every shipped app carries) is block-token.
