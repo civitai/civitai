@@ -1,16 +1,17 @@
+// `manifestWantsOauthToken` is the SAME predicate the two mint paths branch on
+// (`/api/v1/block-tokens` page mint and the dev-tunnel mint), so the gate below and the
+// runtime that would hand this app an opaque OAuth token cannot disagree about what
+// `auth: "oauth"` means. It is read from the SHARED module, not from
+// `~/server/services/blocks/block-oauth-scope` (which re-exports it), to keep this file
+// client-bundle-safe — see the notes on the imports below.
 import {
   appStorageScopesIn,
   isKnownBlockScope,
+  manifestWantsOauthToken,
   sensitiveScopeJustificationError,
   unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
-// The SAME predicate the two mint paths branch on (`/api/v1/block-tokens` page mint and
-// dev-tunnel mint) — so the manifest gate below and the runtime that would hand this app
-// an opaque OAuth token cannot come to disagree about what `auth: "oauth"` means. The
-// module imports only `~/shared/constants/*`, so this keeps the validator
-// client-bundle-safe (it is imported by `ManifestEditForm.tsx`).
-import { manifestWantsOauthToken } from '~/server/services/blocks/block-oauth-scope';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,

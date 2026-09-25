@@ -751,6 +751,12 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.errors).toContain(expectedRefusal(storageScope));
+        // 🔴 REACHABILITY: exactly ONE error, so the guard EXECUTED rather than riding on
+        // some earlier check's refusal. A mutation test can pass because a different guard
+        // killed the case first and this one never ran; the manifest here is otherwise fully
+        // valid (justification supplied, scope known, no OAuth bit required), so the
+        // conflict rule is the only thing that can have produced this.
+        expect(result.errors).toHaveLength(1);
       }
     });
 

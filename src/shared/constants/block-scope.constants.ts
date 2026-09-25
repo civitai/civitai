@@ -189,6 +189,28 @@ export function appStorageScopesIn(scopes: readonly unknown[]): string[] {
 }
 
 /**
+ * Does this manifest ask the host for an OAuth access token instead of a block JWT?
+ * `auth` is optional and absent means `block-token` (see `RawManifest.auth`).
+ *
+ * 🔴 ONE definition, read by BOTH the runtime and the gate. The two mint paths branch on
+ * this (`/api/v1/block-tokens` page mint at `manifestWantsOauthToken(block.manifest)`, and the
+ * dev-tunnel mint), and `BlockManifestValidator` refuses `auth: "oauth"` alongside any
+ * `APP_STORAGE_SCOPES` entry. If the gate and the mint ever disagreed about what
+ * `auth: "oauth"` means, the gate would pass a manifest the runtime cannot serve — which is
+ * the exact failure it exists to prevent.
+ *
+ * Lives HERE, in the client-safe shared module, rather than in
+ * `~/server/services/blocks/block-oauth-scope` (which now RE-EXPORTS it, so its existing
+ * callers and tests are untouched): `block-manifest-validator.service.ts` is imported by
+ * `ManifestEditForm.tsx`, so everything it pulls in lands in the client bundle. Same reason
+ * the SSRF hostname guards and the `repository` rule were extracted rather than imported
+ * from a server module — see that file's import block.
+ */
+export function manifestWantsOauthToken(manifest: unknown): boolean {
+  return (manifest as { auth?: unknown } | null | undefined)?.auth === 'oauth';
+}
+
+/**
  * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
  * ceiling a moderator's OWN account can spend across ALL run-for-real
  * generations of ONE pending publish request. This is the number surfaced in

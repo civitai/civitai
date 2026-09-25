@@ -3,6 +3,7 @@ import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   APP_STORAGE_SCOPES,
   appStorageScopesIn,
+  manifestWantsOauthToken,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
   deriveOauthBitmaskFromBlockScopes,
@@ -130,6 +131,26 @@ describe('block-scope.constants', () => {
         expect(BLOCK_SCOPE_TO_OAUTH_BIT[scope]).toBe(SKIP_OAUTH_CHECK);
         expect(APP_STORAGE_SCOPES).not.toContain(scope);
       }
+    });
+
+    // `manifestWantsOauthToken` lives here (not in `~/server/services/blocks/
+    // block-oauth-scope`, which now re-exports it) so the client-bundled manifest validator
+    // can read it without pulling a `~/server/**` module into the browser bundle. This suite
+    // covers the DEFINITION; the re-export is exercised by
+    // `server/services/blocks/__tests__/block-oauth-scope.test.ts`, which imports it from
+    // there and must stay green — that pair is what keeps the mint's predicate and the
+    // manifest gate's predicate the same function.
+    describe('manifestWantsOauthToken', () => {
+      it('is true only for auth === "oauth"', () => {
+        expect(manifestWantsOauthToken({ auth: 'oauth' })).toBe(true);
+        expect(manifestWantsOauthToken({ auth: 'block-token' })).toBe(false);
+        expect(manifestWantsOauthToken({})).toBe(false);
+        expect(manifestWantsOauthToken(null)).toBe(false);
+        expect(manifestWantsOauthToken(undefined)).toBe(false);
+        // Not a loose truthiness or case-insensitive test.
+        expect(manifestWantsOauthToken({ auth: 'OAuth' })).toBe(false);
+        expect(manifestWantsOauthToken({ auth: true })).toBe(false);
+      });
     });
 
     describe('appStorageScopesIn', () => {
