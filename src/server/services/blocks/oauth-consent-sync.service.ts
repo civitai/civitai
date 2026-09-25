@@ -5,6 +5,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { simpleBuzzLimitToBudgets, type BuzzLimit } from '~/server/schema/api-key.schema';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { consentGatedScopes, getConsentBuzzBudget } from './scope-grant.service';
 
 export interface OauthConsentMirror {
@@ -14,39 +15,32 @@ export interface OauthConsentMirror {
 
 /**
  * OAuth bitmask for a set of CONSENTED block scopes; block-only scopes
- * (SKIP_OAUTH_CHECK, i.e. no bitmask bit) are skipped.
+ * (SKIP_OAUTH_CHECK, i.e. no bitmask bit) contribute nothing.
  *
- * 🔴 #5127 — this used to seed the bitmask with `TokenScope.UserRead`, mirroring
- * the mandatory-baseline invariant that `createOAuthTokenPair` documents. That
- * was the bug, because the `OauthConsent` row this bitmask lands in is the ONLY
- * thing standing between a caller and a minted token: the hub
- * (`apps/auth/src/routes/api/auth/oauth/app-token/+server.ts`) forces
- * `scope |= TokenScope.UserRead` and then refuses unless
- * `hasScope(consent.scope, scope)`. Seeding the bit here made that check validate
- * a record the platform had manufactured one step earlier, so an `auth: "oauth"`
- * block received a token that reads the viewer's email / emailVerified /
- * isModerator from `/api/v1/me` while the SAME mint response reported
- * `user:read:self` in `missingScopes`.
+ * 🔴 #5127 — THE SEED IS LOAD-BEARING, DO NOT PUT IT BACK. This used to start at
+ * `TokenScope.UserRead`, mirroring the mandatory-baseline invariant that
+ * `createOAuthTokenPair` documents. Two things depend on it now starting at 0, and
+ * the second is easy to miss:
+ *
+ *  1. ROW CONTENTS. The `OauthConsent` row this lands in is the only thing between
+ *     a caller and a minted token — the hub's `app-token` route forces
+ *     `scope |= TokenScope.UserRead` and then refuses unless
+ *     `hasScope(consent.scope, scope)`. Seeding the bit made that check validate a
+ *     record the platform had manufactured one step earlier.
+ *  2. THE MINT PREDICATE in `syncOauthConsentFromGrant` below, which asks
+ *     `blockScopesToOauthScope(grant.grantedScopes) & TokenScope.UserRead`. With the
+ *     seed restored that mask is ALWAYS non-zero, so the predicate can never fire
+ *     and the guard becomes vacuous while still reading like a guard. The seed drop
+ *     is what makes it reachable at all.
  *
  * The baseline invariant is untouched where it belongs — on the TOKEN. Both
- * `oauthScopeBitsFor` (mint request) and the hub itself still force the bit on,
- * so no OAuth token is ever scope-less. What changed is the CONSENT RECORD: it now
- * states only what the viewer actually granted.
+ * `oauthScopeBitsFor` (the mint request) and the hub itself still force the bit on,
+ * so no OAuth token is ever scope-less.
  *
- * The consequence is deliberate and is the point of the fix: because every OAuth
- * app token carries `UserRead`, one can only be minted for a viewer who granted
- * `user:read:self`. Everyone else falls back to the block JWT with the
- * needs-consent signal (#5097's documented `consent_required` path), which the
- * host turns into a prompt via `resolveRequestConsent` + `BlockConsentModal`.
- *
- * KNOWN GAP (deliberately not papered over here): an `auth: "oauth"` manifest that
- * does not declare `user:read:self` at all can therefore never mint an OAuth token
- * — it silently keeps the block JWT, because there is no scope for the host to
- * prompt for. That manifest is misdeclared (the token it asked for unavoidably
- * carries `UserRead`), and the right place to say so is the manifest validator,
- * not a forced bit here.
+ * Module-private on purpose: the only legitimate consumers are in this file. Export
+ * it again and the seed becomes someone else's invariant to break.
  */
-export function blockScopesToOauthScope(scopes: Iterable<string>): number {
+function blockScopesToOauthScope(scopes: Iterable<string>): number {
   let scope = 0;
   for (const s of scopes) {
     const bit = BLOCK_SCOPE_TO_OAUTH_BIT[s];
@@ -61,9 +55,16 @@ function sameLimit(a: BuzzLimit | null, b: BuzzLimit | null): boolean {
 
 /**
  * Mirrors the viewer's block grant into the OauthConsent row the auth hub and
- * orchestrator read. Returns `null` — writing nothing — when there is nothing to
- * mirror, which the mint caller turns into `consent_required` and the block-JWT
- * fallback.
+ * orchestrator read. Returns `null` — writing NOTHING — whenever the viewer's
+ * consent cannot support an OAuth token, which the mint caller turns into
+ * `consent_required` and the block-JWT fallback.
+ *
+ * 🔴 #5127 — "writes nothing" is the contract, not an optimisation. A row this
+ * function writes that cannot mint is worse than no row: it is listed to the viewer
+ * by `oauthConsent.getConnectedApps` as an app they authorized, it carries a
+ * `buzzLimit`, and it would begin minting the moment anything ever ORed `UserRead`
+ * into it. Both refusal arms below therefore write nothing rather than write a
+ * narrower row.
  */
 export async function syncOauthConsentFromGrant(opts: {
   userId: number;
@@ -71,11 +72,17 @@ export async function syncOauthConsentFromGrant(opts: {
   /**
    * Scopes the caller will ask a token for. Only the CONSENT-EXEMPT ones are
    * mirrored from here: those need no grant by definition and the grant row never
-   * records them. A consent-GATED scope passed in this list is IGNORED — the grant
-   * row is the sole authority for those, so a caller cannot manufacture consent for
-   * a scope the viewer never granted. (Today's only mint caller already pre-filters
-   * through `partitionByConsent`, but that is the caller's guarantee, not this
-   * function's; #5127 is what trusting the caller cost.)
+   * records them.
+   *
+   * A consent-GATED scope in this list is IGNORED. ⚠️ DEFENCE IN DEPTH WITH NO
+   * REACHABLE PATH TODAY — not coverage: the only mint caller passes
+   * `partitionByConsent(...).signable`, so every gated scope this filter would strip
+   * is already present in `grant.grantedScopes`, read from the same `dbWrite`
+   * client. It is kept because the grant row is the right sole authority for gated
+   * scopes, so a FUTURE caller passing a raw manifest list cannot ask this function
+   * to assert `AIServicesWrite` / `BuzzRead` / `SocialTip` consent that does not
+   * exist. `UserRead` specifically does not rely on it — the mint predicate below
+   * reads `grant.grantedScopes` directly.
    */
   scopes?: Iterable<string>;
 }): Promise<OauthConsentMirror | null> {
@@ -95,6 +102,19 @@ export async function syncOauthConsentFromGrant(opts: {
   // Both must write nothing and return null, so the caller reaches the
   // `consent_required` fallback instead of a manufactured record.
   if (!block || !grant || grant.revokedAt) return null;
+
+  // 🔴 #5127, SECOND SHAPE — a grant row EXISTS but does not carry the baseline. The
+  // guard above is not enough: for a viewer who granted, say, `ai:write:budgeted` but
+  // not `user:read:self` (exactly the "a v2 manifest adds a scope" case the per-user
+  // grant gate exists for), the row written below would be one the hub can never mint
+  // against, while the same mint response reports `user:read:self` as missing. Refuse
+  // here instead, so no unmintable row is written at all — see the contract above for
+  // why a narrower row is worse than none.
+  //
+  // Reads `grant.grantedScopes` ALONE: the caller-supplied `scopes` must not be able
+  // to answer this. Depends on `blockScopesToOauthScope` starting at 0 — restore the
+  // `UserRead` seed and this mask is always non-zero and the guard never fires.
+  if (!(blockScopesToOauthScope(grant.grantedScopes) & TokenScope.UserRead)) return null;
 
   const clientId = block.appId;
   const requested = [...scopes];

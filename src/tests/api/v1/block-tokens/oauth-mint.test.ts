@@ -307,6 +307,70 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       });
     });
 
+    /**
+     * 🔴 #5127 SECOND SHAPE, through the endpoint. The grant row EXISTS but omits
+     * `user:read:self`, which the same response reports in `missingScopes`. Pre-fix
+     * the mirror wrote a row ORing `UserRead` in and the hub minted against it.
+     */
+    it('a viewer whose grant omits user:read:self gets no OAuth token and no consent row', async () => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['models:read:self', 'apps:storage:read'],
+        revokedAt: null,
+        buzzBudgetPerDay: null,
+      });
+
+      const res = await mint();
+
+      expect(res._status).toBe(200);
+      expect(res._body.missingScopes).toContain('user:read:self');
+      const mintedWithUserRead = mockHub.mintAppToken.mock.calls.filter(
+        ([args]) => ((args as { scope: number }).scope & TokenScope.UserRead) !== 0
+      );
+      expect(mintedWithUserRead).toEqual([]);
+      expect(mockDbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
+      expect(res._body).toMatchObject({ kind: 'block', needsConsent: true });
+    });
+
+    /**
+     * 🔴 #5127 (F1) — the non-terminating consent loop, closed at the branch
+     * condition rather than inside the mirror.
+     *
+     * An APPROVED manifest declaring `auth: "oauth"` but NOT `user:read:self`, for a
+     * viewer who granted everything it declares. The mirror cannot claim `UserRead`,
+     * the hub would refuse, and `withheld` would come back as
+     * `consentGatedScopes(signable)` — `collections:read:private`, a scope THIS VIEWER
+     * ALREADY GRANTED. It would be stripped from the token and reported missing, the
+     * host would render its persistent "missing permissions" banner, and re-consent
+     * would re-offer the same already-granted set for ever.
+     *
+     * The assertion is that relationship, not a field: no scope the viewer granted may
+     * be reported missing. `manifestCanMintOauthToken` keeps the branch unentered, so
+     * the block gets a clean JWT carrying everything it declared.
+     */
+    it('an approved auth: "oauth" manifest with no user:read:self mints a clean JWT, not a consent loop', async () => {
+      const DECLARED = ['models:read:self', 'collections:read:private'];
+      const base = pageBlock({ auth: 'oauth', scopes: DECLARED });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue({
+        appBlock: { ...base.appBlock, approvedScopes: DECLARED },
+      });
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: DECLARED,
+        revokedAt: null,
+        buzzBudgetPerDay: null,
+      });
+
+      const res = await mint();
+
+      expect(res._status).toBe(200);
+      expect(res._body.missingScopes).toEqual([]);
+      for (const granted of DECLARED) expect(res._body.scopes).toContain(granted);
+      expect(res._body).toMatchObject({ kind: 'block', needsConsent: false });
+      // The branch was never entered — not merely refused inside it.
+      expect(mockHub.syncOauthConsentFromGrant).not.toHaveBeenCalled();
+      expect(mockHub.mintAppToken).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
+    });
+
     it('a viewer who granted user:read:self still mints through the hub', async () => {
       // grantedScopes: SCOPES from the outer beforeEach — includes user:read:self.
       mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({

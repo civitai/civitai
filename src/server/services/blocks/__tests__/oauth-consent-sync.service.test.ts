@@ -29,8 +29,17 @@ const DAY_LIMIT = (limit: number) => [{ type: 'sliding', limit, window: 'day', u
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ appId: CLIENT_ID });
+  // DEFAULT = a viewer who granted the OAuth baseline (`user:read:self`) alongside a
+  // spend scope, i.e. one whose consent CAN support a token. #5127: the baseline used
+  // to be absent from this fixture while the assertions still expected `UserRead` in
+  // the row — the partially-granted bypass, pinned as intended behaviour.
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
-    grantedScopes: ['ai:write:budgeted', 'apps:storage:read', 'collections:read:private'],
+    grantedScopes: [
+      'user:read:self',
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'collections:read:private',
+    ],
     revokedAt: null,
     buzzBudgetPerDay: 500,
   });
@@ -42,14 +51,11 @@ describe('syncOauthConsentFromGrant', () => {
   it('maps granted scopes to OAuth bits and the daily budget to a sliding limit', async () => {
     const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
 
-    // The grant fixture does NOT contain `user:read:self`, so the mirrored row must
-    // NOT claim `UserRead` (#5127 — this assertion used to read
-    // `UserRead | AIServicesWrite`, pinning the bug as intended behaviour).
-    // `apps:storage:read` / `collections:read:private` are SKIP_OAUTH_CHECK, so they
-    // contribute no bit.
-    const scope = TokenScope.AIServicesWrite;
+    // `UserRead` is present because the viewer GRANTED `user:read:self`, not because
+    // the mapping forces it (#5127). `apps:storage:read` / `collections:read:private`
+    // are SKIP_OAUTH_CHECK, so they contribute no bit.
+    const scope = TokenScope.UserRead | TokenScope.AIServicesWrite;
     expect(result).toEqual({ clientId: CLIENT_ID, scope });
-    expect(result!.scope & TokenScope.UserRead).toBe(0);
     const upsert = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
     expect(upsert.where).toEqual({ userId_clientId: { userId: USER_ID, clientId: CLIENT_ID } });
     expect(upsert.create).toMatchObject({ userId: USER_ID, clientId: CLIENT_ID, scope });
@@ -57,7 +63,7 @@ describe('syncOauthConsentFromGrant', () => {
     expect(bustMock).not.toHaveBeenCalled();
   });
 
-  it('asserts UserRead when — and only when — the viewer granted user:read:self', async () => {
+  it('maps a baseline-plus-buzz grant to exactly those two bits', async () => {
     dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
       grantedScopes: ['user:read:self', 'buzz:read:self'],
       revokedAt: null,
@@ -102,12 +108,15 @@ describe('syncOauthConsentFromGrant', () => {
     expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
   });
 
-  // #5127, second shape: a grant row EXISTS, so the guard above does not fire, but it
-  // does not contain the consent-gated scope the caller is asking a token for. The
-  // caller-supplied list may only widen the row by CONSENT-EXEMPT scopes.
+  // Pins the FUNCTION'S CONTRACT for the `scopes` parameter, and nothing wider.
+  // ⚠️ NOT production coverage: no caller reaches this shape — `mintOauthAppToken`
+  // passes `partitionByConsent(...).signable`, so a gated scope it hands over is
+  // already in `grantedScopes`. Kept because the grant row must stay the sole
+  // authority for gated scopes if a future caller ever passes a raw manifest list.
   it('ignores consent-gated scopes the caller asks for but the viewer never granted', async () => {
     dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
-      grantedScopes: ['apps:storage:write'],
+      // Carries the baseline, so the mint predicate passes and the filter is REACHED.
+      grantedScopes: ['user:read:self', 'apps:storage:write'],
       revokedAt: null,
       buzzBudgetPerDay: null,
     });
@@ -116,11 +125,47 @@ describe('syncOauthConsentFromGrant', () => {
       userId: USER_ID,
       appBlockId: APP_BLOCK_ID,
       // exempt: models:read:self (→ ModelsRead), apps:storage:read (→ no bit).
-      // gated and NOT granted: user:read:self (→ UserRead), buzz:read:self (→ BuzzRead).
-      scopes: ['user:read:self', 'buzz:read:self', 'models:read:self', 'apps:storage:read'],
+      // gated and NOT granted: buzz:read:self (→ BuzzRead) must NOT appear.
+      scopes: ['buzz:read:self', 'models:read:self', 'apps:storage:read'],
     });
 
-    expect(result).toEqual({ clientId: CLIENT_ID, scope: TokenScope.ModelsRead });
+    expect(result).toEqual({
+      clientId: CLIENT_ID,
+      scope: TokenScope.UserRead | TokenScope.ModelsRead,
+    });
+    expect(result!.scope & TokenScope.BuzzRead).toBe(0);
+  });
+
+  /**
+   * 🔴 #5127 SECOND SHAPE — the guard the audit proved was missing, and the
+   * REACHABILITY PROOF for the mint predicate.
+   *
+   * A grant row EXISTS and is not revoked, so the missing-row guard does not fire;
+   * the viewer simply never granted `user:read:self`. Pre-fix this wrote a row ORing
+   * `UserRead` in, the hub minted against it, and the block read the viewer's email
+   * while the same mint reported `user:read:self` missing.
+   *
+   * The fixture deliberately grants a DIFFERENT bit (`AIServicesWrite`, 32768) rather
+   * than nothing, so a mutant that returns early on an empty grant, or one that
+   * hardcodes 0, cannot survive: the mask must be computed from this scope set and
+   * come back without bit 1.
+   */
+  it('returns null and writes nothing when the grant omits user:read:self', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted', 'collections:read:private'],
+      revokedAt: null,
+      buzzBudgetPerDay: 250,
+    });
+
+    const result = await syncOauthConsentFromGrant({
+      userId: USER_ID,
+      appBlockId: APP_BLOCK_ID,
+      scopes: ['ai:write:budgeted', 'apps:storage:read'],
+    });
+
+    expect(result).toBeNull();
+    expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
+    expect(bustMock).not.toHaveBeenCalled();
   });
 
   it('returns null and writes nothing when the grant is revoked', async () => {
