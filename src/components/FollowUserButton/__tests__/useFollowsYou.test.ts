@@ -40,6 +40,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 import {
   followButtonLabel,
   ownFollowerFollowsYou,
+  ownListBlockRelations,
   useFollowButtonState,
 } from '~/components/FollowUserButton/useFollowsYou';
 
@@ -151,6 +152,24 @@ describe('ownFollowerFollowsYou', () => {
     expect(ownFollowerFollowsYou({ ...base, blockRelations: new Map([[userId, true]]) })).toBe(
       false
     );
+  });
+
+  it('is false across a block for moderators too', () => {
+    const blockRelations = ownListBlockRelations({
+      hiddenUsers: [],
+      blockedUsers: [{ id: userId }],
+      blockedByUsers: [],
+    });
+    expect(ownFollowerFollowsYou({ ...base, blockRelations })).toBe(false);
+  });
+
+  it('is false when the follower has blocked you', () => {
+    const blockRelations = ownListBlockRelations({
+      hiddenUsers: [],
+      blockedUsers: [],
+      blockedByUsers: [{ id: userId }],
+    });
+    expect(ownFollowerFollowsYou({ ...base, blockRelations })).toBe(false);
   });
 
   it('is false until hidden preferences have loaded', () => {

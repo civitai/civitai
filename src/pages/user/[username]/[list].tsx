@@ -16,8 +16,10 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { ownFollowerFollowsYou } from '~/components/FollowUserButton/useFollowsYou';
-import { deriveHiddenUsers } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import {
+  ownFollowerFollowsYou,
+  ownListBlockRelations,
+} from '~/components/FollowUserButton/useFollowsYou';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -52,7 +54,7 @@ function UserListContent({
   isOwnList,
 }: UserListContentProps) {
   const { data: hidden, isSuccess: hiddenLoaded } = useQueryHiddenPreferences();
-  const { blockRelations } = useMemo(() => deriveHiddenUsers(hidden, false), [hidden]);
+  const blockRelations = useMemo(() => ownListBlockRelations(hidden), [hidden]);
   const totalPages = Math.ceil(totalCount / LIST_LIMIT);
 
   const getEmptyMessage = () => {

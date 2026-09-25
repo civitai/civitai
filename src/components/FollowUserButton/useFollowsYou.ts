@@ -1,3 +1,4 @@
+import { deriveHiddenUsers } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -10,6 +11,17 @@ export function followButtonLabel({
 }) {
   if (following) return 'Unfollow';
   return followsYou ? 'Follow back' : 'Follow';
+}
+
+type UserRef = { id: number };
+
+// Unlike the feed, moderators are not exempt: `getFollowsViewer` has no moderator exemption either.
+export function ownListBlockRelations(hidden: {
+  hiddenUsers: UserRef[];
+  blockedUsers: UserRef[];
+  blockedByUsers: UserRef[];
+}) {
+  return deriveHiddenUsers(hidden, false).blockRelations;
 }
 
 /**
