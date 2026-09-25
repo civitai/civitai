@@ -182,10 +182,27 @@ describe('enable() reports every failure it used to swallow', () => {
     );
     const { returned, toast } = await runEnable();
     expect(returned).toBe(false);
-    expect(toast?.title).toBe("Brave's push service is turned off");
+    expect(toast?.title).toBe('Brave could not reach a push service');
     expect(toast?.error?.message).toMatch(/brave:\/\/settings\/privacy/);
     expect(toast?.error?.message).toMatch(/Use Google services for push messaging/);
     expect(toast?.autoClose).toBe(false);
+  });
+
+  it('a Brave build whose isBrave() REJECTS still gets a message, just the generic one', async () => {
+    // The consolidated helper swallows a rejection rather than letting it escape. Before the two
+    // open-coded copies were merged, one of them had no rejection handling at all.
+    Object.defineProperty(navigator, 'brave', {
+      value: {
+        isBrave: () => Promise.reject(new Error('nope')),
+      },
+      configurable: true,
+    });
+    subscribe.mockRejectedValue(
+      Object.assign(new Error('Registration failed - push service error'), { name: 'AbortError' })
+    );
+    const { returned, toast } = await runEnable();
+    expect(returned).toBe(false);
+    expect(toast?.title).toBe("Your browser's push service is unavailable");
   });
 
   it('the SAME error on a non-Brave browser gets generic advice, never the Brave toggle', async () => {

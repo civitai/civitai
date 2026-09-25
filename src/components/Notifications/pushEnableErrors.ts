@@ -5,11 +5,14 @@
  * wrong. Worse, two of the cases below used to produce NO message at all: `enable()` returned
  * `false` when permission was dismissed or denied, so the button appeared inert.
  *
- * Each case here is something the user can act on, so the copy names the exact setting to change.
+ * Each case here is something the user can act on, so the copy names the exact setting to check.
  *
- * Deliberately free of browser globals and of the notification system: the classification and the
- * copy are plain data, unit-testable in node without a DOM. The caller supplies the one fact it can
- * only learn at runtime (`isBrave`) and owns actually displaying the result.
+ * Why a module and not inline strings: the discriminated union plus the exhaustive `switch` mean a
+ * new `kind` cannot be added without copy for it (a type error), and every user-facing string sits
+ * on one greppable surface. Being free of browser globals is a smaller benefit than it looks — it
+ * buys `pushEnableErrors.test.ts` a node environment, and nothing else; the seam test drives the
+ * hook under happy-dom either way. The caller supplies the one fact it can only learn at runtime
+ * (`isBrave`) and owns actually displaying the result.
  */
 
 export type PushEnableFailure =
@@ -92,13 +95,20 @@ export function describePushEnableFailure(failure: PushEnableFailure): PushEnabl
       };
 
     case 'push-service-unavailable':
-      // Brave is the case worth naming: it ships Google's push service switched OFF, so this is the
-      // DEFAULT experience there rather than a broken install, and the fix is one specific toggle.
+      // Brave is worth naming because it ships Google's push service switched OFF, so this is the
+      // DEFAULT experience there rather than a broken install, and the remedy is one named toggle.
+      //
+      // 🔴 The copy instructs a CHECK and must not assert the toggle is off. `isBrave` only tells us
+      // WHICH browser this is — the page cannot read that setting — so a Brave user who already
+      // enabled it and then went offline (or whose network blocks the push service) hits this exact
+      // branch. Asserting the default would send them to flip a toggle that is already on and name a
+      // cause they had already fixed. Phrasing it as a check is also what survives Brave changing
+      // its default, which would otherwise make this string quietly wrong.
       return failure.isBrave
         ? {
-            title: "Brave's push service is turned off",
+            title: 'Brave could not reach a push service',
             message:
-              'Brave disables Google push messaging by default, so notifications cannot be registered. Open brave://settings/privacy, turn on "Use Google services for push messaging", restart Brave, then try again.',
+              'Brave ships with Google push messaging turned off. Open brave://settings/privacy, check "Use Google services for push messaging", then restart Brave and try again. If it is already on, check that you are online and that nothing is blocking the push service.',
             persist: true,
           }
         : {

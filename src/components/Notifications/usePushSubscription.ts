@@ -8,6 +8,7 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePushSubscriptionStore } from '~/store/push-subscription.store';
 import type { PushSupport } from '~/store/push-subscription.store';
+import { isBraveBrowser } from '~/utils/device-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -34,21 +35,6 @@ function urlBase64ToUint8Array(base64String: string) {
 async function getSubscription() {
   const registration = await navigator.serviceWorker.register('/sw.js');
   return { registration, subscription: await registration.pushManager.getSubscription() };
-}
-
-/**
- * Brave ships Google push messaging DISABLED, which makes "push service unavailable" its default
- * state rather than a fault — so its remedy is a specific toggle worth naming. `navigator.brave` is
- * non-standard and only Brave exposes it; anything else (including a throw) means "not Brave", which
- * only ever costs us the more generic copy.
- */
-async function isBraveBrowser(): Promise<boolean> {
-  const brave = (navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } }).brave;
-  try {
-    return (await brave?.isBrave?.()) === true;
-  } catch {
-    return false;
-  }
 }
 
 /** Single exit point for a failed `enable()`, so no branch can go quiet again. */

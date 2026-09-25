@@ -80,11 +80,25 @@ describe('describePushEnableFailure', () => {
   it('names the Brave toggle, the settings page and the restart', () => {
     const copy = describePushEnableFailure({ kind: 'push-service-unavailable', isBrave: true });
     expect(copy).toEqual({
-      title: "Brave's push service is turned off",
+      title: 'Brave could not reach a push service',
       message:
-        'Brave disables Google push messaging by default, so notifications cannot be registered. Open brave://settings/privacy, turn on "Use Google services for push messaging", restart Brave, then try again.',
+        'Brave ships with Google push messaging turned off. Open brave://settings/privacy, check "Use Google services for push messaging", then restart Brave and try again. If it is already on, check that you are online and that nothing is blocking the push service.',
       persist: true,
     });
+  });
+
+  it('instructs a CHECK and never asserts the toggle is off', () => {
+    // `isBrave` says which browser this is, not what that setting holds — the page cannot read it.
+    // A Brave user who already enabled push messaging and then went offline reaches this same
+    // branch, so copy asserting the default would name a cause they had already fixed. This also
+    // keeps the string correct if Brave ever changes the default.
+    const { message } = describePushEnableFailure({
+      kind: 'push-service-unavailable',
+      isBrave: true,
+    });
+    expect(message).toMatch(/If it is already on/);
+    expect(message).not.toMatch(/\bdisables\b/);
+    expect(message).not.toMatch(/cannot be registered/);
   });
 
   it('gives non-Brave browsers generic push-service advice, and never mentions Brave', () => {

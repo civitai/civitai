@@ -102,11 +102,10 @@ was inert until 2026-09-24, though push was never enabled in that window) · 201
   reaches each branch — a mapper-only test cannot see a branch that never calls it, and two branches
   used to `return false` silently, so the button looked inert. Keep every failure path routed through
   `reportPushEnableFailure`.
-  🔴 **The most common real failure is not ours: Brave ships Google push messaging DISABLED by
-  default.** `pushManager.subscribe()` then rejects as an `AbortError` whose message names the push
-  service, and no subscription can ever be minted until the user enables
-  `brave://settings/privacy` → "Use Google services for push messaging" and restarts Brave. That is
-  the default state on Brave, not a broken install, which is why the copy names that toggle.
+  🔴 **The most common real failure is not ours — Brave ships Google push messaging DISABLED by
+  default.** The rationale, and why that copy instructs a _check_ rather than asserting the toggle is
+  off, live in the `push-service-unavailable` branch of `pushEnableErrors.ts`; do not restate them
+  here, or a future change to Brave's default has to be found in two files.
 - **iOS work** → the mechanism already works for installed PWAs (iOS 16.4+): `needs-standalone`
   detection shows the Add-to-Home-Screen card, manifest is `display: standalone`, apple-touch-icon
   is set. What's missing is install-prompting UX, deliberately deferred.
