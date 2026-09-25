@@ -167,21 +167,22 @@ describe('isClickHouseConnectionError — FALSE for query/schema/bug errors (MUS
   });
 });
 
-// The message the $query wrapper throws is `<original>\nQuery: <sql>` — the SQL TEXT is
-// part of the string being matched, and the original text can itself contain column or
-// table identifiers. The syscall-spelling match is narrowed by three independent rules
-// (see isClickHouseConnectionError); each one has at least one case below that ONLY it
-// rejects, so dropping any single rule turns this block red rather than leaving it green
-// on the other two.
+// The message the $query wrapper throws is `ClickHouse query failed: <original>\nQuery:
+// <sql>` — query text reaches the matched string from TWO directions: the tail `$query`
+// appends, and fragments ClickHouse re-embeds in its own exception text. The spelling match
+// is narrowed by four independent rules (see isClickHouseConnectionError); each one has at
+// least one case below that ONLY it rejects, so dropping any single rule turns this block
+// red rather than leaving it green on the other three.
 describe('isClickHouseConnectionError — the syscall-spelling match must not fire on the SQL or on another upstream', () => {
-  // Defeats the `\nQuery:` truncation ONLY: the token is quoted in the SQL, so it sits on
-  // non-word boundaries and the anchor cannot reject it.
-  it('does NOT match an UNKNOWN_TABLE whose QUERY TEXT quotes a syscall code as a literal', () => {
+  // Defeats the `\nQuery:` truncation ONLY. The token is a standalone, UNQUOTED word in
+  // the appended SQL, so neither the identifier anchor nor the quote boundary can reject
+  // it — only dropping the tail does.
+  it('does NOT match an UNKNOWN_TABLE whose QUERY TEXT names a syscall-spelled column', () => {
     expect(
       isClickHouseConnectionError(
         flattened(
-          'Code: 60. DB::Exception: Table default.buzzEvents does not exist. (UNKNOWN_TABLE)',
-          "SELECT * FROM buzzEvents WHERE tag = 'ECONNRESET'"
+          'Code: 60. DB::Exception: Table default.error_codes does not exist. (UNKNOWN_TABLE)',
+          'SELECT ECONNRESET FROM error_codes'
         )
       )
     ).toBe(false);
@@ -232,4 +233,52 @@ describe('isClickHouseConnectionError — the syscall-spelling match must not fi
       expect(isClickHouseConnectionError(new Error(message))).toBe(false);
     }
   );
+
+  // Defeats the QUOTE boundary ONLY. Each token below is a WHOLE WORD sitting between
+  // quote characters, inside ClickHouse's own exception text — so it is BEFORE the
+  // `\nQuery:` separator (rule (a) cannot reach it), it carries our wrapper prefix (rule
+  // (b) admits it), and a quote is a non-identifier character (rule (c) accepts it as a
+  // whole-word match). Only the quote-character exclusion rejects these.
+  //
+  // Each message is shaped as parseError leaves it: its regex keeps everything between
+  // `Exception: ` and the `(TYPE)` marker, which is where ClickHouse puts the failing
+  // query and its string literals. All three are query/schema faults and must 500.
+  it.each([
+    [
+      'Code: 47 UNKNOWN_IDENTIFIER re-embedding the query with a quoted literal',
+      "Missing columns: 'tagg' while processing query: 'SELECT tagg FROM buzz_events WHERE tag = 'ECONNRESET'', required columns: 'tagg'. ",
+      "SELECT tagg FROM buzz_events WHERE tag = 'ECONNRESET'",
+    ],
+    [
+      'Code: 62 SYNTAX_ERROR quoting the offending fragment',
+      "Syntax error: failed at position 9 ('reason = 'ETIMEDOUT''): SELECT reason = 'ETIMEDOUT' FROM jobs. Expected one of: token. ",
+      "SELECT reason = 'ETIMEDOUT' FROM jobs",
+    ],
+    [
+      'Code: 6 CANNOT_PARSE_TEXT quoting the unparseable string',
+      "Cannot parse string 'EPIPE' as UInt64: syntax error at begin of string. ",
+      "SELECT toUInt64('EPIPE')",
+    ],
+  ])(
+    'does NOT match a query fault whose ClickHouse MESSAGE quotes a syscall code as a whole word (%s)',
+    (_name, message, query) => {
+      expect(isClickHouseConnectionError(flattened(message, query))).toBe(false);
+    }
+  );
+
+  // 🔴 KNOWN GAP, PINNED. A syscall token ClickHouse re-embeds UNQUOTED into its own
+  // exception text is rejected by none of the four rules: it is before the `\nQuery:`
+  // separator so (a) cannot drop it, and it is unquoted so (d) cannot reject it. This
+  // asserts TRUE — current behaviour, not desired. If a rule ever covers it, flip this to
+  // false and drop the docblock note with it.
+  it('STILL matches (known gap) a query fault whose MESSAGE re-embeds the query with an UNQUOTED syscall token', () => {
+    expect(
+      isClickHouseConnectionError(
+        flattened(
+          'Missing columns: x while processing query: SELECT ECONNRESET FROM buzz_events',
+          'SELECT ECONNRESET FROM buzz_events'
+        )
+      )
+    ).toBe(true);
+  });
 });

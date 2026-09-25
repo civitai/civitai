@@ -437,17 +437,26 @@ const TRANSPORT_SYSCALL_CODES = new Set([
 const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
 
 // Lowercased, anchored patterns for the same syscall codes, for the message-only match in
-// isClickHouseConnectionError.
+// isClickHouseConnectionError. The boundary class excludes two different kinds of
+// character, and each exclusion rejects a case the other does not:
 //
-// The anchor is load-bearing. A bare `includes` treats these codes as substrings, and
-// ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`, `etimedout`
-// inside `responseTimedOut` (this repo already spells `deadlineTimedOut` in
-// `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a column would
-// otherwise classify as a transport fault and be swallowed. Anchored on non-identifier
-// characters so a token only matches whole: `UND_ERR_SOCKET` must not match inside
-// `some_und_err_socket_thing`.
+// (c) IDENTIFIER characters. A bare `includes` treats these codes as substrings, and
+//     ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`,
+//     `etimedout` inside `responseTimedOut` (this repo already spells `deadlineTimedOut`
+//     in `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a
+//     column would otherwise classify as a transport fault and be swallowed. `a-z0-9_`
+//     also stops `UND_ERR_SOCKET` matching inside `some_und_err_socket_thing`.
+//
+// (d) QUOTE characters — `'`, `"` and a backtick. A token flanked by one of these is a
+//     SQL string literal or a quoted identifier, not a syscall name in a transport
+//     message: ClickHouse renders both that way inside its own exception text (`Cannot
+//     parse string 'EPIPE' as UInt64`, `Syntax error: failed at position 9 ('reason =
+//     'ETIMEDOUT'')`). Exclusion (c) alone does NOT reject these — a quote is already a
+//     non-identifier character, so a whole-word token between quotes matches the same as
+//     one between spaces. Node's syscall spellings are space-flanked — `read ECONNRESET`,
+//     `write EPIPE`, `connect ETIMEDOUT <addr>` — so none of them loses its match.
 const TRANSPORT_SYSCALL_MESSAGE_PATTERNS = [...TRANSPORT_SYSCALL_CODES].map(
-  (code) => new RegExp(`(?:^|[^a-z0-9_])${code.toLowerCase()}(?:$|[^a-z0-9_])`)
+  (code) => new RegExp(`(?:^|[^a-z0-9_'"\`])${code.toLowerCase()}(?:$|[^a-z0-9_'"\`])`)
 );
 
 // Verbatim prefix and SQL separator that packages/civitai-clickhouse/src/client.ts
@@ -486,15 +495,26 @@ const CH_QUERY_SQL_SEPARATOR = '\nquery:';
  *     `Error('ClickHouse query failed: <original message>\nQuery: <sql>')`, losing
  *     `.code`, so we also string-match the transient signatures in the message
  *     (`Code: 279`/`210`/`209`/`202`, `socket hang up`, `broken pipe`, `all connection
- *     tries failed`, `too many simultaneous queries`, and — under three narrowing rules
+ *     tries failed`, `too many simultaneous queries`, and — under the four narrowing rules
  *     below — every `TRANSPORT_SYSCALL_CODES` spelling).
  *
- * 🔴 THE MESSAGE THAT SHAPE 3 MATCHES CONTAINS THE SQL. `$query` appends
- * `\nQuery: <sql>`, so an unrestricted substring match lets the *query text* decide the
- * classification — the exact inversion of what this predicate is for. Three narrowing
- * rules keep shape 3 transient-only; each is documented at the code that applies it, and
- * each has a case only it rejects in
+ * 🔴 THE MESSAGE THAT SHAPE 3 MATCHES CONTAINS QUERY TEXT, FROM TWO SOURCES. `$query`
+ * appends `\nQuery: <sql>`, and ClickHouse re-embeds fragments of the failing query and
+ * its string literals inside its own exception text. An unrestricted substring match
+ * would let either one decide the classification — the exact inversion of what this
+ * predicate is for. Four narrowing rules apply to the syscall-spelling match: (a) drop the
+ * `\nQuery:` tail `$query` appended, (b) require our own wrapper prefix, (c) reject a
+ * token embedded in an identifier, (d) reject a token flanked by a quote character. Each
+ * is documented at the code that applies it, and each has a case only it rejects in
  * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ *
+ * 🔴 WHAT REMAINS UNCOVERED: a syscall token that ClickHouse re-embeds into its exception
+ * text WITHOUT quoting it is rejected by none of the four and is still classified
+ * transient. Rule (a) cannot see it (it is before the separator), and rule (d) cannot see
+ * it (it is not quoted). Pinned by a test in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`. The
+ * literal-phrase matches above get (a) only: they run on the truncated message, but carry
+ * no prefix, identifier or quote boundary.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.
@@ -508,19 +528,25 @@ export function isClickHouseConnectionError(e: unknown): boolean {
       if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
       if (TRANSIENT_CH_CODES.has(code)) return true;
     }
-    // `$query` APPENDS THE SQL to the message it throws, so the raw string carries the
-    // query text as well as the failure. Match only the part BEFORE that separator —
-    // otherwise any token appearing in the SQL (a column name, a quoted string literal)
-    // decides the classification, and a `Code: 60` UNKNOWN_TABLE on
-    // `… WHERE tag = 'ECONNRESET'` reads as a transport blip and gets swallowed.
+    // `$query` APPENDS `\nQuery: <sql>` to the message it throws, so the raw string
+    // carries the query text as well as the failure. Match only the part BEFORE that
+    // separator, so a token that appears ONLY in that appended tail cannot decide the
+    // classification: a `Code: 60` UNKNOWN_TABLE thrown for `… WHERE tag = 'ECONNRESET'`
+    // would otherwise read as a transport blip and get swallowed.
+    //
+    // 🔴 This strips the appended tail and nothing else — ClickHouse re-embeds query
+    // fragments inside its own exception text, which sits before the separator and
+    // survives. See the docblock for what that leaves uncovered.
     const rawMsg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
     const sqlAt = rawMsg.indexOf(CH_QUERY_SQL_SEPARATOR);
     const msg = sqlAt === -1 ? rawMsg : rawMsg.slice(0, sqlAt);
     if (msg) {
-      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
-      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message. Every one
-      // contains a space or a colon, so no identifier can embed them and they need no
-      // anchoring; the truncation above is what keeps them off the SQL.
+      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — multi-word
+      // phrases and `Code: NNN` prefixes that a ClickHouse query/schema error does not
+      // emit. Every one contains a space or a colon, so no identifier can embed them and
+      // they need no anchoring. Unlike the syscall spellings below they are not scoped to
+      // our wrapper prefix, and query text reaches them only where ClickHouse re-embeds
+      // it in its own exception text — an accepted limit, not a covered case.
       if (
         msg.includes('socket hang up') ||
         msg.includes('broken pipe') ||
@@ -528,7 +554,10 @@ export function isClickHouseConnectionError(e: unknown): boolean {
         msg.includes('connection refused') ||
         msg.includes('connection reset') ||
         msg.includes('too many simultaneous queries') ||
-        // The `Code: NNN` prefix our $query wrapper preserves, transient codes only.
+        // A `Code: NNN` prefix survives only when parseError's regex fails and it rethrows
+        // verbatim; a parsed error arrives as inner text (`All connection tries failed. `,
+        // 1.23.1), which the phrases above catch for 279/210/202 but NOT 209 — no phrase
+        // here is a socket-timeout signature. Neither half covers the other.
         msg.includes('code: 279') ||
         msg.includes('code: 210') ||
         msg.includes('code: 209') ||

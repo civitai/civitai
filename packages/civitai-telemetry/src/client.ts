@@ -410,7 +410,7 @@ export const clickhouseFailSoftCounter = registerCounterWithLabels({
   // registerCounterWithLabels prepends PROM_PREFIX — a name carrying it emits
   // `civitai_app_civitai_app_…`.
   name: 'clickhouse_failsoft_total',
-  help: 'Transient ClickHouse transport errors degraded (swallowed or re-mapped to 503) instead of 500-ing, by INSTRUMENTED path — opt-in, so an undercount of all such degradation',
+  help: 'Transient transport errors degraded (swallowed or re-mapped to 503) instead of 500-ing, by INSTRUMENTED path — opt-in, so an undercount. An error object carrying a transport syscall code counts here whatever raised it (image-feed also reaches Meilisearch), so confirm against ClickHouse-side signals before calling a spike a ClickHouse outage.',
   labelNames: ['path'] as const,
 });
 
