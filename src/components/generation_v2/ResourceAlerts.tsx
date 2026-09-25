@@ -264,12 +264,15 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     );
   }
 
+  // Reached only when the whatIf reported a step the cluster cannot service yet (`ready: false`) AND
+  // named nothing to download. That signal is `queuePosition.support`, which is about worker
+  // capacity — it carries no claim about resources, so this must not make one.
   if (!settled.download) {
     return (
       <Alert color="yellow" title="Potentially slow generation" radius="md">
         <Text size="xs">
-          We need to download additional resources to fulfill your request. This generation may take
-          longer than usual to complete.
+          The generator can&apos;t start this request right away, so it may take longer than usual
+          to complete.
         </Text>
       </Alert>
     );
