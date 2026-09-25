@@ -4,11 +4,14 @@ import {
 } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
-type ImageResourceLike = {
+// Required rather than optional, so a query that stops selecting `modelType` or `detected` fails to
+// compile instead of silently counting nothing as a checkpoint, or everything as manual.
+type ImageResource = {
   modelVersionId: number;
-  modelType?: ModelType | null;
-  detected?: boolean | null;
+  modelType: ModelType | null;
+  detected: boolean | null;
 };
+type NewResource = Pick<ImageResource, 'modelVersionId' | 'modelType'>;
 
 export const manualResourceLimitMessages = {
   total: `Images can have at most ${MAX_MANUAL_RESOURCES_PER_IMAGE} manually added resources.`,
@@ -16,9 +19,9 @@ export const manualResourceLimitMessages = {
 };
 
 // Matches the search index's `modelVersionIdsManual` (`detected is not true`).
-const isManual = (resource: ImageResourceLike) => resource.detected !== true;
+const isManual = (resource: ImageResource) => resource.detected !== true;
 
-export function getManualResourceUsage(resources: ImageResourceLike[]) {
+export function getManualResourceUsage(resources: ImageResource[]) {
   const manual = resources.filter(isManual);
   return {
     total: manual.length,
@@ -32,11 +35,11 @@ export function getManualResourceUsage(resources: ImageResourceLike[]) {
  * creates no row.
  */
 export function getManualResourceLimitError(
-  existing: ImageResourceLike[],
-  adding: ImageResourceLike[]
+  existing: ImageResource[],
+  adding: NewResource[]
 ): string | null {
   const seenIds = new Set(existing.map((r) => r.modelVersionId));
-  const newResources: ImageResourceLike[] = [];
+  const newResources: ImageResource[] = [];
   for (const resource of adding) {
     if (seenIds.has(resource.modelVersionId)) continue;
     seenIds.add(resource.modelVersionId);
@@ -56,4 +59,16 @@ export function getManualResourceLimitError(
   )
     return manualResourceLimitMessages.checkpoints;
   return null;
+}
+
+/** Splits a multi-pick into the resources that fit, in order, and the first limit message hit. */
+export function pickAddableResources<T extends NewResource>(existing: ImageResource[], picks: T[]) {
+  const accepted: T[] = [];
+  let error: string | null = null;
+  for (const pick of picks) {
+    const pickError = getManualResourceLimitError(existing, [...accepted, pick]);
+    if (pickError) error ??= pickError;
+    else accepted.push(pick);
+  }
+  return { accepted, error };
 }

@@ -89,6 +89,7 @@ import {
   getManualResourceLimitError,
   getManualResourceUsage,
   manualResourceLimitMessages,
+  pickAddableResources,
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
@@ -449,23 +450,16 @@ const ResourceHeader = () => {
                 }}
                 onChange={(vals) => {
                   if (!vals?.length || cantAdd) return;
-                  const accepted: { modelVersionId: number; modelType: ModelType }[] = [];
-                  for (const val of vals) {
-                    const resource = { modelVersionId: val.id, modelType: val.model.type };
-                    const error = getManualResourceLimitError(image.resourceHelper, [
-                      ...accepted,
-                      resource,
-                    ]);
-                    if (error) {
-                      showErrorNotification({
-                        title: 'Unable to add resource',
-                        error: new Error(error),
-                      });
-                      continue;
-                    }
-                    accepted.push(resource);
-                    addResource(val.id);
-                  }
+                  const { accepted, error } = pickAddableResources(
+                    image.resourceHelper,
+                    vals.map((val) => ({ modelVersionId: val.id, modelType: val.model.type }))
+                  );
+                  if (error)
+                    showErrorNotification({
+                      title: 'Unable to add resource',
+                      error: new Error(error),
+                    });
+                  accepted.forEach((resource) => addResource(resource.modelVersionId));
                 }}
               />
             </Tooltip>

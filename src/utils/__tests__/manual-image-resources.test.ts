@@ -8,6 +8,7 @@ import {
   getManualResourceLimitError,
   getManualResourceUsage,
   manualResourceLimitMessages,
+  pickAddableResources,
 } from '~/utils/manual-image-resources';
 
 let nextId = 1;
@@ -51,9 +52,13 @@ describe('getManualResourceLimitError', () => {
     ).toBe(manualResourceLimitMessages.checkpoints);
   });
 
-  it('still allows a non-checkpoint once the checkpoint limit is full', () => {
+  it('still allows non-checkpoints once the checkpoint limit is full', () => {
     const existing = many(MAX_MANUAL_CHECKPOINTS_PER_IMAGE, ModelType.Checkpoint, false);
     expect(getManualResourceLimitError(existing, [manualLora()])).toBeNull();
+    expect(getManualResourceLimitError(existing, [resource(ModelType.VAE, false)])).toBeNull();
+    expect(
+      getManualResourceLimitError(existing, [resource(ModelType.TextualInversion, false)])
+    ).toBeNull();
   });
 
   it('ignores auto-detected resources toward both limits', () => {
@@ -90,5 +95,22 @@ describe('getManualResourceLimitError', () => {
     expect(getManualResourceLimitError(existing, [manualLora()])).toBe(
       manualResourceLimitMessages.total
     );
+  });
+});
+
+describe('pickAddableResources', () => {
+  it('accepts picks in order until a limit, skips the ones past it, and reports why', () => {
+    const existing = many(MAX_MANUAL_CHECKPOINTS_PER_IMAGE - 1, ModelType.Checkpoint, false);
+    const [first, second] = [manualCheckpoint(), manualCheckpoint()];
+    const lora = manualLora();
+    expect(pickAddableResources(existing, [first, second, lora])).toEqual({
+      accepted: [first, lora],
+      error: manualResourceLimitMessages.checkpoints,
+    });
+  });
+
+  it('accepts every pick that fits, with no error', () => {
+    const picks = [manualCheckpoint(), manualLora()];
+    expect(pickAddableResources([], picks)).toEqual({ accepted: picks, error: null });
   });
 });

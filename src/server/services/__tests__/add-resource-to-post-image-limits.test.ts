@@ -88,36 +88,63 @@ vi.mock('~/server/services/blocklist.service', () => ({
 const { addResourceToPostImage } = await import('~/server/services/post.service');
 
 const IMAGE_ID = 101;
+const OTHER_IMAGE_ID = 102;
 const NEW_VERSION_ID = 9_000_000;
 const user = { id: 1 } as Parameters<typeof addResourceToPostImage>[0]['user'];
 
 const mockVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
 const mockImageFindMany = dbMock.dbWrite.image.findMany;
-const mockLockQuery = dbMock.dbWrite.$queryRaw;
-const mockHelperFindMany = dbMock.dbWrite.imageResourceHelper.findMany;
-const mockCreate = dbMock.dbWrite.imageResourceNew.createManyAndReturn;
+
+// The shared db mock hands `dbWrite` itself to a `$transaction` callback, which would let the lock,
+// the read and the insert all move outside the transaction unnoticed. A separate client makes
+// "inside the transaction" observable.
+const tx = {
+  $queryRaw: vi.fn(),
+  imageResourceHelper: { findMany: vi.fn() },
+  imageResourceNew: { createManyAndReturn: vi.fn() },
+};
 
 let nextVersionId = 1;
-const rows = (n: number, modelType: ModelType, detected: boolean) =>
+const rows = (n: number, modelType: ModelType, detected: boolean, imageId = IMAGE_ID) =>
   Array.from({ length: n }, () => ({
-    imageId: IMAGE_ID,
+    imageId,
     modelVersionId: nextVersionId++,
     modelType,
     detected,
   }));
 
-function arrange({ adding, existing }: { adding: ModelType; existing: ReturnType<typeof rows> }) {
+function arrange({
+  adding,
+  existing,
+  imageIds = [IMAGE_ID],
+}: {
+  adding: ModelType;
+  existing: ReturnType<typeof rows>;
+  imageIds?: number[];
+}) {
   mockVersionFindFirst.mockResolvedValue({
     name: 'v1',
     model: { id: 1, name: 'm', type: adding },
     files: [],
   });
-  mockImageFindMany.mockResolvedValue([{ postId: null, meta: null, type: 'image' }]);
-  mockHelperFindMany.mockResolvedValue(existing);
-  mockCreate.mockResolvedValue([{ imageId: IMAGE_ID, modelVersionId: NEW_VERSION_ID }]);
+  mockImageFindMany.mockResolvedValue(
+    imageIds.map(() => ({ postId: null, meta: null, type: 'image' }))
+  );
+  dbMock.dbWrite.$transaction.mockImplementation((fn: (client: typeof tx) => unknown) => fn(tx));
+  tx.$queryRaw.mockResolvedValue([]);
+  tx.imageResourceHelper.findMany.mockResolvedValue(existing);
+  tx.imageResourceNew.createManyAndReturn.mockResolvedValue(
+    imageIds.map((imageId) => ({ imageId, modelVersionId: NEW_VERSION_ID }))
+  );
 }
 
-const add = () => addResourceToPostImage({ id: [IMAGE_ID], modelVersionId: NEW_VERSION_ID, user });
+const add = (imageIds = [IMAGE_ID]) =>
+  addResourceToPostImage({ id: imageIds, modelVersionId: NEW_VERSION_ID, user });
+
+const expectNothingWritten = () => {
+  expect(tx.imageResourceNew.createManyAndReturn).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.imageResourceNew.createManyAndReturn).not.toHaveBeenCalled();
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -130,7 +157,7 @@ describe('addResourceToPostImage manual resource limits', () => {
       existing: rows(MAX_MANUAL_RESOURCES_PER_IMAGE, ModelType.LORA, false),
     });
     await expect(add()).rejects.toThrow(manualResourceLimitMessages.total);
-    expect(mockCreate).not.toHaveBeenCalled();
+    expectNothingWritten();
   });
 
   it('refuses a checkpoint past the checkpoint limit, and writes nothing', async () => {
@@ -139,7 +166,7 @@ describe('addResourceToPostImage manual resource limits', () => {
       existing: rows(MAX_MANUAL_CHECKPOINTS_PER_IMAGE, ModelType.Checkpoint, false),
     });
     await expect(add()).rejects.toThrow(manualResourceLimitMessages.checkpoints);
-    expect(mockCreate).not.toHaveBeenCalled();
+    expectNothingWritten();
   });
 
   it('does not count auto-detected resources toward either limit', async () => {
@@ -151,25 +178,63 @@ describe('addResourceToPostImage manual resource limits', () => {
       ],
     });
     await expect(add()).resolves.toBeDefined();
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockCreate.mock.calls[0][0].data).toEqual([
+    expect(tx.imageResourceNew.createManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(tx.imageResourceNew.createManyAndReturn.mock.calls[0][0].data).toEqual([
       { imageId: IMAGE_ID, modelVersionId: NEW_VERSION_ID, detected: false },
     ]);
   });
 
-  it('locks the image rows before reading the resources it checks, and writes after', async () => {
-    arrange({ adding: ModelType.LORA, existing: [] });
-    await add();
+  // The mock returns the fixture rows whatever is selected, so the select itself is pinned.
+  it('reads the model type and detected flag of every image being credited', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    await add([IMAGE_ID, OTHER_IMAGE_ID]);
+    expect(tx.imageResourceHelper.findMany).toHaveBeenCalledWith({
+      where: { imageId: { in: [IMAGE_ID, OTHER_IMAGE_ID] } },
+      select: { imageId: true, modelVersionId: true, modelType: true, detected: true },
+    });
+  });
 
-    const lockCall = mockLockQuery.mock.calls.find(([strings]: [TemplateStringsArray]) =>
-      strings.join('?').includes('FOR UPDATE')
+  it('refuses the whole request when any one of several images is at a limit', async () => {
+    arrange({
+      adding: ModelType.LORA,
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+      existing: rows(MAX_MANUAL_RESOURCES_PER_IMAGE, ModelType.LORA, false, OTHER_IMAGE_ID),
+    });
+    await expect(add([IMAGE_ID, OTHER_IMAGE_ID])).rejects.toThrow(
+      manualResourceLimitMessages.total
     );
-    expect(lockCall, 'no FOR UPDATE query was issued').toBeDefined();
-    const lockOrder =
-      mockLockQuery.mock.invocationCallOrder[mockLockQuery.mock.calls.indexOf(lockCall)];
-    expect(lockOrder).toBeLessThan(mockHelperFindMany.mock.invocationCallOrder[0]);
-    expect(mockHelperFindMany.mock.invocationCallOrder[0]).toBeLessThan(
-      mockCreate.mock.invocationCallOrder[0]
-    );
+    expectNothingWritten();
+  });
+
+  it("does not count one image's resources against another image", async () => {
+    // Each image fits on its own; together they are one past the total limit.
+    arrange({
+      adding: ModelType.LORA,
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+      existing: [
+        ...rows(MAX_MANUAL_RESOURCES_PER_IMAGE - 1, ModelType.LORA, false, IMAGE_ID),
+        ...rows(1, ModelType.LORA, false, OTHER_IMAGE_ID),
+      ],
+    });
+    await expect(add([IMAGE_ID, OTHER_IMAGE_ID])).resolves.toBeDefined();
+    expect(tx.imageResourceNew.createManyAndReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks exactly the requested image rows, then reads and writes in the same transaction', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    await add([IMAGE_ID, OTHER_IMAGE_ID]);
+
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, idList] = tx.$queryRaw.mock.calls[0];
+    expect(strings.join('?')).toBe('SELECT id FROM "Image" WHERE id IN (?) ORDER BY id FOR UPDATE');
+    expect(idList.values).toEqual([IMAGE_ID, OTHER_IMAGE_ID]);
+
+    const lockOrder = tx.$queryRaw.mock.invocationCallOrder[0];
+    const readOrder = tx.imageResourceHelper.findMany.mock.invocationCallOrder[0];
+    const writeOrder = tx.imageResourceNew.createManyAndReturn.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(readOrder);
+    expect(readOrder).toBeLessThan(writeOrder);
+    expect(dbMock.dbWrite.imageResourceNew.createManyAndReturn).not.toHaveBeenCalled();
   });
 });
