@@ -160,7 +160,6 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
   });
 });
 
-
 // ===========================================================================
 // resolveHostConsentNotice — THE HOST-SIDE BACKSTOP'S PREDICATE.
 //
@@ -248,9 +247,9 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
     // condition the other lacks — not just on the happy path.
     for (const status of ['loading', 'ready', 'timeout', 'fatal', 'no_token'] as const) {
       for (const missingScopes of [[], MISSING, ['apps:storage:read']]) {
-        expect(
-          resolveHostConsentNotice({ ...base, status, missingScopes })
-        ).toEqual(resolveRequestConsent(status, missingScopes));
+        expect(resolveHostConsentNotice({ ...base, status, missingScopes })).toEqual(
+          resolveRequestConsent(status, missingScopes)
+        );
       }
     }
   });

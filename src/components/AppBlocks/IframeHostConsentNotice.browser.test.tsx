@@ -130,7 +130,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           getCounts: { fetch: vi.fn() },
           get: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -413,7 +417,11 @@ describe('IframeHost consent backstop — the surface', () => {
     const cw = el.contentWindow;
     if (!cw) throw new Error('iframe contentWindow missing');
     window.dispatchEvent(
-      new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+      new MessageEvent('message', {
+        data: { type, payload },
+        origin: window.location.origin,
+        source: cw,
+      })
     );
   }
 
@@ -461,7 +469,9 @@ describe('IframeHost consent backstop — the surface', () => {
     expect(frame.contains(notice)).toBe(true);
     expect(iframeEl.contains(notice)).toBe(false);
     // Above the iframe in document order — the same slot PageBlockHost uses.
-    expect(notice.compareDocumentPosition(iframeEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      notice.compareDocumentPosition(iframeEl) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   test('Review opens the consent dialog with the SERVER-KNOWN missing set', async () => {
