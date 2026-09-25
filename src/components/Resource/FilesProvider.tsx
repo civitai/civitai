@@ -24,7 +24,7 @@ import {
   resolveUploadPrecision,
 } from '~/utils/file-helpers';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
-import { getFileConflicts } from '~/components/Resource/file-conflicts';
+import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
 import {
@@ -515,9 +515,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
 
     if (targetIndex >= 0) {
-      // Only conflicts the edited file is part of — an unrelated pair of siblings
+      // Only groups the edited file is part of — an unrelated pair of siblings
       // that happen to share a key isn't this save's problem.
-      return checkFileConflicts(files, files[targetIndex]);
+      warnSimilarFiles(files, files[targetIndex]);
+      return true;
     }
 
     // External-generation versions (mod-only, routed via external engines) intentionally
@@ -553,7 +554,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
     }
 
-    return checkFileConflicts(files);
+    warnSimilarFiles(files);
+    return true;
   };
 
   const createFileMutation = trpc.modelFile.create.useMutation({
@@ -879,23 +881,9 @@ const metadataSchema = modelFileMetadataSchema
   })
   .array();
 
-const checkFileConflicts = (files: FileFromContextProps[], target?: FileFromContextProps) => {
-  const inScope = (group: FileFromContextProps[]) => !target || group.includes(target);
-  const { duplicates, similar } = getFileConflicts(files);
+const warnSimilarFiles = (files: FileFromContextProps[], target?: FileFromContextProps) => {
   const listNames = (group: FileFromContextProps[]) => group.map((f) => f.name).join(', ');
-
-  const blocking = duplicates.filter(inScope);
-  if (blocking.length) {
-    showErrorNotification({
-      title: 'Duplicate files',
-      error: blocking.map((group) => ({
-        message: `${listNames(group)}: same file uploaded more than once, remove one`,
-      })),
-    });
-    return false;
-  }
-
-  const warnings = similar.filter(inScope);
+  const warnings = getSimilarFiles(files).filter((group) => !target || group.includes(target));
   if (warnings.length) {
     showWarningNotification({
       title: 'Files share the same type, format and precision',
@@ -912,7 +900,6 @@ const checkFileConflicts = (files: FileFromContextProps[], target?: FileFromCont
       autoClose: 8000,
     });
   }
-  return true;
 };
 
 /** Model types whose primary file is an archive/config rather than model weights */
