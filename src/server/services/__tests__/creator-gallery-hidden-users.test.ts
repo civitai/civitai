@@ -52,7 +52,8 @@ const MIGRATION = path.resolve(
 let db: PGlite;
 let creatorModelIds: number[] = [];
 // Every write-side step of an add, in order, with whether a transaction callback was running.
-let ops: { op: string; inTransaction: boolean }[] = [];
+// `via` is the client the call went through: 'tx' is the transaction callback's own client.
+let ops: { op: string; via: 'tx' | 'dbWrite' }[] = [];
 
 const q = async <T>(sql: string, params: unknown[] = []) =>
   (await db.query(sql, params)).rows as T[];
@@ -74,25 +75,82 @@ const seedRows = (creatorId: number, count: number, firstUserId: number) =>
 
 const deletedKeys = () => redisMock.redis.del.mock.calls.flatMap((call) => call[0]);
 
+// The delegates below read every key they are given, so a caller that drops `creatorId` from a
+// `where` addresses a different set of rows here, just as it would against Postgres.
+async function countRows({ where }: { where: { creatorId?: number } }) {
+  const [row] = await q<{ n: number }>(
+    `SELECT count(*)::int AS n FROM "CreatorGalleryHiddenUser"
+     WHERE ($1::int IS NULL OR "creatorId" = $1)`,
+    [where.creatorId ?? null]
+  );
+  return row.n;
+}
+
+async function findRow({ where }: { where: { creatorId_userId: Key } }) {
+  const { creatorId, userId } = where.creatorId_userId;
+  const [row] = await q(
+    `SELECT "userId" FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`,
+    [creatorId, userId]
+  );
+  return row ?? null;
+}
+
+async function upsertRow({
+  where,
+  create,
+  update,
+}: {
+  where: { creatorId_userId: Key };
+  create: Key & { note: string | null };
+  update: { note?: string | null };
+}) {
+  const { creatorId, userId } = where.creatorId_userId;
+  const updated = await q(
+    `UPDATE "CreatorGalleryHiddenUser" SET note = CASE WHEN $3 THEN $4 ELSE note END
+     WHERE "creatorId" = $1 AND "userId" = $2 RETURNING "userId"`,
+    [creatorId, userId, 'note' in update, update.note ?? null]
+  );
+  if (updated.length) return;
+  await q(
+    `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId", note) VALUES ($1, $2, $3)`,
+    [create.creatorId, create.userId, create.note]
+  );
+}
+
 function installDb() {
   const bridge = createPrismaBridge(db, createGate());
-  let depth = 0;
-  const record = (op: string) => ops.push({ op, inTransaction: depth > 0 });
-  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-    depth += 1;
-    try {
-      return await fn(dbMock.dbWrite);
-    } finally {
-      depth -= 1;
-    }
-  });
   // Runs the statement for real, so a malformed lock call fails here.
-  dbMock.dbWrite.$executeRaw.mockImplementation(
+  const executeRaw =
+    (via: 'tx' | 'dbWrite') =>
     async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      record(strings.join('?').includes('pg_advisory_xact_lock') ? 'lock' : 'execute');
+      ops.push({
+        op: strings.join('?').includes('pg_advisory_xact_lock') ? 'lock' : 'execute',
+        via,
+      });
       return bridge.$executeRaw(strings, ...values);
-    }
-  );
+    };
+  dbMock.dbWrite.$executeRaw.mockImplementation(executeRaw('dbWrite'));
+  // A client distinct from dbWrite, as Prisma's is: an advisory xact lock taken on dbWrite inside
+  // the callback runs on another pooled connection and is released at once.
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+    const table = dbMock.dbWrite.creatorGalleryHiddenUser;
+    const viaTx =
+      (op: string, call: (...args: any[]) => unknown) =>
+      (...args: unknown[]) => {
+        ops.push({ op, via: 'tx' });
+        return call(...args);
+      };
+    return fn({
+      $executeRaw: executeRaw('tx'),
+      creatorGalleryHiddenUser: {
+        count: viaTx('count', countRows),
+        findUnique: viaTx('findUnique', findRow),
+        upsert: viaTx('upsert', upsertRow),
+        updateMany: table.updateMany,
+        deleteMany: table.deleteMany,
+      },
+    });
+  });
   for (const root of [dbMock.dbRead, dbMock.dbWrite]) {
     root.$queryRaw.mockImplementation(bridge.$queryRaw);
     root.user.findFirst.mockImplementation(
@@ -121,54 +179,16 @@ function installDb() {
       where.userId === CREATOR ? creatorModelIds.map((id) => ({ id })) : []
     );
 
-    // The delegates below read every key they are given, so a caller that drops `creatorId` from a
-    // `where` addresses a different set of rows here, just as it would against Postgres.
     const table = root.creatorGalleryHiddenUser;
-    const recordWrite = (op: string) => {
-      if (root === dbMock.dbWrite) record(op);
-    };
-    table.count.mockImplementation(async ({ where }: { where: { creatorId?: number } }) => {
-      recordWrite('count');
-      const [row] = await q<{ n: number }>(
-        `SELECT count(*)::int AS n FROM "CreatorGalleryHiddenUser"
-         WHERE ($1::int IS NULL OR "creatorId" = $1)`,
-        [where.creatorId ?? null]
-      );
-      return row.n;
-    });
-    table.findUnique.mockImplementation(async ({ where }: { where: { creatorId_userId: Key } }) => {
-      recordWrite('findUnique');
-      const { creatorId, userId } = where.creatorId_userId;
-      const [row] = await q(
-        `SELECT "userId" FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`,
-        [creatorId, userId]
-      );
-      return row ?? null;
-    });
-    table.upsert.mockImplementation(
-      async ({
-        where,
-        create,
-        update,
-      }: {
-        where: { creatorId_userId: Key };
-        create: Key & { note: string | null };
-        update: { note?: string | null };
-      }) => {
-        recordWrite('upsert');
-        const { creatorId, userId } = where.creatorId_userId;
-        const updated = await q(
-          `UPDATE "CreatorGalleryHiddenUser" SET note = CASE WHEN $3 THEN $4 ELSE note END
-           WHERE "creatorId" = $1 AND "userId" = $2 RETURNING "userId"`,
-          [creatorId, userId, 'note' in update, update.note ?? null]
-        );
-        if (updated.length) return;
-        await q(
-          `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId", note) VALUES ($1, $2, $3)`,
-          [create.creatorId, create.userId, create.note]
-        );
-      }
-    );
+    const recordWrite =
+      (op: string, call: (...args: any[]) => unknown) =>
+      (...args: unknown[]) => {
+        if (root === dbMock.dbWrite) ops.push({ op, via: 'dbWrite' });
+        return call(...args);
+      };
+    table.count.mockImplementation(recordWrite('count', countRows));
+    table.findUnique.mockImplementation(recordWrite('findUnique', findRow));
+    table.upsert.mockImplementation(recordWrite('upsert', upsertRow));
     table.updateMany.mockImplementation(
       async ({ where, data }: { where: Partial<Key>; data: { note: string | null } }) => {
         const rows = await q(
@@ -448,13 +468,26 @@ describe('creator gallery hidden users', () => {
 
   // The cap check and the write share one transaction behind a per-creator advisory lock.
   it('takes the per-creator lock inside the transaction that checks the cap', async () => {
+    const lockArgs: unknown[][] = [];
+    const bridged = dbMock.dbWrite.$transaction.getMockImplementation()!;
+    dbMock.dbWrite.$transaction.mockImplementationOnce((fn: (tx: any) => Promise<unknown>) =>
+      bridged((tx: any) =>
+        fn({
+          ...tx,
+          $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+            lockArgs.push(values);
+            return tx.$executeRaw(strings, ...values);
+          },
+        })
+      )
+    );
+
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
 
     expect(ops.map((o) => o.op).sort()).toEqual(['count', 'findUnique', 'lock', 'upsert']);
-    expect(ops[0]).toEqual({ op: 'lock', inTransaction: true });
-    expect(ops.every((o) => o.inTransaction)).toBe(true);
+    expect(ops[0].op).toBe('lock');
     expect(ops[ops.length - 1].op).toBe('upsert');
-    const lockCall = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(lockCall.slice(1)).toContain(CREATOR);
+    expect(ops.filter((o) => o.via !== 'tx')).toEqual([]);
+    expect(lockArgs).toEqual([[0x47480001, CREATOR]]);
   });
 });

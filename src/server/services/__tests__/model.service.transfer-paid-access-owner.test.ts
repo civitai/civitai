@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -153,7 +153,13 @@ function expectScopedToTransfer(statement: RawCall) {
   expect(valueAfter(statement, /"userId"\s*<>\s*$|"ownerId"\s*<>\s*$/)).toBe(TARGET_USER_ID);
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  // A gallery-settings bust schedules a second delete; a real timer could land in a later test.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   // The hoisted spies live for the whole file — without this their call counts accumulate across
   // tests, and toHaveBeenCalledExactlyOnceWith is the assertion that notices.
   vi.clearAllMocks();
@@ -327,7 +333,7 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     const order: string[] = [];
     // Resolves a macrotask later, so a bust started alongside it rather than after it is seen first.
     mockPreventModelLag.mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setImmediate(resolve));
       order.push('lag');
     });
     redisMock.redis.del.mockImplementation(async () => {
