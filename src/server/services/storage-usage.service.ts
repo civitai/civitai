@@ -165,6 +165,7 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
     FROM "Model" m
     JOIN "ModelVersion" mv ON mv."modelId" = m.id
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
+    JOIN "User" u ON u.id = m."userId" AND u."deletedAt" IS NULL
     WHERE m."userId" >= ${lo} AND m."userId" < ${hi}
       AND m.status <> 'Deleted' AND NOT mf."dataPurged"
     GROUP BY 1, 2, 3, 4, 5
@@ -181,6 +182,7 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
       round(sum(f."sizeKB")::numeric * 1024)::bigint
     FROM "Model3D" m
     JOIN "Model3DFile" f ON f."model3dId" = m.id
+    JOIN "User" u ON u.id = m."userId" AND u."deletedAt" IS NULL
     WHERE m."userId" >= ${lo} AND m."userId" < ${hi}
       AND m.status <> 'Deleted' AND m."deletedAt" IS NULL
     GROUP BY 1, 3, 5
@@ -209,6 +211,7 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
         CASE WHEN status = 'Published' AND NOT "tosViolation" THEN 'public' ELSE 'notPublic' END
       FROM "Article" WHERE "userId" >= ${lo} AND "userId" < ${hi}
     ) o
+    JOIN "User" u ON u.id = o."userId" AND u."deletedAt" IS NULL
     JOIN "File" f ON f."entityType" = o."entityType" AND f."entityId" = o.id
     GROUP BY 1, 3, 5
   `;
@@ -400,6 +403,16 @@ export async function runNightlyStorageUsage({
 }
 
 /** Claims and counts creators one at a time until the queue is empty or the tick's budget is spent. */
+export type MediaRunOptions = {
+  claim?: () => Promise<number[]>;
+  sum?: (userId: number) => Promise<StorageUsageRow[]>;
+  write?: (userId: number, rows: StorageUsageRow[]) => Promise<void>;
+  log?: Log;
+  budgetMs?: number;
+  now?: () => number;
+  isCanceled?: () => boolean;
+};
+
 export async function runMediaStorageUsage({
   claim = claimMediaRollups,
   sum = (userId: number) => sumUserMedia(userId),
@@ -408,7 +421,7 @@ export async function runMediaStorageUsage({
   budgetMs = MEDIA_TICK_BUDGET_MS,
   now = Date.now,
   isCanceled = () => false,
-} = {}) {
+}: MediaRunOptions = {}) {
   const deadline = now() + budgetMs;
   let processed = 0;
   const failed: number[] = [];

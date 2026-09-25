@@ -16,6 +16,7 @@ import {
   NIGHTLY_STORAGE_KINDS,
   claimMediaRollups,
   fetchMediaChunk,
+  fetchNightlyUsage,
   runMediaStorageUsage,
   runNightlyStorageUsage,
   sumUserMedia,
@@ -440,6 +441,33 @@ describe('nightly write order and pruning', () => {
     commit();
     await done;
     expect(snapshots()).toBe(1);
+  });
+
+  // A snapshot started but not awaited would turn its failure into an unhandled rejection, and the
+  // nightly run would report success for a range whose history was never written.
+  it('fails the range when the snapshot fails', async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    dbMock.dbWrite.$executeRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      strings.join('?').includes('INSERT INTO "UserStorageSnapshot"')
+        ? Promise.reject(new Error('snapshot failed'))
+        : Promise.resolve(0)) as never);
+    try {
+      await expect(writeNightlyUsage(0, 100, [])).rejects.toThrow('snapshot failed');
+    } finally {
+      dbMock.dbWrite.$executeRaw.mockReset();
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    }
+  });
+
+  // deleteUser soft-deletes and leaves 3D models, articles and bounties in place; without this filter
+  // their rows would be written and pruned again every night.
+  it('reads no usage for soft-deleted users in any arm', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    await fetchNightlyUsage(0, 100);
+    const { text } = lastQuery(dbMock.dbRead.$queryRaw);
+    expect(
+      text.match(/JOIN "User" u ON u\.id = \w\."userId" AND u\."deletedAt" IS NULL/g)
+    ).toHaveLength(3);
   });
 
   it('drops snapshots and rollup state of deleted users, not only their usage', async () => {
