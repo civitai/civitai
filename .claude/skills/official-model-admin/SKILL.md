@@ -100,6 +100,22 @@ node .claude/skills/official-model-admin/model.mjs attach-import --import <id> -
 `hf-imports` lists each transferred file with its size, state, group and a suggested type;
 `attach-import` creates the model file on your version, and scanning and hashing follow on their own.
 
+🔴 **Attach only once the version's base model is DEPLOYED, or every scan fails.** The scan AIR's
+ecosystem segment comes from `getAirEcosystem(baseModel)`, which falls back to the raw string
+lowercased when `getRootEcosystem` cannot resolve it — so a base model the running build does not know
+puts its **display name, spaces and all**, into the URN. The orchestrator rejects it with a 400 naming
+a resource nobody recognises, which reads like a scanner or storage fault rather than a missing
+deploy. Classified `transient`, so files are retried rather than tombstoned and everything heals on
+the next attempt after the deploy — but until then nothing scans and nothing can publish.
+
+⚠ **Scanning is not fast, and slow is not stuck.** Observed on a 10-file, 143 GB set: most files
+finished 20-30 minutes after submission, with no clean relationship to size (an 18 GB file beat a
+6 GB one), while several took **14-17 hours**. Read `virusScanResult` and `scannedAt` before
+concluding anything, and note that the fallback job only re-picks a file whose `scanRequestedAt` is
+older than **one day** — so forcing a retry means setting that column to `NULL`, which puts the file
+at the front of the next 5-minute tick. Don't spend a duplicate scan on a large file until it has had
+a day.
+
 **`--fp` names the precision**, one of `constants.modelFileFp`, and `--optional` marks a file the
 version does not need (`metadata.isRequired: false`). The attach itself writes only `format`, so
 without `--fp` a repo that ships several quantizations lists them all as untyped precision and the
@@ -119,6 +135,31 @@ check and produces a version nothing can load. Read the filename:
 `.safetensors` at the repo root is the weight file (`Model`, or `Diffusion Model` / `UNet` when the
 repo splits them). If the repo's layout does not make a file's role obvious, ask the user rather than
 guessing — a mislabelled weight file passes every check here and produces a version nothing can load.
+
+#### Shared components: ALSO publish them as their own model
+
+A repo that ships text encoders or a VAE beside the checkpoint gives you a choice, and the two halves
+are not exclusive — do both.
+
+Attach every component to the checkpoint's version, so it works on its own. Then, when a component is
+one a **community finetune of the same base model would need**, publish it a second time as its own
+`TextEncoder` / `VAE` model. The reason is mechanical: `RecommendedResource.resourceId` is a foreign
+key to `ModelVersion`, so a creator can point their upload at a *version* and never at a file inside
+one. Leave an encoder only inside our checkpoint and the closest thing they can recommend is the
+checkpoint itself — a competing model, not the component. Type also drives search filters, so a
+bundled encoder is invisible to anyone browsing for one.
+
+Precedent for both shapes: Qwen Image 2.1 (2954443) bundles its encoders **and** ships `Qwen3`
+(2742977) standalone. `T5` (2740996) and `Flux.1-AE` (2740928) are the same pattern. Where a
+component's variants differ by checkpoint rather than by precision — e.g. a base and a
+layer-decomposition checkpoint with their own encoders — make them two **versions** of one component
+model.
+
+**The second copy costs no storage, and `attach-import` cannot make it.** `reuseStoredFile` keys on
+`repo` + `revision` + `filename`, so for a path already imported it returns the existing file instead
+of minting another. Create the row directly with `modelFile.create`, passing the **same `url`** (the
+controller derives backend and s3Path from it). Two `ModelFile` rows over one object is supported:
+`deleteModelFileObject` skips the S3 delete while any live row still references that URL.
 
 #### Uploaded by hand
 
