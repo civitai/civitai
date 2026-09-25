@@ -253,10 +253,15 @@ export function labelString(img: Img, mode: LabelType): string {
  *  list, mass rename) — one definition so a comma/newline paste can't split differently per path.
  *  Dedupe stays at the call sites; their policies genuinely differ. */
 export function splitTags(text: string): string[] {
-  return text
-    .split(/[,\n]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // Unique: `foo, foo` in a caption would otherwise reach img.tags, where chips key on the tag string.
+  return [
+    ...new Set(
+      text
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
