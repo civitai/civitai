@@ -156,11 +156,7 @@ describe('block-scope.constants', () => {
     describe('appStorageScopesIn', () => {
       it('returns the storage scopes in DECLARATION order', () => {
         expect(
-          appStorageScopesIn([
-            'apps:storage:shared:read',
-            'models:read:self',
-            'apps:storage:write',
-          ])
+          appStorageScopesIn(['apps:storage:shared:read', 'models:read:self', 'apps:storage:write'])
         ).toEqual(['apps:storage:shared:read', 'apps:storage:write']);
       });
 
@@ -179,8 +175,9 @@ describe('block-scope.constants', () => {
       // `apps:storage` (no trailing colon) and `apps:storage:readx` are NOT members, so a
       // prefix predicate that used `includes`/a loose match would be caught here.
       it('matches the vocabulary, not a loose prefix', () => {
-        expect(appStorageScopesIn(['apps:storage', 'apps:storage:readx', 'x:apps:storage:read']))
-          .toEqual([]);
+        expect(
+          appStorageScopesIn(['apps:storage', 'apps:storage:readx', 'x:apps:storage:read'])
+        ).toEqual([]);
       });
     });
   });
@@ -304,9 +301,7 @@ describe('block-scope.constants', () => {
 
   describe('assertSensitiveScopesJustified + sensitiveScopeJustificationError', () => {
     it('throws the scope-named message for an unjustified sensitive scope', () => {
-      expect(() =>
-        assertSensitiveScopesJustified({ scopes: ['ai:write:budgeted'] })
-      ).toThrow(
+      expect(() => assertSensitiveScopesJustified({ scopes: ['ai:write:budgeted'] })).toThrow(
         'sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ai:write:budgeted'
       );
     });
@@ -329,9 +324,7 @@ describe('block-scope.constants', () => {
     });
 
     it('does NOT throw for non-sensitive-only scopes', () => {
-      expect(() =>
-        assertSensitiveScopesJustified({ scopes: ['models:read:self'] })
-      ).not.toThrow();
+      expect(() => assertSensitiveScopesJustified({ scopes: ['models:read:self'] })).not.toThrow();
     });
 
     it('sensitiveScopeJustificationError formats the exact submit/validate message', () => {
@@ -369,11 +362,7 @@ describe('block-scope.constants', () => {
     });
 
     it('rejects the removed decorative scopes as unknown', () => {
-      for (const removed of [
-        'media:read:owned',
-        'block:settings:read',
-        'block:settings:write',
-      ]) {
+      for (const removed of ['media:read:owned', 'block:settings:read', 'block:settings:write']) {
         const result = validateBlockScopesAgainstOauthClient([removed], TokenScope.Full);
         expect(result.valid).toBe(false);
         expect(result.rejectedScopes).toEqual([removed]);
@@ -409,9 +398,9 @@ describe('block-scope.constants', () => {
 
   describe('deriveOauthBitmaskFromBlockScopes (audit A1/A3/A4 scope cap)', () => {
     it('ORs the OAuth bits of the declared scopes', () => {
-      expect(
-        deriveOauthBitmaskFromBlockScopes(['models:read:self', 'user:read:self'])
-      ).toBe(TokenScope.ModelsRead | TokenScope.UserRead);
+      expect(deriveOauthBitmaskFromBlockScopes(['models:read:self', 'user:read:self'])).toBe(
+        TokenScope.ModelsRead | TokenScope.UserRead
+      );
     });
 
     it('returns 0 for an empty / scope-less manifest (NOT Full)', () => {
@@ -421,18 +410,15 @@ describe('block-scope.constants', () => {
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
       // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
-      expect(
-        deriveOauthBitmaskFromBlockScopes([
-          'apps:storage:read',
-          'apps:storage:write',
-        ])
-      ).toBe(0);
+      expect(deriveOauthBitmaskFromBlockScopes(['apps:storage:read', 'apps:storage:write'])).toBe(
+        0
+      );
     });
 
     it('ignores unknown scopes', () => {
-      expect(
-        deriveOauthBitmaskFromBlockScopes(['models:read:self', 'not:a:scope'])
-      ).toBe(TokenScope.ModelsRead);
+      expect(deriveOauthBitmaskFromBlockScopes(['models:read:self', 'not:a:scope'])).toBe(
+        TokenScope.ModelsRead
+      );
     });
 
     it('the derived ceiling never grants more than the manifest declares', () => {
@@ -442,9 +428,7 @@ describe('block-scope.constants', () => {
       // (the ceiling == manifest bits), but a scope NOT in the manifest is
       // rejected when checked against that ceiling.
       expect(validateBlockScopesAgainstOauthClient(scopes, ceiling).valid).toBe(true);
-      expect(
-        validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid
-      ).toBe(false);
+      expect(validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid).toBe(false);
     });
   });
 });

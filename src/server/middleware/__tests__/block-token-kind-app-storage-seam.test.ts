@@ -201,7 +201,9 @@ describe('block-token kind × app storage — the seam the manifest guard closes
     // `function bearer(req: NextApiRequest)` DECLARATION instead of the call, this pair
     // would not discriminate.
     it('DISCRIMINATES: blocks/me.ts (claims-only) is not in the set', () => {
-      const me = stripComments(readFileSync(path.join(REPO_SRC, 'pages/api/v1/blocks/me.ts'), 'utf8'));
+      const me = stripComments(
+        readFileSync(path.join(REPO_SRC, 'pages/api/v1/blocks/me.ts'), 'utf8')
+      );
       expect(me).toContain('blockClaims');
       expect(me.includes('(bearer(req)')).toBe(false);
       // And the eleven DO carry the pattern the scanner looks for — the non-zero half of

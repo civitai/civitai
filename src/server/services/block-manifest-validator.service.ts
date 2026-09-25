@@ -260,11 +260,7 @@ export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
  * Re-exported so `ManifestEditForm.tsx` can import the bound + the host list from the
  * validator it already imports, rather than reaching into the schema module directly.
  */
-export {
-  MAX_REPOSITORY_URL_LENGTH,
-  REPOSITORY_HOST_ALLOWLIST,
-  validateRepositoryUrl,
-};
+export { MAX_REPOSITORY_URL_LENGTH, REPOSITORY_HOST_ALLOWLIST, validateRepositoryUrl };
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -280,8 +276,7 @@ export {
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
 export const BUILD_COMMAND_MAX_LENGTH = 128;
-export const BUILD_COMMAND_RE =
-  /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+export const BUILD_COMMAND_RE = /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
@@ -421,9 +416,7 @@ export class BlockManifestValidator {
     opts?: ManifestValidationOptions
   ): ValidationResult {
     const ctx: AppContext =
-      typeof app === 'number'
-        ? { allowedScopes: app, allowedOrigins: [] }
-        : app;
+      typeof app === 'number' ? { allowedScopes: app, allowedOrigins: [] } : app;
     const errors: string[] = [];
     const oauthClientAllowedScopes = ctx.allowedScopes;
 
@@ -548,16 +541,16 @@ export class BlockManifestValidator {
           errors.push(`scope "${scope}" is not a known block scope`);
         }
       }
-      const blockScopes = (m.scopes as unknown[]).filter(
-        (s): s is string => typeof s === 'string'
-      );
+      const blockScopes = (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string');
       const scopeCheck = validateBlockScopesAgainstOauthClient(
         blockScopes,
         oauthClientAllowedScopes
       );
       if (!scopeCheck.valid) {
         errors.push(
-          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
+          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(
+            ', '
+          )}`
         );
       }
 
@@ -591,7 +584,9 @@ export class BlockManifestValidator {
         typeof m.scopeJustifications !== 'object' ||
         Array.isArray(m.scopeJustifications)
       ) {
-        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+        errors.push(
+          'scopeJustifications must be an object mapping scope-id to a justification string'
+        );
       } else {
         const declaredScopes = new Set(
           Array.isArray(m.scopes)
@@ -663,9 +658,7 @@ export class BlockManifestValidator {
         return;
       }
       if (!allowedOriginSet.has(origin)) {
-        errors.push(
-          `${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`
-        );
+        errors.push(`${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`);
       }
     }
 
@@ -743,9 +736,10 @@ export class BlockManifestValidator {
       if (typeof iframe.resizable !== 'boolean') {
         errors.push('iframe.resizable must be a boolean');
       }
-      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier)
-        ? trustTier
-        : 'unverified') as 'unverified' | 'verified' | 'internal';
+      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier) ? trustTier : 'unverified') as
+        | 'unverified'
+        | 'verified'
+        | 'internal';
       if (typeof iframe.sandbox !== 'string' || iframe.sandbox.length === 0) {
         errors.push('iframe.sandbox must be a non-empty string');
       } else {
@@ -783,7 +777,9 @@ export class BlockManifestValidator {
           // slot — the page surface is declared via the `page` field, not a
           // `targets` entry.
           if (isPageSlot(slotId)) {
-            errors.push(`target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`);
+            errors.push(
+              `target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`
+            );
           }
         }
       }

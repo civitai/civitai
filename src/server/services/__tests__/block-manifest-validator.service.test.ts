@@ -65,9 +65,11 @@ describe('BlockManifestValidator', () => {
 
     it('accepts a 40-char blockId (boundary) and a 3-char one', () => {
       const max = 'a' + 'b'.repeat(38) + 'c'; // 40 chars
-      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual({
-        valid: true,
-      });
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual(
+        {
+          valid: true,
+        }
+      );
       expect(
         BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: 'abc' }, APP_CTX)
       ).toEqual({ valid: true });
@@ -130,9 +132,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-top-navigation') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-top-navigation') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -157,9 +157,7 @@ describe('BlockManifestValidator', () => {
       ...VALID_MANIFEST,
       iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-modals' },
     };
-    expect(
-      BlockManifestValidator.validate(unverified, APP_CTX).valid
-    ).toBe(false);
+    expect(BlockManifestValidator.validate(unverified, APP_CTX).valid).toBe(false);
 
     const verified = { ...unverified, trustTier: 'verified' };
     expect(BlockManifestValidator.validate(verified, APP_CTX).valid).toBe(true);
@@ -178,9 +176,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-popups') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-popups') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -260,9 +256,7 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some(
-            (e) => e.includes('not a known block scope') && e.includes(removed)
-          )
+          result.errors.some((e) => e.includes('not a known block scope') && e.includes(removed))
         ).toBe(true);
       }
     }
@@ -794,7 +788,7 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       const message = result.valid
         ? ''
-        : (result.errors.find((e) => e.includes('apps:storage:shared:read')) ?? '');
+        : result.errors.find((e) => e.includes('apps:storage:shared:read')) ?? '';
       // The conflicting scope, so the author knows WHICH declaration to change.
       expect(message).toContain('apps:storage:shared:read');
       // The auth mode, so they know it is the PAIR that is refused, not the scope alone.
@@ -956,9 +950,9 @@ describe('BlockManifestValidator', () => {
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
       if (!result.valid) {
-        expect(
-          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
-        ).toBe(true);
+        expect(result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')).toBe(
+          true
+        );
       }
     });
 
@@ -984,7 +978,9 @@ describe('BlockManifestValidator', () => {
     it('accepts a justification keyed by a declared scope', () => {
       const manifest = {
         ...VALID_MANIFEST,
-        scopeJustifications: { 'models:read:self': 'We render the page model in a comparison widget.' },
+        scopeJustifications: {
+          'models:read:self': 'We render the page model in a comparison widget.',
+        },
       };
       expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
     });
@@ -1012,7 +1008,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });
@@ -1082,7 +1080,9 @@ describe('BlockManifestValidator', () => {
       if (!result.valid) {
         expect(
           result.errors.some(
-            (e) => e.includes('sensitive scopes require a justification') && e.includes('ai:write:budgeted')
+            (e) =>
+              e.includes('sensitive scopes require a justification') &&
+              e.includes('ai:write:budgeted')
           )
         ).toBe(true);
       }
@@ -1163,7 +1163,9 @@ describe('BlockManifestValidator', () => {
       const manifest = {
         ...VALID_MANIFEST,
         scopes: ['collections:read:private', 'apps:storage:shared:write'],
-        scopeJustifications: { 'collections:read:private': 'We read the viewer’s private collections.' },
+        scopeJustifications: {
+          'collections:read:private': 'We read the viewer’s private collections.',
+        },
       };
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
@@ -1191,7 +1193,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });

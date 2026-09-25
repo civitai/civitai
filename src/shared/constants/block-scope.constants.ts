@@ -177,9 +177,9 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * first of those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
-export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(
-  BLOCK_SCOPE_TO_OAUTH_BIT
-).filter((scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX));
+export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
+  (scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX)
+);
 
 /**
  * The app-storage scopes present in a manifest's declared `scopes`, in the order the
