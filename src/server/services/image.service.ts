@@ -10,6 +10,10 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -7834,6 +7838,41 @@ export async function getImageResourcesFromImageId({
   return computed;
 }
 
+type ImageResourceRow = Awaited<ReturnType<typeof getImageResourcesFromImageId>>[number];
+
+// A version id taken as-is from meta.civitaiResources: the only branch of get_image_resources that
+// yields a detected version with no hash to have matched it through.
+const isMetaAssertedResource = (r: ImageResourceRow) => r.detected && !r.hash && !!r.modelversionid;
+
+async function withoutUnviewableMetaVersions({
+  imageId,
+  resources,
+  dbClient,
+  inTransaction,
+}: {
+  imageId: number;
+  resources: ImageResourceRow[];
+  dbClient: Prisma.TransactionClient;
+  inTransaction: boolean;
+}) {
+  const assertedIds = uniq(resources.filter(isMetaAssertedResource).map((r) => r.modelversionid!));
+  if (!assertedIds.length) return resources;
+
+  const image = await dbClient.image.findUnique({
+    where: { id: imageId },
+    select: { user: { select: { id: true, isModerator: true } } },
+  });
+  const versions = await dbClient.modelVersion.findMany({
+    where: { id: { in: assertedIds } },
+    select: modelVersionVisibilitySelect,
+  });
+  const viewable = image?.user
+    ? await filterViewableModelVersions(versions, image.user, { checkGrants: !inTransaction })
+    : [];
+  const allowed = new Set(viewable.map((v) => v.id));
+  return resources.filter((r) => !isMetaAssertedResource(r) || allowed.has(r.modelversionid!));
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -7842,8 +7881,12 @@ export async function createImageResources({
   tx?: Prisma.TransactionClient;
 }) {
   const dbClient = tx ?? dbWrite;
-  // Read the resources based on complex metadata and hash matches
-  const resources = await getImageResourcesFromImageId({ imageId, tx });
+  const resources = await withoutUnviewableMetaVersions({
+    imageId,
+    resources: await getImageResourcesFromImageId({ imageId, tx }),
+    dbClient,
+    inTransaction: !!tx,
+  });
   if (!resources.length) return null;
 
   const withModelVersionId = resources
