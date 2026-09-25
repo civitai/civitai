@@ -41,13 +41,12 @@ vi.mock('~/components/Resource/official-match', () => ({ resolveOfficialFileHash
 
 import { FilesProvider, useFilesContext } from '~/components/Resource/FilesProvider';
 
-type SeedFile = { id: number; name: string; sizeKB: number; sha256: string | null; fp?: string };
+type SeedFile = { id: number; name: string; sizeKB: number; fp?: string };
 
-const seed = ({ id, name, sizeKB, sha256, fp = 'int8' }: SeedFile) => ({
+const seed = ({ id, name, sizeKB, fp = 'int8' }: SeedFile) => ({
   id,
   name,
   sizeKB,
-  hashes: sha256 ? [{ type: 'SHA256', hash: sha256 }] : [],
   type: 'Model',
   metadata: { fp, format: 'SafeTensor' },
 });
