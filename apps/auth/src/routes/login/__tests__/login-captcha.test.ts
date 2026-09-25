@@ -108,6 +108,10 @@ const [blockedNote, misconfiguredNote] = REGION_NOTE_CONDITIONS.map(noteAfter);
 const LIVE_REGION_TAG = /<div\b[^>]*role="status"[^>]*>/;
 // Regex, not indexOf: an ordinary second class on the form would otherwise red every guard using it.
 const EMAIL_FORM_ANCHOR = /class="[^"]*\bemail-form\b/;
+// The email submit, located ONCE. The `disabled=` suffix is load-bearing, not decoration: the logout
+// form has a `<button type="submit" class="social email">` too and it comes FIRST in the file, so
+// every locator without it silently grabs the wrong button.
+const EMAIL_SUBMIT_ANCHOR = '<button type="submit" class="social email" disabled=';
 const liveRegionTagText = markup.match(LIVE_REGION_TAG)?.[0] ?? '';
 const liveRegionClasses = (liveRegionTagText.match(/class="([^"]*)"/)?.[1] ?? '')
   .split(/\s+/)
@@ -327,20 +331,21 @@ describe('login copy when the verification check cannot run', () => {
     // one can render; a `{#if form}` wrapped around the second would put it behind a round-trip the
     // user has to pay for, which is the wasted-submit regression this check exists to catch, and a
     // first-note-only check cannot see it. `{:else if}` opens no block, so the count stays 1 for each.
-    // The region holds ONLY `<p>`. Four guards scan it for `<p>` and nothing else, so any other
-    // element name is a note none of them can see — measured, a `<span class="…" id="x" hidden>` third
-    // note passed the count, the inline-hide ban, the id ban AND the CSS reach test. That is the `[0]`
-    // gap relocated once more: index, then extraction anchor, now element name. Asserting the element
-    // SET is what makes the `<p>`-only cardinality those guards assume actually true, and it subsumes
-    // the narrower `<div` ban it replaces (a nested `</div>` also truncates liveRegionInner).
-    const foreignTags = [
-      ...new Set(
-        [...liveRegionInner.matchAll(/<\/?([a-zA-Z][\w-]*)\b/g)]
-          .map((m) => m[1].toLowerCase())
-          .filter((t) => t !== 'p')
-      ),
-    ];
-    expect(foreignTags, 'the live region holds an element the note guards cannot see').toEqual([]);
+    // OUTSIDE ITS NOTES THE REGION IS EMPTY. Every other guard here scans it for `<p>`, so anything
+    // announced that is not a `<p>` is invisible to all of them. Measured: a `<span class="…" id="x"
+    // hidden>` third note walked the count, the inline-hide ban, the id ban and the reach test — and a
+    // bare `{#if form?.rateLimited}…{/if}` text node, no element at all, walked those AND an
+    // element-name check, while sitting inside role="status", announced like a note, saying the one
+    // phrase the blocked-path ban forbids. Stripping the pinned notes and the block tokens and
+    // requiring what is left to hold nothing covers text, `{@html}` and elements in one claim.
+    // Scoping it OUTSIDE the notes is deliberate: a note's own copy may carry inline markup — an `<a>`
+    // round "Sign in with one of the buttons above" is a plausible edit — without redding under the
+    // wrong name, which an element-name scan over the whole region did.
+    const outsideNotes = liveRegionInner
+      .replace(/<p\b[\s\S]*?<\/p>/g, '')
+      .replace(/\{[#:/][^}]*\}/g, '')
+      .replace(/\s/g, '');
+    expect(outsideNotes, 'the live region announces something outside its pinned notes').toBe('');
     // …and every note in it arrived through REGION_NOTE_CONDITIONS, whose copy each test pins whole.
     // Depth counts how many blocks enclose a note, never WHAT they test, so a third note behind
     // `{#if x && form?.captcha}` sits at depth 1 and walks the check below.
@@ -353,9 +358,9 @@ describe('login copy when the verification check cannot run', () => {
       NOTE_MATCHES,
       'a note in the live region did not arrive through REGION_NOTE_CONDITIONS, so nothing pins its copy'
     ).toHaveLength(REGION_NOTE_CONDITIONS.length);
-    const noteStarts = NOTE_MATCHES.map((m) => m.index ?? -1);
-    expect(noteStarts, 'no note element inside the live region').not.toHaveLength(0);
-    for (const noteStart of noteStarts) {
+    // Count already asserted above, so no separate non-empty check: expect throws, and this line is
+    // only reached when NOTE_MATCHES holds exactly REGION_NOTE_CONDITIONS.length entries.
+    for (const noteStart of NOTE_MATCHES.map((m) => m.index ?? -1)) {
       const beforeNote = region.slice(0, noteStart);
       // DEPTH, i.e. blocks still OPEN at the note — not a raw `{#` count. Each note's own body opens
       // and closes inline blocks for the conditional fragments of its copy, so by the second note the
@@ -687,8 +692,12 @@ describe('login copy when the verification check cannot run', () => {
     // managed pair set: no invisible widget renders, so no error callback can ever fire, scriptWatch
     // stays 0, and de-arming the deadline leaves the submit on "Verifying…" for the session with no
     // note. None of the window callbacks above it returns, so a bare `return` there is always new.
+    // Deliberately BROADER than the hazard: this reds on an ordinary guard clause in a window callback
+    // above it too. The narrow form (`\n    return`) would miss a same-line `if (x) return;`, and this
+    // file errs toward a loud false block over a silent pass. The message stays literally true either
+    // way. The empty case needs no guard — `mount` is asserted non-empty above and begins `onMount(`,
+    // so this slice is never empty, and a lost anchor is already caught by the pin above.
     const beforeTimeout = mount.slice(0, mount.indexOf('const timeout ='));
-    expect(beforeTimeout, 'the onMount block was not found').not.toBe('');
     expect(beforeTimeout, 'something returns before the deadline is armed').not.toMatch(
       /\breturn\b/
     );
@@ -757,11 +766,8 @@ describe('login copy when the verification check cannot run', () => {
         "if (solvePrompted) return 'Verify to continue'; if (captchaPending) return 'Verifying…'; " +
         "if (retryCannotHelp) return 'Email login unavailable'; return 'Email me a login link'; });"
     );
-    // Anchored on the email submit's OWN disabled expression: the logout form has a
-    // `<button type="submit" class="social email">` too, and it comes FIRST in the file.
     const button =
-      markup.match(/<button type="submit" class="social email" disabled=[\s\S]*?<\/button>/)?.[0] ??
-      '';
+      markup.match(new RegExp(EMAIL_SUBMIT_ANCHOR + '[\\s\\S]*?<\\/button>'))?.[0] ?? '';
     expect(button, 'the email submit button was not found').not.toBe('');
     expect(button, 'the button renders something other than that rule').toMatch(
       />\{emailButtonLabel\}<\/span/
@@ -810,9 +816,11 @@ describe('login copy when the verification check cannot run', () => {
   });
 
   it('surfaces the note proactively, not only after a wasted submit', () => {
-    // Gating it on `form` would mean the user learns only after spending a rate-limit slot.
-    const condition = pageSource.match(/\{#if captchaBlocked[^}]*\}/)?.[0] ?? '';
-    expect(condition).toBe('{#if captchaBlocked}');
+    // Gating it on `form` would mean the user learns only after spending a rate-limit slot. That the
+    // condition carries no extra conjunct is pinned by noteAfter, which appends the closing brace, so
+    // there is no second reader here: that would have been the last structural read of this anchor
+    // still on `pageSource`, where a comment spelling it keeps the check green after the markup
+    // loses it.
     // …and it is read before the click. Anchor on the email submit's own markup: the logout form has a
     // `<button type="submit">` too. The region's own placement relative to the form is pinned by the
     // test above, from a different anchor; this one only has to put the NOTE ahead of the button.
@@ -877,9 +885,7 @@ describe('login copy when the verification check cannot run', () => {
   // soft-release is the whole reason a broken widget cannot trap a user, and the server stays the sole gate.
   it('never disables the submit button on the blocked path', () => {
     // The logout form also has a `<button type="submit">`, so anchor on the email submit's own class.
-    const disabledExpr = pageSource.match(
-      /<button type="submit" class="social email" disabled=\{([^}]*)\}/
-    )?.[1];
+    const disabledExpr = markup.match(new RegExp(EMAIL_SUBMIT_ANCHOR + '\\{([^}]*)\\}'))?.[1];
     expect(disabledExpr).toBe('submitting || captchaPending');
     // Pinning the `disabled=` expression alone is not the guard the name claims: the realistic break is
     // folding captchaBlocked into captchaPending's own definition, which leaves `disabled=` untouched.
