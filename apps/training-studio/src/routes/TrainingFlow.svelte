@@ -38,6 +38,11 @@
   let images = $state<Img[]>([]);
   let trigger = $state('');
   let labelMode = $state<LabelType>('tag');
+  // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
+  // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
+  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
+  let autoLabel = $state<'auto' | 'manual'>('auto');
+  let excludeTags = $state<string[]>([]);
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -169,6 +174,8 @@
       bind:images
       bind:trigger
       bind:labelMode
+      bind:autoLabel
+      bind:excludeTags
       onContinue={() => (step = 3)}
       onBack={() => (step = 1)}
     />

@@ -35,6 +35,14 @@ export interface StudioElementHost {
      *  mode to it — no user toggle, and nothing persisted to localStorage. Omit to leave the
      *  user's own toggle in charge. */
     buzzMode?: 'yellow' | 'green';
+    /** Whether this user may generate with UNPUBLISHED training results — the main app gates that
+     *  on membership (member or moderator). Pass `false` for a non-member: the per-epoch Generate
+     *  affordance disables with a membership explanation instead of silently doing nothing. Omit
+     *  when the host doesn't know (behaves as before). */
+    canGenerateUnpublished?: boolean;
+    /** The host's membership-plans page, linked from that explanation. Relative = same-tab
+     *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
+    pricingUrl?: string;
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;

@@ -1158,6 +1158,19 @@ export function paramsForVersion(card: ModelCard, versionKey: string): RunParamD
   return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
 }
 
+/**
+ * Default step budget per version — VENDORED mirror of the main app's `aiToolkitStepDefault`
+ * (src/utils/training.ts). Fixed per base model, NOT scaled by dataset size (repeats absorb that);
+ * the source keys on the version's `TrainingBaseModelType`, and the catalog's version keys for the
+ * deviating bases coincide with those type names. Re-mirror by hand when the trainer's defaults
+ * change. Callers resolve a "Custom…" run to a catalog version before asking, so the only unknown
+ * keys are future unmirrored ones — those take the source's `otherwise` arm (2000).
+ */
+const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3']);
+export function versionStepDefault(versionKey: string): number {
+  return STEP_DEFAULT_3000.has(versionKey) ? 3000 : versionKey === 'anima' ? 1500 : 2000;
+}
+
 export interface ParamBound {
   min: number;
   max: number;

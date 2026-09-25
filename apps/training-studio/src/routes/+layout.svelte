@@ -22,6 +22,9 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
+      // canGenerateUnpublished stays unset — the shell has no membership knowledge.
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      pricingUrl: `${data.civitaiUrl}/pricing`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),

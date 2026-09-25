@@ -135,19 +135,51 @@ export interface EpochModelOutput {
   id?: string;
   url?: string | null;
   available?: boolean;
+  /** Weights size in bytes. Only the legacy shape carries one (`blobSize`); the ai-toolkit
+   *  `training` shape's blobs have no size field, so this stays undefined there. */
+  size?: number | null;
 }
 
 export const epochModelKey = (model: EpochModelOutput | undefined): string | undefined =>
   model?.available && typeof model.id === 'string' ? model.id : undefined;
 
+/** One epoch entry in a training step's output, in either shape the orchestrator produces:
+ *  the ai-toolkit `training` shape (`model` + `samples`, with blob ids and availability flags), or
+ *  the legacy `imageResourceTraining` shape the main-app/old-trainer runs carry (`blobUrl`/`blobSize`
+ *  + `sampleImages` URL strings — no availability flags and no blob ids). Mirrors the two branches of
+ *  the main app's `mapWorkflowToTrainingResultsV2` (publish-from-workflow.ts). */
+interface TrainingEpochOutput {
+  epochNumber?: number;
+  model?: EpochModelOutput;
+  samples?: Array<{ url?: string | null; available?: boolean }>;
+  /** Tail-able live trace of this epoch's job (present only when the run requested tracing). */
+  traceUrl?: string | null;
+  blobUrl?: string | null;
+  blobSize?: number | null;
+  sampleImages?: Array<string | null>;
+}
+
+/** The epoch's weights blob across both shapes. A legacy `blobUrl` is downloadable but has no blob
+ *  id, so `epochModelKey` stays undefined and key-needing affordances (generate, train further)
+ *  degrade away while download keeps working. */
+const epochModel = (e: TrainingEpochOutput): EpochModelOutput | undefined =>
+  e.model ??
+  (typeof e.blobUrl === 'string' && e.blobUrl
+    ? { url: e.blobUrl, available: true, size: e.blobSize }
+    : undefined);
+
+const epochSamples = (
+  e: TrainingEpochOutput
+): Array<{ url?: string | null; available?: boolean }> =>
+  e.samples ??
+  (e.sampleImages ?? [])
+    .filter((u): u is string => typeof u === 'string' && u.length > 0)
+    .map((url) => ({ url, available: true }));
+
 interface TrainingStepOutput {
-  epochs?: Array<{
-    epochNumber?: number;
-    model?: EpochModelOutput;
-    samples?: Array<{ url?: string | null; available?: boolean }>;
-    /** Tail-able live trace of this epoch's job (present only when the run requested tracing). */
-    traceUrl?: string | null;
-  }>;
+  epochs?: TrainingEpochOutput[];
+  /** Legacy `imageResourceTraining` runs carry the sample prompts here, not on the input. */
+  sampleImagesPrompts?: string[];
 }
 
 /**
@@ -162,7 +194,10 @@ function resolveWorkflow(w: Workflow) {
   // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
   const state: RunState | undefined = meta.published ? 'published' : STATE_BY_STATUS[w.status];
 
-  const step = w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ?? w.steps?.[0];
+  const step =
+    w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ??
+    w.steps?.find((s) => (s as { $type?: string }).$type === 'imageResourceTraining') ??
+    w.steps?.[0];
   const input = ((step as { input?: TrainingStepInput } | undefined)?.input ??
     {}) as TrainingStepInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
@@ -190,6 +225,7 @@ function resolveWorkflow(w: Workflow) {
     input,
     output,
     progress,
+    startedAt: (step as { startedAt?: string | null } | undefined)?.startedAt ?? undefined,
     completedAt: (step as { completedAt?: string | null } | undefined)?.completedAt ?? undefined,
     media: card?.media ?? 'image',
     base: card
@@ -221,12 +257,19 @@ export function overallProgressPct(
   return typeof rate === 'number' ? Math.round(r * 100) : 0;
 }
 
-/** Epochs that have produced something (a finished checkpoint or a sample) — the "N complete" count. */
+/** An epoch that has produced something (a finished checkpoint or a sample). The single predicate
+ *  behind every "checkpoint N" counter AND the detail's epoch list — stated once so the list row
+ *  and the detail page can't disagree about how many checkpoints exist. */
+const epochHasOutput = (e: TrainingEpochOutput): boolean => {
+  const model = epochModel(e);
+  return Boolean(
+    (model?.available && model.url) || epochSamples(e).some((s) => s.available && s.url)
+  );
+};
+
+/** Epochs that have produced something — the "N complete" count. */
 function completedEpochCount(epochs: TrainingStepOutput['epochs']): number {
-  return (epochs ?? []).filter(
-    (e) =>
-      (e.model?.available && e.model?.url) || (e.samples ?? []).some((s) => s.available && s.url)
-  ).length;
+  return (epochs ?? []).filter(epochHasOutput).length;
 }
 
 /** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
@@ -255,7 +298,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
   // epoch often has fewer than 4, so we fill from the most recent epochs backward.
   const sampleUrls: string[] = [];
   for (const epoch of [...(output.epochs ?? [])].reverse()) {
-    for (const s of epoch.samples ?? []) {
+    for (const s of epochSamples(epoch)) {
       if (sampleUrls.length >= 4) break;
       if (s.available && typeof s.url === 'string') sampleUrls.push(s.url);
     }
@@ -263,10 +306,6 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
   }
 
   const completedEpochs = completedEpochCount(output.epochs);
-  // The epoch being worked on now = one past the last completed, capped at the plan.
-  const currentEpoch = input.epochs
-    ? Math.min(completedEpochs + 1, input.epochs)
-    : completedEpochs + 1;
 
   return {
     workflowId: w.id,
@@ -276,10 +315,12 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     state,
     sub: parts.join(' · '),
     progressPct: overallProgressPct(completedEpochs, input.epochs, progressRate),
+    // COMPLETED checkpoints, starting at 0/N — the main site's counter shape ("Progress: 0/10"),
+    // and what the detail header shows; "epoch N+1" read as one already done.
     progress:
       state === 'training'
         ? input.epochs
-          ? `epoch ${currentEpoch} / ${input.epochs}`
+          ? `checkpoint ${completedEpochs} / ${input.epochs}`
           : w.status
         : '',
     sampleUrls,
@@ -302,6 +343,9 @@ export interface TrainingDetailEpoch {
   /** The weights blob's orchestrator key — with the run's ecosystem it forms the epoch's LoRA blob
    *  AIR (train-core's `loraBlobAir`) for the generate hand-off. */
   modelKey?: string;
+  /** Weights file size in bytes, when the payload carries one (legacy runs only — see
+   *  EpochModelOutput.size). */
+  sizeBytes?: number;
 }
 
 /** One dataset image the run trained on: the blob reference (resolved to a viewable URL through the
@@ -319,6 +363,9 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** When the training step started running — with `completedAt` it gives the run's wall-clock
+   *  duration. Absent on runs whose step carries no start date. */
+  startedAt?: string;
   /** When the training step finished — the anchor for the 30-day retention countdown. Absent while
    *  running and on runs whose step carries no completion date (retention then anchors at createdAt,
    *  which can only warn early, never late). */
@@ -355,19 +402,23 @@ export interface TrainingDetail {
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
-  const { meta, input, state, output, media, base, code, name, progress, completedAt } =
+  const { meta, input, state, output, media, base, code, name, progress, startedAt, completedAt } =
     resolveWorkflow(w);
   if (!state) return null;
 
-  const prompts = input.samples?.prompts ?? [];
+  const prompts = input.samples?.prompts ?? output.sampleImagesPrompts ?? [];
   // Number of image slots per epoch = the prompt count (each prompt yields one image). Fall back to the
   // widest observed sample array when a run carries no prompt list.
   const slots =
-    prompts.length || Math.max(0, ...(output.epochs ?? []).map((e) => e.samples?.length ?? 0));
+    prompts.length || Math.max(0, ...(output.epochs ?? []).map((e) => epochSamples(e).length));
 
+  // Only epochs that produced content (epochHasOutput, the counters' predicate) — a just-started
+  // run renders as a "training underway" state rather than N empty checkpoint cards.
   const epochs: TrainingDetailEpoch[] = (output.epochs ?? [])
+    .filter(epochHasOutput)
     .map((e, idx) => {
-      const raw = e.samples ?? [];
+      const raw = epochSamples(e);
+      const model = epochModel(e);
       return {
         id: `${e.epochNumber ?? 'x'}-${idx}`,
         // Match the main-app publish/generate bridge's `?? -1` fallback so a (pathological) numberless
@@ -378,20 +429,18 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
           const s = raw[i];
           return s?.available && typeof s.url === 'string' ? s.url : null;
         }),
-        modelUrl: e.model?.available && typeof e.model.url === 'string' ? e.model.url : undefined,
-        modelKey: epochModelKey(e.model),
+        modelUrl: model?.available && typeof model.url === 'string' ? model.url : undefined,
+        modelKey: epochModelKey(model),
+        sizeBytes: typeof model?.size === 'number' ? model.size : undefined,
       };
-    })
-    // Drop epochs the orchestrator has listed but not yet produced (no sample, no weights) — otherwise a
-    // just-started run renders as N empty checkpoints instead of a "training underway" state.
-    .filter((e) => e.modelUrl != null || e.samples.some((s) => s !== null));
+    });
 
   // The live trace is the currently-training epoch's stream. The orchestrator pre-creates ALL epoch entries
   // up front, each with a traceUrl, and marks them done as weights land — so the epoch training *now* is the
   // LOWEST-numbered one without finished weights. (Picking the highest tailed the final epoch's stream, which
   // stays empty until the run is nearly over — the "blank until ~80%" bug.) Absent once every epoch is done.
   const liveTraceUrl = [...(output.epochs ?? [])]
-    .filter((e) => typeof e.traceUrl === 'string' && !e.model?.available)
+    .filter((e) => typeof e.traceUrl === 'string' && !epochModel(e)?.available)
     .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))[0]?.traceUrl;
 
   const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
@@ -407,6 +456,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    startedAt,
     completedAt,
     ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,
     media,
@@ -486,6 +536,8 @@ export const SAMPLE_DETAIL: TrainingDetail = {
   code: 'XL',
   state: 'ready',
   createdAt: '2026-08-21T16:48:19.000Z',
+  startedAt: '2026-08-21T16:50:02.000Z',
+  completedAt: '2026-08-21T17:34:40.000Z',
   ecosystem: 'sdxl',
   media: 'image',
   isVideo: false,
@@ -504,6 +556,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
     ),
     modelUrl: '#',
     modelKey: `preview-epoch-${n}`,
+    sizeBytes: 36_000_000 + n * 1024,
   })),
   // Preview dataset: picsum stand-ins keyed to bogus airs (the proxy is never hit in dev preview).
   dataset: [0, 1, 2, 3, 4, 5].map((i) => ({

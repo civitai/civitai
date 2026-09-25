@@ -29,7 +29,7 @@
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
-    defaultStepsFor,
+    defaultStepsForRun,
     isCustom,
     runCard,
     runVersion,
@@ -82,7 +82,6 @@
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
-  const defaultSteps = (id: string) => defaultStepsFor(id, selection.media, imageCount);
 
   // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
   // selection gets a fresh component. untrack documents the intentional one-time capture.
@@ -94,7 +93,7 @@
       selection.runs.map((run) => {
         const d = paramsForVersion(runCard(run), run.versionKey);
         return {
-          steps: defaultSteps(selection.loraType),
+          steps: defaultStepsForRun(run),
           epochs: d.epochs,
           unetLr: String(d.unetLr),
           textEncoderLr: String(d.textEncoderLr),
@@ -108,7 +107,6 @@
       }),
     ),
   );
-  let stepsEdited = $state<boolean[]>(untrack(() => selection.runs.map(() => false)));
   // Seed the sample prompts from the dataset itself — 3 random image labels (joined tags or the caption) —
   // so the test images generated during training reflect what the model actually learned. Falls back to a
   // generic prompt when the dataset carries no usable labels.
@@ -200,13 +198,12 @@
     return seen(i) < Math.round(presetSeen * 0.6);
   }
 
+  // Only the "seen ~N×" guidance follows the preset now — step defaults are fixed per base model.
   function setPreset(id: string) {
     presetType = id;
-    params = params.map((p, i) => (stepsEdited[i] ? p : { ...p, steps: defaultSteps(id) }));
   }
   function setSteps(i: number, v: string) {
     params[i]!.steps = parseInt(v) || 0;
-    stepsEdited[i] = true;
   }
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
@@ -287,7 +284,7 @@
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
       <p class="mt-1 text-sm text-dark-2">
-        Steps are set for you from your type and image count. Tweak if you like — everything else is
+        Steps are set to your model's recommended budget. Tweak if you like — everything else is
         optional.
       </p>
     </div>

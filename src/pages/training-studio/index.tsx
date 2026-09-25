@@ -8,7 +8,9 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { canGenerateWithEpochs } from '~/utils/training';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { getAirEcosystem, stringifyAIR } from '~/shared/utils/air';
@@ -93,6 +95,11 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const canGenerate = features.generationAirResources && features.formGraphGenerator;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
+  // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
+  // predicate as the training-results Generate button (TrainingSelectFile). Passed explicitly so
+  // the element can explain the gate instead of a non-member's click silently doing nothing.
+  const currentUser = useCurrentUser();
+  const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
 
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
@@ -161,7 +168,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             return null;
           }
         },
-        config: { orchestratorEndpoint, orchestratorMode, buzzMode },
+        // pricingUrl relative on purpose: the element treats it as an in-host same-tab navigation.
+        config: {
+          orchestratorEndpoint,
+          orchestratorMode,
+          buzzMode,
+          canGenerateUnpublished,
+          pricingUrl: '/pricing',
+        },
         hrefFor,
         navigate: async (loc: StudioLocation) => {
           await routerRef.current.push(hrefFor(loc), undefined, { shallow: true });
@@ -243,7 +257,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       cancelled = true;
       link.remove();
     };
-  }, [orchestratorEndpoint, orchestratorMode, canGenerate, buzzMode]);
+  }, [orchestratorEndpoint, orchestratorMode, canGenerate, buzzMode, canGenerateUnpublished]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
   // is the source of truth, pushed into the element as a property whenever it changes.

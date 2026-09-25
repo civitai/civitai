@@ -59,6 +59,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { buildContinuationRunUpdate, trainingStore } from '~/store/training.store';
 import { basePath as trainWizardBasePath } from '~/components/Training/Form/TrainingCommon';
 import type { TrainingBaseModelType } from '~/utils/training';
+import { canGenerateWithEpochs } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -186,7 +187,7 @@ const EpochRow = ({
                       >
                         <Menu.Item
                           leftSection={<IconBrush size={16} />}
-                          disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                          disabled={!canGenerateWithEpochs(currentUser)}
                         >
                           Generate
                         </Menu.Item>
@@ -224,7 +225,7 @@ const EpochRow = ({
                   <GenerateButton
                     versionId={modelVersionId}
                     modelId={modelId}
-                    disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                    disabled={!canGenerateWithEpochs(currentUser)}
                     epochNumber={epoch.epochNumber}
                     data-activity="create:training-select"
                     // Default render uses padding '12px 20px' on a fixed-height button, which

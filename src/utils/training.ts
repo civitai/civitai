@@ -9,6 +9,15 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
+/** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
+ *  definition behind the training-results Generate affordances and the Training Studio embed's
+ *  `canGenerateUnpublished` host config — a tier change here must reach all of them at once. */
+export function canGenerateWithEpochs(
+  user: { isMember?: boolean; isModerator?: boolean } | null | undefined
+): boolean {
+  return !!(user?.isMember || user?.isModerator);
+}
+
 export const trainingBaseModelTypesImage = [
   'sd15',
   'sdxl',
