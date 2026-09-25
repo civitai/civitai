@@ -16,6 +16,14 @@ import { queryDb } from '../generation-coverage/coverage.mjs';
 // constants.system.officialUserId in src/server/common/constants.ts
 const OFFICIAL_USER_ID = 12042163;
 const KINDS = { 'api-only': 'ExternalGeneration', 'hosted-weights': 'Download' };
+// The "base model" tag is what puts a model in that category on the site; it is the one tag every
+// CivitaiOfficial mirror carries.
+const BASE_MODEL_TAG = { id: 1237, name: 'base model' };
+// constants.modelFileFp in src/server/common/constants.ts — the schema takes any string, so a typo
+// would store silently and show up as a precision the file picker cannot label.
+const FP_VALUES = [
+  'fp32', 'fp16', 'bf16', 'mxfp8', 'fp8_mixed', 'fp8_scaled', 'fp8', 'int8', 'nf4', 'nvfp4', 'int4',
+];
 const ECOSYSTEMS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/ecosystems');
 // Mirrors LOADABLE_FILE_TYPES in src/utils/file-display-helpers.ts, which checkLoadable applies.
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
@@ -28,6 +36,7 @@ const EXTERNAL_ENGINES = [
 const { flags, writable, fail, required, requiredInt, oneOf, dryRun, dispatch } = createCli([
   'writable',
   'no-download',
+  'optional',
 ]);
 
 const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
@@ -87,11 +96,22 @@ async function createModel() {
   const description = readDescription();
   const targetUserId = flags['owner-id'] ? requiredInt('owner-id') : OFFICIAL_USER_ID;
   const hash = approvalHash(name, description);
-  const payload = { name, description, type: flags.type ?? 'Checkpoint', uploadType: 'Created', status: 'Draft' };
+  const type = flags.type ?? 'Checkpoint';
+  const payload = {
+    name,
+    description,
+    type,
+    uploadType: 'Created',
+    status: 'Draft',
+    tagsOnModels: [BASE_MODEL_TAG],
+    // Meaningless on anything but a checkpoint, and the column stays null there.
+    ...(type === 'Checkpoint' ? { checkpointType: 'Trained' } : {}),
+  };
 
   if (!writable) {
     console.log(`[dry run] model.upsert → ${API_URL}, then transfer to user ${targetUserId}`);
-    console.log(`Name: ${name}   Type: ${payload.type}   Status: Draft\n`);
+    console.log(`Name: ${name}   Type: ${payload.type}   Status: Draft`);
+    console.log(`Checkpoint type: ${payload.checkpointType ?? 'n/a'}   Category: ${BASE_MODEL_TAG.name}\n`);
     console.log(oneTagPerLine(description));
     return printApprovalFooter(hash);
   }
@@ -357,12 +377,29 @@ async function attachImport() {
   const id = requiredInt('import');
   const modelVersionId = requiredInt('version');
   const type = required('type');
-  if (!writable) return dryRun('huggingFaceImport.attach', { id, modelVersionId, type });
+  // The attach writes `format` only. Precision is not inferable from the file — `w4a8` is `int4`,
+  // and every quant name is the publisher's own — so it is stated, and a wrong one misprices the
+  // download a user picks between.
+  const fp = flags.fp ? oneOf('fp', flags.fp, FP_VALUES) : undefined;
+  const metadata = { ...(fp ? { fp } : {}), ...(flags.optional ? { isRequired: false } : {}) };
+
+  if (!writable)
+    return dryRun('huggingFaceImport.attach', {
+      id,
+      modelVersionId,
+      type,
+      ...(Object.keys(metadata).length ? { 'then modelFile.update metadata': metadata } : {}),
+    });
 
   const result = await trpcCall('huggingFaceImport.attach', { id, modelVersionId, type });
   console.log(
     `Attached import ${id} as model file ${result.modelFileId} on version ${result.modelVersionId}.`
   );
+  if (Object.keys(metadata).length) {
+    // updateFile merges metadata, so this keeps the `format` the attach just wrote.
+    await trpcCall('modelFile.update', { id: result.modelFileId, metadata });
+    console.log(`  metadata: ${JSON.stringify(metadata)}`);
+  }
   console.log('Scanning and hashing start on their own. Check with: files --version ' + modelVersionId);
 }
 
@@ -377,7 +414,7 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
                       [--no-download] [--writable]
   files               --version <id>                                 are the uploaded files ready?
   hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
-  attach-import       --import <id> --version <id> --type <type> [--writable]
+  attach-import       --import <id> --version <id> --type <type> [--fp <precision>] [--optional] [--writable]
 
 Description writes need --approved <hash>, printed by the dry run of the same command.
 --kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.

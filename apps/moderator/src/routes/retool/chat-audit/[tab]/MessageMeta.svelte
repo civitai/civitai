@@ -12,6 +12,8 @@
     bannedAt,
     createdAt,
     chatId = null,
+    editedAt = null,
+    deletedAt = null,
   }: {
     userId: number;
     username: string | null;
@@ -19,6 +21,8 @@
     bannedAt: Date | string | null;
     createdAt: Date | string;
     chatId?: number | null;
+    editedAt?: Date | string | null;
+    deletedAt?: Date | string | null;
   } = $props();
 </script>
 
@@ -27,4 +31,11 @@
   {#if bannedAt}<Badge variant="destructive">banned</Badge>{/if}
   {#if chatId}<a href={chatUrl(chatId)} class="text-xs {LINK_CLASS}">chat {chatId}</a>{/if}
   <span class="text-xs text-dark-2">{dateTime(createdAt)}</span>
+  <!-- Neither is visible to the participants: an edited message is not what was reported. -->
+  {#if editedAt}
+    <Badge variant="secondary" title="Edited {dateTime(editedAt)}">edited</Badge>
+  {/if}
+  {#if deletedAt}
+    <Badge variant="destructive" title="Deleted {dateTime(deletedAt)}">deleted</Badge>
+  {/if}
 </div>

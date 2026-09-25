@@ -87,11 +87,7 @@ vi.mock('~/libs/form/components/NumberSlider', () => ({
       data-max={String(max)}
       data-disabled={String(!!disabled)}
     >
-      <button
-        type="button"
-        data-testid="strength-set"
-        onClick={() => onChange?.(0.5)}
-      >
+      <button type="button" data-testid="strength-set" onClick={() => onChange?.(0.5)}>
         set-strength
       </button>
     </div>
@@ -99,9 +95,7 @@ vi.mock('~/libs/form/components/NumberSlider', () => ({
 }));
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
-  EdgeMedia2: ({ src }: { src?: string }) => (
-    <img data-testid="edge-media" src={src} alt="" />
-  ),
+  EdgeMedia2: ({ src }: { src?: string }) => <img data-testid="edge-media" src={src} alt="" />,
 }));
 
 vi.mock('~/providers/AppProvider', () => ({
@@ -117,6 +111,7 @@ import {
   shouldShowModelLink,
 } from './ResourceItemContent';
 import { useAppContext } from '~/providers/AppProvider';
+import { BrowsingModeOverrideCtx } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
 const appContextMock = vi.mocked(useAppContext);
@@ -139,8 +134,7 @@ const makeResource = (over: Record<string, any> = {}): any => ({
 });
 
 // Count rendered tabler icons of a given suffix in the live DOM.
-const countIcon = (suffix: string) =>
-  document.querySelectorAll(`.tabler-icon-${suffix}`).length;
+const countIcon = (suffix: string) => document.querySelectorAll(`.tabler-icon-${suffix}`).length;
 
 // The Mantine `color` prop is rendered as a `color="..."` attribute on the
 // ThemeIcon root that wraps the icon svg. partial and incompatible BOTH render
@@ -473,13 +467,52 @@ describe('ResourceItemContent (render)', () => {
   test('resource image renders via EdgeMedia2 (image branch)', async () => {
     const r = makeResource({
       model: { id: 1, name: 'M', type: 'Checkpoint' },
-      image: { id: 9, url: 'abc-123', type: 'image', width: 100, height: 100, hash: 'h' },
+      image: {
+        id: 9,
+        url: 'abc-123',
+        type: 'image',
+        width: 100,
+        height: 100,
+        hash: 'h',
+        nsfwLevel: 1,
+      },
     });
     renderWithProviders(<ResourceItemContent resource={r} />);
 
     const img = page.getByTestId('edge-media');
     await expect.element(img).toBeInTheDocument();
     await expect.element(img).toHaveAttribute('src', 'abc-123');
+  });
+
+  const matureImageResource = () =>
+    makeResource({
+      model: { id: 1, name: 'Mature Preview', type: 'Checkpoint' },
+      image: {
+        id: 9,
+        url: 'x-video',
+        type: 'video',
+        width: 100,
+        height: 100,
+        hash: 'h',
+        nsfwLevel: 8,
+      },
+    });
+
+  test('a preview above the viewer browsing level is not rendered', async () => {
+    renderWithProviders(<ResourceItemContent resource={matureImageResource()} />);
+
+    await expect.element(page.getByText('Mature Preview')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="edge-media"]')).toBeNull();
+  });
+
+  test('the same preview renders for a viewer whose level admits it', async () => {
+    renderWithProviders(
+      <BrowsingModeOverrideCtx.Provider value={{ userBrowsingLevel: 1 | 2 | 4 | 8, blurLevels: 0 }}>
+        <ResourceItemContent resource={matureImageResource()} />
+      </BrowsingModeOverrideCtx.Provider>
+    );
+
+    await expect.element(page.getByTestId('edge-media')).toHaveAttribute('src', 'x-video');
   });
 
   test('strength slider present for LORA + onStrengthChange + enabled; onChange wires back', async () => {
@@ -491,9 +524,7 @@ describe('ResourceItemContent (render)', () => {
       model: { id: 1, name: 'M', type: 'LORA' },
     });
     const onStrengthChange = vi.fn();
-    renderWithProviders(
-      <ResourceItemContent resource={r} onStrengthChange={onStrengthChange} />
-    );
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={onStrengthChange} />);
 
     const slider = page.getByTestId('strength-slider');
     await expect.element(slider).toBeInTheDocument();
@@ -525,9 +556,7 @@ describe('ResourceItemContent (render)', () => {
     // disabled pass-through + value = strengthValue ?? resource.strength ?? 1.
     // Here strengthValue is omitted and resource.strength = 0.8 -> 0.8.
     const r = makeResource({ strength: 0.8, model: { id: 1, name: 'M', type: 'LORA' } });
-    renderWithProviders(
-      <ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />
-    );
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} disabled />);
 
     const slider = page.getByTestId('strength-slider');
     await expect.element(slider).toBeInTheDocument();
@@ -567,9 +596,7 @@ describe('ResourceItemContent (render)', () => {
 
   test('strength slider ABSENT when type is not LORA/LoCon/DoRA', async () => {
     const r = makeResource({ model: { id: 1, name: 'M', type: 'Checkpoint' } });
-    renderWithProviders(
-      <ResourceItemContent resource={r} onStrengthChange={vi.fn()} />
-    );
+    renderWithProviders(<ResourceItemContent resource={r} onStrengthChange={vi.fn()} />);
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();

@@ -102,19 +102,15 @@ vi.mock('@civitai/client', () => ({
   Air: class Air {
     static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
     static stringify = vi.fn(() => '');
-    // Faithful-enough parse of `urn:air:<ecosystem>:<type>:<source>:<id>[@<version>]`
-    // so link builders can tell a civitai AIR (numeric id/version) from a
-    // HuggingFace one (string segments) without the real ESM-only module. This
-    // must track the real id/version splitting in
-    // node_modules/@civitai/client/dist/utils/Air.js — if that changes, the AIR
-    // link tests keep passing against behaviour production no longer has.
-    static parseSafe = vi.fn((identifier: string) => {
-      const match = /^urn:air:([^:]+):([^:]+):([^:]+):(.+)$/.exec(identifier);
-      if (!match) return undefined;
-      const [, ecosystem, type, source, rest] = match;
-      const [id, version] = rest.split('@');
-      return { ecosystem, type, source, id, version };
-    });
+    // Copied VERBATIM from node_modules/@civitai/client/dist/utils/Air.js (ESM-only,
+    // so not importable here). An approximation lets AIR tests pass against a parser
+    // production does not run.
+    static parseSafe = vi.fn(
+      (identifier: string) =>
+        identifier.match(
+          /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
+        )?.groups
+    );
   },
 }));
 
@@ -227,10 +223,10 @@ vi.mock('~/server/prom/client', () => ({
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
-  // prom/client, so this module-replacing mock drops it. `base.reward` and
-  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
-  // neighbours use, so the first test to drive either fail-soft path dies here
-  // rather than on whatever it was written to check.
+  // prom/client, so this module-replacing mock drops it. Every fail-soft call site
+  // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT
+  // the `?.inc?.()` guard their neighbours use, so the first test to drive one of those
+  // paths dies here rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
   // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
   // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the

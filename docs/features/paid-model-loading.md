@@ -48,9 +48,11 @@ indicator that links to a full queue page.
 
 ## The orchestrator contract
 
-Everything the site needs is already typed in `@civitai/client`. Read
-`node_modules/@civitai/client/dist/generated/types.gen.d.ts` rather than trusting this section
-once it ages.
+Everything the site needs is typed in `@civitai/client` **except the fleet-wide loaded list**:
+`/v1/manager/resources/loaded` is absent from the OpenAPI documents the client is generated from, so
+`getLoadedResourceAirs` (`src/server/http/orchestrator/loaded-resources.ts`) calls it through the
+orchestrator caller. Read `node_modules/@civitai/client/dist/generated/types.gen.d.ts` rather than
+trusting this section once it ages.
 
 ### Resource state — `ResourceInfo.availability`
 
@@ -314,7 +316,12 @@ deciding anything.
    already-shipped eviction metric (tried to evict, couldn't, last copy). That metric is the only
    instrument we have, and nothing yet watches it.
 5. **Search does not show load state**, deliberately deferred. Justin: "maybe we won't, for
-   initially."
+   initially." The data exists: `sync-generator-loaded-resources` sets `ModelVersion.generatorLoaded`
+   from the orchestrator's loaded list, and the models index carries it as the filterable
+   `versions.generatorLoaded` (inert on the live index until the filterable list is applied). What
+   stays deferred is any surface that reads it. The orchestrator posts each change to
+   `/api/webhooks/resource-availability` within seconds, and the job is the backstop behind that at
+   15 minutes; the generation-time check stays the orchestrator's.
 6. **Queue-position boosting** is out for v1, and Justin expects it back if bot armies defeat the
    rate limits.
 
@@ -324,7 +331,8 @@ deciding anything.
 
 - Rate limits are site-side, not orchestrator-side.
 - Pay-to-boost queue position is out for v1.
-- Load state in search is deferred.
+- Load state in search **results** is deferred — no surface reads `versions.generatorLoaded`, though
+  the index carries it.
 - A browser keeps what it is **watching** in `localStorage` and drains that queue on every page
   load — finished loads raise a toast that must be dismissed, then leave; items that can no longer
   finish leave; the rest stay subscribed. Items expire at 48h so every one has an exit.

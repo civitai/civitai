@@ -64,14 +64,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     !!currentUser.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(username);
   const removeContentMutation = trpc.user.removeAllContent.useMutation();
-  // const deleteAccountMutation = trpc.user.delete.useMutation({
-  //   onSuccess() {
-  //     showSuccessNotification({
-  //       title: 'Account Deleted',
-  //       message: 'This account has been deleted.',
-  //     });
-  //   },
-  // });
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
@@ -218,16 +210,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   //     onConfirm: () => removeContentMutation.mutate({ id: user.id }),
   //   });
   // };
-  // const handleDeleteAccount = () => {
-  //   if (!user) return;
-  //   openConfirmModal({
-  //     title: 'Delete Account',
-  //     children: `Are you sure you want to delete this account? This action cannot be undone.`,
-  //     labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
-  //     confirmProps: { color: 'red' },
-  //     onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
-  //   });
-  // };
   const handleEnableTipalti = () => {
     if (user) enableTipaltiMutation.mutate({ id: user.id });
   };
@@ -331,13 +313,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 onClick={handleRemoveContent}
               >
                 Remove all content
-              </Menu.Item> */}
-              {/* <Menu.Item
-                color="red"
-                leftSection={<IconUserMinus size={14} stroke={1.5} />}
-                onClick={handleDeleteAccount}
-              >
-                Delete Account
               </Menu.Item> */}
               <Menu.Item
                 leftSection={

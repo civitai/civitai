@@ -60,11 +60,62 @@ Each has exactly one real consumer; the question is whether the feature itself i
 
 ## Tier 4 — Long-public flags worth promoting (decorative-only)
 
-These have been `['public']` forever with no Flipt key, so the gate always evaluates `true`. Each `features.X` consumer can be inlined to `true` (or just the gate removed). This is mostly a code-tidying pass — there's no risk of behavior change.
+A flag here is safe to inline to `true` (or have its gate removed) only if **all three** hold. Check
+them against the registry entry rather than against this list — the list is a snapshot and has
+drifted repeatedly, always toward looking safer than it is:
 
-`canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`, `imageGeneration`, `collections`, `profileCollections`, `imageSearch`, `buzz`, `cosmeticShop`, `donationGoals`, `appTour`, `privateModels`, `toolSearch`, `vault`, `draftMode`, `membershipsV2`, `prepaidMemberships`, `newsroom`, `bounties` (mostly public), `creatorComp`, `alternateHome`, `auctions` (public), `disablePayments`, `challengePlatform`, `largerGenerationImages` (toggleable but defaulted), `air` (toggleable but defaulted), `assistant` (toggleable but defaulted).
+1. `availability: ['public']` exactly. A domain list (`['blue', 'red', 'public']`) or a role
+   (`['user']`) means the flag is already false for somebody.
+2. **No `fliptKey`.** A flag carrying one is never decorative: Flipt overrides static availability
+   in both directions, so inlining deletes a no-deploy off-switch.
 
-⚠️ Before promoting any of these, double-check that `ENV` overrides via `FEATURE_FLAG_X` are not expected to flip them off in some deployment.
+   ⚠️ …but only where Flipt still has control, and a `FEATURE_FLAG_<KEY>` variable can take it
+   away. The rule is not "is the variable set" — it depends on the registry entry:
+
+   | Registry entry | Its variable | Flipt |
+   | --- | --- | --- |
+   | `availability: []` **with** a `fliptKey` | **ignored** | **keeps control** |
+   | anything else | **applied** | **skipped entirely** |
+
+   So a non-dark flag's `fliptKey` can be set `enabled: false` and have no effect, which makes it
+   look decorative when it is merely pinned. Do not invert this on a dark flag: a variable naming
+   one is discarded, and the flag stays dark, off and Flipt-owned.
+3. Not `toggleable`. A toggleable flag is user-settable — `computeUserFeatureFlagsOverlay` in
+   `src/server/services/feature-flags.service.ts` merges each user's stored choice over the
+   defaults — so inlining one removes an existing opt-out even when its `default` is `true`. With
+   `default: false` it is additionally off for everyone who has not opted in.
+
+Derive it, don't trust the prose: the current split is 20 safe and 6 not.
+
+**Safe:** `canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`,
+`imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`,
+`appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`,
+`newsroom`, `creatorComp`, `alternateHome`.
+
+**Not safe, and previously listed as if they were:**
+
+| Flag | Why inlining it changes behaviour |
+| --- | --- |
+| `disablePayments` | `['blue', 'red', 'public']`. Inlining to `true` disables the purchase buttons (`src/components/Buzz/BuzzPurchase.tsx`, `src/pages/user/membership.tsx`, the pricing redirect). |
+| `bounties` | `['blue', 'red', 'public']` — domain-gated, on for some colors only. |
+| `auctions` | `['blue', 'red', 'green', 'public']` — same. |
+| `air` | `['user']`, not `['public']` — false for anonymous visitors. |
+| `assistant` | `['user']` — same. |
+| `largerGenerationImages` | `toggleable` with `default: false`, so it is **off** unless a user opts in. The old "toggleable but defaulted" annotation reads the wrong way round. |
+
+Three more were removed from this list entirely rather than annotated: `imageSearch`
+(`availability: []` plus a live `image-search` key — image search is retired, so inlining re-ships
+it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
+kill-switch key), and `vault` (`['user']`).
+
+Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
+toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
+condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+`largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
+condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
+above: drop condition 3 and the split is 21/5, not 20/6. `nativeVideoControls` was never on the
+Tier 4 list so it does not move the split, but it is the same shape and is already in the registry —
+the flag this condition exists to catch is not hypothetical.
 
 ## Open question — only ship truthy flags to the client?
 

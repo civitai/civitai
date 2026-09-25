@@ -15,7 +15,12 @@ import { endpointBucketLabel, scopeBucketLabel } from '../analytics-bucket-label
  * `block-scope.schema-drift.test.ts`).
  *
  * Scope of the grep, and why it is the right set:
- *   - Only the two ROUTER files write bounded string literals. The other
+ *   - Only the two files below write bounded string literals. `apps.router.ts` used to
+ *     be one of them; the per-viewer storage implementation (and with it both of its
+ *     `recordScopeInvocation` sites) moved to `services/apps/app-storage.service.ts` when
+ *     the `/api/v1/blocks/app-storage/*` REST twins were added, so that the route modules
+ *     could import the implementation without module-evaluating `appsRouter`. The router
+ *     file now holds no `recordScopeInvocation` call at all. The other
  *     `recordScopeInvocation` writers are `block-scope.middleware.ts`, which writes
  *     `normalizeEndpoint(req.url)` (a REST path — deliberately passed through), and
  *     `oauth-scope-audit.ts`, which writes dotted tRPC paths on rows carrying no
@@ -25,7 +30,17 @@ import { endpointBucketLabel, scopeBucketLabel } from '../analytics-bucket-label
  *     token, and #3561's whole point was that there should not be any.
  */
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
-const WRITER_FILES = ['src/server/routers/blocks.router.ts', 'src/server/routers/apps.router.ts'];
+const WRITER_FILES = [
+  'src/server/routers/blocks.router.ts',
+  'src/server/services/apps/app-storage.service.ts',
+  // The viewer-settings write body, EXTRACTED from `blocks.router.ts` when it grew a REST
+  // twin (`POST /api/v1/blocks/user-checkpoint/set`). The `user-settings:write` literal
+  // moved WITH it, and that move is exactly the drift this guard exists to notice: both
+  // checks below went red on it — the pinned literal set lost an entry whose label is
+  // still rendered, and the writer-file set gained a file — and neither was a false
+  // alarm. Same extract-to-a-service shape `app-storage.service.ts` above is here for.
+  'src/server/services/blocks/user-settings.service.ts',
+];
 
 /** Repo-relative paths of files under `dir` whose contents match `re`. */
 function grepFiles(dir: string, re: RegExp): string[] {

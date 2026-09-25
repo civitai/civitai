@@ -3,7 +3,14 @@
 // to the orchestrator with the client-safe cores — no server routes involved.
 import { createCivitaiClient } from '@civitai/client';
 import type { StudioBackend } from '$lib/backend';
-import type { GenerateRequest, ModelPageRequest, PublishRequest, StudioLocation } from '$lib/host';
+import type {
+  GenerateRequest,
+  ModelPageRequest,
+  PickedModel,
+  PickModelRequest,
+  PublishRequest,
+  StudioLocation,
+} from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as label from '$lib/autolabel-core';
@@ -24,6 +31,10 @@ export interface StudioElementHost {
     imageLocation?: string | null;
     /** Opt training jobs into the NDJSON live trace (`events` or `logs`); off when omitted. */
     traceMode?: string;
+    /** The host page's Buzz color (green domain vs yellow). When set, the element locks the Buzz
+     *  mode to it — no user toggle, and nothing persisted to localStorage. Omit to leave the
+     *  user's own toggle in charge. */
+    buzzMode?: 'yellow' | 'green';
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
@@ -40,6 +51,9 @@ export interface StudioElementHost {
   /** URL for the run's model page — draft or published (runs carry a modelId once a draft
    *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
   modelPageUrl?(req: ModelPageRequest): string;
+  /** Open the host's own model picker for the Custom base; resolves null when the user cancels.
+   *  Omit to keep the paste-an-AIR input alone. */
+  pickModel?(req: PickModelRequest): Promise<PickedModel | null>;
 }
 
 class UnauthorizedError extends Error {}
@@ -146,6 +160,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       ),
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
+
+    quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
   };

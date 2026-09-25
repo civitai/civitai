@@ -1,4 +1,5 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
+import { plural } from '../abuse-report-prose';
 import {
   BOT_ACCOUNT_COHORT_WINDOW_HOURS,
   COHORT_PAGE_SIZE,
@@ -24,7 +25,7 @@ import {
   isCommonEmailDomain,
   registrationClusterGroupKey,
 } from './heuristics';
-import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
+import { BOT_ACCOUNT_DETECTOR, POST_COUNT_LEGEND, buildFinding, buildReports } from './report';
 import {
   MIN_REPORTED_CONFIDENCE,
   confidenceBucketCounters,
@@ -330,21 +331,31 @@ export async function runBotAccountDetection(
   // 🔴 THIS COMMENT USED TO NAME A QUESTION THESE COUNTERS CAN NO LONGER ANSWER, AND THE CORRECTION
   // MATTERS BECAUSE THE OLD SENTENCE READ AS COVERAGE. It said they were here to settle "whether the
   // same-second half ever fires on an account the volume half did not already carry". Since the
-  // firing point moved to two that has a known answer — NEVER — and it is known by arithmetic
-  // rather than by measurement: a same-second group is a subset of the staged rows, so a burst of
-  // two implies a count of at least two, and both halves now share boundaries (see `BURST_ONE_AT`).
-  // `fired_burst > 0 && fired_volume == 0` is unreachable, so a run reporting it is a defect in the
-  // evidence fold, not a finding about accounts. Leaving the old sentence would have had someone
-  // watch a counter for a signal that cannot arrive and read its silence as an answer.
+  // firing point moved to two that has a known answer — NEVER. `fired_burst > 0 && fired_volume == 0`
+  // is unreachable, so a run reporting it is a defect in the evidence fold, not a finding about
+  // accounts. Leaving the old sentence would have had someone watch a counter for a signal that
+  // cannot arrive and read its silence as an answer.
+  //
+  // 🔴 WHY IT IS UNREACHABLE, AND UNDER WHAT CONDITION, IS ON `BURST_ONE_AT` — DO NOT RE-DERIVE IT
+  // FROM THE CONSTANTS HERE. This comment used to, and the derivation it carried ("the two halves
+  // share boundaries") went stale the moment the volume boundary moved. So did the copy on the
+  // constants — both said it, both were wrong, both had to be rewritten, which is the argument for
+  // one derivation in one place rather than a claim that the other copy fared better.
   //
   // WHAT THEY CAN STILL SETTLE, which is why they are kept: `fired_burst` is the population of
   // accounts whose staged uploads arrived in one batch, and the question is whether THAT population
   // is actioned at a different rate than the accounts carried by volume alone. That is a grading
   // question over outcomes, answered by joining these counters to moderation results — not by
   // either counter on its own. If the answer is "no different", the burst arm has no reason to
-  // exist and the honest edit is to delete it; if it separates, that is the evidence for giving it
-  // a tighter boundary than the volume half again, which is the only thing that would make it
-  // affect a score.
+  // exist and the honest edit is to delete it.
+  //
+  // 🔴 IF IT SEPARATES, TIGHTENING `BURST_ONE_AT` IS NOT THE FIX — AND THIS PARAGRAPH SAID IT WAS
+  // UNTIL THE VOLUME RAMP BECAME A STEP. Such an edit changes no SCORE. It is not silent, though,
+  // and saying "it ships green" would send someone to read a guard firing as designed as an
+  // unrelated break: the two assertions that read the burst half AT 0.5 go red, which is exactly
+  // what they are for. (Other assertions read that half at 0 or 1 and are unmoved — the qualifier
+  // is what makes the count right.) What reviving the arm takes instead is on `BURST_ONE_AT` and on
+  // the `max` in `assetStagingHeuristic`.
   //
   // Counted over EVERY scored member, matching `fired`'s own population. They may sum to MORE than
   // `fired` — an account can be both, and attributing it to whichever won a `>` comparison would
@@ -481,10 +492,21 @@ export async function runBotAccountDetection(
   // oldest tail of the window; saying so is what stops a moderator drawing the backwards
   // conclusion that the newest signups went unexamined.
   const summary =
-    `Scanned ${cohort.scanned} account(s) created since ${createdAfter.toISOString()}; ` +
-    `${cohort.members.length} had posted something and were scored by ${heuristics.length} ` +
-    `heuristic(s). They posted ${postedAll} item(s), of which ${postedExcluded} are no longer on ` +
-    `the site; ${nothingOnSite} of the ${cohort.members.length} have nothing left on the site at ` +
+    // 🔴 THE VERBS AGREE AS WELL AS THE NOUNS. A one-account run is not a hypothetical shape here —
+    // the cohort is a single day's signups that posted something, and `were scored`/`are no longer`/
+    // `have nothing`/`appear below` all read as a defect at 1. `plural` takes the irregular form as
+    // its third argument precisely so a verb can go through the same helper as a noun.
+    `Scanned ${cohort.scanned} ${plural(cohort.scanned, 'account')} created since ` +
+    `${createdAfter.toISOString()}; ${cohort.members.length} had posted something and ` +
+    `${plural(cohort.members.length, 'was', 'were')} scored by ${heuristics.length} ` +
+    `${plural(heuristics.length, 'heuristic')}. They posted ${postedAll} ` +
+    `${plural(postedAll, 'item')}, of which ${postedExcluded} ` +
+    `${plural(postedExcluded, 'is', 'are')} no longer on the site; ${nothingOnSite} of the ` +
+    `${cohort.members.length} ${plural(
+      nothingOnSite,
+      'has',
+      'have'
+    )} nothing left on the site at ` +
     `all. Membership counts everything an account posted, so an account whose uploads were all ` +
     `blocked or removed is included rather than dropped.` +
     // 🔴 THE SUPPRESSION SENTENCE. The counters carry this too, but the summary is what a human
@@ -498,8 +520,13 @@ export async function runBotAccountDetection(
     ` ${reported.length} scored at or above the ${String(
       Number(minConfidence.toFixed(4))
     )} reporting threshold and ` +
-    `appear below; ${suppressed.length} scored under it and are counted in the ` +
-    `confidence_bucket_* counters but NOT reported as findings.` +
+    `${plural(reported.length, 'appears', 'appear')} below; ${suppressed.length} scored under it ` +
+    `and ${plural(
+      suppressed.length,
+      'is',
+      'are'
+    )} counted in the confidence_bucket_* counters but ` +
+    `NOT reported as findings.` +
     // Two of three heuristics are ring detectors and both can go dark. Saying so in the summary
     // stops a reader treating a low-confidence run as evidence that no ring existed.
     (signals.sources.registrationIps
@@ -518,7 +545,11 @@ export async function runBotAccountDetection(
     // recognise it.
     (signals.sources.registrationIps && signals.membersPerIp.size === 0 && cohort.members.length > 0
       ? ` 🔴 THE REGISTRATION-IP READ RAN AND MATCHED NOTHING for any of the ` +
-        `${cohort.members.length} member(s). That is possible on a quiet day, and it is also what a ` +
+        `${cohort.members.length} ${plural(
+          cohort.members.length,
+          'member'
+        )}. That is possible on ` +
+        `a quiet day, and it is also what a ` +
         `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
         `distinguishable from this run alone.`
       : '') +
@@ -542,7 +573,8 @@ export async function runBotAccountDetection(
         `data. That is not evidence that no accounts uploaded files under the same name.`) +
     (signals.sources.filenameBudgetExhausted
       ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +
+        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} ` +
+        `${plural(cohort.members.length, 'member')}. ` +
         `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
         `window and scored 0 on filename clustering for want of data.`
       : '') +
@@ -563,7 +595,8 @@ export async function runBotAccountDetection(
         `that these accounts published what they uploaded.`) +
     (signals.sources.stagedImageBudgetExhausted
       ? ` 🔴 THE STAGED-IMAGE BUDGET (${maxStagedImageSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} members. ` +
+        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} ` +
+        `${plural(cohort.members.length, 'member')}. ` +
         `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
         `window and scored 0 on asset staging for want of data.`
       : '') +
@@ -571,7 +604,30 @@ export async function runBotAccountDetection(
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
         `${cohort.scanned} read are the most recent of the window and the unread remainder is its ` +
         `OLDEST end — the earliest signups of the window were not scored.`
-      : '');
+      : '') +
+    // 🔴 THE LEGEND FOR BOTH ON-SITE CATEGORIES, HERE AND NOT ON EVERY ROW. It used to be appended
+    // to each finding's reason, so a run of a thousand findings carried a thousand copies of one
+    // definition and pushed each account's own facts down the reason cell. The board renders this
+    // summary once, above the findings table, on the same screen as every row it explains — see
+    // `apps/moderator/src/routes/abuse/[runId]/+page.svelte`.
+    //
+    // ⚠️ ONLY the ENUMERATION moved. The scan-pending caveat stayed on every finding, because the
+    // run page is not the only surface that renders a reason:
+    // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` shows `{f.reason}`
+    // with no summary anywhere on the screen. See `PENDING_CARVE_OUT` in `./report`.
+    //
+    // 🔴 LAST ON PURPOSE, AND THE ORDER IS A SAFETY PROPERTY RATHER THAN A STYLE CHOICE. This
+    // summary is capped at 2,000 characters by the wire contract and it GROWS WITH THE RUN'S ILL
+    // HEALTH — every branch above is appended only when something went wrong. Measured when the
+    // legend was first appended in full: three failed reads plus a capped cohort put the summary at
+    // 2,037 characters and `abuseReportInput.safeParse` refused the WHOLE report, losing the
+    // findings, the counters and the record that the reads had failed. That same case measures
+    // 1,973 today — 27 characters of headroom, which is one reworded sentence, not a margin.
+    // `truncateSummary` in `report.ts` bounds it, and it cuts the TAIL — so whatever sits last is
+    // what gets sacrificed. A definition that is
+    // identical on every run and inferable from the words it defines is the right thing to lose; a
+    // source-read failure, which appears nowhere else a human reads, is not.
+    ` ${POST_COUNT_LEGEND}`;
 
   const reports = buildReports({
     findings,

@@ -98,6 +98,7 @@ const BIG_B = 7009;
  */
 const ORDER_NEWEST_SAFE = 7010;
 const ORDER_NEWEST_MATURE = 7011;
+const MODEL3DS_ONLY = 7012;
 /** Comfortably over the cap, and not a multiple of it. */
 const ORDER_TOTAL = 260;
 const ORDER_OLD_TAIL = ORDER_TOTAL - PLAYABLE_SAMPLE_SIZE; // 60 items older than the window
@@ -111,7 +112,7 @@ function item(collectionId: number, cols: Partial<Record<string, number | string
   rowsSql.push(
     `(${id}, ${collectionId}, ${v('imageId')}, ${v('modelId')}, ${v('postId')}, ${v(
       'articleId'
-    )}, '${cols.status ?? 'ACCEPTED'}')`
+    )}, ${v('model3dId')}, '${cols.status ?? 'ACCEPTED'}')`
   );
 }
 
@@ -136,6 +137,7 @@ item(IMAGES_ONLY, { imageId: IMG_X });
 for (let i = 0; i < 3; i++) item(MODELS_ONLY, { modelId: 910 + i });
 for (let i = 0; i < 2; i++) item(ARTICLES_ONLY, { articleId: 920 + i });
 item(POSTS_ONLY, { postId: 930 });
+for (let i = 0; i < 2; i++) item(MODEL3DS_ONLY, { model3dId: 940 + i });
 
 // ---- EMPTY: an item with NO subject at all — the row filter drops it, so this
 // collection produces no lateral row and must be ABSENT from the map.
@@ -181,13 +183,14 @@ beforeAll(async () => {
       "modelId"      integer,
       "postId"       integer,
       "articleId"    integer,
+      "model3dId"    integer,
       "status"       "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED'
     );
     INSERT INTO "Image" ("id", "nsfwLevel") VALUES
       (${IMG_PG}, ${PG}), (${IMG_PG13}, ${PG13}), (${IMG_R}, ${R}),
       (${IMG_X}, ${X}), (${IMG_UNRATED}, 0);
     INSERT INTO "CollectionItem"
-      ("id","collectionId","imageId","modelId","postId","articleId","status")
+      ("id","collectionId","imageId","modelId","postId","articleId","model3dId","status")
     VALUES ${rowsSql.join(',\n')};
   `);
 });
@@ -198,6 +201,7 @@ const ALL = [
   MODELS_ONLY,
   ARTICLES_ONLY,
   POSTS_ONLY,
+  MODEL3DS_ONLY,
   EMPTY,
   ORPHAN_IMAGE,
   BIG_A,
@@ -214,6 +218,7 @@ describe('getCollectionPlayableSample — what it counts', () => {
     expect(map.get(MODELS_ONLY)).toEqual({ sampled: 3, playable: 3 });
     expect(map.get(ARTICLES_ONLY)).toEqual({ sampled: 2, playable: 2 });
     expect(map.get(POSTS_ONLY)).toEqual({ sampled: 1, playable: 1 });
+    expect(map.get(MODEL3DS_ONLY)).toEqual({ sampled: 2, playable: 2 });
   });
 
   it('🔴 a MIXED collection keeps permitted images AND every non-image row, and scores only the over-ceiling images as unplayable', async () => {

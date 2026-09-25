@@ -57,6 +57,31 @@ function getCommentAutoExpandDepth(entityType: string) {
   return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
 }
 
+/**
+ * Ceiling on a batch `?ids=` lookup for the image REST routes
+ * (`/api/v1/images` and `/api/v1/blocks/images`).
+ *
+ * NOT a new number. It is the ceiling the bridge message those routes replace
+ * already enforced: `blocks.getImagesByIds` (`GET_IMAGES_BY_IDS`) validates
+ * `imageIds: z.number().int().positive().array().min(1).max(100)` in
+ * `src/server/routers/blocks.router.ts`, and its service states the same bound
+ * as `BLOCK_GATED_IMAGES_MAX_IDS = 100` in
+ * `src/server/services/blocks/block-gated-images.service.ts` ("Bound the read —
+ * a grid page never needs more, and each id is a row lookup"). An app porting
+ * off the bridge therefore meets exactly the limit it already coded against.
+ *
+ * It also equals `constants.galleryFilterDefaults.limit` below, so a caller that
+ * sends a full batch and no `limit` gets every row in one page. Send fewer ids
+ * than `limit`, or the page truncates — `ids` is a filter, not a paging bypass.
+ *
+ * Lives here, not next to `runImageSearch`, so a test can read it without
+ * pulling in the image service (the same reason
+ * `search-index/filterable-attributes.ts` is a leaf). The agreement with the
+ * bridge is asserted, not merely described:
+ * `src/server/services/__tests__/image-ids-batch-cap-parity.test.ts`.
+ */
+export const IMAGE_IDS_BATCH_MAX = 100;
+
 export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
@@ -347,7 +372,7 @@ export const constants = {
   },
   buzz: {
     minChargeAmount: 500, // $5.00
-    maxChargeAmount: 500000, // $500.00
+    maxChargeAmount: 500000, // $5,000.00
     cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
     referralBonusAmount: 500,
     maxTipAmount: 100000000,
@@ -566,11 +591,12 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
 export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
-// Cap on resources that can be manually credited on a single uploaded/external
-// image. This is an attribution action with no GPU cost, so it is intentionally
-// decoupled from the per-tier generation resource limits (genStatus.limits) —
-// those are throttled during GPU crunches and must not bleed into crediting.
-export const MAX_RESOURCES_PER_IMAGE = 20;
+// Caps on resources a user can manually credit on a single uploaded/external image
+// (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
+// attribution action with no GPU cost, so it is intentionally decoupled from the per-tier
+// generation resource limits (genStatus.limits), which are throttled during GPU crunches.
+export const MAX_MANUAL_RESOURCES_PER_IMAGE = 10;
+export const MAX_MANUAL_CHECKPOINTS_PER_IMAGE = 3;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
@@ -766,16 +792,24 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'qwen research': {
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    name: 'Qwen Research License Agreement',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
+    nonCommercial: true,
+  },
   'minimax h3': {
     // Permalinked to the 2 Aug 2026 revision. The model page tracks the latest
     // commit, and section III.1 obliges us to hand over a stable copy.
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     name: 'MiniMax H3 Community License Agreement',
     notice:
-      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
-    // Section IV.2 demands this exact string in the product UI. "Powered by
-    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
-    attribution: 'MiniMax H3',
+      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+    // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
+    // header and ecosystem label both render it, so no `attribution` line is
+    // needed under the generate button. "Powered by MiniMax H3" is the separate,
+    // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
   },
   'minimax music 3': {
@@ -861,6 +895,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
   'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
   Qwen: baseLicenses['apache 2.0'],
+  'Qwen 2.1': baseLicenses['qwen research'],
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],

@@ -409,6 +409,12 @@ export interface DevPageBlockResolution {
    *  `'brand-new'` (a truly-unclaimed slug, scopes from the dev-tunnel session).
    *  Undefined for the owned-approved path. Used for the mint-time audit log. */
   ephemeralSource?: 'pending' | 'brand-new';
+  /** The manifest's `auth`; the CLI-declared local value wins over it in the tunnel. */
+  auth?: 'block-token' | 'oauth';
+}
+
+function manifestAuth(manifest: { auth?: unknown }): 'block-token' | 'oauth' | undefined {
+  return manifest.auth === 'oauth' || manifest.auth === 'block-token' ? manifest.auth : undefined;
 }
 
 interface UninstallOpts {
@@ -1984,6 +1990,7 @@ export class BlockRegistry {
       // Same strict `=== true` as the SSR projection: publisher JSON.
       bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+      auth: manifestAuth(manifest),
     };
   }
 
@@ -2100,14 +2107,17 @@ export class BlockRegistry {
     // already selected and already read below for `scopes`; there was nothing
     // to fetch.
     let ephemeralBootSkeleton = false;
+    let ephemeralAuth: 'block-token' | 'oauth' | undefined;
     const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
       const pendingManifest = (pending.manifest ?? {}) as {
         scopes?: unknown;
         bootSkeleton?: unknown;
+        auth?: unknown;
       };
       // Same strict `=== true` as every other read of this field.
       ephemeralBootSkeleton = pendingManifest.bootSkeleton === true;
+      ephemeralAuth = manifestAuth(pendingManifest);
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
@@ -2145,6 +2155,7 @@ export class BlockRegistry {
       // block-token mint so the dev-page block's Generate gate is not falsely empty.
       scopes: ephemeralScopes,
       ephemeralSource,
+      auth: ephemeralAuth,
       // SFW default — no reviewed content rating exists pre-submit.
       contentRating: null,
     };
@@ -2383,7 +2394,14 @@ export class BlockRegistry {
         data: { enabled, updatedAt: new Date() },
       });
       if (!row.blockInstanceId) continue;
-      // Disable writes a revocation marker; re-enable MUST clear it.
+      // Disable writes an INSTALL revocation marker; re-enable MUST clear it.
+      //
+      // 🔴 BOTH CALLS ADDRESS THE INSTALL KEYSPACE ONLY, AND THAT IS LOAD-BEARING. A
+      // publisher BAN writes a different key (`revokeInstanceForBan`). When the two
+      // shared one, this line's `revokeInstance` overwrote a ban marker and the
+      // `clearInstance` below then deleted it — so an ordinary, un-banned model owner
+      // toggling a banned publisher's install off and on again put that publisher's
+      // live tokens straight back into service. See `block-revocation.service.ts`.
       // Without the clear, every freshly-minted token for this install
       // would be rejected by withBlockScope until the marker's TTL elapsed —
       // MAX_BLOCK_TOKEN_LIFETIME_SECONDS, not the 15 minutes this line claimed

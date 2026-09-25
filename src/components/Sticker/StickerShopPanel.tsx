@@ -115,10 +115,9 @@ export function StickerShopPanel({
   const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
-    // Official first, then community, each most-sold first. Not interleaved:
-    // the two halves are separately paged catalogs with no comparable sort key
-    // — `meta.purchases` against a joined row count — so a merged ordering would
-    // be a made-up one.
+    // Official first, then community, each most-sold first. Not interleaved: the
+    // community half is paged while the official one arrives whole, so a merged
+    // ordering would rank a complete catalog against whichever page is in hand.
     const official = browseShopItems({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,

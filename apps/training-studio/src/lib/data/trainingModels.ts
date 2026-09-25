@@ -7,6 +7,10 @@
  * `air`, `baseModel`, ecosystem and `modelVariant`. (If `trainingModelInfo` ever
  * moves into a shared `packages/civitai-*`, import it instead of this snapshot.)
  *
+ * `flagKey` is NOT from the source — it's this app's per-model gate (the mirror of
+ * the main app's `<name>Training` Flipt flag). Set it on a new/experimental card so
+ * the model ships mod-only until its flag opens; a re-mirror must preserve it.
+ *
  * Shape difference from the source: the trainer keys every entry flat; here we
  * GROUP entries into one card per family, and the flat entries become that
  * card's `versions` — which is how the redesign's Select step presents them
@@ -67,6 +71,12 @@ export interface ModelCard {
   /** Free-text badge on the card — 'recommended', 'anime', 'latest', anything. Absent means no badge.
    *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
   flag?: string;
+  /** Flipt gate key. Absent → the card is shown to everyone (the default for established models). Present
+   *  → the card is offered only to users the server evaluated the flag `true` for (a new model ships dark,
+   *  moderators-only, until its flag opens — mirrors the main-app trainer's `<name>Training` flag). The
+   *  server resolves this per user in `/new`'s load; the client filters on the resolved set. Card resolution
+   *  by id/AIR (`cardByType`, `findByAir`) is NOT gated — only the offer surfaces are. */
+  flagKey?: string;
   /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
    *  could be established. Hand-researched — re-check it when a card gains a version. */
   released?: string;
@@ -602,8 +612,12 @@ export interface LoraType {
   medias: Media[];
   /** Recommended base-model card `type` per media. */
   recommended: Partial<Record<Media, string>>;
-  /** Default per-item "seen" target used to compute a starting step count. */
-  seen: number;
+  /** Default per-item "seen" target used to compute a starting step count, per media. Image follows
+   *  Atif's 2026-09-21 guidance — 35 for characters, 50 for broader styles and concepts — which was
+   *  about image LoRAs only. Video and audio deliberately keep their own figures: he led with "the base
+   *  model matters a lot here", and those base models were not what he was reasoning about. Splitting
+   *  the target per media is what keeps one from being retuned by the other. */
+  seen: Partial<Record<Media, number>>;
   /** Warn below this item count for this type. */
   minImg: number;
 }
@@ -615,7 +629,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '🧍',
     medias: ['image', 'video'],
     recommended: { image: 'zimage', video: 'minimaxh3' },
-    seen: 100,
+    seen: { image: 35, video: 100 },
     minImg: 10,
   },
   {
@@ -624,7 +638,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '🎨',
     medias: ['image', 'video', 'audio'],
     recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
-    seen: 150,
+    seen: { image: 50, video: 150, audio: 150 },
     minImg: 15,
   },
   {
@@ -633,7 +647,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '💡',
     medias: ['image', 'video', 'audio'],
     recommended: { image: 'zimage', video: 'minimaxh3', audio: 'acestep' },
-    seen: 150,
+    seen: { image: 50, video: 150, audio: 150 },
     minImg: 15,
   },
   {
@@ -642,7 +656,7 @@ export const LORA_TYPES: LoraType[] = [
     icon: '✨',
     medias: ['video'],
     recommended: { video: 'minimaxh3' },
-    seen: 150,
+    seen: { video: 150 },
     minImg: 20,
   },
 ];
@@ -654,11 +668,32 @@ export const typesForMedia = (media: Media): LoraType[] =>
 export const loraTypeById = (id: string): LoraType =>
   LORA_TYPES.find((t) => t.id === id) ?? LORA_TYPES[0]!;
 
+/** The per-item "seen" target for a type in a given media. A type only carries figures for the medias
+ *  it covers; an unlisted pair is reachable only through `loraTypeById`'s unknown-id fallback, so it
+ *  takes the type's smallest figure rather than inventing one. */
+export const seenFor = (loraTypeId: string, media: Media): number => {
+  const { seen } = loraTypeById(loraTypeId);
+  return seen[media] ?? Math.min(...Object.values(seen));
+};
+
 export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);
 
-export const cardsForMedia = (media: Media): ModelCard[] =>
-  MODEL_CARDS.filter((c) => c.media === media);
+/** A gated card is visible only when its `flagKey` is in the viewer's enabled set; an ungated card always
+ *  is. Pass the set the server resolved for this user. */
+export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
+  !card.flagKey || enabledFlags.has(card.flagKey);
+
+/** The distinct Flipt gate keys used across the catalog — the set the server evaluates per user in the
+ *  `/new` load. Empty when no card is gated. */
+export const catalogFlagKeys = (): string[] => [
+  ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
+];
+
+/** Cards for a media, minus any gated card the viewer can't see. `enabledFlags` omitted → no gating applied
+ *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). */
+export const cardsForMedia = (media: Media, enabledFlags?: ReadonlySet<string>): ModelCard[] =>
+  MODEL_CARDS.filter((c) => c.media === media && (!enabledFlags || isCardVisible(c, enabledFlags)));
 
 /**
  * The version label to show beside a card's name, blank when it only repeats it. A single-version card
@@ -715,9 +750,6 @@ export const findByAir = (
 /** First card in an ecosystem (e.g. `sdxl`) — a coarser fallback when the exact `air` isn't in the catalog. */
 export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
-
-/** Extra Buzz for training on top of a user-supplied custom model. */
-export const CUSTOM_MODEL_SURCHARGE = 500;
 
 // ---- Advanced training parameters (AI-Toolkit) ----
 // VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),

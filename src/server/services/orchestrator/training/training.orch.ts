@@ -285,6 +285,7 @@ export const createTrainingWorkflow = async ({
   token,
   user,
   features,
+  domain,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -336,6 +337,16 @@ export const createTrainingWorkflow = async ({
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
   const fileMetadata = modelVersion.fileMetadata ?? {};
   const trainingDataImagesCount = fileMetadata.numImages ?? 1;
+
+  // Content prepared under red's permissive policy (captions/images live in the training zip and
+  // aren't re-checked here) must be paid for and run on red, not laundered onto green by switching
+  // domains at the final step. Legacy datasets predate the stamp and fall through to post-run
+  // moderation. See createFileHandler for where uploadDomain is set.
+  if (domain === 'green' && fileMetadata.uploadDomain === 'red') {
+    throw throwBadRequestError(
+      'This training dataset was prepared on civitai.red and must be submitted there. Switch back to civitai.red to start this training.'
+    );
+  }
   // const trainingResults = (fileMetadata.trainingResults ?? {}) as TrainingResultsV2;
 
   if (isInvalidRapid(baseModelType, trainingParams.engine))

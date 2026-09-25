@@ -35,9 +35,11 @@ import {
   IconSearch,
   IconTrash,
   IconX,
+  IconBarbell,
   IconCurrencyDollar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React, { useMemo, useState } from 'react';
 import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
@@ -115,7 +117,16 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
 const DEFAULT_PAGE_SIZE = 10;
 
 // Helper to extract dates and other derived info from training data
-function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
+export function sumBuzzByAccount(
+  transactions: { amount: number; accountType?: string | null }[],
+  accountType: 'yellow' | 'blue' | 'green'
+): number | undefined {
+  const matching = transactions.filter((tx) => tx.accountType === accountType);
+  if (matching.length === 0) return undefined;
+  return matching.reduce((sum, tx) => sum + tx.amount, 0);
+}
+
+export function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
   return items.map((mv) => {
     const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
     const thisFile = pickBestTrainingFile(mv.files);
@@ -149,13 +160,10 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const costTxs = trainingResults.transactionData.filter((tx) => tx.type === 'debit');
       if (costTxs.length > 0) {
-        const yellowTx = costTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = costTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = costTxs.find((tx) => tx.accountType === 'green');
         costInfo = {
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(costTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(costTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(costTxs, 'green'),
         };
       }
     }
@@ -165,14 +173,11 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const refundTxs = trainingResults.transactionData.filter((tx) => tx.type === 'credit');
       if (refundTxs.length > 0) {
-        const yellowTx = refundTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = refundTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = refundTxs.find((tx) => tx.accountType === 'green');
         refundInfo = {
           isRefunded: true,
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(refundTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(refundTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(refundTxs, 'green'),
         };
       } else if (mv.trainingStatus === TrainingStatus.Failed) {
         // Failed but no refund transaction yet
@@ -207,6 +212,7 @@ export default function UserTrainingModels() {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
+  const features = useFeatureFlags();
 
   // Fetch moderator-editable announcement
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
@@ -519,10 +525,14 @@ export default function UserTrainingModels() {
                       <Text size="sm">
                         Training success can vary based on system conditions and configuration.
                         Check for service updates at the top of the page or on the{' '}
-                        <Anchor href="/changelog" target="_blank">
-                          Updates page
+                        <Anchor href="/issues" target="_blank">
+                          Known Issues
                         </Anchor>{' '}
-                        for any relevant LoRA training notices before retrying.
+                        or{' '}
+                        <Anchor href="/changelog" target="_blank">
+                          Updates
+                        </Anchor>{' '}
+                        pages for any relevant LoRA training notices before retrying.
                       </Text>
                     </HoverCard.Dropdown>
                   </HoverCard>
@@ -808,6 +818,27 @@ export default function UserTrainingModels() {
           size="sm"
         >
           <CustomMarkdown>{announcement.message}</CustomMarkdown>
+        </AlertWithIcon>
+      )}
+
+      {/* Runs made in the new Training Studio never appear in this list (they live on the
+          orchestrator, not in this table) — without this pointer, anyone who tried the studio and
+          toggled it back off loses sight of those runs entirely. Flag-on users were routed to the
+          studio already; no banner needed. */}
+      {!features.trainingStudioUi && (
+        <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm">
+          <Text size="sm">
+            We&rsquo;ve built a new training experience — <b>Training Studio</b> (Beta). Runs made
+            there (or on{' '}
+            <Anchor href="https://training.civitai.com" target="_blank" rel="noreferrer">
+              training.civitai.com
+            </Anchor>
+            ) don&rsquo;t appear in this list. You can turn it on under{' '}
+            <Anchor component={Link} href="/user/account/preferences">
+              Settings → Preferences
+            </Anchor>
+            .
+          </Text>
         </AlertWithIcon>
       )}
 

@@ -3,7 +3,10 @@
 // web-component host (direct @civitai/client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
 import type { TrainingRunInput } from '$lib/train-core';
+
+export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
 
 export type { TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
@@ -52,6 +55,10 @@ export interface StudioBackend {
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
+  /** Real whatif for ONE run's exact config (steps/epochs/base) — what the Review step's Final
+   *  price shows. Orchestrator pricing has a base fee and per-epoch terms, so scaling the "from"
+   *  quote misprices; only this number matches what Start will charge. Null = unpriced. */
+  quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
 }

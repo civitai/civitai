@@ -12,36 +12,12 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * for everyone else. Every OTHER consumer must keep treating anything that is not
  * `visible` as a refusal, and must do so by spelling the test `!== 'visible'`: a
  * gate written `=== 'hidden'` was correct while the verdict had two members and
- * silently ADMITS a `pending` image now. That is not a bug in either file on its
- * own — each one type-checks, each one's unit tests pass — so it is exactly the
- * class of defect a per-file suite cannot see.
- *
- * This asserts the RELATIONSHIP, not a component:
- *   1. the exact SET of call sites (fails when it GROWS *or* SHRINKS, so a new
- *      consumer cannot join without a human deciding what it does with `pending`),
- *   2. that no call site outside the projection gates on `=== 'hidden'`.
- *
- * 🔴 (1) IS DETECTED BY THE IMPORT SPECIFIER, NOT BY THE SYMBOL'S SPELLING, AND
- * THAT IS THE WHOLE POINT. It used to be `source.includes('classifyGatedImageForViewer(')`
- * — a SPELLED check, walkable by writing the thing a different way. A third
- * consumer added as
- *
- *     import { classifyGatedImageForViewer as classify } from '…block-gated-images.logic';
- *     if (classify(row, level).status === 'hidden') { … }   // ADMITS `pending`
- *
- * is a real bypass of both assertions below, and this suite reported 85/85 green
- * over it. Binding the ledger to `from '…block-gated-images.logic'` pins the
- * thing that cannot be renamed away: you cannot call the function without
- * importing the module it lives in. The symbol-spelling test is KEPT as a second,
- * differently-failing route (a namespace import, a re-export) rather than
- * replaced — a file matching EITHER is a call site.
+ * silently ADMITS a `pending` image now. Neither file is wrong on its own, so nothing
+ * fails until someone writes a per-consumer case for the new state: the two ledgered
+ * consumers have one, and a third would not.
  *
  * The BEHAVIOURAL half lives with each consumer and is deliberately not duplicated
- * here: `block-post.service.test.ts` proves the public-Post adoption gate refuses
- * a `Pending`-ingestion and an unrated (`nsfwLevel: 0`) image, and
- * `block-gated-images.service.test.ts` proves the grid withholds the url from
- * every viewer but the image's own author. A structural check alone would
- * type-check past a wrong argument; those two are what make it mean something.
+ * here — see `block-post.service.test.ts` and `block-gated-images.service.test.ts`.
  */
 
 const SRC = resolve(__dirname, '../../../..'); // …/src
@@ -52,10 +28,11 @@ const DEFINITION = 'server/services/blocks/block-gated-images.logic.ts';
 
 /**
  * An `import … from '<anything>/block-gated-images.logic'` — the alias-proof half
- * of the detection. Matches the `~/`-rooted, relative and extensionless spellings
- * alike, and (because the source is comment-stripped first) cannot be satisfied by
- * prose that merely names the module. `export … from` is matched by the same
- * `from` clause, so a re-export is a call site too.
+ * of the detection. Matches any prefix, `~/`-rooted or relative, with no extension
+ * or a `.ts`/`.tsx`/`.js`/`.jsx` one and nothing else, and (because the source is
+ * comment-stripped first) cannot be satisfied by prose that merely names the module.
+ * `export … from` is matched by the same `from` clause, so a re-export is a call
+ * site too.
  */
 const LOGIC_MODULE_IMPORT = /from\s*['"][^'"]*block-gated-images\.logic(?:\.[jt]sx?)?['"]/;
 
@@ -123,9 +100,11 @@ for (const full of PRODUCTION_FILES) {
 }
 
 /**
- * A file is a call site if it IMPORTS the logic module (alias-proof) OR names the
- * symbol in call position (namespace import / re-export). Either alone is
- * walkable; the union is what the ledger asserts.
+ * A file is a call site if it IMPORTS the logic module or names the symbol in call
+ * position. Each half pins a SPELLING: a `from` clause in the forms listed on
+ * `LOGIC_MODULE_IMPORT`, and the literal `SYMBOL(`. Escaping both takes a file that
+ * writes neither — reaching the module some way that regex does not list (a barrel, an
+ * `import()`, an unlisted extension) AND reaching the function under another name.
  */
 function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
@@ -159,9 +138,10 @@ describe(`${SYMBOL} seam`, () => {
   it('the file walk actually reaches the module under test', () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
-    // `verdictFor` writes straight into `SOURCE`, so no detector fixture can observe the corpus
-    // loop narrowing by path — and every real corpus member carries the token `blocks`, so no
-    // Re-derive from the same walk instead: a filter added to the LOOP makes the two disagree.
+    // `verdictFor` seeds `SOURCE` directly, so no detector fixture runs the corpus loop and none
+    // can observe it narrowing by path. Every corpus member's path also contains the token
+    // `blocks`, so narrowing the loop by that token excludes nothing and stays green. Re-derive
+    // from the same walk instead: a filter added to the LOOP makes the two disagree.
     // Both shared inputs are pinned elsewhere — `PRODUCTION_FILES` by the enumeration equality
     // above, `couldBeCallSite` by its own case — so deleting either makes this one vacuous.
     const expectedCorpus = PRODUCTION_FILES.filter((full) =>

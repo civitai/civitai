@@ -1,11 +1,11 @@
-import { Drawer, Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
+import { Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { FilterButton } from '~/components/Buttons/FilterButton';
+import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import classes from './SelectMenu.module.scss';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -103,18 +103,10 @@ export function SelectMenuV2<T extends string | number>({
     return (
       <>
         {target}
-        <Drawer
-          position="bottom"
+        <MobileMenuDrawer
           opened={opened}
           onClose={() => setOpened(false)}
-          classNames={{
-            root: classes.root,
-            header: classes.header,
-            body: classes.body,
-            close: classes.close,
-          }}
           closeButtonProps={{ 'aria-label': 'Close sort menu' }}
-          zIndex={400}
         >
           <div className="flex flex-col gap-2">
             {options.map((option) => {
@@ -132,7 +124,11 @@ export function SelectMenuV2<T extends string | number>({
                   }}
                 >
                   <div className="flex justify-between">
-                    <Text inline>{option.label}</Text>
+                    {/* `span`, because `label` is a ReactNode and callers pass rich
+                        ones: Text's default `p` then nests a p inside a p. */}
+                    <Text component="span" inline>
+                      {option.label}
+                    </Text>
                     {active && (
                       <Text c={theme.primaryColor} inline>
                         <IconCheck size={16} color="currentColor" />
@@ -142,8 +138,11 @@ export function SelectMenuV2<T extends string | number>({
                 </UnstyledButton>
               );
             })}
+            {/* Rendered in BOTH branches: a caller's footer action disappearing on
+                touch is the half nobody tests. */}
+            {children}
           </div>
-        </Drawer>
+        </MobileMenuDrawer>
       </>
     );
 

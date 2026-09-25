@@ -52,6 +52,7 @@ import {
   updateCreatorShopItem,
 } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
@@ -474,6 +475,39 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().listed).toBe(true);
   });
 
+  // The share assertion above is `objectContaining`, which cannot see an extra
+  // key. This one is an exact key set on both sections, so widening the list
+  // the storefront publishes fails here rather than shipping.
+  it('publishes exactly the shared display keys, plus the buyer’s share on a resold item', async () => {
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 50 }]);
+    const row = shopItemRow(SHOP_ITEM_ID);
+    const wideMeta = {
+      ...row.meta,
+      purchases: 3,
+      acceptsBlueBuzz: true,
+      creatorId: 77,
+      submissionFee: 250,
+      imageHash: 'a1b2c3',
+      history: [],
+    };
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }])
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }]);
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    expect(Object.keys(cosmetics[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
+    expect(Object.keys(resold[0].meta).sort()).toEqual([
+      'acceptsBlueBuzz',
+      'purchases',
+      'sellerShare',
+    ]);
+    expect(resold[0].meta.sellerShare).toBe(50);
+  });
+
   // Preview is a moderator design aid with no resale rows behind it, so it must
   // keep showing only what's genuinely on offer.
   it('preview still requires a live, resellable item', async () => {
@@ -484,6 +518,35 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().status).toBe('Published');
     expect(resoldWhere().listed).toBe(true);
     expect(resoldWhere().meta).toEqual({ path: ['sellableByOthers'], equals: true });
+  });
+
+  /**
+   * Both storefront sanitizers, against a fixture where the purchase rows and
+   * `meta.purchases` disagree. Without this, reverting either of them to the
+   * counter reddens nothing in this file — the sold count is not otherwise
+   * asserted on the storefront path.
+   */
+  it('reports the purchase rows as the sold count, not the meta counter', async () => {
+    const OWN_ITEM_ID = SHOP_ITEM_ID + 1;
+    const withCounterDrift = (id: number) => ({
+      ...shopItemRow(id),
+      meta: { sellableByOthers: true, sellerShare: 0, purchases: 3 },
+    });
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([withCounterDrift(OWN_ITEM_ID)])
+      .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)]);
+    mocks.queryRaw.mockImplementation(soldCountsFake({ [OWN_ITEM_ID]: 7, [SHOP_ITEM_ID]: 5 }));
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    // Distinct ids and counts, so a count read for only one of the two
+    // queries' items shows up as a 0 on the other.
+    expect(cosmetics[0].meta.purchases).toBe(7);
+    expect(resold[0].meta.purchases).toBe(5);
   });
 });
 

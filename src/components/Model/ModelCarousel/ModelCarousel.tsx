@@ -167,7 +167,11 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               >
                                 <ImagePreview
                                   image={image}
-                                  edgeImageProps={{ width: 800, hiDpi: features.hiDpiPreviews, sourceWidth: image.width }}
+                                  edgeImageProps={{
+                                    width: 800,
+                                    hiDpi: features.hiDpiPreviews,
+                                    sourceWidth: image.width,
+                                  }}
                                   aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                                   // radius="md"
                                   style={{ width: '100%' }}
@@ -179,6 +183,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               entityId={image.id}
                               entityType="image"
                               reactions={image.reactions}
+                              metricsUnknown={image.stats?.statsUnknown}
                               metrics={{
                                 likeCount: image.stats?.likeCountAllTime,
                                 dislikeCount: image.stats?.dislikeCountAllTime,

@@ -878,6 +878,68 @@ export type BlockAttributionPayout = {
   row_count: number;
   created_at: Generated<Timestamp>;
 };
+export type BlockAuthorFeeAccrual = {
+  id: string;
+  /**
+   * Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+   * workflow must never charge or accrue twice.
+   */
+  workflow_id: string;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+   * must not retroactively move earnings already accrued to the previous owner
+   * (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+   * in the settlement query would do exactly that.
+   */
+  app_owner_user_id: number;
+  /**
+   * The viewer who paid. What the self-dealing exclusion is measured against,
+   * and what slice 2b's refund path will join on to reverse a fee.
+   */
+  viewer_user_id: number;
+  /**
+   * 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+   * blue (non-withdrawable). The settlement job groups by this and never
+   * coerces to yellow; defaulting it would silently convert non-withdrawable
+   * Buzz into withdrawable earnings. No `@default` for that reason.
+   */
+  buzz_type: string;
+  /**
+   * Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+   * negative row: the clawback was retired in round 0 (zero production callers,
+   * and its carry-forward arm unreachable until something had settled). Slice 2b
+   * adds it together with the refund path that drives it.
+   */
+  fee_buzz: number;
+  /**
+   * The pricing inputs, kept so a disputed charge can be explained without
+   * re-deriving it from a workflow that may no longer exist.
+   */
+  base_generation_buzz: number;
+  flat_leg_buzz: number;
+  pct_leg_buzz: number;
+  governing_leg: string;
+  /**
+   * The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+   * NULL when the type could not be resolved — the fee still applies, falling
+   * to the app's default (see `resolveBlockAuthorFeeParams`).
+   */
+  generation_type: string | null;
+  /**
+   * 'accrued' | 'settled'.
+   */
+  status: Generated<string>;
+  /**
+   * The externalTransactionId this row settled under, so a row traces to the
+   * exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+   * with `status`.
+   */
+  settlement_key: string | null;
+  accrued_at: Generated<Timestamp>;
+  settled_at: Timestamp | null;
+};
 export type BlockBuzzAttribution = {
   id: string;
   user_id: number;
@@ -2409,7 +2471,14 @@ export type GenerationBaseModel = {
 export type GenerationCoverage = {
   modelId: number;
   modelVersionId: number;
+  /**
+   * The live rule. A row exists when EITHER column is true, so test the column, not existence.
+   */
   covered: boolean;
+  /**
+   * The staged rule: community checkpoints qualify on their own and load on demand.
+   */
+  coveredNext: boolean;
 };
 export type GenerationPreset = {
   id: Generated<number>;
@@ -2477,6 +2546,12 @@ export type HuggingFaceImport = {
   userId: number | null;
   modelVersionId: number | null;
   modelFileId: number | null;
+  /**
+   * Where this file is headed, recorded before the bytes move so the transfer job can attach it
+   * itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+   */
+  attachVersionId: number | null;
+  attachType: string | null;
   /**
    * Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
    * runs moving the same file and what lets the next run tell "in flight" from "abandoned".
@@ -2612,7 +2687,6 @@ export type ImageTag = {
   tagId: number;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -3051,6 +3125,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
@@ -3567,6 +3642,18 @@ export type Purchase = {
   status: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type PushSubscription = {
+  id: Generated<number>;
+  userId: number;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastSuccessAt: Timestamp | null;
+  failureCount: Generated<number>;
+};
 export type Question = {
   id: Generated<number>;
   userId: number;
@@ -3851,7 +3938,10 @@ export type Tag = {
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;
@@ -4273,6 +4363,11 @@ export type UserPurchasedRewards = {
   meta: Generated<unknown>;
   code: string;
 };
+export type UserPushSetting = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserRank = {
   userId: number;
   leaderboardRank: number | null;
@@ -4339,6 +4434,29 @@ export type UserStat = {
   thumbsUpCountAllTime: number;
   thumbsDownCountAllTime: number;
   reactionCountAllTime: number;
+};
+export type UserStorageRollup = {
+  userId: number;
+  imagesRequestedAt: Timestamp | null;
+  imagesStartedAt: Timestamp | null;
+  imagesComputedAt: Timestamp | null;
+};
+export type UserStorageSnapshot = {
+  userId: number;
+  date: Timestamp;
+  kind: string;
+  fileCount: number;
+  bytes: string;
+};
+export type UserStorageUsage = {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: Generated<string>;
+  month: Timestamp;
+  fileCount: number;
+  bytes: string;
+  computedAt: Generated<Timestamp>;
 };
 export type UserStrike = {
   id: Generated<number>;
@@ -4482,6 +4600,7 @@ export type DB = {
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
+  block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;
@@ -4678,6 +4797,7 @@ export type DB = {
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
+  PushSubscription: PushSubscription;
   Question: Question;
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
@@ -4749,6 +4869,7 @@ export type DB = {
   UserPaymentConfiguration: UserPaymentConfiguration;
   UserProfile: UserProfile;
   UserPurchasedRewards: UserPurchasedRewards;
+  UserPushSetting: UserPushSetting;
   UserRank: UserRank;
   UserReferral: UserReferral;
   UserReferralCode: UserReferralCode;
@@ -4756,6 +4877,9 @@ export type DB = {
   UserRestriction: UserRestriction;
   UserRole: UserRole;
   UserStat: UserStat;
+  UserStorageRollup: UserStorageRollup;
+  UserStorageSnapshot: UserStorageSnapshot;
+  UserStorageUsage: UserStorageUsage;
   UserStrike: UserStrike;
   Vault: Vault;
   VaultItem: VaultItem;

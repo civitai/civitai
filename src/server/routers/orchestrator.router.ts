@@ -626,6 +626,38 @@ export const orchestratorRouter = router({
         }),
       };
     }),
+
+  /**
+   * The same mint for the reuse-prompt entry point, which seeds no media and so
+   * leaves the server nothing to resolve a link from at submit.
+   *
+   * Separate from `mintRemixProvenance` rather than a `kind` parameter: the kind
+   * is the whole security property, and a client-chosen one would let the caller
+   * ask for the stronger `mint` audience from the weaker click.
+   *
+   * `getImage` is the gate here for the same reason it is there — it applies the
+   * needs-review, published-or-owner and Blocked checks, so a token cannot be
+   * minted for an image the caller could not open.
+   */
+  mintPromptProvenance: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await getImage({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+      return {
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'prompt',
+        }),
+      };
+    }),
   // #endregion
 
   // #region [Image upload]
@@ -648,6 +680,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
+        domain: ctx.domain,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);

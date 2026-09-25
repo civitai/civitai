@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
   buildFeedShadowRow,
   compareIds,
@@ -10,6 +12,7 @@ import {
   parseFeedCursor,
   parseShadowConfig,
   type FeedShadowConfig,
+  fetchFeedAnswer,
 } from '../feed-shadow.service';
 import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 
@@ -37,12 +40,53 @@ describe('parseShadowConfig', () => {
   });
 });
 
+describe('fetchFeedAnswer', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends the active trace context so the feed joins the request trace', async () => {
+    const provider = new NodeTracerProvider();
+    provider.register();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const span = provider.getTracer('t').startSpan('page');
+    try {
+      await context.with(trace.setSpan(context.active(), span), () =>
+        fetchFeedAnswer('http://feed', 'levels=1', 1000, 'primary')
+      );
+    } finally {
+      span.end();
+      await provider.shutdown();
+      context.disable();
+      trace.disable();
+      propagation.disable();
+    }
+    const headers = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers.traceparent).toBe(`00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`);
+    expect(headers['x-request-source']).toBe('primary');
+  });
+});
+
 describe('meta flags', () => {
   it('asks the feed for images with visible meta, and for on-site ones', () => {
     const m = mapSearchInputToFeedQuery({ ...base, withMeta: true, fromPlatform: true });
     const q = m.ok ? new URLSearchParams(m.query) : new URLSearchParams();
     expect(q.get('withMeta')).toBe('1');
     expect(q.get('fromPlatform')).toBe('1');
+  });
+});
+
+describe('real-person and minor settings', () => {
+  it('asks the feed to drop flagged media, keeping a signed-in viewer their own', () => {
+    const query = (i: Record<string, unknown>) => {
+      const m = mapSearchInputToFeedQuery({ ...base, ...i });
+      return new URLSearchParams(m.ok ? m.query : '');
+    };
+    const viewer = query({ disablePoi: true, disableMinor: true, currentUserId: 42 });
+    expect(viewer.get('excludePoi')).toBe('1');
+    expect(viewer.get('excludeMinor')).toBe('1');
+    expect(viewer.get('viewerId')).toBe('42');
+    expect(query({ disablePoi: true }).get('viewerId')).toBeNull();
+    expect(query({ currentUserId: 42 }).get('viewerId')).toBeNull();
   });
 });
 
@@ -83,12 +127,40 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q('Oldest').get('before')).toBeNull();
   });
 
+  it('names any cursor it cannot read, after every other reason', () => {
+    for (const cursor of ['feed', 'meili', -1, new Date(0), 'abc|1'])
+      expect(mapSearchInputToFeedQuery({ ...base, cursor })).toEqual({ ok: false, reason: 'cursor:unparsed' });
+    expect(mapSearchInputToFeedQuery({ ...base, cursor: 'feed', sort: 'Random' })).toEqual({
+      ok: false,
+      reason: 'sort:Random',
+    });
+  });
+
+  it('pages a bare offset cursor like an offset|entry one, without freezing the set', () => {
+    for (const cursor of ['400', 400]) {
+      const m = mapSearchInputToFeedQuery({ ...base, sort: 'Newest', cursor });
+      const q = new URLSearchParams(m.ok ? m.query : '');
+      expect(q.get('offset')).toBe('400');
+      expect(q.get('before')).toBeNull();
+    }
+  });
+
+  it('ignores the resource filters unless a model version gives them something to narrow', () => {
+    const flags = { hideAutoResources: true, hideManualResources: true };
+    expect(mapSearchInputToFeedQuery({ ...base, ...flags }).ok).toBe(true);
+    expect(mapSearchInputToFeedQuery({ ...base, ...flags, modelVersionId: 9 })).toEqual({
+      ok: false,
+      reason: 'flag:hideAutoResources',
+    });
+  });
+
   it('names the first thing it cannot express', () => {
     const reason = (i: Record<string, unknown>) => {
       const m = mapSearchInputToFeedQuery({ ...base, ...i });
       return m.ok ? 'ok' : m.reason;
     };
-    expect(reason({ followed: true })).toBe('flag:followed');
+    expect(reason({ followed: true, currentUserId: 9 })).toBe('flag:followed');
+    expect(reason({ followed: true })).toBe('ok');
     expect(reason({ postId: 4 })).toBe('input:postId');
     expect(reason({ remixOfId: 4 })).toBe('input:remixOfId');
     expect(reason({ remixesOnly: true })).toBe('flag:remixesOnly');
@@ -103,15 +175,18 @@ describe('mapSearchInputToFeedQuery', () => {
   });
 
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
-    const m = mapSearchInputToFeedQuery({ ...base, followed: true, followedUserIds: [7, 3, 0] });
+    const signedIn = { ...base, currentUserId: 9, followed: true };
+    const m = mapSearchInputToFeedQuery({ ...signedIn, followedUserIds: [7, 3, 0] });
     expect(m.ok && new URLSearchParams(m.query).get('userIds')).toBe('7,3');
     const reason = (i: Record<string, unknown>) => {
-      const r = mapSearchInputToFeedQuery({ ...base, followed: true, ...i });
+      const r = mapSearchInputToFeedQuery({ ...signedIn, ...i });
       return r.ok ? 'ok' : r.reason;
     };
     expect(reason({})).toBe('flag:followed');
-    expect(reason({ followedUserIds: Array.from({ length: 1001 }, (_, i) => i + 1) })).toBe(
-      'followed>1000'
+    const anon = mapSearchInputToFeedQuery({ ...base, followed: true });
+    expect(anon.ok && new URLSearchParams(anon.query).has('userIds')).toBe(false);
+    expect(reason({ followedUserIds: Array.from({ length: 10_001 }, (_, i) => i + 1) })).toBe(
+      'followed>10000'
     );
     expect(reason({ followedUserIds: [7], userId: 7 })).toBe('flag:followed:userId');
   });
@@ -209,7 +284,7 @@ describe('createFeedShadow', () => {
       calls++;
       return { status: 200, ms: 1, ids: [] };
     });
-    await shadow.compare({ ...base, followed: true }, outcome);
+    await shadow.compare({ ...base, currentUserId: 9, followed: true }, outcome);
     expect(calls).toBe(0);
     expect(rows[0].skipReason).toBe('flag:followed');
   });

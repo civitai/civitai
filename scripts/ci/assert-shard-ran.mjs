@@ -61,8 +61,8 @@ if (shard < 1 || shard > total) {
  * growth was on course to trip the ceiling on all four shards within weeks, printing a
  * confident and WRONG "`--shard` is probably not reaching vitest".
  *
- * BASE_TESTS is the whole suite's executed count, and it is the one number here that goes
- * stale. Re-measured 2026-09-04 from this job's own output on `main`:
+ * BASE_TESTS is the whole suite's executed count, and it now sets only the FLOOR (the
+ * ceiling counts files, see MAX_FILES). Re-measured 2026-09-04 from this job's own output on `main`:
  * 7177 + 5769 + 14724 + 10187 = 37,857 executed across 1,626 files (run 33900980756).
  * The previous figure, 22,157 across 1,417 files, was ten days older and 41% low — it had
  * already tripped the ceiling on shards 3 and 4, turning this gate red on `main` for every
@@ -91,19 +91,23 @@ const expected = BASE_TESTS / total;
 const MIN_TESTS = Math.max(100, Math.round(expected * 0.3));
 
 /**
- * Catches "this shard ran the whole suite", which is `total` x expected. At 1.8x it
- * separates that from real imbalance for every N >= 2.
+ * Catches "this shard ran the whole suite", which is `total` x one share. At 1.8x a share
+ * it separates that from a legitimate shard for every N >= 2.
  *
- * 🔴 THE HEADROOM HAS COLLAPSED AND THIS IS NOW THE BINDING CONSTRAINT. When these
- * multipliers were chosen the worst shard sat ~5% off the mean, giving ~1.7x headroom.
- * On 2026-09-04 the heaviest shard is 14,724 against a mean of 9,464 — **+55% off the
- * mean**, leaving only ~1.16x under the ceiling. vitest shards by FILE, so a few
- * test-dense files skew a shard badly, and the next such file trips this ceiling long
- * before the suite grows enough to matter. Re-pinning BASE_TESTS buys much less time than
- * it did last round; if this reds again on a green suite, the fix is to balance the shards
- * (or shard by test count), not to keep raising this number.
+ * 🔴 COUNTED IN FILES, NOT TESTS. vitest shards by file count, so file shares are exact
+ * (515/514/514/514), while test shares are not: one parametrised table,
+ * `image-parity.test.ts` at 8,620 cases (~19% of the suite), lands wholly on one shard and
+ * grows with every generator model. A test-count ceiling tripped on that file alone
+ * (shard 3 at 17,079 vs 17,036, 2026-09-25) with sharding working correctly, three weeks
+ * after BASE_TESTS was last re-pinned for the same reason. Do not move this back to tests.
+ *
+ * BASE_FILES is the whole unit suite's file count: 515 + 514 + 514 + 514 = 2,057, the four
+ * shards' "across N files" figures on `main`, 2026-09-25 (run 36084791308). A stale-low
+ * figure trips the ceiling only once the suite grows 80% past it.
  */
-const MAX_TESTS = Math.round(expected * 1.8);
+const BASE_FILES = 2057;
+const BASE_FILES_MEASURED = '2026-09-25';
+const MAX_FILES = Math.round((BASE_FILES / total) * 1.8);
 
 if (!existsSync(reportPath)) {
   console.error(
@@ -144,7 +148,7 @@ const numFiles = Array.isArray(report.testResults) ? report.testResults.length :
 
 console.log(
   `shard ${shard}/${total}: ${executed} executed, ${skipped} skipped, across ${numFiles} files ` +
-    `(expected ~${Math.round(expected)}, band ${MIN_TESTS}..${MAX_TESTS}; ` +
+    `(expected ~${Math.round(expected)}, floor ${MIN_TESTS} tests, ceiling ${MAX_FILES} files; ` +
     `report.numTotalTests=${report.numTotalTests ?? '?'})`
 );
 
@@ -171,19 +175,19 @@ if (executed < MIN_TESTS) {
   process.exit(1);
 }
 
-if (executed > MAX_TESTS) {
+if (numFiles > MAX_FILES) {
   console.error(
-    `\nSHARD ${shard}/${total} executed ${executed} tests (ceiling ${MAX_TESTS}, ` +
-      `expected ~${Math.round(expected)}).\n` +
+    `\nSHARD ${shard}/${total} ran ${numFiles} test files (ceiling ${MAX_FILES}, ` +
+      `expected ~${Math.round(BASE_FILES / total)}).\n` +
       '🔴 TWO CAUSES, and this script CANNOT tell them apart from inside one shard:\n' +
       `  1. \`--shard\` is not reaching vitest, so every shard is running the WHOLE suite —\n` +
       `     ${total}x the runner cost, all of it green. Check for a stray \`--\` in the pnpm\n` +
       '     invocation (pnpm forwards it literally and vitest discards what follows).\n' +
-      `  2. The suite has simply grown past BASE_TESTS=${BASE_TESTS}, measured 2026-08-25.\n` +
-      '     Re-derive it by summing the four shards\' "executed" counts from a green run and\n' +
-      '     update the constant.\n' +
+      `  2. The suite has simply grown past BASE_FILES=${BASE_FILES}, measured ${BASE_FILES_MEASURED}.\n` +
+      '     Re-derive it by summing the four shards\' "across N files" counts from one run and\n' +
+      '     update the constant and its date.\n' +
       'Check the other shards: if all of them tripped and each took ~the full-suite runtime,\n' +
-      'it is (1). If the counts look like a proportionate share, it is (2).'
+      'it is (1). If the file counts look like an even share, it is (2).'
   );
   process.exit(1);
 }

@@ -1,20 +1,25 @@
 import {
-  CUSTOM_MODEL_SURCHARGE,
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
   cardByType,
   cardsForMedia,
-  loraTypeById,
+  seenFor,
   versionSuffix,
   type LabelType,
   type Media,
   type ModelCard,
+  type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
+
+/** Floor under every default step budget. A small dataset multiplied by its per-image target lands
+ *  well under what any base model needs to converge — 20 images of a character is 700 steps — so the
+ *  floor, not the multiplier, is what sets the budget for small sets. Per Atif, 2026-09-21. */
+export const MIN_STEPS = 1500;
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -28,6 +33,9 @@ export interface Run {
   versionKey: string;
   /** For the `Custom…` version: the AIR of a Civitai model to train on, pasted by the user. */
   customAir?: string;
+  /** The picked model's display name when `customAir` came from the host's model picker; cleared
+   *  when the AIR is edited by hand, so it never labels an AIR it doesn't describe. */
+  customName?: string;
 }
 
 /** A pasted custom-model AIR looks usable (urn:air:…). Not exhaustive — the orchestrator is the real check. */
@@ -90,6 +98,15 @@ export function isCustom(run: Run): boolean {
   return run.versionKey === CUSTOM_VERSION_KEY;
 }
 
+/** The run's effective catalog version: the chosen key, or the card's default when the key names
+ *  no catalog entry (the Custom key never does). The single resolution the submit payload, the
+ *  engine lookup and the host model-picker pre-filter all share — divergence here means the
+ *  picker filters against one ecosystem while the submit trains against another. */
+export function runVersion(run: Run): ModelVersionInfo {
+  const card = runCard(run);
+  return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+}
+
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
   const card = runCard(run);
@@ -104,11 +121,19 @@ export function newRun(card: ModelCard): Run {
 }
 
 /** The recommended base-model card for a LoRA type + media (falls back defensively). */
-export function recommendedCardFor(loraTypeId: string, media: Media): ModelCard {
+export function recommendedCardFor(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags?: ReadonlySet<string>
+): ModelCard {
   const t = LORA_TYPES.find((x) => x.id === loraTypeId);
   const recommendedId = t?.recommended[media];
+  const cards = cardsForMedia(media, enabledFlags);
+  // Never seed a gated-off card: prefer the recommended one if visible, else the first visible card, and
+  // only fall back to the unfiltered catalog if a media somehow has no visible cards at all.
   return (
-    (recommendedId ? cardByType(recommendedId) : undefined) ??
+    (recommendedId ? cards.find((c) => c.type === recommendedId) : undefined) ??
+    cards[0] ??
     cardsForMedia(media)[0] ??
     MODEL_CARDS[0]!
   );
@@ -182,45 +207,33 @@ export interface LaunchedRun {
   params: RunParams;
 }
 
-/** Per-run Buzz cost, scaled from the model's real "from ⚡X" orchestrator quote by the chosen step count,
- * plus the flat custom-model surcharge. `fromPrice` is the live quote for the run's card (see `FromPrices`);
- * `null` when the orchestrator couldn't price it, so the caller shows "—" rather than a guessed number.
- * Interim: the Review step should eventually re-quote the exact run config via a real whatif. */
-export function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
+/** COARSE per-run Buzz estimate for the pre-Review steps, scaled from the model's "from ⚡X" quote
+ * by the chosen step count. `null` when the orchestrator couldn't price the card, so the caller
+ * shows "—" rather than a guessed number. The Review step does NOT use this — it re-quotes the
+ * exact config via a real whatif (`quoteRun`), because orchestrator pricing has a base fee and
+ * per-epoch terms this linear scale can't see (it over-read by 90-190⚡ before). No custom-model
+ * surcharge: whatif-verified that the orchestrator charges none. */
+function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
   if (fromPrice == null) return null;
-  const base = Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
-  return base + (isCustom(run) ? CUSTOM_MODEL_SURCHARGE : 0);
+  return Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
 }
 
 // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same cost,
 // so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
 const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
 
-/** Buzz spent per sample image generated during training. Matches the Review step's `SAMPLE_RATE`. */
-export const SAMPLE_RATE = 30;
-/** The Review step seeds this many sample prompts by default (before the user edits them). */
-export const DEFAULT_SAMPLE_PROMPTS = 3;
-
 /** The orchestrator's "from" quote for a card at the default step budget (Pony/Illustrious fall back to
- *  SDXL), WITHOUT the custom surcharge — the raw base `runCost` scales. `undefined` when unpriced. */
-export function cardBaseQuote(
-  prices: Record<string, number>,
-  cardType: string
-): number | undefined {
+ *  SDXL). `undefined` when unpriced. */
+function cardBaseQuote(prices: Record<string, number>, cardType: string): number | undefined {
   const alias = PRICE_ALIAS[cardType];
   return prices[cardType] ?? (alias ? prices[alias] : undefined);
 }
 
-/** The "from" Buzz quote for one model card, plus the flat custom-model surcharge; null when unpriced
- *  (callers show a muted em-dash). Single source of truth for the "from" floor shown on Select. */
-export function cardFromPrice(
-  prices: Record<string, number>,
-  cardType: string,
-  custom: boolean
-): number | null {
-  const base = cardBaseQuote(prices, cardType);
-  if (base == null) return null;
-  return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
+/** The "from" Buzz quote for one model card; null when unpriced (callers show a muted em-dash).
+ *  Single source of truth for the "from" floor shown on Select. A custom base costs the same as the
+ *  card's own (whatif-verified — the orchestrator has no custom-model surcharge). */
+export function cardFromPrice(prices: Record<string, number>, cardType: string): number | null {
+  return cardBaseQuote(prices, cardType) ?? null;
 }
 
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced. Used on Select, where no
@@ -228,7 +241,7 @@ export function cardFromPrice(
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType, isCustom(run));
+    const runPrice = cardFromPrice(prices, run.cardType);
     if (runPrice == null) return null;
     sum += runPrice;
   }
@@ -236,28 +249,27 @@ export function selectionFromTotal(prices: Record<string, number>, runs: Run[]):
 }
 
 /** The default step budget for a lora type given the dataset size — each image "seen" ~N times, floored at
- *  200. Dataset size drives the price through this. Shared with the Review step's default. */
-export function defaultStepsFor(loraTypeId: string, imageCount: number): number {
-  return Math.max(200, imageCount * loraTypeById(loraTypeId).seen);
+ *  MIN_STEPS. Dataset size drives the price through this. Shared with the Review step's default. */
+export function defaultStepsFor(loraTypeId: string, media: Media, imageCount: number): number {
+  return Math.max(MIN_STEPS, imageCount * seenFor(loraTypeId, media));
 }
 
-/** The dataset-aware price estimate for a selection — the same figure the Review step shows at its defaults:
- *  each run's cost scaled by the image-count-derived step budget, plus the sample images. `null` if any run
- *  is unpriced. This is what Data and Review both price against so the number doesn't jump between steps. */
+/** The dataset-aware price estimate for a selection: each run's cost scaled by the image-count-derived
+ *  step budget. `null` if any run is unpriced. COARSE — the Review step replaces this with real
+ *  per-config whatif quotes; sample images are not billed separately (the quote covers them). */
 export function estimatedTotal(
   prices: Record<string, number>,
   selection: Selection,
-  imageCount: number,
-  samplePrompts: number = DEFAULT_SAMPLE_PROMPTS
+  imageCount: number
 ): number | null {
-  const steps = defaultStepsFor(selection.loraType, imageCount);
+  const steps = defaultStepsFor(selection.loraType, selection.media, imageCount);
   let sum = 0;
   for (const run of selection.runs) {
     const cost = runCost(cardBaseQuote(prices, run.cardType), run, steps);
     if (cost == null) return null;
     sum += cost;
   }
-  return sum + samplePrompts * SAMPLE_RATE;
+  return sum;
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption
@@ -270,7 +282,15 @@ export function labelString(img: Img, mode: LabelType): string {
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
   return mode === 'tag'
-    ? { tags: t ? t.split(',').map((s) => s.trim()).filter(Boolean) : [], caption: '' }
+    ? {
+        tags: t
+          ? t
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [],
+        caption: '',
+      }
     : { tags: [], caption: t };
 }
 
@@ -302,8 +322,7 @@ export function buildTrainingRuns(
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
-    const card = runCard(run);
-    const version = card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+    const version = runVersion(run);
     return {
       ecosystem: version.ecosystem,
       modelVariant: version.modelVariant,

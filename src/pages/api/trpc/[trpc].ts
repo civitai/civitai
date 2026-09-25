@@ -14,6 +14,7 @@ import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
 
 export const config = {
@@ -167,8 +168,10 @@ const trpcHandler = createNextApiHandler({
       //
       // Skip if the fault was ALREADY logged by a router that logs+re-throws (e.g.
       // orchestrator what-if) so we don't double-emit; recordTrpcError above still
-      // counts it either way.
-      if (!wasServerFaultLogged(error)) {
+      // counts it either way. A masked error is logged regardless: the user was shown
+      // its `errorRef`, and the router's own log line doesn't carry one.
+      const errorRef = getClientSafeError(error)?.errorRef;
+      if (!wasServerFaultLogged(error) || errorRef) {
         await logToAxiom(
           {
             path,
@@ -176,13 +179,17 @@ const trpcHandler = createNextApiHandler({
             user: ctx?.user?.id,
             browser: req.headers['user-agent'],
             input: axInput,
+            errorRef,
             ...buildCentralErrorLog(error),
           },
           'civitai-prod'
         );
       }
     } else {
-      console.error(`❌ tRPC failed on ${path ?? 'unknown'}`);
+      const errorRef = getClientSafeError(error)?.errorRef;
+      console.error(
+        `❌ tRPC failed on ${path ?? 'unknown'}${errorRef ? ` (ref: ${errorRef})` : ''}`
+      );
       console.error(error);
     }
 

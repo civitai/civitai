@@ -52,55 +52,67 @@
       My trainings
     </a>
     {#if buzz}
-      <details
-        class="relative"
-        bind:open={buzzMenuOpen}
-        use:dismiss={{ enabled: buzzMenuOpen, onDismiss: () => (buzzMenuOpen = false) }}
-      >
-        <summary
-          class="flex cursor-pointer list-none items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-buzz [&::-webkit-details-marker]:hidden"
+      {#snippet balancePill(blue: number)}
+        <IconBoltFilled size={15} stroke={2} />
+        {primaryBalance.toLocaleString()}
+        <span class="text-xs font-normal capitalize opacity-70">{buzzMode.value}</span>
+        <span
+          class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-xs font-normal text-blue-400"
         >
-          <IconBoltFilled size={15} stroke={2} />
-          {primaryBalance.toLocaleString()}
-          <span class="text-xs font-normal capitalize opacity-70">{buzzMode.value}</span>
-          <span
-            class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-xs font-normal text-blue-400"
+          <IconBoltFilled size={11} stroke={2} />{blue.toLocaleString()}
+        </span>
+      {/snippet}
+      {#if buzzMode.locked}
+        <!-- Host-dictated mode: the balance pill without the picker. -->
+        <span
+          class="flex items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz"
+        >
+          {@render balancePill(buzz.blue)}
+        </span>
+      {:else}
+        <details
+          class="relative"
+          bind:open={buzzMenuOpen}
+          use:dismiss={{ enabled: buzzMenuOpen, onDismiss: () => (buzzMenuOpen = false) }}
+        >
+          <summary
+            class="flex cursor-pointer list-none items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-buzz [&::-webkit-details-marker]:hidden"
           >
-            <IconBoltFilled size={11} stroke={2} />{buzz.blue.toLocaleString()}
-          </span>
-          <IconChevronDown size={13} stroke={2} class="opacity-70" />
-        </summary>
-        <div
-          class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
-        >
-          <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-dark-2">
-            Buzz to spend
+            {@render balancePill(buzz.blue)}
+            <IconChevronDown size={13} stroke={2} class="opacity-70" />
+          </summary>
+          <div
+            class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
+          >
+            <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-dark-2">
+              Buzz to spend
+            </div>
+            {#each [{ mode: 'yellow', label: 'Yellow', balance: buzz.yellow }, { mode: 'green', label: 'Green', balance: buzz.green }] as const as opt (opt.mode)}
+              <button
+                type="button"
+                onclick={() => pick(opt.mode)}
+                class="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm transition-colors hover:bg-dark-5"
+              >
+                <IconBoltFilled
+                  size={14}
+                  stroke={2}
+                  class={opt.mode === 'green' ? 'text-emerald-400' : 'text-buzz'}
+                />
+                <span class="text-dark-0">{opt.label}</span>
+                <span class="ml-auto font-mono text-xs text-dark-2">{opt.balance.toLocaleString()}</span>
+                {#if buzzMode.value === opt.mode}
+                  <IconCheck size={14} stroke={2.5} class="text-primary" />
+                {/if}
+              </button>
+            {/each}
+            <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
+              <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train
+              NSFW content. <span class="text-blue-400">Blue</span> (free) always spends first; your
+              pick covers the rest.
+            </p>
           </div>
-          {#each [{ mode: 'yellow', label: 'Yellow', balance: buzz.yellow }, { mode: 'green', label: 'Green', balance: buzz.green }] as const as opt (opt.mode)}
-            <button
-              type="button"
-              onclick={() => pick(opt.mode)}
-              class="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm transition-colors hover:bg-dark-5"
-            >
-              <IconBoltFilled
-                size={14}
-                stroke={2}
-                class={opt.mode === 'green' ? 'text-emerald-400' : 'text-buzz'}
-              />
-              <span class="text-dark-0">{opt.label}</span>
-              <span class="ml-auto font-mono text-xs text-dark-2">{opt.balance.toLocaleString()}</span>
-              {#if buzzMode.value === opt.mode}
-                <IconCheck size={14} stroke={2.5} class="text-primary" />
-              {/if}
-            </button>
-          {/each}
-          <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
-            <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
-            content. <span class="text-blue-400">Blue</span> (free) always spends first; your pick
-            covers the rest.
-          </p>
-        </div>
-      </details>
+        </details>
+      {/if}
     {/if}
     {#if username}
       <details

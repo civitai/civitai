@@ -11,6 +11,7 @@
     "./feedback.constants": "./src/feedback.constants.ts",
     "./generation-eligibility": "./src/generation-eligibility.ts",
     "./clickhouse-ip-filters": "./src/clickhouse-ip-filters.ts",
+    "./clickup-url": "./src/clickup-url.ts",
     "./lazy": "./src/lazy.ts",
     "./type-guards": "./src/type-guards.ts",
     "./moderator-paths": "./src/moderator-paths.ts",

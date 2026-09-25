@@ -131,9 +131,8 @@ function chDateTime(d: Date): string {
 }
 
 /**
- * Server-side execution cap, in seconds. The driver's own `request_timeout`
- * defaults to FIVE MINUTES (@clickhouse/client-common 0.2.10) and
- * `max_open_connections` to Infinity, neither of which this app overrides — so
+ * Server-side execution cap, in seconds. The shared client is configured with a
+ * `request_timeout` of FIVE MINUTES and an unbounded `max_open_connections` — so
  * without a bound a merely SLOW ClickHouse (not a down one) holds the whole
  * `Promise.all` in getMyAppAnalytics open for minutes.
  *

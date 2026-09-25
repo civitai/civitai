@@ -1,7 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { RUN_PAGE_DIR, pageSurface, read } from './page-sources';
 
 /**
  * The /abuse → User Lookup ROUND TRIP.
@@ -18,18 +16,19 @@ import { describe, expect, it, vi } from 'vitest';
  * somewhere that cannot answer it, and a service function with no caller.
  */
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const APP = join(HERE, '../../..'); // src/
-const read = (p: string) => readFileSync(join(APP, p), 'utf8');
-
-const RUN_PAGE = 'routes/abuse/[runId]/+page.svelte';
+/**
+ * 🔴 THE WHOLE RUN-PAGE DIRECTORY, not `+page.svelte`. The link these assertions are about lives in
+ * whichever component currently renders a finding, and moving it into one must not empty the guard.
+ * `pageSurface` refuses an empty read rather than returning one — see `page-sources.ts`.
+ */
+const RUN_PAGE = () => pageSurface(RUN_PAGE_DIR);
 const SECTION_PAGE = 'routes/retool/user-lookup/[section]/+page.svelte';
 const PANEL = 'routes/retool/user-lookup/AbuseFindingsPanel.svelte';
 const API = 'routes/api/user-abuse-findings/[userId]/+server.ts';
 
 describe('abuse finding → user lookup round trip', () => {
   it('the finding link names a SECTION, not the bare route that redirects to Basic', () => {
-    const src = read(RUN_PAGE);
+    const src = RUN_PAGE();
     const href = /href="(\/retool\/user-lookup[^"]*)"/.exec(src)?.[1];
     expect(href, 'the user id must still link somewhere').toBeTruthy();
     expect(href, 'a bare /retool/user-lookup?q= lands on Basic, which shows no findings').toMatch(
@@ -41,7 +40,7 @@ describe('abuse finding → user lookup round trip', () => {
     // 🔴 THE SEAM ITSELF. Either half can be edited alone and stay green on its own terms: rename
     // the section in the link and it still "links somewhere"; move the panel to another section and
     // it still "renders". Only comparing them catches the pair drifting apart.
-    const linked = /href="\/retool\/user-lookup\/([a-z-]+)\?q=/.exec(read(RUN_PAGE))?.[1];
+    const linked = /href="\/retool\/user-lookup\/([a-z-]+)\?q=/.exec(RUN_PAGE())?.[1];
     expect(linked).toBeTruthy();
 
     const sectionPage = read(SECTION_PAGE);
@@ -62,7 +61,7 @@ describe('abuse finding → user lookup round trip', () => {
     // slug in sections.ts alone made /abuse's link 404 while every other assertion here stayed
     // green — the link matched the branch, the branch rendered the panel, and the route did not
     // exist. Three parties, and the guard compared two of them.
-    const linked = /href="\/retool\/user-lookup\/([a-z-]+)\?q=/.exec(read(RUN_PAGE))?.[1];
+    const linked = /href="\/retool\/user-lookup\/([a-z-]+)\?q=/.exec(RUN_PAGE())?.[1];
     expect(linked, 'the link must name a section at all').toBeTruthy();
     const { isSection } = await import('../../retool/user-lookup/sections');
     expect(

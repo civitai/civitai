@@ -25,6 +25,7 @@ const CTX: GenerationCtx = {
 
 const SD15_MODEL = { id: 128713, baseModel: 'SD 1.5' };
 const LTXV23_MODEL = { id: 2749948, baseModel: 'LTXV 2.3' };
+const FLUX2_KLEIN_4B_MODEL = { id: 2612557, baseModel: 'Flux.2 Klein 4B' };
 
 describe('deriveSelectorsFromModel', () => {
   it('moves the ecosystem when the workflow survives the switch', () => {
@@ -70,6 +71,14 @@ describe('deriveSelectorsFromModel', () => {
     expect(
       deriveSelectorsFromModel(LTXV23_MODEL, { ecosystem: 'LTXV2', workflow: 'txt2vid' })
     ).toEqual({ ecosystem: 'LTXV23' });
+    // Klein's four variants are four ecosystems, and each one is model-locked,
+    // so its version buttons ARE this switch — refuse it and they do nothing.
+    expect(
+      deriveSelectorsFromModel(FLUX2_KLEIN_4B_MODEL, {
+        ecosystem: 'Flux2Klein_9B',
+        workflow: 'txt2img',
+      })
+    ).toEqual({ ecosystem: 'Flux2Klein_4B' });
   });
 });
 

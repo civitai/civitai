@@ -12,9 +12,14 @@ import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import type { SearchIndexContext } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
-import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
+import { modelVersionPricingSignals } from '@civitai/buzz';
+import {
+  getModelPaidAccessGates,
+  getModelVersionPaidAccessTerms,
+} from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -181,6 +186,7 @@ type PullDataResult = {
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+
 type VersionMetricRow = {
   generationCount: number;
   downloadCount: number;
@@ -236,6 +242,9 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelIds = models.map((m) => m.id);
   const paidAccessGates = await getModelPaidAccessGates(modelIds);
 
+  const versionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
+  const paidAccessTerms = await getModelVersionPaidAccessTerms(versionIds);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -256,13 +265,20 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const canGenerate = modelVersions.some((x) =>
+      const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
         isGenerationEligible({
-          covered: x.generationCoverage?.covered,
+          covered,
           baseModel: x.baseModel,
           modelType: model.type,
           flags: x.flags,
-        })
+        });
+
+      const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+      // What `canGenerate` becomes when the staged rule takes over — the same composition over the
+      // view's other column. Transitional: delete it, and its filterable entries, at the cutover,
+      // when `covered` answers this on its own.
+      const canGenerateNext = modelVersions.some((x) =>
+        eligible(x, x.generationCoverage?.coveredNext)
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
@@ -307,11 +323,18 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
+            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate: isGenerationEligible({
               covered: generationCoverage?.covered,
+              baseModel: x.baseModel,
+              modelType: model.type,
+              flags: x.flags,
+            }),
+            canGenerateNext: isGenerationEligible({
+              covered: generationCoverage?.coveredNext,
               baseModel: x.baseModel,
               modelType: model.type,
               flags: x.flags,
@@ -365,6 +388,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         hiddenMetrics: hidden,
         canGenerate,
+        canGenerateNext,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
       };
@@ -454,12 +478,25 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
   return ids.map((id) => byId.get(id)).filter(isDefined) as ModelSearchIndexRecord[];
 }
 
-export const modelsSearchIndex = createSearchIndexUpdateProcessor({
-  indexName: INDEX_ID,
-  setup: onIndexSetup,
-  maxQueueSize: 25, // Avoids hoggging too much memory.
-  prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
-    const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
+/**
+ * Hoisted and exported so the delta scan's paging can be driven by a test.
+ *
+ * The update pass walks the set by KEYSET (`id > lastId ORDER BY id`) rather than by OFFSET.
+ * The set is re-evaluated on every page and its membership moves while the scan runs — an edit
+ * that unpublishes a model, or flips it to Unsearchable, takes a row out from under the cursor
+ * and shifts every later OFFSET page down, so a model that was eligible for the whole scan is
+ * silently never indexed. Ordering the OFFSET query would not have helped: ids are immutable and
+ * a keyset cursor only moves forward, which is what makes the skip unreachable rather than rare.
+ *
+ * A row that ENTERS the set below the cursor is deliberately left for the next run: the `now`
+ * that `createSearchIndexUpdateProcessor` hands to `setLastUpdate` is captured before this
+ * function is called, so anything edited mid-scan falls inside the next window.
+ */
+export const prepareModelsBatches = async (
+  { db, logger }: SearchIndexContext,
+  lastUpdatedAt?: Date
+) => {
+  const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
       WHERE status = ${ModelStatus.Published}::"ModelStatus"
           AND availability != ${Availability.Unsearchable}::"Availability"
@@ -472,41 +509,53 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       };
     `;
 
-    const { startId, endId } = data[0];
-    logger(
-      `PrepareBatches :: StartId: ${startId}, EndId: ${endId}. Last Updated at ${lastUpdatedAt}`
-    );
+  const { startId, endId } = data[0];
+  logger(
+    `PrepareBatches :: StartId: ${startId}, EndId: ${endId}. Last Updated at ${lastUpdatedAt}`
+  );
 
-    const updateIds = [];
+  const updateIds: number[] = [];
 
-    if (lastUpdatedAt) {
-      let offset = 0;
+  if (lastUpdatedAt) {
+    let lastId = 0;
 
-      while (true) {
-        const ids = await db.$queryRaw<{ id: number }[]>`
+    while (true) {
+      const ids = await db.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Model"
         WHERE status = ${ModelStatus.Published}::"ModelStatus"
             AND availability != ${Availability.Unsearchable}::"Availability"
             AND "updatedAt" >= ${lastUpdatedAt}
-        OFFSET ${offset} LIMIT ${READ_BATCH_SIZE};
+            AND id > ${lastId}
+        ORDER BY id
+        LIMIT ${READ_BATCH_SIZE};
         `;
 
-        if (!ids.length) {
-          break;
-        }
+      if (!ids.length) {
+        break;
+      }
 
-        offset += READ_BATCH_SIZE;
-        updateIds.push(...ids.map((x) => x.id));
+      lastId = ids[ids.length - 1].id;
+      updateIds.push(...ids.map((x) => x.id));
+
+      if (ids.length < READ_BATCH_SIZE) {
+        break;
       }
     }
+  }
 
-    return {
-      batchSize: READ_BATCH_SIZE,
-      startId,
-      endId,
-      updateIds,
-    };
-  },
+  return {
+    batchSize: READ_BATCH_SIZE,
+    startId,
+    endId,
+    updateIds,
+  };
+};
+
+export const modelsSearchIndex = createSearchIndexUpdateProcessor({
+  indexName: INDEX_ID,
+  setup: onIndexSetup,
+  maxQueueSize: 25, // Avoids hoggging too much memory.
+  prepareBatches: prepareModelsBatches,
   pullData: async ({ db, logger }, batch) => {
     const batchLogKey =
       batch.type === 'update'

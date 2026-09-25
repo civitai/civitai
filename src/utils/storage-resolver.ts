@@ -1,6 +1,12 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
+/**
+ * Shorter than the 30s the deregister calls use: this is one small write on the upload path, which a
+ * caller awaits before responding, while those are bulk post-commit cleanups nobody waits on.
+ */
+const REGISTER_TIMEOUT_MS = 10_000;
+
 export async function registerFileLocation(params: {
   fileId: number;
   modelVersionId: number;
@@ -28,6 +34,7 @@ export async function registerFileLocation(params: {
       Authorization: `Bearer ${env.STORAGE_RESOLVER_INTERNAL_TOKEN}`,
     },
     body: JSON.stringify(params),
+    signal: AbortSignal.timeout(REGISTER_TIMEOUT_MS),
   });
 
   if (!response.ok) {

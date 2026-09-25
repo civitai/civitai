@@ -9,6 +9,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { getContentOwnerIdForComment } from '~/server/services/block-check.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -19,7 +20,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
@@ -171,40 +171,12 @@ export const getCommentCountV2Handler = async ({
 };
 
 export const getCommentsThreadDetailsHandler = async ({
-  ctx,
   input,
 }: {
-  ctx: Context;
   input: CommentConnectorInput;
 }) => {
   try {
-    // Fetch thread metadata including hiddenCount (needs excludedUserIds for accurate count)
-    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
-      (x) => x.id
-    );
-    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    // On the owner's own content, don't hide a blocker's engagement from them (they must still
-    // be able to see + report it) — drop blockedByUsers only in that case; keep the anti-
-    // harassment exclusion for every non-owner viewer.
-    const isContentOwner = await isViewerContentOwner({
-      entityType: input.entityType,
-      entityId: input.entityId,
-      userId: ctx.user?.id,
-      blockedByUsers,
-    });
-    // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
-    // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
-    // load-bearing safety priority — see boundExcludedUserIds.
-    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
-      isContentOwner,
-    });
-
-    return await getCommentsThreadDetails2({
-      ...input,
-      excludedUserIds,
-      isModerator: ctx.user?.isModerator ?? false,
-    });
+    return await getCommentsThreadDetails2(input);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -282,37 +254,6 @@ export const toggleLockThreadDetailsHandler = async ({
   }
 };
 
-async function getCommentV2WithEntityOwner({
-  id,
-  entityType,
-}: {
-  id: number;
-  entityType: ToggleHideCommentInput['entityType'];
-}) {
-  const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
-  // Comic chapter threads use comicProject relation instead of a direct entity relation
-  const threadSelect =
-    entityType === 'comicChapter'
-      ? { comicChapter: { select: { project: { select: { userId: true } } } } }
-      : { [entityType]: { select: { [ownerField]: true } } };
-  const comment = await dbRead.commentV2.findFirst({
-    where: { id },
-    select: {
-      hidden: true,
-      pinnedAt: true,
-      userId: true,
-      thread: { select: threadSelect },
-    },
-  });
-  if (!comment) throw throwNotFoundError(`No comment with id ${id}`);
-  const threadData = comment.thread as any;
-  const entityOwner =
-    entityType === 'comicChapter'
-      ? threadData.comicChapter?.project?.userId
-      : threadData[entityType]?.[ownerField];
-  return { comment, entityOwner };
-}
-
 export const toggleHideCommentHandler = async ({
   input,
   ctx,
@@ -321,16 +262,13 @@ export const toggleHideCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { id: userId, isModerator } = ctx.user;
-  const { id, entityType } = input;
+  const { id } = input;
 
   try {
-    const { comment, entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
-    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
+    const { hidden, ownerId } = await getContentOwnerIdForComment(id);
+    if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
-    const updatedComment = await toggleHideComment({
-      id,
-      currentToggle: comment.hidden ?? false,
-    });
+    const updatedComment = await toggleHideComment({ id, currentToggle: hidden });
 
     return updatedComment;
   } catch (error) {
@@ -347,11 +285,11 @@ export const togglePinnedCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { id: userId, isModerator } = ctx.user;
-  const { id, entityType } = input;
+  const { id } = input;
 
   try {
-    const { entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
-    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
+    const { ownerId } = await getContentOwnerIdForComment(id);
+    if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
     return await togglePinComment({ id });
   } catch (error) {

@@ -858,9 +858,15 @@ export function FormFooter({
 
     // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
     // generation_v2/FormFooter.tsx for why both of those matter.
-    const sourceProvenance = (snapshot.images ?? [])
-      .map((img) => remixProvenanceStore.getToken(img.url))
-      .filter(isDefined);
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
+    ].filter(isDefined);
 
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;

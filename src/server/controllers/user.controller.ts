@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -16,6 +15,7 @@ import { getStaticContent, resolveTosHash } from '~/server/services/content.serv
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
+import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
@@ -770,8 +770,9 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  const canRemoveAsModerator = !isProd && currentUser.isModerator;
-  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
+  // Self-only, in every environment. A moderator deleting somebody else's account goes through
+  // `/api/mod/user/delete`, which writes a ModActivity row.
+  if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser(input);
@@ -904,6 +905,20 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: ProtectedConte
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const getFollowsMeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await getFollowsViewer({ viewerId: ctx.user.id, userId: input.id });
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
 
@@ -1554,10 +1569,9 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
 /**
  * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
  * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
- * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `allowAds`, `isEarlyAdopter`). Writing one of these without busting
  * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
- * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
- * endpoint cannot write it (see the gate below).
+ * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
 
@@ -1597,7 +1611,7 @@ export const setUserSettingHandler = async ({
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
-    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and
     // folds them into the SessionUser — and the hub caches that projection in
     // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
     // client-side (the `getSettings` cache is patched optimistically) while every session
@@ -1611,8 +1625,6 @@ export const setUserSettingHandler = async ({
     // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
     // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
     // silent re-introduction of the same bug (#4298's defect class).
-    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
-    // it is written by `updateContentSettings`, which performs its own bust.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the

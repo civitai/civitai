@@ -21,7 +21,9 @@ import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 //   - ban / unban delegates to the main app's /api/mod/ban-user, which also purges media and models,
 //     sends notifications and busts caches. Reimplementing that here would be a second source of truth.
 //
-// Every action logs to ModActivity with the REAL moderator id. The ban endpoint records itself as
+// Actions log to ModActivity with the REAL moderator id, except `deleteAccount` and
+// `removePlacement`, whose endpoints write their own row, and `voteOnImageTags`, which only the
+// endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -51,11 +53,31 @@ async function callMainApp(
   }
 }
 
-// `/api/mod/*` (defineModeratorEndpoint) authenticates as the MODERATOR who is acting: the spoke is on
-// the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
-// already accepts, and relaying it server-side attributes the audit row to a person rather than to a
-// shared key. This app therefore needs no moderator API key at all.
-export type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
+/**
+ * A failure reports facts rather than a verdict, because only the caller knows whether its own
+ * action was mutating and therefore what a lost response means.
+ *
+ * 🔴 `requestNeverSent` is deliberately NOT the negation of "we got an error". `fetch` rejects with
+ * the same `TypeError: fetch failed` whether nothing was listening (`cause.code ECONNREFUSED`) or
+ * the socket died mid-request after the server had already acted (`UND_ERR_SOCKET`) — name and
+ * message are identical and only `cause.code` separates them. So after a send this is true ONLY for
+ * the codes that prove the request never left, and false for everything else including an abort. Getting that
+ * default backwards tells an operator a completed, irreversible action failed.
+ *
+ * `status` is the response status when the far side answered at all — an intermediary's 504 is a
+ * lost response, not a refusal, and the caller needs to see it to say so.
+ */
+export type JsonResult =
+  | { ok: true; body: Record<string, unknown> }
+  | {
+      ok: false;
+      error: string;
+      requestNeverSent?: boolean;
+      status?: number;
+      /** The recovered text alone, without the action label, so a caller that overrides the message
+       *  can still carry what the far side said. */
+      reason?: string;
+    };
 
 /** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
  *  is the difference between "try later" and a moderator retrying immediately.
@@ -87,13 +109,23 @@ async function postJson(opts: {
     try {
       cookie = getRequestEvent().request.headers.get('cookie');
     } catch {
-      return { ok: false, error: `${opts.label} must be called while handling a request.` };
+      return {
+        ok: false,
+        error: `${opts.label} must be called while handling a request.`,
+        requestNeverSent: true,
+      };
     }
-    if (!cookie) return { ok: false, error: `${opts.label} failed: no session to forward.` };
+    if (!cookie)
+      return {
+        ok: false,
+        error: `${opts.label} failed: no session to forward.`,
+        requestNeverSent: true,
+      };
     headers.cookie = cookie;
   } else {
     const token = env.WEBHOOK_TOKEN;
-    if (!token) return { ok: false, error: 'WEBHOOK_TOKEN is not configured.' };
+    if (!token)
+      return { ok: false, error: 'WEBHOOK_TOKEN is not configured.', requestNeverSent: true };
     url += `?token=${encodeURIComponent(token)}`;
   }
 
@@ -109,10 +141,15 @@ async function postJson(opts: {
       // limit has left. Reducing that to a status code is what makes a moderator retry the same
       // forbidden action, or re-login against a 403 that re-logging in cannot fix.
       const reason = await readError(res);
-      if (reason) return { ok: false, error: `${opts.label}: ${reason}` };
-      if (opts.auth === 'session' && res.status === 401)
-        return { ok: false, error: `${opts.label} was refused — sign in to civitai.com again.` };
-      return { ok: false, error: `${opts.label} returned ${res.status}.` };
+      // Recovered = the body parsed as the envelope this app reads. It is NOT proof the app wrote it.
+      if (reason)
+        return {
+          ok: false,
+          error: `${opts.label}: ${reason}`,
+          status: res.status,
+          reason,
+        };
+      return { ok: false, error: `${opts.label} returned ${res.status}.`, status: res.status };
     }
     return {
       ok: true,
@@ -120,13 +157,20 @@ async function postJson(opts: {
     };
   } catch (e) {
     console.error(`[user-actions] ${opts.label} failed`, e);
-    return { ok: false, error: `${opts.label} failed.` };
+    // Fails SAFE: anything not on this list is treated as possibly-delivered. An abort
+    // (`TimeoutError`) and a mid-flight socket death both land here and both mean the far side may
+    // have acted.
+    const code = (e as { cause?: { code?: string } } | null)?.cause?.code;
+    const requestNeverSent =
+      code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN';
+    return { ok: false, error: `${opts.label} failed.`, requestNeverSent };
   }
 }
 
 /**
- * Every `/api/mod/*` route the spoke calls. A bare string would make a typo a 404 that reads as a
- * failed action; this makes it a compile error. Replaced by the generated client when that lands.
+ * Every `/api/mod/*` route the spoke calls through `callModEndpoint`. A bare string would make a
+ * typo a 404 that reads as a failed action; this makes it a compile error. Replaced by the
+ * generated client when that lands.
  */
 export type ModEndpoint =
   | 'comment/bulk-delete'
@@ -144,9 +188,14 @@ export type ModEndpoint =
   | 'review/set-exclude'
   | 'strike/create'
   | 'training-data/resolve'
+  | 'user/delete'
   | 'user/toggle-moderator'
   | 'user/update-identity';
 
+// `/api/mod/*` (defineModeratorEndpoint) authenticates as the MODERATOR who is acting: the spoke is on
+// the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
+// already accepts, and relaying it server-side attributes the audit row to a person rather than to a
+// shared key. This app therefore needs no moderator API key at all.
 /** One `/api/mod/*` endpoint per action, called as the acting moderator. The ONLY place `auth`
  *  becomes `'session'` — a call site that picks its own scheme is how one gets the wrong one. */
 export const callModEndpoint = (
@@ -1054,6 +1103,118 @@ export async function purgeAllContent(input: {
   if (!result.ok) return result;
 
   await logAction('purgeAllContent', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+/** One sentence for every way this call can fail without proving the deletion did not happen. The
+ *  operator's next move is the same in all of them, and it is not "retry". */
+const MAY_HAVE_COMPLETED =
+  'Account deletion could not be confirmed. It may already have completed — re-check the account before retrying.';
+
+/**
+ * Close an account on its owner's behalf — a data-subject erasure request from someone who cannot
+ * sign in and use the self-serve path. Calls the same `deleteUser` service that path calls; this
+ * function contains no deletion logic and must not grow any.
+ *
+ * No existence pre-check, unlike `purgeAllContent` above. That one needs its own because
+ * `callMainApp` gives it back a bare status code; this endpoint writes a legible refusal for an
+ * unknown id and for an already-deleted account, and `readError` surfaces it. A local check would be
+ * a second, drifting copy of a rule the endpoint already owns.
+ *
+ * 🔴 NO `logAction` CALL HERE, AND THAT IS DELIBERATE — do not add one for symmetry with its
+ * neighbours. `/api/mod/user/delete` writes its own `deleteAccount` ModActivity row against the
+ * acting moderator, because a bearer-token script reaches that endpoint without passing through this
+ * app at all. `ModActivity` is append-only in production, so a second call here is a second row in
+ * the account history for one deletion, not a deduped one.
+ */
+export async function deleteAccount(input: {
+  userId: number;
+  /** The account's current username. **REQUIRED by the endpoint for any account that has one** —
+   *  it is the only check that catches a mistyped id which happens to be another LIVE account, and
+   *  nothing downstream catches that one. Omitting it for such an account is a legible 400, not a
+   *  deletion. Optional only where there is nothing to confirm against: an account whose username
+   *  is null, and a row already scrubbed — so it is safe to send on a retry, because the endpoint
+   *  answers already-deleted before it compares. */
+  username?: string;
+  /** Omitted moves their models to the deleted-user sentinel; true deletes the models too. */
+  removeModels?: boolean;
+  /** True deletes the images now, irrecoverably. Omitted keeps them for the 7-day grace period —
+   *  the endpoint defaults this to `false`, so an erasure needing immediate removal must say so. */
+  removeImages?: boolean;
+}): Promise<ActionResult> {
+  const body: Record<string, unknown> = { userId: input.userId };
+  // Truthy, not `!== undefined`, and safe ONLY because the endpoint REQUIRES a username for any
+  // account that has one. An EMPTY field therefore arrives as an omission and comes back as
+  // "confirm the username" rather than the opaque `.min(1)` rejection; a whitespace-only field is
+  // truthy, goes on the wire, and still gets the opaque one. Either way it cannot become a silent
+  // unverified deletion.
+  if (input.username) body.username = input.username;
+  if (input.removeModels !== undefined) body.removeModels = input.removeModels;
+  if (input.removeImages !== undefined) body.removeImages = input.removeImages;
+
+  // Longer than the 30s default because `deleteUser` cancels Stripe and Paddle subscriptions,
+  // reindexes and invalidates every session. 🔴 The number does NOT close the hole below: the
+  // deletion commits first and the Paddle client has no timeout of its own, so no value makes an
+  // abort mean "nothing happened". Pinned, because a silent revert to the 30s default widens a
+  // window the operator reads as a failed deletion.
+  const result = await callModEndpoint('user/delete', body, 'Account deletion', 60_000);
+  if (!result.ok) {
+    // 🔴 ONE QUESTION: could this request have reached the handler?
+    //
+    // `deleteUser` commits before an unbounded post-commit step, so a lost response does NOT mean
+    // nothing happened, and telling an operator a committed deletion failed is what sends them to
+    // do it again. Equally, destroying a refusal the endpoint wrote for a human — "already
+    // deleted", "wrong username" — leaves them unable to tell a finished job from a broken route.
+    //
+    // 🔴 5xx AND 408 BEFORE THE REFUSAL BRANCH BELOW, which reads any answered status as a
+    // refusal: a gateway's 504, JSON or not, would reach the operator as a failed deletion over one
+    // that committed. A 5xx the app authors after committing is near-unreachable — every
+    // post-commit step in `deleteUser`, and both audit writes in `/api/mod/user/delete`, are caught
+    // individually.
+    //
+    // A 408 goes with them, envelope or not: this endpoint does not author one before committing
+    // (a raw Prisma timeout leaves `handleEndpointError` as a 500), so any 408 is a timeout of a
+    // request that may already have been acted on.
+    if (result.status !== undefined && (result.status >= 500 || result.status === 408)) {
+      // The recovered text is LOGGED, not appended. `handleEndpointError` genericizes every
+      // server-fault 5xx, so appending it would give the operator "(An unexpected error
+      // occurred)" — and 503 is the one status excluded from that, so its hand-written hint would
+      // arrive as "retry" glued to a sentence saying re-check before retrying. One instruction in
+      // front of a person; the detail stays recoverable here.
+      if (result.reason)
+        console.error('[user-actions] account deletion lost its response', {
+          userId: input.userId,
+          status: result.status,
+          reason: result.reason,
+        });
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    }
+
+    // Below 500 and not 408: a refusal, whoever wrote it — the handler did not act. One written for
+    // a human arrives with its text intact.
+    if (result.status !== undefined) return { ok: false, error: result.error };
+
+    // NOBODY answered. Only a code proving the request never left is safe to call a failure.
+    return result.requestNeverSent
+      ? { ok: false, error: result.error }
+      : { ok: false, error: MAY_HAVE_COMPLETED };
+  }
+
+  // Any 2xx that is not this endpoint's success envelope — a proxy interstitial, an auth layer, a
+  // future partial-success shape — would otherwise be reported as a completed erasure. For an
+  // erasure the false positive is the expensive direction: the request gets closed and the data is
+  // still there. No live path to a non-JSON 200 is known; this is here on that asymmetry. It shares
+  // the message above because an abort while the body is being read also lands here, swallowed by
+  // `res.json().catch`, and that one genuinely may have completed.
+  if (result.body.deleted !== true) return { ok: false, error: MAY_HAVE_COMPLETED };
+
+  // The deletion succeeded but its audit row did not land. Not an error for the operator, who
+  // cannot act on it; it belongs in this app's log next to the action it describes.
+  if (result.body.auditRecorded === false)
+    console.error('[user-actions] account deleted but the ModActivity row failed', {
+      userId: input.userId,
+    });
+
   return { ok: true };
 }
 

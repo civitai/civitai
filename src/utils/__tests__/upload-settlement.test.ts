@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { attachUploadSettlement } from '~/utils/upload-settlement';
+import { attachUploadSettlement, relayImageFallback } from '~/utils/upload-settlement';
 import type { SettlementXhr } from '~/utils/upload-settlement';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 // AUDIT-F1 regression guard — the defect the first draft of the upload relay shipped,
 // and the one nothing in the tree could see.
@@ -308,5 +309,152 @@ describe('attachUploadSettlement', () => {
     expect(cb.onAborted).toHaveBeenCalledTimes(1);
     expect(cb.onError).not.toHaveBeenCalled();
     expect(cb.onSuccess).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `relayImageFallback` is the multipart upload's execution half of the relay rescue —
+ * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
+ * relay-minted key or `null`. The DECISION to call it lives in
+ * `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is what
+ * runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing. (This said the
+ * hook "has no test file". `src/hooks/__tests__/useS3Upload.test.ts` exists, and this very
+ * change adds the multipart producer assertion to it.)
+ *
+ * 🔴 `null` is the contract for EVERY failure — a rejected relay, a non-ok response, a
+ * mid-relay cancel. The caller falls through to the normal terminal-error path, so a
+ * broken fallback must degrade to "upload failed" (the pre-existing outcome), never to a
+ * thrown error that replaces the user's real diagnosis.
+ */
+describe('relayImageFallback', () => {
+  const opts = () => ({
+    signal: new AbortController().signal,
+    sleep: vi.fn().mockResolvedValue(undefined),
+    defaultRetryAfterSeconds: 2,
+  });
+  const file = () => new File([new Uint8Array(10)], 'pic.png', { type: 'image/png' });
+
+  it('POSTs the whole file to the relay and resolves its minted key', async () => {
+    const f = file();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const id = await relayImageFallback(f, opts());
+
+    expect(id).toBe('RELAY-KEY');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/image-upload/relay',
+      expect.objectContaining({
+        method: 'POST',
+        // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
+        // attribute a rescue to THIS path; an `objectContaining` here would pass with it
+        // missing, which is the defect the discriminator exists to make impossible. The
+        // exact match also pins the VALUE, so a mutant sending `single_put` from this
+        // caller — the most damaging one available, since it silently re-creates the
+        // attribution error under the appearance of a fix — fails here. (A separate test
+        // asserting exactly that was removed as strictly subsumed by this line.)
+        headers: {
+          'Content-Type': 'image/png',
+          [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
+        },
+        body: f,
+      })
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back to octet-stream when the File carries no type', async () => {
+    const f = new File([new Uint8Array(10)], 'pic');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await relayImageFallback(f, opts());
+
+    expect(fetchMock.mock.calls[0][1].headers['Content-Type']).toBe('application/octet-stream');
+    vi.unstubAllGlobals();
+  });
+
+  it('retries the 429 shed once through relayWithRetry, then resolves', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'RELAY-KEY' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const id = await relayImageFallback(file(), { ...opts(), sleep });
+
+    expect(id).toBe('RELAY-KEY');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a 500 from the relay', 500],
+    ['a 413 over the relay cap', 413],
+  ])('returns null on %s, without retrying', async (_name, status) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status, json: async () => ({ error: 'nope' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const id = await relayImageFallback(file(), opts());
+
+    expect(id).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('returns null on a relay id-less 200 rather than inventing a key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns null when the relay itself cannot be reached', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns null, and does not retry, when the signal aborts during a shed wait', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn(async () => {
+      controller.abort();
+    });
+
+    const id = await relayImageFallback(file(), {
+      signal: controller.signal,
+      sleep,
+      defaultRetryAfterSeconds: 2,
+    });
+
+    expect(id).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

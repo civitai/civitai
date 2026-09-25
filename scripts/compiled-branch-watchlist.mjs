@@ -126,8 +126,21 @@ export const COMPILED_BRANCH_WATCHLIST = [
   },
   {
     id: 'block-token-subject-refusal',
-    module: 'src/server/routers/blocks.router.ts',
-    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on 16 block-token runtime procs. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
+    // MOVED 2026-09-18 out of `src/server/routers/blocks.router.ts`. The function is now
+    // shared with the REST route `src/pages/api/v1/blocks/me.ts`, which cannot import a
+    // tRPC router — so it lives in a service and BOTH doors call it. This field is a PIN:
+    // the move made both anchors below resolve to zero lines in the old module until it
+    // was updated here, which is the failure to expect if it is ever moved again.
+    //
+    // ⚠️ KNOWN LIMIT, WIDENED BY THAT MOVE. This gate unions mapped source lines across
+    // EVERY emitted chunk, so it answers "did this branch survive SOMEWHERE", not "did it
+    // survive in each consumer's chunk". The function now has two consumers — the tRPC
+    // router and the `/api/v1/blocks/me` API route — so a build that kept the branch in
+    // the router's chunk and dropped it from the API-route chunk would still pass. The
+    // union is pre-existing (one module inlines into ~200 chunks, as this file's header
+    // notes); recorded because the second consumer is new.
+    module: 'src/server/services/blocks/block-token-access.service.ts',
+    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on every block-token runtime caller — the tRPC bridge procs AND the `/api/v1/blocks/me` REST route, which joined them when its hardcoded moderator literal was dropped. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
     control: [
       {
         code: 'await isAppBlocksEnabled({ user })',
@@ -137,7 +150,24 @@ export const COMPILED_BRANCH_WATCHLIST = [
     required: [
       {
         code: "'runtime block token subject could not be resolved'",
-        why: "the refusal's message literal. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`. NB this anchors a literal INSIDE the branch rather than the branch's condition, because `if (!user) {` is not unique in this module (the author gate above uses the same condition). That is sound here only because the literal is unique ACROSS THE WHOLE APP: a minifier cannot intern it from another site, so a surviving mapping for this line means this site survived. Keep it unique — do not reuse this string elsewhere.",
+        why: "the refusal's message literal. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`. NB this anchors a literal INSIDE the branch rather than the branch's condition. That was originally because `if (!user) {` was not unique in `blocks.router.ts`, where the function used to live alongside `assertViewerIsAppDeveloper`'s identical condition; since the 2026-09-18 move the condition IS unique in this module, so the literal is no longer the only option — it is kept because it remains the stronger anchor and re-pointing an anchor is itself a change worth not making idly. It is sound because the literal is unique ACROSS THE WHOLE APP: a minifier cannot intern it from another site, so a surviving mapping for this line means this site survived. Keep it unique — do not reuse this string elsewhere. 🔴 That uniqueness is why `/api/v1/blocks/me` renders this refusal with its OWN generic literal instead of echoing this message.",
+      },
+    ],
+  },
+  {
+    id: 'post-subject-refusal',
+    module: 'src/server/routers/blocks.router.ts',
+    why: "`authorizeBlockPostRequest` refuses a post/preview whose token subject does not hydrate, BEFORE consulting `app-blocks-post-creation`. Lost, it falls back to the shape this branch replaced — the flag evaluated with no entity and no context, which returns the flag's BASE value rather than a deny. Under a base-`enabled: true` GA flip of post creation, a token whose subject no longer resolves would then be allowed to publish a PUBLIC, feed-visible post under that subject's byline. Same hazard as `shared-storage-subject-refusal` and `block-token-subject-refusal`, on the one surface where the consequence is public content rather than a read. NB the TypeScript cannot cover this: `BlockPostRequestAuth.subjectUser` is non-nullable, so deleting the branch in SOURCE is a type error — which is exactly why only an emitted-output gate can see a bundler dropping it.",
+    control: [
+      {
+        code: 'isAppBlocksPostCreationEnabled({ user: subjectUser }',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means the gate is looking at a build that never emitted this function, not at a violation. Stops before the closing paren so argument reflow cannot move it off this line.',
+      },
+    ],
+    required: [
+      {
+        code: 'if (!subjectUser) {',
+        why: "the refusal's own CONDITION rather than a payload inside it, per rule 2 of this file's header — a condition cannot be interned from another site. It is unique in this module today (the sibling `assertViewerIsAppDeveloper` refusal spells its binding `user`, not `subjectUser`); if a second `subjectUser` null-check is ever added to this router, re-point this anchor at the message literal instead, which is unique app-wide.",
       },
     ],
   },

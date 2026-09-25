@@ -105,6 +105,9 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckBlockCatalogRateLimit(...(a as [])),
   // `publishGenerationOutputs` charges its OWN (image-weighted) bucket, not the catalog one.
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckBlockPublishRateLimit(...(a as [])),
+  // …and `pollWorkflow` charges a third, dedicated `:poll:` bucket. Always allowed here: this
+  // file is about SCOPE, and a refusal would pre-empt the guard it exists to exercise.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');

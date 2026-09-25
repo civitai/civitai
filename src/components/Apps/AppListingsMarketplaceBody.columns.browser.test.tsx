@@ -83,7 +83,13 @@ const mocks = vi.hoisted(() => ({ items: [] as ListingCard[] }));
 // reports `no tests` rather than a failure.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
   useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),

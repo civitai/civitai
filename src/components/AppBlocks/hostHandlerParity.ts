@@ -121,6 +121,28 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // 🔴 N/A FOR EVERY HOST ON PURPOSE, AND IT IS THE ONLY ENTRY WHOSE `N/A` DOES
+  // NOT MEAN "UNHANDLED". `usePostMessage` consumes it in the SHARED DISPATCHER,
+  // above the subscriber lookup, because the message is TELEMETRY about the bridge
+  // rather than a feature either host implements: it carries no `requestId`, awaits
+  // no reply, and reaches no `onMessage` subscriber by design. Registering it
+  // per-host would be the same predicate written twice, which is how one of the two
+  // copies ends up wrong.
+  //
+  // The parity test greps each host for `onMessage('<TYPE>'`, so marking it
+  // `'required'` would demand a handler that must not exist. Fire-and-forget, so an
+  // ignored one can never hang the block — on an OLD host (this entry absent) the
+  // dispatcher records one `no_handler` against `'other'` and sends no NACK, since
+  // there is no `requestId` for `buildBridgeNackReply` to answer.
+  BLOCK_MESSAGE_REJECTED: {
+    request: false,
+    reply: '',
+    IframeHost:
+      'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
+    PageBlockHost:
+      'bridge telemetry, not a feature: consumed by the shared usePostMessage dispatcher above the subscriber lookup, so no per-host onMessage handler exists',
+    InlineHost: INLINE_STUB,
+  },
   RESIZE_IFRAME: {
     request: false,
     reply: '',
@@ -295,8 +317,11 @@ export const INVENTORY = {
   },
   // Viewer self-read ("who am I") backing the SDK `useViewer()` hook — host-
   // mediated via the `user:read:self`-gated `blocks.getMyViewer` MUTATION, the
-  // successor to GET /blocks/me (which stays live until the hook publishes +
-  // consumers migrate). AHEAD of the published SDK dist union (SDK co-requisite
+  // TWIN of GET /blocks/me and not its successor — a viewer read is data
+  // movement, so the REST route is the DEFAULT surface and both stay (see the
+  // "Direction" note under Routes in docs/features/app-blocks.md, and
+  // civitai/civitai-app-starters#437).
+  // AHEAD of the published SDK dist union (SDK co-requisite
   // — forward-looking coverage, allowed by the one-directional compile-time
   // gate). PAGE-ONLY affordance today (a page block reading its viewer; model-
   // slot apps are deferred + will get page-host too), so N/A for the model host

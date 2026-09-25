@@ -102,8 +102,9 @@ import {
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
-import { CacheTTL, MAX_RESOURCES_PER_IMAGE } from '../common/constants';
+import { CacheTTL } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -372,7 +373,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (sort === PostSort.RecentlyAdded && !collectionId) {
+  if (sort === PostSort.RecentlyAdded && !collectionId && !draftOnly) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 
@@ -1555,7 +1556,7 @@ export const addResourceToPostImage = async ({
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
-      model: { select: { name: true, id: true } },
+      model: { select: { name: true, id: true, type: true } },
       name: true,
       files: {
         select: {
@@ -1579,7 +1580,7 @@ export const addResourceToPostImage = async ({
   // a spurious "Image not found".
   const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, resourceHelper: true, type: true },
+    select: { postId: true, meta: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
@@ -1592,32 +1593,32 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  // Manually crediting resources on an uploaded/external image is an attribution
-  // action with no GPU cost, so it uses a fixed cap rather than the per-tier
-  // generation limits (those are throttled during GPU crunches — see the
-  // MAX_RESOURCES_PER_IMAGE comment in server/common/constants).
-  const resourceLimit = MAX_RESOURCES_PER_IMAGE;
-
-  images.forEach((img) => {
-    const numExistingResources = img.resourceHelper.length;
-    if (numExistingResources >= resourceLimit) {
-      throw throwBadRequestError(`Maximum resources reached (${resourceLimit})`);
+  const createdResources = await dbWrite.$transaction(async (tx) => {
+    // Serialises concurrent adds to the same image, so two requests cannot both pass the limit check.
+    await tx.$queryRaw`SELECT id FROM "Image" WHERE id IN (${Prisma.join(
+      imageIds
+    )}) ORDER BY id FOR UPDATE`;
+    const existing = await tx.imageResourceHelper.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { imageId: true, modelVersionId: true, modelType: true, detected: true },
+    });
+    for (const imageId of imageIds) {
+      const error = getManualResourceLimitError(
+        existing.filter((r) => r.imageId === imageId),
+        [{ modelVersionId, modelType: modelVersion.model.type }]
+      );
+      if (error) throw throwBadRequestError(error);
     }
-  });
 
-  // TODO restrictions on allowedTypes
-
-  // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
-  // const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
-
-  const createdResources = await dbWrite.imageResourceNew.createManyAndReturn({
-    data: imageIds.map((imageId) => ({
-      modelVersionId,
-      imageId,
-      detected: false,
-    })),
-    skipDuplicates: true,
-    select: { modelVersionId: true, imageId: true },
+    return tx.imageResourceNew.createManyAndReturn({
+      data: imageIds.map((imageId) => ({
+        modelVersionId,
+        imageId,
+        detected: false,
+      })),
+      skipDuplicates: true,
+      select: { modelVersionId: true, imageId: true },
+    });
   });
 
   if (createdResources.length > 0) {

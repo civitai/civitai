@@ -254,6 +254,13 @@ export const BLOCK_AUTHOR_FEE_DEFAULT_PARAMS: BlockAuthorFeeParams = {
  * `resolveBlockAuthorFeeParams` were unreachable outside its own unit tests,
  * and `source` was a compile-time constant `'default'`. A precedence rule that
  * production never executes is not configuration, it is dead code with a test.
+ *
+ * ⚠️ EVERY OVERRIDE HERE IS FEE-FREE, AND A VIEWER-FACING SENTENCE MAY DEPEND ON
+ * THAT. `max(flatBuzz, pctOfBase × base)` bounds every generation type only while
+ * no override prices one ABOVE the default, so an override that CHARGES would
+ * make any copy quoting the default pair ("at most N Buzz or P%") false. Adding
+ * one is already red — `author-fee.test.ts` pins this table to an exact literal —
+ * so the fix is to re-read that copy, not to bump the literal.
  */
 export const BLOCK_AUTHOR_FEE_PLATFORM_CONFIG: BlockAuthorFeeConfig = {
   default: BLOCK_AUTHOR_FEE_DEFAULT_PARAMS,

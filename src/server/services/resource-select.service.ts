@@ -25,6 +25,10 @@ import {
   getModelSearchIndexRecords,
   type ModelSearchIndexRecord,
 } from '~/server/search-index/models.search-index';
+import {
+  modelPricingFilterClause,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { transformModelHits } from '~/shared/search/models-transform';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -122,8 +126,16 @@ function buildFilter({
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
 }): string | null {
-  const { tab, selectSource, canGenerate, resources, filterTypes, filterBaseModels, tagName } =
-    input;
+  const {
+    tab,
+    selectSource,
+    canGenerate,
+    resources,
+    filterTypes,
+    filterBaseModels,
+    tagName,
+    hidePaid,
+  } = input;
 
   // On the featured tab, determine which types have featured models so we can
   // skip the baseModel filter for those types and instead AND an explicit id set.
@@ -176,6 +188,7 @@ function buildFilter({
     filterTypes.length > 0 && inArray('type', filterTypes),
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
     tagName ? eq('tags.name', tagName) : null,
+    modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
     tab === 'official' ? eq('user.id', constants.system.officialUserId) : null,
@@ -303,6 +316,9 @@ export async function getResourceSelectModels(
     signal
   );
 
+  // Images are returned at every browsing level on purpose: the picker filters them by the
+  // viewer's level before rendering (ResourceHitList). Product decision, 2026-09-22: do not
+  // add server-side level filtering here without revisiting it.
   let items = transformModelHits(results.hits);
 
   // Prepend the official models on the first page only. Sourced straight from
@@ -313,6 +329,15 @@ export async function getResourceSelectModels(
     const officialItems = transformModelHits(
       await getModelSearchIndexRecords(officialIdsForType)
     ).filter((m) => {
+      // buildFilter never sees the pin, so anything it would have excluded is re-applied here —
+      // pricing and base model only. `canGenerate`, the private-availability split and the celebrity
+      // exclusion are NOT re-applied; `getOfficialModelIds` scopes on isOfficial + Published alone,
+      // so a mod flagging a private or non-generatable model official would pin it past all three.
+      if (
+        input.hidePaid &&
+        !m.versions.some((v) => versionSatisfiesPricingFilter(v.pricing, input))
+      )
+        return false;
       const baseModels = input.resources
         .filter((r) => r.type === m.type)
         .flatMap((r) => r.baseModels);

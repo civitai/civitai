@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { DIRECT_COMMANDS } from '../queued-check-rules.mjs';
+
 import {
   canonicalFlag,
   conflictingOutputFile,
@@ -488,13 +490,19 @@ describe('the WIRING — package.json must actually invoke the wrapper', () => {
    * reverts one of the two, and the "take theirs" resolution is the one that looks safest and
    * kills this feature. A textual conflict made it loud that time; the next overlap may not.
    */
-  it('`pnpm test:component` runs scripts/test-component-run.mjs, not vitest directly', () => {
+  it('`pnpm test:component` reaches scripts/test-component-run.mjs, not vitest directly', () => {
     const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'));
-    const script = pkg.scripts['test:component'];
-    // Asserted as the WHOLE normalised string, not a substring: a partial match is satisfied by
+    // TWO HOPS since the component suite got a queue lane: the package script names the queue
+    // wrapper, and the wrapper's direct command names this runner. Both are asserted as WHOLE
+    // normalised values, not substrings, for the reason above - a partial match is satisfied by
     // `vitest run --project component && node scripts/test-component-run.mjs` and by anything
-    // else that merely mentions the file.
-    expect(script.trim()).toBe('node scripts/test-component-run.mjs');
+    // else that merely mentions the file. Checking only the first hop would let the second be
+    // repointed at a bare vitest and leave this green, which is the same inert-guard state.
+    expect(pkg.scripts['test:component'].trim()).toBe('node scripts/queued-check.mjs component');
+    expect(DIRECT_COMMANDS.component).toEqual({
+      cmd: 'node',
+      args: ['scripts/test-component-run.mjs'],
+    });
   });
 
   it('the script it names EXISTS and exports the entry point', async () => {

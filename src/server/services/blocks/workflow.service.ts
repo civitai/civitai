@@ -93,7 +93,32 @@ export function snapshotFromWorkflow(
    * request's own collector is in scope and is authoritative for that exact
    * validation (and where, on the estimate path, nothing was persisted at all).
    */
-  extra?: { modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'] }
+  extra?: {
+    modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'];
+    /**
+     * Whole Buzz to ADD to the reported `cost.total`, for a charge the viewer
+     * will incur that the orchestrator's own cost does not include — today only
+     * the App Blocks per-generation AUTHOR FEE, on the two ESTIMATE arms.
+     *
+     * 🔴 IT WIDENS THE NUMBER, NEVER THE WIRE SHAPE. `cost` stays `{ total }`:
+     * adding an itemised `authorFee` field would publish a cost breakdown to
+     * every third-party app, which is the thing this projection deliberately
+     * does not do, and it would also be INERT — an itemised field discloses
+     * nothing until each third-party author writes a renderer for it, whereas a
+     * corrected total is read by every app that already displays a price.
+     *
+     * 🔴 AND IT IS AN ESTIMATE-ONLY ARGUMENT. A SUBMIT must not pass it: there
+     * the orchestrator's realized `cost.total` is the generation's own price and
+     * the settle/refund arithmetic downstream (`snapshot.cost?.total ?? ceiling`)
+     * is taken against it, so inflating it there would refund the fee back into
+     * every cap while the fee stands. Pinned by
+     * `no-divergent-author-fee-base.test.ts`.
+     *
+     * Ignored when the workflow reports no cost at all — there is no total to
+     * correct, and inventing one would report a fee as if it were the price.
+     */
+    additionalCostBuzz?: number;
+  }
 ): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
@@ -191,7 +216,28 @@ export function snapshotFromWorkflow(
       }
     }
   }
-  const total = workflow.cost?.total;
+  const orchestratorTotal = workflow.cost?.total;
+  // Only a WHOLE, POSITIVE addition moves the number. A NaN/Infinity would
+  // propagate into the reported price silently, and a negative one would make
+  // the block show LESS than it will be charged — the one direction this whole
+  // change exists to remove.
+  //
+  // 🔴 `isInteger`, NOT JUST `isFinite` — BUZZ IS WHOLE AND THE TYPE DOES NOT SAY
+  // SO. `additionalCostBuzz: number` accepts a fraction, and today's only caller
+  // passes `computation.feeBuzz`, an integer by construction — so the constraint
+  // is true by accident of the caller, which is exactly the kind of guarantee
+  // that stops being true when a second caller appears. Checked here rather than
+  // documented, because the wrong outcome is a fractional Buzz price on the wire
+  // with nothing objecting. (`isInteger` implies `isFinite`, which is why that
+  // leg is gone rather than kept alongside.)
+  const additional = extra?.additionalCostBuzz;
+  const total =
+    typeof orchestratorTotal === 'number' &&
+    typeof additional === 'number' &&
+    Number.isInteger(additional) &&
+    additional > 0
+      ? orchestratorTotal + additional
+      : orchestratorTotal;
   const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   // #3520 — prefer the CALLER-SUPPLIED record (the submit/estimate reply, where
   // the request's own collector is still in scope and is authoritative for this
@@ -201,14 +247,20 @@ export function snapshotFromWorkflow(
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
   return {
-    // A whatif/estimate workflow has no orchestrator id. The block SDK's
-    // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
-    // workflowId is an empty string, so an `''` here silently strands the
-    // ESTIMATE_RESULT reply until the 120s transport timeout (the block then
-    // falls back to a "≤ budget" cost). Emit a non-empty sentinel so estimate
-    // replies validate; the block treats estimate results as a cost quote only
-    // and never polls on this id (the request is correlated by requestId, not
-    // workflowId). Submit always carries a real id, so it is unaffected.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key before the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today and this fallback is currently
+    // unreachable. It is kept as a defensive floor because the orchestrator's
+    // OpenAPI declares `id` optional-and-nullable with
+    // `DefaultIgnoreCondition=WhenWritingNull`, so a future regression would
+    // silently OMIT the field rather than error. The floor must be non-empty:
+    // the block SDK's inbound validator (isValidWorkflowSnapshot) DROPS any
+    // snapshot whose workflowId is an empty string, so an `''` here would
+    // silently strand the ESTIMATE_RESULT reply until the 120s transport
+    // timeout (the block then falls back to a "≤ budget" cost). The block
+    // treats estimate results as a cost quote only and never polls on this id
+    // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),

@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { sAddWithExpireGe } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
@@ -8,6 +9,7 @@ import {
   waitForApplyJob,
 } from '~/server/services/blocks/apps-pipeline.service';
 import {
+  DEV_TUNNEL_SESSION_BUZZ_CAP,
   fingerprintSshPublicKey,
   generateDevHostLabel,
   isValidDevHost,
@@ -55,7 +57,7 @@ export const DEV_TUNNEL_HARD_SECONDS = 8 * 60 * 60; // 8h (design §9)
 /** Per-dev-session cumulative Buzz ceiling (backstop over the block-token
  *  DEV_BUZZ_BUDGET_CAP + the untouched per-user daily cap). Bounds a runaway
  *  local submit loop within ONE dev session. Conservative default. */
-export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
+export { DEV_TUNNEL_SESSION_BUZZ_CAP };
 
 /** A route whose backing session record is CONFIRMED-ABSENT is only reaped once
  *  its k8s object is older than this. Closes the create-before-persist race:
@@ -72,6 +74,22 @@ const sessionKey = (sessionId: string) => `${SYS_PREFIX}:session:${sessionId}` a
 const hostKey = (host: string) => `${SYS_PREFIX}:host:${host}` as const;
 const userBlockKey = (userId: number, blockId: string) =>
   `${SYS_PREFIX}:user:${userId}:${blockId}` as const;
+/**
+ * A SET of the blockIds a user currently has a tunnel for.
+ *
+ * 🔴 EXISTS SO A BAN CAN ENUMERATE THEM. An EPHEMERAL (unsubmitted) app has no
+ * `AppBlock` row, no publish request and no listing — the live tunnel session is the
+ * ONLY server-side record that the app exists at all — and its page token
+ * (`page_ephemeral-<blockId>`, `dev: true`, 4h) is held by the AUTHOR, i.e. exactly the
+ * publisher a ban is meant to cut off. `userBlockKey` can answer "is THIS pair live"
+ * but cannot list a user's pairs, and the alternative was a cluster-wide `SCAN` inside
+ * the ban fan-out, which Bulk Ban would multiply. See
+ * `blocks/publisher-ban-revocation.service.ts`.
+ *
+ * Carries the same hard-TTL as every other key here, refreshed on each add, so a member
+ * missed by teardown cannot outlive the session it names by more than that window.
+ */
+const userTunnelIndexKey = (userId: number) => `${SYS_PREFIX}:user-index:${userId}` as const;
 const spendKey = (sessionId: string) => `${SYS_PREFIX}:spend:${sessionId}` as const;
 
 /** Label every rendered k8s object carries so the reaper + teardown can sweep by
@@ -82,6 +100,8 @@ const DEV_TUNNEL_SESSION_LABEL = 'civitai.com/dev-tunnel-session';
 // ---------------------------------------------------------------------------
 // Record shapes
 // ---------------------------------------------------------------------------
+
+export type DevTunnelDeclaredAuth = 'block-token' | 'oauth';
 
 export type DevTunnelSessionRecord = {
   sessionId: string;
@@ -104,6 +124,8 @@ export type DevTunnelSessionRecord = {
    *  defense-in-depth. ABSENT on an old-CLI session → treated as `[]` (read-only,
    *  no spend). */
   grantedScopes?: string[];
+  /** The local manifest's `auth`, as the CLI read it; absent on an older CLI. */
+  declaredAuth?: DevTunnelDeclaredAuth;
   /** Last browser-activity marker (unix seconds), refreshed by the forwardAuth
    *  gate on each successful ENTRY-document hit (F3). The reaper reaps a session
    *  idle past DEV_TUNNEL_IDLE_SECONDS. ABSENT on a never-visited tunnel → the
@@ -317,7 +339,10 @@ function manifestOpts(host: string, sessionId: string): DevTunnelManifestOpts {
  *  deletes routes by label selector, not by name). Used by the Job, Middleware, and
  *  IngressRoute names so they all agree. */
 export function sessionResourceSuffix(sessionId: string): string {
-  return sessionId.replace(/[^a-z0-9-]/gi, '-').toLowerCase().slice(0, 40);
+  return sessionId
+    .replace(/[^a-z0-9-]/gi, '-')
+    .toLowerCase()
+    .slice(0, 40);
 }
 
 /** DNS-1123 Job name for a session's route-apply Job. */
@@ -463,9 +488,13 @@ export async function renderDevTunnelRoute(host: string, sessionId: string): Pro
 
   // Re-rendering the same session must restart the apply — delete a same-name Job
   // first (404 is fine). This is a Job DELETE, which the web-pod SA CAN do.
-  await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`, {
-    method: 'DELETE',
-  }).then(async (r) => {
+  await k8sFetch(
+    target,
+    `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}?propagationPolicy=Background`,
+    {
+      method: 'DELETE',
+    }
+  ).then(async (r) => {
     if (!r.ok && r.status !== 404) {
       const body = await r.text().catch(() => '');
       throw new Error(`dev-tunnel pre-delete apply Job ${r.status}: ${body.slice(0, 200)}`);
@@ -726,6 +755,7 @@ export type StartDevTunnelParams = {
    *  ownership + flags; these scopes are NOT an authz input — they are clamped to
    *  the tunnel allowlist and re-gated at the mint. Omitted/absent → read-only. */
   declaredScopes?: string[];
+  declaredAuth?: DevTunnelDeclaredAuth;
 };
 
 export type StartDevTunnelResult = {
@@ -793,6 +823,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
     declaredScopes,
     grantedScopes,
+    ...(params.declaredAuth === 'oauth' || params.declaredAuth === 'block-token'
+      ? { declaredAuth: params.declaredAuth }
+      : {}),
     // Seed the idle marker at mint so a never-visited tunnel still idle-reaps
     // (createdAt fallback in the reaper covers an absent field too).
     lastActivityAt: created,
@@ -820,6 +853,36 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     }),
   ]);
 
+  // Best-effort, and deliberately AFTER the state above: the index only makes a ban
+  // able to find this tunnel, so any failure here must degrade revocation COVERAGE
+  // rather than fail a developer's tunnel start.
+  //
+  // 🔴 ONE ATOMIC EVAL, NOT `sAdd` + `expire`. This was written as that pair inside a
+  // single swallowing catch, which `sAddWithExpireGe`'s own docblock calls racy: a
+  // failure between the two — a sentinel failover is the documented case on this exact
+  // client, see `packages/civitai-redis/src/sys-inflight.ts` — lands the SADD and drops
+  // the EXPIRE, leaving a TTL-LESS set that then accumulates every blockId this user
+  // ever tunnels. Every later ban would emit `page_ephemeral-<blockId>` for all of them,
+  // and the index's own TTL guarantee below would be false. The EVAL form makes
+  // "member added, no TTL" unreachable, and its EXPIRE is a FLOOR (GE) so a concurrent
+  // start cannot shorten the set beneath a member that needs it.
+  //
+  // 🔴 try/catch, NOT a trailing `.catch()`. A rejected promise is only one of the ways
+  // this can fail — if the client ever lacks the method, the CALL throws synchronously
+  // and a `.catch()` attached to its result never runs, so the throw escapes and takes
+  // the tunnel start with it. That is the opposite of what this block is for, and it is
+  // the shape that broke the dev-tunnel suite the moment these lines were added.
+  try {
+    await sAddWithExpireGe(
+      sysRedis,
+      userTunnelIndexKey(params.userId),
+      params.blockId,
+      DEV_TUNNEL_HARD_SECONDS
+    );
+  } catch {
+    // A ban may not be able to see this tunnel; the tunnel itself is unaffected.
+  }
+
   recordDevTunnelMint();
   // eslint-disable-next-line no-console
   console.log(
@@ -836,7 +899,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   return {
     sessionId,
     host,
-    url: `${(env.NEXTAUTH_URL ?? 'https://civitai.com').replace(/\/$/, '')}/apps/dev/${params.blockId}`,
+    url: `${(env.NEXTAUTH_URL ?? 'https://civitai.com').replace(/\/$/, '')}/apps/dev/${
+      params.blockId
+    }`,
     expiresAt: hardExpiresAt,
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
     // R1: hand the CLI the sish host pubkey to pin. Empty when unconfigured (the
@@ -859,6 +924,13 @@ async function teardownSession(
     sysRedis.del(userBlockKey(session.userId, session.blockId)).catch(() => {}),
     sysRedis.del(spendKey(session.sessionId)).catch(() => {}),
   ]);
+  // Same reasoning as the add site: a try/catch, so a MISSING method (a synchronous
+  // throw) is swallowed as well as a rejection. An index write must never break teardown.
+  try {
+    await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
+  } catch {
+    // The member ages out with the index's TTL.
+  }
   recordDevTunnelTeardown(reason);
   // eslint-disable-next-line no-console
   console.log(
@@ -888,11 +960,36 @@ export async function stopDevTunnel(userId: number, sessionId: string): Promise<
  *  blockId). */
 export async function stopDevTunnelForUserBlock(userId: number, blockId: string): Promise<boolean> {
   // The user-block index stores a BARE sessionId string (not JSON).
-  const sessionId = await withSysReadDeadline(
-    sysRedis.get(userBlockKey(userId, blockId))
-  ).catch(() => null);
+  const sessionId = await withSysReadDeadline(sysRedis.get(userBlockKey(userId, blockId))).catch(
+    () => null
+  );
   if (!sessionId || typeof sessionId !== 'string') return false;
   return stopDevTunnel(userId, sessionId);
+}
+
+/**
+ * The blockIds this user currently has tunnels for.
+ *
+ * 🔴 READ BY THE BAN WRITER, AND IT DELIBERATELY DOES NOT CROSS-CHECK EACH MEMBER
+ * against `getActiveDevTunnel`. The consumer turns each id into a revocation marker: a
+ * STALE member costs one harmless Redis `SET` under an id no token carries, while a
+ * dropped LIVE member leaves a banned author's 4h token authenticating. The two errors
+ * are not symmetric, so this errs wide. Anything stale ages out with the set's TTL.
+ *
+ * ⚠️ Tunnels started BEFORE this index shipped are not in it. They age out with
+ * `DEV_TUNNEL_HARD_SECONDS`; until then a ban cannot see them.
+ *
+ * Fails to an EMPTY LIST on a Redis error — the ban must not be failable by this read.
+ * That is a coverage gap, not a refusal, and it matches how every other leg of the ban
+ * fan-out degrades.
+ */
+export async function listActiveDevTunnelBlockIds(userId: number): Promise<string[]> {
+  try {
+    const members = await withSysReadDeadline(sysRedis.sMembers(userTunnelIndexKey(userId)));
+    return Array.isArray(members) ? members.filter((m): m is string => typeof m === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Resolve the active dev-tunnel session for a (user, block), for the SSR route +
@@ -901,9 +998,9 @@ export async function getActiveDevTunnel(
   userId: number,
   blockId: string
 ): Promise<DevTunnelSessionRecord | null> {
-  const sessionId = await withSysReadDeadline(
-    sysRedis.get(userBlockKey(userId, blockId))
-  ).catch(() => null);
+  const sessionId = await withSysReadDeadline(sysRedis.get(userBlockKey(userId, blockId))).catch(
+    () => null
+  );
   if (!sessionId || typeof sessionId !== 'string') return null;
   const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
   // Cross-check ownership + freshness (fail-closed on a stale/foreign index).

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EnvModule from '../env';
 
 // Behavioral coverage for the fan-out worker (closes G1 from the 2026-07-03 coverage audit). The sibling
 // poll-loop.test.ts only asserts the PENDING_CLAIM_QUERY *string*; this suite exercises the actual fan-out
@@ -57,7 +58,12 @@ vi.mock('../lib/server/metrics', () => ({
   writePoolActive: { set: vi.fn() },
 }));
 
-vi.mock('../env', () => ({ signalsEndpoint: 'http://signals.test' }));
+vi.mock('../env', async (importOriginal) => ({
+  ...(await importOriginal<typeof EnvModule>()),
+  signalsEndpoint: 'http://signals.test',
+  // Push stays off in this suite — dispatchPush is covered by push.test.ts.
+  pushEnabled: false,
+}));
 
 import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';

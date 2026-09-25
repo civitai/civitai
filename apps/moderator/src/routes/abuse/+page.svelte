@@ -28,6 +28,21 @@
   // detector finding 40 and acting on 2 is the normal, healthy shape, and a total alone hides it.
   const actionedLabel = (actioned: number, total: number) =>
     total === 0 ? '—' : `${num(actioned)} of ${num(total)}`;
+
+  /**
+   * How much of a run a MODERATOR has ruled on — the column that says which runs still need
+   * attention.
+   *
+   * 🔴 IT IS NOT "Acted on". That column is the DETECTOR's own self-report and reads a permanent
+   * "0 of N" for every shadow-mode detector, so a board of forty runs offered no way to tell the
+   * reviewed ones from the untouched ones.
+   *
+   * 🔴 `null` RENDERS AS AN EM DASH, NEVER AS ZERO. It means this deployment has no verdict columns
+   * — nothing here has been ruled because nothing CAN be — and a "0 of 40" would present a missing
+   * capability as a backlog somebody could work through.
+   */
+  const ruledLabel = (ruled: number | null, total: number) =>
+    ruled === null || total === 0 ? '—' : `${num(ruled)} of ${num(total)}`;
 </script>
 
 <header class="page-header">
@@ -81,7 +96,8 @@
           <TableHead>Detector</TableHead>
           <TableHead>Run</TableHead>
           <TableHead>Findings</TableHead>
-          <TableHead>Acted on</TableHead>
+          <TableHead>Acted on (detector)</TableHead>
+          <TableHead>Reviewed (moderator)</TableHead>
           <TableHead>Summary</TableHead>
         </TableRow>
       </TableHeader>
@@ -94,7 +110,19 @@
             </TableCell>
             <TableCell>{num(run.findingCount)}</TableCell>
             <TableCell>{actionedLabel(run.actionedCount, run.findingCount)}</TableCell>
-            <TableCell class="max-w-xl">{run.summary ?? ''}</TableCell>
+            <TableCell>{ruledLabel(run.ruledCount, run.findingCount)}</TableCell>
+            <!-- Same opt-in as the run page's reason cell: `TableCell`'s `whitespace-nowrap` is
+                 wrong for prose, and a one-line summary overruns the width this `max-w-xl` asks
+                 for. -->
+            <!-- An em dash, matching the two count columns beside it. A blank cell reads as a
+                 rendering failure next to two that spell their absence out.
+                 🔴 `||`, NOT `??`: the wire contract admits an EMPTY summary — `summary` is
+                 `z.string().max(2_000).nullish()` with no `.min(1)`, while the `action` field beside
+                 it carries `.min(1)` against exactly this defect. `??` passes `''` straight through
+                 and the cell goes blank again. No producer sends one today; the contract is what
+                 decides whether it can. -->
+            <TableCell class="max-w-xl break-words whitespace-normal">{run.summary || '—'}</TableCell
+            >
           </TableRow>
         {/each}
       </TableBody>

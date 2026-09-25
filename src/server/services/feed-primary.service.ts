@@ -1,7 +1,10 @@
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
+  CURSOR_UNPARSED,
+  DEEP_OFFSET,
   encodeFeedCursor,
   fetchFeedAnswer,
   mapSearchInputToFeedQuery,
@@ -24,6 +27,31 @@ export function reasonLabel(reason: string) {
 }
 const count = (outcome: string, reason = '') =>
   requestCounter.inc({ outcome, reason: reasonLabel(reason) });
+
+const UNMAPPED_LOG_INTERVAL_MS = 60_000;
+const unmappedLoggedAt = new Map<string, number>();
+function logUnmapped(reason: string, input: CapturableSearchInput) {
+  const now = Date.now();
+  if (now - (unmappedLoggedAt.get(reason) ?? 0) < UNMAPPED_LOG_INTERVAL_MS) return;
+  unmappedLoggedAt.set(reason, now);
+  const keys = Object.keys(input).filter((k) => {
+    const v = input[k];
+    return v !== undefined && v !== null && v !== false && !(Array.isArray(v) && !v.length);
+  });
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'feed-primary-unmapped',
+      reason,
+      keys,
+      sort: input.sort,
+      period: input.period,
+      cursorType: typeof input.cursor,
+      cursor: reason === 'cursor:unparsed' ? String(input.cursor).slice(0, 80) : undefined,
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
@@ -113,7 +141,9 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
-    count('unmapped', mapping.reason);
+    const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
+    count(rejected ? 'rejected' : 'unmapped', mapping.reason);
+    if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;

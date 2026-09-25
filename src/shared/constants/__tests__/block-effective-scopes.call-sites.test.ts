@@ -42,6 +42,8 @@ const MODULE_SPECIFIER = "from '~/shared/constants/block-effective-scopes'";
 
 /** Every module that is expected to consume the shared rule, and what it uses it for. */
 const EXPECTED_CALL_SITES: Record<string, string> = {
+  'server/middleware/block-scope.middleware.ts':
+    'resolveHubTokenClaims — the scope ceiling for a hub-issued OAuth token on a block route',
   'server/routers/blocks.router.ts':
     'grantScopes consent ceiling + getInstallConfig install-time disclosure',
   'server/services/block-registry.service.ts': 'recordInstallConsent grant set',

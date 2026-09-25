@@ -31,6 +31,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         graph={audioHub}
         name="model"
         render={({ value, meta, onChange }) => {
+          const defaultModelId = meta?.defaultModelId;
           return (
             <>
               <ResourceSelectInput
@@ -41,6 +42,12 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
                 modalTitle="Select Model"
                 options={meta?.options}
                 allowRemove={false}
+                allowSwap={!meta?.modelLocked}
+                onRevertToDefault={
+                  defaultModelId
+                    ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                    : undefined
+                }
               />
               {meta?.versions ? (
                 <VersionGroupSelector

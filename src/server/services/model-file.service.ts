@@ -425,7 +425,7 @@ export const getRecentTrainingData = async ({
   const where: Prisma.ModelFileWhereInput[] = [
     { type: 'Training Data' },
     { dataPurged: false },
-    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId } } },
+    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId, deletedAt: null } } },
   ];
 
   if (filters.hasLabels === true || filters.labelType !== null) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getEcosystemDisplayItems,
+  isBaseModelGenerationSupported,
   isSelfHostedEcosystem,
 } from '@civitai/shared/basemodel.constants';
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
@@ -11,11 +12,13 @@ import { getEcosystemStates as getFormEcosystemStates } from '~/shared/form-grap
 import { createEcosystemStepInput } from '../ecosystems';
 import { createFormGraphStepInput } from '../form-graph';
 import { formatStepOutputs, type GenerationHandlerCtx } from '../orchestration-new.service';
+import { mapDataToGraphInput } from '../legacy-metadata-mapper';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 const ext: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 1 },
   user: { isMember: true, tier: 'gold' },
-  flags: { yue2Generator: true },
+  flags: {},
   gateRules: [],
 };
 const ctx = {
@@ -48,6 +51,31 @@ describe.each([
     dispatch: createFormGraphStepInput,
   },
 ])('YuE2 $name', ({ parse, dispatch }) => {
+  it('opens the official model card in the music generator with v2 selected', () => {
+    const model = {
+      id: 3337846,
+      baseModel: 'YuE2',
+      model: { id: 2944296, type: 'Checkpoint' },
+    };
+    const params = mapDataToGraphInput({}, [model as GenerationResource]);
+    expect(params).toMatchObject({ ecosystem: 'YuE2', workflow: 'txt2music' });
+    const parsed = parse({ ...params, model, prompt: 'A hopeful synth-pop song' });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).toMatchObject({
+      ecosystem: 'YuE2',
+      workflow: 'txt2music',
+      model: { id: 3337846 },
+      yue2MusicMode: 'simple',
+    });
+  });
+
+  it('selects the official v2 checkpoint when starting from the ecosystem picker', () => {
+    const parsed = parse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data).toMatchObject({ model: { id: 3337846 } });
+  });
+
   async function submit(overrides: Record<string, unknown> = {}) {
     const parsed = parse({ ...base, ...overrides });
     if (!parsed.success) throw new Error(JSON.stringify(parsed.errors));
@@ -186,11 +214,33 @@ describe.each([
 });
 
 describe.each([getEcosystemStates, getFormEcosystemStates])('YuE2 visibility', (getStates) => {
-  it('requires its feature flag and preserves the other music generators', () => {
-    const hidden = getStates('txt2music', { ...ext, flags: {} });
-    expect(hidden.hiddenEcosystems).toContain('YuE2');
-    expect(hidden.compatibleEcosystems).toEqual(expect.arrayContaining(['Ace', 'MiniMaxMusic3']));
-    expect(getStates('txt2music', ext).compatibleEcosystems).toContain('YuE2');
+  it('is offered without a feature flag alongside the other music generators', () => {
+    const states = getStates('txt2music', { ...ext, flags: {} });
+    expect(states.hiddenEcosystems).not.toContain('YuE2');
+    expect(states.compatibleEcosystems).toEqual(
+      expect.arrayContaining(['Ace', 'MiniMaxMusic3', 'YuE2'])
+    );
+  });
+
+  // Gate rules are the ONLY mechanism that hides an ecosystem now that the
+  // feature-flag gate is gone, and this is the only absolute assertion that the
+  // fold runs at all — deleting it from both lanes otherwise breaks no test.
+  it('hides an ecosystem a gate rule targets, and leaves its siblings alone', () => {
+    const gateRules = [
+      {
+        id: 'hide-yue2',
+        name: '',
+        availableTo: 'nobody' as const,
+        presentation: 'hidden' as const,
+        ecosystems: ['YuE2'],
+        workflows: [],
+        modelVersionIds: [],
+      },
+    ];
+    const gated = getStates('txt2music', { ...ext, gateRules });
+    expect(gated.hiddenEcosystems).toContain('YuE2');
+    expect(gated.compatibleEcosystems).not.toContain('YuE2');
+    expect(gated.compatibleEcosystems).toEqual(expect.arrayContaining(['Ace', 'MiniMaxMusic3']));
   });
 });
 
@@ -211,4 +261,6 @@ it('offers YuE2 in the audio picker and applies self-hosted availability', () =>
     expect.arrayContaining([expect.objectContaining({ key: 'YuE2', compatible: true })])
   );
   expect(isSelfHostedEcosystem('YuE2')).toBe(true);
+  expect(isBaseModelGenerationSupported('YuE2', 'Checkpoint')).toBe(true);
+  expect(isBaseModelGenerationSupported('YuE2', 'LORA')).toBe(false);
 });

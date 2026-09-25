@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as HuggingFaceService from '~/server/services/huggingface.service';
+import type * as ModelFileController from '~/server/controllers/model-file.controller';
 import type * as S3Utils from '~/utils/s3-utils';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -13,6 +14,8 @@ const {
   mockComplete,
   mockAbort,
   mockDeleteObject,
+  mockObjectExists,
+  mockCreateModelFile,
   mockUrlsSafeToDelete,
 } = vi.hoisted(() => ({
   mockReadRange: vi.fn(),
@@ -22,6 +25,8 @@ const {
   mockComplete: vi.fn(),
   mockAbort: vi.fn(),
   mockDeleteObject: vi.fn(),
+  mockObjectExists: vi.fn(),
+  mockCreateModelFile: vi.fn(),
   mockUrlsSafeToDelete: vi.fn(),
 }));
 
@@ -52,7 +57,13 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   completeMultipartUpload: mockComplete,
   abortMultipartUpload: mockAbort,
   deleteObject: mockDeleteObject,
+  objectExists: mockObjectExists,
   urlsSafeToDelete: mockUrlsSafeToDelete,
+}));
+
+vi.mock('~/server/controllers/model-file.controller', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelFileController>()),
+  createModelFile: mockCreateModelFile,
 }));
 
 import { parseHuggingFaceRepo, suggestFileType } from '~/server/services/huggingface.service';
@@ -69,6 +80,12 @@ import {
   processImportQueue,
   renameGroup,
   retryImport,
+  attachIfRequested,
+  detachImport,
+  enqueueImports,
+  getImportStatus,
+  IMPORT_SYSTEM_USER_ID,
+  reuseStoredFile,
 } from '~/server/services/huggingface-import.service';
 
 /** The width under test. Passed in rather than read from config, so these tests do not depend on
@@ -205,7 +222,8 @@ describe('processImportQueue', () => {
     // no other assertion in this file fails if the write is deleted.
     const partWrites = dbWrite.huggingFaceImport.updateMany.mock.calls
       .map(([arg]) => arg)
-      .filter((arg: { data: Record<string, unknown> }) => 'parts' in arg.data);
+      // Not the completion write, which also clears `parts` — these are the per-part heartbeats.
+      .filter((arg: { data: Record<string, unknown> }) => 'parts' in arg.data && !arg.data.status);
     expect(partWrites).toHaveLength(3);
     for (const write of partWrites) {
       expect(write.data.heartbeatAt).toBeInstanceOf(Date);
@@ -732,9 +750,9 @@ describe('unattached and delete', () => {
   });
 
   it('scopes the lookup to the owner when the caller is not a moderator', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(null);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(null);
     await expect(deleteImport({ id: 1, userId: 7, isModerator: false })).rejects.toThrow();
-    expect(dbRead.huggingFaceImport.findFirst.mock.calls[0][0].where).toMatchObject({
+    expect(dbWrite.huggingFaceImport.findFirst.mock.calls[0][0].where).toMatchObject({
       id: 1,
       userId: 7,
     });
@@ -742,7 +760,7 @@ describe('unattached and delete', () => {
 
   it('refuses to delete an import that is still attached', async () => {
     // Deleting here would leave a model version pointing at bytes that no longer exist.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Completed',
       bucket: 'b',
@@ -760,7 +778,7 @@ describe('unattached and delete', () => {
     // The two-click data-loss path: detach leaves the ModelFile alive, so the row lands in the
     // unattached list while a published version is still serving those exact bytes. `modelFileId`
     // is a local pointer; the refcount over `ModelFile.url` is the global one.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Completed',
       bucket: 'b2-transfer-bucket',
@@ -779,7 +797,7 @@ describe('unattached and delete', () => {
   });
 
   it('refuses to delete a transfer that is still running', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Transferring',
       bucket: 'b',
@@ -793,7 +811,7 @@ describe('unattached and delete', () => {
   });
 
   it('frees the object before removing the row', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Completed',
       // Deliberately NOT what the env resolves to: these bytes are in the bucket the transfer used.
@@ -828,7 +846,7 @@ describe('unattached and delete', () => {
   it('aborts a live multipart before forgetting the row', async () => {
     // A Failed row can still hold an uploadId, and the row is the only handle that can free the
     // parts already uploaded — which are billed until something aborts them.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Failed',
       bucket: 'b2-transfer-bucket',
@@ -852,7 +870,7 @@ describe('unattached and delete', () => {
   });
 
   it("aborts through a client that reaches the row's bucket", async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Failed',
       bucket: 'other-bucket',
@@ -882,7 +900,7 @@ describe('unattached and delete', () => {
   };
 
   it('keeps the row, and says why, when the multipart abort fails', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
     mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
 
     const result = await deleteImport({ id: 1, userId: 7, isModerator: true });
@@ -899,7 +917,7 @@ describe('unattached and delete', () => {
     Object.assign(new Error(message), { name });
 
   it('treats an upload that is already gone as removed, and needs no force', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
     mockAbort.mockRejectedValue(storageError('NoSuchUpload'));
     mockDeleteObject.mockRejectedValue(storageError('NoSuchKey'));
     dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
@@ -911,7 +929,7 @@ describe('unattached and delete', () => {
   it('tries the other backend when the first does not know the bucket', async () => {
     // The row records only a bucket name; picking the wrong backend for it is how "The specified
     // bucket does not exist" happened. The upload is still there, on the other backend.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
     mockAbort
       .mockRejectedValueOnce(storageError('NoSuchBucket', 'The specified bucket does not exist'))
       .mockResolvedValueOnce(undefined);
@@ -923,7 +941,7 @@ describe('unattached and delete', () => {
   });
 
   it('asks for force only when no backend could remove it', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
     mockAbort.mockRejectedValue(
       storageError('NoSuchBucket', 'The specified bucket does not exist')
     );
@@ -936,7 +954,7 @@ describe('unattached and delete', () => {
   });
 
   it('does not try another backend for an error that is not about the bucket', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
     mockAbort.mockRejectedValue(storageError('AccessDenied'));
 
     await deleteImport({ id: 1, userId: 7, isModerator: true });
@@ -945,7 +963,7 @@ describe('unattached and delete', () => {
   });
 
   it('deletes a stuck row when forced, even though its upload cannot be aborted', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
     mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
     dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
 
@@ -959,7 +977,7 @@ describe('unattached and delete', () => {
 
   it('never forces past a model file that still points at the object', async () => {
     // Force overrides storage cleanup only — deleting live bytes is not a cleanup failure.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       ...stuckRow,
       status: 'Completed',
       uploadId: null,
@@ -976,7 +994,7 @@ describe('unattached and delete', () => {
 
   it('keeps the row when the object could not be deleted', async () => {
     // Otherwise the bytes stay in the bucket with nothing left pointing at them.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Completed',
       bucket: 'b2-transfer-bucket',
@@ -1014,7 +1032,7 @@ describe('retryImport', () => {
   const reset = () => dbWrite.huggingFaceImport.update.mock.calls[0]?.[0].data;
 
   it('restarts from nothing, in the backend configured now', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
     mockAbort.mockResolvedValue(undefined);
 
     expect(await retryImport({ id: 1, userId: 7, isModerator: true })).toEqual({ ok: true });
@@ -1032,7 +1050,7 @@ describe('retryImport', () => {
 
   it('asks before restarting when the old upload cannot be aborted', async () => {
     // Resuming the upload that cannot be aborted is what kept an import failing forever.
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
     mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
 
     const result = await retryImport({ id: 1, userId: 7, isModerator: true });
@@ -1042,7 +1060,7 @@ describe('retryImport', () => {
   });
 
   it('restarts from nothing when forced past a failed abort', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
     mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
 
     const result = await retryImport({ id: 1, userId: 7, isModerator: true, force: true });
@@ -1052,7 +1070,7 @@ describe('retryImport', () => {
   });
 
   it('refuses a transfer that is still running', async () => {
-    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...failedRow, status: 'Transferring' });
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ ...failedRow, status: 'Transferring' });
 
     const result = await retryImport({ id: 1, userId: 7, isModerator: true, force: true });
 
@@ -1124,5 +1142,430 @@ describe('renameGroup', () => {
     dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(renameGroup(input)).rejects.toThrow(/No files found in group/);
+  });
+});
+
+describe('auto-attach', () => {
+  const completedRow = (overrides: Record<string, unknown> = {}) => ({
+    attachVersionId: 42,
+    attachType: 'VAE',
+    userId: 7,
+    modelFileId: null,
+    status: 'Completed',
+    ...overrides,
+  });
+
+  /** What `buildAttachInput` reads once `attachIfRequested` decides to go ahead. */
+  const attachableRow = () => ({
+    id: 1,
+    filename: 'flux1-dev.safetensors',
+    url: 'https://s3.example/model-bucket/model/7/flux.safetensors',
+    key: 'model/7/flux.safetensors',
+    bucket: 'model-bucket',
+    sizeBytes: BigInt(2048),
+    status: 'Completed',
+    modelFileId: null,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockObjectExists.mockResolvedValue(true);
+    mockCreateModelFile.mockResolvedValue({ id: 900 });
+  });
+
+  it('records where each file is headed, per file', async () => {
+    dbWrite.huggingFaceImport.createMany.mockResolvedValue({ count: 2 });
+    dbWrite.huggingFaceImport.findMany.mockResolvedValue([
+      { id: 1, filename: 'a.safetensors', status: 'Queued', modelFileId: null },
+      { id: 2, filename: 'ae.safetensors', status: 'Queued', modelFileId: null },
+    ]);
+
+    const result = await enqueueImports({
+      repo: {
+        repo: 'owner/name',
+        revision: 'abc123',
+        files: [
+          { path: 'a.safetensors', size: 10, sha256: null },
+          { path: 'ae.safetensors', size: 20, sha256: null },
+        ],
+      } as never,
+      paths: ['a.safetensors', 'ae.safetensors'],
+      userId: 7,
+      attach: { modelVersionId: 42, types: { 'a.safetensors': 'Model', 'ae.safetensors': 'VAE' } },
+    });
+
+    const queued = dbWrite.huggingFaceImport.createMany.mock.calls[0][0].data;
+    expect(queued).toMatchObject([
+      { filename: 'a.safetensors', attachVersionId: 42, attachType: 'Model' },
+      { filename: 'ae.safetensors', attachVersionId: 42, attachType: 'VAE' },
+    ]);
+    // The QUERY, not the mock's answer: dropping `revision` returns another revision's rows, and
+    // the caller is handed import ids belonging to different bytes.
+    expect(dbWrite.huggingFaceImport.findMany).toHaveBeenCalledWith({
+      where: {
+        repo: 'owner/name',
+        revision: 'abc123',
+        filename: { in: ['a.safetensors', 'ae.safetensors'] },
+      },
+      select: {
+        id: true,
+        filename: true,
+        status: true,
+        modelFileId: true,
+        attachVersionId: true,
+      },
+    });
+    expect(result.rows.map((row) => row.id)).toEqual([1, 2]);
+  });
+
+  it('leaves the attach columns null when nobody asked for one', async () => {
+    dbWrite.huggingFaceImport.createMany.mockResolvedValue({ count: 1 });
+    dbWrite.huggingFaceImport.findMany.mockResolvedValue([]);
+
+    await enqueueImports({
+      repo: {
+        repo: 'owner/name',
+        revision: 'abc123',
+        files: [{ path: 'a.safetensors', size: 10, sha256: null }],
+      } as never,
+      paths: ['a.safetensors'],
+      userId: 7,
+    });
+
+    expect(dbWrite.huggingFaceImport.createMany.mock.calls[0][0].data[0]).toMatchObject({
+      attachVersionId: null,
+      attachType: null,
+    });
+  });
+
+  it('creates the model file and claims the import', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(completedRow());
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachableRow());
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile).toHaveBeenCalledTimes(1);
+    const [call] = mockCreateModelFile.mock.calls;
+    expect(call[0].input).toMatchObject({ modelVersionId: 42, type: 'VAE', sizeKB: 2 });
+    // 🔴 Moderator, deliberately: the job has no session, and every entry point that can set
+    // `attachVersionId` is moderator-gated.
+    expect(call[0]).toMatchObject({ userId: 7, isModerator: true });
+    expect(dbWrite.huggingFaceImport.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, modelFileId: null },
+      data: { modelFileId: 900, modelVersionId: 42 },
+    });
+  });
+
+  it('does nothing for an import nobody pointed at a version', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(
+      completedRow({ attachVersionId: null, attachType: null })
+    );
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the version is known but the type is not', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(completedRow({ attachType: null }));
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for an import that is already attached', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(completedRow({ modelFileId: 900 }));
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
+  });
+
+  it('does nothing until the transfer has finished', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(
+      completedRow({ status: 'Transferring' })
+    );
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
+  });
+
+  it('records the reason and does not throw when the attach fails', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(completedRow());
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachableRow());
+    mockCreateModelFile.mockRejectedValue(new Error('Model version not found'));
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(attachIfRequested(1)).resolves.toBeUndefined();
+
+    expect(dbWrite.huggingFaceImport.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, modelFileId: null },
+      data: { error: 'Attach failed: Model version not found' },
+    });
+  });
+
+  it('reports the created file when the import was claimed by someone else first', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(completedRow());
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachableRow());
+    // Zero rows updated means the link lost the race; the file exists regardless, and its id is the
+    // only way to find it again.
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 0 });
+
+    await attachIfRequested(1);
+
+    const errorWrite = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg)
+      .find((arg: { data: Record<string, unknown> }) => typeof arg.data.error === 'string');
+    expect(errorWrite?.data.error).toContain('900');
+  });
+});
+
+describe('the transfer attaches what it finished', () => {
+  /** The attach read, distinct from the pre-complete cancel re-read that precedes it. */
+  const attachRow = {
+    attachVersionId: 42,
+    attachType: 'VAE',
+    userId: 7,
+    modelFileId: null,
+    status: 'Completed',
+  };
+
+  const attachable = {
+    id: 1,
+    filename: 'ae.safetensors',
+    url: 'https://s3.example/model-bucket/model/7/ae.safetensors',
+    key: 'model/7/ae.safetensors',
+    bucket: 'model-bucket',
+    sizeBytes: BigInt(2048),
+    status: 'Completed',
+    modelFileId: null,
+  };
+
+  function completingRow() {
+    // The cancel re-read first, then the attach read — one mock serves both, and a single
+    // `mockResolvedValue` would short-circuit the attach on `status !== 'Completed'`.
+    dbWrite.huggingFaceImport.findUnique
+      .mockResolvedValueOnce({ status: 'Transferring', claimedBy: 'test-worker' })
+      .mockResolvedValue(attachRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachable);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateMultipart.mockResolvedValue('upload-1');
+    mockUploadPart.mockImplementation(
+      async ({ partNumber }: { partNumber: number }) => `etag-${partNumber}`
+    );
+    mockComplete.mockResolvedValue(undefined);
+    mockReadRange.mockImplementation(
+      async ({ start, end }: { start: number; end: number }) => new Uint8Array(end - start + 1)
+    );
+    mockObjectExists.mockResolvedValue(true);
+    mockCreateModelFile.mockResolvedValue({ id: 900 });
+    dbWrite.huggingFaceImport.update.mockResolvedValue({});
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+    dbWrite.huggingFaceImport.findMany.mockResolvedValue([]);
+  });
+
+  it('attaches the file the moment its last part lands', async () => {
+    // 🔴 The one line wiring auto-attach into the transfer. Everything else about the feature can be
+    // right and nothing will ever attach if this call goes.
+    claimOnce(baseRow({ sizeBytes: BigInt(PART_SIZE) }));
+    completingRow();
+
+    await processImportQueue({
+      deadline: Date.now() + 5000,
+      worker: 'test-worker',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
+
+    expect(mockCreateModelFile).toHaveBeenCalledTimes(1);
+    expect(mockCreateModelFile.mock.calls[0][0].input).toMatchObject({
+      modelVersionId: 42,
+      type: 'VAE',
+    });
+  });
+
+  it('does not attach when the completion write lost the row', async () => {
+    // The negative control for the test above: a cancel or another run took it, so the attach is
+    // theirs to do.
+    claimOnce(baseRow({ sizeBytes: BigInt(PART_SIZE) }));
+    completingRow();
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 0 });
+
+    await processImportQueue({
+      deadline: Date.now() + 5000,
+      worker: 'test-worker',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
+
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
+  });
+
+  it('sweeps up a file a dead run left unattached, under a claim', async () => {
+    dbWrite.huggingFaceImport.findMany.mockResolvedValue([{ id: 99 }]);
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(attachRow);
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 99 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachable);
+    dbWrite.$queryRaw.mockResolvedValue([]);
+
+    await processImportQueue({
+      deadline: Date.now() + 5000,
+      worker: 'test-worker',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
+
+    expect(dbWrite.huggingFaceImport.findMany).toHaveBeenCalledWith({
+      // A recorded failure is usually permanent, so the sweep only ever picks up crash gaps.
+      where: {
+        status: 'Completed',
+        modelFileId: null,
+        attachVersionId: { not: null },
+        error: null,
+      },
+      select: { id: true },
+      orderBy: { completedAt: 'asc' },
+      take: 1,
+    });
+    // 🔴 Claimed first. Two runs passing the same read both mint a `ModelFile`, and the loser's is
+    // orphaned — `linkImportToFile` picks a winner only after both files exist.
+    expect(dbWrite.huggingFaceImport.updateMany).toHaveBeenCalledWith({
+      where: { id: 99, modelFileId: null, claimedBy: null },
+      data: { claimedBy: 'test-worker', claimedAt: expect.any(Date) },
+    });
+    expect(mockCreateModelFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('files a tooling import under the system user', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({ ...attachRow, userId: null });
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1 });
+    dbWrite.huggingFaceImport.findUniqueOrThrow.mockResolvedValue(attachable);
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await attachIfRequested(1);
+
+    expect(mockCreateModelFile.mock.calls[0][0].userId).toBe(IMPORT_SYSTEM_USER_ID);
+    // The value, not just the symbol: it is the `userId` segment of the stored object's key.
+    expect(IMPORT_SYSTEM_USER_ID).toBe(-1);
+  });
+
+  it('ends the auto-attach intent when a moderator detaches the file', async () => {
+    // 🔴 Otherwise the sweep matches the row on the next tick and re-attaches it — minting a SECOND
+    // `ModelFile`, since detach leaves the first one alive.
+    dbWrite.huggingFaceImport.findFirst.mockResolvedValue({ id: 1, modelFileId: 900 });
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await detachImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(dbWrite.huggingFaceImport.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, modelFileId: { not: null } },
+      data: {
+        modelFileId: null,
+        modelVersionId: null,
+        attachVersionId: null,
+        attachType: null,
+      },
+    });
+  });
+});
+
+describe('getImportStatus', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('emits sizes JSON can carry', async () => {
+    // `res.json()` throws on a BigInt, so dropping the conversion 500s every poll — the API's only
+    // progress surface.
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({
+      id: 1,
+      status: 'Transferring',
+      sizeBytes: BigInt(2048),
+      bytesTransferred: BigInt(1024),
+    });
+
+    const status = await getImportStatus(1);
+
+    expect(JSON.stringify(status)).toContain('"sizeBytes":2048');
+    expect(JSON.stringify(status)).toContain('"bytesTransferred":1024');
+  });
+
+  it('reports nothing for an id that does not exist', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(null);
+
+    await expect(getImportStatus(1)).resolves.toBeNull();
+  });
+});
+
+describe('reuseStoredFile', () => {
+  const input = {
+    repo: 'owner/name',
+    revision: 'abc123',
+    path: 'text_encoders/t5.safetensors',
+    sizeBytes: 4096,
+    sha256: 'DEADBEEF',
+    storedUrl: 'https://s3.example/model-bucket/model/9/t5.safetensors',
+    modelVersionId: 42,
+    type: 'Text Encoder' as const,
+    userId: 7,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateModelFile.mockResolvedValue({ id: 900 });
+    dbWrite.huggingFaceImport.create.mockResolvedValue({ id: 5 });
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('attaches the bytes we already hold, without queueing a transfer', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(null);
+
+    const result = await reuseStoredFile(input);
+
+    expect(result).toEqual({ importId: 5, modelFileId: 900 });
+    expect(mockCreateModelFile.mock.calls[0][0].input).toMatchObject({
+      modelVersionId: 42,
+      type: 'Text Encoder',
+      name: 't5.safetensors',
+      url: input.storedUrl,
+      sizeKB: 4,
+    });
+    // Queued for nothing: the row records the provenance and is Completed on arrival.
+    expect(dbWrite.huggingFaceImport.create.mock.calls[0][0].data).toMatchObject({
+      status: 'Completed',
+      url: input.storedUrl,
+      attachVersionId: 42,
+      attachType: 'Text Encoder',
+    });
+  });
+
+  it('claims no storage of its own', async () => {
+    // 🔴 These bytes are another file's object. A `key` here would let `deleteImport` reach for
+    // something this import never stored.
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue(null);
+
+    await reuseStoredFile(input);
+
+    const { data } = dbWrite.huggingFaceImport.create.mock.calls[0][0];
+    expect(data.bucket).toBeUndefined();
+    expect(data.key).toBeUndefined();
+  });
+
+  it('does not import the same file twice', async () => {
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({ id: 5, modelFileId: 900 });
+
+    const result = await reuseStoredFile(input);
+
+    expect(result).toEqual({ importId: 5, modelFileId: 900 });
+    expect(dbWrite.huggingFaceImport.create).not.toHaveBeenCalled();
+    expect(mockCreateModelFile).not.toHaveBeenCalled();
   });
 });

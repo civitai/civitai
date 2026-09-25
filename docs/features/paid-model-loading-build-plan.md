@@ -33,7 +33,9 @@ for the mechanism, and ours should name the product.
 
 ### `src/server/services/resource-load.service.ts` — new
 
-The only module that talks to the orchestrator about residency. Everything else goes through it.
+The only module that talks to the orchestrator about a resource's load state. Everything else goes
+through it. The exception is the fleet-wide loaded list, which `sync-generator-loaded-resources` reads
+through `getLoadedResourceAirs` to maintain `ModelVersion.generatorLoaded`.
 
 | Function | Does |
 | --- | --- |
@@ -46,9 +48,10 @@ Notes that decide the implementation:
 
 - 🔴 `submitResourceLoad` **must call `assertWorkflowOwner`** on the result. It is a user-token
   billable submit, which is exactly what `no-unguarded-billable-submit` guards.
-- The queue returns AIRs; the site thinks in version ids. Map back via `parseAIRSafe` — **not**
-  `parseAIR`, which throws — and **drop anything that does not resolve** rather than rendering a
-  half-known row.
+- The queue returns AIRs; the site thinks in version ids. Map back via `versionIdFromAir`
+  (`src/shared/utils/air.ts`) — **not** `parseAIR`, which throws, and not bare `parseAIRSafe`, which
+  resolves a non-civitai AIR with an integer version to an unrelated ModelVersion — and **drop
+  anything that does not resolve** rather than rendering a half-known row.
 - Do not reuse `modelVersionResourceCache` — day-long TTL, and it discards `availability`.
 
 ### `src/server/utils/resource-air.ts` — new (extraction, not new logic)
@@ -367,5 +370,6 @@ Recorded so they do not creep back in:
 - **A size→price table.** The orchestrator prices; the CTA reads `whatIf`.
 - **A residency countdown.** The 48-hour policy is real (the spine controllers enforce it), but no
   API reports when a given resource's window ends, so there is nothing to count down from.
-- **Load state in search.** Deliberately deferred.
+- **Load state in search results.** Deliberately deferred. (The index carries
+  `versions.generatorLoaded`; no surface reads it.)
 - **Queue-position boosting.** Out for v1.

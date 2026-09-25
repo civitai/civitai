@@ -519,6 +519,7 @@ export interface PageBlockHostProps {
   /** The minted, viewer-scoped page token (no money scopes). */
   token: string | null;
   expiresAt: string | null;
+  tokenKind?: 'block' | 'oauth';
   /** #3/#6: the page manifest's declared scopes. The host posts the ACTUAL
    *  granted set (declared − missingScopes) in BLOCK_INIT so the block sees the
    *  scopes the JWT actually carries (e.g. `apps:storage:*`), not `[]`. */
@@ -708,6 +709,7 @@ export function PageBlockHost({
   slug,
   token,
   expiresAt,
+  tokenKind,
   declaredScopes,
   missingScopes,
   needsConsent,
@@ -1108,7 +1110,13 @@ export function PageBlockHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+  const { send, onMessage, nack, reportNoToken } = usePostMessage({
+    iframeRef,
+    expectedOrigin,
+    opaqueOrigin,
+    host: 'PageBlockHost',
+    appBlockId,
+  });
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
   // Emitted exactly once per mount at the BLOCK_READY transition (see the
@@ -1181,6 +1189,7 @@ export function PageBlockHost({
         // about the capabilities it holds.
         scopes: grantedScopes,
         expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
       },
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
@@ -1207,6 +1216,7 @@ export function PageBlockHost({
       blockInstanceId,
       buildContext,
       expiresAt,
+      tokenKind,
       grantedScopes,
       token,
       viewer,
@@ -1397,9 +1407,14 @@ export function PageBlockHost({
   useEffect(() => {
     if (!initSentRef.current || !token) return;
     send('TOKEN_REFRESH', {
-      token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
+      token: {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
+      },
     });
-  }, [token, expiresAt, grantedScopes, send]);
+  }, [token, expiresAt, tokenKind, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
   //
@@ -1430,12 +1445,28 @@ export function PageBlockHost({
   // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
-      if (!token || !initSentRef.current) return;
+      if (!token || !initSentRef.current) {
+        // 🔴 COUNTED, NOT ANSWERED — and IframeHost does the identical thing, per
+        // the "MUST STAY IN STEP" note above. `REQUEST_TOKEN` is in
+        // `BRIDGE_NACK_EXEMPT`: `isValidTokenRefreshResponse` requires a valid
+        // `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is dropped at
+        // the block's own trust boundary and the block would hang exactly as
+        // before while we believed we had fixed it. Closing the block-facing half
+        // needs a failure variant in the SDK message union; the operator-facing
+        // half lands now.
+        reportNoToken('REQUEST_TOKEN');
+        return;
+      }
       const requestId =
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
+      const wrapped = {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
+      };
       if (requestId === undefined) {
         send('TOKEN_REFRESH', { token: wrapped });
         return;
@@ -1443,7 +1474,7 @@ export function PageBlockHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, grantedScopes, send, onMessage]);
+  }, [token, expiresAt, tokenKind, grantedScopes, send, onMessage, reportNoToken]);
 
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
@@ -1917,7 +1948,9 @@ export function PageBlockHost({
   const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
   const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
   // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
-  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // `useViewer()` hook and is the host-mediated TWIN of GET /blocks/me, not its
+  // successor — both stay; the REST route is the default surface for a viewer
+  // read (see "Direction" under Routes in docs/features/app-blocks.md). A
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
@@ -1985,7 +2018,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('SUBMIT_WORKFLOW', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       // Idempotency (item 2, gen half): forward the OPTIONAL client key to the
       // server so a lost-response retry collapses to one Buzz charge. Host-first:
@@ -2008,7 +2045,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, submitWorkflowMutation, reviewNack, nack]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -2024,7 +2061,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        if (!raw || typeof raw.requestId !== 'string') return;
+        if (!token) {
+          nack('ESTIMATE_WORKFLOW', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           const { snapshot } = await estimateWorkflowMutation.mutateAsync({
@@ -2038,7 +2079,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, estimateWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, estimateWorkflowMutation, reviewNack, nack]);
 
   // POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS.
   useEffect(() => {
@@ -2058,9 +2099,12 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.workflowId !== 'string' ||
-          raw.workflowId.length === 0 ||
-          !token
+          raw.workflowId.length === 0
         ) {
+          return;
+        }
+        if (!token) {
+          nack('POLL_WORKFLOW', raw.requestId);
           return;
         }
         const requestId = raw.requestId;
@@ -2076,7 +2120,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, pollWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, pollWorkflowMutation, reviewNack, nack]);
 
   // CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED. Ownership is
   // enforced server-side by the viewer's orchestrator token.
@@ -2097,9 +2141,12 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.workflowId !== 'string' ||
-          raw.workflowId.length === 0 ||
-          !token
+          raw.workflowId.length === 0
         ) {
+          return;
+        }
+        if (!token) {
+          nack('CANCEL_WORKFLOW', raw.requestId);
           return;
         }
         const requestId = raw.requestId;
@@ -2115,7 +2162,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, cancelWorkflowMutation, reviewNack, nack]);
 
   // QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows → APP_WORKFLOWS_RESULT. The
   // app's OWN tag-scoped generation subqueue (host page token + SERVER-forced
@@ -2137,6 +2184,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('QUERY_APP_WORKFLOWS');
           send('APP_WORKFLOWS_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2157,7 +2205,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewNack]);
+  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewNack, reportNoToken]);
 
   // CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow → CANCEL_APP_WORKFLOW_RESULT.
   // FAIL-CLOSED server-side (ownership + app-tag guard — the orchestrator by-id
@@ -2184,6 +2232,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('CANCEL_APP_WORKFLOW');
           send('CANCEL_APP_WORKFLOW_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2202,7 +2251,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewNack]);
+  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewNack, reportNoToken]);
 
   // PUBLISH_GENERATION_OUTPUTS → blocks.publishGenerationOutputs → PUBLISH_RESULT.
   // Turn the app's OWN workflow outputs into bare, real-scanned public images.
@@ -2221,6 +2270,7 @@ export function PageBlockHost({
         if (!req) return; // missing requestId / workflowId — drop, nothing to publish
         const { requestId, workflowId, imageIndexes } = req;
         if (!token) {
+          reportNoToken('PUBLISH_GENERATION_OUTPUTS');
           send('PUBLISH_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2261,7 +2311,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, appName, publishGenerationOutputsMutation]);
+  }, [onMessage, send, token, appName, publishGenerationOutputsMutation, reportNoToken]);
 
   // GET_IMAGES_BY_IDS → blocks.getImagesByIds → IMAGES_RESULT. Per-viewer gated
   // read of the shared-grid image ids. The SERVER self-binds the viewer + applies
@@ -2284,6 +2334,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_IMAGES_BY_IDS');
           send('IMAGES_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2299,7 +2350,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getImagesByIdsMutation]);
+  }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK
@@ -2309,7 +2360,9 @@ export function PageBlockHost({
   // BOUND `sub` server-side (never client input). REQUEST-style ⇒ every path MUST
   // post a reply or the block hangs to its SDK timeout.
   //
-  // DEVIATION from the workflow handlers (which DROP a `!token` request silently):
+  // This was the FIRST handler to answer a `!token` request instead of dropping
+  // it. Every handler now does (`nack` / `reportNoToken`); this one keeps its own
+  // reply shape. The note is kept because the rationale below is still the reason:
   // a balance read is a pure UI affordance, not a spend — dropping it strands the
   // hook with no data and no error. So on a null token we reply with the ERROR
   // variant (`error: <message>`) instead of dropping, mirroring the storage
@@ -2325,6 +2378,7 @@ export function PageBlockHost({
         return;
       }
       if (!token) {
+        reportNoToken('GET_BUZZ_BALANCE');
         send('BUZZ_BALANCE_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2339,7 +2393,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
   // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
@@ -2358,6 +2412,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_BUZZ_TRANSACTIONS');
           send('BUZZ_TRANSACTIONS_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2381,7 +2436,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_ACCOUNTS → blocks.getMyBuzzAccounts → BUZZ_ACCOUNTS_RESULT. All-pool
   // balances (spendable + creator payout pools). Same host-mediated + consent +
@@ -2395,6 +2450,7 @@ export function PageBlockHost({
         return;
       }
       if (!token) {
+        reportNoToken('GET_BUZZ_ACCOUNTS');
         send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2409,7 +2465,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack]);
+  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack, reportNoToken]);
 
   // GET_DAILY_COMPENSATION → blocks.getMyDailyCompensation → DAILY_COMPENSATION_RESULT.
   // Per-modelVersion generation earnings for the month of `date`. Same contract.
@@ -2425,6 +2481,7 @@ export function PageBlockHost({
           return;
         }
         if (!token) {
+          reportNoToken('GET_DAILY_COMPENSATION');
           send('DAILY_COMPENSATION_RESULT', { requestId, error: 'no block token' });
           return;
         }
@@ -2445,12 +2502,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack]);
+  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack, reportNoToken]);
 
   // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
-  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
-  // GET /blocks/me REST call, so a page block can render the viewer's name /
-  // gate write UI on their moderation status without holding the scope directly.
+  // that backs the SDK `useViewer()` hook — the host-mediated TWIN of the
+  // GET /blocks/me REST call (not its successor; both stay, and the REST route
+  // is the default surface for this read), so a page block can render the
+  // viewer's name / gate write UI on their moderation status without holding
+  // the scope directly.
   // Host-MEDIATED: the iframe never sees a session; the identity is derived from
   // the token's SELF-BOUND `sub` server-side (never client input), gated on the
   // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page
@@ -2463,6 +2522,7 @@ export function PageBlockHost({
       if (!raw || typeof raw.requestId !== 'string') return;
       const requestId = raw.requestId;
       if (!token) {
+        reportNoToken('GET_VIEWER');
         send('VIEWER_RESULT', { requestId, error: 'no block token' });
         return;
       }
@@ -2477,7 +2537,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getMyViewerMutation]);
+  }, [onMessage, send, token, getMyViewerMutation, reportNoToken]);
 
   // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
   // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
@@ -2629,7 +2689,8 @@ export function PageBlockHost({
   // token is a PROP here (string | null) — PageBlockHost does NOT use
   // useBlockToken (that's the page route). apps.storage.* require a non-null
   // blockToken (z.string().min(1)); a null token means the block never rendered a
-  // usable surface, so each handler drops a `!token` request without replying
+  // usable surface. Every handler now ANSWERS a `!token` request (see `nack` /
+  // `reportNoToken` in usePostMessage) rather than dropping it
   // (consistent with the #2618 workflow handlers — the mint path surfaces
   // no_token/error terminal states above). A missing requestId is likewise
   // dropped without replying (mirrors IframeHost).
@@ -2655,8 +2716,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_GET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.storage.get.fetch(
@@ -2677,7 +2741,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // APP_STORAGE_SET → apps.storage.set → APP_STORAGE_SET_RESULT.
   useEffect(() => {
@@ -2694,8 +2758,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_SET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await storageSetMutation.mutateAsync({
@@ -2721,7 +2788,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack, nack]);
 
   // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
   useEffect(() => {
@@ -2739,8 +2806,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('APP_STORAGE_DELETE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await storageDeleteMutation.mutateAsync({
@@ -2766,7 +2836,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack, nack]);
 
   // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
   useEffect(() => {
@@ -2789,7 +2859,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('APP_STORAGE_LIST', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
@@ -2825,7 +2899,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
   useEffect(() => {
@@ -2843,7 +2917,11 @@ export function PageBlockHost({
         }
         return;
       }
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('APP_STORAGE_QUOTA', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const result = await trpcUtils.apps.storage.getQuota.fetch(
@@ -2869,7 +2947,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, reviewNack, nack]);
 
   // ── App Blocks SHARED (cross-user / app-global) storage bridge (Phase 2b) ──
   //
@@ -2910,7 +2988,11 @@ export function PageBlockHost({
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
-      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      if (!raw || typeof raw.requestId !== 'string') return;
+      if (!token) {
+        nack('SHARED_LIST', raw.requestId);
+        return;
+      }
       const requestId = raw.requestId;
       try {
         const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
@@ -2951,15 +3033,18 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_GET_COUNT → apps.shared.getCount → SHARED_GET_COUNT_RESULT (query).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_GET_COUNT',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_GET_COUNT', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.getCount.fetch(
@@ -2976,14 +3061,18 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_GET_COUNTS → apps.shared.getCounts → SHARED_GET_COUNTS_RESULT (query).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; keys?: unknown } | undefined>(
       'SHARED_GET_COUNTS',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys) || !token) return;
+        if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys)) return;
+        if (!token) {
+          nack('SHARED_GET_COUNTS', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.getCounts.fetch(
@@ -3000,7 +3089,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_APPEND → apps.shared.append → SHARED_APPEND_RESULT (mutation).
   useEffect(() => {
@@ -3021,10 +3110,13 @@ export function PageBlockHost({
           !raw ||
           typeof raw.requestId !== 'string' ||
           typeof raw.value !== 'object' ||
-          raw.value === null ||
-          !token
+          raw.value === null
         )
           return;
+        if (!token) {
+          nack('SHARED_APPEND', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           // Server zod-validates {title, body?}; a malformed value rejects
@@ -3043,7 +3135,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode, nack]);
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
@@ -3076,10 +3168,13 @@ export function PageBlockHost({
           typeof raw.requestId !== 'string' ||
           typeof raw.key !== 'string' ||
           typeof raw.value !== 'object' ||
-          raw.value === null ||
-          !token
+          raw.value === null
         )
           return;
+        if (!token) {
+          nack('SHARED_UPDATE', raw.requestId);
+          return;
+        }
         const requestId = raw.requestId;
         try {
           // Server zod-validates {title, body?}; a malformed value rejects
@@ -3099,7 +3194,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode, nack]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
@@ -3113,8 +3208,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_VOTE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
@@ -3128,7 +3226,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode, nack]);
 
   // SHARED_UNVOTE → apps.shared.unvote → SHARED_UNVOTE_RESULT (mutation).
   useEffect(() => {
@@ -3142,8 +3240,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_UNVOTE', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedUnvoteMutation.mutateAsync({
@@ -3160,7 +3261,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode, nack]);
 
   // SHARED_WITHDRAW → apps.shared.withdraw → SHARED_WITHDRAW_RESULT (mutation).
   useEffect(() => {
@@ -3177,8 +3278,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_WITHDRAW', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await sharedWithdrawMutation.mutateAsync({
@@ -3195,7 +3299,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode, nack]);
 
   // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
   // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
@@ -3206,8 +3310,11 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_GET',
       async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_GET', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         try {
           const result = await trpcUtils.apps.shared.get.fetch(
@@ -3244,7 +3351,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils]);
+  }, [onMessage, send, token, trpcUtils, nack]);
 
   // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
   // reports a posted row for mod review; the server already trust-gates + rate-
@@ -3269,8 +3376,11 @@ export function PageBlockHost({
           }
           return;
         }
-        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        if (!token) {
+          nack('SHARED_REPORT', raw.requestId);
           return;
+        }
         const requestId = raw.requestId;
         const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
         try {
@@ -3285,7 +3395,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode, nack]);
 
   // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
   // state) so increment/decrement never re-renders and the count is read
@@ -3337,6 +3447,7 @@ export function PageBlockHost({
         }
         // id variant — route through the gated per-viewer read.
         if (!token) {
+          reportNoToken('SAVE_IMAGE');
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'no block token' });
           return;
         }
@@ -3365,7 +3476,7 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, getImagesByIdsMutation]);
+  }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
 
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
@@ -4048,6 +4159,7 @@ export function PageBlockHost({
         emit: (payload) => send('CREATE_POST_RESULT', payload),
       });
       if (!token) {
+        reportNoToken('CREATE_POST_FROM_APP');
         settlement.reply({ error: 'no block token' });
         return;
       }
@@ -4137,6 +4249,7 @@ export function PageBlockHost({
     appName,
     previewPostFromAppMutation,
     createPostFromAppMutation,
+    reportNoToken,
   ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the

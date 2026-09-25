@@ -2309,6 +2309,16 @@ const REDIS_KEYS_UNPREFIXED = {
     // is exactly what let this line claim 15min while dev tokens lived hours.
     // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
+    // 🔴 BAN REVOCATIONS LIVE IN THEIR OWN KEYSPACE, AND THAT SEPARATION IS THE
+    // SECURITY CONTROL — not a tidiness choice. When both causes shared one key,
+    // `toggleEnabled(false)` (an ordinary model owner, reachable over tRPC) wrote
+    // that key with no cause and DOWNGRADED a ban marker to an install marker;
+    // `toggleEnabled(true)` then cleared it, and the banned publisher's pre-ban
+    // token was accepted again. A value-guarded write would have been a
+    // read-modify-write with a race in it; separate keys make the downgrade
+    // unrepresentable — the install path cannot address this key at all.
+    // Same TTL, same semantics, checked together by BlockRevocation.isRevoked.
+    REVOKED_INSTANCE_BAN: 'blocks:revoked-instance-ban',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
@@ -2359,6 +2369,8 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+    /** Per-user daily web-push quota counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },

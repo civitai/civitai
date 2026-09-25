@@ -16,12 +16,20 @@ export type AddFromImportsModalProps = {
   modelType?: ModelType | null;
   /** From the `FilesProvider` that opened this — a dialog mounts outside that subtree. */
   adoptFiles: (modelFileIds: number[]) => Promise<void>;
+  /**
+   * File types the picker may assign, scoping it to the section that opened it. Left out, every
+   * type is offered — which lets the weights picker also mint a VAE into the components section.
+   */
+  types?: readonly ModelFileType[];
+  title?: string;
 };
 
 export default function AddFromImportsModal({
   modelVersionId,
   modelType,
   adoptFiles,
+  types,
+  title = 'Add from Hugging Face imports',
 }: AddFromImportsModalProps) {
   const dialog = useDialogContext();
   const [filter, setFilter] = useState('');
@@ -97,7 +105,7 @@ export default function AddFromImportsModal({
   const groups = byGroup(data);
 
   return (
-    <Modal {...dialog} title="Add from Hugging Face imports" size="lg" centered>
+    <Modal {...dialog} title={title} size="lg" centered>
       <Stack gap="md">
         <TextInput
           placeholder="Filter by group name"
@@ -129,7 +137,7 @@ export default function AddFromImportsModal({
               </Group>
 
               {group.items.map((row) => {
-                const options = getModelFileTypeOptions(row.filename, { modelType });
+                const options = getModelFileTypeOptions(row.filename, { modelType, types });
                 const type = selection[row.id] ?? null;
                 const suggested = options.find((option) => option.value === row.suggestedType);
                 return (

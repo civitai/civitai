@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-08-26
+lastmod: 2026-09-22
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.red](https://civitai.red), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -111,7 +111,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - (c) Illegal or violent activities, including:
 
-  - Depictions of incest, including sexual activity between immediate or close biological family members.
+  - Depictions of incest, including sexual activity between immediate or close biological family members. This applies to human and humanoid characters, including humanized versions of non-human characters.
   - Child abuse, exploitation, or endangerment.
   - Rape, sexual violence, or domestic abuse.
   - Depictions of human death, brutal violence, or graphic injuries.
@@ -122,43 +122,40 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
   - Vomit.
+  - Flatulence.
 
-- (e) Content depicting sexual activity while in a mind-altered state, including;
-
-  - Being drunk, drugged, under hypnosis, or mind control.
-
-- (f) The depiction of the following bodily excretions and related content, regardless of context;
+- (e) The depiction of the following bodily excretions and related content, regardless of context;
 
   - Urine.
-  - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
+  - Feces (scat, coprophagia, object or lifeform being ejected from an anus, etc.)
   - Menstruation.
   - Smegma.
   - Diapers.
 
-- (g) Self-harm, body image disorders, or promotion of dangerous behavior:
+- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
 
   - Cutting, mutilation, or suicide themes.
   - Depictions of anorexia, bulimia, or other disordered eating.
 
-- (h) Content that promotes hate, harm, or extremist ideologies, including:
+- (g) Content that promotes hate, harm, or extremist ideologies, including:
 
   - Hate speech or imagery targeting groups or individuals.
   - Extremist propaganda or incitement to violence.
 
-- (i) Misleading or impersonated content:
+- (h) Misleading or impersonated content:
 
   - Falsely labeled content claiming to be from another creator.
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (j) Nudity-manipulating tools or AI workflows:
+- (i) Nudity-manipulating tools or AI workflows:
   - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
 
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
 
 In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
 
-- (k) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
+- (j) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
 
   - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 

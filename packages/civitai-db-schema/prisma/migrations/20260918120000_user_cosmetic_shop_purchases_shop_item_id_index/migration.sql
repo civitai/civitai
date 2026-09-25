@@ -1,0 +1,85 @@
+-- Index the FK every displayed sold count aggregates over.
+--
+-- `UserCosmeticShopPurchases` has had one index since it was created: the primary
+-- key on `buzzTransactionId`. Nothing indexes `shopItemId`, which is what every
+-- `_count: { select: { purchases: true } }` groups by.
+--
+-- Prisma resolves a relation `_count` as a LEFT JOIN to a subquery that aggregates
+-- the WHOLE related table once, not a correlated per-row subquery. So the cost is
+-- one aggregate per QUERY, independent of page size. Measured on the replica
+-- 2026-09-18: 1,190 buffers, ~14 ms, over a 9.3 MB heap that is permanently cached
+-- (every buffer in every plan is a `shared hit`, zero reads).
+--
+-- WHERE THIS INDEX PAYS: the single-item reads. `WHERE si.id = $1` still scans all
+-- 40,600 rows to count one item's, because the planner pushes the qual into the
+-- subquery and then has nothing to use. `getPackDetail` (publicProcedure,
+-- unauthenticated) and `getShopItemById` (protectedProcedure, consumed by the
+-- moderator item edit page) both do this.
+--
+-- WHAT IT DOES NOT FIX: the aggregate is O(table), not O(page), so cost grows with
+-- the table regardless of indexing. The durable fix is a `groupBy` restricted to the
+-- page's ids -- and that is BLOCKED ON THIS INDEX: measured, a groupBy over 60 ids
+-- is still a whole-table seq scan today, and becomes a ~9-cost index-only nested
+-- loop with the index. `withSoldCount` in src/server/selectors/cosmetic-shop.selector.ts
+-- is the seam. The heaviest per-call consumer is `getCommunityCosmetics`, which under
+-- MostPopular carries TWO of these aggregates -- one for the value, one for the
+-- `orderBy` -- confirmed by reading Prisma's emitted SQL, and Postgres does not dedupe
+-- them. `getShop` runs one aggregate but at higher volume.
+--
+-- 🔴 NOT APPROVED. DO NOT APPLY THIS YET.
+--
+-- This file is committed for review and history, not as an instruction. The owner's
+-- answer to the request to apply it was: Prisma emits poor SQL here, so replace the
+-- query with raw SQL FIRST and re-measure -- the index may not be needed at all. That
+-- measurement has not been done as of this commit.
+--
+-- The doubled aggregate this header describes is a Prisma artifact, not a database
+-- necessity, which is what makes that the right order.
+--
+-- What is NOT in question is the single-item read: counting one item's rows by
+-- scanning 40,600 is a missing index rather than a bad query, and no rewrite fixes
+-- that. So the likely outcome is that this file survives with a smaller
+-- justification. Confirm with a measurement before anyone acts on it.
+--
+-- IF AND WHEN IT IS APPROVED: apply BEFORE the deploy. Not because a reader would
+-- 500 without it -- no column is added, which is why this is an index and not a
+-- `purchaseCount` column -- but so the single-item reads are not served at ~4 ms of
+-- pure scan each from the moment it lands. A slowdown, not a brownout. Apply to DEV
+-- too.
+--
+-- 🔴 APPLIED BY HAND. Feed this file to psql on STDIN so each statement runs in its
+-- own implicit transaction: `CONCURRENTLY` cannot run inside a transaction block and
+-- a multi-statement `-c` would wrap it in one. Takes SHARE UPDATE EXCLUSIVE, not
+-- ACCESS EXCLUSIVE -- it blocks neither reads nor writes.
+--
+-- 🔴 `IF NOT EXISTS` WILL SKIP A BROKEN INDEX. A cancelled CONCURRENTLY build leaves
+-- an INVALID index behind that is never used and never cleaned up, so a second run of
+-- this file reports success over it. Confirm validity, not completion:
+--
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--    WHERE indexrelid = '"UserCosmeticShopPurchases_shopItemId_idx"'::regclass;
+--   -- the embedded quotes matter: regclass::text renders a mixed-case identifier
+--   -- QUOTED, so comparing against the bare name silently matches nothing.
+--
+-- If false: DROP INDEX CONCURRENTLY IF EXISTS "UserCosmeticShopPurchases_shopItemId_idx";
+-- then run this file again.
+--
+-- 🔴 THE PLAN CHECK, AND WHICH PLAN TO RUN IT ON. Check the SINGLE-ITEM read
+-- (`WHERE si.id = $1`): it must go from a Seq Scan to an index scan of ANY kind on
+-- this index. A remaining Seq Scan there means invalid or missing -- that is the
+-- abort condition.
+--
+-- Do NOT judge it on a multi-row plan. Those DO change -- the planner flips the
+-- whole-table aggregate to an Index Only Scan (measured hypothetically, 1,592.80 ->
+-- 1,427.09) -- but it is ~10% of an estimate on a fully cached table with only 46% of
+-- pages all-visible, so expect the wall clock to read about the same before and after.
+-- The plan changing there is not a signal in either direction.
+--
+-- SHAPE: plain single-column, deliberately. `refunded` exists but is true on 40 rows,
+-- and the counts carry no `refunded` predicate, so a partial index would not be used.
+-- `INCLUDE` buys nothing: the aggregate is COUNT(*), so this is already index-only.
+-- The name is Prisma's own, matching `@@index([shopItemId])` in schema.full.prisma.
+SET statement_timeout = 0;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "UserCosmeticShopPurchases_shopItemId_idx"
+  ON "UserCosmeticShopPurchases" ("shopItemId");

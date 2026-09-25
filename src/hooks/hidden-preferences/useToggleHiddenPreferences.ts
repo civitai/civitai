@@ -32,6 +32,7 @@ export const useToggleHiddenPreferences = () => {
         await queryUtils.user.getLists.invalidate();
         await queryUtils.user.getList.invalidate();
       }
+      if (variables.kind === 'blockedUser') await queryUtils.user.getFollowsMe.invalidate();
     },
     onError: async (_error, _variables, context) => {
       const plan = planToggleRollback(context?.previous as any);

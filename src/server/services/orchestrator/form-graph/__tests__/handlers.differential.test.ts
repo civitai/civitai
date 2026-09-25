@@ -45,12 +45,56 @@ const VIDEO_INPUT = {
 
 /** Every input carries a seed so neither dispatcher reaches its RNG. */
 const CASES: Record<string, unknown>[] = [
+  { workflow: 'txt2img', ecosystem: 'Ming', prompt: 'a poster', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    resolution: '2K',
+    aspectRatio: '16:9',
+    outputFormat: 'png',
+    cfgScale: 2,
+    steps: 24,
+    negativePrompt: 'blurry',
+  },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    images: [IMAGE],
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.75 },
+    ],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'make it teal',
+    seed: 42,
+    images: [IMAGE],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'combine the references',
+    seed: 42,
+    images: [IMAGE, IMAGE, IMAGE],
+    resolution: '2K',
+    aspectRatio: '9:16',
+    cfgScale: 2,
+    steps: 30,
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.5 },
+    ],
+  },
+
   {
     workflow: 'txt2music',
     ecosystem: 'YuE2',
     prompt: 'A hopeful synth-pop song about sunrise',
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -64,7 +108,6 @@ const CASES: Record<string, unknown>[] = [
     steps: 80,
     duration: 60,
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -73,7 +116,6 @@ const CASES: Record<string, unknown>[] = [
     musicDescription: 'synth-pop',
     lyrics: '[verse] Morning light',
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -86,7 +128,6 @@ const CASES: Record<string, unknown>[] = [
     yue2Abc: 'X:1\nK:C\nC D E G |',
     duration: 90,
     steps: 50,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -97,7 +138,6 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     yue2Mode: 'off',
     yue2Abc: 'X:1\nK:C\nC D E G |',
-    expectFlags: { yue2Generator: true },
   },
 
   // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
@@ -335,6 +375,33 @@ const CASES: Record<string, unknown>[] = [
     resources: [{ id: 135, baseModel: 'Qwen', model: { type: 'LORA' }, strength: 0.6 }],
   },
   { workflow: 'img2img:edit', ecosystem: 'Qwen', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2img', ecosystem: 'Qwen21', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Qwen21',
+    prompt: 'a cat',
+    seed: 42,
+    resolution: '2K',
+    aspectRatio: '16:9',
+    negativePrompt: 'blurry',
+    cfgScale: 2.5,
+    steps: 37,
+    resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Qwen21', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Qwen21',
+    prompt: 'a cat',
+    seed: 42,
+    images: Array.from({ length: 10 }, () => IMAGE),
+    resolution: '2K',
+    aspectRatio: '16:9',
+    negativePrompt: 'blurry',
+    cfgScale: 2.5,
+    steps: 37,
+    resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+  },
   { workflow: 'txt2img', ecosystem: 'Qwen2', prompt: 'a cat', negativePrompt: 'blurry', seed: 42 },
   {
     workflow: 'txt2img',
@@ -707,7 +774,6 @@ const CASES: Record<string, unknown>[] = [
     texture: 'HD',
     pbr: true,
     faceLimit: 20000,
-    expectFlags: { tripoGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -717,7 +783,6 @@ const CASES: Record<string, unknown>[] = [
     hunyuanPrompt: 'shiny metal',
     hunyuanModelVersion: 'v2',
     hunyuanSteps: 45,
-    expectFlags: { hunyuan3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -725,7 +790,6 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     enablePbr: true,
-    expectFlags: { pixal3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -733,13 +797,12 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     shouldTexture: false,
-    expectFlags: { trellis2Generator: true },
   },
 ];
 
 async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<string, unknown>) {
-  // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
-  // in ext or the selection is hidden and falls back to the default
+  // meshy v7 needs its flag in ext or the selection is hidden and falls back
+  // to the default
   const ext = expectFlags
     ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
     : BASE;
@@ -804,6 +867,97 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
     for (const steps of [v1, v2]) {
       expect(steps).toHaveLength(1);
       expect(steps[0].input).toMatchObject({ engine: 'openai', model, operation: 'createImage' });
+    }
+  });
+
+  it('Qwen 2.1 creates 2K images through comfy with release-specific LoRAs', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '2K',
+      aspectRatio: '16:9',
+      cfgScale: 2.5,
+      steps: 37,
+      outputFormat: 'png',
+      images: [IMAGE],
+      resources: [{ id: 135, baseModel: 'Qwen 2.1', model: { type: 'LORA' }, strength: 0.6 }],
+    });
+    for (const steps of [v1, v2]) {
+      expect(steps).toHaveLength(1);
+      expect(steps[0].input).toMatchObject({
+        engine: 'comfy',
+        ecosystem: 'qwen',
+        model: '2.1',
+        operation: 'createImage',
+        width: 2048,
+        height: 1152,
+        cfgScale: 2.5,
+        steps: 37,
+        sampler: 'euler',
+        scheduler: 'simple',
+        outputFormat: 'png',
+        loras: { 'urn:air:test:135': 0.6 },
+      });
+      expect(steps[0].input).not.toHaveProperty('images');
+      expect(steps[0].input).not.toHaveProperty('resolution');
+      // The hosted default is what `model: '2.1'` already means to the orchestrator.
+      expect(steps[0].input).not.toHaveProperty('diffusionModel');
+    }
+  });
+
+  it('Qwen 2.1 sends ten references and resolution without read-only edit dimensions', async () => {
+    const images = Array.from({ length: 10 }, (_, i) => ({
+      ...IMAGE,
+      url: `https://example.com/${i}.png`,
+    }));
+    const { v1, v2 } = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '2K',
+      aspectRatio: '16:9',
+      images,
+    });
+    for (const steps of [v1, v2]) {
+      expect(steps).toHaveLength(1);
+      expect(steps[0].input).toMatchObject({
+        engine: 'comfy',
+        ecosystem: 'qwen',
+        model: '2.1',
+        operation: 'editImage',
+        resolution: 2048,
+        cfgScale: 1,
+        steps: 25,
+        images: images.map((image) => image.url),
+      });
+      expect(steps[0].input).not.toHaveProperty('width');
+      expect(steps[0].input).not.toHaveProperty('height');
+      expect(steps[0].input).not.toHaveProperty('diffusionModel');
+    }
+  });
+
+  // Fed straight to both dispatchers: the picker is model-locked, so the graph substitutes any
+  // other checkpoint back to the default and no parsed input can reach this branch. Without it
+  // the suite cannot tell "omitted for the default" from "never sent".
+  it('Qwen 2.1 names a non-default checkpoint as diffusionModel', async () => {
+    const data = {
+      workflow: 'txt2img',
+      ecosystem: 'Qwen21',
+      prompt: 'a teapot',
+      seed: 42,
+      resolution: '1K',
+      aspectRatio: { value: '1:1', width: 1024, height: 1024 },
+      model: { id: 424242, baseModel: 'Qwen 2.1', model: { type: 'Checkpoint' } },
+    } as unknown as GenerationData;
+
+    for (const steps of [
+      await createEcosystemStepInput(data, ctx),
+      await createFormGraphStepInput(data, ctx),
+    ]) {
+      expect(steps[0].input).toMatchObject({ diffusionModel: 'urn:air:test:424242' });
     }
   });
 

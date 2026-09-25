@@ -22,9 +22,10 @@ type BrowsingLevelInput = Omit<InputWrapperProps, 'children' | 'onChange'> & {
    */
   allowEmpty?: boolean;
   /**
-   * Shrink the chips so all of them still fit one row. The default row is full-size
-   * and overflows a 300px sidebar; wrapping instead leaves XXX alone on a second
-   * line, reading as though it were singled out.
+   * Shrink the chips so all of them still fit one row. Written for the 300px hub
+   * sidebar, which no longer renders this — the hub's edit modal uses it now, where
+   * the reason is the same: wrapping leaves XXX alone on a second line, reading as
+   * though it were singled out.
    */
   compact?: boolean;
 };
@@ -60,7 +61,8 @@ export function BrowsingLevelsInput({
 
   return (
     <Input.Wrapper {...props} error={props.error}>
-      <Group gap={compact ? 2 : 'xs'} mt={compact ? 4 : 'md'} wrap="nowrap">
+      {/* 2px read as one bar of five segments rather than five chips. */}
+      <Group gap={compact ? 6 : 'xs'} mt={compact ? 4 : 'md'} wrap="nowrap">
         {levels.map((level) => (
           <BrowsingLevelLabel
             key={level}

@@ -78,6 +78,7 @@ import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -732,14 +733,17 @@ function ImageDetailReactions({
       }}
     >
       {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          targetUserId={image.user.id}
-          disableBuzzTip={image.poi}
-        />
+        <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
+          <Reactions
+            entityId={image.id}
+            entityType="image"
+            reactions={image.reactions}
+            metrics={metrics}
+            metricsUnknown={image.stats?.statsUnknown}
+            targetUserId={image.user.id}
+            disableBuzzTip={image.poi}
+          />
+        </ImageReactorsPreview>
       )}
     </Metrics>
   );

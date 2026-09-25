@@ -297,9 +297,9 @@ export const serverSchema = z
     REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
 
     // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
-    // hot path (getImageMetricsObject). The @clickhouse/client default
-    // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would
-    // otherwise park ~30s and blow the SSR deadline (the surrounding try/catch
+    // hot path (getImageMetricsObject). The client's own `request_timeout` is
+    // 300000ms, so a saturated/cold-cache-miss metric read would otherwise park for
+    // MINUTES and blow the SSR deadline (the surrounding try/catch
     // CANNOT catch a hang). The CH metric query (entityMetricDailyAgg_v2) is
     // genuinely slow — ~4.6s p50 / ~11s p99 — so on a cold cache miss the timeout
     // fires and we fail SOFT to empty metrics, yielding TRANSIENT zeros. That
@@ -309,7 +309,7 @@ export const serverSchema = z
     // Default 3000ms — snappy SSR over correctness on the first cold render.
     // .int().positive() so a misconfigured 0 / negative fails fast at BOOT instead
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
-    // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
+    // when ms<=0 → the exact multi-minute hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
     // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
     // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
@@ -875,6 +875,39 @@ export const serverSchema = z
     S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
     S3_UPLOAD_B2_BUCKET: z.string().optional(),
     S3_UPLOAD_B2_REGION: z.string().optional(),
+    // Quarantine destination for model-file deletes that opt in (see
+    // `deleteModelFileObject`'s `quarantine` option). The object is copied here and
+    // only then removed from the source bucket, so this bucket's own retention rule
+    // — not the application — is what finally destroys the bytes.
+    //
+    // 🔴 UNSET IS A REFUSAL, NOT A FALLBACK. A caller that asked for quarantine and
+    // finds this unconfigured gets `quarantine-not-configured` and deletes nothing.
+    // Falling back to a plain delete would silently reinstate exactly the behaviour
+    // the option exists to replace, at the moment the operator is least likely to be
+    // watching for it.
+    //
+    // 🔴 THIS BUCKET MUST HAVE A RETENTION RULE AND MUST NOT HAVE VERSIONING. Nothing
+    // in this application ever deletes from it; if no lifecycle rule expires its
+    // contents, quarantine is an unbounded copy of everything ever deleted. And with
+    // versioning enabled, that rule would hide objects rather than remove them and the
+    // bucket would still grow without limit.
+    S3_UPLOAD_B2_QUARANTINE_BUCKET: z.string().optional(),
+    // 🔴 A SEPARATE CREDENTIAL, AND IT HAS TO BE ACCOUNT-WIDE — WHICH IS EXACTLY WHY IT IS NOT
+    // THE UPLOAD CREDENTIAL. A server-side copy reads one bucket and writes another in a single
+    // call, so one credential must be authorised for both; B2 pins a restricted key to exactly
+    // one bucket, so no bucket-scoped key can ever perform it. Rather than widen the key used by
+    // every model-file upload, download and presign from one bucket to the whole account, the
+    // wide credential is confined to the quarantine path and nothing else reads these.
+    //
+    // 🔴 Grant it FILE capabilities only — read/write/delete/list. It needs nothing that can
+    // create, delete or reconfigure a bucket, and nothing that can mint another key. It is
+    // account-wide in SCOPE out of necessity; it should not be account-wide in POWER.
+    //
+    // Endpoint and region are deliberately NOT duplicated — `getQuarantineS3Client` reuses
+    // `S3_UPLOAD_B2_ENDPOINT`/`_REGION`, because it is the same B2 account and a second copy of
+    // those values is a second thing to get wrong.
+    S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY: z.string().optional(),
+    S3_UPLOAD_B2_QUARANTINE_SECRET_KEY: z.string().optional(),
 
     // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
     S3_IMAGE_B2_ENDPOINT: z.string().optional(),
@@ -921,6 +954,7 @@ export const serverSchema = z
     BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
     BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
     BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: zc.booleanString.optional().default(false),
 
     // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
     // platform layer (PR previews without apps-pipeline wiring) still boot.

@@ -3,6 +3,7 @@ import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
+import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 
@@ -35,14 +36,18 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable
  *      token also has no `blockInstanceId` to key a revocation lookup on.
- *   2. REVOCATION — a Redis GET, so it is the cheap check and it runs before the DB
- *      read. It is also the one that responds to a user action (uninstall /
+ *   2. REVOCATION — two pipelined Redis GETs, so it is still the cheap check and it runs
+ *      before the DB read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
- *      🔴 NOT publisher ban, which this line claimed until 2026-09-16: no ban
- *      path writes a revocation marker. `revokeInstance` has exactly two
- *      production call sites — `uninstallFromModel` and `toggleEnabled(false)`,
- *      both in `block-registry.service.ts` — so a ban is NOT contained within
- *      seconds here; a banned publisher's live tokens run to natural `exp`.
+ *      🔴 A PUBLISHER BAN IS NOW ALSO CONTAINED HERE, and this line has been
+ *      wrong in both directions before — it claimed the ban leg until 2026-09-16
+ *      with no writer in the tree, then said no ban path writes a marker. As of
+ *      clawgate #618 `toggleBan` calls `revokeBlockInstancesForPublisher`
+ *      (`blocks/publisher-ban-revocation.service.ts`), the third production call
+ *      site of `revokeInstance` alongside `uninstallFromModel` and
+ *      `toggleEnabled(false)`. It marks every live instance of every block the
+ *      banned user OWNS, so those tokens are refused on their next bridge call
+ *      rather than running to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
  *
  * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside
@@ -52,13 +57,30 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
  * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add ONE Redis GET plus ONE indexed `appBlock.findUnique` (the
+ * ones. Steps 2 and 3 add TWO Redis GETs — three for a `page_ephemeral-*` id, the only
+ * shape carrying a subject-scoped ban marker — plus ONE indexed `appBlock.findUnique` (the
  * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
+ *
+ * ⚠️ THIS COUNT HAS NOW BEEN WRONG THREE TIMES — "ONE Redis GET" before the ban keyspace
+ * was split out, "TWO" after the subject keyspace was added, and the sibling copy in
+ * `block-revocation.service.ts` was corrected while this one was missed. A number in prose
+ * about a function two other files also describe is a claim with three places to rot. It is
+ * kept only because the per-request cost of THIS step is the argument for the step order
+ * below; if it goes wrong a fourth time, delete the count rather than correct it — the
+ * ordering argument survives without it. The history, which is the part worth keeping:
+ * introduced the split claimed the count was unchanged because it used `mGet`. That was
+ * wrong: this repo's client WRAPS `mGet` into `Promise.all(keys.map(get))` to avoid
+ * CROSSSLOT on the cluster, so the array path never reaches the native `MGET`. The two
+ * GETs are issued in one tick and pipeline, so wall-clock is likely unchanged — but the
+ * COMMAND RATE against the cache cluster is doubled on this path. Count commands, not
+ * awaits.
  * The read itself is issued by the shared predicate rather than spelled here, which moves
  * where it lives and not what it costs. `pollWorkflow` is the shape to think about: a
  * running block polls it on a timer, so that pair is paid per poll, per open block
- * instance. A `dev` token skips the DB read (the predicate short-circuits on the
- * exemption, before the query) but still pays the Redis GET.
+ * instance. ⚠️ A `dev` token USED TO skip the DB read; as of clawgate #571 it does not —
+ * that skip was the hole, not an optimisation. Only a `reviewRunForReal` token still
+ * short-circuits ahead of the query. A dev token on a real, NOT-approved row
+ * additionally pays a dev-tunnel lookup (two sysRedis GETs); no other token does.
  *
  * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
  * call sites in `blocks.router.ts`, covering seven of the fifteen bridge procedures. Four
@@ -96,7 +118,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *     App-Blocks flag (an in-process, cached Flipt eval).
  *     ⚠️ This enumeration used to omit that step while phrasing itself as closed ("what
  *     the reorder would save is one Redis GET + one replica findUnique … roughly one
- *     op"). It is not roughly one op: on a session-cache miss it is a network round-trip.
+ *     op") — and the GET count is per the note above, not the one in this sentence. It is not roughly one op: on a session-cache miss it is a network round-trip.
  * The conclusion is unchanged, because it never rested on the cost: what decides it is the
  * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
  * cost line only ever said the reorder was not worth making for its own sake, and a
@@ -112,7 +134,13 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   // Per-instance revocation. Keyed on the token's OWN `blockInstanceId` claim, never on
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+  // `claims.sub` verbatim — same reason as the REST wrapper; see `bannedSubjectKey`.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
+    // Same counter the REST wrapper emits, different `surface` label — both guards read
+    // the same primitive, and a series that could not tell them apart would leave you
+    // unable to say which half of the surface refused. See the counter's own comment for
+    // why this mechanism had no signal at all before clawgate #618.
+    recordBlockRevocationRefusal('bridge', claims.blockInstanceId);
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 
@@ -125,20 +153,23 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  * The backing `app_blocks` row must still be `approved`. Resolved by the same
  * `(appId, blockId)` unique the sibling resolvers use, and from the token's claims only.
  *
- * 🔴 THE ONE EXEMPTION — a `dev` token, and it is a documented product decision, not an
- * oversight. `/api/v1/block-tokens`'s `tryDevTunnelOwnedNonApprovedMint` mints a dev
- * token carrying the app's REAL ids for an app that is deliberately NOT approved: a
- * suspended / pending / deprecated app stays runnable by its OWNER inside the owner's own
- * dev tunnel, so they can diagnose it back into review. That path is contained by its own
- * belt — ownership enforced in the query, an ACTIVE dev tunnel required, author +
- * dev-tunnel flags, self-bound `sub`, forced-SFW, dev-budget-capped, and never public.
- * Enforcing approval here would break it. The dev-token mints that have no backing row at
- * all (the pending / local-manifest / review-sandbox paths, which sign a synthetic
- * `pubreq_…` / `page_local_…` / `ephemeral-…` appBlockId) are covered by the same
- * exemption for the same reason: there is no row to be approved.
+ * 🔴 THE EXEMPTION IS NO LONGER "A `dev` TOKEN", AND THIS PARAGRAPH USED TO SAY IT WAS.
+ * It justified a bare `claims.dev === true` short-circuit by listing the belts
+ * `tryDevTunnelOwnedNonApprovedMint` enforces — ownership in-query, an ACTIVE dev tunnel,
+ * author + dev-tunnel flags, self-bound `sub`, forced-SFW, budget cap — while this guard
+ * re-checked NONE of them and keyed on the signed boolean alone. Since the `dev` claim is
+ * stamped by six different mint paths, that argument covered one of them and exempted all
+ * six, for the 4h dev lifetime (16× the 900s default). clawgate #571.
  *
- * Revocation above is NOT exempted — every one of those mints stamps a revocable instance
- * id, so a dev token is still killable.
+ * The shared predicate now re-derives the two belts that actually discriminate — the
+ * subject IS the app's owner, and that owner has an ACTIVE dev tunnel for the slug — so a
+ * `dev:live` token whose app was approved at mint and has since been suspended is
+ * REFUSED here, while the owner-dev-tunnel path and the review sandbox keep working.
+ * `resolveAppBlockApprovalVerdict`'s own docblock is the argument and the population
+ * table; do not restate it here, and do not re-derive the exemption from the `dev` claim.
+ *
+ * Revocation above is NOT exempted, and never was — every one of those mints stamps a
+ * revocable instance id, so a dev token is still killable regardless of this verdict.
  *
  * 🔴 THE LOOKUP IS SHARED WITH THE REST GATE; THE POLICY IS NOT. `resolveAppBlockApprovalVerdict`
  * (`block-approval.service.ts`) is the one place the row is read and `approved` is compared,
@@ -152,10 +183,26 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  *     first-party postMessage surface reached only through the host page, this is its
  *     long-standing behaviour, and nothing here argued for changing it — so it did not
  *     change. If you make these agree, make it a decision, not a refactor.
- *   - a read that THROWS — propagates from here exactly as it always has, surfacing as
+ *   - a ROW read that THROWS — propagates from here exactly as it always has, surfacing as
  *     the tRPC internal error. The REST gate converts it to a fail-closed 503 instead.
  *     That mapping lives in `resolveRestApprovalVerdict`, which this function does not
  *     call, precisely so the conversion does not reach the bridge.
+ *     ⚠️ SCOPED TO THE ROW READS SINCE clawgate #571, and this line used to be blanket.
+ *     The predicate's dev-tunnel re-check is wrapped at its own call, so a cache fault on
+ *     THAT leg no longer reaches here as an internal error — a bridge caller gets
+ *     `FORBIDDEN / 'app block is not approved'`, deliberately indistinguishable from a
+ *     real refusal (telling a block that the dev-tunnel cache is down would be an
+ *     infrastructure oracle), plus a throttled warn this path never used to emit.
+ *
+ *     🔴 WHAT SEPARATES THAT INCIDENT FROM A REAL REFUSAL IS THE `tunnel_lookup_failed`
+ *     VERDICT — NOT THE LOG, and an earlier version of this note said the log. It is not
+ *     readable: container logs are not collected on this deployment. But the verdict is
+ *     only half a signal HERE, because **this path records no counter at all** — the
+ *     verdict metric has a single call site, in `withBlockScope`. So on the bridge a
+ *     tunnel-cache fault is genuinely unobservable today. That gap predates this change
+ *     and is equally true of `not_approved`; closing it means giving the bridge a verdict
+ *     counter, which is a metrics change rather than a guard one. Recorded here so the
+ *     next reader does not infer from the REST series that this surface is covered.
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);
@@ -163,7 +210,12 @@ async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   if (verdict === 'not_found') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   }
-  if (verdict === 'not_approved') {
+  if (verdict === 'not_approved' || verdict === 'tunnel_lookup_failed') {
+    // 🔴 THE SAME REFUSAL FOR BOTH, DELIBERATELY — identical code AND identical message.
+    // `tunnel_lookup_failed` is a separate verdict so the REST counter can attribute it,
+    // not so the caller can tell the two apart: a block that learned "the dev-tunnel cache
+    // is down" rather than "not approved" would be a state oracle on infrastructure, for
+    // no benefit to it. The split is for the operator, not the bearer.
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
   // Compile-time exhaustiveness: a verdict added to the shared union fails to build here

@@ -13,11 +13,17 @@ const {
   mockWaitForApplyJob,
   mockRecordTeardown,
   sysRedis,
+  evalTtls,
   mockEnv,
   mockNewId,
 } = vi.hoisted(() => {
   const store = new Map<string, string>();
+  // TTL floors the `eval` fake was handed, asserted by the index test below. It cannot
+  // model the GE comparison itself — the fake has no TTL clock — so it pins the VALUE the
+  // service passes, not the floor semantics, and the test says so.
+  const evalTtls = new Map<string, number>();
   return {
+    evalTtls,
     store,
     mockK8sFetch: vi.fn(),
     mockGetDp1Target: vi.fn(async () => ({ server: 'https://k8s', token: 't' })),
@@ -30,30 +36,64 @@ const {
     // don't poll; the failure test overrides it.
     mockWaitForApplyJob: vi.fn(async () => 'succeeded' as const),
     mockRecordTeardown: vi.fn(),
-      sysRedis: {
-        _store: store,
-        get: vi.fn(async (k: string) => store.get(k) ?? null),
-        set: vi.fn(async (k: string, v: string) => {
-          store.set(k, v);
-          return 'OK';
-        }),
-        del: vi.fn(async (k: string) => {
-          store.delete(k);
-          return 1;
-        }),
-        incrBy: vi.fn(async (k: string, n: number) => {
-          const cur = Number(store.get(k) ?? '0') + n;
-          store.set(k, String(cur));
-          return cur;
-        }),
-        decrBy: vi.fn(async (k: string, n: number) => {
-          const cur = Number(store.get(k) ?? '0') - n;
-          store.set(k, String(cur));
-          return cur;
-        }),
-        expire: vi.fn(async () => 1),
-        ttl: vi.fn(async () => 100),
-      },
+    sysRedis: {
+      _store: store,
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      set: vi.fn(async (k: string, v: string) => {
+        store.set(k, v);
+        return 'OK';
+      }),
+      del: vi.fn(async (k: string) => {
+        store.delete(k);
+        return 1;
+      }),
+      incrBy: vi.fn(async (k: string, n: number) => {
+        const cur = Number(store.get(k) ?? '0') + n;
+        store.set(k, String(cur));
+        return cur;
+      }),
+      decrBy: vi.fn(async (k: string, n: number) => {
+        const cur = Number(store.get(k) ?? '0') - n;
+        store.set(k, String(cur));
+        return cur;
+      }),
+      expire: vi.fn(async () => 1),
+      ttl: vi.fn(async () => 100),
+      // The per-user tunnel INDEX (a SET of blockIds), read by the publisher-ban
+      // revocation writer so a ban can find an ephemeral app's live tunnel — the only
+      // server record such an app leaves. Backed by the same store so the
+      // add/remove assertions below are about real state, not about a stub.
+      sAdd: vi.fn(async (k: string, v: string) => {
+        const cur = new Set(JSON.parse(store.get(k) ?? '[]') as string[]);
+        const added = cur.has(v) ? 0 : 1;
+        cur.add(v);
+        store.set(k, JSON.stringify([...cur]));
+        return added;
+      }),
+      sRem: vi.fn(async (k: string, v: string) => {
+        const cur = new Set(JSON.parse(store.get(k) ?? '[]') as string[]);
+        const removed = cur.delete(v) ? 1 : 0;
+        if (cur.size === 0) store.delete(k);
+        else store.set(k, JSON.stringify([...cur]));
+        return removed;
+      }),
+      sMembers: vi.fn(async (k: string) => JSON.parse(store.get(k) ?? '[]') as string[]),
+      // `sAddWithExpireGe` is an EVAL, so the index write lands here rather than on
+      // `sAdd`. This EXECUTES the script's effect against the same store — SADD the
+      // member, record the TTL floor — rather than returning a canned reply, so a test
+      // that reads the member back is measuring a real write. A stub returning 1 would
+      // let every assertion below pass with the index never populated.
+      eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
+        const [key] = opts.keys;
+        const [member, ttl] = opts.arguments;
+        const cur = new Set(JSON.parse(store.get(key) ?? '[]') as string[]);
+        const added = cur.has(member) ? 0 : 1;
+        cur.add(member);
+        store.set(key, JSON.stringify([...cur]));
+        evalTtls.set(key, Number(ttl));
+        return added;
+      }),
+    },
     mockEnv: {
       APPS_DOMAIN: 'civit.ai',
       APPS_KUBE_NAMESPACE: 'civitai-apps',
@@ -102,6 +142,8 @@ import {
   reserveDevSessionBuzz,
   startDevTunnel,
   stopDevTunnel,
+  stopDevTunnelForUserBlock,
+  listActiveDevTunnelBlockIds,
   reapExpiredDevTunnels,
   touchDevTunnelActivity,
   __resetDevTunnelDnsCacheForTest,
@@ -113,6 +155,13 @@ import {
 import { DEV_HOST_LABEL_REGEX } from '~/server/services/blocks/dev-tunnel-session';
 
 const PUBKEY = 'ssh-ed25519 AAAAC3NzaExampleBytes0123456789abcdef dev@laptop';
+
+// The index tests below drive the REAL startDevTunnel / teardown pair rather than poking
+// the fake, so they fail if the index write is removed from the service.
+const TEST_USER_ID = 555;
+const TEST_BLOCK_ID = 'my-app';
+const startTunnel = () =>
+  startDevTunnel({ userId: TEST_USER_ID, blockId: TEST_BLOCK_ID, sshPublicKey: PUBKEY });
 
 function okRes(body = '{}') {
   return { ok: true, status: 200, text: async () => body };
@@ -223,6 +272,75 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
   });
 });
 
+/**
+ * 🔴 THE DEV-TUNNEL INDEX — THE SEAM A PUBLISHER BAN READS.
+ *
+ * An EPHEMERAL app (unsubmitted, running over a tunnel) has no `AppBlock` row, no publish
+ * request and no listing, so a live tunnel session is the ONLY server record that it
+ * exists. `revokeBlockInstancesForPublisher` reads this index to turn a ban into a
+ * `page_ephemeral-<blockId>` revocation marker.
+ *
+ * These tests exist because the index-write block was, briefly, payload that NOTHING could
+ * fail on: deleting it outright left 707 files / 12,806 tests green. Both sides were
+ * hermetically tested — the revocation writer mocked `listActiveDevTunnelBlockIds` at the
+ * seam, and this suite had been given `sAdd`/`sRem`/`sMembers` on its fake with not one
+ * assertion using them — so the seam itself was owned by nobody. They assert the
+ * RELATIONSHIP: what `startDevTunnel` writes is what `listActiveDevTunnelBlockIds` reads,
+ * and what `teardownSession` removes.
+ */
+describe('the dev-tunnel index a ban enumerates', () => {
+  it('startDevTunnel makes the blockId readable by listActiveDevTunnelBlockIds', async () => {
+    await startTunnel();
+
+    expect(
+      await listActiveDevTunnelBlockIds(TEST_USER_ID),
+      'a live tunnel is invisible to listActiveDevTunnelBlockIds — a ban on this author ' +
+        'cannot revoke their page_ephemeral-<blockId> token, which lives 4h'
+    ).toEqual([TEST_BLOCK_ID]);
+  });
+
+  it('writes the index ATOMICALLY — one EVAL, not a SADD + EXPIRE pair, and with a TTL', async () => {
+    await startTunnel();
+
+    // `sAddWithExpireGe` is an EVAL. The racy pair it replaced could land the SADD and
+    // drop the EXPIRE on a failover, leaving a TTL-less set that accumulates every
+    // blockId the user ever tunnels — and every later ban would then emit a marker for
+    // all of them.
+    expect(sysRedis.eval).toHaveBeenCalledTimes(1);
+    expect(sysRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
+
+    // 🔴 AND THE TTL IS ASSERTED, not merely recorded. `evalTtls` was written and never
+    // read, under a comment promising TTL coverage — which is the shape of a guard that
+    // reads as coverage and provides none. A TTL-less index is exactly the state the
+    // atomic swap exists to make unreachable, so the floor it passes is worth pinning.
+    const key = [...evalTtls.keys()].find((k) => k.includes('user-index'));
+    expect(key, 'the index write did not go through the EVAL path').toBeTruthy();
+    expect(evalTtls.get(key!)).toBe(DEV_TUNNEL_HARD_SECONDS);
+  });
+
+  it('teardown removes the member, so a stopped tunnel is not re-revoked', async () => {
+    await startTunnel();
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([TEST_BLOCK_ID]);
+
+    await stopDevTunnelForUserBlock(TEST_USER_ID, TEST_BLOCK_ID);
+
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([]);
+  });
+
+  it('reads EMPTY for a user with no tunnels — the negative control', async () => {
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID + 1)).toEqual([]);
+  });
+
+  it('fails OPEN to an empty list when the index read throws', async () => {
+    await startTunnel();
+    sysRedis.sMembers.mockRejectedValueOnce(new Error('redis is down'));
+
+    // A ban must never be failable by this read. The cost is a coverage gap, which is
+    // the same direction every other leg of the ban fan-out degrades in.
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([]);
+  });
+});
+
 describe('startDevTunnel', () => {
   it('mints an unguessable host, renders the route (via the apply Job), persists state, returns the URL + host pubkey', async () => {
     const result = await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
@@ -245,7 +363,8 @@ describe('startDevTunnel', () => {
     expect(posts[0][1]).toContain('/namespaces/civitai-apps/jobs');
     const job = JSON.parse((posts[0][2] as { body: string }).body);
     const envVal = (name: string) =>
-      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)?.value;
+      job.spec.template.spec.containers[0].env.find((e: { name: string }) => e.name === name)
+        ?.value;
     const appliedIr = JSON.parse(envVal('INGRESSROUTE_JSON'));
     const appliedMw = JSON.parse(envVal('MIDDLEWARE_JSON'));
     expect(appliedIr.metadata.namespace).toBe('apps-dev-tunnel');
@@ -279,18 +398,20 @@ describe('startDevTunnel', () => {
 
   it('F1: a FAILED route-apply Job aborts the mint — nothing is persisted', async () => {
     mockWaitForApplyJob.mockResolvedValueOnce('failed');
-    await expect(
-      startDevTunnel({ userId: 9, blockId: 'b', sshPublicKey: PUBKEY })
-    ).rejects.toThrow(/apply Job failed/);
+    await expect(startDevTunnel({ userId: 9, blockId: 'b', sshPublicKey: PUBKEY })).rejects.toThrow(
+      /apply Job failed/
+    );
     // render threw before persist → no dev-tunnel keys left behind
-    const keys = [...sysRedis._store.keys()].filter((k) => k.startsWith('system:blocks:dev-tunnel'));
+    const keys = [...sysRedis._store.keys()].filter((k) =>
+      k.startsWith('system:blocks:dev-tunnel')
+    );
     expect(keys).toEqual([]);
   });
 
   it('rejects an invalid SSH public key before touching k8s/redis', async () => {
-    await expect(
-      startDevTunnel({ userId: 1, blockId: 'a', sshPublicKey: 'junk' })
-    ).rejects.toThrow(/invalid SSH public key/);
+    await expect(startDevTunnel({ userId: 1, blockId: 'a', sshPublicKey: 'junk' })).rejects.toThrow(
+      /invalid SSH public key/
+    );
     expect(mockK8sFetch).not.toHaveBeenCalled();
     expect(sysRedis.set).not.toHaveBeenCalled();
   });
@@ -311,6 +432,24 @@ describe('startDevTunnel', () => {
     expect(s.declaredScopes).toEqual(['ai:write:budgeted', 'apps:storage:write']);
     // grantedScopes = clampTunnelDeclaredScopes → storage stripped, self-read added, sorted.
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  it('stores the CLI-declared auth on the session and drops anything but the two known values', async () => {
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredAuth: 'oauth',
+    });
+    expect(readSession().declaredAuth).toBe('oauth');
+
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredAuth: 'whatever' as never,
+    });
+    expect(readSession()).not.toHaveProperty('declaredAuth');
   });
 
   it('#3703 step 1: startDevTunnel STILL PERSISTS ai:write:budgeted into the stored grantedScopes', async () => {
@@ -364,9 +503,9 @@ describe('startDevTunnel', () => {
     });
     const s = readSession();
     expect(s.declaredScopes).toEqual(['ai:write:budgeted']); // trimmed, deduped, junk removed
-    expect(s.declaredScopes.every((x: unknown) => typeof x === 'string' && (x as string).length <= 64)).toBe(
-      true
-    );
+    expect(
+      s.declaredScopes.every((x: unknown) => typeof x === 'string' && (x as string).length <= 64)
+    ).toBe(true);
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 
@@ -440,7 +579,9 @@ describe('stopDevTunnel (ownership-checked)', () => {
   it('the owner tears down: deletes route + all keys', async () => {
     await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     expect(await stopDevTunnel(555, 'bki_testsession')).toBe(true);
-    const remaining = [...sysRedis._store.keys()].filter((k) => k.startsWith('system:blocks:dev-tunnel'));
+    const remaining = [...sysRedis._store.keys()].filter((k) =>
+      k.startsWith('system:blocks:dev-tunnel')
+    );
     expect(remaining).toEqual([]);
   });
 });
@@ -487,10 +628,7 @@ describe('touchDevTunnelActivity (F3 — idle refresh on gate entry)', () => {
       sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!
     );
     before.lastActivityAt = 1000;
-    sysRedis._store.set(
-      'system:blocks:dev-tunnel:session:bki_testsession',
-      JSON.stringify(before)
-    );
+    sysRedis._store.set('system:blocks:dev-tunnel:session:bki_testsession', JSON.stringify(before));
 
     await touchDevTunnelActivity(host);
 
@@ -556,10 +694,7 @@ describe('chargeDevSessionOverage (divergence correction, third reservation)', (
 describe('reapExpiredDevTunnels (server-authoritative, idle + hardened)', () => {
   const NOW = Math.floor(Date.now() / 1000);
 
-  function seedSession(
-    sessionId: string,
-    over: Partial<Record<string, unknown>> = {}
-  ) {
+  function seedSession(sessionId: string, over: Partial<Record<string, unknown>> = {}) {
     sysRedis._store.set(
       `system:blocks:dev-tunnel:session:${sessionId}`,
       JSON.stringify({
@@ -733,7 +868,10 @@ function cfEnvelope(result: unknown, ok = true, status = 200) {
 }
 
 /** Route CF fetch by URL + method: zone lookup, per-name record list, deletes. */
-function routeCfFetch(recordsByName: Record<string, Array<{ id: string }>>, zoneResult = [{ id: 'zone-1' }]) {
+function routeCfFetch(
+  recordsByName: Record<string, Array<{ id: string }>>,
+  zoneResult = [{ id: 'zone-1' }]
+) {
   return vi.fn(async (url: string, init?: any) => {
     const method = init?.method ?? 'GET';
     if (String(url).includes('/zones?name=')) return cfEnvelope(zoneResult);
@@ -764,10 +902,12 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
     // zone looked up by the registrable (last-two-label) domain of the host
     expect(urls.some((u) => u.includes('/zones?name=civit.ai'))).toBe(true);
     // both name forms queried (A record + external-dns TXT-registry forms)
-    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent(CF_DEV_HOST)}`))).toBe(true);
-    expect(urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent('a-' + CF_DEV_HOST)}`))).toBe(
-      true
-    );
+    expect(
+      urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent(CF_DEV_HOST)}`))
+    ).toBe(true);
+    expect(
+      urls.some((u) => u.includes(`dns_records?name=${encodeURIComponent('a-' + CF_DEV_HOST)}`))
+    ).toBe(true);
     // one DELETE per returned record id
     const deletes = fetchMock.mock.calls
       .filter((c) => (c[1] as any)?.method === 'DELETE')
@@ -789,7 +929,10 @@ describe('deleteDevTunnelDns (best-effort orphan CF DNS cleanup)', () => {
     const fetchMock = vi.fn();
     await deleteDevTunnelDns('civitai.com', fetchMock as unknown as typeof fetch);
     await deleteDevTunnelDns('dev-notenoughhex.civit.ai', fetchMock as unknown as typeof fetch);
-    await deleteDevTunnelDns('evil-dev-0123456789abcdef.civit.ai', fetchMock as unknown as typeof fetch);
+    await deleteDevTunnelDns(
+      'evil-dev-0123456789abcdef.civit.ai',
+      fetchMock as unknown as typeof fetch
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -861,7 +1004,9 @@ describe('orphan-DNS GC wiring (teardown + reap call the CF deleter, best-effort
     );
     await deleteDevTunnelRoute('bki_wire');
     // the CF deleter was invoked with the route host and DELETEd its record
-    expect(cf.some(([m, u]) => m === 'DELETE' && u.endsWith('/zones/zone-1/dns_records/rec-1'))).toBe(true);
+    expect(
+      cf.some(([m, u]) => m === 'DELETE' && u.endsWith('/zones/zone-1/dns_records/rec-1'))
+    ).toBe(true);
   });
 
   it('a CF failure does NOT break teardown (route + keys still deleted)', async () => {
