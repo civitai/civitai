@@ -6,7 +6,10 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   type FetchMediaChunk,
   type StorageUsageRow,
+  MEDIA_JOB_LOCK_SECONDS,
+  MEDIA_LEASE_MINUTES,
   MEDIA_SIZE_PATTERN,
+  MEDIA_TICK_BUDGET_MS,
   MEDIA_STORAGE_KINDS,
   NIGHTLY_STORAGE_KINDS,
   claimMediaRollups,
@@ -310,11 +313,50 @@ describe('runNightlyStorageUsage', () => {
 });
 
 describe('runMediaStorageUsage', () => {
+  const queue = (ids: number[]) => async () => {
+    const next = ids.shift();
+    return next === undefined ? [] : [next];
+  };
+
+  // One creator a minute capped the queue at 1,440 a day while every dashboard visit adds to it.
+  it('keeps claiming within one tick until the queue is empty', async () => {
+    const written: number[] = [];
+    const result = await runMediaStorageUsage({
+      claim: queue([1, 2, 3]),
+      sum: async () => [],
+      write: async (userId) => {
+        written.push(userId);
+      },
+      log: () => undefined,
+    });
+    expect(written).toEqual([1, 2, 3]);
+    expect(result).toEqual({ processed: 3 });
+  });
+
+  it('stops claiming once the tick budget is spent', async () => {
+    let clock = 0;
+    const written: number[] = [];
+    await runMediaStorageUsage({
+      claim: queue([1, 2, 3]),
+      sum: async () => {
+        clock += 60_000;
+        return [];
+      },
+      write: async (userId) => {
+        written.push(userId);
+      },
+      log: () => undefined,
+      budgetMs: 90_000,
+      now: () => clock,
+    });
+    expect(written).toEqual([1, 2]);
+  });
+
   it('writes the users it can and fails the run for the one it cannot', async () => {
     const written: number[] = [];
     await expect(
       runMediaStorageUsage({
-        claim: async () => [1, 2],
+        claim: queue([1, 2]),
         sum: async (userId) => {
           if (userId === 1) throw new Error('boom');
           return [];
@@ -326,5 +368,38 @@ describe('runMediaStorageUsage', () => {
       })
     ).rejects.toThrow('1 rollup(s) failed');
     expect(written).toEqual([2]);
+  });
+});
+
+describe('media lease', () => {
+  // The lease must outlast both the job lock and a tick's budget, or the next tick reclaims a creator
+  // whose scan is still running and a second Image scan starts for them.
+  it('outlasts the job lock, which outlasts the tick budget, and is what the claim binds', async () => {
+    expect(MEDIA_LEASE_MINUTES * 60).toBeGreaterThan(MEDIA_JOB_LOCK_SECONDS);
+    expect(MEDIA_TICK_BUDGET_MS / 1000).toBeLessThan(MEDIA_JOB_LOCK_SECONDS);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
+    await claimMediaRollups();
+    expect(lastQuery(dbMock.dbWrite.$queryRaw).values).toContain(MEDIA_LEASE_MINUTES);
+  });
+});
+
+describe('nightly write order and pruning', () => {
+  it('snapshots after the usage transaction commits, in its own statement', async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    dbMock.dbWrite.$transaction.mockClear();
+    await writeNightlyUsage(0, 100, []);
+    const calls = executed();
+    expect(calls[calls.length - 1].text).toContain('INSERT INTO "UserStorageSnapshot"');
+    const snapshotOrder = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder.at(-1) as number;
+    expect(dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]).toBeLessThan(snapshotOrder);
+  });
+
+  it('drops snapshots and rollup state of deleted users, not only their usage', async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    await writeNightlyUsage(0, 100, []);
+    const pruned = executed()
+      .filter((q) => q.text.includes('NOT EXISTS (SELECT 1 FROM "User"'))
+      .map((q) => q.text.match(/DELETE FROM "(\w+)"/)?.[1]);
+    expect(pruned).toEqual(['UserStorageUsage', 'UserStorageSnapshot', 'UserStorageRollup']);
   });
 });

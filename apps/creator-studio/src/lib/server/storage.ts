@@ -102,12 +102,10 @@ export async function loadStorageUsage(
   const usage = await getStorageUsage(userId);
   const queued = usage.ready && needsMediaRefresh(usage.state);
   if (queued) void requestMediaRollup(userId);
-  const media: MediaStatus = queued
-    ? usage.state?.computedAt
-      ? 'refreshing'
-      : 'first'
-    : mediaStatus(usage.state);
-  return { ...usage, media };
+  const state = queued
+    ? { computedAt: usage.state?.computedAt ?? null, requestedAt: new Date().toISOString() }
+    : usage.state;
+  return { ...usage, media: mediaStatus(state) };
 }
 
 export type StorageModelRow = {

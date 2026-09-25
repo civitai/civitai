@@ -1,4 +1,5 @@
 import {
+  MEDIA_JOB_LOCK_SECONDS,
   runMediaStorageUsage,
   runNightlyStorageUsage,
 } from '~/server/services/storage-usage.service';
@@ -15,5 +16,5 @@ export const storageUsageMediaJob = createJob(
   'storage-usage-media',
   '* * * * *',
   () => runMediaStorageUsage(),
-  { lockExpiration: 10 * 60 }
+  { lockExpiration: MEDIA_JOB_LOCK_SECONDS }
 );

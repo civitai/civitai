@@ -27,10 +27,13 @@ export const MEDIA_CHUNK_ROWS = 50_000;
 // 20M images. Hitting it throws rather than writing a total that silently stops partway.
 export const MAX_MEDIA_CHUNKS = 400;
 
-// One creator per tick, and a lease longer than the job's 10-minute lock, so a slow run cannot be
-// reclaimed by the next tick while it is still scanning.
+// Each claim takes one creator and holds it for the lease; a tick keeps claiming until its budget is
+// spent. Budget < job lock < lease, so the next tick cannot reclaim a creator still being scanned. The
+// lease also covers a creator at MAX_MEDIA_CHUNKS (~400 x 3 s).
 export const MEDIA_CLAIM_LIMIT = 1;
-export const MEDIA_LEASE_MINUTES = 15;
+export const MEDIA_JOB_LOCK_SECONDS = 10 * 60;
+export const MEDIA_TICK_BUDGET_MS = 8 * 60 * 1000;
+export const MEDIA_LEASE_MINUTES = 30;
 
 // Bound as a parameter: inline, its backslash would have to survive both the JS template and the SQL
 // string literal, which treat it differently. 13 digits (~9 TB) keeps a forged size from overflowing.
@@ -194,7 +197,8 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
       SELECT 'BountyEntry' AS "entityType", id, "userId", 'public' AS "publicStatus"
       FROM "BountyEntry" WHERE "userId" >= ${lo} AND "userId" < ${hi}
       UNION ALL
-      SELECT 'Bounty', id, "userId", 'public'
+      SELECT 'Bounty', id, "userId",
+        CASE WHEN availability <> 'Private' THEN 'public' ELSE 'notPublic' END
       FROM "Bounty" WHERE "userId" >= ${lo} AND "userId" < ${hi}
       UNION ALL
       SELECT 'Article', id, "userId",
@@ -219,7 +223,9 @@ function toArrays(rows: StorageUsageRow[]) {
 }
 
 /**
- * Replaces the nightly kinds for users in [lo, hi) and snapshots any public total that moved.
+ * Replaces the nightly kinds for users in [lo, hi), drops every storage row of deleted users, then
+ * snapshots any public total that moved. The snapshot is its own statement so a failure there cannot
+ * roll back the usage refresh.
  *
  * Unchanged rows are filtered out before the upsert: ON CONFLICT DO UPDATE locks every row it
  * conflicts with even when its WHERE rejects the update, which would log a lock for every row nightly.
@@ -262,8 +268,18 @@ export async function writeNightlyUsage(lo: number, hi: number, rows: StorageUsa
       WHERE u."userId" >= ${lo} AND u."userId" < ${hi}
         AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = u."userId")
     `,
-    snapshotRange(lo, hi),
+    dbWrite.$executeRaw`
+      DELETE FROM "UserStorageSnapshot" s
+      WHERE s."userId" >= ${lo} AND s."userId" < ${hi}
+        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = s."userId")
+    `,
+    dbWrite.$executeRaw`
+      DELETE FROM "UserStorageRollup" r
+      WHERE r."userId" >= ${lo} AND r."userId" < ${hi}
+        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = r."userId")
+    `,
   ]);
+  await snapshotRange(lo, hi);
 }
 
 /**
@@ -378,22 +394,31 @@ export async function runNightlyStorageUsage({
   return { ranges, rows };
 }
 
+/** Claims and counts creators one at a time until the queue is empty or the tick's budget is spent. */
 export async function runMediaStorageUsage({
   claim = claimMediaRollups,
   sum = (userId: number) => sumUserMedia(userId),
   write = writeMediaUsage,
   log = logError,
+  budgetMs = MEDIA_TICK_BUDGET_MS,
+  now = Date.now,
 } = {}) {
-  const userIds = await claim();
+  const deadline = now() + budgetMs;
+  let processed = 0;
   const failed: number[] = [];
-  for (const userId of userIds) {
-    try {
-      await write(userId, await sum(userId));
-    } catch (e) {
-      failed.push(userId);
-      log(`storage-usage-media: user ${userId} failed`, e);
+  while (now() < deadline) {
+    const userIds = await claim();
+    if (!userIds.length) break;
+    for (const userId of userIds) {
+      processed++;
+      try {
+        await write(userId, await sum(userId));
+      } catch (e) {
+        failed.push(userId);
+        log(`storage-usage-media: user ${userId} failed`, e);
+      }
     }
   }
   if (failed.length) throw new Error(`storage-usage-media: ${failed.length} rollup(s) failed`);
-  return { processed: userIds.length };
+  return { processed };
 }

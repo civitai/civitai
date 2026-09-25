@@ -82,12 +82,27 @@ describe('loadStorageUsage', () => {
     expect(requests()).toHaveLength(0);
   });
 
-  it('leaves an already-queued refresh alone in SQL too, so a second tab cannot requeue it', async () => {
+  // The SQL restates needsMediaRefresh. Either arm loosened lets a second tab bump an already-queued
+  // request to now(), which sends that creator to the back of the queue.
+  it('requeues in SQL only what the JS rule would requeue', async () => {
     state.rows = [usageRow()];
     await loadStorageUsage(1);
     const [sqlText] = requests();
-    expect(sqlText).toContain(
-      'OR ("UserStorageRollup"."imagesComputedAt" < timezone(\'UTC\', now()) - interval \'24 hours\' AND "UserStorageRollup"."imagesRequestedAt" <= "UserStorageRollup"."imagesComputedAt")'
+    expect(sqlText.slice(sqlText.indexOf('WHERE'))).toBe(
+      `WHERE ("UserStorageRollup"."imagesComputedAt" IS NULL AND "UserStorageRollup"."imagesRequestedAt" IS NULL) OR ("UserStorageRollup"."imagesComputedAt" < timezone('UTC', now()) - interval '24 hours' AND "UserStorageRollup"."imagesRequestedAt" <= "UserStorageRollup"."imagesComputedAt") `
+    );
+  });
+
+  // Seeded from the user id so there is a row even with no rollup and no usage; starting FROM the usage
+  // table would read a finished zero-row rollup as never counted and requeue it on every view.
+  it('reads state and rows from one row-seeded statement', async () => {
+    state.rows = [usageRow()];
+    await loadStorageUsage(1);
+    const read = state.queries.find(
+      (q) => q.includes('"UserStorageUsage"') && q.includes('SELECT')
+    );
+    expect(read).toContain(
+      'FROM (SELECT ?::int AS "userId") k LEFT JOIN "UserStorageRollup" r ON r."userId" = k."userId" LEFT JOIN "UserStorageUsage" u ON u."userId" = k."userId"'
     );
   });
 });

@@ -31,6 +31,7 @@
 
   const summary = $derived(data.summary);
   const media = $derived(summary ? data.media : null);
+  const hasModelTable = $derived(!!data.byModel?.length);
   const emptyKind = $derived(
     summary ? storageEmptyKind(summary, data.byModel ? data.byModel.length : null) : null
   );
@@ -136,6 +137,7 @@
   );
   const monthSummary = $derived(
     (summary?.months ?? [])
+      .slice(-12)
       .map(
         (m) =>
           `${m.month.slice(0, 7)} ${formatBytes(Object.values(m.bytesByKind).reduce((a, b) => a + b, 0))}`
@@ -151,19 +153,21 @@
   what they cost to store or serve.
 </p>
 
-{#if media && media !== 'done'}
+<!-- The overnight notice already explains an empty rollup; the banner on top of it would contradict it. -->
+{#if media && media !== 'done' && emptyKind !== 'overnight'}
   <div
     class="mb-4 flex items-center gap-2 rounded-lg border border-dashed border-dark-4 p-3 text-sm text-dark-2"
+    role="status"
   >
-    <IconLoader2 size={16} class="animate-spin text-blue-4" />
+    <IconLoader2 size={16} class="animate-spin text-blue-4" aria-hidden="true" />
     {#if media === 'first'}
-      Counting your images and videos for the first time. This can take a few minutes, and they're
-      left out of the totals until it's done.
+      Counting your images and videos for the first time. This can take a few minutes, and until
+      then they aren't included.
     {:else if media === 'refreshing'}
       Updating your images and videos. Until it's done they show as of your last count.
     {:else}
-      Counting your images and videos is taking longer than expected. They may be missing or out of
-      date below. We'll keep trying.
+      Counting your images and videos is taking longer than expected, so they may be missing or out
+      of date. We'll keep trying.
     {/if}
   </div>
 {/if}
@@ -174,8 +178,9 @@
   <div class="placeholder">Storage is temporarily unavailable. Please try again shortly.</div>
 {:else if emptyKind === 'overnight'}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-2">
-    <strong class="text-white">Your totals update overnight.</strong> New uploads show up here by tomorrow.
-    Your models are listed below in the meantime.
+    <strong class="text-white">Your totals update overnight.</strong> New uploads show up here by
+    tomorrow.
+    {#if hasModelTable}Your models are listed below in the meantime.{/if}
   </div>
 {:else if emptyKind === 'none' && media !== 'done'}
   <!-- The banner above already says what is happening; 0 B cards would only contradict it. -->
