@@ -89,6 +89,7 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import {
   AutoResolveRaceLost,
@@ -1040,12 +1041,17 @@ export const upsertArticle = async ({
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
-        submitTextModeration({
+        submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
-          content: textForModeration,
-          labels: ['nsfw'],
-          recordForReview: true,
+          xguard: () =>
+            submitTextModeration({
+              entityType: 'Article',
+              entityId: result.id,
+              content: textForModeration,
+              labels: ['nsfw'],
+              recordForReview: true,
+            }),
         }).catch((e) => {
           logToAxiom({
             type: 'error',
@@ -1446,12 +1452,17 @@ export async function applyArticleContentChange({
     } else {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
-      submitTextModeration({
+      submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
-        content: textForModeration,
-        labels: ['nsfw'],
-        recordForReview: true,
+        xguard: () =>
+          submitTextModeration({
+            entityType: 'Article',
+            entityId: id,
+            content: textForModeration,
+            labels: ['nsfw'],
+            recordForReview: true,
+          }),
       }).catch((e) => {
         logToAxiom({
           type: 'error',
@@ -2502,13 +2513,19 @@ export async function rescanArticle({
       .filter(Boolean)
       .join(' ');
 
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Article',
       entityId: id,
-      content: textForModeration,
-      labels: ['nsfw'],
-      recordForReview: true,
-      forceRescan: true,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: textForModeration,
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+        }),
     }).catch((e) => {
       logToAxiom({
         type: 'error',

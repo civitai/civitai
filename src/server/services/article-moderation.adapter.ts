@@ -5,6 +5,8 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { removeTags } from '~/utils/string-helpers';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
@@ -26,12 +28,17 @@ export const articleModerationAdapter: ModerationAdapter = {
   },
 
   submit: ({ entityId, content }) =>
-    submitTextModeration({
+    submitTextModerationOrScan({
       entityType: 'Article',
       entityId,
-      content,
-      labels: ['nsfw'],
-      priority: 'low',
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId,
+          content,
+          labels: ['nsfw'],
+          priority: 'low',
+        }),
     }),
 
   applyResult: async ({ entityId, blocked, triggeredLabels }) => {
@@ -77,5 +84,12 @@ export const articleModerationAdapter: ModerationAdapter = {
 
   applyFailure: async ({ entityId }) => {
     await recomputeArticleIngestion(entityId);
+  },
+
+  // Rating before ingestion: ingestion publishes a Processing article, which must not go
+  // live at its pre-verdict level.
+  applyTextScan: async (args) => {
+    await applyRatingFloor('Article', args);
+    await recomputeArticleIngestion(args.entityId);
   },
 };
