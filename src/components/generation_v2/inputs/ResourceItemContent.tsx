@@ -23,6 +23,7 @@ import type { ResourceSelectOptions } from '~/components/ImageGeneration/Generat
 import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
+import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
 
 // =============================================================================
 // Types
@@ -302,6 +303,13 @@ export function ResourceItemContent({
               </HoverCard>
             )}
           </Group>
+          {!isDisabled && (
+            <ResourceResidencyStatus
+              modelVersionId={resource.id}
+              className="w-fit shrink-0"
+              tooltipWidth={240}
+            />
+          )}
         </div>
         {actions && (
           <Group gap={4} className="shrink-0">

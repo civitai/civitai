@@ -29,8 +29,10 @@ export const resourceDataCache = createCachedArray({
         mv."status",
         mv."usageControl",
         mv."flags",
+        mv."generatorLoaded",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
+        gc."coveredNext",
         FALSE AS "hasAccess",
         (
           SELECT to_json(obj)
@@ -62,8 +64,10 @@ export const resourceDataCache = createCachedArray({
     return results;
   },
   idKey: 'id',
+  // Both answers ride in the row, so a flag flip is served by the same entry instead of waiting
+  // out the TTL.
   dontCacheFn: (data) => {
-    return !data.hasAccess || !data.covered;
+    return !data.hasAccess || (!data.covered && !data.coveredNext);
   },
   ttl: CacheTTL.hour,
 });
@@ -79,9 +83,11 @@ export type GenerationResourceDataModel = {
   availability: Availability;
   aliasId: number | null;
   covered: boolean | null;
+  coveredNext: boolean | null;
   status: ModelStatus;
   usageControl?: string;
   flags: number;
+  generatorLoaded: boolean;
   hasAccess: boolean;
   epochNumber?: number;
   model: {

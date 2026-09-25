@@ -18,6 +18,7 @@ import React, { useState } from 'react';
 import { isSortAvailable } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ResourceFilter,
   ResourceSort,
@@ -44,10 +45,12 @@ const baseModelLimit = 4;
 export function ResourceSelectFiltersDropdown() {
   const {
     resources,
+    selectSource,
     filters: selectFilters,
     setFilters: setSelectFilters,
-    selectSource,
   } = useResourceSelectContext();
+  const features = useFeatureFlags();
+  const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
   // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the
   // generator" — several non-generator callers pass it deliberately, and the generate-price question
   // is still the right one for them.
@@ -85,12 +88,14 @@ export function ResourceSelectFiltersDropdown() {
   const filterLength =
     (selectFilters.types.length > 0 ? 1 : 0) +
     (selectFilters.baseModels.length > 0 ? 1 : 0) +
+    (selectFilters.loadedOnly ? 1 : 0) +
     (showPaidFilter && selectFilters.hidePaid ? 1 : 0);
 
   const clearFilters = () => {
     const reset: Required<ResourceFilter> = {
       types: [],
       baseModels: [],
+      loadedOnly: false,
       hidePaid: false,
     };
     setSelectFilters(reset);
@@ -192,6 +197,19 @@ export function ResourceSelectFiltersDropdown() {
           </>
         )}
       </Stack>
+
+      {canFilterLoaded && (
+        <Stack gap="md">
+          <Divider label="Generator" className="text-sm font-bold" />
+          <Chip
+            {...chipProps}
+            checked={selectFilters.loadedOnly}
+            onChange={(checked) => setSelectFilters((f) => ({ ...f, loadedOnly: checked }))}
+          >
+            <span>Loaded only</span>
+          </Chip>
+        </Stack>
+      )}
 
       {filterLength > 0 && (
         <Button

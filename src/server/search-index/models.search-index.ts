@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
@@ -321,8 +322,18 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           baseModel: restVersion.baseModel as BaseModel,
         },
         versions: modelVersions.map(
-          ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
+          ({
+            generationCoverage,
+            files,
+            hashes,
+            settings,
+            metrics: vMetrics,
+            usageControl,
+            ...x
+          }) => ({
             ...x,
+            // Keeps the column's name but holds readiness — the loaded-only filter reads this.
+            generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
             pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),

@@ -19,7 +19,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
-import { UNLOADABLE_MESSAGES } from '~/server/schema/resource-load.schema';
+import { isQueuedAvailability, UNLOADABLE_MESSAGES } from '~/server/schema/resource-load.schema';
 import type {
   ResourceLoadAvailability,
   UnloadableReason,
@@ -37,6 +37,7 @@ const QUEUE_POLL_MS = 15_000;
 const statusColors: Record<string, string> = {
   available: 'green',
   loading: 'blue',
+  queued: 'yellow',
   unavailable: 'yellow',
   unsupported: 'red',
   unknown: 'gray',
@@ -46,7 +47,7 @@ function AvailabilityBadge({ availability }: { availability: ResourceLoadAvailab
   const suffix =
     availability.status === 'loading'
       ? ` ${Math.round(availability.progress * 100)}%`
-      : availability.status === 'unavailable' && availability.queuePosition != null
+      : isQueuedAvailability(availability) && 'queuePosition' in availability
       ? ` #${availability.queuePosition}`
       : '';
 
@@ -83,7 +84,7 @@ function LiveProgress({ live }: { live: ResourceLoadProgress }) {
     <Stack gap={4}>
       <Progress value={pct ?? 0} animated={pct != null} />
       <Text size="xs" c="dimmed">
-        {live.queuePosition > 0
+        {live.queuePosition != null && live.queuePosition > 0
           ? `${live.queuePosition} download${live.queuePosition === 1 ? '' : 's'} ahead`
           : pct != null
           ? `Downloading — ${pct}%${eta}`

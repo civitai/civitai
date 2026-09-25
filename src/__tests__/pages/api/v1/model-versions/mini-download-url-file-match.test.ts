@@ -202,6 +202,7 @@ const versionRow = {
   requireAuth: false,
   checkPermission: false,
   covered: true,
+  isPromoted: false,
   generationAlias: null,
   minor: false,
   sfwOnly: false,
@@ -229,6 +230,7 @@ type Body = {
   fileName: string;
   hashes: Record<string, string>;
   downloadUrls: string[];
+  isPromoted?: boolean;
 };
 
 async function run(
@@ -394,6 +396,14 @@ describe('GET /api/v1/model-versions/mini/[id] — url names the advertised file
     const { body } = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
     expect(body.fileName).toBe(GGUF.name);
     expect(urlFileId(body)).toBe(String(GGUF.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — isPromoted', () => {
+  it.each([true, false])('reports the version row’s isPromoted (%s)', async (isPromoted) => {
+    const { status, body } = await run([SAFETENSOR], {}, { isPromoted });
+    expect(status).toBe(200);
+    expect(body.isPromoted).toBe(isPromoted);
   });
 });
 

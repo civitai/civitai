@@ -157,7 +157,7 @@ export default WebhookEndpoint(async (req, res) => {
       FROM "GenerationCoverage" gc
       JOIN "Model" m ON m.id = gc."modelId"
       JOIN "ModelVersion" mv ON mv.id = gc."modelVersionId"
-      WHERE gc.covered
+      WHERE gc."coveredNext"
         AND NOT (m."allowCommercialUse" && ARRAY['RentCivit']::"CommercialUse"[])
         AND m."allowCommercialUse" && ARRAY['Rent', 'Sell']::"CommercialUse"[]
         AND mv."usageControl" <> 'ExternalGeneration'

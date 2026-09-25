@@ -2337,7 +2337,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-3',
+    RESOURCE_DATA: 'packed:generation:resource-data-5',
     /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
     /**
@@ -2376,6 +2376,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
@@ -2390,7 +2391,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
-    DATA_FOR_MODEL: 'packed:caches:data-for-model',
+    DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
     PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',

@@ -128,6 +128,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       uploadType: true,
       usageControl: true,
       licensingFee: true,
+      generatorLoaded: true,
       metrics: {
         select: {
           generationCount: true,
@@ -141,7 +142,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
         select: modelFileSelect,
         where: { dataPurged: false, replacedAt: null },
       },
-      generationCoverage: { select: { covered: true } },
+      generationCoverage: { select: { covered: true, coveredNext: true } },
       recommendedResources: {
         select: {
           id: true,

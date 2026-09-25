@@ -658,11 +658,6 @@ export const modelVersionEarlyAccessPurchase = z.object({
   payWithBlue: z.boolean().optional(),
 });
 
-export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;
-export const getModelVersionPopularityInput = z.object({
-  id: z.number(),
-});
-
 export type GetModelVersionsPopularityInput = z.infer<typeof getModelVersionsPopularityInput>;
 export const getModelVersionsPopularityInput = z.object({
   ids: z.array(z.number()),

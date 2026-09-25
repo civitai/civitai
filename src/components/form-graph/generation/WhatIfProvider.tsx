@@ -16,6 +16,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { usePreBoostWhatIf } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
@@ -27,7 +28,6 @@ import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-f
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
-import { trpc } from '~/utils/trpc';
 import type { GenerationStore } from './store';
 
 /** The first blocking message, in field declaration order. */
@@ -118,26 +118,24 @@ export function useWhatIfFromStore({
   // Don't estimate a selection the server will refuse.
   const gateBlocked = useDisabledGates(selectionValues).length > 0;
 
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    queryPayload as any,
-    {
-      enabled:
-        enabled &&
-        !isNoSubmit &&
-        !gateBlocked &&
-        !!currentUser &&
-        !!queryPayload &&
-        !resourcesLoading &&
-        !imagesPending,
-    }
-  );
+  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+    revision,
+    queryPayload,
+    enabled:
+      enabled &&
+      !isNoSubmit &&
+      !gateBlocked &&
+      !!currentUser &&
+      !resourcesLoading &&
+      !imagesPending,
+  });
 
   const data = useMemo(
     () =>
       queryResult.data ?? {
         cost: defaultWorkflowCost,
         ready: false,
+        preparation: undefined,
         allowMatureContent: false,
         transactions: undefined,
       },
@@ -153,6 +151,9 @@ export function useWhatIfFromStore({
     canEstimateCost,
     gateBlocked,
     validationErrors,
+    preBoost,
+    setPreBoost,
+    download,
   };
 }
 

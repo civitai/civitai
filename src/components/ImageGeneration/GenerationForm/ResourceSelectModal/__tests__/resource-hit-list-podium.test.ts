@@ -76,6 +76,7 @@ vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', ()
     selectSource: 'generation',
     excludedIds: [],
     tab: 'featured',
+    filters: { loadedOnly: false },
   }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({

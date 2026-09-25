@@ -517,7 +517,6 @@ const featureFlags = createFeatureFlags({
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   datapacketRead: ['public'],
-  modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { coveredBy, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
@@ -512,7 +513,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       usageControl: true,
       flags: true,
       meta: true,
-      generationCoverage: { select: { covered: true } },
+      generationCoverage: { select: { covered: true, coveredNext: true } },
       model: { select: { id: true, type: true, userId: true } },
     },
   });
@@ -544,7 +545,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       availability: version.availability,
       usageControl: version.usageControl,
       baseModel: version.baseModel,
-      covered: version.generationCoverage?.covered ?? false,
+      covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
       flags: version.flags,
@@ -599,7 +600,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       usageControl: true,
       flags: true,
       meta: true,
-      generationCoverage: { select: { covered: true } },
+      generationCoverage: { select: { covered: true, coveredNext: true } },
       model: { select: { id: true, type: true, userId: true } },
     },
   });
@@ -617,7 +618,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       availability: version.availability,
       usageControl: version.usageControl,
       baseModel: version.baseModel,
-      covered: version.generationCoverage?.covered ?? false,
+      covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
       flags: version.flags,

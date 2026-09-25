@@ -39,6 +39,7 @@ import {
   getStatusClasses,
   isResourceDisabled,
 } from './ResourceItemContent';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
 import { getDisplayName } from '~/utils/string-helpers';
 import {
   needsHydration,
@@ -331,97 +332,99 @@ export function ResourceSelectMultipleInput({
   const countDisplay = limit ? `${value.length}/${limit}` : `${value.length}`;
 
   return (
-    <Input.Wrapper {...inputWrapperProps} label={undefined}>
-      <Card withBorder padding={0}>
-        {/* Header section - only show bottom border when content is expanded */}
-        <Card.Section withBorder={opened && hasResources} inheritPadding py="xs" px="sm">
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap="xs" wrap="nowrap">
-              {label && (
-                <Input.Label component="span" fw={500}>
-                  {label}
-                </Input.Label>
-              )}
+    <ResidencyBatchProvider modelVersionIds={resourceIds}>
+      <Input.Wrapper {...inputWrapperProps} label={undefined}>
+        <Card withBorder padding={0}>
+          {/* Header section - only show bottom border when content is expanded */}
+          <Card.Section withBorder={opened && hasResources} inheritPadding py="xs" px="sm">
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap="xs" wrap="nowrap">
+                {label && (
+                  <Input.Label component="span" fw={500}>
+                    {label}
+                  </Input.Label>
+                )}
 
-              <Badge size="sm" variant="light" color="gray">
-                {countDisplay}
-              </Badge>
-
-              {/* Show warning indicator when there are disabled resources */}
-              {disabledCount > 0 && (
-                <Badge
-                  size="sm"
-                  variant="light"
-                  color="red"
-                  leftSection={<IconAlertTriangle size={12} />}
-                >
-                  {disabledCount}
+                <Badge size="sm" variant="light" color="gray">
+                  {countDisplay}
                 </Badge>
-              )}
-            </Group>
 
-            <Group gap="xs" wrap="nowrap">
-              {canAdd && !hideButton && (
-                <Button
-                  variant="light"
-                  size="compact-xs"
-                  leftSection={<IconPlus size={14} />}
-                  onClick={handleOpenModal}
-                  disabled={disabled}
+                {/* Show warning indicator when there are disabled resources */}
+                {disabledCount > 0 && (
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color="red"
+                    leftSection={<IconAlertTriangle size={12} />}
+                  >
+                    {disabledCount}
+                  </Badge>
+                )}
+              </Group>
+
+              <Group gap="xs" wrap="nowrap">
+                {canAdd && !hideButton && (
+                  <Button
+                    variant="light"
+                    size="compact-xs"
+                    leftSection={<IconPlus size={14} />}
+                    onClick={handleOpenModal}
+                    disabled={disabled}
+                  >
+                    Add
+                  </Button>
+                )}
+
+                <ActionIcon
+                  aria-label={opened ? 'Collapse resources' : 'Expand resources'}
+                  variant="subtle"
+                  size="sm"
+                  onClick={toggle}
+                  className={clsx('transition-transform', { 'rotate-180': opened })}
                 >
-                  Add
-                </Button>
-              )}
-
-              <ActionIcon
-                aria-label={opened ? 'Collapse resources' : 'Expand resources'}
-                variant="subtle"
-                size="sm"
-                onClick={toggle}
-                className={clsx('transition-transform', { 'rotate-180': opened })}
-              >
-                <IconChevronDown size={16} />
-              </ActionIcon>
+                  <IconChevronDown size={16} />
+                </ActionIcon>
+              </Group>
             </Group>
-          </Group>
-        </Card.Section>
-
-        {/* Content section - collapsible resource list */}
-        <Collapse in={opened}>
-          <Card.Section>
-            {hasResources ? (
-              <div className="flex flex-col">
-                {groups.map((group, index) => (
-                  <div key={group.type}>
-                    {index !== 0 && <Divider />}
-                    <Text size="xs" c="dimmed" fw={500} className="px-3 pb-1 pt-2">
-                      {group.label}
-                    </Text>
-                    <div className="flex flex-col">
-                      {group.items.map(({ value: resourceValue, resource }, itemIndex) => (
-                        <ResourceItem
-                          key={resourceValue.id}
-                          resourceValue={resourceValue}
-                          resource={resource}
-                          onChange={handleUpdate}
-                          onRemove={() => handleRemove(resourceValue.id)}
-                          disabled={disabled}
-                          index={itemIndex}
-                          options={options}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Text c="dimmed" size="sm" className="px-3 py-2">
-                No resources selected
-              </Text>
-            )}
           </Card.Section>
-        </Collapse>
-      </Card>
-    </Input.Wrapper>
+
+          {/* Content section - collapsible resource list */}
+          <Collapse in={opened}>
+            <Card.Section>
+              {hasResources ? (
+                <div className="flex flex-col">
+                  {groups.map((group, index) => (
+                    <div key={group.type}>
+                      {index !== 0 && <Divider />}
+                      <Text size="xs" c="dimmed" fw={500} className="px-3 pb-1 pt-2">
+                        {group.label}
+                      </Text>
+                      <div className="flex flex-col">
+                        {group.items.map(({ value: resourceValue, resource }, itemIndex) => (
+                          <ResourceItem
+                            key={resourceValue.id}
+                            resourceValue={resourceValue}
+                            resource={resource}
+                            onChange={handleUpdate}
+                            onRemove={() => handleRemove(resourceValue.id)}
+                            disabled={disabled}
+                            index={itemIndex}
+                            options={options}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Text c="dimmed" size="sm" className="px-3 py-2">
+                  No resources selected
+                </Text>
+              )}
+            </Card.Section>
+          </Collapse>
+        </Card>
+      </Input.Wrapper>
+    </ResidencyBatchProvider>
   );
 }

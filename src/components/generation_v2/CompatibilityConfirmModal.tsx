@@ -24,6 +24,7 @@ import {
   getEcosystemSetting,
 } from '~/shared/constants/basemodel.constants';
 import { ResourceItemContent } from '~/components/generation_v2/inputs/ResourceItemContent';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
 import { getLastUsedCheckpointIdForEcosystem } from '~/components/generation_v2/GenerationFormProvider';
 import { useResourceDataStore } from '~/store/resource-data.store';
 
@@ -264,54 +265,56 @@ function CompatibilityConfirmModalContent({
         ) : null}
 
         {isWorkflowChange ? (
-          <Stack gap="xs">
-            {ecosystemOptions.map((option) => {
-              const versionId = versionIdByKey.get(option.ecosystemKey);
-              const resource = versionId ? storeResources.get(versionId) : undefined;
-              const isSelected = selectedEcosystemKey === option.ecosystemKey;
-              const sharedClasses = clsx(
-                'cursor-pointer rounded-sm border border-solid',
-                isSelected
-                  ? 'border-blue-5 bg-blue-1 dark:bg-blue-9/20'
-                  : 'border-gray-3 hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-6'
-              );
+          <ResidencyBatchProvider modelVersionIds={[...versionIdByKey.values()]}>
+            <Stack gap="xs">
+              {ecosystemOptions.map((option) => {
+                const versionId = versionIdByKey.get(option.ecosystemKey);
+                const resource = versionId ? storeResources.get(versionId) : undefined;
+                const isSelected = selectedEcosystemKey === option.ecosystemKey;
+                const sharedClasses = clsx(
+                  'cursor-pointer rounded-sm border border-solid',
+                  isSelected
+                    ? 'border-blue-5 bg-blue-1 dark:bg-blue-9/20'
+                    : 'border-gray-3 hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-6'
+                );
 
-              if (!resource) {
+                if (!resource) {
+                  return (
+                    <Paper
+                      key={option.id}
+                      p="sm"
+                      className={sharedClasses}
+                      onClick={() => setSelectedEcosystemKey(option.ecosystemKey)}
+                    >
+                      <Text size="sm" fw={500}>
+                        {option.label}
+                      </Text>
+                    </Paper>
+                  );
+                }
+
                 return (
                   <Paper
                     key={option.id}
-                    p="sm"
+                    p="xs"
                     className={sharedClasses}
                     onClick={() => setSelectedEcosystemKey(option.ecosystemKey)}
                   >
-                    <Text size="sm" fw={500}>
-                      {option.label}
-                    </Text>
+                    <ResourceItemContent
+                      resource={resource}
+                      showLink={false}
+                      showStrength={false}
+                      actions={
+                        <Badge size="xs" variant="light" color="gray" className="shrink-0">
+                          {option.label}
+                        </Badge>
+                      }
+                    />
                   </Paper>
                 );
-              }
-
-              return (
-                <Paper
-                  key={option.id}
-                  p="xs"
-                  className={sharedClasses}
-                  onClick={() => setSelectedEcosystemKey(option.ecosystemKey)}
-                >
-                  <ResourceItemContent
-                    resource={resource}
-                    showLink={false}
-                    showStrength={false}
-                    actions={
-                      <Badge size="xs" variant="light" color="gray" className="shrink-0">
-                        {option.label}
-                      </Badge>
-                    }
-                  />
-                </Paper>
-              );
-            })}
-          </Stack>
+              })}
+            </Stack>
+          </ResidencyBatchProvider>
         ) : (
           <Card withBorder p="sm" className="bg-gray-0 dark:bg-dark-6">
             <Group gap="sm" wrap="nowrap">

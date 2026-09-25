@@ -1,3 +1,4 @@
+import { versionGeneratableFor } from '~/shared/generation/coverage-fields';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
@@ -23,6 +24,7 @@ export type ResourceSelectSource = (typeof selectSources)[number];
 export type ResourceFilter = {
   types: ModelType[];
   baseModels: BaseModel[];
+  loadedOnly: boolean;
 } & ModelPricingFilter;
 
 export const resourceSelectTabs = [
@@ -40,6 +42,62 @@ export type Tabs = (typeof resourceSelectTabs)[number];
 // variants). Mirrors the same predicate on the server picker service.
 export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: string): boolean {
   return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
+}
+
+/** The fields the picker filters a hit's versions on. */
+export type SelectableVersion = {
+  id: number;
+  baseModel: string;
+  canGenerate?: boolean;
+  canGenerateNext?: boolean;
+  generatorLoaded?: boolean;
+};
+
+/**
+ * The versions of one hit a user may pick, re-checked client-side: the index filters MODELS, and
+ * Meilisearch matching a nested array only proves some version qualified — so a card could otherwise
+ * land on one that does not.
+ */
+export function selectableVersions<V extends SelectableVersion>(
+  versions: V[],
+  {
+    canGenerate,
+    coverageNext,
+    member,
+    isCheckpoint,
+    loadedOnly,
+    skipBaseModel,
+    modelBaseModels,
+    excludedIds,
+  }: {
+    canGenerate?: boolean;
+    /** Which indexed coverage field the server gated this page on. */
+    coverageNext?: boolean;
+    /** Whether this user gets the expansion — the server resolved it for the same page. */
+    member?: boolean;
+    isCheckpoint?: boolean;
+    loadedOnly?: boolean;
+    skipBaseModel: boolean;
+    modelBaseModels: string[];
+    excludedIds: number[];
+  }
+) {
+  return versions.filter(
+    (version) =>
+      (canGenerate
+        ? canGenerate ===
+          versionGeneratableFor(version, {
+            coverageNext,
+            member: !!member,
+            isCheckpoint: !!isCheckpoint,
+          })
+        : true) &&
+      (!loadedOnly || !!version.generatorLoaded) &&
+      (skipBaseModel ||
+        modelBaseModels.length === 0 ||
+        modelBaseModels.includes(version.baseModel)) &&
+      !excludedIds.includes(version.id)
+  );
 }
 
 /** The chip asks a generate-price question, which is the wrong one for the other picker sources. */
@@ -104,6 +162,7 @@ export const toResourceSelectFilterInput = (filters: ResourceFilter) => ({
   filterTypes: filters.types,
   filterBaseModels: filters.baseModels,
   hidePaid: filters.hidePaid,
+  filterLoaded: filters.loadedOnly,
 });
 
 export const resourceSort = {

@@ -30,9 +30,12 @@
 --   3. Re-queue those models into the models search index.
 --
 -- SHAPE. The rules differ in exactly two things — the file-format exclusions and how a checkpoint
--- qualifies — so the shared work is computed ONCE per version in two lateral subqueries. Written as
--- two independent boolean expressions instead, each version pays three `ModelFile` lookups rather
--- than one pass, which measured slower and read more buffers.
+-- qualifies — so the shared work is computed ONCE per version in two
+-- lateral subqueries and the two output columns are one line each. Written as two independent
+-- boolean expressions instead, each version pays three `ModelFile` lookups (live file, staged file,
+-- SafeTensor) rather than one pass. Measured on the replica over a 33,646-version sample,
+-- 2026-09-23: 1,634 ms / 716,281 shared buffers duplicated, against 1,027 ms / 561,938 shared
+-- buffers for the shape below — ~1.5x faster, ~22% fewer buffers.
 --
 -- CTEs were tried and rejected: Postgres inlines a non-materialized CTE, so the shared expression is
 -- still evaluated twice, and `MATERIALIZED` would spool intermediate rows for a ~1M-row view and

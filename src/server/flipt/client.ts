@@ -157,6 +157,26 @@ export enum FLIPT_FEATURE_FLAGS {
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
+
+  // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
+  // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
+  //
+  // 🔴 BOOLEAN ONLY, and global. The orchestrator reads /api/v1/model-versions/mini/[id] with no
+  // user to decide what it may load, and the coverage answer is cached and indexed for everyone —
+  // so a percentage or segment rollout would have the orchestrator, the cache and the viewer
+  // disagreeing about the same model.
+  //
+  // DEFAULT-OFF is the safe failure: an unreachable Flipt narrows generation to what the cluster
+  // already holds rather than opening on-demand loading nobody is watching.
+  GENERATION_COVERAGE_NEXT = 'generation-coverage-next',
+
+  // Who may START a download by generating with a checkpoint only the EXPANSION covers. Named for
+  // the OPEN state: `isFlipt` answers false for an unknown flag or an unreachable Flipt, so the
+  // default and the failure both land on the narrower audience. Evaluate with the user id as
+  // entity, or a percentage hashes the literal 'global' and answers the same for everyone. Read it
+  // through `coverageAudience`, which is where it meets the tier.
+  // docs/features/paid-model-loading-members-gate.md
+  GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

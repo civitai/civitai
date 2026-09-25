@@ -235,8 +235,9 @@ export const AuctionTopSection = ({
         )}
         <HoverCard withArrow width={380}>
           <HoverCard.Target>
-            <Text c="dimmed">
+            <Text c="dimmed" size="sm" className="flex cursor-default items-center gap-1">
               <IconMoodSmile />
+              <span className="hide-mobile">Perks of winning</span>
             </Text>
           </HoverCard.Target>
           <HoverCard.Dropdown maw="100%">
@@ -256,7 +257,9 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Checkpoints will be enabled for use in generation.
+                  Every eligible checkpoint can be generated with, so winning no longer unlocks
+                  that. A winning checkpoint is marked for priority when the generator has to
+                  download it.
                 </Text>
               </Stack>
             </Stack>
