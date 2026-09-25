@@ -125,6 +125,8 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
@@ -2694,7 +2696,7 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -3178,12 +3180,14 @@ export async function applyModelContentChange({
     // This branch is the fan-out, which has neither — and the text it just wrote is text the
     // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
     // published description while it keeps the SFW classification it earned with the old text.
-    const flagged = evaluateAutoNsfw({
-      name: stored.name,
-      description,
-      alreadyNsfw: stored.nsfw,
-      lockedProperties: stored.lockedProperties,
-    });
+    const flagged = (await legacyProfanityAutoNsfwApplies('Model', id))
+      ? evaluateAutoNsfw({
+          name: stored.name,
+          description,
+          alreadyNsfw: stored.nsfw,
+          lockedProperties: stored.lockedProperties,
+        })
+      : null;
     if (flagged) {
       const meta = {
         ...((stored.meta as MixedObject | null) ?? {}),
@@ -4897,25 +4901,32 @@ export async function bustFeaturedModelsCache() {
 
 // Mod-only read of a model's moderation state — surfaces why a model is
 // locked / marked nsfw / hidden so mods can self-triage instead of escalating
-// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+// (automated actions such as the profanity nsfw-lock or the text-scan nsfw flag are otherwise
+// invisible to them).
 export async function getModelModerationDetail({ id }: { id: number }) {
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      nsfw: true,
-      nsfwLevel: true,
-      status: true,
-      availability: true,
-      minor: true,
-      poi: true,
-      lockedProperties: true,
-      deletedAt: true,
-      deletedBy: true,
-      meta: true,
-    },
-  });
+  const [model, scan] = await Promise.all([
+    dbRead.model.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        nsfw: true,
+        nsfwLevel: true,
+        status: true,
+        availability: true,
+        minor: true,
+        poi: true,
+        lockedProperties: true,
+        deletedAt: true,
+        deletedBy: true,
+        meta: true,
+      },
+    }),
+    dbRead.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Model', entityId: id } },
+      select: { status: true, nsfwLevel: true, triggeredLabels: true, result: true, updatedAt: true },
+    }),
+  ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const meta = (model.meta ?? {}) as ModelMeta;
@@ -4942,6 +4953,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
+    textScan: summarizeTextScan(scan),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
