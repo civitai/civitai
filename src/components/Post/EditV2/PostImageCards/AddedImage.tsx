@@ -63,7 +63,11 @@ import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { DEFAULT_EDGE_IMAGE_WIDTH, MAX_RESOURCES_PER_IMAGE } from '~/server/common/constants';
+import {
+  DEFAULT_EDGE_IMAGE_WIDTH,
+  MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
+  MAX_MANUAL_RESOURCES_PER_IMAGE,
+} from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
 import type { ImageMetaProps, UnmatchedResource } from '~/server/schema/image.schema';
@@ -81,6 +85,11 @@ import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
+import {
+  getManualResourceLimitError,
+  getManualResourceUsage,
+  manualResourceLimitMessages,
+} from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -364,7 +373,8 @@ function Preview() {
 const ResourceHeader = () => {
   const { image, allowedResources, addResource, isAddingResource, canAdd } = useAddedImageContext();
 
-  const cantAdd = image.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE;
+  const manualUsage = getManualResourceUsage(image.resourceHelper);
+  const cantAdd = manualUsage.total >= MAX_MANUAL_RESOURCES_PER_IMAGE;
 
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
@@ -385,6 +395,15 @@ const ResourceHeader = () => {
           Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
           create this image.
         </InfoPopover>
+        {canAdd && (
+          <Tooltip
+            label={`Manually added: ${manualUsage.checkpoints}/${MAX_MANUAL_CHECKPOINTS_PER_IMAGE} checkpoints`}
+          >
+            <Badge color={cantAdd ? 'red' : 'gray'} variant="light">
+              {manualUsage.total}/{MAX_MANUAL_RESOURCES_PER_IMAGE}
+            </Badge>
+          </Tooltip>
+        )}
       </div>
       <div className="flex items-center gap-2">
         {canAdd ? (
@@ -402,6 +421,10 @@ const ResourceHeader = () => {
                 <Stack>
                   <Text>Manually add a resource.</Text>
                   <Text size="sm">
+                    Up to {MAX_MANUAL_RESOURCES_PER_IMAGE} manually added resources per image, of
+                    which at most {MAX_MANUAL_CHECKPOINTS_PER_IMAGE} can be checkpoints.
+                  </Text>
+                  <Text size="sm">
                     If you can&apos;t find the one you&apos;re looking for, it&apos;s either not
                     uploaded here, or is being filtered out to match your already selected
                     resources.
@@ -409,10 +432,7 @@ const ResourceHeader = () => {
                 </Stack>
               </InfoPopover>
             </Box>
-            <Tooltip
-              label={`Maximum resources reached (${MAX_RESOURCES_PER_IMAGE})`}
-              disabled={!cantAdd}
-            >
+            <Tooltip label={manualResourceLimitMessages.total} disabled={!cantAdd}>
               <ResourceSelectMultiple
                 buttonLabel="RESOURCE"
                 modalTitle="Select resource(s)"
@@ -429,9 +449,23 @@ const ResourceHeader = () => {
                 }}
                 onChange={(vals) => {
                   if (!vals?.length || cantAdd) return;
-                  vals.forEach((val) => {
+                  const accepted: { modelVersionId: number; modelType: ModelType }[] = [];
+                  for (const val of vals) {
+                    const resource = { modelVersionId: val.id, modelType: val.model.type };
+                    const error = getManualResourceLimitError(image.resourceHelper, [
+                      ...accepted,
+                      resource,
+                    ]);
+                    if (error) {
+                      showErrorNotification({
+                        title: 'Unable to add resource',
+                        error: new Error(error),
+                      });
+                      continue;
+                    }
+                    accepted.push(resource);
                     addResource(val.id);
-                  });
+                  }
                 }}
               />
             </Tooltip>
@@ -461,16 +495,15 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   const otherAvailableIDs = useMemo(() => {
     return otherImages
       .map((oi) => {
-        // Skip if target image is at resource limit
-        if (oi.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE) return null;
-        // Skip if target image already has this exact resource
         if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
+        if (getManualResourceLimitError(oi.resourceHelper, [{ modelVersionId, modelType }]))
+          return null;
 
         // Allow copy to eligible images
         return oi.id;
       })
       .filter(isDefined);
-  }, [modelVersionId, otherImages]);
+  }, [modelVersionId, modelType, otherImages]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
