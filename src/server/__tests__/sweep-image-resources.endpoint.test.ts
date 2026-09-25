@@ -48,7 +48,7 @@ function toCall(strings: TemplateStringsArray, ...values: unknown[]): Call {
     }
     text += strings[i + 1];
   });
-  return { text: text.replace(/\s+/g, ' '), values: params };
+  return { text: text.replace(/\s+/g, ' ').trim(), values: params };
 }
 
 function route(client: 'dbRead' | 'dbWrite', answer: (c: Call) => unknown) {
@@ -75,63 +75,68 @@ async function call(query: Record<string, string>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbMock.dbRead.$queryRaw.mockReset();
+  dbMock.dbWrite.$queryRaw.mockReset();
 });
 
+// The whole statement, not fragments: which rows this endpoint deletes IS its SQL text, so any edit
+// to it must show up here and be read.
+const SQL = {
+  next: 'SELECT min("modelVersionId") AS next FROM "ImageResourceNew" WHERE "modelVersionId" >= ?',
+  missing:
+    'WITH RECURSIVE ids AS ( (SELECT "modelVersionId" AS v FROM "ImageResourceNew" WHERE "modelVersionId" >= ? ORDER BY 1 LIMIT 1) UNION ALL SELECT (SELECT "modelVersionId" FROM "ImageResourceNew" WHERE "modelVersionId" > ids.v ORDER BY 1 LIMIT 1) FROM ids WHERE ids.v < ? ) SELECT v FROM ids WHERE v IS NOT NULL AND v < ? AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = ids.v)',
+  count: 'SELECT count(*)::int AS n FROM "ImageResourceNew" WHERE "modelVersionId" = ANY(?::int[])',
+  deleteDangling:
+    'WITH t AS ( SELECT irn."imageId", irn."modelVersionId" FROM "ImageResourceNew" irn WHERE irn."modelVersionId" = ANY(?::int[]) AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = irn."modelVersionId") LIMIT ? ), d AS ( DELETE FROM "ImageResourceNew" irn USING t WHERE irn."imageId" = t."imageId" AND irn."modelVersionId" = t."modelVersionId" RETURNING irn.* ) INSERT INTO "_sweep_irn_20260925" ("imageId", "modelVersionId", "strength", "detected", "tier") SELECT "imageId", "modelVersionId", "strength", "detected", \'dangling\' FROM d RETURNING "imageId", "modelVersionId"',
+  select:
+    'SELECT irn."imageId", irn."modelVersionId", CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END AS tier FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" JOIN "ImageResourceNew" irn ON irn."modelVersionId" = mv.id JOIN "Image" i ON i.id = irn."imageId" LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE mv.id >= ? AND mv.id < ? AND ( (mv."publishedAt" IS NULL AND (mv.status <> \'Published\' OR m.status <> \'Published\')) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) )',
+  deleteNonVisible:
+    'WITH p AS ( SELECT * FROM unnest( ?::int[], ?::int[] ) AS p("imageId", "modelVersionId") ), d AS ( DELETE FROM "ImageResourceNew" irn USING p, "ModelVersion" mv, "Model" m, "Image" i LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE irn."imageId" = p."imageId" AND irn."modelVersionId" = p."modelVersionId" AND mv.id = irn."modelVersionId" AND m.id = mv."modelId" AND i.id = irn."imageId" AND ( (mv."publishedAt" IS NULL AND (mv.status <> \'Published\' OR m.status <> \'Published\')) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) ) RETURNING irn.*, CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END AS tier ) INSERT INTO "_sweep_irn_20260925" ("imageId", "modelVersionId", "strength", "detected", "tier") SELECT "imageId", "modelVersionId", "strength", "detected", tier FROM d RETURNING "imageId", "modelVersionId", "tier"',
+  captured:
+    'SELECT DISTINCT "imageId", "modelVersionId" FROM "_sweep_irn_20260925" WHERE "sweptAt" >= ? AND "sweptAt" < ? AND "imageId" >= ? ORDER BY "imageId", "modelVersionId" LIMIT ?',
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
 describe('sweep-image-resources: dangling', () => {
-  function arrangeRead() {
+  function arrangeRead({ ids = [5, 7], next = null as number | null } = {}) {
     return route('dbRead', ({ text }) => {
       if (text.includes('max("modelVersionId")')) return [{ max: 99 }];
-      if (text.includes('WITH RECURSIVE')) return [{ v: 5 }, { v: 7 }];
-      if (text.includes('count(*)')) return [{ n: 3 }];
-      if (text.includes('min("modelVersionId")')) return [{ next: null }];
+      if (text.startsWith('WITH RECURSIVE')) return ids.map((v) => ({ v }));
+      if (text.startsWith('SELECT count(*)')) return [{ n: 3 }];
+      if (text.includes('min("modelVersionId")')) return [{ next }];
       throw new Error(`unexpected read: ${text}`);
     });
   }
 
-  it('is a dry run by default: counts and never writes', async () => {
-    arrangeRead();
+  it('is a dry run by default: counts, never writes, touches no search or cache', async () => {
+    const reads = arrangeRead();
     const out = await call({ tier: 'dangling' });
 
     expect(out).toMatchObject({ dryRun: true, rows: 3, byTier: { dangling: 3 }, nextStart: null });
+    expect(reads.find((r) => r.text.startsWith('WITH RECURSIVE'))!.text).toBe(SQL.missing);
+    expect(reads.find((r) => r.text.startsWith('SELECT count(*)'))!.text).toBe(SQL.count);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mocks.queueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    expect(mocks.bust).not.toHaveBeenCalled();
+    expect(mocks.bustCacheTag).not.toHaveBeenCalled();
   });
 
   // Keep the capture in the DELETE's own statement: split into two, a failure between them loses
   // rows the rollback depends on.
-  it('captures every deleted row in the same statement that deletes it', async () => {
+  it('deletes and captures in one statement that re-checks the version on the primary', async () => {
     arrangeRead();
     const writes = route('dbWrite', () => [
       { imageId: 1, modelVersionId: 5 },
       { imageId: 2, modelVersionId: 7 },
-      { imageId: 1, modelVersionId: 7 },
     ]);
 
     const out = await call({ tier: 'dangling', dryRun: 'false' });
 
     expect(writes).toHaveLength(1);
-    const [{ text, values }] = writes;
-    expect(text).toMatch(/^ ?WITH d AS \( DELETE FROM "ImageResourceNew" irn/);
-    expect(text).toContain(
-      'NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = irn."modelVersionId")'
-    );
-    expect(text).toContain('INSERT INTO "_sweep_irn_20260925"');
-    expect(text).toContain("'dangling' FROM d");
-    expect(values).toEqual([[5, 7]]);
-    expect(out).toMatchObject({ dryRun: false, rows: 3, images: 2 });
-  });
-
-  it('refreshes search, the resource cache and the version tags once per batch', async () => {
-    arrangeRead();
-    route('dbWrite', () => [
-      { imageId: 1, modelVersionId: 5 },
-      { imageId: 2, modelVersionId: 7 },
-      { imageId: 1, modelVersionId: 7 },
-    ]);
-
-    await call({ tier: 'dangling', dryRun: 'false' });
-
-    expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
+    expect(writes[0].text).toBe(SQL.deleteDangling);
+    expect(writes[0].values).toEqual([[5, 7], 10000]);
+    expect(out).toMatchObject({ dryRun: false, rows: 2, images: 2, sideEffectFailures: 0 });
     expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [1, 2],
       action: SearchIndexUpdateQueueAction.Update,
@@ -142,6 +147,71 @@ describe('sweep-image-resources: dangling', () => {
       'images-modelVersion:7',
     ]);
   });
+
+  it('repeats a capped statement until it comes back short, one side-effect pass each', async () => {
+    arrangeRead({ ids: [5] });
+    let n = 0;
+    const writes = route('dbWrite', () =>
+      ++n === 1
+        ? [
+            { imageId: 1, modelVersionId: 5 },
+            { imageId: 2, modelVersionId: 5 },
+          ]
+        : [{ imageId: 3, modelVersionId: 5 }]
+    );
+
+    const out = await call({ tier: 'dangling', dryRun: 'false', rowCap: '2' });
+
+    expect(writes.map((w) => w.values)).toEqual([
+      [[5], 2],
+      [[5], 2],
+    ]);
+    expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledTimes(2);
+    expect(out.rows).toBe(3);
+  });
+
+  it('splits the missing ids into batches of 500', async () => {
+    arrangeRead({ ids: Array.from({ length: 501 }, (_, i) => i + 1) });
+    const writes = route('dbWrite', () => []);
+
+    await call({ tier: 'dangling', dryRun: 'false' });
+
+    expect(writes.map((w) => (w.values[0] as number[]).length)).toEqual([500, 1]);
+  });
+
+  it('skips ahead to the next credited version id between chunks', async () => {
+    let next: number | null = 400;
+    const reads = route('dbRead', ({ text }) => {
+      if (text.includes('max("modelVersionId")')) return [{ max: 499 }];
+      if (text.startsWith('WITH RECURSIVE')) return [];
+      if (text.includes('min("modelVersionId")')) {
+        const found = next;
+        next = null;
+        return [{ next: found }];
+      }
+      throw new Error(`unexpected read: ${text}`);
+    });
+
+    await call({ tier: 'dangling', chunk: '100' });
+
+    expect(reads.find((r) => r.text.includes('min("modelVersionId")'))!.text).toBe(SQL.next);
+
+    const chunks = reads.filter((r) => r.text.startsWith('WITH RECURSIVE')).map((r) => r.values);
+    expect(chunks).toEqual([
+      [0, 100, 100],
+      [400, 500, 500],
+    ]);
+  });
+
+  it('records a failed search or cache update and carries on, since the rows are already gone', async () => {
+    arrangeRead({ ids: [5] });
+    route('dbWrite', () => [{ imageId: 9, modelVersionId: 5 }]);
+    mocks.bust.mockRejectedValueOnce(new Error('redis down'));
+
+    const out = await call({ tier: 'dangling', dryRun: 'false' });
+
+    expect(out).toMatchObject({ rows: 1, sideEffectFailures: 1, failedImageIds: [9] });
+  });
 });
 
 describe('sweep-image-resources: visibility', () => {
@@ -151,80 +221,120 @@ describe('sweep-image-resources: visibility', () => {
     { imageId: 3, modelVersionId: 11, tier: 'private' },
   ];
 
-  const answerPairs = ({ text }: Call) => {
+  const answerReads = ({ text }: Call) => {
     if (text.includes('max(id)')) return [{ max: 19 }];
-    if (text.includes('WITH inv AS')) return PAIRS;
-    throw new Error(`unexpected query: ${text}`);
+    if (text.startsWith('SELECT irn."imageId"')) return PAIRS;
+    throw new Error(`unexpected read: ${text}`);
   };
+  const selects = (calls: Call[]) =>
+    calls.filter((r) => r.text.startsWith('SELECT irn."imageId"')).map((r) => r.values);
 
-  it('dry run reads the replica and counts by tier', async () => {
-    route('dbRead', answerPairs);
+  it('dry run selects on the replica with the exact rule, counts by tier, and writes nothing', async () => {
+    const reads = route('dbRead', answerReads);
 
     const out = await call({ tier: 'visibility', chunk: '100' });
 
-    expect(out).toMatchObject({
-      dryRun: true,
-      rows: 3,
-      byTier: { never_published: 2, private: 1 },
-      images: 3,
-    });
+    expect(reads.find((r) => r.text.startsWith('SELECT irn."imageId"'))!.text).toBe(SQL.select);
+    expect(out).toMatchObject({ rows: 3, byTier: { never_published: 2, private: 1 }, images: 3 });
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mocks.queueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    expect(mocks.bust).not.toHaveBeenCalled();
+    expect(mocks.bustCacheTag).not.toHaveBeenCalled();
   });
 
-  it('decides on the primary, deletes exactly the selected pairs, and counts only what was removed', async () => {
-    route('dbRead', answerPairs);
-    const writes = route('dbWrite', (c) => {
-      if (c.text.includes('WITH inv AS')) return PAIRS;
-      // One pair was already gone by the time of the delete.
-      return [
-        { imageId: 1, modelVersionId: 10 },
-        { imageId: 3, modelVersionId: 11 },
-      ];
-    });
+  // The primary applies the whole rule again, so a row whose version or owner changed since the
+  // replica read is kept, and the pair join spares every other resource on the image.
+  it('deletes by exact pair on the primary, re-applying the rule, in slices of rowCap', async () => {
+    route('dbRead', answerReads);
+    const writes = route('dbWrite', (c) =>
+      (c.values[0] as number[]).includes(1)
+        ? [{ imageId: 1, modelVersionId: 10, tier: 'never_published' }]
+        : [{ imageId: 3, modelVersionId: 11, tier: 'private' }]
+    );
 
-    const out = await call({ tier: 'visibility', dryRun: 'false', chunk: '100' });
+    const out = await call({ tier: 'visibility', dryRun: 'false', chunk: '100', rowCap: '2' });
 
-    const del = writes.find((w) => w.text.includes('DELETE FROM'))!;
-    expect(del.text).toContain('INSERT INTO "_sweep_irn_20260925"');
-    expect(del.values).toEqual([
-      [1, 2, 3],
-      [10, 10, 11],
-      ['never_published', 'never_published', 'private'],
+    expect(writes).toHaveLength(2);
+    expect(writes[0].text).toBe(SQL.deleteNonVisible);
+    expect(writes.map((w) => w.values)).toEqual([
+      [
+        [1, 2],
+        [10, 10],
+      ],
+      [[3], [11]],
     ]);
     expect(out).toMatchObject({ rows: 2, byTier: { never_published: 1, private: 1 }, images: 2 });
-    expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledWith({
-      ids: [1, 3],
-      action: SearchIndexUpdateQueueAction.Update,
-    });
   });
 
-  it('selects only client-supplied rows: manual ones and those listed in meta.civitaiResources', async () => {
-    const reads = route('dbRead', answerPairs);
-
-    await call({ tier: 'visibility', chunk: '100' });
-
-    const select = reads.find((r) => r.text.includes('WITH inv AS'))!.text;
-    expect(select).toContain(
-      '(NOT irn.detected AND p."modelVersionId" IS DISTINCT FROM irn."modelVersionId")'
-    );
-    expect(select).toContain(`i.meta->'civitaiResources' @> jsonb_build_array(`);
-    expect(select).toContain(
-      'WHERE i."userId" <> inv.owner AND NOT coalesce(u."isModerator", false)'
-    );
-  });
-
-  it('walks the version range in chunks and resumes nowhere once done', async () => {
-    const reads = route('dbRead', answerPairs);
+  it('walks version chunks and reports no cursor once done', async () => {
+    const reads = route('dbRead', answerReads);
 
     const out = await call({ tier: 'visibility', chunk: '5' });
 
-    const chunks = reads.filter((r) => r.text.includes('WITH inv AS')).map((r) => r.values);
-    expect(chunks).toEqual([
+    expect(selects(reads)).toEqual([
       [0, 5],
       [5, 10],
       [10, 15],
       [15, 20],
     ]);
     expect(out.nextStart).toBeNull();
+  });
+
+  it('stops at the budget with a cursor, and resumes from it', async () => {
+    let now = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const reads = route('dbRead', (c) => {
+      const answer = answerReads(c);
+      if (c.text.startsWith('SELECT irn."imageId"')) now += 2 * DAY;
+      return answer;
+    });
+
+    const first = await call({ tier: 'visibility', chunk: '5' });
+    expect(first.nextStart).toBe(5);
+
+    now = 0;
+    await call({ tier: 'visibility', chunk: '5', start: String(first.nextStart) });
+    expect(selects(reads)).toEqual([
+      [0, 5],
+      [5, 10],
+    ]);
+    spy.mockRestore();
+  });
+});
+
+describe('sweep-image-resources: redrive', () => {
+  it('needs a capture window', async () => {
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
+    await (handler as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>)(
+      { query: { tier: 'redrive', dryRun: 'false' } } as unknown as NextApiRequest,
+      res as unknown as NextApiResponse
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('replays search and cache updates for captured rows, resuming at the last image', async () => {
+    let batch = 0;
+    const reads = route('dbRead', () =>
+      ++batch === 1
+        ? [
+            { imageId: 1, modelVersionId: 5 },
+            { imageId: 4, modelVersionId: 5 },
+          ]
+        : [{ imageId: 4, modelVersionId: 6 }]
+    );
+
+    const out = await call({
+      tier: 'redrive',
+      dryRun: 'false',
+      since: '2026-09-25T00:00:00Z',
+      until: '2026-09-26T00:00:00Z',
+      rowCap: '2',
+    });
+
+    expect(reads[0].text).toBe(SQL.captured);
+    expect(reads.map((r) => r.values[2])).toEqual([0, 4]);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledTimes(2);
+    expect(out).toMatchObject({ rows: 3, nextStart: null });
   });
 });

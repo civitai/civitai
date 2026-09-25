@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { uniq } from 'lodash-es';
+import { chunk as chunkArray, uniq } from 'lodash-es';
 import * as z from 'zod';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -11,41 +11,72 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
 /**
- * Cleans up ImageResourceNew rows that credit a model version which no longer exists (`dangling`),
- * or one the image's owner cannot view (`visibility`): a never-published version or a private one
- * with no access grant, on the manual and meta-listed rows only. Every removed row is written to
+ * Cleans up orphaned and non-visible ImageResourceNew rows. Every removed row is written to
  * "_sweep_irn_20260925" by the same statement that deletes it, so the sweep can be reversed.
  *
- * GET /api/admin/temp/sweep-image-resources?token=<WEBHOOK_TOKEN>&tier=dangling|visibility
+ * GET /api/admin/temp/sweep-image-resources?token=<WEBHOOK_TOKEN>&tier=dangling|visibility|redrive
  *   &dryRun=true|false   (default true) counts only
- *   &start=<versionId>   inclusive; default 0
- *   &end=<versionId>     exclusive; default one past the highest credited (dangling) or existing
- *                        (visibility) version id
+ *   &start=<id>          inclusive cursor: a version id, or an image id for `redrive`
+ *   &end=<id>            exclusive; version tiers only
  *   &chunk=<n>           version ids per chunk (default 100000 dangling, 2000 visibility)
- *   &sleepMs=1000        pause between chunks
+ *   &rowCap=10000        most rows one statement may delete
+ *   &sleepMs=1000        pause between statements
  *   &budgetMs=60000      stop and return a cursor before the gateway times out
+ *   &since=&until=       `redrive` only: replays search and cache updates for rows captured then
  *
- * Resumable: feed `nextStart` back as `start` until it comes back null.
+ * Resumable: feed `nextStart` back as `start` until it comes back null. A chunk cut short by the
+ * budget resumes from its own start, which is safe because deleted rows are not selected again.
  */
 
 const CAPTURE = Prisma.raw('"_sweep_irn_20260925"');
 const ID_BATCH = 500;
+const BUST_BATCH = 1000;
 
 const schema = z.object({
-  tier: z.enum(['dangling', 'visibility']),
+  tier: z.enum(['dangling', 'visibility', 'redrive']),
   dryRun: booleanString().default(true),
   start: z.coerce.number().int().min(0).default(0),
   end: z.coerce.number().int().min(1).optional(),
   chunk: z.coerce.number().int().min(1).max(200_000).optional(),
+  rowCap: z.coerce.number().int().min(1).max(50_000).default(10_000),
   sleepMs: z.coerce.number().int().min(0).max(60_000).default(1000),
   budgetMs: z.coerce.number().int().min(1000).max(120_000).default(60_000),
+  since: z.coerce.date().optional(),
+  until: z.coerce.date().optional(),
 });
 
-type Pair = { imageId: number; modelVersionId: number; tier: string };
-type Removed = { imageId: number; modelVersionId: number };
+type Pair = { imageId: number; modelVersionId: number };
+type Tiered = Pair & { tier: string };
 
-async function missingVersionIds(lo: number, hi: number) {
-  const rows = await dbRead.$queryRaw<{ v: number }[]>`
+const tierSql = Prisma.sql`CASE WHEN mv.availability = 'Private' OR m.availability = 'Private'
+  THEN 'private' ELSE 'never_published' END`;
+
+const versionInScope = Prisma.sql`(
+  (mv."publishedAt" IS NULL AND (mv.status <> 'Published' OR m.status <> 'Published'))
+  OR (mv.status = 'Published' AND m.status = 'Published'
+      AND (mv.availability = 'Private' OR m.availability = 'Private'))
+)`;
+
+// Manual rows and rows listed in meta.civitaiResources only; post-derived and hash-detected rows
+// are left alone. Judged for the image's owner.
+const rowInScope = Prisma.sql`(
+  i."userId" <> m."userId"
+  AND NOT coalesce(u."isModerator", false)
+  AND (
+    (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId")
+    OR (irn.detected
+        AND jsonb_typeof(i.meta->'civitaiResources') = 'array'
+        AND i.meta->'civitaiResources' @> jsonb_build_array(
+          jsonb_build_object('modelVersionId', irn."modelVersionId")))
+  )
+  AND NOT ((${tierSql}) = 'private' AND EXISTS (
+    SELECT 1 FROM "EntityAccess" ea
+    WHERE ea."accessToId" = mv.id AND ea."accessToType" = 'ModelVersion'
+      AND ea."accessorType" = 'User' AND ea."accessorId" = i."userId"))
+)`;
+
+function missingVersionIds(lo: number, hi: number) {
+  return dbRead.$queryRaw<{ v: number }[]>`
     WITH RECURSIVE ids AS (
       (SELECT "modelVersionId" AS v FROM "ImageResourceNew"
        WHERE "modelVersionId" >= ${lo} ORDER BY 1 LIMIT 1)
@@ -57,101 +88,152 @@ async function missingVersionIds(lo: number, hi: number) {
     SELECT v FROM ids
     WHERE v IS NOT NULL AND v < ${hi}
       AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = ids.v)
-  `;
-  return rows.map((r) => r.v);
+  `.then((rows) => rows.map((r) => r.v));
 }
 
-async function sweepDanglingIds(ids: number[], dryRun: boolean) {
-  if (dryRun) {
-    const [row] = await dbRead.$queryRaw<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM "ImageResourceNew" WHERE "modelVersionId" = ANY(${ids}::int[])
-    `;
-    return { count: row.n, removed: [] as Removed[] };
-  }
-  // The version is re-checked on the primary, so an id created since the replica read is kept.
-  const removed = await dbWrite.$queryRaw<Removed[]>`
-    WITH d AS (
-      DELETE FROM "ImageResourceNew" irn
+async function countDangling(ids: number[]) {
+  const [row] = await dbRead.$queryRaw<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM "ImageResourceNew" WHERE "modelVersionId" = ANY(${ids}::int[])
+  `;
+  return row.n;
+}
+
+// The missing-version check is repeated on the primary, so an id created since the replica read
+// is kept.
+function deleteDangling(ids: number[], rowCap: number) {
+  return dbWrite.$queryRaw<Pair[]>`
+    WITH t AS (
+      SELECT irn."imageId", irn."modelVersionId" FROM "ImageResourceNew" irn
       WHERE irn."modelVersionId" = ANY(${ids}::int[])
         AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = irn."modelVersionId")
+      LIMIT ${rowCap}
+    ), d AS (
+      DELETE FROM "ImageResourceNew" irn USING t
+      WHERE irn."imageId" = t."imageId" AND irn."modelVersionId" = t."modelVersionId"
       RETURNING irn.*
     )
     INSERT INTO ${CAPTURE} ("imageId", "modelVersionId", "strength", "detected", "tier")
     SELECT "imageId", "modelVersionId", "strength", "detected", 'dangling' FROM d
     RETURNING "imageId", "modelVersionId"
   `;
-  return { count: removed.length, removed };
 }
 
-// Same rule as filterViewableModelVersions, restricted to rows a client supplied: manual rows, and
-// detected rows whose version is listed in meta.civitaiResources. Post-derived and hash-detected
-// rows are left alone.
-function nonVisiblePairs(db: typeof dbRead, lo: number, hi: number) {
-  return db.$queryRaw<Pair[]>`
-    WITH inv AS (
-      SELECT mv.id, m."userId" AS owner,
-        CASE WHEN mv.availability = 'Private' OR m.availability = 'Private'
-             THEN 'private' ELSE 'never_published' END AS tier
-      FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.id >= ${lo} AND mv.id < ${hi}
-        AND (
-          (mv."publishedAt" IS NULL AND (mv.status <> 'Published' OR m.status <> 'Published'))
-          OR (mv.status = 'Published' AND m.status = 'Published'
-              AND (mv.availability = 'Private' OR m.availability = 'Private'))
-        )
-    )
-    SELECT irn."imageId", irn."modelVersionId", inv.tier
-    FROM inv
-    JOIN "ImageResourceNew" irn ON irn."modelVersionId" = inv.id
+function selectNonVisible(lo: number, hi: number) {
+  return dbRead.$queryRaw<Tiered[]>`
+    SELECT irn."imageId", irn."modelVersionId", ${tierSql} AS tier
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    JOIN "ImageResourceNew" irn ON irn."modelVersionId" = mv.id
     JOIN "Image" i ON i.id = irn."imageId"
     LEFT JOIN "User" u ON u.id = i."userId"
-    LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE i."userId" <> inv.owner
-      AND NOT coalesce(u."isModerator", false)
-      AND (
-        (NOT irn.detected AND p."modelVersionId" IS DISTINCT FROM irn."modelVersionId")
-        OR (irn.detected
-            AND jsonb_typeof(i.meta->'civitaiResources') = 'array'
-            AND i.meta->'civitaiResources' @> jsonb_build_array(
-              jsonb_build_object('modelVersionId', irn."modelVersionId")))
-      )
-      AND NOT (inv.tier = 'private' AND EXISTS (
-        SELECT 1 FROM "EntityAccess" ea
-        WHERE ea."accessToId" = inv.id AND ea."accessToType" = 'ModelVersion'
-          AND ea."accessorType" = 'User' AND ea."accessorId" = i."userId"))
+    LEFT JOIN "Post" ps ON ps.id = i."postId"
+    WHERE mv.id >= ${lo} AND mv.id < ${hi}
+      AND ${versionInScope}
+      AND ${rowInScope}
   `;
 }
 
-async function deletePairs(pairs: Pair[]) {
-  if (!pairs.length) return [] as Removed[];
-  return dbWrite.$queryRaw<Removed[]>`
+// Selected on the replica; the rule is applied again here, on the primary, so a row whose version
+// or owner changed since is kept.
+function deleteNonVisible(pairs: Pair[]) {
+  return dbWrite.$queryRaw<Tiered[]>`
     WITH p AS (
       SELECT * FROM unnest(
         ${pairs.map((x) => x.imageId)}::int[],
-        ${pairs.map((x) => x.modelVersionId)}::int[],
-        ${pairs.map((x) => x.tier)}::text[]
-      ) AS p("imageId", "modelVersionId", tier)
+        ${pairs.map((x) => x.modelVersionId)}::int[]
+      ) AS p("imageId", "modelVersionId")
     ), d AS (
-      DELETE FROM "ImageResourceNew" irn USING p
+      DELETE FROM "ImageResourceNew" irn
+      USING p, "ModelVersion" mv, "Model" m, "Image" i
+        LEFT JOIN "User" u ON u.id = i."userId"
+        LEFT JOIN "Post" ps ON ps.id = i."postId"
       WHERE irn."imageId" = p."imageId" AND irn."modelVersionId" = p."modelVersionId"
-      RETURNING irn.*, p.tier
+        AND mv.id = irn."modelVersionId" AND m.id = mv."modelId" AND i.id = irn."imageId"
+        AND ${versionInScope}
+        AND ${rowInScope}
+      RETURNING irn.*, ${tierSql} AS tier
     )
     INSERT INTO ${CAPTURE} ("imageId", "modelVersionId", "strength", "detected", "tier")
     SELECT "imageId", "modelVersionId", "strength", "detected", tier FROM d
-    RETURNING "imageId", "modelVersionId"
+    RETURNING "imageId", "modelVersionId", "tier"
   `;
 }
 
-async function afterRemoval(removed: Removed[]) {
+function capturedSince(since: Date, until: Date, cursor: number, limit: number) {
+  return dbRead.$queryRaw<Pair[]>`
+    SELECT DISTINCT "imageId", "modelVersionId" FROM ${CAPTURE}
+    WHERE "sweptAt" >= ${since} AND "sweptAt" < ${until} AND "imageId" >= ${cursor}
+    ORDER BY "imageId", "modelVersionId"
+    LIMIT ${limit}
+  `;
+}
+
+async function afterRemoval(removed: Pair[]) {
   if (!removed.length) return;
   const imageIds = uniq(removed.map((r) => r.imageId));
   await queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Update });
-  await imageResourcesCache.bust(imageIds);
+  for (const batch of chunkArray(imageIds, BUST_BATCH)) await imageResourcesCache.bust(batch);
   await bustCacheTag(uniq(removed.map((r) => `images-modelVersion:${r.modelVersionId}`)));
 }
 
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
+  const startedAt = Date.now();
+  const outOfBudget = () => Date.now() - startedAt >= params.budgetMs;
+
+  let rows = 0;
+  const byTier: Record<string, number> = {};
+  const imageIds = new Set<number>();
+  let sideEffectFailures = 0;
+  const failedImageIds: number[] = [];
+
+  // Rows are gone by the time the updates run, so a failure is recorded rather than thrown: the
+  // `redrive` tier replays it from the capture table.
+  const settle = async (removed: Pair[]) => {
+    try {
+      await afterRemoval(removed);
+    } catch {
+      sideEffectFailures++;
+      for (const r of removed) if (failedImageIds.length < 100) failedImageIds.push(r.imageId);
+    }
+  };
+  const record = (tier: string, removed: Pair[]) => {
+    rows += removed.length;
+    byTier[tier] = (byTier[tier] ?? 0) + removed.length;
+    removed.forEach((r) => imageIds.add(r.imageId));
+  };
+  const pause = () => (params.sleepMs ? sleep(params.sleepMs) : undefined);
+
+  if (params.tier === 'redrive') {
+    if (!params.since || !params.until)
+      return res.status(400).json({ error: 'redrive needs since and until' });
+    let cursor = params.start;
+    let done = false;
+    while (!done && !outOfBudget()) {
+      const batch = await capturedSince(params.since, params.until, cursor, params.rowCap);
+      if (!batch.length) {
+        done = true;
+        break;
+      }
+      record('redrive', batch);
+      if (!params.dryRun) await settle(batch);
+      // Resuming at the last image replays it again, which is harmless: the updates are idempotent,
+      // and a batch cut inside an image must not skip that image's remaining pairs.
+      if (batch.length < params.rowCap) done = true;
+      else cursor = batch[batch.length - 1].imageId;
+      await pause();
+    }
+    return res.status(200).json({
+      tier: 'redrive',
+      dryRun: params.dryRun,
+      rows,
+      images: imageIds.size,
+      sideEffectFailures,
+      failedImageIds,
+      nextStart: done ? null : cursor,
+    });
+  }
+
   const chunk = params.chunk ?? (params.tier === 'dangling' ? 100_000 : 2_000);
   const [{ max }] =
     params.tier === 'dangling'
@@ -163,41 +245,53 @@ export default WebhookEndpoint(async (req, res) => {
         `;
   const end = params.end ?? (max ?? 0) + 1;
 
-  const startedAt = Date.now();
   let cursor = params.start;
-  let rows = 0;
-  let largestBatch = 0;
-  const byTier: Record<string, number> = {};
-  const imageIds = new Set<number>();
+  let interrupted = false;
 
-  while (cursor < end && Date.now() - startedAt < params.budgetMs) {
+  chunks: while (cursor < end) {
+    if (outOfBudget()) {
+      interrupted = true;
+      break;
+    }
     const hi = Math.min(cursor + chunk, end);
 
     if (params.tier === 'dangling') {
       const ids = await missingVersionIds(cursor, hi);
-      for (let i = 0; i < ids.length; i += ID_BATCH) {
-        const { count, removed } = await sweepDanglingIds(
-          ids.slice(i, i + ID_BATCH),
-          params.dryRun
-        );
-        rows += count;
-        largestBatch = Math.max(largestBatch, count);
-        byTier.dangling = (byTier.dangling ?? 0) + count;
-        removed.forEach((r) => imageIds.add(r.imageId));
-        await afterRemoval(removed);
+      for (const batch of chunkArray(ids, ID_BATCH)) {
+        if (params.dryRun) {
+          const n = await countDangling(batch);
+          rows += n;
+          byTier.dangling = (byTier.dangling ?? 0) + n;
+          continue;
+        }
+        for (;;) {
+          if (outOfBudget()) {
+            interrupted = true;
+            break chunks;
+          }
+          const removed = await deleteDangling(batch, params.rowCap);
+          record('dangling', removed);
+          await settle(removed);
+          await pause();
+          if (removed.length < params.rowCap) break;
+        }
       }
     } else {
-      const pairs = await nonVisiblePairs(params.dryRun ? dbRead : dbWrite, cursor, hi);
-      const removed = params.dryRun ? pairs : await deletePairs(pairs);
-      const tierOf = new Map(pairs.map((p) => [`${p.imageId}:${p.modelVersionId}`, p.tier]));
-      for (const r of removed) {
-        const tier = tierOf.get(`${r.imageId}:${r.modelVersionId}`) ?? 'unknown';
-        byTier[tier] = (byTier[tier] ?? 0) + 1;
-        imageIds.add(r.imageId);
+      const pairs = await selectNonVisible(cursor, hi);
+      if (params.dryRun) {
+        for (const p of pairs) record(p.tier, [p]);
+      } else {
+        for (const slice of chunkArray(pairs, params.rowCap)) {
+          if (outOfBudget()) {
+            interrupted = true;
+            break chunks;
+          }
+          const removed = await deleteNonVisible(slice);
+          for (const r of removed) record(r.tier, [r]);
+          await settle(removed);
+          await pause();
+        }
       }
-      rows += removed.length;
-      largestBatch = Math.max(largestBatch, removed.length);
-      if (!params.dryRun) await afterRemoval(removed);
     }
 
     cursor = hi;
@@ -208,7 +302,6 @@ export default WebhookEndpoint(async (req, res) => {
       `;
       cursor = next ?? end;
     }
-    if (cursor < end && params.sleepMs) await sleep(params.sleepMs);
   }
 
   return res.status(200).json({
@@ -217,7 +310,8 @@ export default WebhookEndpoint(async (req, res) => {
     rows,
     byTier,
     images: imageIds.size,
-    largestBatch,
-    nextStart: cursor >= end ? null : cursor,
+    sideEffectFailures,
+    failedImageIds,
+    nextStart: interrupted || cursor < end ? cursor : null,
   });
 });
