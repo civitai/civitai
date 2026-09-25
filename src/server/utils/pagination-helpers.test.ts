@@ -137,7 +137,7 @@ describe('parseCursor (via getCursor) — scalar cursor on a multi-field sort', 
 describe('parseCursor (via getCursorClauses) — KNOWN GAP: composite numeric token on a date column', () => {
   it('still binds a numeric head token to a timestamp sort column (NOT yet rejected)', () => {
     const { strict } = getCursorClauses(
-      'mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC',
+      'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC',
       '165997|123'
     );
     const values = (strict as unknown as { values: unknown[] }).values;
@@ -151,7 +151,7 @@ describe('parseCursor (via getCursorClauses) — KNOWN GAP: composite numeric to
 describe('getCursorClauses — scalar cursor on a multi-field sort (the model.getAll caller)', () => {
   // getModelsRaw uses getCursorClauses, not getCursor. Same parseCursor inside,
   // but pin it separately so a future divergence can't reopen the hole.
-  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC';
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC';
 
   it('rejects 165997 as a number → 400', () => {
     expectBadRequest(() => getCursorClauses(NEWEST, 165997));

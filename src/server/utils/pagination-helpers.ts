@@ -125,7 +125,7 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     //
     // That was a live 500: `model.getAll` takes a JSON cursor, so a client can
     // send a bare number (a model id, say) where the sort is Newest/Oldest —
-    // `mm."lastVersionAt" DESC NULLS LAST, ${pAlias}."modelId" DESC`, two fields. The
+    // `mm."lastVersionAt" DESC NULLS LAST, mm|mbm."modelId" DESC`, two fields. The
     // number bound to the TIMESTAMP head field and Postgres threw
     // `date/time field value out of range: "165997"`, which surfaced as an
     // INTERNAL_SERVER_ERROR for what is a malformed client input. Note the
@@ -179,10 +179,15 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
       const parsed = parseInt(value, 10);
       if (Number.isNaN(parsed))
         throwBadRequestError(`Invalid cursor: unparseable numeric value "${value}"`);
-      // Every sort column a cursor can reach is int4; `keysetCursorSchema` bounds
-      // only the number/bigint spellings, so a string token needs it here. If a
-      // wider sort column is ever made cursor-reachable, this guard must move
-      // with it. Rationale and the reachability enumeration: PR #5146.
+      // `keysetCursorSchema` bounds only the number/bigint spellings, so a string
+      // token — every REST query param — needs the bound here. NOT redundant with it.
+      //
+      // Safe because every cursor-reachable sort column is int4: `i."index"`,
+      // `i."id"`, `ct."collectionItemId"`, `irr."imageId"` (`image.service.ts`),
+      // `ci."id"`, `mm|mbm."modelId"` and the `*Count` columns (`model.service.ts`).
+      // `ct."sortKey"` caps at 1e9 and only pairs with a sort that bypasses this;
+      // timestamps take the date branch. If a wider sort column is ever made
+      // cursor-reachable, this guard must move with it.
       if (parsed > INT4_MAX)
         throwBadRequestError(`Invalid cursor: numeric value out of range "${value}"`);
       result[fields[i].field] = parsed;
