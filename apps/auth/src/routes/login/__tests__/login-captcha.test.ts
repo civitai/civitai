@@ -87,32 +87,33 @@ const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 // ban forbids. Filtering by POSITION was wrong twice — from the file start it stripped template lines
 // whenever template content sat BEFORE the instance script, and up to the first `</script>` it stopped
 // covering the instance script whenever another script block came first.
-const SCRIPT_BLOCK_SRC = '<script\\b[^>]*>[\\s\\S]*?<\\/script>';
+const SCRIPT_OPEN_SRC = '<script\\b[^>]*>';
+const SCRIPT_BLOCK_SRC = `${SCRIPT_OPEN_SRC}[\\s\\S]*?<\\/script>`;
 // HTML comments come out FIRST, so a `<script …>` written in PROSE cannot open a block. This template
 // carries eight prose comments, one directly above the live region, and documenting the loader tag in
 // one of them is an unremarkable edit.
 const withoutHtmlComments = pageSource.replace(/<!--[\s\S]*?-->/g, '');
-// 🔴 AND THE BOUNDS ARE CHECKED, because a per-block replace still has to FIND the blocks. A correctly
-// bounded one holds no Svelte block opener; one that does means the regex began at text that only
-// LOOKS like a script tag and ran to the instance script's closer, `//`-filtering the whole template
-// between — the same defect again, and this time the ledgers stay green, because the instance script
-// is INSIDE the over-wide match. Measured reachable with the script block moved below the markup plus
-// a self-closing `<script … />`, which Svelte warns about and compiles. A file where nothing matched
-// fails loud on its own: the script's comments leak into `markup` and red two ledgers.
-// Checked on what SURVIVES the filter, not the raw block: a `{#` inside a script comment is ordinary
-// (this file's own comments quote template syntax), while a swallowed template's blocks are on live
-// lines and outlive the strip. Testing the raw block reds on a comment quoting `{#if`.
-const markup = withoutHtmlComments.replace(new RegExp(SCRIPT_BLOCK_SRC, 'g'), (block) => {
-  const filtered = block
+// 🔴 AND THE BOUNDS ARE CHECKED, because a per-block replace still has to FIND the blocks — the regex
+// matches text that LOOKS like a script element. One opener per block is the whole invariant: a match
+// that began at a fake opener swallows the template up to some later closer, which leaves an opener
+// with no block of its own. Measured shapes that reach it: a self-closing `<script … />` (Svelte warns,
+// compiles) with the instance script below the markup, and a fake opener inside an ATTRIBUTE value.
+// Counting is why the sentinel it replaces is gone — testing the block for `{#` relied on the converse
+// of what it asserted (a `{#`-free mis-bound is constructible), and it red the whole file, with a wrong
+// cause, on an ordinary script comment or string quoting `{#if`.
+const scriptBlocks = withoutHtmlComments.match(new RegExp(SCRIPT_BLOCK_SRC, 'g')) ?? [];
+const scriptOpeners = withoutHtmlComments.match(new RegExp(SCRIPT_OPEN_SRC, 'g')) ?? [];
+if (scriptOpeners.length !== scriptBlocks.length)
+  throw new Error(
+    `${scriptOpeners.length} <script> openers but ${scriptBlocks.length} blocks — one match spans ` +
+      'markup, so the // filter is mis-bounded'
+  );
+const markup = withoutHtmlComments.replace(new RegExp(SCRIPT_BLOCK_SRC, 'g'), (block) =>
+  block
     .split('\n')
     .filter((line) => !line.trim().startsWith('//'))
-    .join('\n');
-  if (filtered.includes('{#'))
-    throw new Error(
-      'a <script> block match spans template markup, so the // filter is mis-bounded'
-    );
-  return filtered;
-});
+    .join('\n')
+);
 // One extraction for every note after a named condition, so the sibling pins cannot drift: written
 // twice, the two copies already disagreed, one tolerating attributes after `class` and one not.
 // Reads `markup`, NOT pageSource — measured, a note commented out keeps a pageSource-backed copy pin
@@ -293,6 +294,15 @@ const declOf = (name: string) => {
     ...markup.matchAll(new RegExp(`const ${name} = \\$derived(?:\\.by)?\\([\\s\\S]*?\\);`, 'g')),
   ];
   expect(all, `expected exactly one declaration of ${name}`).toHaveLength(1);
+  // …and exactly one BINDING of the name. The match count alone closes a commented-out copy only while
+  // the live declaration still looks like one: measured, `/* const x = $derived(…) */` above a live
+  // `let x = $derived(<fewer terms>)` leaves one match — the comment — and the pin returns it while the
+  // live expression has lost its terms. `let … = $derived(…)` is ordinary Svelte 5, so this is one
+  // edit away. Counting bindings sees the second one whatever keyword or shape it uses.
+  expect(
+    [...markup.matchAll(new RegExp(`\\b(?:const|let)\\s+${name}\\s*=`, 'g'))],
+    `expected exactly one binding of ${name}`
+  ).toHaveLength(1);
   return normalize(all[0][0]);
 };
 
