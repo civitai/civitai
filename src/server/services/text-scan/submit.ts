@@ -71,21 +71,19 @@ export function buildTextScanStep({
   labels: TextScanLabel[];
   thinking: boolean;
 }) {
-  return {
-    $type: 'chatCompletion',
-    name: 'textScan',
-    input: {
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0,
-      maxTokens: MAX_OUTPUT_TOKENS,
-      chatTemplateKwargs: { enable_thinking: thinking },
-      responseFormat: buildTextScanResponseFormat(labels),
-    },
-  } as ChatCompletionStepTemplate;
+  // The generated ChatCompletionMessage type declares only `role`; content is untyped upstream.
+  const input: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    temperature: 0,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    chatTemplateKwargs: { enable_thinking: thinking },
+    responseFormat: buildTextScanResponseFormat(labels),
+  };
+  return { $type: 'chatCompletion', name: 'textScan', input } as ChatCompletionStepTemplate;
 }
 
 export function textScanContentHash({

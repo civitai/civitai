@@ -152,7 +152,7 @@ function requireProfile(entityType: TextScanEntityType) {
 }
 
 function requireModeratorId(id: number | undefined) {
-  if (id === undefined) return throwBadRequestError('a moderator id is required');
+  if (id === undefined) throw throwBadRequestError('a moderator id is required');
   return id;
 }
 
