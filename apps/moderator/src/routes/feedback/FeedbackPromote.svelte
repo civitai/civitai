@@ -240,8 +240,10 @@
                is scoped to ONE ClickUp list, so a well-formed task URL from any other list stores
                fine and still never auto-closes. An unconditional "paste it and it closes itself"
                is FALSE for every task outside that list, and no server-side guard can catch it —
-               checking list membership needs a ClickUp API token this app does not have. The
-               sentence is the only thing standing between a moderator and a silent non-closure.
+               checking list membership needs a ClickUp API token this app does not have. For THIS
+               non-closure — the wrong-list one — the sentence is the only protection there is;
+               other shapes are caught by the input gate, so do not read it as a claim about all
+               of them.
 
                🔴 "NEXT completed" IS LOAD-BEARING, AND THE PRECISE CLAIM IS NARROWER THAN "ALREADY
                COMPLETE NEVER CLOSES" — an earlier draft of this comment said that, and it is wrong
@@ -256,10 +258,15 @@
                a moderator leaves the box blank, and 21 of 24 of them can never add the link
                afterwards. Over-claiming here spends the one chance they get.
 
-               A custom-id URL (`DEV-1234`) is the one non-closure the gate actually catches, because
-               deliveries carry ClickUp's internal id. Source is the integration's own shipping
-               record — ClickUp task `868ktfupv`, not anything in this repo; its documented backstop
-               is `check-known-issues-sync.mjs` in the support-agent repo.
+               Of the non-closures listed here, the custom-id URL (`DEV-1234`) is the one the input
+               gate catches, because deliveries carry ClickUp's internal id. It is NOT the only
+               thing that gate refuses — it also refuses sub-tab and view-embedded URLs, whose last
+               path segment is not the task id; see `isClickupTaskUrl`. Scoped deliberately: an
+               earlier draft called it "the one non-closure the gate actually catches", which reads
+               as an absolute and would have a maintainer believing those URLs reach storage.
+               Source for the custom-id limit is the integration's own shipping record — ClickUp
+               task `868ktfupv`, not anything in this repo; its documented backstop is
+               `check-known-issues-sync.mjs` in the support-agent repo.
 
                🔴 AND THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the
                link on the issue board afterwards needs `bugsEdit`, which is a per-user grant and

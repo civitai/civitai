@@ -165,7 +165,8 @@ describe('isClickupTaskUrl', () => {
 
   /**
    * ⚠️ THE TWO PLACES THE GATE IS KNOWINGLY LOOSER THAN ITS OWN PROSE, pinned so they are visible
-   * as decisions rather than discovered later as bugs. Both are documented at the call site.
+   * as decisions rather than discovered later as bugs. Both are documented at the DEFINITION site,
+   * in `isClickupTaskUrl` — not at any call site, which is where an earlier wording sent readers.
    *
    * 1. A separator-less custom id passes the charset rule — the code refuses the DOCUMENTED
    *    `PREFIX-number` format, not provably every custom id.

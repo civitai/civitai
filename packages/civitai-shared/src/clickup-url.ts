@@ -97,8 +97,12 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
    * custom-ID pattern feature permits one. Stated rather than papered over: this refuses the
    * documented format, not provably every custom id.
    *
-   * ⚠️ AND IT IS NOT APPLIED TO THE 2-SEGMENT BRANCH, DELIBERATELY. The numeric-team premise above
-   * would also refuse `/t/8459928` — a truncated paste of a team id, which stores as a task link
+   * ⚠️ THE NUMERIC-TEAM PREMISE IS NOT APPLIED TO THE 2-SEGMENT BRANCH, DELIBERATELY — and the
+   * subject of that sentence is the premise, NOT the charset rule directly above it, which DOES run
+   * on every path (`/t/DEV-1234` is refused). Spelled out because a pronoun here read as the
+   * charset rule, and a reader who took it that way would conclude a 2-segment custom id is
+   * accepted. That premise would also refuse `/t/8459928` — a truncated paste of a team id, stored
+   * as a task link
    * that can never match. It is left ACCEPTED because the premise needed to refuse it is "a native
    * task id is never purely numeric", and that is unverified: native ids are 9-char base-36-ish and
    * every one seen here begins `86`, but nothing rules out an all-digit id. Refusing on an
