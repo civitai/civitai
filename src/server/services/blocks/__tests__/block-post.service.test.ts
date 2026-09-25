@@ -251,6 +251,17 @@ describe('resolveGalleryTarget', () => {
         'a version scheduled for later',
         version({ publishedAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }),
       ],
+      [
+        "the poster's OWN version scheduled for later",
+        version({
+          publishedAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          model: { userId: VIEWER_USER_ID },
+        }),
+      ],
+      [
+        "the poster's OWN private model",
+        version({ model: { userId: VIEWER_USER_ID, availability: 'Private' } }),
+      ],
     ])('refuses %s', async (_label, row) => {
       dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(row);
       dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ userId: PUBLISHER_USER_ID });

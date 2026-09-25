@@ -27,7 +27,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { canViewModelVersion } from '~/server/services/model-version-visibility.service';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 
 /**
  * App Blocks → a REAL Civitai Post (`blocks.createPostFromApp` /
@@ -322,14 +322,17 @@ export async function resolveGalleryTarget(input: {
    * `imagePostedToModelReward`'s own `modelOwnerId === posterId` guard already
    * declines to pay in that case, and refusing it here would break a normal flow
    * to fix nothing. The self-dealing hazard is the APP PUBLISHER owning the
-   * model, which is what the check below tests. The poster is only the viewer
-   * the version's visibility is judged for.
+   * model, which is what the check below tests. The field is carried so the
+   * actor is visible at the call site and so a future rule that DOES need the
+   * poster has it; `void` marks the non-use as intentional to a reader and to
+   * the linter.
    */
   posterUserId: number;
   /** `claims.appId`; the publisher is resolved from it here, never passed in. */
   appId: string;
 }): Promise<ResolvedGalleryTarget> {
   const { modelVersionId, posterUserId, appId } = input;
+  void posterUserId;
 
   const version = await dbRead.modelVersion.findUnique({
     where: { id: modelVersionId },
@@ -359,15 +362,22 @@ export async function resolveGalleryTarget(input: {
   // distinguish "gone" from "not allowed".
   if (!version || !version.model) badRequest('gallery target is not available');
   if (version.model.deletedAt) badRequest('gallery target is not available');
-  if (version.status !== ModelStatus.Published) badRequest('gallery target is not available');
-  if (version.model.status !== ModelStatus.Published) badRequest('gallery target is not available');
+  // Judged for no viewer, not the poster: a gallery post is public, so the version must be
+  // publicly visible even when the poster owns it.
+  if (
+    !canViewModelVersionStatus({
+      viewer: null,
+      ownerId: version.model.userId,
+      modelStatus: version.model.status,
+      versionStatus: version.status,
+      publishedAt: version.publishedAt,
+    })
+  )
+    badRequest('gallery target is not available');
   if (version.model.availability !== Availability.Public) {
     badRequest('gallery target is not available');
   }
   if (version.availability === Availability.Private) badRequest('gallery target is not available');
-  if (!(await canViewModelVersion(version, { id: posterUserId }))) {
-    badRequest('gallery target is not available');
-  }
 
   // SELF-DEALING. Resolved from the token's OWN appId → OauthClient.userId; the
   // block supplies neither side of this comparison.

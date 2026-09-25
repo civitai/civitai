@@ -98,10 +98,28 @@ const fromPost = (modelversionid: number) => ({
   detected: false,
 });
 
-function arrange(rows: unknown[], owner: { id: number; isModerator: boolean } = OWNER) {
-  dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows).mockResolvedValue([]);
-  dbMock.dbWrite.image.findUnique.mockResolvedValue({ user: owner, meta: {} } as never);
-  dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+type Client = {
+  $queryRaw: ReturnType<typeof vi.fn>;
+  image: { findUnique: ReturnType<typeof vi.fn>; update?: ReturnType<typeof vi.fn> };
+  modelVersion: { findMany: ReturnType<typeof vi.fn> };
+};
+
+// A client separate from dbWrite, so a read that leaves the transaction finds nothing there.
+const tx: Client = {
+  $queryRaw: vi.fn(),
+  image: { findUnique: vi.fn(), update: vi.fn() },
+  modelVersion: { findMany: vi.fn() },
+};
+
+function arrange(
+  rows: unknown[],
+  owner: { id: number; isModerator: boolean } | null = OWNER,
+  client: Client = dbMock.dbWrite as unknown as Client
+) {
+  client.$queryRaw.mockReset();
+  client.$queryRaw.mockResolvedValueOnce(rows).mockResolvedValue([]);
+  client.image.findUnique.mockResolvedValue(owner && ({ user: owner, meta: {} } as never));
+  client.modelVersion.findMany.mockImplementation((async (args: {
     where: { id: { in: number[] } };
   }) => VERSIONS.filter((v) => args.where.id.in.includes(v.id))) as never);
   // Grants only the exact question the filter should ask.
@@ -112,15 +130,15 @@ function arrange(rows: unknown[], owner: { id: number; isModerator: boolean } = 
         hasAccess:
           entityType === 'ModelVersion' &&
           entityId === V.strangerPrivateGranted &&
-          userId === owner.id &&
-          isModerator === owner.isModerator,
+          userId === owner?.id &&
+          isModerator === owner?.isModerator,
       }))
   );
 }
 
 /** The version ids in the ImageResourceNew upsert, or null when no upsert ran. */
-function writtenVersionIds(): number[] | null {
-  const insert = dbMock.dbWrite.$queryRaw.mock.calls
+function writtenVersionIds(client: Client = dbMock.dbWrite as unknown as Client): number[] | null {
+  const insert = client.$queryRaw.mock.calls
     .slice(1)
     .find(([strings]: [TemplateStringsArray]) => strings.join('').includes('ImageResourceNew'));
   if (!insert) return null;
@@ -181,15 +199,42 @@ describe('createImageResources: version ids asserted in image meta', () => {
     expect(writtenVersionIds()).toBeNull();
   });
 
-  it('inside a transaction, drops a private version that needs a grant without looking it up', async () => {
-    arrange([asserted(V.published), asserted(V.strangerPrivateGranted)]);
+  // Video metadata carries civitaiResources too, through the same path. Keeps a media-type
+  // exemption from creeping into the filter.
+  it('filters a video the same way as an image', async () => {
+    arrange([asserted(V.published), asserted(V.strangerDraft)]);
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      user: OWNER,
+      type: 'video',
+      meta: {},
+    } as never);
+
+    await createImageResources({ imageId: IMAGE_ID });
+
+    expect(writtenVersionIds()).toEqual([V.published]);
+  });
+
+  it('drops every asserted id when the image cannot be read', async () => {
+    arrange([asserted(V.published), hashMatched(V.hashMatchedDraft)], null);
+
+    await createImageResources({ imageId: IMAGE_ID });
+
+    expect(writtenVersionIds()).toEqual([V.hashMatchedDraft]);
+  });
+
+  // The bounty callers insert the image in the same transaction, so a read outside it cannot see
+  // the image and would drop every asserted id.
+  it('inside a transaction, reads through it and drops a private version needing a grant without looking it up', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
+    arrange([asserted(V.published), asserted(V.strangerPrivateGranted)], OWNER, tx);
 
     await createImageResources({
       imageId: IMAGE_ID,
-      tx: dbMock.dbWrite as unknown as Parameters<typeof createImageResources>[0]['tx'],
+      tx: tx as unknown as Parameters<typeof createImageResources>[0]['tx'],
     });
 
     expect(hasEntityAccess).not.toHaveBeenCalled();
-    expect(writtenVersionIds()).toEqual([V.published]);
+    expect(writtenVersionIds(tx)).toEqual([V.published]);
   });
 });
