@@ -13,11 +13,19 @@ import {
 } from './author-fee-accrual.service';
 import { isSettlementEligible, settlementBoundary } from './author-fee-settlement.service';
 import {
+  blockAuthorFeeChargedBuzzCounter,
+  blockAuthorFeeChargedCounter,
+  blockAuthorFeeClampedCounter,
+  blockAuthorFeeQuotedCounter,
+} from '~/server/prom/client';
+import {
   computeBlockAuthorFee,
   BLOCK_AUTHOR_FEE_PRICE_IS_CAP,
   BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE,
+  BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
 } from './author-fee';
 import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-fee';
+import { blockGenerationCoarseType } from './generation-type';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks PER-GENERATION AUTHOR FEE — slice 2b, THE VIEWER-CHARGE PATH.
@@ -162,6 +170,36 @@ export async function quoteBlockAuthorFee(args: {
    * where it is logged unsuppressed, once per real generation, which is the
    * better signal anyway because it cannot be drowned by estimate volume.
    */
+  suppressQuoteLogs?: boolean;
+  config?: BlockAuthorFeeConfig;
+}): Promise<BlockAuthorFeeQuote> {
+  const quote = await quoteBlockAuthorFeeUncounted(args);
+  // 🔴 ONE INSTRUMENTATION POINT, ON PURPOSE — the function below has SEVEN
+  // return arms, and a counter repeated at each of them is a seven-site ledger
+  // that will be right at six of them. Counting the RESULT instead makes an
+  // uncounted arm structurally impossible, including one added later.
+  //
+  // `surface` is derived from `suppressQuoteLogs` because that flag IS the
+  // disclosure-only marker — deriving it keeps the two from drifting apart,
+  // which a second boolean argument would eventually allow.
+  blockAuthorFeeQuotedCounter.inc({
+    coarse_type: quote.charge
+      ? quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL
+      : BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+    outcome: quote.charge ? 'quoted' : quote.reason,
+    surface: args.suppressQuoteLogs ? 'disclosure' : 'gating',
+  });
+  return quote;
+}
+
+/** The quote itself. Wrapped by `quoteBlockAuthorFee`, which counts its result. */
+async function quoteBlockAuthorFeeUncounted(args: {
+  baseGenerationBuzz: number | null | undefined;
+  priceIsCap: boolean | null | undefined;
+  generationType: unknown;
+  appId: string;
+  viewerUserId: number;
+  workflowLabel: string;
   suppressQuoteLogs?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeQuote> {
@@ -333,6 +371,38 @@ export async function chargeBlockAuthorFee(args: {
   reservedAuthorFeeBuzz: number;
   config?: BlockAuthorFeeConfig;
 }): Promise<ChargeBlockAuthorFeeResult> {
+  const result = await chargeBlockAuthorFeeUncounted(args);
+  // Same single-point rule as the quote above: NINE return arms, counted once on
+  // the result. `coarse_type` is resolved from the generation type rather than
+  // from a computation, because the skip arms return before one exists.
+  const coarseType =
+    blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL;
+  blockAuthorFeeChargedCounter.inc({
+    coarse_type: coarseType,
+    outcome: result.charged ? 'charged' : result.reason,
+  });
+  // 🔴 THE MONEY COUNTER, AND IT IS DELIBERATELY NOT `reserved`. `feeBuzz` on a
+  // charged result is what was actually debited (`min(reserved, realized)`), so
+  // this sums real Buzz taken from viewers and not what was quoted.
+  if (result.charged) {
+    blockAuthorFeeChargedBuzzCounter.inc({ coarse_type: coarseType }, result.feeBuzz);
+  }
+  return result;
+}
+
+/** The charge itself. Wrapped by `chargeBlockAuthorFee`, which counts its result. */
+async function chargeBlockAuthorFeeUncounted(args: {
+  workflowId: string;
+  appId: string;
+  appBlockId: string;
+  viewerUserId: number;
+  buzzType: BuzzAccountType;
+  baseGenerationBuzz: number | null | undefined;
+  priceIsCap: boolean | null | undefined;
+  generationType: string | null;
+  reservedAuthorFeeBuzz: number;
+  config?: BlockAuthorFeeConfig;
+}): Promise<ChargeBlockAuthorFeeResult> {
   const { workflowId, appId, appBlockId, viewerUserId, buzzType } = args;
 
   // THE STRUCTURAL BOUND, AND IT IS FIRST. Nothing below — not the flag read, not
@@ -417,6 +487,20 @@ export async function chargeBlockAuthorFee(args: {
   }
 
   if (feeBuzz !== quote.feeBuzz) {
+    // 🔴 THE ESTIMATE-VS-CHARGE DIVERGENCE, AND THIS IS THE ONLY PLACE IT IS
+    // OBSERVABLE. `feeBuzz = min(reserved, realized)`, so a difference here means
+    // the realized base moved UP between the whatIf the viewer was shown and the
+    // submit — the estimate UNDER-QUOTED. Not an over-billing bug (the clamp is
+    // what prevents that), but it is the quoted number being wrong, which is the
+    // open risk the estimate-total disclosure named and could not measure.
+    //
+    // The counter is what makes it readable in production: the Axiom line below
+    // carries the same fact, but the estimate surface it originates from is
+    // unbounded, so a rate derived from logs is not one anybody can rely on.
+    // Read as a RATIO against `block_author_fee_charged_total{outcome="charged"}`.
+    blockAuthorFeeClampedCounter.inc({
+      coarse_type: quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+    });
     logToAxiom(
       {
         name: BLOCK_AUTHOR_FEE_LOG_NAME,

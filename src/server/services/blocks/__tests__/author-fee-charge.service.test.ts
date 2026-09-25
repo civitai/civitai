@@ -47,14 +47,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * touched `block_author_fee_accrual`.
  */
 
-const { mockLog, mockCreateMany, mockFlag } = vi.hoisted(() => ({
-  mockLog: vi.fn(),
-  mockCreateMany: vi.fn(),
-  mockFlag: vi.fn(),
-}));
+const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged, mockChargedBuzz, mockClamped } =
+  vi.hoisted(() => ({
+    mockLog: vi.fn(),
+    mockCreateMany: vi.fn(),
+    mockFlag: vi.fn(),
+    mockQuoted: vi.fn(),
+    mockCharged: vi.fn(),
+    mockChargedBuzz: vi.fn(),
+    mockClamped: vi.fn(),
+  }));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => mockCreateMany(...args),
+}));
+// The charge rail's Prometheus counters. Mocked LOCALLY and partially, matching
+// `author-fee.test.ts` next door — `~/server/prom/client` is on
+// `PENDING_SPECIFIERS`, so a per-file partial mock is the current convention for
+// this module rather than an exception to it.
+//
+// ⚠️ A PARTIAL MOCK MEANS THIS SUITE CANNOT SEE A MISSPELLED LABEL NAME. The real
+// `registerCounterWithLabels` rejects a label outside `labelNames`; these stubs
+// accept anything. So the assertions below pin the label VALUES and the call
+// COUNTS, and the label-name contract is carried by the counter definitions in
+// `packages/civitai-telemetry/src/client.ts` — not by this file. Stated because a
+// green run here reads like it covers the wiring, and it does not.
+vi.mock('~/server/prom/client', () => ({
+  blockAuthorFeeQuotedCounter: { inc: mockQuoted },
+  blockAuthorFeeChargedCounter: { inc: mockCharged },
+  blockAuthorFeeChargedBuzzCounter: { inc: mockChargedBuzz },
+  blockAuthorFeeClampedCounter: { inc: mockClamped },
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorFeeEnabled: () => mockFlag(),
@@ -609,5 +631,106 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
       now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'refund-failed' });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TELEMETRY — the charge rail's Prometheus counters.
+//
+// WHY THEY EXIST: before them the live fee was unmeasured in Prometheus on BOTH
+// sides. The three pre-existing `blockAuthorFee*` counters sit on the SIZING path
+// (`observeBlockAuthorFee`, spend attribution); nothing counted a quote or a
+// charge. The estimate-vs-charge divergence in particular had no instrument at
+// all, because the quote path's logs are deliberately suppressed on an unbounded
+// surface.
+describe('author-fee charge telemetry', () => {
+  /** The label object of the Nth call, or undefined. */
+  const labelsOf = (m: { mock: { calls: unknown[][] } }, n = 0) =>
+    m.mock.calls[n]?.[0] as Record<string, string> | undefined;
+
+  it('counts a DISCLOSURE-ONLY quote, whose logs are suppressed', async () => {
+    await quoteBlockAuthorFee(quoteArgs({ suppressQuoteLogs: true }));
+    expect(mockQuoted).toHaveBeenCalledTimes(1);
+    expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'quoted', surface: 'disclosure' });
+  });
+
+  it('counts a GATING quote under its own surface', async () => {
+    // The control that makes `surface` load-bearing rather than decorative: the
+    // SAME call shape, differing only in the suppression flag, must land on a
+    // different series. Without this pair a constant 'disclosure' passes above.
+    await quoteBlockAuthorFee(quoteArgs());
+    expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'quoted', surface: 'gating' });
+  });
+
+  it('counts a SKIP arm under its own reason, with the unknown coarse type', async () => {
+    // A cap-priced generation returns before any computation exists, so there is
+    // genuinely no coarse type to report — `unknown` is the contract here, the
+    // same convention `blockAuthorFeeObservedCounter` already uses. Pinned so a
+    // later change that invents a type on this arm is visible.
+    const quote = await quoteBlockAuthorFee(quoteArgs({ priceIsCap: true }));
+    expect(quote.charge).toBe(false);
+    expect(labelsOf(mockQuoted)).toMatchObject({
+      outcome: 'price-is-cap',
+      coarse_type: 'unknown',
+    });
+  });
+
+  it('counts every quote arm exactly once — including the one that throws', async () => {
+    // The wrapper's whole reason for existing: seven return arms, counted at one
+    // point. A per-arm counter would be right at six of them.
+    mockFlag.mockResolvedValue(false);
+    await quoteBlockAuthorFee(quoteArgs());
+    expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'flag-disabled' });
+
+    mockQuoted.mockClear();
+    mockFlag.mockResolvedValue(true);
+    mockDbRead.oauthClient.findUnique.mockRejectedValue(new Error('replica down'));
+    await quoteBlockAuthorFee(quoteArgs());
+    expect(mockQuoted).toHaveBeenCalledTimes(1);
+    expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'error' });
+  });
+
+  it('counts a charge, and sums the Buzz actually debited', async () => {
+    const result = await chargeBlockAuthorFee(chargeArgs());
+    expect(result).toMatchObject({ charged: true, feeBuzz: EXPECTED_FEE });
+    expect(labelsOf(mockCharged)).toMatchObject({ outcome: 'charged' });
+    expect(mockChargedBuzz).toHaveBeenCalledWith(expect.anything(), EXPECTED_FEE);
+  });
+
+  it('counts a skipped charge under its reason, and moves no Buzz', async () => {
+    // The negative control for the Buzz counter: a skip must not increment it at
+    // all. Without this, a counter incremented unconditionally passes above.
+    const result = await chargeBlockAuthorFee(chargeArgs({ reservedAuthorFeeBuzz: 0 }));
+    expect(result).toEqual({ charged: false, reason: 'not-reserved' });
+    expect(labelsOf(mockCharged)).toMatchObject({ outcome: 'not-reserved' });
+    expect(mockChargedBuzz).not.toHaveBeenCalled();
+  });
+
+  // 🔴 THE ONE THIS GROUP EXISTS FOR. A clamp is the ONLY place the
+  // estimate-vs-charge divergence is observable: the realized base moved UP
+  // between the whatIf the viewer saw and the submit, so the estimate
+  // UNDER-QUOTED. 7 is deliberately distinct from every other constant in this
+  // file (400 base, 20 realized fee, 1 flat, 5%, 500 bp, 10000 scale), so a
+  // mutant reaching for any of them cannot land on it.
+  it('counts a CLAMP, and bills the reserved amount rather than the realized one', async () => {
+    const CLAMPED_TO = 7;
+    const result = await chargeBlockAuthorFee(chargeArgs({ reservedAuthorFeeBuzz: CLAMPED_TO }));
+
+    expect(result).toMatchObject({ charged: true, feeBuzz: CLAMPED_TO });
+    expect(mockClamped).toHaveBeenCalledTimes(1);
+    // The assertion that pins the money: the Buzz counter must carry what was
+    // DEBITED (7), never what the fee computed to (20). Reaching for
+    // `quote.feeBuzz` here would over-report revenue by the clamped difference,
+    // on exactly the generations where the quote was already wrong.
+    expect(mockChargedBuzz).toHaveBeenCalledWith(expect.anything(), CLAMPED_TO);
+    expect(mockChargedBuzz).not.toHaveBeenCalledWith(expect.anything(), EXPECTED_FEE);
+  });
+
+  it('does NOT count a clamp when the realized fee matches the reservation', async () => {
+    // The negative control for the clamp counter. Without it, a counter wired to
+    // increment on every charge passes the test above.
+    const result = await chargeBlockAuthorFee(chargeArgs());
+    expect(result).toMatchObject({ charged: true, feeBuzz: EXPECTED_FEE });
+    expect(mockClamped).not.toHaveBeenCalled();
   });
 });
