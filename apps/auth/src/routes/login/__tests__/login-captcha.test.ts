@@ -85,7 +85,14 @@ const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 // with a matched pair: a third `<p class="captcha-fallback-note">Too many attempts. Please try
 // again.</p>` inside role="status" survived the whole suite with a `//` prefix and died without it,
 // the two slashes the only variable. The author believes the line is disabled and the suite agrees.
-const SCRIPT_END = pageSource.indexOf('</script>');
+// Resolved FROM the instance script's opener, not by position, and guarded — the sibling `styleStart`
+// below carries the same guard for the same reason. Measured on the unanchored `indexOf('</script>')`:
+// a `<script module>` block above this one moved it to that block's closer and the filter stopped
+// covering the instance script at all, and no `</script>` literal at all made it -1, where
+// `slice(0, -1)` + `slice(-1)` reassembles the whole file and silently restores whole-file filtering.
+const SCRIPT_OPEN = pageSource.indexOf('<script lang="ts">');
+const SCRIPT_END = pageSource.indexOf('</script>', SCRIPT_OPEN);
+if (SCRIPT_OPEN < 0 || SCRIPT_END < 0) throw new Error('the instance <script> block was not found');
 const markup = (
   pageSource
     .slice(0, SCRIPT_END)
@@ -835,7 +842,7 @@ describe('login copy when the verification check cannot run', () => {
     // Locating the button through the shared anchor, not its gate expression: that expression is
     // pinned whole elsewhere, so spelling it here reds this ORDERING test under "button not found"
     // whenever the gate changes — a second, misattributed red carrying no information.
-    const noteStart = markup.indexOf('{#if captchaBlocked}');
+    const noteStart = markup.search(new RegExp(REGION_NOTE_CONDITIONS[0]));
     const submitStart = markup.indexOf(EMAIL_SUBMIT_ANCHOR);
     expect(noteStart, 'the blocked note is not in the markup').toBeGreaterThan(-1);
     expect(submitStart, 'the email submit button was not found').toBeGreaterThan(-1);

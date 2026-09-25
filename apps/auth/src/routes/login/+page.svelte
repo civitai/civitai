@@ -32,7 +32,7 @@
   // form?.email so a no-JS POST round-trip (server echoes the email back) still repopulates it.
   let email = $state(form?.email ?? '');
 
-  // Turnstile uses the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
+  // Turnstile's ~99% path is the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
   // auto-issues a token via its success callback (no interactive challenge). We track that token so
   // the submit button can wait for it, avoiding the race where a fast user POSTs an empty
   // `cf-turnstile-response` and the server fail-closes. `captchaUnavailable` is the safety valve:
@@ -42,25 +42,22 @@
   let captchaToken = $state('');
   let captchaUnavailable = $state(false);
   // Whether a widget can appear AT ALL — the two sitekeys are independent config, so neither alone
-  // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW, and re-derived against the CURRENT code: drop
-  // it there and, wherever enforcement is on with no sitekey, the deadline finds captchaPending true,
-  // triggerFallback passes, the grace concludes, and captchaBlocked tells every visitor that an
-  // extension or a VPN is blocking a check that was never offered. The submit does release ~13s in, so
-  // this is not a trap — it is the false-blame regression, reintroduced through the other door.
+  // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW: without it, a deployment that enforces with no
+  // sitekey tells every visitor an extension or a VPN is blocking a check it never offered. Pinned by
+  // 'never concludes the check is blocked where no check was ever offered'.
   const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);
-  // THIS is the expression a broken widget must never reach: no term may be added here that is true
+  // 🔴 THIS is the expression a broken widget must never reach: no term may be added here that is true
   // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
-  // being trapped behind a permanently disabled button, and the server stays the sole gate. The two
-  // config terms pass that test — both read only `data`, so neither can become true because the check
-  // FAILED, and each can only RELEASE the button. captchaConfigured, see above; turnstileEnforced,
-  // because a sitekey without its secret otherwise makes everyone wait on a check the action ignores.
+  // being trapped behind a permanently disabled button, and the server stays the sole gate. Both
+  // config terms pass that test — they read only `data`, so neither can become true because the check
+  // FAILED, and each can only RELEASE the button.
   const captchaPending = $derived(
     data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable
   );
   // A token in hand contradicts "blocked" whatever the flag still says. `turnstileEnforced` is
-  // DEFENCE IN DEPTH, not currently load-bearing: every writer of captchaUnavailable now sits behind
-  // triggerFallback, which refuses unless captchaPending, which already requires enforcement — so with
-  // enforcement off the verdict is unreachable. Kept because that choke point is one edit from moving.
+  // DEFENCE IN DEPTH and redundant today, because nothing can set the verdict on an unenforced page.
+  // If a writer of `captchaUnavailable = true` ever appears outside triggerFallback's reach, this term
+  // is what keeps the blocked copy off that page.
   const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);
   // The OTHER way email login cannot complete: enforcement on with no widget to produce a token, so
   // every submit is refused. Separate from captchaBlocked because it is provable from `data` and is
@@ -137,10 +134,10 @@
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
   // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
   // ONLY WHILE SOMETHING IS WAITING ON A CAPTCHA — captchaPending, the same rule the submit button and
-  // the fallback prompt read, not a third hand-spelled copy. It subsumes a token in hand and a verdict
-  // already reached, and adds what those missed: with enforcement off or no widget configured, this
-  // would put a real Cloudflare challenge on screen that the action ignores. `fallbackActive` stays
-  // separate — a once-only latch, not a condition, and every empty-slot exit hands it back.
+  // the fallback prompt read, not a third hand-spelled copy. Spelled out, it missed two cases: with
+  // enforcement off, or no widget configured, this put a real Cloudflare challenge on screen that the
+  // action ignores. `fallbackActive` stays separate — a latch, not a condition, and every empty-slot
+  // exit hands it back.
   function triggerFallback(reason: string) {
     if (fallbackActive || !captchaPending) return;
     captchaFailReason = reason;
@@ -152,7 +149,7 @@
   // No managed key: there is no second widget, so the script's presence decides nothing a token does not
   // already decide — and a script that arrived just before the deadline has not had time to solve.
   // COST of that second look, accepted: a genuinely blocked user stays behind a disabled "Verifying…"
-  // button for the onMount deadline PLUS TURNSTILE_SCRIPT_GRACE_MS, not the deadline alone.
+  // button for TURNSTILE_TOKEN_DEADLINE_MS plus TURNSTILE_SCRIPT_GRACE_MS, not the deadline alone.
   $effect(() => {
     if (scriptWatch === 0) return;
     return decideAfterGrace({ tokenArrived: () => !!captchaToken, decide: concludeUnavailable });
@@ -184,11 +181,10 @@
 
   function renderManagedWidget() {
     const ts = turnstileApi();
-    // KNOWN OPEN: this early return leaves the commitment taken with an empty slot — the dead end
-    // releaseFallbackIfEmpty closes everywhere else. Unreached today, and no route to it is established.
-    // It rests on three things no test pins: managedEl is a $state dependency of the effect above,
-    // probeTurnstile hands that effect the grace teardown, and Svelte runs a teardown before a re-run —
-    // so an unmount cancels the second look. Adding a release here changes a pinned list, not nothing.
+    // KNOWN OPEN: reached, this early return holds the commitment with an empty slot — the dead end
+    // releaseFallbackIfEmpty closes everywhere else. Nothing reaches it today, and nothing pins why:
+    // managedEl is a $state dependency of the effect above, probeTurnstile hands that effect the grace
+    // teardown, and Svelte runs a teardown before a re-run, so an unmount cancels the second look.
     if (!ts || !managedEl || managedWidgetId !== undefined) return;
     let id: string | null | undefined;
     try {
@@ -260,7 +256,7 @@
     managedToken = '';
     captchaMode = 'invisible';
     const ts = turnstileApi();
-    ts?.reset(); // invisible widget → fresh background token
+    ts?.reset(); // the invisible widget, where one is configured → fresh background token
     if (managedWidgetId) ts?.reset(managedWidgetId); // managed widget (if shown) → fresh solve
   };
 
@@ -692,9 +688,8 @@
     margin: 0;
     line-height: 1.4;
   }
-  /* There is deliberately NO `.live-region` rule: out of .email-form's flex flow it needs no box of
-     its own, so an empty one is zero-height, and `display: contents` would buy a gap back against an
-     accessibility-tree claim nothing here can settle. Only its content is spaced. */
+  /* Deliberately NO `.live-region` rule — see the region's own comment in the markup for why it sits
+     outside .email-form and why `display: contents` is refused. Only its content is spaced. */
   .live-region > .captcha-fallback-note {
     margin-bottom: 0.6rem;
   }
