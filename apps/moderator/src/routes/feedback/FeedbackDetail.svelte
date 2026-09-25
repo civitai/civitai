@@ -98,10 +98,10 @@
 
   /**
    * 🔴 `let`, NOT `const`, AND HANDED DOWN WITH `bind:draft=`. `FeedbackPromote` mutates this object
-   * — three bound boxes and the mode toggle — and Svelte's dev ownership validator flags a mutation
+   * — four bound boxes and the mode toggle — and Svelte's dev ownership validator flags a mutation
    * of a prop the parent passed PLAIN: `is_bound_or_unset` wants a SETTER on the props descriptor
    * (`svelte@5.56.3/src/internal/client/dev/ownership.js:71-80`), and only `bind:` puts one there.
-   * Unbound, every keystroke into title/summary/bugId raised `ownership_invalid_mutation`; measured
+   * Unbound, every keystroke into title/summary/bugId/clickupUrl raised `ownership_invalid_mutation`; measured
    * at 2 warnings for 2 keystrokes in a compiled repro of this exact shape, 0 once bound.
    *
    * `const` is not an option alongside that binding — `bind:draft={promoteDraft}` over a `const` is

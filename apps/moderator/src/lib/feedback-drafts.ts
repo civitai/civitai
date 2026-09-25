@@ -29,6 +29,8 @@ export type FeedbackPromoteDraft = {
   bugId: string;
   title: string;
   summary: string;
+  /** The ClickUp task URL for a newly created issue. Optional — see the form's own note. */
+  clickupUrl: string;
 };
 
 /**
@@ -42,7 +44,7 @@ export type FeedbackPromoteDraft = {
  * `attachMode` is deliberately absent: it is a toggle, not a box, and it posts through the hidden
  * `mode` input rather than under its own name.
  */
-export const FEEDBACK_PROMOTE_DRAFT_FIELDS = ['bugId', 'title', 'summary'] as const;
+export const FEEDBACK_PROMOTE_DRAFT_FIELDS = ['bugId', 'title', 'summary', 'clickupUrl'] as const;
 
 /**
  * A blank promote draft.
@@ -52,7 +54,7 @@ export const FEEDBACK_PROMOTE_DRAFT_FIELDS = ['bugId', 'title', 'summary'] as co
  * `row.triageNote` and has to fall back to it — see `FeedbackDetail.svelte`.
  */
 export function makeFeedbackPromoteDraft(): FeedbackPromoteDraft {
-  return { attachMode: false, bugId: '', title: '', summary: '' };
+  return { attachMode: false, bugId: '', title: '', summary: '', clickupUrl: '' };
 }
 
 /**

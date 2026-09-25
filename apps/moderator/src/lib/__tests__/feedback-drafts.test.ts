@@ -12,6 +12,9 @@ describe('makeFeedbackPromoteDraft', () => {
       bugId: '',
       title: '',
       summary: '',
+      // Blank, not null: this is a form draft, and the box is a `bind:value`-d text input. The
+      // '' -> null conversion is the ACTION's job, so the column carries one spelling of "absent".
+      clickupUrl: '',
     });
   });
 
