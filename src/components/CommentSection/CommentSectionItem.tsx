@@ -124,7 +124,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
-        title: 'Could not hide comment',
+        title: comment.hidden ? 'Could not unhide comment' : 'Could not hide comment',
       });
     },
   });

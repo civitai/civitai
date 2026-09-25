@@ -13,6 +13,8 @@ const STRANGER_ID = 300;
 const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; isModerator?: boolean; muted?: boolean },
   toggleHide: vi.fn(),
+  invalidateThread: vi.fn(),
+  model: undefined as undefined | { user: { id: number } },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
@@ -22,16 +24,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: {
-      useUtils: () => ({}),
+      useUtils: () => ({
+        comment: { getCommentsById: { invalidate: mocks.invalidateThread } },
+      }),
       comment: {
         getReactions: { useQuery: () => ({ data: [] }) },
         upsert: { useMutation: mutation },
         delete: { useMutation: mutation },
         toggleReaction: { useMutation: mutation },
-        toggleHide: { useMutation: () => ({ mutate: mocks.toggleHide, isPending: false }) },
+        toggleHide: {
+          useMutation: (opts?: { onSuccess?: () => unknown }) => ({
+            mutate: (vars: unknown) => {
+              mocks.toggleHide(vars);
+              void opts?.onSuccess?.();
+            },
+            isPending: false,
+          }),
+        },
       },
       model: {
-        getById: { useQuery: () => ({ data: { user: { id: MODEL_OWNER_ID } } }) },
+        getById: { useQuery: () => ({ data: mocks.model }) },
       },
     },
   };
@@ -39,7 +51,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 // Leaf renderers stubbed to plain text so the assertions read what reaches the DOM,
 // including the author's name, without pulling in the editor and cosmetics graphs.
-vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({ RichTextEditor: () => null }));
+vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
+  RichTextEditor: () => createElement('span', null, 'editor-open'),
+}));
 vi.mock('~/components/Sticker/StickerPicker', () => ({ StickerPicker: () => null }));
 vi.mock('~/components/ReactionPicker/ReactionPicker', () => ({
   ReactionPicker: () => createElement('span', null, 'reactions'),
@@ -129,6 +143,7 @@ function openMenu() {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
+  mocks.model = { user: { id: MODEL_OWNER_ID } };
 });
 
 afterEach(() => {
@@ -148,6 +163,32 @@ describe('CommentSectionItem: hiding a reply in the model comment thread', () =>
         ?.click()
     );
     expect(mocks.toggleHide).toHaveBeenCalledWith({ id: 5 });
+    expect(mocks.invalidateThread).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer Hide to a logged-out viewer while the model is still loading', () => {
+    mocks.currentUser = null;
+    mocks.model = undefined;
+    render(false);
+
+    const items = openMenu();
+    expect(items).toContain('Report');
+    expect(items).not.toContain('Hide comment');
+  });
+
+  it('opens the editor when the author edits their own hidden reply', () => {
+    mocks.currentUser = { id: REPLY_AUTHOR_ID };
+    render(true);
+    expect(text()).toContain('Hidden comment');
+
+    openMenu();
+    act(() =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((el) => el.textContent?.trim() === 'Edit comment')
+        ?.click()
+    );
+    expect(text()).toContain('editor-open');
+    expect(text()).not.toContain('Hidden comment');
   });
 
   it('offers Hide to a moderator', () => {
