@@ -366,6 +366,7 @@ describe('model version visibility on caller-supplied version ids', () => {
     hasEntityAccess.mockImplementation(
       async ({ entityType, entityIds, userId, isModerator }: Record<string, unknown>) => [
         {
+          entityId: NEW_VERSION_ID,
           hasAccess:
             !!granted &&
             entityType === 'ModelVersion' &&

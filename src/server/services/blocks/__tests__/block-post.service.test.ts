@@ -135,11 +135,20 @@ describe('resolveExistingPostTags — a block may NEVER mint a site tag', () => 
 describe('resolveGalleryTarget', () => {
   const OTHER_OWNER = 555;
 
-  function version(over: { model?: Record<string, unknown>; status?: string } = {}) {
+  function version(
+    over: {
+      model?: Record<string, unknown>;
+      status?: string;
+      availability?: string;
+      publishedAt?: Date;
+    } = {}
+  ) {
     return {
       id: 3100,
       name: 'v1.5',
       status: 'Published',
+      publishedAt: over.publishedAt ?? new Date(Date.now() - 24 * 60 * 60 * 1000),
+      availability: over.availability ?? 'Public',
       modelId: 800,
       model: {
         id: 800,
@@ -231,6 +240,17 @@ describe('resolveGalleryTarget', () => {
       ['a version whose MODEL is unpublished', version({ model: { status: 'Draft' } })],
       ['a DELETED model', version({ model: { deletedAt: new Date() } })],
       ['a PRIVATE model', version({ model: { availability: 'Private' } })],
+      ['a PRIVATE version', version({ availability: 'Private' })],
+      [
+        // Gallery posts are public, so a private version is refused outright, not by visibility:
+        // its own owner can see it and would otherwise pass.
+        "the poster's OWN private version",
+        version({ availability: 'Private', model: { userId: VIEWER_USER_ID } }),
+      ],
+      [
+        'a version scheduled for later',
+        version({ publishedAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }),
+      ],
     ])('refuses %s', async (_label, row) => {
       dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(row);
       dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ userId: PUBLISHER_USER_ID });

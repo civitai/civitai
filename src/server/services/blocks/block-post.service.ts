@@ -27,6 +27,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { canViewModelVersion } from '~/server/services/model-version-visibility.service';
 
 /**
  * App Blocks → a REAL Civitai Post (`blocks.createPostFromApp` /
@@ -321,17 +322,14 @@ export async function resolveGalleryTarget(input: {
    * `imagePostedToModelReward`'s own `modelOwnerId === posterId` guard already
    * declines to pay in that case, and refusing it here would break a normal flow
    * to fix nothing. The self-dealing hazard is the APP PUBLISHER owning the
-   * model, which is what the check below tests. The field is carried so the
-   * actor is visible at the call site and so a future rule that DOES need the
-   * poster has it; `void` marks the non-use as intentional to a reader and to
-   * the linter.
+   * model, which is what the check below tests. The poster is only the viewer
+   * the version's visibility is judged for.
    */
   posterUserId: number;
   /** `claims.appId`; the publisher is resolved from it here, never passed in. */
   appId: string;
 }): Promise<ResolvedGalleryTarget> {
   const { modelVersionId, posterUserId, appId } = input;
-  void posterUserId;
 
   const version = await dbRead.modelVersion.findUnique({
     where: { id: modelVersionId },
@@ -339,6 +337,8 @@ export async function resolveGalleryTarget(input: {
       id: true,
       name: true,
       status: true,
+      publishedAt: true,
+      availability: true,
       modelId: true,
       model: {
         select: {
@@ -362,6 +362,10 @@ export async function resolveGalleryTarget(input: {
   if (version.status !== ModelStatus.Published) badRequest('gallery target is not available');
   if (version.model.status !== ModelStatus.Published) badRequest('gallery target is not available');
   if (version.model.availability !== Availability.Public) {
+    badRequest('gallery target is not available');
+  }
+  if (version.availability === Availability.Private) badRequest('gallery target is not available');
+  if (!(await canViewModelVersion(version, { id: posterUserId }))) {
     badRequest('gallery target is not available');
   }
 
