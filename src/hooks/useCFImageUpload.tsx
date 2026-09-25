@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { constants } from '~/server/common/constants';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { showErrorNotification } from '~/utils/notifications';
@@ -230,10 +230,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
   const processed = await preprocessFile(file, options);
-  const { blockedFor } = await auditImageMeta(
-    processed.type === MediaType.image ? processed.meta : undefined,
-    false
-  );
+  const { blockedFor } = await auditImageMeta(processed.meta, false);
   if (processed.type === 'video') {
     const { metadata } = processed;
     try {
@@ -254,7 +251,7 @@ export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?
     }
   }
 
-  if (processed.type === 'image' && processed.meta.comfy) {
+  if (processed.meta?.comfy) {
     const { comfy } = processed.meta;
     // if comfy metadata is larger than 1MB, we don't want to store it
     const tooLarge = calculateSizeInMegabytes(comfy) > 1;

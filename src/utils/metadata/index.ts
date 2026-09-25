@@ -1,13 +1,18 @@
 import type { Generator } from '@civitai/generation-metadata';
 /* eslint-disable no-restricted-imports -- this adapter IS the sanctioned wrapper */
 import {
+  applyPlugins,
+  createParserContext,
+  defaultParsers,
   encodeMetadata as encodePackageMetadata,
+  generationMetadataSchema,
   parseGenerationText,
 } from '@civitai/generation-metadata';
 /* eslint-enable no-restricted-imports */
 import { civitai, readCivitaiMetadata } from '@civitai/generation-metadata/civitai';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
+import { readVideoTags } from '~/utils/metadata/video-tags';
 
 /**
  * Thin adapter over @civitai/generation-metadata, keeping this module's historical
@@ -69,6 +74,38 @@ export async function ExifParser(file: File | string) {
 export async function getMetadata(file: File | string) {
   const parser = await ExifParser(file);
   return parser.getMetadata();
+}
+
+/**
+ * The package's `readMetadata` only accepts image bytes, so tags lifted out of another container
+ * (video) go through its parser registry directly — the same detect/parse walk, the same civitai
+ * plugin, then the same imageMetaSchema pass as getMetadata().
+ */
+function getMetadataFromTags(tags: Record<string, string>): ImageMetaProps | undefined {
+  const { parsers, context } = applyPlugins(PLUGINS, defaultParsers);
+  const ctx = createParserContext(context);
+  for (const parser of parsers) {
+    let state: unknown;
+    try {
+      state = parser.detect(tags, ctx);
+    } catch {
+      continue;
+    }
+    if (!state) continue;
+    try {
+      const raw = generationMetadataSchema.safeParse(parser.parse(state, ctx));
+      if (!raw.success) return undefined;
+      const result = imageMetaSchema.safeParse(raw.data);
+      return result.success && Object.keys(result.data).length ? result.data : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export async function getVideoMetadata(file: Blob) {
+  return getMetadataFromTags(await readVideoTags(file));
 }
 
 export function encodeMetadata(meta: ImageMetaProps, type: LegacyParserType = 'automatic') {
