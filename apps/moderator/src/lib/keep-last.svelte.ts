@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { begin, idle, settle, type KeepLast } from './keep-last';
 
 /**
@@ -15,8 +16,10 @@ import { begin, idle, settle, type KeepLast } from './keep-last';
  * The standard names three failure modes for this shape, and each is closed:
  *
  *   **Stuck spinner** — `settle` clears `loading` on both paths, so no outcome leaves it set.
- *   **Re-run loop** — the effect writes `state` and reads none of it; it reads only `source()`, whose
- *     own dependencies decide when to re-run.
+ *   **Re-run loop** — the effect must READ no reactive state, only `source()`, whose own dependencies
+ *     decide when to re-run. `begin` needs the previous state and `settle` writes it, so both go
+ *     through `untrack`; without it the effect depends on the value it writes, and the two failure
+ *     modes compound into the third.
  *   **A stale response landing on a newer request** — every run takes a ticket, and `settle` discards a
  *     response whose ticket is no longer current.
  *
@@ -29,8 +32,15 @@ export function keepLast<T>(source: () => Promise<T> | null) {
     const promise = source();
     if (!promise) return;
 
-    state = begin(state);
-    const ticket = state.current;
+    // Reading `state` here is what makes the effect depend on its own writes: every settle then
+    // re-enters it, takes a new ticket and issues a fresh request, so each response in flight is
+    // already stale by the time it lands and `settle` drops it — `loading` never clears and `value`
+    // never arrives. The `.then` callbacks run outside the tracking context, so only these two
+    // synchronous lines need it.
+    const ticket = untrack(() => {
+      state = begin(state);
+      return state.current;
+    });
 
     promise.then(
       (value) => (state = settle(state, ticket, { ok: true, value })),
