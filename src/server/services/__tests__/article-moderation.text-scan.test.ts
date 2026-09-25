@@ -5,6 +5,7 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   ...(await importOriginal<typeof RouteModule>()),
   submitTextModerationOrScan: vi.fn(),
 }));
+// Hand-listed: the real module pulls nsfwLevels.service, whose search-index graph builds clients at load.
 vi.mock('~/server/services/text-scan/rated-entities', () => ({
   applyRatingFloor: vi.fn(async () => ({ deferredRatingNotice: null })),
 }));

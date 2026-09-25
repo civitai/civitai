@@ -11,6 +11,7 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   ...(await importOriginal<typeof RouteModule>()),
   submitTextModerationOrScan: vi.fn(),
 }));
+// Hand-listed: the real action pulls model-version.service and nsfwLevels.service at load.
 vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
   applyModelNsfwTextScan: vi.fn(async () => ({ deferredRatingNotice: null })),
   applySystemModelNsfwFlag: vi.fn(),

@@ -51,6 +51,7 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { BlurbUse } from '~/server/services/blurb-materialize.service';
 import {
@@ -568,7 +569,10 @@ export const upsertBounty = async ({
       addLockedProperties,
       blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
-    if (updated) await queueBountySearchIndexUpdate(updated.id);
+    if (updated) {
+      await queueBountySearchIndexUpdate(updated.id);
+      scanEntityInBackground({ entityType: 'Bounty', entityId: updated.id });
+    }
     return updated;
   } else {
     if (data.poi) {
@@ -585,6 +589,7 @@ export const upsertBounty = async ({
       blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
     await queueBountySearchIndexUpdate(created.id);
+    scanEntityInBackground({ entityType: 'Bounty', entityId: created.id });
     return created;
   }
 };
@@ -664,6 +669,7 @@ export async function applyBountyContentChange({
   }
 
   await queueBountySearchIndexUpdate(id);
+  scanEntityInBackground({ entityType: 'Bounty', entityId: id });
 
   return true;
 }

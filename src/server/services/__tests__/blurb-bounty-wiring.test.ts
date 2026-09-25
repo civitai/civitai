@@ -5,6 +5,7 @@ import type * as AutoNsfw from '~/server/services/auto-nsfw';
 import type * as BlurbMaterializeService from '~/server/services/blurb-materialize.service';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageIngestion from '~/server/services/image.service';
+import type * as SubmitModule from '~/server/services/text-scan/submit';
 
 // The Bounty half of the blurb save path, run against the REAL `upsertBounty` /
 // `applyBountyContentChange`. Only the blurb modules, the blocklist guard and the Redis-backed
@@ -21,8 +22,10 @@ const {
   enqueueImageIngestion,
   refreshUserBountyCount,
   evaluateAutoNsfw,
+  scanEntityInBackground,
 } = vi.hoisted(() => ({
   evaluateAutoNsfw: vi.fn(),
+  scanEntityInBackground: vi.fn(),
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
@@ -48,6 +51,10 @@ vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) =>
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageIngestion>()),
   enqueueImageIngestion,
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubmitModule>()),
+  scanEntityInBackground,
 }));
 vi.mock('~/server/redis/caches', async (importOriginal) => {
   const actual = await importOriginal<typeof RedisCaches>();
@@ -233,6 +240,11 @@ describe('upsertBounty — blurb reconciliation', () => {
 });
 
 describe('applyBountyContentChange', () => {
+  it('hands the text it just wrote to the text scan', async () => {
+    await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Bounty', entityId: BOUNTY_ID });
+  });
+
   it('writes the description column and nothing else', async () => {
     await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
 

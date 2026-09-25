@@ -26,6 +26,7 @@ import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -195,6 +196,8 @@ export const upsertBountyEntry = async ({
     name: 'bounty-entry-image-ingest',
     userId,
   });
+  if (result && description !== undefined)
+    scanEntityInBackground({ entityType: 'BountyEntry', entityId: result.id });
 
   return result;
 };

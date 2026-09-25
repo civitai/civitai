@@ -27,6 +27,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 
 /**
  * App Blocks → a REAL Civitai Post (`blocks.createPostFromApp` /
@@ -989,6 +990,8 @@ export async function writeBlockPost(input: {
 
     return created;
   });
+
+  if (input.title || input.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return {
     postId: post.id,

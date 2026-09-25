@@ -27,6 +27,13 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   ['src/server/services/model-version.service.ts', 'export const mergeVersions', "scanEntityInBackground({ entityType: 'Model', entityId: modelId })", 1],
   ['src/server/services/model.service.ts', 'export const privateModelFromTraining', "scanEntityInBackground({ entityType: 'Model', entityId: result.id })", 1],
   ['src/server/services/model.service.ts', 'export async function migrateResourceToCollection', "scanEntityInBackground({ entityType: 'Model', entityId })", 1],
+  ['src/server/services/post.service.ts', 'export const createPost', "scanEntityInBackground({ entityType: 'Post', entityId: post.id })", 1],
+  ['src/server/services/post.service.ts', 'export const updatePost', "scanEntityInBackground({ entityType: 'Post', entityId: post.id })", 1],
+  ['src/server/services/blocks/block-post.service.ts', 'export async function writeBlockPost', "scanEntityInBackground({ entityType: 'Post', entityId: post.id })", 1],
+  ['src/server/services/bounty.service.ts', 'export const upsertBounty', "scanEntityInBackground({ entityType: 'Bounty', entityId: updated.id })", 1],
+  ['src/server/services/bounty.service.ts', 'export const upsertBounty', "scanEntityInBackground({ entityType: 'Bounty', entityId: created.id })", 1],
+  ['src/server/services/bounty.service.ts', 'export async function applyBountyContentChange', "scanEntityInBackground({ entityType: 'Bounty', entityId: id })", 1],
+  ['src/server/services/bountyEntry.service.ts', 'export const upsertBountyEntry', "scanEntityInBackground({ entityType: 'BountyEntry', entityId: result.id })", 1],
 ];
 
 describe('text-scan write-path wiring', () => {
