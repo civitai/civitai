@@ -3658,7 +3658,13 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
       },
       {
         uploadType: ModelUploadType.Trained,
-        status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+        // Scheduled belongs here, not on the Training tab: getTrainingModelsByUserId
+        // whitelists only Draft/Training, so a trained model scheduled to publish would
+        // otherwise appear on no tab. Draft/Training stay excluded here — they surface on
+        // the Training tab, and listing them notIn [Published, Deleted] would double-list.
+        status: {
+          in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+        },
       },
       // A Published model is excluded by the model-status branches above, so a new
       // version scheduled on it (version status Scheduled, publishedAt in the future)
