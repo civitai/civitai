@@ -4,7 +4,9 @@ Only members may **start a download** by generating with a checkpoint that only 
 Everything in the live coverage rule stays available to everyone, as does anything already resident, and
 every other resource type is untouched.
 
-Status: **built, not switched on.** Feature it extends: [paid-model-loading.md](paid-model-loading.md).
+Status: **live.** Released 2026-09-25 with `generation-coverage-next` already on and
+`generation-loading-open-to-all` off, so the gate was active from the deploy rather than shipping dark.
+Feature it extends: [paid-model-loading.md](paid-model-loading.md).
 
 ---
 
@@ -142,12 +144,21 @@ rule for `paidAccess` (`generation.service.ts`): gating terms do not belong in t
 
 ## Rollout
 
-1. Create `generation-loading-open-to-all` in Flipt, **off**. Off is also what an absent flag means, so
-   this step only buys the ability to ramp later.
-2. Turn `generation-coverage-next` on. The expansion appears for members; non-members see what they see
-   today plus whatever is resident.
-3. Watch download volume and queue depth. Ramp `generation-loading-open-to-all` by percentage to open it
-   to non-members; set it on for everyone, or off to close it again, without a deploy.
+1. ~~Turn `generation-coverage-next` on.~~ Already on before this shipped, which is why the gate was
+   live at the deploy rather than dark. Worth stating plainly: this feature never had an off state in
+   production.
+2. ~~Create `generation-loading-open-to-all` in Flipt, **off**.~~ Done at release. Off is also what an
+   absent flag means, so the step bought the ability to ramp, not the gate.
+3. **Where we are.** Watch download volume and queue depth. Ramp `generation-loading-open-to-all` by
+   percentage to open it to non-members; set it on for everyone, or off to close it again, without a
+   deploy.
+
+**The baseline, measured the day before release.** Over the previous 7 days, across the 4,000
+most-generated versions (17.2M generations), 304,666 used a checkpoint only the expansion covers — and
+**zero** used one that was not already resident. Every expansion checkpoint people actually generate
+with is loaded, so the gate cost existing users nothing at launch; it bites only on being first to pull
+in something cold. That is the number to re-run before deciding the ramp has to move: if refusals are
+still near zero, the gate is not doing anything a ramp would undo.
 
 `generation-coverage-next` is global — it is evaluated with no entity, so it moves whole environments
 at once. Only `generation-loading-open-to-all` is per-user, which is what makes step 3 a ramp rather

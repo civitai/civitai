@@ -30,8 +30,8 @@ orchestrator source at `9306e7333`.
 
 - **Generation is always accepted**, with one exception: a non-member is refused a checkpoint only
   the `coveredNext` expansion covers, until it is resident
-  ([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)) — built, and inert until
-  `generation-coverage-next` is on. Otherwise a cold checkpoint does not block a submit.
+  ([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)) — **live since 2026-09-25**.
+  Otherwise a cold checkpoint does not block a submit.
 - **Downloads are free.** Lanes, the queue slot, and cancellation removing a job's downloads are the
   abuse controls — not a price.
 - **Boost = the high lane.** `PUT /v2/consumer/workflows/{id}` with `{ downloadPriority: "high" }`,
@@ -411,11 +411,10 @@ Everything here is the deploying engineer's, before this branch merges.
       global. An unknown key evaluates false, which is the same answer as "off" — so verify the key is
       present rather than inferring it from the site behaving as expected.
       *Closes when:* the flag is listed in Flipt with its default off.
-- [ ] **Create `generation-loading-open-to-all` in Flipt, OFF, before `generation-coverage-next` goes
-      on.** An absent key evaluates false, which is the same answer as off — so this step buys the
-      ability to ramp, not the gate itself. Steps and ramp semantics:
-      [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
-      *Closes when:* the flag is listed in Flipt with its default off.
+- [x] **Create `generation-loading-open-to-all` in Flipt, OFF, before `generation-coverage-next` goes
+      on.** Done at the 2026-09-25 release. `generation-coverage-next` was ALREADY on, so the gate was
+      live at the deploy rather than dark — the ordering this item assumed did not happen. Ramp
+      semantics: [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
 - [x] **`pnpm run db:check-generated`** after `GenerationCoverage` gained `coveredNext` — passes; the
       generated change is the new column on the Kysely type and the model list.
 
