@@ -4,15 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { MAX_FINDINGS_PER_REPORT, abuseReportInput } from '@civitai/moderation';
 import { describe, expect, it } from 'vitest';
 import type { BotAccountCohortMember, PostCounts, SurfaceCounts } from '../cohort';
+import { NO_ACTION_TAKEN } from '../../abuse-report-prose';
 import {
   BOT_ACCOUNT_DETECTOR,
   HASHED_GROUP_KEY_PREFIX,
+  POST_COUNT_LEGEND,
   boundGroupKey,
   buildFinding,
   buildReports,
   chunkFindings,
   renderPostCounts,
   truncateReason,
+  truncateSummary,
 } from '../report';
 import type { BotAccountScore } from '../scoring';
 
@@ -119,8 +122,13 @@ describe('buildFinding', () => {
     // The heuristic that said nothing contributes no clause — a reason reciting every signal that
     // did not fire buries the one that did.
     expect(finding.reason).not.toContain('content-templating:');
-    // The numbers still follow, for both.
-    expect(finding.reason).toContain('registration-cluster=0.60, content-templating=0.00');
+    // 🔴 AND THE NUMBERS NO LONGER FOLLOW. This used to assert
+    // `registration-cluster=0.60, content-templating=0.00` in the same sentence — machine syntax in
+    // the one string a non-technical moderator reads. The magnitudes moved to the run counters as
+    // `heuristic:<id>:score_sum` (see `heuristicCounters`); what stays in the prose is the note,
+    // which is the part that says what the signal SAW.
+    expect(finding.reason).not.toContain('registration-cluster=');
+    expect(finding.reason).not.toMatch(/\w=\d/);
   });
 
   it('omits the signals clause entirely when nothing fired', () => {
@@ -131,24 +139,69 @@ describe('buildFinding', () => {
   it('cites the evidence a moderator needs to judge it', () => {
     const finding = buildFinding(member(), score(), STARTED);
     // Distinct counts per surface so a mutant reading the wrong field cannot produce this string.
-    expect(finding.reason).toContain('Posted 6 item(s) — 2 comment(s), 1 model(s), 3 image(s).');
+    expect(finding.reason).toContain('Posted 6 items — 2 comments, 1 model, 3 images.');
     expect(finding.reason).toContain('3.0h old');
-    expect(finding.reason).toContain('placeholder-no-op=0.00');
-    expect(finding.reason).toContain('NOT actioned');
+    // 🔴 THE DISCLAIMER IS THE SHARED SENTENCE, AND IT IS LAST. It used to LEAD, as "Shadow-mode
+    // observation — NOT actioned." — an internal rollout phase in the position a reader skips. The
+    // per-heuristic `placeholder-no-op=0.00` clause this case also used to assert is gone; the
+    // magnitudes ride out in the run counters instead.
+    expect(finding.reason.endsWith(NO_ACTION_TAKEN)).toBe(true);
+    expect(finding.reason).not.toContain('Shadow-mode observation');
   });
 
-  it('🔴 pins the WHOLE clause when nothing was taken down — carve-out included', () => {
+  it('🔴 pins the WHOLE clause when nothing was taken down', () => {
     // 🔴 THE WIRE CONTRACT CALLS THIS STRING "the whole value of the row to a moderator", so it is
     // pinned as a whole normalised string rather than by keyword. A guard on words is walkable by
     // rewording; this one makes a cosmetic reword a deliberate edit with a failing test attached.
     //
-    // 🔴 The Pending carve-out is part of the pin, in THIS branch too. It was absent here while the
-    // excluded branch carried it, and this is the branch a young account with three unscanned
-    // uploads takes — see `renderPostCounts`.
+    // 🔴 THE CARVE-OUT IS NO LONGER PART OF THIS PIN, AND ITS ABSENCE IS ASSERTED SEPARATELY BELOW.
+    // It — and the definition of both on-site categories — used to be appended to EVERY finding,
+    // 115 characters of identical prose repeated per row on this branch (226 on the other). The
+    // enumeration half of it lives in `POST_COUNT_LEGEND` on the
+    // run summary now, which the board renders once above the findings table. Nothing was dropped;
+    // `sibling case: the legend still states it` pins that.
     expect(renderPostCounts(posts({ comments: 2, models: 1, images: 3 }))).toBe(
-      'Posted 6 item(s) — 2 comment(s), 1 model(s), 3 image(s). All 6 still on the site ' +
-        '(nothing hidden, blocked, unpublished or removed). ' +
-        'Images still awaiting a scan result are counted as on the site.'
+      'Posted 6 items — 2 comments, 1 model, 3 images. All 6 are still on the site. ' +
+        'Images awaiting a scan result count as on the site.'
+    );
+  });
+
+  it('🔴 the on-site legend is stated ONCE, on the summary — not per finding', () => {
+    // The move, pinned in both directions: gone from the row, present in the legend. Asserting only
+    // the first half would let "shortened" silently mean "deleted", which is the one outcome that
+    // costs a moderator information.
+    // 🔴 THE SPLIT IS NOT ARBITRARY, AND ONLY HALF OF THIS MOVED. A reason is rendered on TWO
+    // surfaces and only one shows a summary: `apps/moderator/src/routes/abuse/[runId]/+page.svelte`
+    // renders the summary above the findings table, while
+    // `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders `{f.reason}`
+    // alone — `getAbuseFindingsForUser` never joins the run. So anything on the summary is
+    // not on the User Lookup screen — one click away via that panel's `run #{f.runId}` link, which
+    // is the distinction the split turns on. The ENUMERATION of which states fall where can live
+    // there; the
+    // scan-pending CAVEAT cannot, because without it "All 3 are still on the site" sends a moderator
+    // to look at three items none of which they can open.
+    const row = renderPostCounts(posts({ comments: 2, models: 1, images: 3 }));
+    for (const definitional of ['TOS-flagged', 'unattached uploads'])
+      expect(row).not.toContain(definitional);
+    for (const definitional of ['TOS-flagged', 'unattached uploads'])
+      expect(POST_COUNT_LEGEND).toContain(definitional);
+    // The caveat rides with the number, on every row, on both surfaces.
+    expect(row).toContain('Images awaiting a scan result count as on the site.');
+    expect(POST_COUNT_LEGEND).not.toContain('awaiting a scan result');
+  });
+
+  it('🔴 singular and plural both resolve — watched at both ends', () => {
+    // A helper hardcoded to always append `s` passes every plural assertion in this file and fails
+    // only here; one hardcoded to never append it fails only on the plural line.
+    expect(renderPostCounts(posts({ comments: 1, models: 1, images: 1 }))).toBe(
+      'Posted 3 items — 1 comment, 1 model, 1 image. All 3 are still on the site. ' +
+        'Images awaiting a scan result count as on the site.'
+    );
+    // Zero takes the plural — the case an `n > 1` test gets wrong — and a total of one takes the
+    // singular noun for the item count itself.
+    expect(renderPostCounts(posts({ images: 1 }))).toBe(
+      'Posted 1 item — 0 comments, 0 models, 1 image. It is still on the site. ' +
+        'Images awaiting a scan result count as on the site.'
     );
   });
 
@@ -163,12 +216,10 @@ describe('buildFinding', () => {
     expect(
       renderPostCounts(posts({ comments: 5, models: 0, images: 40 }, { comments: 2, images: 1 }))
     ).toBe(
-      'Posted 45 item(s) — 5 comment(s), 0 model(s), 40 image(s). ' +
-        'Still on the site: 3 (2 comment(s), 0 model(s), 1 image(s)). ' +
-        'NOT on the site: 42 (3 comment(s), 0 model(s), 39 image(s)) — drafts, unpublished or ' +
-        'scheduled models, unattached uploads, uploads the scanner blocked or could not find, and ' +
-        'hidden, TOS-flagged or already-removed content. Images still awaiting a scan result are ' +
-        'counted as on the site.'
+      'Posted 45 items — 5 comments, 0 models, 40 images. ' +
+        'Still on the site: 3 (2 comments, 0 models, 1 image). ' +
+        'No longer on the site: 42 (3 comments, 0 models, 39 images). ' +
+        'Images awaiting a scan result count as on the site.'
     );
   });
 
@@ -176,26 +227,31 @@ describe('buildFinding', () => {
     // The canonical bot wave: 40 images, every one blocked. Under the old rule this account was not
     // in the cohort at all, so there was no finding for this sentence to be wrong in.
     const finding = buildFinding(member({ posts: posts({ images: 40 }, {}) }), score(), STARTED);
-    expect(finding.reason).toContain('Posted 40 item(s) — 0 comment(s), 0 model(s), 40 image(s).');
-    expect(finding.reason).toContain('Still on the site: 0 (0 comment(s), 0 model(s), 0 image(s))');
-    expect(finding.reason).toContain('NOT on the site: 40 (0 comment(s), 0 model(s), 40 image(s))');
+    expect(finding.reason).toContain('Posted 40 items — 0 comments, 0 models, 40 images.');
+    expect(finding.reason).toContain('Still on the site: 0 (0 comments, 0 models, 0 images)');
+    expect(finding.reason).toContain('No longer on the site: 40 (0 comments, 0 models, 40 images)');
   });
 
   it('🔴 never calls the reported number "visible" — the Pending carve-out', () => {
     // 🔴 `cohort.ts` deliberately counts an image whose scan has not finished as on-site, and that
     // is exactly the case a moderator cannot view. "N visible image(s)" claimed something the query
-    // does not deliver. The replacement states the carve-out in the same sentence, so this checks
-    // BOTH halves: the over-claiming word is gone, and the caveat that replaced it is present.
+    // does not deliver. Both branches say "on the site" instead, and the CAVEAT that makes that
+    // wording honest is on the run summary — one copy for every row it explains, rather than one
+    // copy per row. This checks both halves across both branches.
     const shown = renderPostCounts(posts({ images: 40 }, { images: 1 }));
     expect(shown).not.toContain('visible');
-    expect(shown).toContain('Images still awaiting a scan result are counted as on the site.');
     // 🔴 AND THE NO-EXCLUSIONS BRANCH, which is where this actually bites. Three uploads, all
     // attached, all `ingestion: Pending` — `excluded.total` is 0, so nothing has been taken down and
     // there is nothing for a moderator to look at either. Dropping the word "visible" was never
-    // enough on its own here: "All 3 still on the site" makes the same claim in other words.
+    // enough on its own here: "All 3 are still on the site" makes the same claim in other words.
     const allPending = renderPostCounts(posts({ images: 3 }));
     expect(allPending).not.toContain('visible');
-    expect(allPending).toContain('Images still awaiting a scan result are counted as on the site.');
+    // 🔴 BOTH BRANCHES CARRY THE CAVEAT, on the ROW rather than on the summary — see the sibling
+    // case for why that half could not move. `imageCountArgs` keeps `ingestion: Pending`, so a
+    // twenty-minute-old account whose three uploads are all awaiting a scan takes the
+    // nothing-excluded branch, and that is the modal shape of the population this detector finds.
+    for (const branch of [shown, allPending])
+      expect(branch).toContain('Images awaiting a scan result count as on the site.');
   });
 
   it('floors the account age at zero when the clocks disagree', () => {
@@ -219,6 +275,32 @@ describe('truncateReason', () => {
     const cut = truncateReason('x'.repeat(50), 10);
     expect(cut).toHaveLength(10);
     expect(cut.endsWith('…')).toBe(true);
+  });
+
+  it('🔴 a TRUNCATED reason still ends with the disclaimer, and still reads as two sentences', () => {
+    // 🔴 THE CASE THE ORDINARY FIXTURES CANNOT REACH. Moving `NO_ACTION_TAKEN` to the END put it in
+    // `truncateReason`'s cut zone — a prefix-keeping trim drops the LAST clause first — so on the
+    // one finding that ran long the sentence saying nothing was done would simply vanish. The
+    // budget is reserved instead. Exercised with an unbounded username, which is the real input
+    // that can push a reason over: `member.username` has no cap anywhere upstream.
+    const finding = buildFinding(member({ username: 'n'.repeat(4_000) }), score(), STARTED);
+    expect(finding.reason.length).toBeLessThanOrEqual(2_000);
+    expect(finding.reason.endsWith(NO_ACTION_TAKEN)).toBe(true);
+    // The body really was cut — otherwise this case proves nothing about the truncating path.
+    expect(finding.reason).toContain('…');
+    // 🔴 AND THE JOIN KEPT A SEPARATOR. A naive `body + NO_ACTION_TAKEN` yields `…No action was
+    // taken`, run together, because a truncated body ends in the ellipsis rather than a space.
+    expect(finding.reason).toContain(`… ${NO_ACTION_TAKEN}`);
+    expect(finding.reason).not.toContain(`…${NO_ACTION_TAKEN}`);
+    // The contract accepts it, which is the only thing that decides whether the run lands.
+    expect(() =>
+      abuseReportInput.parse({
+        detector: BOT_ACCOUNT_DETECTOR,
+        startedAt: STARTED.toISOString(),
+        finishedAt: FINISHED.toISOString(),
+        findings: [finding],
+      })
+    ).not.toThrow();
   });
 
   it('keeps a generated reason within the contract’s own bound', () => {
@@ -325,8 +407,84 @@ describe('buildReports', () => {
     expect(reports.every((r) => r.counters?.cohort_size === 2_501)).toBe(true);
   });
 
+  it('🔴 an over-long summary is TRIMMED, not left to refuse the whole report', () => {
+    // 🔴 THE THIRD PRODUCER-SUPPLIED STRING ON THIS CONTRACT, AND IT SHIPPED UNBOUNDED. `reason` and
+    // `groupKey` were each brought inside their cap; the summary was not — and it is the one that
+    // GROWS WITH THE RUN'S ILL HEALTH, because every disclosure sentence in `run.ts` is appended
+    // only when something went wrong. Over the cap the report is not shortened, it is REJECTED, and
+    // the findings, the counters and the record of the failure go with it.
+    const report = buildReports({
+      findings: findings(1),
+      startedAt: STARTED,
+      finishedAt: FINISHED,
+      counters: {},
+      summary: 'x'.repeat(5_000),
+    })[0];
+    expect((report.summary ?? '').length).toBeLessThanOrEqual(2_000);
+    expect(report.summary).toContain('…'); // the cut is recorded, not silent
+    // 🔴 THE BATCH WORDING SURVIVES THE CUT. It is built first and subtracted from the budget, so
+    // the caller's sentence is what gets trimmed — "Batch 1 of 1" and "nothing was muted" are the
+    // two facts a reader cannot reconstruct from anywhere else on the row.
+    expect(report.summary).toContain('Batch 1 of 1');
+    expect(report.summary).toContain('Nothing was muted, banned or restricted by this scan.');
+    // And the REAL schema accepts it — this is the assertion that makes the bound mean something.
+    expect(() => abuseReportInput.parse(report)).not.toThrow();
+  });
+
+  it('🔴 the local summary cap equals the one the CONTRACT enforces', () => {
+    // The contract exports `MAX_REASON_LENGTH` and `MAX_FINDINGS_PER_REPORT`; the summary's
+    // `.max(2_000)` is inline, so `report.ts` holds a copy that can drift silently. Pinned by
+    // PARSING at the boundary in both directions rather than by restating the number a second time
+    // — a second literal would agree with the first and with nothing else.
+    const parses = (length: number) =>
+      abuseReportInput.safeParse({
+        detector: BOT_ACCOUNT_DETECTOR,
+        startedAt: STARTED.toISOString(),
+        finishedAt: FINISHED.toISOString(),
+        summary: 'x'.repeat(length),
+        findings: [],
+      }).success;
+    expect(parses(2_000)).toBe(true);
+    expect(parses(2_001)).toBe(false);
+    // …and the producer's own bound lands exactly on that boundary rather than merely under it: a
+    // trim to 1,500 would pass every assertion above while silently losing 500 characters of
+    // disclosure on every unhealthy run.
+    expect(truncateSummary('x'.repeat(5_000))).toHaveLength(2_000);
+    expect(truncateSummary('x'.repeat(2_000))).toHaveLength(2_000);
+    expect(truncateSummary('x'.repeat(2_000))).not.toContain('…');
+    // 🔴 AND IT CANNOT EXCEED ITS OWN BUDGET AT THE DEGENERATE END. `slice(0, 0)` plus an ellipsis
+    // is ONE character where zero were allowed, and `slice(0, -1)` — what a negative budget gives —
+    // returns nearly the whole string from a function whose entire job is to shorten it. Both are
+    // bounds that break in the direction the contract refuses.
+    expect(truncateSummary('x'.repeat(50), 0)).toBe('');
+    expect(truncateSummary('x'.repeat(50), -10)).toBe('');
+    // One character of budget still costs the ellipsis rather than overflowing.
+    expect(truncateSummary('x'.repeat(50), 1)).toHaveLength(1);
+  });
+
+  it('🔴 carries the CALLER’s summary into every batch, not only the first', () => {
+    // 🔴 THE PROPERTY `POST_COUNT_LEGEND` RESTS ON. The on-site legend moved out of every finding
+    // and into the run summary, and each batch is its own row on the board with its own summary —
+    // so a legend attached to batch 1 alone would leave batches 2..n undefined, which is worse than
+    // where it started. `buildReports` APPENDS its batch wording rather than replacing the caller's
+    // string; this is what pins that, because the comment on `POST_COUNT_LEGEND` asserts it.
+    const reports = buildReports({
+      findings: findings(2_501),
+      startedAt: STARTED,
+      finishedAt: FINISHED,
+      counters: {},
+      summary: `Scanned things. ${POST_COUNT_LEGEND}`,
+    });
+    expect(reports).toHaveLength(3);
+    for (const report of reports) expect(report.summary).toContain(POST_COUNT_LEGEND);
+  });
+
   it('says in every summary that nothing was acted on', () => {
-    for (const report of build(2_501)) expect(report.summary).toContain('SHADOW MODE');
+    // 🔴 IN PLAIN WORDS, NOT "SHADOW MODE:". That phrase named an internal rollout phase to a
+    // moderator who has no reason to know the detector has phases; what they need to know is that
+    // no account was touched. Every batch, not only the first — each is its own row on the board.
+    for (const report of build(2_501))
+      expect(report.summary).toContain('Nothing was muted, banned or restricted by this scan.');
   });
 
   it('marks every finding of every batch un-actioned', () => {

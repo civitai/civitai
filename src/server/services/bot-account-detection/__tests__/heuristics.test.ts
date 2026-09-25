@@ -240,8 +240,21 @@ describe('posting-velocity', () => {
   it('explains itself with the numbers it used, and says nothing at zero', () => {
     const wave = member({ all: { images: 40 }, createdAt: at('2026-09-03T11:40:00.000Z') });
     const note = postingVelocityHeuristic.explain(evidence(wave), 1);
-    expect(note).toContain('40 item(s)');
+    expect(note).toContain('posted 40 items in');
     expect(note).toContain('/hour');
+    // Singular too, at the other end: a helper hardcoded to always append `s` passes the line above
+    // and fails only here.
+    //
+    // ⚠️ THE SINGULAR IS NOT REACHABLE THROUGH THE HEURISTIC, AND THIS CASE FABRICATES THE SCORE TO
+    // GET AT IT. `score` returns 0 below `MIN_ITEMS` (5) and `explain` returns null at 0, so one
+    // item can never render this clause on a real run — the `1` passed here is a score no caller
+    // would produce for this member. The agreement is written anyway for the reason
+    // `heuristics/staging.ts` gives for its own unreachable singular: `explain` is a pure function
+    // anyone may call, and a boundary that moves must not leave a grammar bug behind it. An earlier
+    // wording here claimed the fixture sat AT `MIN_ITEMS`; it is four below it.
+    const lone = member({ all: { images: 1 }, createdAt: at('2026-09-03T11:40:00.000Z') });
+    expect(postingVelocityHeuristic.score(evidence(lone))).toBe(0); // the premise, asserted
+    expect(postingVelocityHeuristic.explain(evidence(lone), 1)).toContain('posted 1 item in');
     // A reason reciting every heuristic that did NOT fire buries the one that did.
     expect(postingVelocityHeuristic.explain(evidence(member()), 0)).toBeNull();
   });
@@ -1097,7 +1110,7 @@ describe('asset-staging', () => {
       1
     );
     expect(note).toContain('9 of this account');
-    expect(note).toContain('12 uploaded image(s)');
+    expect(note).toContain('12 uploaded images');
     expect(note).toContain('no generation metadata');
     expect(note).toContain('4 of them were created within the same second');
   });
