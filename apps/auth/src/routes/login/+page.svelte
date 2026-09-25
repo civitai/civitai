@@ -138,8 +138,9 @@
   // ONLY WHILE SOMETHING IS WAITING ON A CAPTCHA — captchaPending, the same rule the submit button and
   // the fallback prompt read, not a third hand-spelled copy. Spelled out, it missed two cases, with
   // different harms: with enforcement OFF and a managed key present it renders a real Cloudflare
-  // challenge the action then ignores; with NO widget configured there is nothing to render, and the
-  // other arm reaches a verdict that blames the reader's browser for a check never offered.
+  // challenge the action then ignores; with enforcement ON and NO widget configured there is nothing
+  // to render, and the other arm reaches a verdict that blames the reader's browser for a check never
+  // offered. (Enforcement off AND nothing configured reaches the verdict too, and renders nothing.)
   // `fallbackActive` stays separate — a latch, not a condition, and every empty-slot exit hands it back.
   function triggerFallback(reason: string) {
     if (fallbackActive || !captchaPending) return;

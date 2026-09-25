@@ -85,18 +85,34 @@ const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 // RENDERS. Measured: a `<p class="captcha-fallback-note">Too many attempts. Please try again.</p>` on
 // a `//` line inside role="status" is announced like a note and says the one phrase the blocked-path
 // ban forbids. Filtering by POSITION was wrong twice — from the file start it stripped template lines
-// whenever the script came first, and up to the first `</script>` it stopped covering the instance
-// script whenever another script block came before it. A per-block replace has no boundary to place,
-// so no legal layout can move it. If no block matched at all the script's own comments would leak
-// into `markup` and red the ledgers, so that degenerate case fails loud rather than reverting.
-const markup = pageSource
-  .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, (block) =>
-    block
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//'))
-      .join('\n')
-  )
-  .replace(/<!--[\s\S]*?-->/g, '');
+// whenever template content sat BEFORE the instance script, and up to the first `</script>` it stopped
+// covering the instance script whenever another script block came first.
+const SCRIPT_BLOCK_SRC = '<script\\b[^>]*>[\\s\\S]*?<\\/script>';
+// HTML comments come out FIRST, so a `<script …>` written in PROSE cannot open a block. This template
+// carries eight prose comments, one directly above the live region, and documenting the loader tag in
+// one of them is an unremarkable edit.
+const withoutHtmlComments = pageSource.replace(/<!--[\s\S]*?-->/g, '');
+// 🔴 AND THE BOUNDS ARE CHECKED, because a per-block replace still has to FIND the blocks. A correctly
+// bounded one holds no Svelte block opener; one that does means the regex began at text that only
+// LOOKS like a script tag and ran to the instance script's closer, `//`-filtering the whole template
+// between — the same defect again, and this time the ledgers stay green, because the instance script
+// is INSIDE the over-wide match. Measured reachable with the script block moved below the markup plus
+// a self-closing `<script … />`, which Svelte warns about and compiles. A file where nothing matched
+// fails loud on its own: the script's comments leak into `markup` and red two ledgers.
+// Checked on what SURVIVES the filter, not the raw block: a `{#` inside a script comment is ordinary
+// (this file's own comments quote template syntax), while a swallowed template's blocks are on live
+// lines and outlive the strip. Testing the raw block reds on a comment quoting `{#if`.
+const markup = withoutHtmlComments.replace(new RegExp(SCRIPT_BLOCK_SRC, 'g'), (block) => {
+  const filtered = block
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  if (filtered.includes('{#'))
+    throw new Error(
+      'a <script> block match spans template markup, so the // filter is mis-bounded'
+    );
+  return filtered;
+});
 // One extraction for every note after a named condition, so the sibling pins cannot drift: written
 // twice, the two copies already disagreed, one tolerating attributes after `class` and one not.
 // Reads `markup`, NOT pageSource — measured, a note commented out keeps a pageSource-backed copy pin
@@ -266,6 +282,20 @@ const rulesDeclaring = (prop: RegExp) => {
     .filter(canReachAnnouncement);
 };
 
+// A $derived's WHOLE declaration, and the assertion that there is exactly ONE of it. Reading `markup`
+// rather than pageSource is necessary but not sufficient: markup strips `//` lines and HTML comments,
+// never `/* */`, so a block-commented copy of the old declaration left above a mutated one is what the
+// first match returns — the pin passes while the live term is gone. Measured on captchaPending, whose
+// terms this file calls load-bearing. The COUNT is the half that closes both comment shapes, and the
+// two-live-declarations shape with them.
+const declOf = (name: string) => {
+  const all = [
+    ...markup.matchAll(new RegExp(`const ${name} = \\$derived(?:\\.by)?\\([\\s\\S]*?\\);`, 'g')),
+  ];
+  expect(all, `expected exactly one declaration of ${name}`).toHaveLength(1);
+  return normalize(all[0][0]);
+};
+
 // Every line naming `identifier`, paired with the top-level scope it sits in. Scope resolution includes
 // the matched line, so a declaration is its own scope. Trailing comments are stripped: a ledger pins
 // what the code does, and rewording a comment beside it is not a change to that.
@@ -289,9 +319,7 @@ describe('login copy when the verification check cannot run', () => {
     //    sitekey test is wrong on both edges (a sitekey can exist where the action does not enforce);
     //  - captchaUnavailable is never cleared on the managed path, so without !captchaToken a fallback
     //    widget that errors and then solves keeps claiming login is blocked while a submit would pass.
-    const decl = normalize(
-      pageSource.match(/const captchaBlocked = \$derived\([\s\S]*?\);/)?.[0] ?? ''
-    );
+    const decl = declOf('captchaBlocked');
     expect(decl).toBe(
       'const captchaBlocked = $derived(data.turnstileEnforced && captchaUnavailable && !captchaToken);'
     );
@@ -747,9 +775,9 @@ describe('login copy when the verification check cannot run', () => {
     // The derived ITSELF, or every reader below pins a name whose meaning can be inverted underneath
     // them: `||` instead of `&&` reads identically at all three call sites and prompts a solve for a
     // widget that is not on screen.
-    expect(
-      normalize(pageSource.match(/const solvePrompted = \$derived\([\s\S]*?\);/)?.[0] ?? '')
-    ).toBe('const solvePrompted = $derived(managedWidgetShown && captchaPending);');
+    expect(declOf('solvePrompted')).toBe(
+      'const solvePrompted = $derived(managedWidgetShown && captchaPending);'
+    );
 
     // Pinned WHOLE, like both notes in the live region: a keyword check keeps "Complete this quick
     // check to continue." while a reword drops "Couldn't verify you automatically." — the sentence
@@ -769,12 +797,7 @@ describe('login copy when the verification check cannot run', () => {
     );
     // WHOLE STRING, not per-arm: the order is load-bearing (stated beside the derived) and measured
     // reorderable under assertions that pinned only the arms. Copy, order and branch set in one pin.
-    expect(
-      normalize(
-        markup.match(/const emailButtonLabel = \$derived\.by\([\s\S]*?\n {2}\}\);/)?.[0] ?? ''
-      ),
-      'the button label is not one ordered rule'
-    ).toBe(
+    expect(declOf('emailButtonLabel'), 'the button label is not one ordered rule').toBe(
       "const emailButtonLabel = $derived.by(() => { if (submitting) return 'Sending…'; " +
         "if (solvePrompted) return 'Verify to continue'; if (captchaPending) return 'Verifying…'; " +
         "if (retryCannotHelp) return 'Email login unavailable'; return 'Email me a login link'; });"
@@ -856,9 +879,7 @@ describe('login copy when the verification check cannot run', () => {
     // rate-limit budget and turn into "Too many attempts".
     expect(pageSource).toMatch(/\{#if form\?\.captcha && !retryCannotHelp\}/);
     expect(pageSource).toContain('Captcha verification failed. Please try again.');
-    const union = normalize(
-      pageSource.match(/const retryCannotHelp = \$derived\([\s\S]*?\);/)?.[0] ?? ''
-    );
+    const union = declOf('retryCannotHelp');
     expect(union).toBe('const retryCannotHelp = $derived(captchaBlocked || captchaMisconfigured);');
   });
 
@@ -867,9 +888,7 @@ describe('login copy when the verification check cannot run', () => {
     // behind triggerFallback, which refuses unless captchaPending, which requires captchaConfigured —
     // so that configuration had NO copy at all and fell through to the generic retry. It is a real state: enforcement is keyed on the invisible SECRET and the widget on
     // the invisible SITEKEY, two separate values, so setting one without the other reaches it.
-    const decl = normalize(
-      pageSource.match(/const captchaMisconfigured = \$derived\([\s\S]*?\);/)?.[0] ?? ''
-    );
+    const decl = declOf('captchaMisconfigured');
     expect(decl).toBe(
       'const captchaMisconfigured = $derived(data.turnstileEnforced && !captchaConfigured);'
     );
@@ -903,17 +922,13 @@ describe('login copy when the verification check cannot run', () => {
     expect(disabledExpr).toBe('submitting || captchaPending');
     // Pinning the `disabled=` expression alone is not the guard the name claims: the realistic break is
     // folding captchaBlocked into captchaPending's own definition, which leaves `disabled=` untouched.
-    const pending = normalize(
-      pageSource.match(/const captchaPending = \$derived\([\s\S]*?\);/)?.[0] ?? ''
-    );
+    const pending = declOf('captchaPending');
     expect(pending).toBe(
       'const captchaPending = $derived( data.turnstileEnforced && captchaConfigured && !captchaToken && !captchaUnavailable );'
     );
     // Both config terms read only `data`, so neither can become true because captcha FAILED — the one
     // property this expression must keep. Why each is load-bearing is stated once, beside the derived.
-    expect(
-      normalize(pageSource.match(/const captchaConfigured = \$derived\([\s\S]*?\);/)?.[0] ?? '')
-    ).toBe(
+    expect(declOf('captchaConfigured')).toBe(
       'const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);'
     );
   });
