@@ -23,10 +23,13 @@ vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
     maxVideoDimensions: 4096,
   }),
 }));
+const { uploadToS3 } = vi.hoisted(() => ({
+  uploadToS3: vi.fn(async () => ({ key: 'uploaded-key', url: 'https://uploaded' })),
+}));
 vi.mock('~/hooks/useS3Upload', () => ({
   useS3Upload: () => ({
     files: [],
-    uploadToS3: vi.fn(async () => ({ key: 'uploaded-key', url: 'https://uploaded' })),
+    uploadToS3,
     resetFiles: vi.fn(),
     removeFile: vi.fn(),
   }),
@@ -81,6 +84,7 @@ describe('useMediaUpload with a video carrying generation meta', () => {
       status: 'blocked',
       blockedFor: 'audit-reason',
     });
+    expect(uploadToS3).not.toHaveBeenCalled();
   });
 
   it('uploads the video with its meta when the audit passes', async () => {
@@ -88,5 +92,6 @@ describe('useMediaUpload with a video carrying generation meta', () => {
     const onComplete = await dropVideo();
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete.mock.calls[0][0]).toMatchObject({ status: 'added', meta: videoMeta });
+    expect(uploadToS3).toHaveBeenCalledTimes(1);
   });
 });

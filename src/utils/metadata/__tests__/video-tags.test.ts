@@ -350,7 +350,13 @@ describe('readVideoTags on hostile input', () => {
 
   it('ignores a TagString that claims more bytes than its SimpleTag holds', async () => {
     const overlong = concat(new Uint8Array(ID.tagString), vintSize(100), encode('hello'));
-    const file = webmWithTags(el(ID.simpleTag, el(ID.tagName, encode('PROMPT')), overlong));
+    // The sibling padding keeps the claimed 100 bytes inside the buffer, so only the SimpleTag's
+    // own end can reject it.
+    const padding = Array.from({ length: 60 }, () => VOID);
+    const file = webmWithTags(
+      el(ID.simpleTag, el(ID.tagName, encode('PROMPT')), overlong),
+      ...padding
+    );
     expect(await readVideoTags(blob(file))).toEqual({});
   });
 
@@ -359,6 +365,13 @@ describe('readVideoTags on hostile input', () => {
     const tagged = mp4WithTags([['prompt', 'after-largesize']]);
     const file = blob(ftyp, largeFree, tagged.subarray(ftyp.length));
     expect(await readVideoTags(file)).toEqual({ prompt: 'after-largesize' });
+  });
+
+  it('reads the high word of a 64-bit box size', async () => {
+    const hugeFree = concat(u32(1), encode('free'), u32(1), u32(24), new Uint8Array(8));
+    const tagged = mp4WithTags([['prompt', 'after-largesize']]);
+    const file = blob(ftyp, hugeFree, tagged.subarray(ftyp.length));
+    expect(await readVideoTags(file)).toEqual({});
   });
 
   it('stops after its element budget on a file of tiny boxes', async () => {
