@@ -606,8 +606,11 @@ describe('login copy when the verification check cannot run', () => {
     expect(setter, 'concludeUnavailable declaration not found').toBe(
       'const concludeUnavailable = () => { captchaUnavailable = true; };'
     );
-    // One writer, so the verdict cannot be reached behind the ledger below.
-    expect(markup.match(/captchaUnavailable = true/g) ?? []).toHaveLength(1);
+    // Every ASSIGNMENT to the verdict, not just the ones spelled `= true`: the single setter above plus
+    // the two clears (the `let` declaration is excluded, not counted). Keyed to the literal value this
+    // was satisfiable by a second writer under any other spelling — measured, `captchaUnavailable =
+    // Boolean(1)` in a new $effect reinstated browser-blame in the misconfigured state, suite green.
+    expect(markup.match(/(?<!let )captchaUnavailable\s*=(?!=)/g) ?? []).toHaveLength(3);
 
     // Ledger of every line naming it, PAIRED WITH THE SCOPE IT SITS IN. A new route makes this list
     // grow and must restate what evidence it has; deleting one makes it shrink. The scope is what stops
@@ -685,8 +688,10 @@ describe('login copy when the verification check cannot run', () => {
     ).toContain('releaseFallbackIfEmpty();');
 
     // ONE WRITER of the release, so the guard on "no widget to destroy" cannot be dropped at one site
-    // only, and no fourth route can set the commitment behind the ledger.
-    expect(ledger('fallbackActive = (?:true|false)')).toEqual([
+    // only, and no fourth route can set the commitment behind the ledger. The pattern matches an
+    // ASSIGNMENT, not the two literal values it happens to use today: keyed to `= (?:true|false)` the
+    // list stayed satisfied while `fallbackActive = Boolean(1)` added a fourth route — measured.
+    expect(ledger('(?<!let )fallbackActive\\s*=(?!=)')).toEqual([
       ['releaseFallbackIfEmpty', 'if (managedWidgetId === undefined) fallbackActive = false;'],
       ['triggerFallback', 'if (data.turnstileManagedSiteKey) fallbackActive = true;'],
     ]);
@@ -887,8 +892,11 @@ describe('login copy when the verification check cannot run', () => {
     // respect, so the suppression reads the union rather than one of them: gating on captchaBlocked
     // alone leaves the misconfigured state inviting a doomed retry, five of which spend the
     // rate-limit budget and turn into "Too many attempts".
-    expect(pageSource).toMatch(/\{#if form\?\.captcha && !retryCannotHelp\}/);
-    expect(pageSource).toContain('Captcha verification failed. Please try again.');
+    // Read `markup`, per the rule at the top of this file: an HTML comment is not the live template, and
+    // off `pageSource` both of these stayed green with the block commented out and with the gate narrowed
+    // back to `!captchaBlocked` beside a comment carrying the new spelling — measured, suite green.
+    expect(markup).toMatch(/\{#if form\?\.captcha && !retryCannotHelp\}/);
+    expect(markup).toContain('Captcha verification failed. Please try again.');
     const union = declOf('retryCannotHelp');
     expect(union).toBe('const retryCannotHelp = $derived(captchaBlocked || captchaMisconfigured);');
   });
@@ -925,8 +933,11 @@ describe('login copy when the verification check cannot run', () => {
     }
   });
 
-  // INVARIANT GUARD (green before this change too): the blocked path must never re-gate the button. The
-  // soft-release is the whole reason a broken widget cannot trap a user, and the server stays the sole gate.
+  // The blocked path must never re-gate the button: the soft-release is the whole reason a broken widget
+  // cannot trap a user, and the server stays the sole gate.
+  // NOT an invariant guard any more, whatever an earlier round's label said. It began as one — the
+  // `disabled=` pin alone was green before this work — but it now pins `captchaPending` as a whole string,
+  // and that string is this round's. It is RED at the round's base and belongs in the regression count.
   it('never disables the submit button on the blocked path', () => {
     const disabledExpr = markup.match(new RegExp(EMAIL_SUBMIT_ANCHOR + '\\{([^}]*)\\}'))?.[1];
     expect(disabledExpr).toBe('submitting || captchaPending');
