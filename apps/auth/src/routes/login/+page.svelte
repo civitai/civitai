@@ -32,7 +32,7 @@
   // form?.email so a no-JS POST round-trip (server echoes the email back) still repopulates it.
   let email = $state(form?.email ?? '');
 
-  // Turnstile's ~99% path is the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
+  // Turnstile's primary path is the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
   // auto-issues a token via its success callback (no interactive challenge). We track that token so
   // the submit button can wait for it, avoiding the race where a fast user POSTs an empty
   // `cf-turnstile-response` and the server fail-closes. `captchaUnavailable` is the safety valve:
@@ -43,8 +43,10 @@
   let captchaUnavailable = $state(false);
   // Whether a widget can appear AT ALL — the two sitekeys are independent config, so neither alone
   // answers it. 🔴 LOAD-BEARING IN captchaPending BELOW: without it, a deployment that enforces with no
-  // sitekey tells every visitor an extension or a VPN is blocking a check it never offered. Pinned by
-  // 'never concludes the check is blocked where no check was ever offered'.
+  // sitekey tells every visitor an extension or a VPN is blocking a check it never offered. The term
+  // is pinned by 'never disables the submit button on the blocked path', which holds captchaPending as
+  // a whole string; the harm it prevents is described by 'never concludes the check is blocked where
+  // no check was ever offered'.
   const captchaConfigured = $derived(!!data.turnstileSiteKey || !!data.turnstileManagedSiteKey);
   // 🔴 THIS is the expression a broken widget must never reach: no term may be added here that is true
   // because captcha failed (captchaBlocked above all). The soft-release is what keeps a user from
@@ -134,10 +136,11 @@
   // Invisible widget failed to produce a token. Show the managed challenge if a managed key is configured;
   // otherwise keep the pre-existing soft-release (un-gate and let the server fail-closed decide).
   // ONLY WHILE SOMETHING IS WAITING ON A CAPTCHA — captchaPending, the same rule the submit button and
-  // the fallback prompt read, not a third hand-spelled copy. Spelled out, it missed two cases: with
-  // enforcement off, or no widget configured, this put a real Cloudflare challenge on screen that the
-  // action ignores. `fallbackActive` stays separate — a latch, not a condition, and every empty-slot
-  // exit hands it back.
+  // the fallback prompt read, not a third hand-spelled copy. Spelled out, it missed two cases, with
+  // different harms: with enforcement OFF and a managed key present it renders a real Cloudflare
+  // challenge the action then ignores; with NO widget configured there is nothing to render, and the
+  // other arm reaches a verdict that blames the reader's browser for a check never offered.
+  // `fallbackActive` stays separate — a latch, not a condition, and every empty-slot exit hands it back.
   function triggerFallback(reason: string) {
     if (fallbackActive || !captchaPending) return;
     captchaFailReason = reason;
@@ -256,7 +259,7 @@
     managedToken = '';
     captchaMode = 'invisible';
     const ts = turnstileApi();
-    ts?.reset(); // the invisible widget, where one is configured → fresh background token
+    ts?.reset(); // untargeted: Cloudflare picks the widget. Fresh background token on the usual page.
     if (managedWidgetId) ts?.reset(managedWidgetId); // managed widget (if shown) → fresh solve
   };
 

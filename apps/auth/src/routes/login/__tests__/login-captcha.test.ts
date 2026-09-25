@@ -79,27 +79,24 @@ describe('login interactive fallback wiring', () => {
 const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
 // Structural guards read THIS, not pageSource. A comment can spell any token a guard looks for, and the
 // comments most likely to be rewritten are the ones warning against the very edit being guarded.
-// 🔴 THE `//` FILTER APPLIES TO THE SCRIPT HALF ONLY. In the TEMPLATE, `//` is not a comment — Svelte
-// renders it as literal text and still parses the markup on the line — so stripping such lines
-// everywhere made anything written on one invisible to every guard here WHILE IT RENDERED. Measured
-// with a matched pair: a third `<p class="captcha-fallback-note">Too many attempts. Please try
-// again.</p>` inside role="status" survived the whole suite with a `//` prefix and died without it,
-// the two slashes the only variable. The author believes the line is disabled and the suite agrees.
-// Resolved FROM the instance script's opener, not by position, and guarded — the sibling `styleStart`
-// below carries the same guard for the same reason. Measured on the unanchored `indexOf('</script>')`:
-// a `<script module>` block above this one moved it to that block's closer and the filter stopped
-// covering the instance script at all, and no `</script>` literal at all made it -1, where
-// `slice(0, -1)` + `slice(-1)` reassembles the whole file and silently restores whole-file filtering.
-const SCRIPT_OPEN = pageSource.indexOf('<script lang="ts">');
-const SCRIPT_END = pageSource.indexOf('</script>', SCRIPT_OPEN);
-if (SCRIPT_OPEN < 0 || SCRIPT_END < 0) throw new Error('the instance <script> block was not found');
-const markup = (
-  pageSource
-    .slice(0, SCRIPT_END)
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join('\n') + pageSource.slice(SCRIPT_END)
-).replace(/<!--[\s\S]*?-->/g, '');
+// 🔴 THE `//` FILTER APPLIES INSIDE `<script>` BLOCKS AND NOWHERE ELSE. In the TEMPLATE `//` is not a
+// comment — Svelte renders it as literal text and still parses the markup on the line — so stripping
+// such lines outside a script makes anything written on one invisible to every guard here WHILE IT
+// RENDERS. Measured: a `<p class="captcha-fallback-note">Too many attempts. Please try again.</p>` on
+// a `//` line inside role="status" is announced like a note and says the one phrase the blocked-path
+// ban forbids. Filtering by POSITION was wrong twice — from the file start it stripped template lines
+// whenever the script came first, and up to the first `</script>` it stopped covering the instance
+// script whenever another script block came before it. A per-block replace has no boundary to place,
+// so no legal layout can move it. If no block matched at all the script's own comments would leak
+// into `markup` and red the ledgers, so that degenerate case fails loud rather than reverting.
+const markup = pageSource
+  .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, (block) =>
+    block
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n')
+  )
+  .replace(/<!--[\s\S]*?-->/g, '');
 // One extraction for every note after a named condition, so the sibling pins cannot drift: written
 // twice, the two copies already disagreed, one tolerating attributes after `class` and one not.
 // Reads `markup`, NOT pageSource — measured, a note commented out keeps a pageSource-backed copy pin
