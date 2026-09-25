@@ -63,7 +63,18 @@ on the block routes, deriving the block claims from the grant. The mint
 response and `BLOCK_INIT.token` carry `kind: "block" | "oauth"` so
 `@civitai/sdk` can refuse a JWT for a signed-in viewer with a clear message.
 Anonymous viewers and blocks without the field keep the JWT path exactly as
-described above. Not yet covered for direct-to-orchestrator spend: the
+described above.
+
+In the author's own dev tunnel the same token kind is minted at any app status.
+The CLI sends the local manifest's `auth` at tunnel start (`declaredAuth` on
+the session; an older CLI falls back to the stored or pending manifest). A
+never-submitted app has no `OauthClient`, so it borrows one owned by the author,
+`appdev-<userId>-<slug>`, with no redirect URIs and no grants; a submitted app
+uses its real client. Consent is written for the author directly
+(`dev-tunnel-oauth.service.ts`) with the tunnel's daily Buzz cap as the
+limit, since the author is the only viewer of their tunnel. `withBlockScope`
+binds such a token to the author's active tunnel and derives the block claims
+from the consent, with `dev: true`. Not yet covered for direct-to-orchestrator spend: the
 platform-wide per-user daily cap across blocks and the per-app aggregate cap,
 which still live in the `blocks.submitWorkflow` proxy; keep the flag off for
 spend-driving public apps until they do.
@@ -92,17 +103,17 @@ both routes require `collections:read:self`, whose non-anon binding still runs.
 A third such site has to make its own argument — see the note at the foot of
 `src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
 
-| Scope                            | Bind                                              | Notes                                                                                                                                                                   |
-| -------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models:read:self`               | `query.id == ctx.modelId`                         |                                                                                                                                                                         |
-| ~~`media:read:owned`~~           | —                                                 | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected |
-| `buzz:read:self`                 | non-anon `sub`                                    | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN) |
-| `social:tip:self`                | non-anon `sub`                                    |                                                                                                                                                                         |
-| `user:read:self`                 | non-anon `sub`                                    | viewer identity. Gates `GET /api/v1/blocks/me` — the REST read, and the default surface for it (see "Direction" under Routes) — AND its host-mediated twin, the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Neither is deprecated |
-| `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
-| ~~`block:settings:read` / `:write`~~ | —                                             | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED |
-| `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
-| `posts:write:self`               | non-anon `sub`                                    | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.createPostFromApp`), optionally attached to a model version's gallery. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+| Scope                                | Bind                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models:read:self`                   | `query.id == ctx.modelId`               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ~~`media:read:owned`~~               | —                                       | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `buzz:read:self`                     | non-anon `sub`                          | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN)                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `social:tip:self`                    | non-anon `sub`                          |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `user:read:self`                     | non-anon `sub`                          | viewer identity. Gates `GET /api/v1/blocks/me` — the REST read, and the default surface for it (see "Direction" under Routes) — AND its host-mediated twin, the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Neither is deprecated                                                                                                                                                                                                                                                                                                                                                                |
+| `ai:write:budgeted`                  | positive `buzzBudget`                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ~~`block:settings:read` / `:write`~~ | —                                       | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.createPostFromApp`), optionally attached to a model version's gallery. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
 
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
@@ -144,14 +155,14 @@ Unknown scopes are rejected at runtime (deny-by-default in middleware).
 > message, they are two front doors to one capability — not a predecessor and a
 > successor. Tracking issue: `civitai/civitai-app-starters#437`.
 
-| Route                                          | Auth                 | Scope required                                                                                                                                                                             |
-| ---------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)                                                                                                                                                                   |
-| `GET /api/v1/block-tokens/jwks`                | public               | —                                                                                                                                                                                          |
+| Route                                          | Auth                 | Scope required                                                                                                                                                                                                        |
+| ---------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)                                                                                                                                                                                              |
+| `GET /api/v1/block-tokens/jwks`                | public               | —                                                                                                                                                                                                                     |
 | `GET /api/v1/blocks/me`                        | block JWT            | `user:read:self` — the viewer self-read, and **not deprecated**: a viewer read is data movement, so the API is its default surface. Its host-mediated twin is the `useViewer()` hook (`GET_VIEWER` bridge); both stay |
-| `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path)                                                                                                                                                            |
-| `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                                                                                                                                                                                          |
-| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                                                                                                                                                                                          |
+| `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path)                                                                                                                                                                                       |
+| `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                                                                                                                                                                                                                     |
+| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                                                                                                                                                                                                                     |
 
 ⚠️ **This table is a sample, not the register.** It carries no count on purpose:
 block-token-authed routes also live under `/api/v1/blocks/*` (the catalog reads
@@ -419,11 +430,11 @@ A viewer who grants `ai:write:budgeted` may also set a **daily Buzz limit for th
 one app**, stored on their grant row (`app_user_scope_grants.buzz_budget_per_day`).
 It is the only one of the three spend ceilings the user chooses:
 
-| Ceiling | Scope of the key | Who set it |
-| --- | --- | --- |
-| Platform per-user daily cap | one user, ALL their apps | the platform |
-| Per-app aggregate cap | one app, ALL its users | the platform |
-| **Consent budget** | one (user, app) pair, per UTC day | **the user** |
+| Ceiling                     | Scope of the key                  | Who set it   |
+| --------------------------- | --------------------------------- | ------------ |
+| Platform per-user daily cap | one user, ALL their apps          | the platform |
+| Per-app aggregate cap       | one app, ALL its users            | the platform |
+| **Consent budget**          | one (user, app) pair, per UTC day | **the user** |
 
 - **Both apply; the tighter one binds.** The consent budget is bounded above by the
   platform per-user daily cap, so it can only ever narrow. `null` (the default, and
@@ -438,8 +449,8 @@ It is the only one of the three spend ceilings the user chooses:
   alone (so re-consenting to an unrelated scope can never wipe a limit).
 - **What an app sees when it binds.** The submit is refused before any spend with a
   `failed` snapshot whose error names the user's own number — e.g. `app Buzz limit
-  reached: 400 already spent today by this app on your behalf, this generation may
-  cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
+reached: 400 already spent today by this app on your behalf, this generation may
+cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   (a platform secret), this ceiling is the user's own setting, so telling the app is
   what makes the rejection actionable: surface it and let the user raise the limit.
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly

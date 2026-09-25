@@ -366,6 +366,22 @@ type OauthMintOutcome =
  * the mirror still mint; a missing grant or a hub `consent_required` refusal
  * falls back to the JWT path with the consent signal set, never a 500.
  */
+async function mintDevTunnelOauth(args: {
+  userId: number;
+  clientId: string;
+  scopes: string[];
+}): Promise<{ token: string; expiresAt: string }> {
+  const { mintDevTunnelOauthToken } = await import(
+    '~/server/services/blocks/dev-tunnel-oauth.service'
+  );
+  return mintDevTunnelOauthToken(args);
+}
+
+async function devTunnelClientIdFor(userId: number, slug: string): Promise<string> {
+  const { devTunnelClientId } = await import('~/server/services/blocks/dev-tunnel-oauth.service');
+  return devTunnelClientId(userId, slug);
+}
+
 async function mintOauthAppToken(args: {
   userId: number;
   appBlockId: string;
@@ -508,17 +524,29 @@ async function tryDevTunnelScopedMint(args: {
   const granted = clampTunnelDeclaredScopes(app.scopes);
   const buzzBudget = resolveDevBuzzBudget(granted);
 
+  const wantsOauth = tunnel?.declaredAuth ? tunnel.declaredAuth === 'oauth' : app.auth === 'oauth';
+  const oauth =
+    wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintDevTunnelOauth({
+          userId,
+          clientId: await devTunnelClientIdFor(userId, slug),
+          scopes: granted,
+        })
+      : null;
+
   // SIGN — synthetic, non-resolving ids (`ephemeral-<slug>`), the client's page
   // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
-  const result = await signDevScopedPageToken({
-    userId,
-    signBlockId: app.blockId,
-    signAppId: app.appId,
-    signAppBlockId: app.appBlockId,
-    blockInstanceId,
-    granted,
-    buzzBudget,
-  });
+  const result =
+    oauth ??
+    (await signDevScopedPageToken({
+      userId,
+      signBlockId: app.blockId,
+      signAppId: app.appId,
+      signAppBlockId: app.appBlockId,
+      blockInstanceId,
+      granted,
+      buzzBudget,
+    }));
 
   // MINT-TIME AUDIT (dev-token.ts `blocks.dev-token.*-mint` parity): a synthetic
   // `ephemeral-<slug>` app has NO durable AppBlock-backed row, so this structured
@@ -537,6 +565,7 @@ async function tryDevTunnelScopedMint(args: {
     sessionId: tunnel?.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
+    kind: oauth ? 'oauth' : 'block',
   };
   req.log?.info('app-blocks.dev-tunnel.mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.mint', mintAudit);
@@ -545,7 +574,7 @@ async function tryDevTunnelScopedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
-    kind: 'block',
+    kind: oauth ? 'oauth' : 'block',
     // Dev tokens are self-bound + mod/author-gated; there is no per-user consent
     // ledger for a synthetic pre-approval app, so no consent signal is surfaced.
     needsConsent: false,
@@ -693,11 +722,13 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
   const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
 
+  const wantsOauth = tunnel.declaredAuth
+    ? tunnel.declaredAuth === 'oauth'
+    : manifestWantsOauthToken(app.manifest);
   const oauth =
-    manifestWantsOauthToken(app.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
-      ? await mintOauthAppToken({
+    wantsOauth && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await mintDevTunnelOauth({
           userId,
-          appBlockId: app.appBlockId,
           clientId: app.appId,
           scopes: granted,
         })
@@ -706,17 +737,16 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // SIGN with the app's REAL ids (appId/appBlockId/blockId), the client's page
   // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
   const result =
-    oauth?.outcome === 'minted'
-      ? oauth
-      : await signDevScopedPageToken({
-          userId,
-          signBlockId: app.blockId,
-          signAppId: app.appId,
-          signAppBlockId: app.appBlockId,
-          blockInstanceId,
-          granted,
-          buzzBudget,
-        });
+    oauth ??
+    (await signDevScopedPageToken({
+      userId,
+      signBlockId: app.blockId,
+      signAppId: app.appId,
+      signAppBlockId: app.appBlockId,
+      blockInstanceId,
+      granted,
+      buzzBudget,
+    }));
 
   // MINT-TIME AUDIT (parity with the ephemeral branch): the forensic record of
   // granting a (possibly spend-capable) dev token to a NON-approved owned app. Never
@@ -729,6 +759,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     sessionId: tunnel.sessionId,
     scopes: granted,
     spendGranted: granted.includes('ai:write:budgeted'),
+    kind: oauth ? 'oauth' : 'block',
   };
   req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
   emitMintAuditToStdout('app-blocks.dev-tunnel.owned-nonapproved-mint', mintAudit);
@@ -737,10 +768,10 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
-    kind: oauth?.outcome === 'minted' ? 'oauth' : 'block',
+    kind: oauth ? 'oauth' : 'block',
     scopes: granted,
-    needsConsent: oauth?.outcome === 'consent_required',
-    missingScopes: oauth?.outcome === 'consent_required' ? oauth.withheld : [],
+    needsConsent: false,
+    missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // See the ephemeral branch above: forced-SFW is the DOMAIN half only.

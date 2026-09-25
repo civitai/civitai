@@ -970,6 +970,81 @@ function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): num
  * JWT mint would sign for this viewer: manifest ∩ approved ∩ (granted ∪ consent-exempt).
  * With several blocks on one client the oldest approved one is chosen.
  */
+/**
+ * A hub token from an author's own dev tunnel: either the borrowed dev client of a
+ * never-submitted app, or the real client of an owned app that is not approved.
+ * The consent the mint wrote is what bounds the scopes.
+ */
+async function resolveDevTunnelHubClaims(args: {
+  userId: number;
+  clientId: string;
+  apiKeyId: number;
+}): Promise<BlockTokenClaims | null> {
+  const { userId, clientId, apiKeyId } = args;
+  const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
+    await Promise.all([
+      import('~/server/services/blocks/dev-tunnel-oauth.service'),
+      import('~/server/services/blocks/dev-tunnel.service'),
+      import('~/server/db/client'),
+    ]);
+
+  const dev = parseDevTunnelClientId(clientId);
+  if (dev && dev.userId !== userId) return null;
+  const owned = dev
+    ? null
+    : await dbRead.appBlock.findFirst({
+        where: { appId: clientId, app: { userId } },
+        select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+      });
+  if (!dev && !owned) return null;
+
+  const blockId = dev ? dev.slug : owned!.blockId;
+  const appBlockId = dev ? `${EPHEMERAL_APP_ID_PREFIX}${dev.slug}` : owned!.id;
+  const tunnel = await getActiveDevTunnel(userId, blockId);
+  if (!tunnel) return null;
+  const consent = await dbRead.oauthConsent.findUnique({
+    where: { userId_clientId: { userId, clientId } },
+    select: { scope: true },
+  });
+  if (!consent) return null;
+
+  const {
+    clampTunnelDeclaredScopes,
+    parseManifestBuzzBudget,
+    resolveDevBuzzBudget,
+    FORCED_SFW_CEILING,
+  } = await import('~/server/services/blocks/dev-scoped-mint.service');
+  const source = dev
+    ? tunnel.grantedScopes ?? []
+    : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
+  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const manifestBudget = owned
+    ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
+    : undefined;
+  const buzzBudget = resolveDevBuzzBudget(scopes, undefined, manifestBudget);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${apiKeyId}`,
+    blockId,
+    appId: clientId,
+    appBlockId,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${appBlockId}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    dev: true,
+    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  };
+}
+
+const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
+
 async function resolveHubTokenClaims(
   bearer: string,
   req: NextApiRequest
@@ -992,7 +1067,7 @@ async function resolveHubTokenClaims(
     manifest: unknown;
     approvedScopes: string[];
   } | null;
-  if (!block) return null;
+  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
 
   const { getGrantedScopes, partitionByConsent } = await import(
     '~/server/services/blocks/scope-grant.service'
