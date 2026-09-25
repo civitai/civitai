@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -14,6 +15,11 @@ vi.mock('~/server/games/daily-challenge/challenge-nsfw-escalation', () => ({
   applyChallengeNsfwEscalation: vi.fn(),
 }));
 vi.mock('~/server/prom/challenge.metrics', () => ({ recordChallengeScanResult: vi.fn() }));
+// Pinned off so this suite stays about the XGuard path.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
 
 const { challengeModerationAdapter } = await import(
   '~/server/services/challenge-moderation.adapter'

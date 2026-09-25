@@ -14,6 +14,7 @@ dbMock.dbWrite.$transaction.mockImplementation(
 // activation job voids it.
 const { mockTx, mockSubmitTextModeration } = vi.hoisted(() => {
   const mockTx = {
+    $executeRaw: vi.fn(async () => 0),
     challenge: {
       updateMany: vi.fn(),
       findUniqueOrThrow: vi.fn(),

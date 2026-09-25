@@ -26,6 +26,8 @@ export async function submitTextModerationOrScan({
   if (mode === 'active') {
     const result = await scanEntity({ entityType, entityId, force });
     if (result.status === 'submitted') return { id: result.workflowId };
+    // The flag turned off between the two reads: XGuard owns the entity again.
+    if (result.status === 'skipped' && result.reason === 'off') return xguard();
     if (result.status === 'skipped') await onActiveSkip?.(result.reason);
     return null;
   }

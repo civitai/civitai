@@ -74,6 +74,15 @@ describe('submitTextModerationOrScan', () => {
     expect(onActiveSkip).not.toHaveBeenCalled();
   });
 
+  it('active: falls back to XGuard when the flag turned off before the scan read it', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
+    expect(
+      await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, xguard, onActiveSkip })
+    ).toEqual({ id: 'xg-1' });
+    expect(onActiveSkip).not.toHaveBeenCalled();
+  });
+
   it('passes force through for moderator rescans', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(scanEntity).mockResolvedValue({ status: 'submitted', workflowId: 'wf-1' });
