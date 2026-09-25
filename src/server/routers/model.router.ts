@@ -201,6 +201,13 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   });
 });
 
+// Add and remove share one quota: each busts the gallery cache of every model the creator owns.
+const creatorGalleryHiddenUsersRateLimit = rateLimit(
+  { limit: 100, period: CacheTTL.hour },
+  undefined,
+  { sharedKey: 'creator-gallery-hidden-users' }
+);
+
 export const modelRouter = router({
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
@@ -406,15 +413,10 @@ export const modelRouter = router({
   getCreatorGalleryHiddenUsers: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .query(({ ctx }) => getCreatorGalleryHiddenUsers(ctx.user.id)),
-  // Each add or remove busts the gallery cache of every model the creator owns.
   addCreatorGalleryHiddenUser: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertCreatorGalleryHiddenUserSchema)
-    .use(
-      rateLimit({ limit: 100, period: CacheTTL.hour }, undefined, {
-        sharedKey: 'creator-gallery-hidden-users',
-      })
-    )
+    .use(creatorGalleryHiddenUsersRateLimit)
     .mutation(({ ctx, input }) =>
       addCreatorGalleryHiddenUser({
         creatorId: ctx.user.id,
@@ -435,11 +437,7 @@ export const modelRouter = router({
   removeCreatorGalleryHiddenUser: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(removeCreatorGalleryHiddenUserSchema)
-    .use(
-      rateLimit({ limit: 100, period: CacheTTL.hour }, undefined, {
-        sharedKey: 'creator-gallery-hidden-users',
-      })
-    )
+    .use(creatorGalleryHiddenUsersRateLimit)
     .mutation(({ ctx, input }) =>
       removeCreatorGalleryHiddenUser({ creatorId: ctx.user.id, userId: input.userId })
     ),

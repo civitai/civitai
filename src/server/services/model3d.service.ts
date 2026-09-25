@@ -1288,25 +1288,26 @@ export const getModel3DGallerySettings = async ({ id }: { id: number }) => {
   if (!row) return null;
   const settings = (row.gallerySettings ?? {}) as Model3DGallerySettingsSchema;
   const { tags, users, images } = settings;
-  const hiddenTags =
+  const [hiddenTags, hiddenUsers, creatorHiddenUserIds] = await Promise.all([
     tags && tags.length
-      ? await dbRead.tag.findMany({
+      ? dbRead.tag.findMany({
           where: { id: { in: tags } },
           select: { id: true, name: true },
         })
-      : [];
-  const hiddenUsers =
+      : [],
     users && users.length
-      ? await dbRead.user.findMany({
+      ? dbRead.user.findMany({
           where: { id: { in: users } },
           select: { id: true, username: true },
         })
-      : [];
+      : [],
+    getCreatorGalleryHiddenUserIds(row.userId),
+  ]);
   return {
     hiddenTags,
     hiddenUsers,
     hiddenImages: images ?? [],
-    creatorHiddenUserIds: await getCreatorGalleryHiddenUserIds(row.userId),
+    creatorHiddenUserIds,
   };
 };
 

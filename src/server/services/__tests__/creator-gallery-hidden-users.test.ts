@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -51,6 +51,8 @@ const MIGRATION = path.resolve(
 
 let db: PGlite;
 let creatorModelIds: number[] = [];
+// Every write-side step of an add, in order, with whether a transaction callback was running.
+let ops: { op: string; inTransaction: boolean }[] = [];
 
 const q = async <T>(sql: string, params: unknown[] = []) =>
   (await db.query(sql, params)).rows as T[];
@@ -74,6 +76,23 @@ const deletedKeys = () => redisMock.redis.del.mock.calls.flatMap((call) => call[
 
 function installDb() {
   const bridge = createPrismaBridge(db, createGate());
+  let depth = 0;
+  const record = (op: string) => ops.push({ op, inTransaction: depth > 0 });
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+    depth += 1;
+    try {
+      return await fn(dbMock.dbWrite);
+    } finally {
+      depth -= 1;
+    }
+  });
+  // Runs the statement for real, so a malformed lock call fails here.
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      record(strings.join('?').includes('pg_advisory_xact_lock') ? 'lock' : 'execute');
+      return bridge.$executeRaw(strings, ...values);
+    }
+  );
   for (const root of [dbMock.dbRead, dbMock.dbWrite]) {
     root.$queryRaw.mockImplementation(bridge.$queryRaw);
     root.user.findFirst.mockImplementation(
@@ -105,7 +124,11 @@ function installDb() {
     // The delegates below read every key they are given, so a caller that drops `creatorId` from a
     // `where` addresses a different set of rows here, just as it would against Postgres.
     const table = root.creatorGalleryHiddenUser;
+    const recordWrite = (op: string) => {
+      if (root === dbMock.dbWrite) record(op);
+    };
     table.count.mockImplementation(async ({ where }: { where: { creatorId?: number } }) => {
+      recordWrite('count');
       const [row] = await q<{ n: number }>(
         `SELECT count(*)::int AS n FROM "CreatorGalleryHiddenUser"
          WHERE ($1::int IS NULL OR "creatorId" = $1)`,
@@ -114,6 +137,7 @@ function installDb() {
       return row.n;
     });
     table.findUnique.mockImplementation(async ({ where }: { where: { creatorId_userId: Key } }) => {
+      recordWrite('findUnique');
       const { creatorId, userId } = where.creatorId_userId;
       const [row] = await q(
         `SELECT "userId" FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`,
@@ -131,6 +155,7 @@ function installDb() {
         create: Key & { note: string | null };
         update: { note?: string | null };
       }) => {
+        recordWrite('upsert');
         const { creatorId, userId } = where.creatorId_userId;
         const updated = await q(
           `UPDATE "CreatorGalleryHiddenUser" SET note = CASE WHEN $3 THEN $4 ELSE note END
@@ -178,8 +203,15 @@ afterAll(async () => {
   await db?.close();
 });
 
-beforeEach(async () => {
+afterEach(() => {
   vi.useRealTimers();
+});
+
+beforeEach(async () => {
+  // Faked for every test: each bust schedules a second delete, and a real one could land in a
+  // later test's assertions.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  ops = [];
   await db.exec(`TRUNCATE "User"; TRUNCATE "CreatorGalleryHiddenUser";`);
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES
@@ -193,6 +225,7 @@ beforeEach(async () => {
   redisMock.redis.get.mockResolvedValue(null);
   redisMock.redis.set.mockClear();
   redisMock.redis.del.mockClear();
+  dbMock.dbWrite.$executeRaw.mockClear();
 });
 
 describe('creator gallery hidden users', () => {
@@ -290,16 +323,19 @@ describe('creator gallery hidden users', () => {
 
     expect(new Set(deletedKeys()).size).toBe(1201);
     expect(deletedKeys()).toContain(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:1201`);
+    expect(Math.max(...redisMock.redis.del.mock.calls.map((call) => call[0].length))).toBe(500);
   });
 
   // A rebuild that read the list before the write can SET after the first delete; the entry lives
   // a week, so without the second delete that stale list would too.
   it('deletes the gallery caches again after the rebuild window', async () => {
-    vi.useFakeTimers();
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
     expect(redisMock.redis.del).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(redisMock.redis.del).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(redisMock.redis.del).toHaveBeenCalledTimes(2);
     expect(redisMock.redis.del.mock.calls[1][0]).toEqual(redisMock.redis.del.mock.calls[0][0]);
@@ -350,6 +386,31 @@ describe('creator gallery hidden users', () => {
     ).rejects.toThrow('not on your hidden list');
   });
 
+  it('stores a blank note on add as null', async () => {
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: '' });
+
+    expect(await rowsFor(CREATOR)).toEqual([{ userId: CREATOR_HIDDEN, note: null }]);
+  });
+
+  // Entries cached before this field existed have no creatorHiddenUserIds; the client treats that
+  // as an empty list, and the hit path must not rebuild or reshape them.
+  it('serves a cached entry as it was stored, without reading the database', async () => {
+    const cached = {
+      hiddenUsers: [],
+      hiddenTags: [],
+      hiddenImages: {},
+      level: 31,
+      pinnedPosts: {},
+    };
+    redisMock.redis.get.mockResolvedValue(JSON.stringify(cached));
+    dbMock.dbRead.model.findFirst.mockClear();
+    dbMock.dbWrite.model.findFirst.mockClear();
+
+    expect(await getGallerySettingsByModelId({ id: MODEL_ID })).toEqual(cached);
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
+  });
+
   it('updates the note when an existing entry is saved again', async () => {
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'old' });
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'new' });
@@ -389,11 +450,11 @@ describe('creator gallery hidden users', () => {
   it('takes the per-creator lock inside the transaction that checks the cap', async () => {
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
 
-    const lockCall = dbMock.dbWrite.$executeRaw.mock.calls.find((call) =>
-      String(call[0]).includes('pg_advisory_xact_lock')
-    );
-    expect(lockCall).toBeDefined();
-    expect(lockCall?.slice(1)).toContain(CREATOR);
-    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
+    expect(ops.map((o) => o.op).sort()).toEqual(['count', 'findUnique', 'lock', 'upsert']);
+    expect(ops[0]).toEqual({ op: 'lock', inTransaction: true });
+    expect(ops.every((o) => o.inTransaction)).toBe(true);
+    expect(ops[ops.length - 1].op).toBe('upsert');
+    const lockCall = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    expect(lockCall.slice(1)).toContain(CREATOR);
   });
 });

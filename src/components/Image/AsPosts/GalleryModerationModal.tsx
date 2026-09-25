@@ -121,6 +121,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
           name="tag"
           ref={searchInputRef}
           placeholder="Search tags to hide"
+          comboboxProps={{ withinPortal: true, zIndex: 500 }}
           data={options}
           value={search}
           onChange={setSearch}
