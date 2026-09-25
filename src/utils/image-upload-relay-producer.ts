@@ -146,7 +146,14 @@ export const CLIENT_DECLARABLE_PRODUCERS = [
 
 export type ClientDeclarableProducer = (typeof CLIENT_DECLARABLE_PRODUCERS)[number];
 
-/** The bucket for a request that carried NO header. Named so no call site spells it twice. */
+/**
+ * The bucket for a request that carried NO header.
+ *
+ * Named rather than inlined so the sanitiser's two return paths read as two decisions, and
+ * so a test can assert against the constant rather than re-typing the string. (It said
+ * "named so no call site spells it twice", which was a claim about a second production call
+ * site that has never existed — its sibling `OTHER_…` has one, this does not.)
+ */
 export const UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER: ImageUploadRelayProducer = 'unknown';
 
 /** The bucket for a header that arrived and was not recognised. */
@@ -220,10 +227,23 @@ export function isImageUploadRelayProducer(value: unknown): value is ImageUpload
  * exist; do not reason from it that duplicate custom headers reach us as arrays.
  *
  * 🔴 THE BOUND IS THIS SET, NOT THE ROUTE'S AUTH. The relay sanitises the header before
- * its method check, its origin guard and its session lookup, so an unauthenticated
- * cross-origin caller still chooses which producer series moves for every outcome
- * reachable before that lookup — `method_not_allowed`, `forbidden_origin`, `unauthorized`.
- * (The method check comes first of the three and this list omitted it.) That is
+ * its method check, its origin guard and its session lookup, so a caller who never
+ * authenticates still chooses which producer series moves for every outcome that does not
+ * require a session — `method_not_allowed`, `forbidden_origin`, `unauthorized`, and
+ * `handler_error`, which an unauthenticated caller can drive because the session lookup
+ * itself can throw on a caller-supplied bearer token (see `handler_error` in
+ * `~/server/prom/image-upload-relay.metrics`). In production the origin guard runs before
+ * the session lookup, so a CROSS-ORIGIN caller is refused at `forbidden_origin` and never
+ * reaches it. (It is not the FIRST of the three — the method check is, so a cross-origin
+ * GET is `method_not_allowed`. Guard ORDER is the axis that has now produced four wrong
+ * revisions of this paragraph, so it is stated rather than summarised.)
+ *
+ * ⚠ Three revisions, each wrong differently, which is why the mechanism is spelled out
+ * rather than summarised. The first omitted the method check. The second added it and then
+ * said "an unauthenticated CROSS-ORIGIN caller … for every outcome reachable before that
+ * lookup" — which named a population that cannot reach `unauthorized` at all in production,
+ * while listing `unauthorized`, an outcome returned FROM the lookup's result rather than
+ * before it. Both still omitted `handler_error`. A correction is a claim like any other. That is
  * harmless only while the set is closed and every pair is pre-seeded. Anyone widening this
  * to a prefix match, a pattern, or a length-bounded passthrough would be letting
  * unauthenticated input drive cardinality on a public route — do not.

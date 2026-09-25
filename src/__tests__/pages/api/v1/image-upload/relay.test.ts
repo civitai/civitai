@@ -897,8 +897,10 @@ describe('image-upload relay', () => {
       // 🔴 RESTORED. It was deleted on the claim that it is "covered by the absent-header
       // case above" — and that was false: the absent case sends NO header key at all and
       // exercises the `typeof value !== 'string'` clause, while this one sends a present
-      // but empty value. Measured at the time: deleting the empty-string branch turned two
-      // tests red and NEITHER was in this file, so the route had no coverage of it.
+      // but empty value. (A trailing sentence here narrated deleting "the empty-string
+      // branch". There is no such branch any more — `''` reaches `other` emergently,
+      // because the declarable set does not contain it — so the measurement named code that
+      // cannot be mutated. The justification above carries the whole load and is checkable.)
       ['an empty header value', ''],
       // 🔴 A CLIENT DECLARING A SERVER BUCKET — the exact input class a round-6 review
       // found ACCEPTED verbatim onto the row a rollout is graded on. It is pinned in the

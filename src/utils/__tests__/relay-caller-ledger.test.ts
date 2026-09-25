@@ -151,9 +151,16 @@ const SWEEP_ROOT = '.';
  * shipped directory now costs nothing; the failure mode is a false RED from a generated
  * tree, which is loud.
  *
- * `.git` is here for size, not for meaning. The rest are build output or caches, several
- * of which exist only on a developer's machine — without them the sweep's population would
- * differ between a local run and a fresh checkout, silently.
+ * `.git` is here for size, not for meaning. Most of the rest are build output or caches,
+ * several existing only on a developer's machine — without them the sweep's population
+ * would differ between a local run and a fresh checkout, silently.
+ *
+ * ⚠ THREE ARE TRACKED, NOT GENERATED — `.husky`, `patches`, `.prompt-analysis-backups` —
+ * and that matters because the sentence above is the REVIEW RULE the whole opt-out
+ * inversion rests on: "does this directory hold generated output?, answerable by looking".
+ * Applied correctly to those three the answer is no, so a reviewer following the stated
+ * rule removes them. They hold no file in a walked extension (shell, `.patch`, `.json`) and
+ * are listed so the walk does not have to decide that per-run.
  */
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -175,7 +182,10 @@ const SKIP_DIRS = new Set([
  * the walk is really global, and it is what a too-eager `SKIP_DIRS` entry runs into. Each
  * name here was unswept at some point, three of them found by review rather than by any
  * test: `scripts`, `event-engine-common`, and `public`, which is where the live escape was.
- * The repo root itself is included because several shipped config files sit there.
+ * ⚠ The repo root's own shipped config files are NOT covered by this array — they sit in no
+ * directory, so no swept path starts with a prefix that could match one. Their coverage is
+ * asserted separately, in the sweep-is-global case below. This said the root "is included",
+ * and the natural repair — adding `'.'` here — cannot work for that reason.
  */
 const MUST_SWEEP_DIRS = [
   'src',
@@ -207,8 +217,10 @@ const MUST_SWEEP_DIRS = [
  * the walk made `public/` reachable and left this list closed, so the only carrier in it the
  * sweep admitted was `.js`. `public/reset.html` is a page served verbatim at the site's own
  * origin with an inline `<script>` that already does awaited browser work; a relay caller
- * planted in it was live and left every test green. Five more shipped shells sit beside it,
- * including the SvelteKit document template rendered on EVERY page of four workspace apps.
+ * planted in it was live and left every test green. The SvelteKit document template
+ * rendered on EVERY page of each workspace app is another. (No count — the first attempt at
+ * this sentence gave one nobody could reproduce, in the file that wrote the no-counts
+ * rule.)
  *
  * Such a file is parsed as TypeScript, which is wrong in general and adequate here for the
  * same reason `.svelte` is: the parse still tokenises the string literals, which is what
@@ -429,14 +441,38 @@ function readOrSkip(abs: string): string | null {
   }
 }
 
+/** Next's page root. Everything under it is a route, whatever the filename says. */
+const NEXT_PAGES_ROOT = 'src/pages/';
+
 /**
  * Production files only.
  *
  * Specs are excluded — a test naming the path is not a caller, and this repo has hundreds
  * of them, colocated as well as under `__tests__`. Both spellings are excluded, because
  * excluding only the directory leaves the colocated ones scanned.
+ *
+ * 🔴 EXCEPT UNDER `src/pages`, WHERE THE SPEC CONVENTION IS NOT TRUE AND THE EXCLUSION WAS
+ * AN ESCAPE. Next routes EVERY `.ts`/`.tsx` file under the page root, nested `__tests__/`
+ * included — the root `CLAUDE.md` says so in its own words and adds that only `next build`
+ * catches it, because `tsconfig.json` excludes `src/**\/__tests__/**` and vitest does not
+ * care. So `src/pages/api/v1/image-upload/__tests__/x.ts` is a LIVE ROUTE, and this filter
+ * removed it from the sweep by name.
+ *
+ * Measured: a route at `…/image-upload/__tests__/relay-proxy.ts` setting the producer
+ * header and forwarding to the relay's own handler left all 13 tests here and all 140
+ * across the changed suites green, with a clean typecheck. The identical file ONE DIRECTORY
+ * UP turns the ledger red — the `__tests__` segment was the sole discriminator.
+ *
+ * This is the missing-directory escape again, in its nastiest form: not a directory nobody
+ * listed, but one the filter actively REMOVES, because a filename convention and a routing
+ * convention disagree and only the slower of the two tools knows.
+ *
+ * A genuine test file under the page root now reads as production and will produce a loud
+ * false red. That is correct rather than unfortunate — such a file already breaks
+ * `next build`, so the red is the earlier of two failures, not a new one.
  */
 function isProductionFile(rel: string): boolean {
+  if (rel.startsWith(NEXT_PAGES_ROOT)) return true;
   // Both regexes come from `WALKED_EXTENSIONS`, so the drift described there cannot recur.
   return !rel.includes('__tests__') && !SPEC_FILE_RE.test(rel);
 }
@@ -521,23 +557,35 @@ function referencesRelay(
  */
 function importsRelayRouteModule(sf: ts.SourceFile, rel: string): boolean {
   const dir = path.posix.dirname(rel);
-  const target = RELAY_ROUTE_MODULE.replace(/\.tsx?$/, '');
+  // 🔴 EVERY MODULE-SPECIFIER EXTENSION, NOT JUST `.ts(x)`. A specifier may name the
+  // source with a `.js` suffix — `moduleResolution: bundler` accepts it and this repo does
+  // write that form — and stripping only `.ts(x)` left `'~/pages/…/relay.js'` comparing
+  // unequal to the same module. ⚠ Whether Next resolves that spelling to the page module at
+  // RUNTIME is not established; it is closed as a DETECTION gap, which is the cheaper side
+  // to be wrong on.
+  const SPECIFIER_EXTENSION = /\.(tsx?|jsx?|mts|cts|mjs|cjs)$/;
+  const target = RELAY_ROUTE_MODULE.replace(SPECIFIER_EXTENSION, '');
   let found = false;
   const check = (spec: string): void => {
     // `~/x` is this repo's alias for `src/x`; anything else relative resolves against the
     // importing file's own directory. A bare package specifier can never be the route.
+    //
+    // 🔴 BOTH BRANCHES NORMALISE. Only the relative one did, so an aliased specifier with a
+    // `..` segment in it compared unequal to the module it names.
     const resolved = spec.startsWith('~/')
-      ? `src/${spec.slice(2)}`
+      ? path.posix.normalize(`src/${spec.slice(2)}`)
       : spec.startsWith('.')
       ? path.posix.normalize(path.posix.join(dir, spec))
       : null;
-    if (resolved !== null && resolved.replace(/\.tsx?$/, '') === target) found = true;
+    if (resolved !== null && resolved.replace(SPECIFIER_EXTENSION, '') === target) {
+      found = true;
+    }
   };
   const visit = (node: ts.Node): void => {
     if (
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
       node.moduleSpecifier &&
-      ts.isStringLiteral(node.moduleSpecifier)
+      ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
       // A TYPE-only import binds nothing at runtime and cannot invoke the handler.
       const typeOnly =
@@ -553,7 +601,15 @@ function importsRelayRouteModule(sf: ts.SourceFile, rel: string): boolean {
         node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === 'require');
       const arg = node.arguments[0];
-      if (isLoader && arg && ts.isStringLiteral(arg)) check(arg.text);
+      // 🔴 `isStringLiteralLike`, NOT `isStringLiteral` — the latter is FALSE for a
+      // no-substitution template, so `` import(`./relay`) `` walked past this branch on one
+      // backtick. Three things say this was an oversight and not a limit: the repo writes
+      // that form in production (`src/hooks/useDateLocale.ts`), the two other scans in this
+      // very file already use the `Like` form, and the ledger this file cites as its model
+      // uses it at exactly this position — while a sibling guard enumerates the backtick
+      // spelling explicitly and calls a one-spelling ledger "a word list wearing a ledger's
+      // clothes". Which is what this was.
+      if (isLoader && arg && ts.isStringLiteralLike(arg)) check(arg.text);
     }
     ts.forEachChild(node, visit);
   };
@@ -706,12 +762,39 @@ function countPathConstantRefs(sf: ts.SourceFile): number {
 }
 
 /** Every production file in the repo. Shared by the sweep and the narrowing ledger. */
+let productionFilesCache: string[] | null = null;
+
+/**
+ * Every production file in the repo, walked ONCE per run.
+ *
+ * Memoised because four call sites wanted it and each was re-walking the tree: measured at
+ * 2,460 `readdirSync` calls per walk, ~9,840 across the file. The walk is pure within a run
+ * — the sweep does not write — so a second walk can only produce the same list.
+ */
 function allProductionFiles(): string[] {
+  if (productionFilesCache !== null) return productionFilesCache;
   const files = walkFiles(path.join(REPO_ROOT, SWEEP_ROOT), []);
-  return files.filter((abs) =>
+  productionFilesCache = files.filter((abs) =>
     isProductionFile(path.relative(REPO_ROOT, abs).split(path.sep).join('/'))
   );
+  return productionFilesCache;
 }
+
+/**
+ * The narrowing functions, and the ONE module each is allowed to be used from.
+ *
+ * Declared beside the sweep rather than inside its test because the sweep now collects
+ * these refs in its single pass — the narrowing test used to re-walk and re-READ the whole
+ * repo to parse three files, which measured as the slowest case in this file at ~110ms of
+ * its ~250ms. Same coverage, one pass.
+ */
+const NARROWING_CONSUMERS: Record<string, string[]> = {
+  sanitizeImageUploadRelayProducer: ['src/pages/api/v1/image-upload/relay.ts'],
+  isImageUploadRelayProducer: ['src/server/prom/image-upload-relay.metrics.ts'],
+};
+const NARROWING_NAMES: ReadonlySet<string> = new Set(Object.keys(NARROWING_CONSUMERS));
+/** It declares both, by definition, so it is never a consumer of either. */
+const NARROWING_DEFINING_MODULE = 'src/utils/image-upload-relay-producer.ts';
 
 function scan(): {
   referencing: string[];
@@ -719,12 +802,17 @@ function scan(): {
   helperPathRefs: number;
   helperExportNames: string[];
   pathLiteralsByFile: Record<string, number>;
+  narrowingRefs: Record<string, string[]>;
 } {
   const files = allProductionFiles();
 
   const referencing: string[] = [];
   const candidates: string[] = [];
   const pathLiteralsByFile: Record<string, number> = {};
+  const narrowingRefs: Record<string, string[]> = {
+    sanitizeImageUploadRelayProducer: [],
+    isImageUploadRelayProducer: [],
+  };
   let helperPathRefs = -1;
   let helperExportNames: string[] = [];
   for (const abs of files) {
@@ -744,9 +832,23 @@ function scan(): {
     // unconditionally closes the remainder exactly, rather than by widening a hint into
     // something that admits half the repo.
     const alwaysParse = CALLER_LEDGER.includes(rel) || rel.startsWith(RELAY_ROUTE_DIR);
+    // 🔴 The narrowing hints widen the parse set, and they are kept SEPARATE from
+    // `isCandidateText` on purpose: that predicate answers "could this reach the relay",
+    // and a module merely naming a narrowing has not. Folding them into `TEXT_HINTS` would
+    // silently widen the CALLER ledger's own prefilter, which is a different guard.
+    const namesNarrowing = [...NARROWING_NAMES].some((n) => text.includes(n));
+    if (!alwaysParse && !namesNarrowing && !isCandidateText(text)) continue;
+    const sf = parse(rel, text);
+    if (namesNarrowing && rel !== NARROWING_DEFINING_MODULE) {
+      for (const name of collectIdentifierRefs(sf, NARROWING_NAMES)) {
+        if (!narrowingRefs[name].includes(rel)) narrowingRefs[name].push(rel);
+      }
+    }
+    // ⚠ AFTER the narrowing collection but only for files that earned it the CALLER way.
+    // A module naming a narrowing is not a relay candidate, and counting it as one would
+    // make the candidate-set control assert something weaker than it claims.
     if (!alwaysParse && !isCandidateText(text)) continue;
     candidates.push(rel);
-    const sf = parse(rel, text);
     const { helper, pathLiterals, routeModule } = referencesRelay(sf, rel);
     if (helper || pathLiterals > 0 || routeModule) referencing.push(rel);
     if (pathLiterals > 0) pathLiteralsByFile[rel] = pathLiterals;
@@ -755,11 +857,25 @@ function scan(): {
       helperExportNames = exportedValueNames(sf);
     }
   }
-  return { referencing, candidates, helperPathRefs, helperExportNames, pathLiteralsByFile };
+  return {
+    referencing,
+    candidates,
+    helperPathRefs,
+    helperExportNames,
+    pathLiteralsByFile,
+    narrowingRefs,
+  };
 }
 
 describe('the relay caller ledger', () => {
-  const { referencing, candidates, helperPathRefs, helperExportNames, pathLiteralsByFile } = scan();
+  const {
+    referencing,
+    candidates,
+    helperPathRefs,
+    helperExportNames,
+    pathLiteralsByFile,
+    narrowingRefs,
+  } = scan();
 
   it('finds EVERY module that can reach the relay, and none outside the ledger', () => {
     expect(referencing.sort()).toEqual([...CALLER_LEDGER].sort());
@@ -845,32 +961,9 @@ describe('the relay caller ledger', () => {
     // Both wrong directions are red today. What was holding the CHOICE for a future site
     // was two docstrings — which is the shape this file spent three rounds proving is not a
     // guard. So the consumer set is pinned like everything else here.
-    const NARROWING_CONSUMERS: Record<string, string[]> = {
-      sanitizeImageUploadRelayProducer: ['src/pages/api/v1/image-upload/relay.ts'],
-      isImageUploadRelayProducer: ['src/server/prom/image-upload-relay.metrics.ts'],
-    };
-    const DEFINING_MODULE = 'src/utils/image-upload-relay-producer.ts';
-
-    const narrowingNames = new Set(Object.keys(NARROWING_CONSUMERS));
-    const found: Record<string, string[]> = {
-      sanitizeImageUploadRelayProducer: [],
-      isImageUploadRelayProducer: [],
-    };
-    for (const abs of allProductionFiles()) {
-      const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
-      if (rel === DEFINING_MODULE) continue; // it declares both, by definition
-      const text = readOrSkip(abs);
-      if (text === null) continue;
-      if (![...narrowingNames].some((n) => text.includes(n))) continue;
-      const sf = parse(rel, text);
-      // 🔴 The SHARED walk, with a `Set`. The open-coded copy this replaced used
-      // `node.text in found` over an object literal, so an identifier spelled `toString`
-      // or `constructor` in any scanned file crashed the guard.
-      for (const name of collectIdentifierRefs(sf, narrowingNames)) {
-        if (!found[name].includes(rel)) found[name].push(rel);
-      }
-    }
-
+    // Collected by the sweep's single pass — see `NARROWING_CONSUMERS`. This used to
+    // re-walk and re-READ the whole repo here to parse three files.
+    const found = narrowingRefs;
     for (const [fn, expected] of Object.entries(NARROWING_CONSUMERS)) {
       expect(found[fn].sort(), `consumers of ${fn}`).toEqual([...expected].sort());
     }
@@ -1079,6 +1172,25 @@ describe('the relay caller ledger', () => {
         `const h = require('./relay').default;\nexport default (q: never, s: never) => h(q, s);`,
         'src/pages/api/v1/image-upload/relay-cjs.ts',
       ],
+      // 🔴 THREE SPELLINGS OF A SPECIFIER THAT NAMES THE SAME MODULE. Each was a real
+      // escape and none has any other control: a specifier is inert to the path scan, so
+      // with the resolver wrong the file is simply not a reference and nothing else here
+      // notices. Without these cases the fixes are only exercised by a planted file, and a
+      // fix nothing in the tree exercises is one a later edit silently reverts.
+      [
+        'sibling route, DYNAMIC relative import, TEMPLATE literal',
+        'export default async (q: never, s: never) => {\n' +
+          '  const { default: h } = await import(`./relay`);\n  return h(q, s);\n};',
+        'src/pages/api/v1/image-upload/relay-tpl.ts',
+      ],
+      [
+        'aliased import naming the source with a `.js` suffix',
+        `import h from '~/pages/api/v1/image-upload/relay.js';\nexport const go = (q: never, s: never) => h(q, s);`,
+      ],
+      [
+        'aliased import carrying a `..` segment',
+        `import h from '~/pages/api/v1/image-upload/../image-upload/relay';\nexport const go = (q: never, s: never) => h(q, s);`,
+      ],
       // 🔴 THE THREE STRING-SPELLED SHAPES, each a measured or one-character-adjacent
       // escape. The first was live: it compiled, ran, and left 847 tests green.
       [
@@ -1215,7 +1327,13 @@ describe('the relay caller ledger', () => {
     // say which one, rather than showing up as a production file that is suddenly not one.
     // (`.svelte` was previously absent from this loop while the walker admitted it, so
     // `thing.test.svelte` counted as production — narrower body than the title claimed.)
-    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs', 'svelte', 'html']) {
+    //
+    // 🔴 DELIBERATELY NOT IN THE CONSTANT'S ORDER. Written in the same order it was
+    // BYTE-IDENTICAL to `WALKED_EXTENSIONS`, so the natural way to drop an extension — a
+    // find/replace on a run of it — edited both lines and the control followed the constant
+    // in silence. A reviewer hit exactly that and scored the mutant SURVIVED. Hard-coding
+    // is only half the defence; the text has to be un-copyable too.
+    for (const ext of ['html', 'svelte', 'cjs', 'mjs', 'cts', 'mts', 'jsx', 'js', 'tsx', 'ts']) {
       expect(WALKED_EXTENSIONS, `the walker must still admit *.${ext}`).toContain(ext);
       expect(isProductionFile(`src/utils/thing.test.${ext}`), `*.test.${ext}`).toBe(false);
       expect(isProductionFile(`src/utils/thing.spec.${ext}`), `*.spec.${ext}`).toBe(false);
@@ -1223,6 +1341,19 @@ describe('the relay caller ledger', () => {
     }
     // And the directory form, which is this repo's dominant convention.
     expect(isProductionFile('src/utils/__tests__/thing.ts')).toBe(false);
+
+    // 🔴 THE ROUTE-ROOT CARVE-OUT, PINNED — and without these two lines the fix for it is
+    // unobservable, because no such file exists in the tree for the sweep to notice.
+    // The PAIR is the point: the same `__tests__` segment must mean "not a caller" in
+    // `src/utils` and "a live route" under the page root.
+    expect(
+      isProductionFile('src/pages/api/v1/image-upload/__tests__/proxy.ts'),
+      'Next routes __tests__ under the page root — it is production there'
+    ).toBe(true);
+    expect(
+      isProductionFile('src/utils/__tests__/proxy.ts'),
+      'outside the page root the convention holds and this is a spec'
+    ).toBe(false);
   });
 
   it('POSITIVE CONTROL: prose and type positions are NOT references', () => {
