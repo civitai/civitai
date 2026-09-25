@@ -31,10 +31,8 @@ export function getFileConflicts<T extends ConflictCandidate>(files: T[]) {
       if (file.sizeKB == null) continue;
       bySize.set(file.sizeKB, [...(bySize.get(file.sizeKB) ?? []), file]);
     }
-    const sameSize = [...bySize.values()].filter((g) => g.length > 1);
-
-    if (sameSize.length) duplicates.push(...sameSize);
-    else similar.push(group);
+    duplicates.push(...[...bySize.values()].filter((g) => g.length > 1));
+    similar.push(group);
   }
 
   return { duplicates, similar };

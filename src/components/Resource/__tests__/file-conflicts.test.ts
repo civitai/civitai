@@ -28,7 +28,7 @@ describe('getFileConflicts', () => {
     const { duplicates, similar } = getFileConflicts([a, b]);
 
     expect(duplicates).toEqual([[a, b]]);
-    expect(similar).toEqual([]);
+    expect(similar).toEqual([[a, b]]);
   });
 
   it('warns rather than blocks while a size is still unknown', () => {
@@ -41,7 +41,7 @@ describe('getFileConflicts', () => {
     expect(similar).toEqual([[uploaded, pending]]);
   });
 
-  it('reports a same-size pair as a duplicate even inside a larger similar group', () => {
+  it('keeps the whole group similar when only some of it is a duplicate', () => {
     const a = file({ name: 'a.safetensors', sizeKB: 100 });
     const b = file({ name: 'b.safetensors', sizeKB: 100 });
     const c = file({ name: 'c.safetensors', sizeKB: 200 });
@@ -49,7 +49,7 @@ describe('getFileConflicts', () => {
     const { duplicates, similar } = getFileConflicts([a, b, c]);
 
     expect(duplicates).toEqual([[a, b]]);
-    expect(similar).toEqual([]);
+    expect(similar).toEqual([[a, b, c]]);
   });
 
   it('ignores files that differ in precision, type or format', () => {
