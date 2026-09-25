@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type SlimMatchedTermsText = { text: string[] };
@@ -250,6 +251,17 @@ export type ModerationAdapter = {
     blocked: boolean;
     triggeredLabels: string[];
     output: XGuardModerationOutput;
+  }) => Promise<void>;
+
+  /**
+   * Text-scan counterpart of `applyResult`, called only while the entity's text-scan mode is
+   * `active`. Must be idempotent: the orchestrator redelivers callbacks.
+   */
+  applyTextScan?: (args: {
+    entityId: number;
+    workflowId: string;
+    outcome: TextScanOutcome;
+    subject: TextScanSubject;
   }) => Promise<void>;
 
   /**

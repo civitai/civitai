@@ -350,6 +350,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
         'server/services/training.service.ts:true',
         'pages/api/testing/xguard-test.ts:input.wait',
         'pages/api/testing/chat-completion-scan.ts:input.wait',
+        'server/services/text-scan/harness.ts:input.wait',
       ])
     );
   });

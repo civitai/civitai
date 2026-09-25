@@ -2429,6 +2429,7 @@ export type EntityModeration = {
   triggeredLabels: Generated<string[]>;
   result: unknown | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -4115,6 +4116,14 @@ export type Technique = {
   enabled: Generated<boolean>;
   type: TechniqueType;
 };
+export type TextScanPrompt = {
+  id: Generated<number>;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type Thread = {
   id: Generated<number>;
   locked: Generated<boolean>;
@@ -4846,6 +4855,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;
   TipConnection: TipConnection;
