@@ -259,6 +259,11 @@ describe('upsertBounty — create path', () => {
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
 
+  it('stores the Buzz type the bounty was paid in', async () => {
+    await create({ buzzType: 'green' });
+    expect(createData().buzzType).toBe('green');
+  });
+
   it('charges green buzz when the caller asked for green', async () => {
     await create({ buzzType: 'green' });
 
