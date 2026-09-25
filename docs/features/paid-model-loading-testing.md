@@ -26,9 +26,17 @@ from the code, not an observation — it depends on the orchestrator reporting n
 already-boosted workflow, which cannot be verified from this repo. A tester's checklist did record
 "never charged twice" as passing.
 
-**Fixed (offer side).** `isWorthBoosting` now withholds the offer from a workflow already in the
-boosted lane — both ETAs were measured before the boost, so they still read as a saving and the lane
-is the only signal that the purchase already happened.
+**Fixed (offer side), twice.** `isWorthBoosting` first withheld the offer from a workflow already in
+the boosted lane — both ETAs were measured before the boost, so they still read as a saving and the
+lane was the only signal the purchase had happened.
+
+Round 2 showed that was not enough: a tester reproduced the second offer after the fix. The lane and
+`downloadPriority` both lag a refetch, and the offer returned inside that window. The page already
+kept a *receipt* of the purchase, but only recorded it when the orchestrator had reported an
+unboosted ETA to compare against — so with no ETA there was no latch at all. The receipt is now
+recorded unconditionally and is itself a boosted signal, which is the shape a tester proposed
+independently: once you have paid, the control becomes the "Boosted." notice rather than a toggle
+that can come back.
 
 **No money was lost.** A tester tried the second purchase deliberately and was refunded immediately,
 which matches the re-price-and-refuse path in `boostWorkflow`. Worth noting the refund is observed as
@@ -157,7 +165,42 @@ Asked about an int8 variant of a published community model. Unanswered.
 
 ---
 
+## Round 2 — new reports
+
+### 13. NSFW models missing from the resource picker
+
+Reported once, unconfirmed. The picker filters by browsing level client-side
+(`useBrowsingLevelDebounced` + `useApplyHiddenPreferences`); nothing in the coverage or loading work
+touches it. The likeliest explanation is the reporter's own session: they had signed in freshly on
+the preview via an email link, and a new session carries the default browsing level rather than
+whichever one their real account uses. Worth one check before treating it as a defect.
+
+*Closes when:* the reporter confirms their browsing level on the preview, and either the models
+appear — in which case drop this — or they do not, in which case it becomes a real filter bug.
+
+### 14. The loaded dot on the version strip lags the generator
+
+A tester saw the model page's version strip stay unmarked for "much much longer" while the generator
+and the model card had already flipped. Distinct from item 2, which was the indicator being wrong
+rather than late.
+
+The server read is fresh: `getModel` goes to Postgres through `model.selector.ts`, which selects
+`generatorLoaded`, with no cache in front of it. The submit path's own staleness — a one-hour cached
+row — was fixed separately by busting it from both residency writers. So what remains is most likely
+client-side: the page holds an already-fetched version list and nothing invalidates it when a
+download lands, where the generator explicitly does.
+
+*Closes when:* someone reproduces it with the network tab open and says whether the model page
+refetched. That distinguishes a client cache from a server one, and nothing else will.
+
+---
+
 ## Not filed, deliberately
 
 Sign-in trouble on the preview build, and a geoblock on the same host. Both are properties of the
 test environment rather than of this feature.
+
+A minimax video queued on the live site rendering oddly on the preview, which the reporter themselves
+traced to the known "a fresh queue card reads `—` for a few seconds" behaviour.
+
+A question about whether members pay the same boost fee, answered in-thread by another tester.

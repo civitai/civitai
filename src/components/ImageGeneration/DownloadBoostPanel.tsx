@@ -32,10 +32,14 @@ import { trpc } from '~/utils/trpc';
 const DOWNLOAD_STATUS_POLL_MS = 10_000;
 
 /**
- * The unboosted ETA at the moment of purchase, by workflow id. Once boosted the orchestrator no
- * longer reports what the wait would have been, so the receipt only survives this page session.
+ * Proof this page bought a boost, by workflow id. `etaSeconds` is what the wait would have been —
+ * null when the orchestrator had not reported one yet — and once boosted it stops reporting it, so
+ * the receipt only survives this page session.
+ *
+ * Its presence is what suppresses a second offer. `downloadPriority` and the summary lane both lag
+ * a refetch, and testers spent real Buzz in that window clicking a toggle that had come back.
  */
-const useBoostReceipts = create<Record<string, number>>(() => ({}));
+const useBoostReceipts = create<Record<string, { etaSeconds: number | null }>>(() => ({}));
 
 export type WorkflowDownloads = ReturnType<typeof useWorkflowDownloads>;
 
@@ -114,9 +118,10 @@ export function DownloadBoostPanel({
   request: WorkflowData;
   downloads: WorkflowDownloads;
 }) {
-  const boosted = request.downloadPriority === 'high' || summary?.lane === 'high';
+  const receipt = useBoostReceipts((state) => state[request.id]);
+  const boosted = request.downloadPriority === 'high' || summary?.lane === 'high' || !!receipt;
   const offer = !boosted && isWorthBoosting(summary) ? summary : undefined;
-  const receiptEta = useBoostReceipts((state) => state[request.id]);
+  const receiptEta = receipt?.etaSeconds ?? null;
   const laneLabel = downloadLaneLabel(summary?.lane);
 
   return (
@@ -264,7 +269,9 @@ function BoostButton({ request, summary }: { request: WorkflowData; summary: Dow
       {
         onSuccess: (result) => {
           if (result.boosted) {
-            if (unboostedEta != null) useBoostReceipts.setState({ [request.id]: unboostedEta });
+            // Unconditional: the receipt is what stops a second offer, so an unknown ETA must not
+            // cost us the latch — it only costs the before/after comparison.
+            useBoostReceipts.setState({ [request.id]: { etaSeconds: unboostedEta ?? null } });
             return;
           }
           if (result.cost == null) {
