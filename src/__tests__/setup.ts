@@ -194,6 +194,16 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  // App Blocks author-fee CHARGE rail. 🔴 These are reached from
+  // `blocks.router.ts` via `quoteBlockAuthorFee`/`chargeBlockAuthorFee`, so ANY
+  // suite that exercises an estimate or a submit touches them — not only the fee's
+  // own tests. Omitting one does not fail quietly: `vi.mock` throws
+  // `No "<name>" export is defined`, which surfaces as a TRPCError from whatever
+  // router call the suite was actually testing, far from the cause.
+  blockAuthorFeeQuotedCounter: promMetricStub(),
+  blockAuthorFeeChargedCounter: promMetricStub(),
+  blockAuthorFeeChargedBuzzCounter: promMetricStub(),
+  blockAuthorFeeClampedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
