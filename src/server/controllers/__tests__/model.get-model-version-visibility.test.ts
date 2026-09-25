@@ -78,6 +78,7 @@ async function visibleVersions(viewer: ViewerKey): Promise<VersionKey[] | 'not-f
     (e: unknown) => e
   );
   if (result instanceof TRPCError && result.code === 'NOT_FOUND') return 'not-found';
+  if (!(result instanceof Error) || result.message !== STOP.message) throw result;
   expect(dbMock.dbRead.post.findMany).toHaveBeenCalledTimes(1);
   const ids: number[] = dbMock.dbRead.post.findMany.mock.calls[0][0].where.modelVersionId.in;
   return ids.map((id) => ALL[id - 1]);

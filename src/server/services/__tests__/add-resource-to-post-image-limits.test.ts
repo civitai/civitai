@@ -293,6 +293,12 @@ describe('model version visibility on caller-supplied version ids', () => {
       version: { availability: Availability.Private },
       granted: true,
     },
+    {
+      name: "a moderator, on someone else's private version with no grant",
+      version: { availability: Availability.Private },
+      viewer: moderator,
+      granted: false,
+    },
   ];
 
   const REFUSED: Case[] = [
@@ -354,6 +360,22 @@ describe('model version visibility on caller-supplied version ids', () => {
     },
   };
 
+  // Grants only the exact question the check should ask, so a call made for the wrong user,
+  // version or entity type reads as a refusal.
+  const grant = (granted: boolean | undefined, viewer: typeof user) =>
+    hasEntityAccess.mockImplementation(
+      async ({ entityType, entityIds, userId, isModerator }: Record<string, unknown>) => [
+        {
+          hasAccess:
+            !!granted &&
+            entityType === 'ModelVersion' &&
+            JSON.stringify(entityIds) === JSON.stringify([NEW_VERSION_ID]) &&
+            userId === viewer.id &&
+            isModerator === !!viewer.isModerator,
+        },
+      ]
+    );
+
   const errorOf = (p: Promise<unknown>) =>
     p.then(
       () => null,
@@ -362,7 +384,7 @@ describe('model version visibility on caller-supplied version ids', () => {
 
   describe.each(Object.entries(paths))('%s', (_, path) => {
     it.each(ALLOWED.map((c) => [c.name, c] as const))('allows %s', async (_name, c) => {
-      hasEntityAccess.mockResolvedValue([{ hasAccess: !!c.granted }]);
+      grant(c.granted, c.viewer ?? user);
       await expect(path.run(row(c), c.viewer ?? user)).resolves.toBeDefined();
       expect(path.written()).toBe(true);
     });
@@ -380,7 +402,7 @@ describe('model version visibility on caller-supplied version ids', () => {
       async (_name, c) => {
         const missing = await errorOf(path.run(null, user));
         vi.clearAllMocks();
-        hasEntityAccess.mockResolvedValue([{ hasAccess: !!c.granted }]);
+        grant(c.granted, c.viewer ?? user);
 
         const refused = await errorOf(path.run(row(c), c.viewer ?? user));
 
@@ -393,9 +415,20 @@ describe('model version visibility on caller-supplied version ids', () => {
     // hasEntityAccess also refuses a paid-gated version to a non-purchaser; that is a usage gate,
     // and consulting it for a public version would refuse every early-access release.
     it('does not consult entity access for a public version', async () => {
-      hasEntityAccess.mockResolvedValue([{ hasAccess: false }]);
+      grant(false, user);
       await expect(path.run(row({ name: 'public' }), user)).resolves.toBeDefined();
       expect(hasEntityAccess).not.toHaveBeenCalled();
     });
+  });
+
+  it.each([
+    ['a private model', Availability.Private],
+    ['a public model', Availability.Public],
+  ])('createPost gives the post the availability of %s', async (_name, availability) => {
+    await paths.createPost.run(
+      row({ name: 'own', model: { userId: user.id, availability } }),
+      user
+    );
+    expect(dbMock.dbWrite.post.create.mock.calls[0][0].data.availability).toBe(availability);
   });
 });
