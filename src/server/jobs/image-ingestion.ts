@@ -583,19 +583,34 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
+    // The appeal decides this image's fate: approval unblocks it, rejection clears needsReview
+    // and the next run deletes it. Purging it first strands the Appeal as Pending forever.
+    // dbWrite for the same replica-lag reason as the CSAM lookup above.
+    const appealHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "needsReview" = 'appeal'
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+    ).map((x) => x.id);
+
+    const held = [...heldActive, ...appealHeld];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
         entityType: EntityType.Image,
-        ...(heldActive.length ? { entityId: { notIn: heldActive } } : {}),
+        ...(held.length ? { entityId: { notIn: held } } : {}),
       },
       take: 15000,
       orderBy: { createdAt: 'asc' },
     });
 
     if (!jobQueue.length) {
-      console.log('No blocked images in queue', { csamHeld: heldActive.length });
-      return { processed: 0, csamHeld: heldActive.length };
+      console.log('No blocked images in queue', {
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+      });
+      return { processed: 0, csamHeld: heldActive.length, appealHeld: appealHeld.length };
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -650,6 +665,7 @@ export const removeBlockedImages = createJob(
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
+      appealHeld: appealHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -835,6 +851,7 @@ export const removeBlockedImages = createJob(
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
+      appealHeld: appealHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
