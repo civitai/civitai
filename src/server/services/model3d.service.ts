@@ -24,6 +24,10 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -385,6 +389,7 @@ export const getModel3DsInfinite = async ({
   status,
   statuses,
   tagIds,
+  collectionId,
   includeDrafts,
   sort,
   period,
@@ -438,6 +443,21 @@ export const getModel3DsInfinite = async ({
     if (username) AND.push({ user: { username } });
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
+
+    if (collectionId) {
+      const permissions = await getUserCollectionPermissionsById({
+        id: collectionId,
+        userId: user?.id,
+        isModerator,
+      });
+      if (!permissions.read) return { items: [], nextCursor: undefined };
+
+      const { AND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
+      AND.push({ collectionItems: { some: { collectionId, AND: collectionItemAND } } });
+    }
 
     // PolyGen `enableAnimation` toggle. JSON path equality against the
     // form-input snapshot stored on `Model3D.generationParams`. The

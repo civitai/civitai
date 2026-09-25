@@ -23,6 +23,7 @@ import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
   collectionReadPrivacyData,
+  collectionTypeData,
   collectionWritePrivacyData,
   useCollection,
   useMutateCollection,
@@ -224,7 +225,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 data={[
                   ...Object.values(CollectionType).map((value) => ({
                     value,
-                    label: getDisplayName(value),
+                    label: collectionTypeData[value].label,
                   })),
                 ]}
                 clearable

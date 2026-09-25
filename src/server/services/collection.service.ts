@@ -738,6 +738,7 @@ const inputToCollectionType = {
   articleId: CollectionType.Article,
   imageId: CollectionType.Image,
   postId: CollectionType.Post,
+  model3dId: CollectionType.Model3D,
 } as const;
 
 /**
@@ -915,6 +916,11 @@ export const saveItemInCollections = async ({
     if (filteredCollections.length !== upsertCollectionItems.length) {
       throw throwBadRequestError('Collection type mismatch');
     }
+  }
+
+  // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
+  if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
+    throw throwBadRequestError('3D models cannot be entered into contest collections');
   }
 
   // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
@@ -2089,11 +2095,13 @@ async function getEntityOwnerId({
   imageId,
   articleId,
   postId,
+  model3dId,
 }: {
   modelId?: number;
   imageId?: number;
   articleId?: number;
   postId?: number;
+  model3dId?: number;
 }): Promise<number | null> {
   const select = { userId: true };
   if (modelId) {
@@ -2112,6 +2120,10 @@ async function getEntityOwnerId({
     const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
     return article?.userId ?? null;
   }
+  if (model3dId) {
+    const model3d = await dbRead.model3D.findUnique({ where: { id: model3dId }, select });
+    return model3d?.userId ?? null;
+  }
   return null;
 }
 
@@ -2120,7 +2132,7 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId } = input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2135,7 +2147,7 @@ export const getUserCollectionItemsByItem = async ({
 
   if (userCollections.length === 0) return [];
 
-  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId });
+  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId, model3dId });
   const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({
@@ -2154,7 +2166,7 @@ export const getUserCollectionItemsByItem = async ({
       collectionId: {
         in: userCollections.map((c) => c.id),
       },
-      OR: [{ modelId }, { imageId }, { postId }, { articleId }],
+      OR: [{ modelId }, { imageId }, { postId }, { articleId }, { model3dId }],
     },
   });
 
@@ -3665,6 +3677,8 @@ export const removeCollectionItem = async ({
       ? 'Image'
       : permissions.collectionType === CollectionType.Post
       ? 'Post'
+      : permissions.collectionType === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
@@ -3764,6 +3778,8 @@ export async function checkUserOwnsCollectionAndItem({
       ? 'Image'
       : collection.type === CollectionType.Post
       ? 'Post'
+      : collection.type === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');

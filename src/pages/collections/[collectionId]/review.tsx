@@ -521,7 +521,9 @@ export function ModerationControls({
 
         // Snapshot for onError: the item is about to leave the queue, and without a rollback a
         // failed write hides an entry that is still pending review.
-        const prevData = queryUtils.collection.getAllCollectionItems.getInfiniteData({ ...filters });
+        const prevData = queryUtils.collection.getAllCollectionItems.getInfiniteData({
+          ...filters,
+        });
 
         // A decided item leaves the queue rather than flipping in place. Left visible it stays
         // selectable, and the next bulk action silently re-decides it the other way.
@@ -611,6 +613,9 @@ export function ModerationControls({
               break;
             case CollectionType.Article:
               await queryUtils.article.getInfinite.invalidate();
+              break;
+            case CollectionType.Model3D:
+              await queryUtils.model3d.getInfinite.invalidate();
               break;
             default:
               break;
