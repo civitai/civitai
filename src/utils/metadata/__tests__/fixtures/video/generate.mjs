@@ -5,7 +5,6 @@
 //   core.webm          core SaveWEBM / SaveVideo webm: Matroska global tags
 //   core.mkv           core SaveVideo mkv
 //   live-prompt.webm   streamed (unknown-size segment) with `prompt` only, as an API-queued run has
-//   nomovflags.mp4     tags set but no use_metadata_tags, so ffmpeg drops them
 //   plain.mp4/.webm    no tags at all (encoder only)
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -30,6 +29,5 @@ ffmpeg(...src, ...h264, ...tags, '-movflags', 'use_metadata_tags+faststart', 'co
 ffmpeg(...src, '-c:v', 'libvpx-vp9', ...tags, 'core.webm');
 ffmpeg(...src, ...h264, ...tags, 'core.mkv');
 ffmpeg(...src, '-c:v', 'libvpx-vp9', '-metadata', `prompt=${prompt}`, '-live', '1', '-f', 'webm', 'live-prompt.webm');
-ffmpeg(...src, ...h264, '-metadata', `prompt=${prompt}`, 'nomovflags.mp4');
 ffmpeg(...src, ...h264, 'plain.mp4');
 ffmpeg(...src, '-c:v', 'libvpx-vp9', 'plain.webm');

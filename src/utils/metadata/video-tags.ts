@@ -17,6 +17,8 @@ const MAX_DEPTH = 6;
 
 type Reader = (offset: number, length: number) => Promise<Uint8Array>;
 
+const utf8 = new TextDecoder('utf-8');
+
 class Budget {
   private remaining = MAX_ELEMENTS;
   step() {
@@ -173,7 +175,7 @@ async function readMatroskaTags(read: Reader, fileSize: number): Promise<VideoTa
       const length = el.end - el.body;
       if (length > MAX_META_BYTES) continue;
       const bytes = await read(el.body, length);
-      collectSimpleTags(bytes, 0, bytes.length, tags, 0);
+      collectSimpleTags(bytes, 0, bytes.length, tags, 0, budget);
       if (VIDEO_TAG_KEYS.every((key) => tags[key] !== undefined)) break;
     }
   } catch (e) {
@@ -206,20 +208,22 @@ function collectSimpleTags(
   start: number,
   end: number,
   tags: VideoTags,
-  depth: number
+  depth: number,
+  budget: Budget
 ) {
   if (depth > MAX_DEPTH) return;
   let offset = start;
   let name: string | undefined;
   let value: string | undefined;
-  for (let i = 0; offset < end && i < MAX_ELEMENTS; i++) {
+  while (offset < end) {
+    budget.step();
     const el = parseEbmlHeader(bytes, offset, end);
     if (!el || el.size === undefined) return;
     const body = offset + el.headerSize;
     const elEnd = body + el.size;
     if (elEnd > end) return;
     if (el.id === EBML_ID.tag || el.id === EBML_ID.simpleTag)
-      collectSimpleTags(bytes, body, elEnd, tags, depth + 1);
+      collectSimpleTags(bytes, body, elEnd, tags, depth + 1, budget);
     else if (el.id === EBML_ID.tagName) name = decodeUtf8(bytes.subarray(body, elEnd));
     else if (el.id === EBML_ID.tagString) value = decodeUtf8(bytes.subarray(body, elEnd));
     offset = elEnd;
@@ -288,5 +292,5 @@ function fourcc(bytes: Uint8Array, offset: number) {
 }
 
 function decodeUtf8(bytes: Uint8Array) {
-  return new TextDecoder('utf-8').decode(bytes);
+  return utf8.decode(bytes);
 }

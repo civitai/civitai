@@ -12,6 +12,7 @@ import {
 import { civitai, readCivitaiMetadata } from '@civitai/generation-metadata/civitai';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
+import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { readVideoTags } from '~/utils/metadata/video-tags';
 
 /**
@@ -82,30 +83,41 @@ export async function getMetadata(file: File | string) {
  * plugin, then the same imageMetaSchema pass as getMetadata().
  */
 function getMetadataFromTags(tags: Record<string, string>): ImageMetaProps | undefined {
-  const { parsers, context } = applyPlugins(PLUGINS, defaultParsers);
-  const ctx = createParserContext(context);
-  for (const parser of parsers) {
-    let state: unknown;
-    try {
-      state = parser.detect(tags, ctx);
-    } catch {
-      continue;
-    }
-    if (!state) continue;
-    try {
+  try {
+    const { parsers, context } = applyPlugins(PLUGINS, defaultParsers);
+    const ctx = createParserContext(context);
+    for (const parser of parsers) {
+      let state: unknown;
+      try {
+        state = parser.detect(tags, ctx);
+      } catch {
+        continue;
+      }
+      if (!state) continue;
       const raw = generationMetadataSchema.safeParse(parser.parse(state, ctx));
       if (!raw.success) return undefined;
       const result = imageMetaSchema.safeParse(raw.data);
       return result.success && Object.keys(result.data).length ? result.data : undefined;
-    } catch {
-      return undefined;
     }
+  } catch {
+    return undefined;
   }
   return undefined;
 }
 
+const MAX_VIDEO_COMFY_MB = 1;
+
+/**
+ * Unlike an image, a video whose graph is over the size limit is not refused: it keeps its
+ * prompt, settings and resources and loses only the `comfy` blob.
+ */
 export async function getVideoMetadata(file: Blob) {
-  return getMetadataFromTags(await readVideoTags(file));
+  const meta = getMetadataFromTags(await readVideoTags(file));
+  if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > MAX_VIDEO_COMFY_MB) {
+    const { comfy: _, ...rest } = meta;
+    return rest;
+  }
+  return meta;
 }
 
 export function encodeMetadata(meta: ImageMetaProps, type: LegacyParserType = 'automatic') {
