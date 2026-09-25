@@ -1054,7 +1054,9 @@ export const saveItemInCollections = async ({
         const status = submissionStatus(permission);
         // The review queue (getAllCollectionItems) has no Model3D variant, so a pending entry could never be actioned.
         if (itemKey === 'model3dId' && status === CollectionItemStatus.REVIEW) {
-          throw throwBadRequestError('3D models cannot be submitted to collections that review entries');
+          throw throwBadRequestError(
+            '3D models cannot be submitted to collections that review entries'
+          );
         }
 
         return {
