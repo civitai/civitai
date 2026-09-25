@@ -12,12 +12,8 @@ import {
   STATUS_ACCRUED,
 } from './author-fee-accrual.service';
 import { isSettlementEligible, settlementBoundary } from './author-fee-settlement.service';
-import {
-  blockAuthorFeeChargedBuzzCounter,
-  blockAuthorFeeChargedCounter,
-  blockAuthorFeeClampedCounter,
-  blockAuthorFeeQuotedCounter,
-} from '~/server/prom/client';
+import { blockAuthorFeeChargedCounter, blockAuthorFeeQuotedCounter } from '~/server/prom/client';
+
 import {
   computeBlockAuthorFee,
   BLOCK_AUTHOR_FEE_PRICE_IS_CAP,
@@ -26,6 +22,20 @@ import {
 } from './author-fee';
 import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-fee';
 import { blockGenerationCoarseType } from './generation-type';
+
+/**
+ * The `workflowLabel` both ESTIMATE call sites pass (`blocks.router.ts:5492`,
+ * `:9444`); the two gating sites pass the block's external id instead
+ * (`:5935`, `:9740`). It is what `surface` on `blockAuthorFeeQuotedCounter` is
+ * derived from.
+ *
+ * 🔴 EXPORTED SO THE ROUTER CAN ADOPT IT — today the router passes the LITERAL
+ * `'estimate'`, so this constant and those two call sites are a relationship
+ * nothing type-checks. It is pinned behaviourally by
+ * `blocks.router.workflow.test.ts`, which drives the real router and asserts the
+ * label, rather than by a test that passes the string it then asserts on.
+ */
+export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks PER-GENERATION AUTHOR FEE — slice 2b, THE VIEWER-CHARGE PATH.
@@ -179,16 +189,35 @@ export async function quoteBlockAuthorFee(args: {
   // that will be right at six of them. Counting the RESULT instead makes an
   // uncounted arm structurally impossible, including one added later.
   //
-  // `surface` is derived from `suppressQuoteLogs` because that flag IS the
-  // disclosure-only marker — deriving it keeps the two from drifting apart,
-  // which a second boolean argument would eventually allow.
-  blockAuthorFeeQuotedCounter.inc({
-    coarse_type: quote.charge
-      ? quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL
-      : BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
-    outcome: quote.charge ? 'quoted' : quote.reason,
-    surface: args.suppressQuoteLogs ? 'disclosure' : 'gating',
-  });
+  // 🔴 `surface` IS DERIVED FROM `workflowLabel`, NOT FROM `suppressQuoteLogs`,
+  // AND AN EARLIER REVISION OF THIS LINE GOT IT WRONG IN A WAY THE TESTS COULD
+  // NOT SEE. `suppressQuoteLogs` is set at ONE of the two estimate call sites
+  // (`blocks.router.ts:9444`) and NOT at the other (`:5492`), so deriving from it
+  // reported a genuine estimate as `gating`. The tests passed because they
+  // asserted the label against the flag the test itself passed — the
+  // expectation was taken from the implementation rather than from the router.
+  // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
+  // both gating sites (`:5935`, `:9740`), so it discriminates all four.
+  //
+  // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING FOUR CALLERS PASS. Pinned by
+  // `blocks.router.workflow.test.ts`, which drives the real router rather than
+  // this function.
+  //
+  // Wrapped, because every sibling `blockAuthorFee*` inc in `author-fee.ts`
+  // (`:658`, `:675`, `:693`) is, under the comment "swallow — telemetry must
+  // never back-pressure the caller". This runs on a live money path; a
+  // prom-client throw here must not be what fails a charge.
+  try {
+    blockAuthorFeeQuotedCounter.inc({
+      coarse_type: quote.charge
+        ? quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL
+        : BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+      outcome: quote.charge ? 'quoted' : quote.reason,
+      surface: args.workflowLabel === BLOCK_AUTHOR_FEE_ESTIMATE_LABEL ? 'disclosure' : 'gating',
+    });
+  } catch {
+    // swallow — telemetry must never back-pressure the caller
+  }
   return quote;
 }
 
@@ -375,17 +404,23 @@ export async function chargeBlockAuthorFee(args: {
   // Same single-point rule as the quote above: NINE return arms, counted once on
   // the result. `coarse_type` is resolved from the generation type rather than
   // from a computation, because the skip arms return before one exists.
-  const coarseType =
-    blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL;
-  blockAuthorFeeChargedCounter.inc({
-    coarse_type: coarseType,
-    outcome: result.charged ? 'charged' : result.reason,
-  });
-  // 🔴 THE MONEY COUNTER, AND IT IS DELIBERATELY NOT `reserved`. `feeBuzz` on a
-  // charged result is what was actually debited (`min(reserved, realized)`), so
-  // this sums real Buzz taken from viewers and not what was quoted.
-  if (result.charged) {
-    blockAuthorFeeChargedBuzzCounter.inc({ coarse_type: coarseType }, result.feeBuzz);
+  //
+  // 🔴 THIS IS THE ONE COUNTER ON THIS PATH THAT NOTHING ELSE ANSWERS. All 12
+  // `logToAxiom` sites in this file log a FAILURE, a SKIP or a REVERSAL — there
+  // is NO success log — so "is the fee charging anyone, and when it skips, why"
+  // is otherwise answerable only by querying `block_author_fee_accrual`. That is
+  // why this survived round 0 while three siblings did not.
+  //
+  // Wrapped for the same reason as the quote counter above: every sibling inc in
+  // `author-fee.ts` is, and this runs after a real Buzz debit.
+  try {
+    blockAuthorFeeChargedCounter.inc({
+      coarse_type:
+        blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+      outcome: result.charged ? 'charged' : result.reason,
+    });
+  } catch {
+    // swallow — telemetry must never back-pressure the caller
   }
   return result;
 }
@@ -487,20 +522,25 @@ async function chargeBlockAuthorFeeUncounted(args: {
   }
 
   if (feeBuzz !== quote.feeBuzz) {
-    // 🔴 THE ESTIMATE-VS-CHARGE DIVERGENCE, AND THIS IS THE ONLY PLACE IT IS
-    // OBSERVABLE. `feeBuzz = min(reserved, realized)`, so a difference here means
-    // the realized base moved UP between the whatIf the viewer was shown and the
-    // submit — the estimate UNDER-QUOTED. Not an over-billing bug (the clamp is
-    // what prevents that), but it is the quoted number being wrong, which is the
-    // open risk the estimate-total disclosure named and could not measure.
+    // 🔴 THE ESTIMATE-VS-CHARGE DIVERGENCE IS MEASURED BY THE AXIOM LINE BELOW,
+    // AND DELIBERATELY NOT BY A COUNTER. A round-0 audit killed the counter that
+    // briefly sat here, and the reasoning is worth keeping so it is not re-added:
     //
-    // The counter is what makes it readable in production: the Axiom line below
-    // carries the same fact, but the estimate surface it originates from is
-    // unbounded, so a rate derived from logs is not one anybody can rely on.
-    // Read as a RATIO against `block_author_fee_charged_total{outcome="charged"}`.
-    blockAuthorFeeClampedCounter.inc({
-      coarse_type: quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
-    });
+    //   - This log carries strictly MORE than a counter could — `reservedBuzz`,
+    //     `realizedBuzz`, `chargedBuzz`, `workflowId`, `appId`. The MAGNITUDE and
+    //     IDENTITY of a divergence are what diagnose an under-quote; a bare count
+    //     is not.
+    //   - The counter's justification was that "the estimate surface is unbounded,
+    //     so a rate derived from logs is unreliable". That argument is about the
+    //     QUOTE path. This code is inside `chargeBlockAuthorFee`, AFTER a
+    //     successful debit — measured at ~1 charge/day — where it does not hold.
+    //     It was an argument imported from somewhere it was true.
+    //   - Its documented reading was "a RATIO against
+    //     `block_author_fee_charged_total`", and at this volume that denominator
+    //     is routinely 0 over 24h.
+    //
+    // If the fee's volume grows by orders of magnitude, revisit — but measure the
+    // volume first, which is the step that was skipped.
     logToAxiom(
       {
         name: BLOCK_AUTHOR_FEE_LOG_NAME,

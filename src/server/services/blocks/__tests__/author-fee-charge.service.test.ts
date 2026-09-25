@@ -47,16 +47,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * touched `block_author_fee_accrual`.
  */
 
-const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged, mockChargedBuzz, mockClamped } =
-  vi.hoisted(() => ({
-    mockLog: vi.fn(),
-    mockCreateMany: vi.fn(),
-    mockFlag: vi.fn(),
-    mockQuoted: vi.fn(),
-    mockCharged: vi.fn(),
-    mockChargedBuzz: vi.fn(),
-    mockClamped: vi.fn(),
-  }));
+const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged } = vi.hoisted(() => ({
+  mockLog: vi.fn(),
+  mockCreateMany: vi.fn(),
+  mockFlag: vi.fn(),
+  mockQuoted: vi.fn(),
+  mockCharged: vi.fn(),
+}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => mockCreateMany(...args),
@@ -75,8 +72,6 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/prom/client', () => ({
   blockAuthorFeeQuotedCounter: { inc: mockQuoted },
   blockAuthorFeeChargedCounter: { inc: mockCharged },
-  blockAuthorFeeChargedBuzzCounter: { inc: mockChargedBuzz },
-  blockAuthorFeeClampedCounter: { inc: mockClamped },
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorFeeEnabled: () => mockFlag(),
@@ -635,38 +630,61 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TELEMETRY — the charge rail's Prometheus counters.
+// TELEMETRY — the two counters that survived round 0.
 //
-// WHY THEY EXIST: before them the live fee was unmeasured in Prometheus on BOTH
-// sides. The three pre-existing `blockAuthorFee*` counters sit on the SIZING path
-// (`observeBlockAuthorFee`, spend attribution); nothing counted a quote or a
-// charge. The estimate-vs-charge divergence in particular had no instrument at
-// all, because the quote path's logs are deliberately suppressed on an unbounded
-// surface.
+// Round 0 killed `block_author_fee_clamped_total` (redundant with the
+// `feeClampedToReserve` Axiom line seven lines below it, which carries the
+// magnitudes a count cannot) and `block_author_fee_charged_buzz_total` (the Buzz
+// ledger and `block_author_fee_accrual` are authoritative for money; a per-pod
+// counter that resets on restart is a strictly worse record, and a second
+// non-authoritative money number invites the two to disagree).
+//
+// What remains answers two questions nothing else does:
+//   quoted_total  — WHY a quote declined (the skip reason), per surface
+//   charged_total — whether the fee charges at all, and why it skips. All 12
+//                   `logToAxiom` sites in this file log a failure, a skip or a
+//                   reversal; there is NO success log.
 describe('author-fee charge telemetry', () => {
-  /** The label object of the Nth call, or undefined. */
   const labelsOf = (m: { mock: { calls: unknown[][] } }, n = 0) =>
     m.mock.calls[n]?.[0] as Record<string, string> | undefined;
 
-  it('counts a DISCLOSURE-ONLY quote, whose logs are suppressed', async () => {
-    await quoteBlockAuthorFee(quoteArgs({ suppressQuoteLogs: true }));
+  // 🔴 THE ROUTER'S OWN VALUES, NOT THE ONES THIS SUITE FINDS CONVENIENT.
+  // `surface` is derived from `workflowLabel`, and an earlier revision derived it
+  // from `suppressQuoteLogs` — which is set at ONE of the two estimate call sites
+  // and not the other, so a genuine estimate was labelled `gating`. The tests
+  // passed anyway, because they asserted the label against the flag the TEST had
+  // passed: the expectation came from the implementation instead of from the
+  // caller. These two constants are what `blocks.router.ts` actually passes.
+  const ROUTER_ESTIMATE_LABEL = 'estimate'; // :5492 and :9444
+  const ROUTER_GATING_LABEL = 'blk_ext_id_example'; // :5935 and :9740 pass the external id
+
+  it('labels an ESTIMATE quote as the disclosure surface', async () => {
+    await quoteBlockAuthorFee(quoteArgs({ workflowLabel: ROUTER_ESTIMATE_LABEL }));
     expect(mockQuoted).toHaveBeenCalledTimes(1);
     expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'quoted', surface: 'disclosure' });
   });
 
-  it('counts a GATING quote under its own surface', async () => {
-    // The control that makes `surface` load-bearing rather than decorative: the
-    // SAME call shape, differing only in the suppression flag, must land on a
-    // different series. Without this pair a constant 'disclosure' passes above.
-    await quoteBlockAuthorFee(quoteArgs());
+  it('labels an ESTIMATE as disclosure even when suppressQuoteLogs is NOT set', async () => {
+    // 🔴 THE REGRESSION GUARD, and the one the old implementation failed. The
+    // router's `:5492` estimate site passes NO `suppressQuoteLogs`. Under the
+    // previous derivation this returned `gating` — a real estimate counted on the
+    // wrong series, silently.
+    await quoteBlockAuthorFee(
+      quoteArgs({ workflowLabel: ROUTER_ESTIMATE_LABEL, suppressQuoteLogs: undefined })
+    );
+    expect(labelsOf(mockQuoted)).toMatchObject({ surface: 'disclosure' });
+  });
+
+  it('labels a GATING quote by its external id as the gating surface', async () => {
+    await quoteBlockAuthorFee(quoteArgs({ workflowLabel: ROUTER_GATING_LABEL }));
     expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'quoted', surface: 'gating' });
   });
 
   it('counts a SKIP arm under its own reason, with the unknown coarse type', async () => {
     // A cap-priced generation returns before any computation exists, so there is
-    // genuinely no coarse type to report — `unknown` is the contract here, the
-    // same convention `blockAuthorFeeObservedCounter` already uses. Pinned so a
-    // later change that invents a type on this arm is visible.
+    // genuinely no coarse type — `unknown` is the contract, the same convention
+    // `blockAuthorFeeObservedCounter` uses. Pinned so a later change that invents
+    // a type on this arm is visible.
     const quote = await quoteBlockAuthorFee(quoteArgs({ priceIsCap: true }));
     expect(quote.charge).toBe(false);
     expect(labelsOf(mockQuoted)).toMatchObject({
@@ -676,8 +694,7 @@ describe('author-fee charge telemetry', () => {
   });
 
   it('counts every quote arm exactly once — including the one that throws', async () => {
-    // The wrapper's whole reason for existing: seven return arms, counted at one
-    // point. A per-arm counter would be right at six of them.
+    // The wrapper's reason for existing: seven return arms, one counting point.
     mockFlag.mockResolvedValue(false);
     await quoteBlockAuthorFee(quoteArgs());
     expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'flag-disabled' });
@@ -690,47 +707,38 @@ describe('author-fee charge telemetry', () => {
     expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'error' });
   });
 
-  it('counts a charge, and sums the Buzz actually debited', async () => {
+  it('counts a charge under the charged outcome', async () => {
     const result = await chargeBlockAuthorFee(chargeArgs());
     expect(result).toMatchObject({ charged: true, feeBuzz: EXPECTED_FEE });
     expect(labelsOf(mockCharged)).toMatchObject({ outcome: 'charged' });
-    expect(mockChargedBuzz).toHaveBeenCalledWith(expect.anything(), EXPECTED_FEE);
   });
 
-  it('counts a skipped charge under its reason, and moves no Buzz', async () => {
-    // The negative control for the Buzz counter: a skip must not increment it at
-    // all. Without this, a counter incremented unconditionally passes above.
+  it('counts a skipped charge under its own reason', async () => {
     const result = await chargeBlockAuthorFee(chargeArgs({ reservedAuthorFeeBuzz: 0 }));
     expect(result).toEqual({ charged: false, reason: 'not-reserved' });
     expect(labelsOf(mockCharged)).toMatchObject({ outcome: 'not-reserved' });
-    expect(mockChargedBuzz).not.toHaveBeenCalled();
   });
 
-  // 🔴 THE ONE THIS GROUP EXISTS FOR. A clamp is the ONLY place the
-  // estimate-vs-charge divergence is observable: the realized base moved UP
-  // between the whatIf the viewer saw and the submit, so the estimate
-  // UNDER-QUOTED. 7 is deliberately distinct from every other constant in this
-  // file (400 base, 20 realized fee, 1 flat, 5%, 500 bp, 10000 scale), so a
-  // mutant reaching for any of them cannot land on it.
-  it('counts a CLAMP, and bills the reserved amount rather than the realized one', async () => {
-    const CLAMPED_TO = 7;
-    const result = await chargeBlockAuthorFee(chargeArgs({ reservedAuthorFeeBuzz: CLAMPED_TO }));
+  // 🔴 TELEMETRY MUST NEVER BACK-PRESSURE THE CALLER. Every sibling inc in
+  // `author-fee.ts` is wrapped; an earlier revision of these two was not, on a
+  // path that had already debited a viewer. A throwing counter must not be what
+  // fails a charge or a quote.
+  it('a THROWING counter breaks neither the quote nor the charge', async () => {
+    mockQuoted.mockImplementation(() => {
+      throw new Error('registry exploded');
+    });
+    mockCharged.mockImplementation(() => {
+      throw new Error('registry exploded');
+    });
 
-    expect(result).toMatchObject({ charged: true, feeBuzz: CLAMPED_TO });
-    expect(mockClamped).toHaveBeenCalledTimes(1);
-    // The assertion that pins the money: the Buzz counter must carry what was
-    // DEBITED (7), never what the fee computed to (20). Reaching for
-    // `quote.feeBuzz` here would over-report revenue by the clamped difference,
-    // on exactly the generations where the quote was already wrong.
-    expect(mockChargedBuzz).toHaveBeenCalledWith(expect.anything(), CLAMPED_TO);
-    expect(mockChargedBuzz).not.toHaveBeenCalledWith(expect.anything(), EXPECTED_FEE);
-  });
+    const quote = await quoteBlockAuthorFee(quoteArgs());
+    expect(quote).toMatchObject({ charge: true, feeBuzz: EXPECTED_FEE });
 
-  it('does NOT count a clamp when the realized fee matches the reservation', async () => {
-    // The negative control for the clamp counter. Without it, a counter wired to
-    // increment on every charge passes the test above.
     const result = await chargeBlockAuthorFee(chargeArgs());
     expect(result).toMatchObject({ charged: true, feeBuzz: EXPECTED_FEE });
-    expect(mockClamped).not.toHaveBeenCalled();
+    // The control: the throwing stubs really were reached, so the pass above is
+    // the swallow working rather than the counters never having been called.
+    expect(mockQuoted).toHaveBeenCalled();
+    expect(mockCharged).toHaveBeenCalled();
   });
 });

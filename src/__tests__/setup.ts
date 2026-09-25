@@ -202,8 +202,6 @@ vi.mock('~/server/prom/client', () => ({
   // router call the suite was actually testing, far from the cause.
   blockAuthorFeeQuotedCounter: promMetricStub(),
   blockAuthorFeeChargedCounter: promMetricStub(),
-  blockAuthorFeeChargedBuzzCounter: promMetricStub(),
-  blockAuthorFeeClampedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),

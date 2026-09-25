@@ -416,33 +416,6 @@ export const blockAuthorFeeChargedCounter = registerCounterWithLabels({
   labelNames: ['coarse_type', 'outcome'] as const,
 });
 
-/** Buzz ACTUALLY debited from viewers. The money counter; there was none before. */
-export const blockAuthorFeeChargedBuzzCounter = registerCounterWithLabels({
-  name: 'block_author_fee_charged_buzz_total',
-  help: 'Buzz actually debited from viewers for the App Blocks per-generation author fee, by coarse generation type',
-  labelNames: ['coarse_type'] as const,
-});
-
-/**
- * THE DIVERGENCE SIGNAL, and the reason this group exists.
- *
- * `charged = min(reserved, realized)`. A clamp means the realized base moved UP
- * between the whatIf the viewer was shown and the submit — i.e. the estimate
- * UNDER-QUOTED the fee. The viewer is never billed past what their consent budget
- * was measured against, so this is not an over-billing bug; it is the quoted
- * number being wrong, which is exactly the open risk the estimate-total
- * disclosure named and could not measure.
- *
- * Read it as a RATIO against `block_author_fee_charged_total{outcome="charged"}`.
- * On its own the count says nothing — a rising clamp count with rising traffic is
- * not a regression.
- */
-export const blockAuthorFeeClampedCounter = registerCounterWithLabels({
-  name: 'block_author_fee_clamped_total',
-  help: 'App Blocks author-fee charges clamped to the reserved ceiling because the realized base exceeded the quoted one (the estimate under-quoted), by coarse generation type',
-  labelNames: ['coarse_type'] as const,
-});
-
 // App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
 // block-initiated membership purchase).
 export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
