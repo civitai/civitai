@@ -120,13 +120,34 @@ export function summarizePreparation(
   };
 }
 
+/**
+ * An orchestrator blob the user supplied rather than a model the generator must fetch — the source
+ * image of an i2v request arrives in `preparation` exactly like a checkpoint does.
+ *
+ * A training epoch's weights are also a blob (`…:lora:orchestrator:blob@<key>`, see
+ * `parseRawAirResourceUrn`) but are a real download worth showing and worth boosting, so only
+ * non-`lora` blobs are dropped.
+ *
+ * Parsed here by segment rather than through `~/shared/utils/air`: that module reaches
+ * `@civitai/client` and the ecosystem constants, and this one runs for every step of every workflow
+ * in a queue listing.
+ */
+function isSuppliedBlob(resource: string) {
+  const [urn, air, , type, source, id] = resource.split(':');
+  if (urn !== 'urn' || air !== 'air') return false;
+  if (source !== 'orchestrator' || !id?.startsWith('blob@')) return false;
+  return type !== 'lora';
+}
+
 /** For `preparation` straight off the orchestrator; anything that is not the resource list reads as nothing to download. */
 export function normalizePreparation(raw: unknown): DownloadPreparation | undefined {
   // Every step of every workflow in a queue listing comes through here, and almost none carries a
   // preparation — zod builds a whole error for each of those, which is ~7µs a step.
   if (!Array.isArray(raw) || !raw.length) return undefined;
   const parsed = preparationSchema.safeParse(raw);
-  return parsed.success ? summarizePreparation(parsed.data) : undefined;
+  if (!parsed.success) return undefined;
+  const downloads = parsed.data.filter((resource) => !isSuppliedBlob(resource.resource));
+  return downloads.length ? summarizePreparation(downloads) : undefined;
 }
 
 function asHighLane(preparation: DownloadPreparation): DownloadPreparation {

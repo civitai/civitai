@@ -259,3 +259,44 @@ describe('settledBoostedEtaSeconds', () => {
     expect(settledBoostedEtaSeconds({ etaSeconds: 600, boostedEtaSeconds: 60 })).toBe(60);
   });
 });
+
+describe('supplied blobs', () => {
+  const uploadedImage = 'urn:air:other:other:orchestrator:blob@JR4C6NP1ZH61KK6WFJSDKQEJC0.png';
+  const trainingEpoch = 'urn:air:sdxl:lora:orchestrator:blob@ABC123';
+
+  // An i2v source image arrives in `preparation` like a checkpoint does, so the queue card offered a
+  // paid boost on the user's own upload.
+  it('reports nothing to download when the only entry is a supplied blob', () => {
+    expect(
+      normalizePreparation([
+        {
+          resource: uploadedImage,
+          sizeBytes: 1_987_610,
+          lane: 'low',
+          queuePosition: 7,
+          etaSeconds: 100,
+          boostedEtaSeconds: 18,
+        },
+      ])
+    ).toBeUndefined();
+  });
+
+  it('keeps the model downloads beside one', () => {
+    const result = normalizePreparation([
+      { resource: uploadedImage, sizeBytes: 1_987_610, lane: 'low', etaSeconds: 100 },
+      { resource: checkpoint, sizeBytes: 4_000_000_000, lane: 'low', etaSeconds: 600 },
+    ]);
+
+    expect(result?.resources).toHaveLength(1);
+    expect(result?.resource).toBe(checkpoint);
+  });
+
+  // A training epoch's weights are a blob too, and a real fetch worth boosting.
+  it('keeps a training epoch blob', () => {
+    const result = normalizePreparation([
+      { resource: trainingEpoch, sizeBytes: 200_000_000, lane: 'low', etaSeconds: 120 },
+    ]);
+
+    expect(result?.resource).toBe(trainingEpoch);
+  });
+});

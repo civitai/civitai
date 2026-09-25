@@ -90,11 +90,27 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
 - **Closes when:** a workflow id is obtained and the report is either tied to this release or ruled
   out.
 
-### B8 — Standard lane shows no speed or ETA
-- [ ] With the members gate on, only the priority lane quotes anything; the standard lane shows
-  nothing even to the free users who are in it. This feeds B1 directly, since an unknown plain ETA is
-  what makes the boost always offer.
-- **Closes when:** free users see a standard-lane estimate, or the display states why there is none.
+### B8 — Standard lane shows no speed or ETA — **not ours to fix**
+- [x] Investigated. `rateLimitBytesPerSecond` exists on the availability union only for the lane the
+  viewer is **currently in**; no per-lane cap is reported anywhere. So a lane the viewer is not in
+  cannot quote a speed, and the display showing nothing is correct rather than broken.
+- [ ] Needs the orchestrator to expose per-lane caps, or acceptance that only the occupied lane
+  quotes one.
+- **Closes when:** the orchestrator answers, alongside B4a.
+
+### B9 — "No speed cap" could be shown for the SLOWEST lane — **fixed**
+- [x] Found next to B8. `formatLaneSpeed` mapped `null` to "no speed cap" on the assumption that only
+  the uncapped high lane reports null — nothing enforced that, so an absent figure on the free lane
+  would have advertised it as the fastest. Null now reads as uncapped only on the boosted lane, and
+  as "unknown" everywhere else. The same assumption in the boost panel's "boosted lane" note is now
+  derived from the lane too.
+
+### B10 — Boost offered on the user's own uploaded image — **fixed**
+- [x] An i2v source image arrives in the step's `preparation` exactly like a checkpoint does, so a
+  request with nothing to download still showed "Waiting on downloads" and offered a paid boost on
+  the uploader's own file. Supplied orchestrator blobs are now filtered out of `normalizePreparation`,
+  which every consumer goes through; a training epoch's weights are a blob too and are kept, being a
+  real download worth boosting.
 
 ## Decisions and official answers needed
 
@@ -111,11 +127,13 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
   confirmed officially.
 - **Closes when:** the eviction rule is stated in the article or a reply.
 
-### D3 — Do Perks memberships get the priority lane?
-- [ ] Neither the membership nor the Perks page mentions model loading. Active subscription tiers in
-  production are bronze, silver and gold only, and the gate reads `(tier ?? 'free') !== 'free'` — so
-  anything not carrying one of those tiers is treated as free and gets no expansion.
-- **Closes when:** the intended answer is decided and both pages say it.
+### D3 — Do Perks memberships get the priority lane? — **yes, answered**
+- [x] They do. The gate reads `(tier ?? 'free') !== 'free'`, and the Referral Perks products carry the
+  same `tier` metadata as the paid ones (bronze/silver/gold), so a Perks subscriber passes it and gets
+  both the coverage expansion and the priority lane.
+- [ ] The remaining gap is documentation: neither the membership page nor the Perks page mentions model
+  loading at all, which is what prompted the question.
+- **Closes when:** both pages say what a membership and a Perks subscription include here.
 
 ### D4 — Standard lane: hard cap or demand-dependent?
 - [ ] Asked once, unanswered.
@@ -125,10 +143,18 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
 - [ ] Users are reading the members gate as a permanent lockout rather than a staged rollout.
 - **Closes when:** the rollout condition is stated publicly.
 
-### D6 — Custom video checkpoints cannot be loaded
-- [ ] Two users hit this and one reacted strongly. Likely correct behaviour rather than a bug, but it
-  is not stated anywhere users will find it.
-- **Closes when:** stated in the article, or filed as a gap with an owner.
+### D6 — Custom video checkpoints cannot be loaded — **correct behaviour, every case explained**
+- [x] Checked against production. Of 73 MiniMax H3 checkpoints, 52 are covered under the expansion.
+  Every uncovered one has a reason:
+  - **GGUF** — 9 of the 21. The loader serves SafeTensor only, which `UNLOADABLE_MESSAGES` states.
+    The model named in the thread is itself a GGUF build.
+  - **Not a checkpoint** — most of the named "can't load these" entries are type `Workflows` or
+    `Other`, which were never loadable as a generation checkpoint.
+  - **Unpublished or draft** — 5 of the 7 uncovered versions that do carry a SafeTensor.
+  - **Unscanned** — the remaining 2 are ~63 GB uploads whose pickle and virus scans are still
+    `Pending`, or whose only SafeTensor is an `Enhancement LoRA` rather than a `Model` file.
+- [ ] Nothing to fix in code. The gap is that none of this is stated where a user hits it.
+- **Closes when:** the article or the picker says why a checkpoint is not loadable.
 
 ## Product feedback — recorded, not actioned
 

@@ -187,6 +187,9 @@ export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undef
 /** The lane a boost buys. Already in it means there is nothing left to sell. */
 const BOOSTED_LANE = 'high';
 
+/** Whether a LANE is the boosted one — `isDownloadBoosted` asks the same of a whole request. */
+export const isBoostedLane = (lane?: string | null) => lane === BOOSTED_LANE;
+
 export function isWorthBoosting(
   summary: DownloadSummary | undefined
 ): summary is DownloadSummary & { boostedEtaSeconds: number } {
