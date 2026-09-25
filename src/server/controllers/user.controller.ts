@@ -15,6 +15,7 @@ import { getStaticContent, resolveTosHash } from '~/server/services/content.serv
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
+import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
@@ -904,6 +905,20 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: ProtectedConte
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const getFollowsMeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await getFollowsViewer({ viewerId: ctx.user.id, userId: input.id });
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
 

@@ -18,6 +18,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -34,11 +35,21 @@ interface UserListContentProps {
   totalCount: number;
   page: number;
   onPageChange: (page: number) => void;
+  isOwnList: boolean;
 }
 
 const LIST_LIMIT = 20;
 
-function UserListContent({ items, type, totalCount, page, onPageChange }: UserListContentProps) {
+function UserListContent({
+  items,
+  type,
+  totalCount,
+  page,
+  onPageChange,
+  isOwnList,
+}: UserListContentProps) {
+  const { blockedUsers, blockedByUsers } = useHiddenPreferencesData();
+  const blockedPairIds = new Set([...blockedUsers, ...blockedByUsers].map((u) => u.id));
   const totalPages = Math.ceil(totalCount / LIST_LIMIT);
 
   const getEmptyMessage = () => {
@@ -74,7 +85,13 @@ function UserListContent({ items, type, totalCount, page, onPageChange }: UserLi
                   linkToProfile
                 />
                 {type === 'following' && <FollowUserButton userId={user.id} size="compact-sm" />}
-                {type === 'followers' && <FollowUserButton userId={user.id} size="compact-sm" />}
+                {type === 'followers' && (
+                  <FollowUserButton
+                    userId={user.id}
+                    followsYou={isOwnList && !blockedPairIds.has(user.id)}
+                    size="compact-sm"
+                  />
+                )}
                 {type === 'hidden' && <HideUserButton userId={user.id} size="compact-sm" />}
                 {type === 'blocked' && <BlockUserButton userId={user.id} size="compact-sm" />}
               </Group>
@@ -211,6 +228,7 @@ export default function UserLists() {
                   totalCount={listData?.totalItems ?? 0}
                   page={page}
                   onPageChange={handlePageChange}
+                  isOwnList={isSameUser}
                 />
               )}
             </Tabs.Panel>
