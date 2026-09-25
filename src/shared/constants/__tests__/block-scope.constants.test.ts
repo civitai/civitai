@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
+  APP_STORAGE_SCOPES,
+  appStorageScopesIn,
+  manifestWantsOauthToken,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
   deriveOauthBitmaskFromBlockScopes,
@@ -88,6 +91,95 @@ describe('block-scope.constants', () => {
     const check = validateBlockScopesAgainstOauthClient(PROTOTYPE_KEYS, TokenScope.Full);
     expect(check.valid).toBe(false);
     expect(check.rejectedScopes.sort()).toEqual([...PROTOTYPE_KEYS].sort());
+  });
+
+  /**
+   * APP_STORAGE_SCOPES is the set `BlockManifestValidator` refuses alongside
+   * `auth: "oauth"`, because the app-storage resolvers re-verify the caller's RAW bearer
+   * as a block JWS and an OAuth app is minted an opaque token.
+   *
+   * 🔴 A LEDGER, enforced on GROWTH AND SHRINK. The set is DERIVED by prefix from the
+   * scope vocabulary, so a new `apps:storage:*` scope joins it silently. That is the
+   * fail-closed direction (one more refused combination, never one more admitted), but it
+   * is still a decision someone must make: does the new scope's resolver read the claims
+   * the block-scope middleware resolved, or re-verify the bearer? If this ledger fails,
+   * answer that question — then update BOTH the list here and the `APP_STORAGE_SCOPES`
+   * docblock. Do not just re-run the assertion's `.sort()` output into the list.
+   */
+  describe('APP_STORAGE_SCOPES (the auth:"oauth" conflict set)', () => {
+    const EXPECTED_APP_STORAGE = [
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ];
+
+    it('is EXACTLY the four app-storage scopes — no more, no fewer', () => {
+      expect([...APP_STORAGE_SCOPES].sort()).toEqual([...EXPECTED_APP_STORAGE].sort());
+    });
+
+    it('every member is a currently-known block scope', () => {
+      for (const scope of APP_STORAGE_SCOPES) expect(isKnownBlockScope(scope)).toBe(true);
+    });
+
+    // The derivation, not the literal: `collections:*` and `posts:write:self` are also
+    // SKIP_OAUTH_CHECK, so a set derived from that sentinel would over-capture scopes whose
+    // routes DO read `req.blockClaims` and work fine on an OAuth token. Pinned because
+    // that is the tempting wrong derivation.
+    it('does NOT include the other SKIP_OAUTH_CHECK scopes', () => {
+      for (const scope of ['collections:read:self', 'collections:read:private']) {
+        expect(BLOCK_SCOPE_TO_OAUTH_BIT[scope]).toBe(SKIP_OAUTH_CHECK);
+        expect(APP_STORAGE_SCOPES).not.toContain(scope);
+      }
+    });
+
+    // `manifestWantsOauthToken` lives here (not in `~/server/services/blocks/
+    // block-oauth-scope`, which now re-exports it) so the client-bundled manifest validator
+    // can read it without pulling a `~/server/**` module into the browser bundle. This suite
+    // covers the DEFINITION; the re-export is exercised by
+    // `server/services/blocks/__tests__/block-oauth-scope.test.ts`, which imports it from
+    // there and must stay green — that pair is what keeps the mint's predicate and the
+    // manifest gate's predicate the same function.
+    describe('manifestWantsOauthToken', () => {
+      it('is true only for auth === "oauth"', () => {
+        expect(manifestWantsOauthToken({ auth: 'oauth' })).toBe(true);
+        expect(manifestWantsOauthToken({ auth: 'block-token' })).toBe(false);
+        expect(manifestWantsOauthToken({})).toBe(false);
+        expect(manifestWantsOauthToken(null)).toBe(false);
+        expect(manifestWantsOauthToken(undefined)).toBe(false);
+        // Not a loose truthiness or case-insensitive test.
+        expect(manifestWantsOauthToken({ auth: 'OAuth' })).toBe(false);
+        expect(manifestWantsOauthToken({ auth: true })).toBe(false);
+      });
+    });
+
+    describe('appStorageScopesIn', () => {
+      it('returns the storage scopes in DECLARATION order', () => {
+        expect(
+          appStorageScopesIn(['apps:storage:shared:read', 'models:read:self', 'apps:storage:write'])
+        ).toEqual(['apps:storage:shared:read', 'apps:storage:write']);
+      });
+
+      it('returns [] for a manifest declaring no storage scope', () => {
+        expect(appStorageScopesIn(['models:read:self', 'collections:read:self'])).toEqual([]);
+      });
+
+      // Non-strings are the upstream per-element check's business, not this predicate's —
+      // otherwise one malformed entry produces two unrelated errors.
+      it('ignores non-string entries instead of throwing or reporting them', () => {
+        expect(appStorageScopesIn([null, 42, { scope: 'apps:storage:read' }, undefined])).toEqual(
+          []
+        );
+      });
+
+      // `apps:storage` (no trailing colon) and `apps:storage:readx` are NOT members, so a
+      // prefix predicate that used `includes`/a loose match would be caught here.
+      it('matches the vocabulary, not a loose prefix', () => {
+        expect(
+          appStorageScopesIn(['apps:storage', 'apps:storage:readx', 'x:apps:storage:read'])
+        ).toEqual([]);
+      });
+    });
   });
 
   describe('SENSITIVE_BLOCK_SCOPES / isSensitiveBlockScope', () => {
@@ -209,9 +301,7 @@ describe('block-scope.constants', () => {
 
   describe('assertSensitiveScopesJustified + sensitiveScopeJustificationError', () => {
     it('throws the scope-named message for an unjustified sensitive scope', () => {
-      expect(() =>
-        assertSensitiveScopesJustified({ scopes: ['ai:write:budgeted'] })
-      ).toThrow(
+      expect(() => assertSensitiveScopesJustified({ scopes: ['ai:write:budgeted'] })).toThrow(
         'sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ai:write:budgeted'
       );
     });
@@ -234,9 +324,7 @@ describe('block-scope.constants', () => {
     });
 
     it('does NOT throw for non-sensitive-only scopes', () => {
-      expect(() =>
-        assertSensitiveScopesJustified({ scopes: ['models:read:self'] })
-      ).not.toThrow();
+      expect(() => assertSensitiveScopesJustified({ scopes: ['models:read:self'] })).not.toThrow();
     });
 
     it('sensitiveScopeJustificationError formats the exact submit/validate message', () => {
@@ -274,11 +362,7 @@ describe('block-scope.constants', () => {
     });
 
     it('rejects the removed decorative scopes as unknown', () => {
-      for (const removed of [
-        'media:read:owned',
-        'block:settings:read',
-        'block:settings:write',
-      ]) {
+      for (const removed of ['media:read:owned', 'block:settings:read', 'block:settings:write']) {
         const result = validateBlockScopesAgainstOauthClient([removed], TokenScope.Full);
         expect(result.valid).toBe(false);
         expect(result.rejectedScopes).toEqual([removed]);
@@ -314,9 +398,9 @@ describe('block-scope.constants', () => {
 
   describe('deriveOauthBitmaskFromBlockScopes (audit A1/A3/A4 scope cap)', () => {
     it('ORs the OAuth bits of the declared scopes', () => {
-      expect(
-        deriveOauthBitmaskFromBlockScopes(['models:read:self', 'user:read:self'])
-      ).toBe(TokenScope.ModelsRead | TokenScope.UserRead);
+      expect(deriveOauthBitmaskFromBlockScopes(['models:read:self', 'user:read:self'])).toBe(
+        TokenScope.ModelsRead | TokenScope.UserRead
+      );
     });
 
     it('returns 0 for an empty / scope-less manifest (NOT Full)', () => {
@@ -326,18 +410,15 @@ describe('block-scope.constants', () => {
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
       // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
-      expect(
-        deriveOauthBitmaskFromBlockScopes([
-          'apps:storage:read',
-          'apps:storage:write',
-        ])
-      ).toBe(0);
+      expect(deriveOauthBitmaskFromBlockScopes(['apps:storage:read', 'apps:storage:write'])).toBe(
+        0
+      );
     });
 
     it('ignores unknown scopes', () => {
-      expect(
-        deriveOauthBitmaskFromBlockScopes(['models:read:self', 'not:a:scope'])
-      ).toBe(TokenScope.ModelsRead);
+      expect(deriveOauthBitmaskFromBlockScopes(['models:read:self', 'not:a:scope'])).toBe(
+        TokenScope.ModelsRead
+      );
     });
 
     it('the derived ceiling never grants more than the manifest declares', () => {
@@ -347,9 +428,7 @@ describe('block-scope.constants', () => {
       // (the ceiling == manifest bits), but a scope NOT in the manifest is
       // rejected when checked against that ceiling.
       expect(validateBlockScopesAgainstOauthClient(scopes, ceiling).valid).toBe(true);
-      expect(
-        validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid
-      ).toBe(false);
+      expect(validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid).toBe(false);
     });
   });
 });
