@@ -510,11 +510,17 @@ const CH_QUERY_SQL_SEPARATOR = '\nquery:';
  *
  * 🔴 WHAT REMAINS UNCOVERED: a syscall token that ClickHouse re-embeds into its exception
  * text WITHOUT quoting it is rejected by none of the four and is still classified
- * transient. Rule (a) cannot see it (it is before the separator), and rule (d) cannot see
- * it (it is not quoted). Pinned by a test in
- * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`. The
- * literal-phrase matches above get (a) only: they run on the truncated message, but carry
- * no prefix, identifier or quote boundary.
+ * transient, so a genuine query/schema fault fails soft instead of surfacing as the 500
+ * this predicate exists to preserve. Only reads through `$query` are exposed, because rule
+ * (b) requires that wrapper's prefix — a raw `client.insert` or `SimpleClickhouse.query`
+ * error carries none, so it stays a 500. Rule (a) cannot see the token (it is before the
+ * separator), and rule (d) cannot (it is not quoted). Pinned by two tests in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ * 🔴 Nor can a rule keyed on ClickHouse's own `DB::Exception:` marker — that is inert
+ * here, because `parseError` sets `.message` to the text BETWEEN `Exception: ` and the
+ * `(TYPE)` marker, so a well-formed server error reaches `$query` with the marker already
+ * stripped. The literal-phrase matches above get (a) only: they run on the truncated
+ * message, but carry no prefix, identifier or quote boundary.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.

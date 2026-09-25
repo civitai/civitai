@@ -266,19 +266,30 @@ describe('isClickHouseConnectionError — the syscall-spelling match must not fi
     }
   );
 
-  // 🔴 KNOWN GAP, PINNED. A syscall token ClickHouse re-embeds UNQUOTED into its own
-  // exception text is rejected by none of the four rules: it is before the `\nQuery:`
-  // separator so (a) cannot drop it, and it is unquoted so (d) cannot reject it. This
-  // asserts TRUE — current behaviour, not desired. If a rule ever covers it, flip this to
-  // false and drop the docblock note with it.
-  it('STILL matches (known gap) a query fault whose MESSAGE re-embeds the query with an UNQUOTED syscall token', () => {
-    expect(
-      isClickHouseConnectionError(
-        flattened(
-          'Missing columns: x while processing query: SELECT ECONNRESET FROM buzz_events',
-          'SELECT ECONNRESET FROM buzz_events'
-        )
-      )
-    ).toBe(true);
-  });
+  // 🔴 REGRESSION, PINNED — both shapes are FALSE at the merge base `ba6ce2b835`, before
+  // the message-text syscall route existed. Rules (a) and (d) cannot see an UNQUOTED
+  // syscall token ClickHouse re-embeds in its own exception text; why a
+  // `DB::Exception:`-keyed fifth rule cannot close it either is in the docblock on
+  // isClickHouseConnectionError. Both assert TRUE — current behaviour, not desired. If a
+  // rule ever covers them, flip to false and drop the docblock note with it.
+  it.each([
+    [
+      'the echoed query is unquoted (constructed)',
+      'Missing columns: x while processing query: SELECT ECONNRESET FROM buzz_events',
+    ],
+    // Shaped as parseError leaves a `Code: 47` naming a syscall-spelled column. Rule (d)
+    // rejects both quoted `'ECONNRESET'`s; the same token is space-flanked inside the
+    // echoed query, so the match succeeds there instead.
+    [
+      'the missing column IS the syscall name, echoed unquoted inside the quoted query',
+      "Missing columns: 'ECONNRESET' while processing query: 'SELECT ECONNRESET FROM buzz_events', required columns: 'ECONNRESET'. ",
+    ],
+  ])(
+    'STILL matches (REGRESSION) a query fault re-embedding an UNQUOTED syscall token — %s',
+    (_name, message) => {
+      expect(
+        isClickHouseConnectionError(flattened(message, 'SELECT ECONNRESET FROM buzz_events'))
+      ).toBe(true);
+    }
+  );
 });
