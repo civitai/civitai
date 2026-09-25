@@ -2010,6 +2010,7 @@ model EntityModeration {
   triggeredLabels String[]               @default([])
   result          Json?
   contentHash     String?
+  nsfwLevel       Int?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
@@ -2021,6 +2022,17 @@ model EntityModeration {
   // manual migration and is not modeled here because Prisma does not
   // support partial indexes. See:
   // prisma/migrations/20260407111422_add_entity_moderation_retry_index/
+}
+
+model TextScanPrompt {
+  id          Int      @id @default(autoincrement())
+  key         String
+  content     String
+  note        String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  @@index([key, id(sort: Desc)])
 }
 
 enum ImageEngagementType {

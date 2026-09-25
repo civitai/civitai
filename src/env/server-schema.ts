@@ -391,6 +391,7 @@ export const serverSchema = z
     LOGGING: commaDelimitedStringArray(),
     IMAGE_SCANNING_CALLBACK: z.string().optional(),
     TEXT_MODERATION_CALLBACK: z.string().optional(),
+    TEXT_SCAN_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
     // Age-out threshold (minutes) for never-returning image scans. A scan verdict
     // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
