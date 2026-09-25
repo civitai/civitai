@@ -15,6 +15,7 @@ import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import {
   EntityAccessPermission,
   ModelSort,
@@ -229,14 +230,15 @@ export const getModelHandler = async ({
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    const now = new Date();
-    const filteredVersions = isOwner
-      ? model.modelVersions
-      : model.modelVersions.filter(
-          (version) =>
-            version.status === ModelStatus.Published &&
-            (!version.publishedAt || version.publishedAt <= now)
-        );
+    const filteredVersions = model.modelVersions.filter((version) =>
+      canViewModelVersionStatus({
+        viewer: ctx.user,
+        ownerId: model.user.id,
+        modelStatus: model.status,
+        versionStatus: version.status,
+        publishedAt: version.publishedAt,
+      })
+    );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {

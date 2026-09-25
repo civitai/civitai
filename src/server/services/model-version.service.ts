@@ -2872,6 +2872,7 @@ export const createModelVersionPostFromTraining = async ({
   // Create post:
   const post = await createPost({
     userId: user.id,
+    isModerator: user.isModerator,
     modelVersionId,
     publishedAt: now,
   });
