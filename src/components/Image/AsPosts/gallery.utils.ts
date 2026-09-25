@@ -7,6 +7,7 @@ type Model3DGallerySettingsResolved = {
   hiddenUsers: Array<{ id: number; username: string | null }>;
   hiddenTags: Array<{ id: number; name: string }>;
   hiddenImages: number[];
+  creatorHiddenUserIds?: number[];
 };
 
 /**

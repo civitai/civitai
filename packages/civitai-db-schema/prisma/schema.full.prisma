@@ -750,6 +750,18 @@ enum UserEngagementType {
   Block
 }
 
+/// Hidden from every gallery the creator owns, merged with each model's own gallerySettings.users.
+/// No relations to User on purpose: an FK locks "User" while it validates.
+model CreatorGalleryHiddenUser {
+  creatorId Int
+  userId    Int
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@id([creatorId, userId])
+  @@index([userId])
+}
+
 model UserEngagement {
   userId       Int
   user         User               @relation("engagingUsers", fields: [userId], references: [id], onDelete: Cascade)

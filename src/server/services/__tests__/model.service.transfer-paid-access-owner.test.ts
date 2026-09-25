@@ -1,6 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type * as ModelVersionService from '~/server/services/model-version.service';
+import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 
 /**
  * `PaidAccess.ownerId` is a denormalised copy of the model owner. It decides who generates free from a
@@ -32,7 +35,9 @@ const {
   mockQueueModelsIndex,
   mockBustDonationGoals,
   mockDeleteBasicDataForUser,
+  mockPreventModelLag,
 } = vi.hoisted(() => ({
+  mockPreventModelLag: vi.fn(async () => undefined),
   mockBustPaidAccessCache: vi.fn(),
   mockBustMvCache: vi.fn(),
   mockQueueModelsIndex: vi.fn(),
@@ -40,6 +45,10 @@ const {
   mockDeleteBasicDataForUser: vi.fn(),
 }));
 
+vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbLagHelpers>()),
+  preventReplicationLagBatch: mockPreventModelLag,
+}));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { cancellableQuery: vi.fn() },
   pgDbWrite: {},
@@ -144,7 +153,13 @@ function expectScopedToTransfer(statement: RawCall) {
   expect(valueAfter(statement, /"userId"\s*<>\s*$|"ownerId"\s*<>\s*$/)).toBe(TARGET_USER_ID);
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
+  // A gallery-settings bust schedules a second delete; a real timer could land in a later test.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   // The hoisted spies live for the whole file — without this their call counts accumulate across
   // tests, and toHaveBeenCalledExactlyOnceWith is the assertion that notices.
   vi.clearAllMocks();
@@ -298,6 +313,43 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     expect(mockQueueModelsIndex).toHaveBeenCalledWith(
       MODEL_IDS.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
+  });
+
+  it("busts each transferred model's gallery settings, which carry the owner's hidden list", async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(redisMock.redis.del.mock.calls.flatMap((call) => call[0])).toEqual(
+      expect.arrayContaining(MODEL_IDS.map((id) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`))
+    );
+  });
+
+  // The rebuild after that bust reads Model.userId; a replica still showing the previous owner
+  // would cache the previous owner's hidden list for a week.
+  it('flags the transferred models as freshly written before busting their gallery settings', async () => {
+    const order: string[] = [];
+    // Resolves a macrotask later, so a bust started alongside it rather than after it is seen first.
+    mockPreventModelLag.mockImplementation(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push('lag');
+    });
+    redisMock.redis.del.mockImplementation(async () => {
+      order.push('del');
+      return 0;
+    });
+
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(mockPreventModelLag).toHaveBeenCalledWith('model', MODEL_IDS);
+    expect(order.indexOf('lag')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('lag')).toBeLessThan(order.indexOf('del'));
   });
 
   it('moves DonationGoal.userId in the same transaction, on both target spellings', async () => {

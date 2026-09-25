@@ -185,7 +185,7 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { redis, REDIS_KEYS } from '../redis/client';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
@@ -2187,8 +2187,7 @@ export const updateGallerySettingsHandler = async ({
       id,
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
-    // Clear cache
-    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+    await bustModelGallerySettings([id]);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

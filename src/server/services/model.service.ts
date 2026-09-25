@@ -34,6 +34,7 @@ import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
+  preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
@@ -60,6 +61,10 @@ import {
   userModelCountCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  bustModelGallerySettings,
+  getCreatorGalleryHiddenUserIds,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
@@ -2284,7 +2289,7 @@ export async function applyModelFlagSideEffects({
   const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-  if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+  if (galleryBrowsingLevelChanged) await bustModelGallerySettings([id]);
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -4247,7 +4252,9 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
 
   const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings)
-    return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+    return fromJson<
+      Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & { creatorHiddenUserIds?: number[] }
+    >(cachedSettings);
 
   const model = await getModel({
     id: id,
@@ -4255,11 +4262,16 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   });
   if (!model) return null;
 
-  const settings = model.gallerySettings
-    ? await getGalleryHiddenPreferences({
+  let settings = null;
+  if (model.gallerySettings) {
+    const [preferences, creatorHiddenUserIds] = await Promise.all([
+      getGalleryHiddenPreferences({
         settings: model.gallerySettings as ModelGallerySettingsSchema,
-      })
-    : null;
+      }),
+      getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
+    ]);
+    settings = { ...preferences, creatorHiddenUserIds };
+  }
   await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
@@ -4645,7 +4657,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
-  await Promise.all(modelIds.map((id) => redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`)));
+  await bustModelGallerySettings(modelIds);
   return result;
 }
 
@@ -5543,6 +5555,10 @@ export async function transferModelOwnership({
       }).catch(() => null)
     );
 
+  // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
+  // and a replica still showing the previous owner would cache that owner's list for a week.
+  await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
+
   await Promise.all([
     // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it
     // holds Model.userId for a DAY, and hasEntityAccess grants "owners always have access" from it, so
@@ -5562,6 +5578,8 @@ export async function transferModelOwnership({
     // The gate row carries ownerId and the public donation goal carries userId, so both have to go.
     // bustMvCache busts the gate row too as of 868kwp6ne — this stays as the deliberate duplicate that
     // keeps the pair together, and a second bust of an already-busted key costs one SET.
+    // Built from the previous owner's creator-wide hidden list.
+    invalidation('bustModelGallerySettings', bustModelGallerySettings(modelIds)),
     invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
     invalidation(
       'bustPublicDonationGoals',
