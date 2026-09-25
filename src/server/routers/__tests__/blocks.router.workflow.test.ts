@@ -1,3 +1,4 @@
+import { blockAuthorFeeQuotedCounter } from '~/server/prom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 // Type-only: names the shape `importOriginal()` returns for the step registry
@@ -147,8 +148,6 @@ const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
-import { blockAuthorFeeQuotedCounter } from '~/server/prom/client';
-
 vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
   recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
   recordBlockPostSubjectRefusal: () => undefined,
@@ -8018,6 +8017,37 @@ describe("step-type registry bridge (kind: 'step')", () => {
         body: { kind: 'step' as const, step: HIGH_ESTIMATE_STEP_ID, params: { pricey: true } },
       });
       expect(estimate.snapshot.cost.total).toBe(9);
+    });
+
+    // 🔴 THE SECOND ESTIMATE CALL SITE. The guard above `blocks.estimateWorkflow`
+    // drives the `textToImage` branch, which reaches ONE of the two router sites
+    // that quote the author fee. A round-2 audit mutated the OTHER one — the
+    // `kind:'step'` branch — on its own and the whole suite stayed green at
+    // 486/486. The shared-constant import cannot catch that: it stops the
+    // constant DRIFTING, not a caller re-spelling the literal, which is exactly
+    // the reasoning that made the import insufficient for the first site.
+    //
+    // Consequence if it regresses: every registered-step estimate — an unbounded,
+    // unrate-limited `publicProcedure` surface — lands on
+    // `block_author_fee_quoted_total{surface="gating"}`, and the conversion ratio
+    // that counter exists for becomes meaningless.
+    it('a STEP estimate also reaches the fee quote as the disclosure surface', async () => {
+      vi.mocked(blockAuthorFeeQuotedCounter.inc).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(2, 2);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: SPLIT_FLOOR_STEP_ID, params: { cheap: true } },
+      });
+
+      const labels = vi
+        .mocked(blockAuthorFeeQuotedCounter.inc)
+        .mock.calls.map((c) => c[0] as Record<string, string>);
+      // Reachability control: if the step branch stopped quoting the fee at all,
+      // an empty set would make the `.every()` below vacuously true.
+      expect(labels.length).toBeGreaterThan(0);
+      expect(labels.every((l) => l.surface === 'disclosure')).toBe(true);
     });
 
     it('mirrors the submit’s max(floor, quoted) — a quote BELOW the floor never under-displays', async () => {

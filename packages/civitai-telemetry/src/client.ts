@@ -404,14 +404,30 @@ export const blockAuthorFeeBaseBuzzCounter = registerCounterWithLabels({
  * submit-time quote that actually gates and reserves, because their call volumes
  * differ by an unknown factor and summing them hides that.
  *
- * 🔴 `coarse_type` is the UNKNOWN label on every skip arm that returns before the
- * computation exists (flag-disabled, price-is-cap, base-unavailable) — the same
- * convention `blockAuthorFeeObservedCounter` already uses. It is not a defect and
- * it is not a spelling to "fix": on those arms the type genuinely is not known.
+ * 🔴 `coarse_type` HERE MEANS "NOT DERIVABLE", AND ON `blockAuthorFeeObservedCounter`
+ * IT MEANS "NOT YET COMPUTED". THE TWO COUNTERS DISAGREE — DO NOT JOIN THEM ON IT.
+ *
+ * This counter derives the label from the generation type ARGUMENT, so every arm
+ * carries the real type whenever one can be resolved — `flag-disabled`,
+ * `price-is-cap` and `base-unavailable` included. `unknown` here means the type
+ * itself did not resolve. `blockAuthorFeeObservedCounter` still reads its label
+ * off the COMPUTATION, so it emits `unknown` on its pre-computation arms even
+ * when the type was perfectly well known.
+ *
+ * ⚠️ An earlier revision of this paragraph asserted the opposite — that the two
+ * followed the same convention — and added "it is not a spelling to fix", which
+ * would have steered the next reader away from exactly this divergence. It was
+ * true when written and falsified by a later commit of the same PR, which is the
+ * one shape no delta round can see.
+ *
+ * THE CONCRETE HAZARD: joining the two series on `coarse_type` silently drops
+ * cap-priced and base-unavailable traffic, because the observed side buckets it
+ * under `unknown` while this side buckets it under the real type. Nothing errors.
+ * Reconcile on `outcome` instead, or widen the observed counter to match.
  */
 export const blockAuthorFeeQuotedCounter = registerCounterWithLabels({
   name: 'block_author_fee_quoted_total',
-  help: 'App Blocks author-fee quotes, by coarse generation type, outcome and surface (disclosure = the unbounded estimate path, gating = the submit-time quote)',
+  help: 'App Blocks author-fee quotes, by coarse generation type (unknown = the type did not resolve), outcome and surface (disclosure = the unbounded estimate path, gating = the submit-time quote)',
   labelNames: ['coarse_type', 'outcome', 'surface'] as const,
 });
 

@@ -158,7 +158,19 @@ export async function quoteBlockAuthorFee(args: {
   generationType: unknown;
   appId: string;
   viewerUserId: number;
-  /** Log-only; a whatIf has no workflow id, so callers pass a stable label. */
+  /**
+   * 🔴 NOT LOG-ONLY — AND IT SAID SO UNTIL A ROUND-2 AUDIT. This string has three
+   * readers: the log lines, the payee resolver (as `workflowId`), and — since the
+   * quote counter shipped — the `surface` LABEL on
+   * `block_author_fee_quoted_total`, which is derived from whether it equals
+   * `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL`.
+   *
+   * So do NOT re-spell it for log readability: an estimate caller that stops
+   * passing the estimate label moves its whole population onto the `gating`
+   * series. A whatIf has no workflow id, which is why callers pass a stable
+   * label at all; both estimate sites import the constant rather than spelling
+   * it, and both are pinned in `blocks.router.workflow.test.ts`.
+   */
   workflowLabel: string;
   /**
    * DISCLOSURE-ONLY caller: the result is shown to a viewer and then discarded,
@@ -203,12 +215,12 @@ export async function quoteBlockAuthorFee(args: {
   // 🔴 `surface` IS DERIVED FROM `workflowLabel`, NOT FROM `suppressQuoteLogs`,
   // AND AN EARLIER REVISION OF THIS LINE GOT IT WRONG IN A WAY THE TESTS COULD
   // NOT SEE. `suppressQuoteLogs` is set at ONE of the two estimate call sites
-  // (`blocks.router.ts:9444`) and NOT at the other (`:5492`), so deriving from it
+  // (the `kind:'step'` estimate) and NOT at the other (the workflow estimate), so deriving from it
   // reported a genuine estimate as `gating`. The tests passed because they
   // asserted the label against the flag the test itself passed — the
   // expectation was taken from the implementation rather than from the router.
   // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
-  // both gating sites (`:5935`, `:9740`), so it discriminates all four.
+  // both gating sites (the two submits), so it discriminates all four.
   //
   // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
   // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
@@ -224,7 +236,7 @@ export async function quoteBlockAuthorFee(args: {
   // level up. The coupling is now structural (a shared import) instead of a
   // sentence about a test.
   //
-  // The GATING side needs no such pin: both gating sites pass
+  // The GATING side needs no such pin: both gating sites (the two SUBMIT paths) pass
   // `blockExternalId`, which `composeBlockExternalId` /
   // `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating
   // caller cannot produce `'estimate'` by construction.

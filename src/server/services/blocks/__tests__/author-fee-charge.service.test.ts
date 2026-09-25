@@ -662,8 +662,8 @@ describe('author-fee charge telemetry', () => {
   // passed anyway, because they asserted the label against the flag the TEST had
   // passed: the expectation came from the implementation instead of from the
   // caller. These two constants are what `blocks.router.ts` actually passes.
-  const ROUTER_ESTIMATE_LABEL = 'estimate'; // :5492 and :9444
-  const ROUTER_GATING_LABEL = 'blk_ext_id_example'; // :5935 and :9740 pass the external id
+  const ROUTER_ESTIMATE_LABEL = 'estimate'; // both estimate sites: workflow + kind:'step'
+  const ROUTER_GATING_LABEL = 'blk_ext_id_example'; // both submit sites pass the external id
 
   it('labels an ESTIMATE quote as the disclosure surface', async () => {
     await quoteBlockAuthorFee(quoteArgs({ workflowLabel: ROUTER_ESTIMATE_LABEL }));
@@ -673,7 +673,7 @@ describe('author-fee charge telemetry', () => {
 
   it('labels an ESTIMATE as disclosure even when suppressQuoteLogs is NOT set', async () => {
     // 🔴 THE REGRESSION GUARD, and the one the old implementation failed. The
-    // router's `:5492` estimate site passes NO `suppressQuoteLogs`. Under the
+    // router's WORKFLOW estimate site passes NO `suppressQuoteLogs`. Under the
     // previous derivation this returned `gating` — a real estimate counted on the
     // wrong series, silently.
     await quoteBlockAuthorFee(
