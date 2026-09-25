@@ -95,6 +95,26 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
 
 export type ImageUploadRelayProducer = (typeof IMAGE_UPLOAD_RELAY_PRODUCERS)[number];
 
+/**
+ * The producers a CLIENT may declare — the two real upload paths, and nothing else.
+ *
+ * 🔴 A STRICT SUBSET OF THE LABEL SET, AND THE DISTINCTION IS LOAD-BEARING. `unknown` and
+ * `other` are the SERVER's buckets: `unknown` means "no header arrived", `other` means
+ * "something arrived that is not a declarable producer". A caller declaring either would be
+ * asserting a fact about the server's own reading, and `unknown` in particular is the row
+ * a rollout is graded on — `HELP` tells the reader to read a falling `unknown` as stale
+ * bundles clearing, so a client able to write to it can make a rollout look finished.
+ *
+ * ⚠ IT WAS NOT ALWAYS A SUBSET. The request parameter used to be typed to the full label
+ * union, so `postImageUploadRelay(file, { producer: 'unknown' })` type-checked and a
+ * request carrying `x-civitai-upload-producer: unknown` was accepted verbatim onto that
+ * row — while three comments and the ledger's own docstring claimed a new call site is
+ * "FORCED to reuse single_put or multipart to compile". It was not.
+ */
+export const CLIENT_DECLARABLE_PRODUCERS = ['single_put', 'multipart'] as const;
+
+export type ClientDeclarableProducer = (typeof CLIENT_DECLARABLE_PRODUCERS)[number];
+
 /** The bucket for a request that carried NO header. Named so no call site spells it twice. */
 export const UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER: ImageUploadRelayProducer = 'unknown';
 
@@ -105,8 +125,28 @@ export const OTHER_IMAGE_UPLOAD_RELAY_PRODUCER: ImageUploadRelayProducer = 'othe
  * A `Set`, not an object literal, for the same reason `sanitizeClientFailure` rebuilds
  * its result: an object lookup would answer truthy for `toString`, `constructor` and
  * `__proto__`, which are exactly the strings a caller would try.
+ *
+ * 🔴 Built from the CLIENT-DECLARABLE subset, not from the full label set — see that
+ * constant. The label set is what gets SEEDED; this is what gets ACCEPTED.
  */
-const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
+const CLIENT_DECLARABLE_SET: ReadonlySet<string> = new Set(CLIENT_DECLARABLE_PRODUCERS);
+
+/** The full LABEL set — what may be EMITTED, as opposed to what may be DECLARED. */
+const PRODUCER_LABEL_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
+
+/**
+ * Is this one of the metric's four label values?
+ *
+ * 🔴 NOT the same question as `sanitizeImageUploadRelayProducer`, and conflating them is a
+ * live defect rather than a style point. That function narrows CLIENT input, so it refuses
+ * the server's own buckets. This one narrows a value our OWN code already derived — which
+ * legitimately IS `unknown` whenever no header arrived. Running the client narrowing over
+ * it converted every stale-bundle rescue into `other`, i.e. it emptied the row the rollout
+ * is graded on. Measured the moment the client subset was introduced.
+ */
+export function isImageUploadRelayProducer(value: unknown): value is ImageUploadRelayProducer {
+  return typeof value === 'string' && PRODUCER_LABEL_SET.has(value);
+}
 
 /**
  * Narrow a caller-supplied header value to the closed set above.
@@ -182,8 +222,11 @@ export function sanitizeImageUploadRelayProducer(input: unknown): ImageUploadRel
   // Nothing arrived at all — the stale-bundle population. An empty STRING is not this: it
   // arrived, so it belongs in `other` with the rest of the unrecognised values.
   if (typeof value !== 'string') return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
-  // Something arrived and was not a member. A DIFFERENT fact, so a different bucket.
-  return PRODUCER_SET.has(value)
+  // Something arrived and is not a value a client may declare. A DIFFERENT fact from
+  // "nothing arrived", so a different bucket — and note the membership test is against the
+  // CLIENT-DECLARABLE subset, not the label set, so a caller sending the server's own
+  // `unknown` or `other` lands in `other` rather than writing to a server bucket.
+  return CLIENT_DECLARABLE_SET.has(value)
     ? (value as ImageUploadRelayProducer)
     : OTHER_IMAGE_UPLOAD_RELAY_PRODUCER;
 }

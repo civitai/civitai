@@ -20,7 +20,7 @@
 
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
-  type ImageUploadRelayProducer,
+  type ClientDeclarableProducer,
 } from '~/utils/image-upload-relay-producer';
 
 /**
@@ -55,10 +55,15 @@ const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
  * else's label silently, and TypeScript refusing to compile is a better reminder than a
  * comment. The server re-sanitises whatever arrives regardless — see
  * `~/utils/image-upload-relay-producer`.
+ *
+ * 🔴 Typed to `ClientDeclarableProducer`, the two real upload paths — NOT to the full label
+ * union. `unknown` and `other` are the server's own buckets, and `unknown` is the row a
+ * rollout is graded on; a caller able to declare it could make a rollout look finished.
+ * This used to accept the full union, so that call compiled.
  */
 export function postImageUploadRelay(
   file: File,
-  opts: { signal: AbortSignal; producer: ImageUploadRelayProducer }
+  opts: { signal: AbortSignal; producer: ClientDeclarableProducer }
 ): Promise<Response> {
   return fetch(IMAGE_UPLOAD_RELAY_PATH, {
     method: 'POST',

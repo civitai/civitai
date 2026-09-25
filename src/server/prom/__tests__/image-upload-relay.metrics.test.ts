@@ -198,13 +198,13 @@ describe('recordImageUploadRelay', () => {
     }
   });
 
-  it('🔴 NARROWS an unknown producer to `unknown` instead of dropping the increment', async () => {
+  it('🔴 NARROWS an unrecognised producer to a bucket instead of dropping the increment', async () => {
     // 🔴 THE ASYMMETRY WITH THE CASE ABOVE, AND IT IS DELIBERATE. An outcome is
-    // code-owned, so an unrecognised one is our own defect and is dropped. A producer is
-    // CALLER-owned, so an unrecognised one is ordinary traffic — a stale bundle, a future
-    // client, or someone poking at the route — and dropping the increment would mean a
-    // caller could choose not to be counted. That breaks the counter's load-bearing
-    // property that `sum()` equals the route's invocation count.
+    // code-owned, so an unrecognised one is our own defect and is dropped. A producer
+    // reaching the emitter is code-owned too, but dropping it would cost the counter's
+    // load-bearing property that `sum()` equals the route's invocation count — the header
+    // it came from is caller-supplied, so a drop would mean a caller could choose not to be
+    // counted. It is bucketed instead.
     //
     // Both halves are asserted: the invocation IS counted, and it is counted on the
     // `unknown` series rather than on an invented one.
@@ -217,12 +217,14 @@ describe('recordImageUploadRelay', () => {
     expect(rows).toHaveLength(
       IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
     );
-    // The two STRINGS that arrived but are not members land in `other` — including the
-    // empty one, which arrived carrying nothing rather than not arriving. `undefined` is
-    // the only one where nothing arrived, so it is the only `unknown`. Both are
-    // narrowings; neither is a drop.
-    expect((await seriesForProducer('other')).success).toBe(2);
-    expect((await seriesForProducer('unknown')).success).toBe(1);
+    // 🔴 ALL THREE land in `other`, and the reason is a distinction this module had to
+    // learn the hard way. The emitter's input is SERVER-derived — the route has already
+    // sanitised the header — so a value that is not one of the four labels is OUR defect,
+    // not a statement about the request. It must not land in `unknown`, which means "the
+    // request carried no header" and is the row a rollout is graded on: letting our bugs
+    // into it would inflate exactly the number someone reads as "stale bundles".
+    expect((await seriesForProducer('other')).success).toBe(3);
+    expect((await seriesForProducer('unknown')).success).toBe(0);
     // And nowhere else: a narrowing that also leaked onto a real producer would make the
     // multipart figure include traffic that never came from it.
     expect((await seriesForProducer('multipart')).success).toBe(0);

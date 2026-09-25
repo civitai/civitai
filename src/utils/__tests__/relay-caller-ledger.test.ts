@@ -12,9 +12,11 @@ import { describe, expect, it } from 'vitest';
  * attributable entirely to the older single-PUT path, and grading the newer multipart path
  * on it returned a confident false positive. Every other guard around that change bounds
  * ONE component. None of them can see a THIRD caller appear — and a third caller is how
- * the defect comes back, because `postImageUploadRelay`'s `producer` parameter is typed to
- * the label union, so a new call site is FORCED to reuse `single_put` or `multipart` to
- * compile and its traffic is then added to a row someone is already grading.
+ * the defect comes back: `postImageUploadRelay`'s `producer` parameter is typed to the
+ * CLIENT-DECLARABLE producers, so a new call site must reuse `single_put` or `multipart` to
+ * compile and its traffic is then added to a row someone is already grading. (⚠ That
+ * parameter used to be typed to the full LABEL union, which made this sentence false — a
+ * caller could declare `unknown`, the row a rollout is graded on.)
  *
  * 🔴 IT LEDGERS REFERENCES, NOT CALL SHAPES — and that is the whole design, arrived at the
  * hard way. Three earlier versions tried to recognise a CALL: first by text
@@ -41,15 +43,25 @@ import { describe, expect, it } from 'vitest';
  * green while omitting one of the two callers this entire change is about — and a planted
  * third caller written the same way was invisible.
  *
- * THE RULE, so the next entry point does not repeat it: every EXPORTED function in the
- * helper module that transitively reaches the relay `fetch` is an entry point and belongs
- * in `HELPER_EXPORTS`. Adding one without adding it here silently reopens this hole.
+ * THE RULE: every EXPORTED function in the helper module that transitively reaches the
+ * relay `fetch` is an entry point and belongs in `HELPER_EXPORTS`. ⚠ That sentence used to
+ * be the WHOLE fix, and prose is not a guard — measured, adding a third export plus a
+ * consumer importing only it left every test green. It is now ENFORCED: the module's
+ * exports are enumerated from the AST, and each must be classified as an entry point or
+ * listed in `HELPER_NON_ENTRY_POINTS` with a reason. Adding any export fails until the
+ * author decides which it is.
  *
- *   1. the set of production modules that reference the helper, or name the path in code,
- *      is exactly the ledger; and
- *   2. inside the helper module, there is exactly ONE `fetch(` — which is what stops a
- *      SECOND relay request being written there using the module-local path constant, a
- *      shape that referenced nothing new and escaped the previous version.
+ *   1. the set of production modules that reference an entry point, or name the path in
+ *      code, is exactly the ledger;
+ *   2. the helper module names its path constant exactly twice — its declaration and its
+ *      one use — which is what stops a SECOND relay request being written there using that
+ *      constant, a shape that references nothing new; and
+ *   3. every export of the helper module is classified, so `HELPER_EXPORTS` cannot silently
+ *      fall behind the module it describes.
+ *
+ * ⚠ (2) bounds USES OF THE CONSTANT, not requests: a one-line `relayUrl()` indirection
+ * keeps the count at two while adding a second request. What bounds requests is (3) — the
+ * second request has to be exported to be reachable, and an unclassified export fails.
  *
  * It answers "who CAN reach the relay", never "with what arguments" — so it is
  * deliberately silent about which producer each caller declares. That claim is behavioural
@@ -94,13 +106,49 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
  */
 const ROOTS = ['src', 'apps', 'packages', 'scripts'];
 
+/** Generated trees, some of which exist only on a developer's machine. */
+const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', '.svelte-kit', 'coverage', '.turbo']);
+
 const HELPER_MODULE = 'src/utils/upload-settlement.ts';
 /**
  * Every exported name in the helper module that reaches the relay. See the entry-points
  * note in the file docstring — this list being short by one is what let the real multipart
  * caller sit outside the ledger.
+ *
+ * 🔴 THE TWO EXPORTS DELIBERATELY *NOT* HERE, recorded so the completeness question does
+ * not have to be re-derived — and so that if either changes shape, the reasoning is on
+ * record to be re-checked rather than assumed:
+ *
+ *   `relayWithRetry` and `attachUploadSettlement` both take the request as a CALLBACK
+ *   PARAMETER. Neither reaches the relay on its own; whatever the caller hands them must
+ *   itself name an entry point or write the path, and that caller is what this ledger
+ *   sees. They are plumbing around a request, not a way to make one.
+ *
+ * So the test is not "is it exported from this module" but "can calling it, with arguments
+ * that name nothing relay-specific, produce a relay request". If either of those two ever
+ * gains a default that builds the request itself, it becomes an entry point.
  */
 const HELPER_EXPORTS = ['postImageUploadRelay', 'relayImageFallback'];
+
+/**
+ * Every OTHER export of the helper module, each with the reason it is not an entry point.
+ *
+ * 🔴 THIS EXISTS SO `HELPER_EXPORTS` CANNOT GO STALE, and it is the fix for the defect that
+ * produced two review rounds in a row. Round 5 found the list short by one. Round 6
+ * lengthened it and wrote the rule above in PROSE — and then measured that adding a third
+ * export plus a consumer importing only that name left every test green. A convention both
+ * sites have to remember is exactly what this file's own argument says is not a guard, and
+ * `HELPER_EXPORTS` had become one.
+ *
+ * So the module's exports are enumerated from the AST and every one must appear in this map
+ * or in `HELPER_EXPORTS`. Adding ANY export to the helper module now fails until the author
+ * classifies it — which is the moment to ask whether it reaches the relay.
+ */
+const HELPER_NON_ENTRY_POINTS: Record<string, string> = {
+  attachUploadSettlement: 'takes the relay as a callback parameter; makes no request itself',
+  relayWithRetry: 'takes the request as a callback parameter; retries whatever it is handed',
+  MAX_RETRY_AFTER_SECONDS: 'a number constant; nothing callable, so it makes no request',
+};
 const RELAY_PATH = '/api/v1/image-upload/relay';
 /**
  * The tail, DERIVED rather than re-typed, so a route rename cannot leave two spellings
@@ -174,8 +222,10 @@ function walkFiles(dir: string, out: string[]): string[] {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === '.next' || entry.name === 'dist')
-        continue;
+      // Generated trees. `.svelte-kit`, `coverage` and `.turbo` are gitignored, so they
+      // exist on a developer's machine and not in a fresh checkout — without them the
+      // sweep's population differs between the two, silently.
+      if (SKIP_DIRS.has(entry.name)) continue;
       walkFiles(full, out);
       // Not just `.ts(x)`: `apps/` is SvelteKit, so a workspace app would reach the relay
       // from a `<script>` block, and `.mjs`/`.js` exist under `packages/`. A `.svelte` file
@@ -197,7 +247,11 @@ function walkFiles(dir: string, out: string[]): string[] {
  * excluding only the directory leaves the colocated ones scanned.
  */
 function isProductionFile(rel: string): boolean {
-  return !rel.includes('__tests__') && !/\.(test|spec)\.tsx?$/.test(rel);
+  // ⚠ The spec regex must cover every extension `walkFiles` admits. It said `tsx?$` while
+  // the walker had been widened to `.js`/`.mjs`/`.svelte`, so a COLOCATED `*.test.js`
+  // naming the helper was reported as a production caller — a false red naming a caller
+  // that does not exist, which is the failure mode this file elsewhere says to avoid.
+  return !rel.includes('__tests__') && !/\.(test|spec)\.(tsx?|jsx?|mjs|cjs)$/.test(rel);
 }
 
 /**
@@ -258,6 +312,42 @@ function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: nu
   return { helper, pathLiterals };
 }
 
+/**
+ * Every VALUE exported by a module — functions, consts, classes; not types.
+ *
+ * Types are excluded because a type cannot make a request, and including them would make
+ * the classification map a list of names with no bearing on reachability.
+ */
+function exportedValueNames(sf: ts.SourceFile): string[] {
+  const names: string[] = [];
+  const isExported = (node: ts.Node): boolean =>
+    !!ts.getCombinedModifierFlags(node as ts.Declaration).valueOf() &&
+    (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && isExported(node)) {
+      names.push(node.name.text);
+    }
+    if (ts.isClassDeclaration(node) && node.name && isExported(node)) {
+      names.push(node.name.text);
+    }
+    if (ts.isVariableStatement(node) && isExported(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) names.push(decl.name.text);
+      }
+    }
+    // `export { a, b }` — a re-export of local bindings.
+    if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
+      for (const el of node.exportClause.elements) {
+        if (!el.isTypeOnly && !node.isTypeOnly) names.push(el.name.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return names;
+}
+
 /** How many times this module names `IMAGE_UPLOAD_RELAY_PATH`. See `EXPECTED_HELPER_PATH_REFS`. */
 function countPathConstantRefs(sf: ts.SourceFile): number {
   let count = 0;
@@ -275,6 +365,7 @@ function scan(): {
   referencing: string[];
   candidates: string[];
   helperPathRefs: number;
+  helperExportNames: string[];
   pathLiteralsByFile: Record<string, number>;
 } {
   const files: string[] = [];
@@ -284,6 +375,7 @@ function scan(): {
   const candidates: string[] = [];
   const pathLiteralsByFile: Record<string, number> = {};
   let helperPathRefs = -1;
+  let helperExportNames: string[] = [];
   for (const abs of files) {
     const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
     if (!isProductionFile(rel)) continue;
@@ -296,13 +388,16 @@ function scan(): {
     const { helper, pathLiterals } = referencesRelay(sf);
     if (helper || pathLiterals > 0) referencing.push(rel);
     if (pathLiterals > 0) pathLiteralsByFile[rel] = pathLiterals;
-    if (rel === HELPER_MODULE) helperPathRefs = countPathConstantRefs(sf);
+    if (rel === HELPER_MODULE) {
+      helperPathRefs = countPathConstantRefs(sf);
+      helperExportNames = exportedValueNames(sf);
+    }
   }
-  return { referencing, candidates, helperPathRefs, pathLiteralsByFile };
+  return { referencing, candidates, helperPathRefs, helperExportNames, pathLiteralsByFile };
 }
 
 describe('the relay caller ledger', () => {
-  const { referencing, candidates, helperPathRefs, pathLiteralsByFile } = scan();
+  const { referencing, candidates, helperPathRefs, helperExportNames, pathLiteralsByFile } = scan();
 
   it('finds EVERY module that can reach the relay, and none outside the ledger', () => {
     expect(referencing.sort()).toEqual([...CALLER_LEDGER].sort());
@@ -337,8 +432,64 @@ describe('the relay caller ledger', () => {
     expect(
       helperPathRefs,
       `${HELPER_MODULE} must name ${HELPER_PATH_CONSTANT} exactly ${EXPECTED_HELPER_PATH_REFS} ` +
-        `times (its declaration, and the one request it builds)`
+        `times (its declaration, and its one use)`
     ).toBe(EXPECTED_HELPER_PATH_REFS);
+  });
+
+  it('🔴 forces EVERY helper-module export to be classified as an entry point or not', () => {
+    // 🔴 THE DRIFT GUARD ON `HELPER_EXPORTS`, and the reason this file stopped relying on a
+    // prose rule. Measured before it existed: adding a third export to the helper module
+    // and a consumer importing only that name left all seven tests green — which is round
+    // 5's finding reproduced by the single edit the rule predicted. A convention both sites
+    // must remember is what this file's own argument calls not-a-guard.
+    //
+    // Asserted as an exact SET so it fails when an export is ADDED (unclassified, and the
+    // author is made to decide whether it reaches the relay) and when one is REMOVED (a
+    // stale entry pointing at nothing).
+    const classified = [...HELPER_EXPORTS, ...Object.keys(HELPER_NON_ENTRY_POINTS)].sort();
+    expect(
+      [...helperExportNames].sort(),
+      `every value export of ${HELPER_MODULE} must be listed in HELPER_EXPORTS (it reaches ` +
+        `the relay) or in HELPER_NON_ENTRY_POINTS (with the reason it does not)`
+    ).toEqual(classified);
+
+    // A name cannot be in both — that would read as "it is an entry point" and "here is why
+    // it is not" at once.
+    for (const entry of HELPER_EXPORTS) {
+      expect(
+        HELPER_NON_ENTRY_POINTS[entry],
+        `"${entry}" is listed as an entry point AND as a non-entry-point`
+      ).toBeUndefined();
+    }
+    // Every reason is a real sentence, not an empty string standing in for one.
+    for (const [name, reason] of Object.entries(HELPER_NON_ENTRY_POINTS)) {
+      expect(reason.length, `"${name}" needs a reason, not a placeholder`).toBeGreaterThan(10);
+    }
+  });
+
+  it('POSITIVE CONTROL: the export scan sees exports written in every shape', () => {
+    // 🔴 Without this the classification assertion is satisfiable by an export scan that
+    // sees nothing: an empty set compared against an empty classification. Each shape below
+    // is one the helper module could legitimately use.
+    const shapes: [string, string, string[]][] = [
+      ['function declaration', 'export function a() {}', ['a']],
+      ['const arrow', 'export const b = () => 1;', ['b']],
+      ['const value', 'export const c = 3;', ['c']],
+      ['multi declarator', 'export const d = 1, e = 2;', ['d', 'e']],
+      ['class', 'export class F {}', ['F']],
+      ['named re-export of locals', 'const g = 1;\nexport { g };', ['g']],
+      ['async function', 'export async function h() {}', ['h']],
+    ];
+    for (const [name, source, expected] of shapes) {
+      expect(exportedValueNames(parse('src/x.ts', source)).sort(), `shape "${name}"`).toEqual(
+        expected.sort()
+      );
+    }
+    // And a TYPE export is not a value — including it would make the map a list of names
+    // with no bearing on whether anything can reach the relay.
+    expect(exportedValueNames(parse('src/x.ts', 'export type T = string;'))).toEqual([]);
+    // The real module must produce a non-empty set, or the assertion above is vacuous.
+    expect(helperExportNames.length, 'the helper module must expose exports').toBeGreaterThan(1);
   });
 
   it('POSITIVE CONTROL: the sweep reaches real files and the parse finds real references', () => {
@@ -449,6 +600,26 @@ describe('the relay caller ledger', () => {
       // skips is still invisible in a real sweep.
       expect(isCandidateText(source), `shape "${name}" must survive the prefilter`).toBe(true);
     }
+  });
+
+  it('POSITIVE CONTROL: a colocated spec is excluded in EVERY extension the walker admits', () => {
+    // 🔴 THE CONTROL FOR A LATENT FIX, and without it the fix is unverifiable. The walker
+    // was widened to `.js`/`.mjs`/`.svelte` while the spec regex still said `tsx?$`, so a
+    // colocated `*.test.js` naming the helper would be reported as a production caller — a
+    // false red naming a caller that does not exist. There is no such file in the tree
+    // today, so nothing in the sweep can see the regex being wrong: reverting it leaves
+    // every test green. Driving `isProductionFile` directly is what makes it observable.
+    //
+    // The pairing is the point — the same basename must be excluded as a spec and included
+    // as production, or an over-broad regex would satisfy the first half by excluding
+    // everything.
+    for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs']) {
+      expect(isProductionFile(`src/utils/thing.test.${ext}`), `*.test.${ext}`).toBe(false);
+      expect(isProductionFile(`src/utils/thing.spec.${ext}`), `*.spec.${ext}`).toBe(false);
+      expect(isProductionFile(`src/utils/thing.${ext}`), `production *.${ext}`).toBe(true);
+    }
+    // And the directory form, which is this repo's dominant convention.
+    expect(isProductionFile('src/utils/__tests__/thing.ts')).toBe(false);
   });
 
   it('POSITIVE CONTROL: prose and type positions are NOT references', () => {

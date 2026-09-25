@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CLIENT_DECLARABLE_PRODUCERS,
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   IMAGE_UPLOAD_RELAY_PRODUCERS,
   OTHER_IMAGE_UPLOAD_RELAY_PRODUCER,
@@ -22,11 +23,14 @@ import {
  * deliberately broken sanitiser.
  */
 describe('sanitizeImageUploadRelayProducer', () => {
-  it('passes every declared producer through unchanged', () => {
+  it('passes every CLIENT-DECLARABLE producer through unchanged', () => {
     // The positive control. Without it, a sanitiser that returned `unknown`
     // unconditionally would satisfy every other case in this file — and would silently
     // erase the whole discriminator while leaving the counter looking healthy.
-    for (const producer of IMAGE_UPLOAD_RELAY_PRODUCERS) {
+    //
+    // ⚠ Iterates the DECLARABLE set, not the label set: the two server-only buckets are
+    // deliberately NOT passed through, which the case below pins.
+    for (const producer of CLIENT_DECLARABLE_PRODUCERS) {
       expect(sanitizeImageUploadRelayProducer(producer), producer).toBe(producer);
     }
   });
@@ -103,6 +107,39 @@ describe('sanitizeImageUploadRelayProducer', () => {
     // rather than `other` — the same distinction the two buckets carry everywhere else.
     expect(sanitizeImageUploadRelayProducer([])).toBe('unknown');
     expect(sanitizeImageUploadRelayProducer([['multipart']])).toBe('unknown');
+  });
+
+  it('🔴 maps a client-declared SERVER bucket to `other` — those are not declarable', () => {
+    // 🔴 `unknown` and `other` are the server's own readings: `unknown` means "no header
+    // arrived", and it is the row a rollout is graded on — `HELP` tells the reader to read
+    // a falling `unknown` as stale bundles clearing. A caller able to write to it could
+    // make a rollout look finished. Neither is a value a client may declare, so a request
+    // carrying one is a header that ARRIVED and is not declarable: `other`.
+    //
+    // ⚠ This was accepted verbatim until a round-6 review measured it. The request
+    // parameter was typed to the full LABEL union, so `producer: 'unknown'` type-checked
+    // AND the sanitiser's membership test was against the label set, so it passed through
+    // onto that row — while three comments and the caller ledger's docstring all claimed a
+    // new call site is "FORCED to reuse single_put or multipart to compile".
+    expect(sanitizeImageUploadRelayProducer('unknown')).toBe('other');
+    expect(sanitizeImageUploadRelayProducer('other')).toBe('other');
+    expect(sanitizeImageUploadRelayProducer(['unknown'])).toBe('other');
+  });
+
+  it('accepts exactly the CLIENT-DECLARABLE producers, and nothing else in the label set', () => {
+    // The relationship, not two independent facts: the accept set is a strict subset of the
+    // label set, and every label outside it is refused. A future producer added to the
+    // label set without being made declarable is caught here rather than passing through.
+    for (const p of CLIENT_DECLARABLE_PRODUCERS) {
+      expect(sanitizeImageUploadRelayProducer(p), p).toBe(p);
+    }
+    const serverOnly = (IMAGE_UPLOAD_RELAY_PRODUCERS as readonly string[]).filter(
+      (p) => !(CLIENT_DECLARABLE_PRODUCERS as readonly string[]).includes(p)
+    );
+    expect(serverOnly.length, 'there must BE server-only buckets, or this asserts nothing').toBe(2);
+    for (const p of serverOnly) {
+      expect(sanitizeImageUploadRelayProducer(p), p).toBe('other');
+    }
   });
 
   it('cannot be walked through a prototype key', () => {

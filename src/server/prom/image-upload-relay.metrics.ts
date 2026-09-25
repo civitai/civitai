@@ -87,7 +87,8 @@
 import client, { type Counter, type Registry } from 'prom-client';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCERS,
-  sanitizeImageUploadRelayProducer,
+  OTHER_IMAGE_UPLOAD_RELAY_PRODUCER,
+  isImageUploadRelayProducer,
   type ImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
 
@@ -271,7 +272,15 @@ export function recordImageUploadRelay(
     // invocation. Re-sanitised here rather than trusting the call site, so the bound
     // holds for every caller including a future one: see
     // `~/utils/image-upload-relay-producer`.
-    const safeProducer = sanitizeImageUploadRelayProducer(producer);
+    // 🔴 NARROWED AGAINST THE LABEL SET, NOT THE CLIENT-DECLARABLE ONE. This value is
+    // server-derived — the route has already sanitised the header — so it legitimately IS
+    // `unknown` whenever no header arrived, which is most traffic during a rollout. Running
+    // the CLIENT narrowing here (which refuses the server's own buckets, correctly, for a
+    // header) rewrote every one of those to `other` and emptied the row the rollout is read
+    // from. Measured the moment the client subset was introduced.
+    const safeProducer = isImageUploadRelayProducer(producer)
+      ? producer
+      : OTHER_IMAGE_UPLOAD_RELAY_PRODUCER;
     const { imageUploadRelayTotal } = ensureRegisterImageUploadRelayMetrics();
     imageUploadRelayTotal.inc({ outcome, producer: safeProducer });
   } catch {
