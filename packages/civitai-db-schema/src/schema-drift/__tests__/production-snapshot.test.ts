@@ -179,4 +179,53 @@ describe('production catalog snapshot (2026-08-03)', () => {
       expect.arrayContaining(['QuestionRank', 'AnswerRank'])
     );
   });
+
+  /**
+   * How much of the schema this pair says NOTHING about.
+   *
+   * 45 of 316 models take the skip branch and are compared on nothing — no column, no
+   * relation, no unique declaration. `assessCoverage` does not object, correctly: its
+   * threshold is half the relations, and this is 64 of 512. So the number is real, tolerable,
+   * and was invisible in every output the tool produced until it was printed.
+   *
+   * Not pinned exactly, for the reason stated at the top of this file: a model added tomorrow
+   * is on a table this frozen snapshot does not have, so the count only grows.
+   */
+  it('says how much of the schema it compared nothing about', () => {
+    expect(report.skippedModels.length).toBeGreaterThanOrEqual(45);
+    expect(report.skippedModels.length).toBeLessThan(schema.models.length / 2);
+  });
+
+  /**
+   * 🔴 THIS SNAPSHOT CANNOT TELL A VIEW FROM AN ABSENT TABLE, and that is what the zero
+   * below means. It carries no `views` key, so every skip is `unclassified` and
+   * `missing-table` cannot fire at all — the zero is "not measured", not "clean".
+   *
+   * Measured against production on 2026-08-24, those 45 split 24 views / 21 ordinary tables
+   * that exist right now and are missing only because this capture is 21 days old. So a
+   * recapture is what turns this assertion from a zero into 21 findings; if you are here
+   * because this test failed after recapturing, that is the tool working.
+   */
+  it('reports no missing tables, because this snapshot cannot say', () => {
+    expect(catalog.views).toBeUndefined();
+    expect(report.counts.modelsUnclassified).toBe(report.skippedModels.length);
+    expect(report.counts.missingTables).toBe(0);
+    expect(found('missing-table')).toEqual([]);
+  });
+
+  /**
+   * The positive control on the zero above, and the reason it is not vacuous: the same
+   * schema against the same catalog WITH a view list reports the absent tables. Without
+   * this, `missing-table: 0` would be indistinguishable from a differ that never emits one.
+   */
+  it('does report them once the snapshot can say (positive control)', () => {
+    const classified = compareSchemaToCatalog(schema, { ...catalog, views: ['QuestionRank'] });
+    expect(classified.counts.missingTables).toBeGreaterThan(20);
+    expect(classified.counts.modelsUnclassified).toBe(0);
+    // Named as a view, so it is skipped rather than reported — the discriminator is the list,
+    // not the table's name or its shape.
+    expect(
+      classified.findings.filter((f) => f.kind === 'missing-table').map((f) => f.table)
+    ).not.toContain('QuestionRank');
+  });
 });
