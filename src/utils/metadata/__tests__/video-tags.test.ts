@@ -56,10 +56,9 @@ const box = (type: string | Uint8Array, ...body: Uint8Array[]) => {
 };
 const ftyp = box('ftyp', encode('isom\0\0\0\0isom'));
 
-function mp4WithTags(
-  tags: [name: string, value: string, dataType?: number][],
-  { fullBox = true, inUdta = true } = {}
-) {
+type Mp4Tag = [name: string, value: string, dataType?: number];
+
+function mdtaMeta(tags: Mp4Tag[], fullBox = true) {
   const keyEntries = tags.map(([name]) => {
     const key = encode(`mdta${name}`);
     return concat(u32(4 + key.length), key);
@@ -69,13 +68,11 @@ function mp4WithTags(
     box(u32(i + 1), box('data', u32(dataType), new Uint8Array(4), encode(value)))
   );
   const hdlr = box('hdlr', new Uint8Array(8), encode('mdta'), new Uint8Array(13));
-  const meta = box(
-    'meta',
-    ...(fullBox ? [new Uint8Array(4)] : []),
-    hdlr,
-    keys,
-    box('ilst', ...items)
-  );
+  return box('meta', ...(fullBox ? [new Uint8Array(4)] : []), hdlr, keys, box('ilst', ...items));
+}
+
+function mp4WithTags(tags: Mp4Tag[], { fullBox = true, inUdta = true } = {}) {
+  const meta = mdtaMeta(tags, fullBox);
   return concat(ftyp, box('moov', inUdta ? box('udta', meta) : meta));
 }
 // #endregion
@@ -249,7 +246,8 @@ describe('readVideoTags on hostile input', () => {
     const small = blob(mp4WithTags([['prompt', 'hello']]));
     expect(await readVideoTags(small)).toEqual({ prompt: 'hello' });
     const huge = 'x'.repeat(9 * 1024 * 1024);
-    expect(await readVideoTags(blob(mp4WithTags([['prompt', huge]])))).toEqual({});
+    // Keys, not the object: a failure would otherwise print the 9MB value.
+    expect(Object.keys(await readVideoTags(blob(mp4WithTags([['prompt', huge]]))))).toEqual([]);
   });
 
   it('ignores a matroska Tags element larger than the read cap', async () => {
@@ -257,7 +255,9 @@ describe('readVideoTags on hostile input', () => {
       prompt: 'hello',
     });
     const huge = 'x'.repeat(9 * 1024 * 1024);
-    expect(await readVideoTags(blob(webmWithTags(simpleTag('PROMPT', huge))))).toEqual({});
+    expect(Object.keys(await readVideoTags(blob(webmWithTags(simpleTag('PROMPT', huge)))))).toEqual(
+      []
+    );
   });
 
   it('ignores a tag nested past the depth limit', async () => {
@@ -295,6 +295,63 @@ describe('readVideoTags on hostile input', () => {
     );
     expect(await readVideoTags(file)).toEqual({});
     expect(file.slices).toBeLessThanOrEqual(WALKER_BUDGET + 5);
+  });
+
+  it('shares one budget between the top-level mp4 walk and the moov walk', async () => {
+    const frees = (n: number) => Array.from({ length: n }, () => box('free'));
+    const file = (before: number, inside: number) =>
+      concat(
+        ftyp,
+        ...frees(before),
+        box('moov', ...frees(inside), box('udta', mdtaMeta([['prompt', 'p']])))
+      );
+    expect(await readVideoTags(blob(file(6_000, 6_000)))).toEqual({});
+    expect(await readVideoTags(blob(file(100, 6_000)))).toEqual({ prompt: 'p' });
+    expect(await readVideoTags(blob(file(6_000, 100)))).toEqual({ prompt: 'p' });
+
+    const inUdta = (before: number, inside: number) =>
+      concat(
+        ftyp,
+        ...frees(before),
+        box('moov', box('udta', ...frees(inside), mdtaMeta([['prompt', 'p']])))
+      );
+    expect(await readVideoTags(blob(inUdta(6_000, 6_000)))).toEqual({});
+    expect(await readVideoTags(blob(inUdta(100, 6_000)))).toEqual({ prompt: 'p' });
+  });
+
+  it('reads the mdta meta after a keys-less meta in the same moov', async () => {
+    const hdlr = box('hdlr', new Uint8Array(8), encode('mdir'), new Uint8Array(13));
+    const itunesMeta = box('meta', new Uint8Array(4), hdlr, box('ilst'));
+    const file = concat(
+      ftyp,
+      box('moov', box('udta', itunesMeta), mdtaMeta([['prompt', 'second']]))
+    );
+    expect(await readVideoTags(blob(file))).toEqual({ prompt: 'second' });
+  });
+
+  it('reads nothing from an mp4 whose moov runs past end of file', async () => {
+    const whole = mp4WithTags([['prompt', 'cut']]);
+    const moovSize = new DataView(whole.buffer).getUint32(ftyp.length);
+    new DataView(whole.buffer).setUint32(ftyp.length, moovSize + 100);
+    expect(await readVideoTags(blob(whole))).toEqual({});
+  });
+
+  it('reads nothing from a matroska Tags element that runs past end of file', async () => {
+    const content = el(ID.tag, simpleTag('PROMPT', 'cut'));
+    const file = concat(
+      el(ID.ebml),
+      ID.segmentUnknownSize,
+      new Uint8Array(ID.tags),
+      vintSize(content.length + 50),
+      content
+    );
+    expect(await readVideoTags(blob(file))).toEqual({});
+  });
+
+  it('ignores a TagString that claims more bytes than its SimpleTag holds', async () => {
+    const overlong = concat(new Uint8Array(ID.tagString), vintSize(100), encode('hello'));
+    const file = webmWithTags(el(ID.simpleTag, el(ID.tagName, encode('PROMPT')), overlong));
+    expect(await readVideoTags(blob(file))).toEqual({});
   });
 
   it('walks past a valid 64-bit box to the tags after it', async () => {
