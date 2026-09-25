@@ -295,6 +295,37 @@ export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 const HEIGHT_MIN_FLOOR = 40;
 const HEIGHT_MAX_CEILING = 4000;
 
+// 🔴 A TIGHTER CEILING FOR `minHeight` ALONE, and the asymmetry is the point.
+//
+// `maxHeight` is a CEILING the publisher volunteers — a big one costs nothing,
+// because the host's own layers (HARD_HEIGHT_CEILING and the viewport clamp in
+// IframeHost's viewport clamp, added in #4589) bind below it. `minHeight` is a FLOOR the
+// host is obliged to honour: `Math.max(min, viewportBudget)` means a large
+// enough `minHeight` wins over the viewport outright, so at 4000 a single
+// schema-legal field reproduced exactly the defect the viewport clamp exists to
+// prevent — a 4000px slot on a 640px screen — with the clamp fully present.
+//
+// 800 rather than something tighter: measured against the complete approved
+// population (11 of 11 blocks, not a sample) the largest declared `minHeight` is
+// 700, so this rejects NOTHING that exists today and leaves headroom above it.
+// It bounds only what a FUTURE manifest can declare.
+//
+// 🔴 It does NOT make the viewport clamp a total bound, and must not be read as
+// doing so: 600/640/700 are all still legal and all still exceed the budget a
+// 640px viewport leaves after the host chrome. Closing that residue is a
+// per-publisher change or a precedence change, not a constant.
+//
+// Mirrored (as `maximum` on `iframe.minHeight`) in public/schemas/app-block/v1.json,
+// which the Go CLI re-vendors from the LIVE published copy on a 6-hourly cron —
+// see `.github/workflows/revendor-canonical-schema.yml` in civitai/cli. That
+// mirror is byte-compared against the URL, so it goes red only after a
+// `main` → `release` cut publishes these bytes, and its own automation opens the
+// resync PR. The CLI ALSO carries a hand-maintained Go copy of this envelope
+// (`internal/validate/semantic.go`, `heightMaxCeiling`) that the re-vendor does
+// NOT touch — until that is updated the CLI accepts a `minHeight` this validator
+// rejects, which fails CLOSED at the real gate but gives a late error.
+const MIN_HEIGHT_MAX_CEILING = 800;
+
 // SSRF gate for iframe.src and assetBundleUrl. `isPublicHttpsUrl` (and the
 // `PRIVATE_HOSTNAME_PATTERNS` it uses) live in `~/server/utils/ssrf-hostname` (a
 // shared, dependency-free module) so this validator, the read-path anchors, and
@@ -710,10 +741,10 @@ export class BlockManifestValidator {
       if (
         typeof iframe.minHeight !== 'number' ||
         iframe.minHeight < HEIGHT_MIN_FLOOR ||
-        iframe.minHeight > HEIGHT_MAX_CEILING
+        iframe.minHeight > MIN_HEIGHT_MAX_CEILING
       ) {
         errors.push(
-          `iframe.minHeight must be a number in [${HEIGHT_MIN_FLOOR}, ${HEIGHT_MAX_CEILING}]`
+          `iframe.minHeight must be a number in [${HEIGHT_MIN_FLOOR}, ${MIN_HEIGHT_MAX_CEILING}]`
         );
       }
       if (
