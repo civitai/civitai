@@ -27,13 +27,19 @@ describe('classifyPushEnableError', () => {
     });
   });
 
-  it('matches real non-Chromium push-service wordings across engines', () => {
-    // Real strings, not constructed: Safari says "push daemon", Gecko says "Push service
-    // unreachable." under a NetworkError. Matching the push service by NAME rather than by
-    // Chromium's `Registration failed` prefix is what makes these land in the right branch.
+  it('matches the push component however an engine names it: service / server / daemon', () => {
+    // 🔴 PROVENANCE, because these literals stand in for browser behaviour and nothing here can check
+    // them: `Push service unreachable.` (Gecko) and `push server` / `push daemon` come from audit
+    // research, not from a browser we drove — only Chromium's `push service error` was observed
+    // directly. What this test pins is the CLASSIFIER's behaviour on each literal, never that a given
+    // engine emits it. An earlier version of this file claimed these were "real strings, not
+    // constructed"; that was an overstatement and is corrected here.
     const engineErrors = [
       Object.assign(new Error('No connection to push daemon'), { name: 'AbortError' }),
       Object.assign(new Error('Push service unreachable.'), { name: 'NetworkError' }),
+      Object.assign(new Error('Registration failed - could not connect to push server'), {
+        name: 'AbortError',
+      }),
     ];
     for (const err of engineErrors) {
       expect(classifyPushEnableError(err, { isBrave: false }), err.message).toEqual({
@@ -75,6 +81,24 @@ describe('classifyPushEnableError', () => {
     expect(classifyPushEnableError(err, { isBrave: false })).toEqual({
       kind: 'stale-subscription',
     });
+  });
+
+  it('🔴 does NOT call every InvalidStateError stale — most of them ARE retryable', () => {
+    // The name alone used to qualify, and that was wrong in the expensive direction: the spec rejects
+    // `subscribe()` with InvalidStateError when the service-worker registration was unregistered — a
+    // reload fixes that — and `enable()`'s try also spans `register`, `ready` and the tRPC mutation.
+    // Those must NOT get copy telling the user retrying cannot work.
+    const retryable = [
+      'The ServiceWorkerRegistration is unregistered',
+      'The object is in an invalid state.',
+    ];
+    for (const message of retryable) {
+      const err = Object.assign(new Error(message), { name: 'InvalidStateError' });
+      expect(classifyPushEnableError(err, { isBrave: false }), message).toEqual({
+        kind: 'unknown',
+        message,
+      });
+    }
   });
 
   it('classifies a mid-flight permission revocation as a denial, not a push-service failure', () => {
@@ -127,27 +151,30 @@ describe('describePushEnableFailure', () => {
     });
   });
 
-  it("asserts nothing about the setting's value, in EITHER direction", () => {
-    // 🔴 This guard replaces one that was mutation-proved vacuous: it forbade the words a previous
-    // draft happened to use (`disables`, `cannot be registered`), so a mutant asserting the same
-    // thing in different words — "Google push messaging is switched off in your Brave" — passed it.
-    // Forbidding WORDS is walkable by rewording, so this pins the SHAPE instead: every mention of
-    // the setting's state must be conditional. The page cannot read that setting, and a claim about
-    // Brave's default goes wrong the day Brave changes it.
+  it('offers the already-on case, so the advice holds whatever the setting is', () => {
+    // 🔴 READ THIS BEFORE WRITING A THIRD VERSION OF THIS GUARD. You would be the third author.
+    //
+    // The property we actually want is "this copy asserts nothing about the setting's value".
+    // Two mechanical guards were written for it and BOTH were mutation-proved vacuous:
+    //   1. a word blocklist (`disables`, `cannot be registered`) — walked by "switched off".
+    //   2. a grammar/shape check for an unconditional state claim — walked by "Brave disables Google
+    //      push messaging by default." (`disables` is not `disabled`) and by "This setting is off in
+    //      Brave." (matches none of the listed phrases).
+    //
+    // Both failed the same way, and it is not a matter of a better regex: the set of English
+    // sentences asserting a state is unbounded, so any pattern over WORDS is walkable by REWORDING.
+    // NOTHING JUSTIFIES A THIRD ATTEMPT — this assertion deliberately does not try.
+    //
+    // What IS mechanical: the exact whole-string `toEqual` in the test above. That is the control —
+    // any reword fails it and lands in review, which is where a human reads whether the new sentence
+    // asserts something we cannot observe. Below is the one half that IS checkable: the already-on
+    // branch must be present, because a Brave user who has already enabled the setting reaches this
+    // same failure and needs it.
     const { message } = describePushEnableFailure({
       kind: 'push-service-unavailable',
       isBrave: true,
     });
-    // Both branches are present, so no single state is being asserted.
-    expect(message).toMatch(/if it is off/i);
     expect(message).toMatch(/if it is already on/i);
-    // And no sentence declares a state outright. These patterns are about GRAMMAR, not vocabulary:
-    // "<subject> is/ships/comes ... off/disabled/turned off" with no conditional governing it.
-    const assertsState =
-      /\b(?:ships?|comes?|is|are|has|have)\b[^.]{0,40}\b(?:turned off|switched off|disabled|off by default)\b/i;
-    const sentences = message.split(/(?<=\.)\s+/);
-    const offenders = sentences.filter((s) => assertsState.test(s) && !/\bif\b/i.test(s));
-    expect(offenders).toEqual([]);
   });
 
   it('gives non-Brave browsers generic push-service advice, and never mentions Brave', () => {

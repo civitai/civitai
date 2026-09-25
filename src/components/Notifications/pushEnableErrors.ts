@@ -72,12 +72,16 @@ export function classifyPushEnableError(
   // Deterministic and permanent: every retry throws the same thing, and because the server holds no
   // row the device toggle renders unchecked, so its only action is `enable()` again. Left in
   // `unknown` this showed a raw Chromium sentence forever.
-  // 🔴 The message test is `a subscription with a different`, NOT a bare `gcm_sender_id`. The first
-  // draft of this branch matched `gcm_sender_id` alone — which also appears in Chromium's CONFIG
-  // error (`missing applicationServerKey, and gcm_sender_id not found in manifest`), so it swallowed
-  // the very misclassification the branch below was narrowed to stop. Caught by that branch's own
-  // test. Both discriminators here require the "already exists" sense, not just the key's name.
-  if (name === 'InvalidStateError' || /a subscription with a different/i.test(message)) {
+  // 🔴 BOTH the name and the message must agree, and each half has already been wrong once:
+  //  - a bare `gcm_sender_id` message test (draft 1) also matched Chromium's CONFIG error
+  //    (`missing applicationServerKey, and gcm_sender_id not found in manifest`), swallowing the
+  //    misclassification the branch below was narrowed to stop.
+  //  - a bare `name === 'InvalidStateError'` (draft 2) matched conditions a reload DOES fix — the
+  //    spec rejects `subscribe()` with it when the service-worker registration was unregistered, and
+  //    the `try` around this also spans `register`, `ready` and the tRPC mutation. That handed
+  //    "retrying will not clear it" to retryable failures.
+  // So the message must carry the ALREADY-EXISTS sense; the name alone never qualifies.
+  if (/a subscription with a different|already exists/i.test(message)) {
     return { kind: 'stale-subscription' };
   }
 
@@ -91,14 +95,20 @@ export function classifyPushEnableError(
   // the other way — and it contradicted this module's own `unknown` principle two branches down.
   // Anything not named here falls to `unknown`, which quotes the browser instead of guessing.
   //
-  // `push daemon` is Safari's wording (`AbortError: No connection to push daemon`); `push service`
-  // covers Chromium and Gecko's `NetworkError: Push service unreachable.`
+  // `service|server|daemon` because the three engines name the same component three ways. 🔴 PROVENANCE,
+  // since these are string literals standing in for browser behaviour and nothing in this repo can
+  // check them: `push service` is Chromium's observed wording (the failure that prompted this work) and
+  // matches Gecko's `NetworkError: Push service unreachable.`; `push daemon` (Safari) and `push server`
+  // (Chromium's network-error rendering) come from audit research, NOT from a browser we drove. If one
+  // is wrong, that engine falls to `unknown` and shows its raw message — the pre-change behaviour —
+  // and no test here would notice, because these tests pin the classifier's behaviour on a literal,
+  // never that a browser emits it.
   //
   // KNOWN GAP, stated rather than guessed: Gecko also has `AbortError: Error retrieving push
-  // subscription.`, which names neither and so falls to `unknown`. Which of its two shapes a given
-  // failure yields is unverified, so this is "at least one common Firefox shape is uncovered", not
-  // "all of them are". Uncovered degrades to the pre-PR behaviour, never to a wrong cause.
-  if (/push service|push daemon/i.test(message)) {
+  // subscription.`, which names none of the three and so falls to `unknown`. Which of its two shapes a
+  // given failure yields is unverified, so this is "at least one common Firefox shape is uncovered",
+  // not "all of them are". Uncovered degrades to the pre-change behaviour, never to a wrong cause.
+  if (/push (?:service|server|daemon)/i.test(message)) {
     return { kind: 'push-service-unavailable', isBrave: opts.isBrave };
   }
 

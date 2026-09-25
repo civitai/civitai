@@ -7,6 +7,9 @@ export const isAndroidDevice = () => {
   return ua.indexOf('android') > -1; //&& ua.indexOf("mobile");
 };
 
+/** Declared above `isBraveBrowser` so its docblock stays attached to the function callers hover. */
+const BRAVE_PROBE_TIMEOUT_MS = 500;
+
 /**
  * Is this Brave? `navigator.brave` is non-standard and only Brave exposes it, so anything else —
  * including a rejection, a throw, or no answer at all — means "not Brave".
@@ -24,8 +27,6 @@ export const isAndroidDevice = () => {
  * the answer is bounded: no answer within `BRAVE_PROBE_TIMEOUT_MS` is "not Brave", which only ever
  * costs the more generic copy.
  */
-const BRAVE_PROBE_TIMEOUT_MS = 500;
-
 export const isBraveBrowser = async (): Promise<boolean> => {
   if (typeof navigator === 'undefined') return false;
   try {
