@@ -1422,6 +1422,8 @@ export interface Post {
   unlisted: boolean;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   images?: Image[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
@@ -3279,7 +3281,10 @@ export interface Bounty {
   refunded: boolean;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  buzzType: string | null;
   tags?: TagsOnBounty[];
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
@@ -3302,6 +3307,8 @@ export interface BountyEntry {
   locked: boolean;
   description: string | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
   thread?: Thread | null;
   reactions?: BountyEntryReaction[];
@@ -4076,6 +4083,8 @@ export interface Challenge {
   coverImageId: number | null;
   coverImage?: Image | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;

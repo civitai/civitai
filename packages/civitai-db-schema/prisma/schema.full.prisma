@@ -1787,6 +1787,8 @@ model Post {
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   images          Image[]
   tags            TagsOnPost[]
@@ -5276,7 +5278,10 @@ model Bounty {
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   lockedProperties        String[]        @default([])
+  buzzType                String?
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -5304,6 +5309,8 @@ model BountyEntry {
   locked      Boolean  @default(false)
   description String?
   nsfwLevel   Int      @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   benefactors BountyBenefactor[]
   thread      Thread?
@@ -6426,6 +6433,8 @@ model Challenge {
   coverImageId Int?
   coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
   nsfwLevel    Int     @default(1)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   // Required model versions (optional - empty means any allowed)
   modelVersionIds Int[] @default([]) // Array of allowed model version IDs (OR logic)

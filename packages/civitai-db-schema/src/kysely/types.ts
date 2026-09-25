@@ -1299,7 +1299,10 @@ export type Bounty = {
   refunded: Generated<boolean>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  buzzType: string | null;
 };
 export type BountyBenefactor = {
   userId: number;
@@ -1327,6 +1330,8 @@ export type BountyEntry = {
   locked: Generated<boolean>;
   description: string | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type BountyEntryMetric = {
   bountyEntryId: number;
@@ -1625,6 +1630,8 @@ export type Challenge = {
   invitation: string | null;
   coverImageId: number | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
@@ -3480,6 +3487,8 @@ export type Post = {
   unlisted: Generated<boolean>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type PostHelper = {
   postId: number;
