@@ -3,6 +3,7 @@ import { articleModerationAdapter } from '~/server/services/article-moderation.a
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
+import { textScanShadowAdapters } from '~/server/services/text-scan/adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
 // Central registry of `ModerationAdapter`s keyed by entityType. Adding a new
@@ -18,6 +19,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   Challenge: challengeModerationAdapter,
   Model: modelModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
+  ...textScanShadowAdapters(),
 };
 
 export function getModerationAdapter(entityType: string): ModerationAdapter | undefined {
