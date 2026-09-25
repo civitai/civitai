@@ -142,9 +142,9 @@ export const useCFImageUpload: UseCFImageUpload = () => {
      */
     async function postToRelay(signal: AbortSignal) {
       // `single_put`: this hook IS the single-PUT path. The request construction is
-      // shared with the multipart caller (`postImageUploadRelay`) so the producer header
-      // cannot be present on one and missing on the other — the two used to build
-      // near-identical fetches side by side.
+      // shared with the multipart caller (`relayImageFallback`) through the one helper
+      // `postImageUploadRelay`, so the producer header cannot be present on one and
+      // missing on the other — the two used to build near-identical fetches side by side.
       return postImageUploadRelay(file, { signal, producer: 'single_put' });
     }
 

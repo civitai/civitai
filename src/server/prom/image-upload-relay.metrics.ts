@@ -128,9 +128,11 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
    *  `relay.ts` records this and re-throws unchanged. Its presence is what makes "one
    *  increment per invocation" hold unconditionally, and it is expected to stay at 0.
    *
-   *  🔴 A non-zero is NOT necessarily a defect in THIS route. `runRelay` awaits three
-   *  things outside its inner `try` — the origin guard, `getServerAuthSession`, and the
-   *  in-flight bookkeeping — and the auth lookup is the one with a network dependency.
+   *  🔴 A non-zero is NOT necessarily a defect in THIS route. `runRelay` awaits exactly
+   *  ONE thing outside its inner `try` — `getServerAuthSession` — and it is the one step
+   *  there with a network dependency. (The origin guard is a synchronous predicate and
+   *  the in-flight bookkeeping is an increment; an earlier version of this paragraph
+   *  listed all three as awaits, which overstated the surface it is warning about.)
    *  `~/server/auth/get-server-auth-session.ts` fail-softs `getHubSession` and
    *  `getLegacySession` with `.catch(() => null)`, but awaits
    *  `getSessionFromBearerToken(token)` and `maybeRollHubCookie(...)` UNGUARDED — the
@@ -268,12 +270,20 @@ export function recordImageUploadRelay(
     // claim a wish and could silently invent evidence that the relay worked.
     if (!isImageUploadRelayOutcome(outcome)) return;
     // 🔴 The producer is NARROWED, not dropped — the opposite treatment to the outcome
-    // above, and deliberately so. An outcome comes from our own code, so an unrecognised
-    // one is our defect; a producer comes from the CALLER, so an unrecognised one is
-    // ordinary traffic (a stale bundle is the common case), and dropping the increment
-    // would let it vanish from a counter whose whole claim is one increment per
-    // invocation. Re-sanitised here rather than trusting the call site, so the bound
-    // holds for every caller including a future one: see
+    // above, and deliberately so. BOTH are our own defect at this point: the route has
+    // already sanitised the header, so a value here that is not one of the four labels
+    // came from our code, not from a caller. What differs is the cost of dropping it.
+    // Dropping an unrecognised OUTCOME loses nothing we can trust anyway. Dropping an
+    // unrecognised PRODUCER would break the counter's load-bearing property that `sum()`
+    // equals the route's invocation count, so it is bucketed instead.
+    //
+    // ⚠ Do NOT restate the sanitiser's argument here — that a stale bundle is ordinary
+    // traffic that must not be dropped. True there, false here: a stale bundle arrives at
+    // this function as `unknown`, which IS a label and passes untouched. It never reaches
+    // this fallback. That sentence stood in this comment for one round and invited the
+    // reader to believe the `other` row carries client traffic, which is the one thing it
+    // must not be read as. Re-sanitised here rather than trusting the call site, so the
+    // bound holds for every caller including a future one: see
     // `~/utils/image-upload-relay-producer`.
     // 🔴 NARROWED AGAINST THE LABEL SET, NOT THE CLIENT-DECLARABLE ONE. This value is
     // server-derived — the route has already sanitised the header — so it legitimately IS

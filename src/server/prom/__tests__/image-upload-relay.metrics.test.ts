@@ -263,7 +263,10 @@ describe('recordImageUploadRelay', () => {
     // counted. It is bucketed instead.
     //
     // Both halves are asserted: the invocation IS counted, and it is counted on the
-    // `unknown` series rather than on an invented one.
+    // `other` series rather than on an invented one — and specifically NOT on `unknown`,
+    // which is a claim about the REQUEST. (This sentence said `unknown` for one round,
+    // eleven lines above the assertion that requires the opposite. Two comments in one
+    // block disagreeing is how a later edit "fixes" the code to match the wrong one.)
     ensureRegisterImageUploadRelayMetrics();
     recordImageUploadRelay('success', 'chrome-extension://evil' as never);
     recordImageUploadRelay('success', undefined as never);

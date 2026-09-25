@@ -317,9 +317,10 @@ describe('attachUploadSettlement', () => {
  * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
  * relay-minted key or `null`. The DECISION to call it lives in
  * `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is what
- * runs when the decision is yes, extracted from `useS3Upload` because that hook has no
- * test file and the fallback must never be able to mask the original failure it is
- * rescuing.
+ * runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing. (This said the
+ * hook "has no test file". `src/hooks/__tests__/useS3Upload.test.ts` exists, and this very
+ * change adds the multipart producer assertion to it.)
  *
  * 🔴 `null` is the contract for EVERY failure — a rejected relay, a non-ok response, a
  * mid-relay cancel. The caller falls through to the normal terminal-error path, so a

@@ -26,9 +26,17 @@ import {
 /**
  * The route both upload paths fall back to.
  *
- * Not exported: the only way to reach the relay is `postImageUploadRelay` below, and
- * handing out the bare path would let a future caller build its own request — which is
- * exactly how the producer header goes missing at one of two sites.
+ * Not exported: the only site that BUILDS a relay request is `postImageUploadRelay` below,
+ * and handing out the bare path would let a future caller build its own — which is exactly
+ * how the producer header goes missing at one of two sites.
+ *
+ * ⚠ That is not the same as "the only way to reach the relay", which is what this sentence
+ * used to say. From outside this module there are TWO entry points — `postImageUploadRelay`
+ * and `relayImageFallback`, which reaches the relay without its caller ever naming the
+ * other — and the real multipart caller uses the second. The singular phrasing is the
+ * precise error that left that caller outside the ledger for two review rounds; the
+ * authoritative list is `HELPER_EXPORTS` in
+ * `src/utils/__tests__/relay-caller-ledger.test.ts`.
  *
  * ⚠ It is one literal for the two CALL SITES, not repo-wide: several test files still spell
  * the path out, deliberately, so that renaming the route (whose real path comes from its
