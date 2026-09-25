@@ -782,7 +782,7 @@ function refundAppealFee(appeal: AppealFeeRef) {
 /**
  * Closes appeals whose entity has been deleted. The moderator queue is driven from the entity row,
  * so these can never be reviewed; left Pending they keep the user's fee and count toward their
- * free-appeal allowance.
+ * free-appeal allowance. Silent by decision: no notification, only the refund.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const voided = await dbWrite.$queryRaw<
@@ -810,11 +810,9 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   let refundFailed = 0;
   for (const appeal of voided) {
     const { buzzTransactionId } = appeal;
-    let didRefund = false;
     if (buzzTransactionId) {
       try {
         await refundAppealFee({ ...appeal, buzzTransactionId });
-        didRefund = true;
         refunded++;
       } catch (e) {
         refundFailed++;
@@ -831,19 +829,6 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
         });
       }
     }
-
-    await createNotification({
-      userId: appeal.userId,
-      type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
-      details: {
-        entityType: appeal.entityType,
-        entityId: appeal.entityId,
-        status: AppealStatus.Void,
-        refunded: didRefund,
-      },
-    });
   }
 
   return { voided: voided.length, refunded, refundFailed };

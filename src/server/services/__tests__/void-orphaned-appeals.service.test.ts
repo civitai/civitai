@@ -29,7 +29,7 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 }));
 
 import { voidOrphanedAppeals } from '~/server/services/report.service';
-import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { EntityType } from '~/shared/utils/prisma/enums';
 
 const claimed = [
   {
@@ -108,20 +108,15 @@ describe('voidOrphanedAppeals', () => {
       expect.objectContaining({ appealId: 1, buzzTransactionId: 'appeal-10-1700000000000' })
     );
     expect(mockRefundTransaction).toHaveBeenCalledTimes(1);
-    expect(mockCreateNotification).toHaveBeenCalledTimes(3);
     expect(result).toMatchObject({ voided: 3, refunded: 1, refundFailed: 1 });
   });
 
-  it('tells each user their appeal was closed, and whether they got their fee back', async () => {
+  // Deliberately silent: the first runs close a backlog of appeals months old, and later orphans
+  // mostly come from owners deleting their own content. The refund carries its own description.
+  it('does not notify anyone', async () => {
     await voidOrphanedAppeals();
 
-    const details = mockCreateNotification.mock.calls.map((c) => c[0].details);
-    expect(details).toEqual([
-      expect.objectContaining({ entityId: 100, status: AppealStatus.Void, refunded: true }),
-      expect.objectContaining({ entityId: 200, status: AppealStatus.Void, refunded: false }),
-      expect.objectContaining({ entityId: 300, status: AppealStatus.Void, refunded: true }),
-    ]);
-    expect(mockCreateNotification.mock.calls.map((c) => c[0].userId)).toEqual([10, 20, 30]);
+    expect(mockCreateNotification).not.toHaveBeenCalled();
   });
 
   it('does nothing when there are no orphans', async () => {
@@ -129,7 +124,6 @@ describe('voidOrphanedAppeals', () => {
 
     const result = await voidOrphanedAppeals();
 
-    expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ voided: 0 });
   });
