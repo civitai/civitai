@@ -17,6 +17,8 @@ export function PushRegistrationManager() {
       !env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
       !('serviceWorker' in navigator) ||
       !('PushManager' in window) ||
+      // Firefox with dom.webnotifications.enabled=false has PushManager but no Notification global
+      !('Notification' in window) ||
       Notification.permission !== 'granted'
     )
       return;
