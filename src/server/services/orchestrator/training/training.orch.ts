@@ -1,3 +1,6 @@
+import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
+import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
+import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
@@ -181,7 +184,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
   // Params are already in AI Toolkit format from the database
   const aiToolkitParams = params as AiToolkitTrainingParams;
 
-  let trainingInput: AiToolkitTrainingInput = {
+  let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
@@ -192,8 +195,13 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       count: trainingDataImagesCount,
     } as ZipTrainingData,
     samples: {
-      prompts: samplePrompts,
-      cfgScale: aiToolkitParams.sampleCfgScale ?? undefined,
+      prompts:
+        aiToolkitParams.ecosystem === 'yue2'
+          ? samplePrompts.map(formatYue2SamplePrompt)
+          : samplePrompts,
+      ...(aiToolkitParams.ecosystem !== 'yue2' && {
+        cfgScale: aiToolkitParams.sampleCfgScale ?? undefined,
+      }),
       strength: aiToolkitParams.sampleStrength ?? undefined,
     },
     // Steps-based pricing: `steps` is the primary length knob and drives pricing;
@@ -243,9 +251,6 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     }
   }
 
-  // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
-  // types only declare `samplesOverrides` on the AceStep15* variants, so we
-  // attach via a cast rather than widening every other ecosystem branch.
   if (
     samplesOverrides &&
     samplesOverrides.length > 0 &&
@@ -256,6 +261,13 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
         samplesOverrides?: Array<Record<string, unknown>>;
       }
     ).samplesOverrides = samplesOverrides as Array<Record<string, unknown>>;
+  }
+
+  if (aiToolkitParams.ecosystem === 'yue2' && samplesOverrides?.length) {
+    const overrides: YuE2SampleOverride[] = samplesOverrides.map((override) =>
+      yue2SampleOverrideSchema.parse(override)
+    );
+    trainingInput = { ...trainingInput, ecosystem: 'yue2', samplesOverrides: overrides };
   }
 
   return {
@@ -532,6 +544,7 @@ export const createTrainingWhatIfWorkflow = async ({
     loraName: '',
     triggerWord: '',
     samplePrompts: whatIfSamplePrompts,
+    samplesOverrides: 'samplesOverrides' in input ? input.samplesOverrides : undefined,
     modelFileId: -1,
     negativePrompt: '',
   };

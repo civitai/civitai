@@ -1,3 +1,8 @@
+import type {
+  MingAiToolkitTrainingInput,
+  Qwen21AiToolkitTrainingInput,
+  YuE2AiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
@@ -26,6 +31,8 @@ export const trainingBaseModelTypesImage = [
   'krea2',
   'mageflow',
   'ideogram4',
+  'ming',
+  'qwen21',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -35,7 +42,7 @@ export const trainingBaseModelTypesVideo = [
   'ltx25',
   'minimaxh3',
 ] as const;
-export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
+export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl', 'yue2'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
@@ -63,6 +70,9 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ltx23' ||
   baseType === 'ltx25' ||
   baseType === 'boogu' ||
+  baseType === 'ming' ||
+  baseType === 'qwen21' ||
+  baseType === 'yue2' ||
   baseType === 'minimaxh3'
     ? 3000
     : baseType === 'anima'
@@ -475,6 +485,36 @@ export const trainingModelInfo: {
     isNew: false,
   },
   //
+  ming: {
+    label: 'Base',
+    pretty: 'Ming Image Design 0.1',
+    type: 'ming',
+    description: 'Train image styles and subjects with Ming Image Design.',
+    air: 'urn:air:ming:checkpoint:civitai:2961930@3355635',
+    baseModel: 'Ming Image Design 0.1',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ming' satisfies MingAiToolkitTrainingInput['ecosystem'] },
+  },
+  qwen21: {
+    label: 'Base',
+    pretty: 'Qwen 2.1',
+    type: 'qwen21',
+    description: 'Train image styles and subjects with Qwen Image 2.1.',
+    air: 'urn:air:qwen21:checkpoint:civitai:2954443@3352534',
+    baseModel: 'Qwen 2.1',
+    isNew: true,
+    aiToolkit: { ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'] },
+  },
+  yue2: {
+    label: 'Base',
+    pretty: 'YuE2',
+    type: 'yue2',
+    description: 'Train music styles with YuE2 using audio captions and lyrics.',
+    air: 'urn:air:yue2:checkpoint:civitai:2944296@3337846',
+    baseModel: 'YuE2',
+    isNew: true,
+    aiToolkit: { ecosystem: 'yue2' satisfies YuE2AiToolkitTrainingInput['ecosystem'] },
+  },
   acestep_15: {
     label: '1.5 (3.5B)',
     pretty: 'ACE-Step 1.5',
@@ -608,6 +648,9 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   krea2: 'krea2',
   mageflow: 'mageflow',
   ideogram4: 'ideogram4',
+  ming: 'ming',
+  qwen21: 'qwen21',
+  yue2: 'yue2',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
@@ -730,8 +773,11 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'krea2',
     'mageflow',
     'ideogram4',
+    'ming',
+    'qwen21',
     'acestep15',
     'acestep15xl',
+    'yue2',
   ];
   return supportedTypes.includes(baseType);
 };
@@ -753,8 +799,11 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'krea2',
     'mageflow',
     'ideogram4',
+    'ming',
+    'qwen21',
     'acestep15',
     'acestep15xl',
+    'yue2',
   ];
   return mandatoryTypes.includes(baseType);
 };
@@ -771,6 +820,7 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
+  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit

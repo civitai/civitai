@@ -65,7 +65,10 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema';
+import {
+  audioSampleOverrideSchema,
+  yue2SampleOverrideSchema,
+} from '~/server/schema/model-version.schema';
 import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -345,6 +348,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       const retData: ImageTrainingRouterWhatIfSchema = {
         ...baseData,
+        samplesOverrides: selectedRun.samplesOverrides,
         ecosystem,
         ...(modelVariant && { modelVariant }),
         epochs: selectedRun.params.maxTrainEpochs,
@@ -394,8 +398,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [
     formBaseModel,
     selectedRun.highPriority,
+    selectedRun.baseType,
     selectedRun.params.engine,
     selectedRun.samplePrompts,
+    selectedRun.samplesOverrides,
     thisNumImages,
     selectedRun.params.resolution,
     selectedRun.params.trainBatchSize,
@@ -611,7 +617,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       if (r.samplesOverrides && r.samplesOverrides.length > 0) {
         const badIndex = r.samplesOverrides.findIndex(
-          (o) => !audioSampleOverrideSchema.safeParse(o).success
+          (o) =>
+            !(
+              r.baseType === 'yue2' ? yue2SampleOverrideSchema : audioSampleOverrideSchema
+            ).safeParse(o).success
         );
         if (badIndex !== -1) {
           showErrorNotification({
@@ -1265,8 +1274,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         >
           <Group gap="sm" justify="space-between" wrap="nowrap">
             <Text>
-              Z&ndash;Image training is experimental, and we're still fine-tuning things behind the
-              scenes{' '}
+              Z&ndash;Image training is experimental, and we&apos;re still fine-tuning things behind
+              the scenes{' '}
             </Text>
           </Group>
         </AlertWithIcon>

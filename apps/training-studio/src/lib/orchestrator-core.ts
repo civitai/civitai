@@ -145,7 +145,8 @@ function stepBlobsForMedia(step: RawStep, media: Media): OutputBlob[] {
     }
   }
   // audio: aceStepAudio emits a VideoBlob (audio + cover) or an AudioBlob — only the latter is trainable audio.
-  if (step.$type === 'aceStepAudio' && output.blob?.type === 'audio') return one(output.blob);
+  if ((step.$type === 'aceStepAudio' || step.$type === 'yuE2') && output.blob?.type === 'audio')
+    return one(output.blob);
   return [];
 }
 

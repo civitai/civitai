@@ -1,7 +1,12 @@
+import type {
+  MingAiToolkitTrainingInput,
+  Qwen21AiToolkitTrainingInput,
+  YuE2AiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
 /**
  * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
  * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
- * 2026-08-27). That module lives in the main Next.js app's `src/`, which an
+ * 2026-09-25). That module lives in the main Next.js app's `src/`, which an
  * `apps/*` package can't import, so it's mirrored here; when the trainer adds or
  * changes a base model, re-mirror it by hand — keep the same version `key`,
  * `air`, `baseModel`, ecosystem and `modelVariant`. (If `trainingModelInfo` ever
@@ -558,6 +563,63 @@ export const MODEL_CARDS: ModelCard[] = [
       },
     ],
   },
+  {
+    type: 'ming',
+    name: 'Ming Image',
+    code: 'MI',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Ming Image Design.',
+    flagKey: 'ming-training',
+    versions: [
+      {
+        key: 'ming',
+        label: 'Base',
+        air: 'urn:air:ming:checkpoint:civitai:2961930@3355635',
+        baseModel: 'Ming Image Design 0.1',
+        ecosystem: 'ming' satisfies MingAiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'qwen21',
+    name: 'Qwen Image 2.1',
+    code: 'Q2',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Qwen Image 2.1.',
+    flagKey: 'qwen21-training',
+    versions: [
+      {
+        key: 'qwen21',
+        label: 'Base',
+        air: 'urn:air:qwen21:checkpoint:civitai:2954443@3352534',
+        baseModel: 'Qwen 2.1',
+        ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'yue2',
+    name: 'YuE2',
+    code: 'YE',
+    media: 'audio',
+    label: 'caption',
+    description: 'Music styles learned from audio captions and lyrics.',
+    flagKey: 'yue2-training',
+    versions: [
+      {
+        key: 'yue2',
+        label: 'Base',
+        air: 'urn:air:yue2:checkpoint:civitai:2944296@3337846',
+        baseModel: 'YuE2',
+        ecosystem: 'yue2' satisfies YuE2AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
   // ---- Audio · captions ----
   {
     type: 'acestep',
@@ -955,6 +1017,39 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkDim: 32,
     networkAlpha: 32,
     resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  ming: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  qwen21: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  yue2: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
     batchSize: 1,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
