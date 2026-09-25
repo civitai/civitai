@@ -1,3 +1,4 @@
+import '~/server/services/text-scan/profiles/index';
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
