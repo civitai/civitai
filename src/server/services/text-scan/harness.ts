@@ -88,14 +88,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
 export type TextScanHarnessInput = z.infer<typeof textScanHarnessSchema>;
 export type TextScanHarnessResult = { kind: 'json'; body: unknown } | { kind: 'csv'; body: string };
 
-type ScanEntitySyncInput = {
-  entityType: TextScanEntityType;
-  entityId: number;
-  promptOverrides?: Record<string, string>;
-  model?: string;
-  thinking?: boolean;
-  wait: number;
-};
+type ScanEntitySyncInput = Omit<Extract<TextScanHarnessInput, { action: 'scanEntity' }>, 'action'>;
 
 async function scanEntitySync(input: ScanEntitySyncInput) {
   const profile = getTextScanProfile(input.entityType);
