@@ -29,6 +29,7 @@ import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
+  preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
@@ -4250,14 +4251,16 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   });
   if (!model) return null;
 
-  const settings = model.gallerySettings
-    ? {
-        ...(await getGalleryHiddenPreferences({
-          settings: model.gallerySettings as ModelGallerySettingsSchema,
-        })),
-        creatorHiddenUserIds: await getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
-      }
-    : null;
+  let settings = null;
+  if (model.gallerySettings) {
+    const [preferences, creatorHiddenUserIds] = await Promise.all([
+      getGalleryHiddenPreferences({
+        settings: model.gallerySettings as ModelGallerySettingsSchema,
+      }),
+      getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
+    ]);
+    settings = { ...preferences, creatorHiddenUserIds };
+  }
   await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
@@ -4642,7 +4645,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
-  await Promise.all(modelIds.map((id) => redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`)));
+  await bustModelGallerySettings(modelIds);
   return result;
 }
 
@@ -5539,6 +5542,10 @@ export async function transferModelOwnership({
         error: { name, modelIds, targetUserId, error: String(error) },
       }).catch(() => null)
     );
+
+  // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
+  // and a replica still showing the previous owner would cache that owner's list for a week.
+  await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
 
   await Promise.all([
     // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it

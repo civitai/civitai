@@ -43,7 +43,7 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyUserPreferences, cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -406,21 +406,40 @@ export const modelRouter = router({
   getCreatorGalleryHiddenUsers: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .query(({ ctx }) => getCreatorGalleryHiddenUsers(ctx.user.id)),
+  // Each add or remove busts the gallery cache of every model the creator owns.
   addCreatorGalleryHiddenUser: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertCreatorGalleryHiddenUserSchema)
+    .use(
+      rateLimit({ limit: 100, period: CacheTTL.hour }, undefined, {
+        sharedKey: 'creator-gallery-hidden-users',
+      })
+    )
     .mutation(({ ctx, input }) =>
-      addCreatorGalleryHiddenUser({ creatorId: ctx.user.id, ...input })
+      addCreatorGalleryHiddenUser({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
     ),
   updateCreatorGalleryHiddenUserNote: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertCreatorGalleryHiddenUserSchema)
     .mutation(({ ctx, input }) =>
-      updateCreatorGalleryHiddenUserNote({ creatorId: ctx.user.id, ...input })
+      updateCreatorGalleryHiddenUserNote({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
     ),
   removeCreatorGalleryHiddenUser: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(removeCreatorGalleryHiddenUserSchema)
+    .use(
+      rateLimit({ limit: 100, period: CacheTTL.hour }, undefined, {
+        sharedKey: 'creator-gallery-hidden-users',
+      })
+    )
     .mutation(({ ctx, input }) =>
       removeCreatorGalleryHiddenUser({ creatorId: ctx.user.id, userId: input.userId })
     ),

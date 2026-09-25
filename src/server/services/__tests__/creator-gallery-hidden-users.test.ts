@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import type * as CreatorMembershipService from '~/server/services/creator-membership.service';
 import { createGate, createPrismaBridge } from './user-settings-race.harness';
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
@@ -17,11 +18,13 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   })),
 }));
 
-vi.mock('~/server/services/creator-membership.service', () => ({
+vi.mock('~/server/services/creator-membership.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorMembershipService>()),
   bustUserMetricPrivacyDefaultsCache: vi.fn(async () => undefined),
 }));
 
 const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
+const { getModel3DGallerySettings } = await import('~/server/services/model3d.service');
 const {
   addCreatorGalleryHiddenUser,
   getCreatorGalleryHiddenUserIds,
@@ -35,8 +38,11 @@ const OTHER_CREATOR = 101;
 const MODEL_HIDDEN = 200;
 const CREATOR_HIDDEN = 201;
 const DELETED_USER = 202;
+const SOFT_DELETED_USER = 203;
 const MODEL_ID = 900;
+const MODEL3D_ID = 950;
 const SECRET_NOTE = 'spams-every-model-zqx';
+const CAP = 1000;
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -44,18 +50,41 @@ const MIGRATION = path.resolve(
 );
 
 let db: PGlite;
+let creatorModelIds: number[] = [];
 
 const q = async <T>(sql: string, params: unknown[] = []) =>
   (await db.query(sql, params)).rows as T[];
+
+type Key = { creatorId: number; userId: number };
+
+const rowsFor = (creatorId: number) =>
+  q<{ userId: number; note: string | null }>(
+    `SELECT "userId", note FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 ORDER BY "userId"`,
+    [creatorId]
+  );
+
+const seedRows = (creatorId: number, count: number, firstUserId: number) =>
+  q(
+    `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId")
+     SELECT $1, g FROM generate_series($2::int, $2::int + $3::int - 1) g`,
+    [creatorId, firstUserId, count]
+  );
+
+const deletedKeys = () => redisMock.redis.del.mock.calls.flatMap((call) => call[0]);
 
 function installDb() {
   const bridge = createPrismaBridge(db, createGate());
   for (const root of [dbMock.dbRead, dbMock.dbWrite]) {
     root.$queryRaw.mockImplementation(bridge.$queryRaw);
-    root.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => {
-      const [row] = await q<{ id: number }>(`SELECT id FROM "User" WHERE id = $1`, [where.id]);
-      return row ?? null;
-    });
+    root.user.findFirst.mockImplementation(
+      async ({ where }: { where: { id: number; deletedAt?: null } }) => {
+        const [row] = await q(
+          `SELECT id FROM "User" WHERE id = $1 AND (NOT $2 OR "deletedAt" IS NULL)`,
+          [where.id, 'deletedAt' in where]
+        );
+        return row ?? null;
+      }
+    );
     root.user.findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
       q(`SELECT id, username FROM "User" WHERE id = ANY($1::int[]) ORDER BY id`, [where.id.in])
     );
@@ -64,62 +93,83 @@ function installDb() {
       userId: CREATOR,
       gallerySettings: { users: [MODEL_HIDDEN], tags: [], images: [] },
     }));
+    root.model3D.findUnique.mockImplementation(async () => ({
+      id: MODEL3D_ID,
+      userId: CREATOR,
+      gallerySettings: { users: [MODEL_HIDDEN], tags: [], images: [] },
+    }));
     root.model.findMany.mockImplementation(async ({ where }: { where: { userId: number } }) =>
-      where.userId === CREATOR ? [{ id: MODEL_ID }, { id: MODEL_ID + 1 }] : []
+      where.userId === CREATOR ? creatorModelIds.map((id) => ({ id })) : []
     );
 
+    // The delegates below read every key they are given, so a caller that drops `creatorId` from a
+    // `where` addresses a different set of rows here, just as it would against Postgres.
     const table = root.creatorGalleryHiddenUser;
-    table.count.mockImplementation(async ({ where }: { where: { creatorId: number } }) => {
+    table.count.mockImplementation(async ({ where }: { where: { creatorId?: number } }) => {
       const [row] = await q<{ n: number }>(
-        `SELECT count(*)::int AS n FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1`,
-        [where.creatorId]
+        `SELECT count(*)::int AS n FROM "CreatorGalleryHiddenUser"
+         WHERE ($1::int IS NULL OR "creatorId" = $1)`,
+        [where.creatorId ?? null]
       );
       return row.n;
     });
-    table.findUnique.mockImplementation(
-      async ({ where }: { where: { creatorId_userId: { creatorId: number; userId: number } } }) => {
-        const { creatorId, userId } = where.creatorId_userId;
-        const [row] = await q(
-          `SELECT "userId" FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`,
-          [creatorId, userId]
-        );
-        return row ?? null;
-      }
-    );
+    table.findUnique.mockImplementation(async ({ where }: { where: { creatorId_userId: Key } }) => {
+      const { creatorId, userId } = where.creatorId_userId;
+      const [row] = await q(
+        `SELECT "userId" FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`,
+        [creatorId, userId]
+      );
+      return row ?? null;
+    });
     table.upsert.mockImplementation(
-      async ({ create }: { create: { creatorId: number; userId: number; note: string | null } }) =>
-        q(
-          `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId", note) VALUES ($1, $2, $3)
-           ON CONFLICT ("creatorId", "userId") DO UPDATE SET note = EXCLUDED.note`,
-          [create.creatorId, create.userId, create.note]
-        )
-    );
-    table.updateMany.mockImplementation(
       async ({
         where,
-        data,
+        create,
+        update,
       }: {
-        where: { creatorId: number; userId: number };
-        data: { note: string | null };
-      }) =>
-        q(
-          `UPDATE "CreatorGalleryHiddenUser" SET note = $3 WHERE "creatorId" = $1 AND "userId" = $2`,
-          [where.creatorId, where.userId, data.note]
-        )
+        where: { creatorId_userId: Key };
+        create: Key & { note: string | null };
+        update: { note?: string | null };
+      }) => {
+        const { creatorId, userId } = where.creatorId_userId;
+        const updated = await q(
+          `UPDATE "CreatorGalleryHiddenUser" SET note = CASE WHEN $3 THEN $4 ELSE note END
+           WHERE "creatorId" = $1 AND "userId" = $2 RETURNING "userId"`,
+          [creatorId, userId, 'note' in update, update.note ?? null]
+        );
+        if (updated.length) return;
+        await q(
+          `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId", note) VALUES ($1, $2, $3)`,
+          [create.creatorId, create.userId, create.note]
+        );
+      }
     );
-    table.deleteMany.mockImplementation(
-      async ({ where }: { where: { creatorId: number; userId: number } }) =>
-        q(`DELETE FROM "CreatorGalleryHiddenUser" WHERE "creatorId" = $1 AND "userId" = $2`, [
-          where.creatorId,
-          where.userId,
-        ])
+    table.updateMany.mockImplementation(
+      async ({ where, data }: { where: Partial<Key>; data: { note: string | null } }) => {
+        const rows = await q(
+          `UPDATE "CreatorGalleryHiddenUser" SET note = $3
+           WHERE ($1::int IS NULL OR "creatorId" = $1) AND ($2::int IS NULL OR "userId" = $2)
+           RETURNING "userId"`,
+          [where.creatorId ?? null, where.userId ?? null, data.note]
+        );
+        return { count: rows.length };
+      }
     );
+    table.deleteMany.mockImplementation(async ({ where }: { where: Partial<Key> }) => {
+      const rows = await q(
+        `DELETE FROM "CreatorGalleryHiddenUser"
+         WHERE ($1::int IS NULL OR "creatorId" = $1) AND ($2::int IS NULL OR "userId" = $2)
+         RETURNING "userId"`,
+        [where.creatorId ?? null, where.userId ?? null]
+      );
+      return { count: rows.length };
+    });
   }
 }
 
 beforeAll(async () => {
   db = new PGlite();
-  await db.exec(`CREATE TABLE "User" (id int PRIMARY KEY, username text);`);
+  await db.exec(`CREATE TABLE "User" (id int PRIMARY KEY, username text, "deletedAt" timestamp);`);
   // The committed migration, not a hand copy, so a schema drift fails here.
   await db.exec(readFileSync(MIGRATION, 'utf8'));
 }, 60_000);
@@ -129,12 +179,16 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  vi.useRealTimers();
   await db.exec(`TRUNCATE "User"; TRUNCATE "CreatorGalleryHiddenUser";`);
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES
       (${CREATOR}, 'creator'), (${OTHER_CREATOR}, 'other-creator'),
       (${MODEL_HIDDEN}, 'model-hidden'), (${CREATOR_HIDDEN}, 'creator-hidden');
+    INSERT INTO "User" (id, username, "deletedAt") VALUES (${SOFT_DELETED_USER}, 'gone', now());
+    INSERT INTO "User" (id, username) SELECT g, 'bulk-' || g FROM generate_series(10000, 12100) g;
   `);
+  creatorModelIds = [MODEL_ID, MODEL_ID + 1];
   installDb();
   redisMock.redis.get.mockResolvedValue(null);
   redisMock.redis.set.mockClear();
@@ -142,15 +196,26 @@ beforeEach(async () => {
 });
 
 describe('creator gallery hidden users', () => {
-  it('scopes the list to its creator and skips users that no longer exist', async () => {
+  it('scopes the list to its creator and skips hard- and soft-deleted users', async () => {
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
     await q(
-      `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId") VALUES ($1, $2), ($3, $4)`,
-      [CREATOR, DELETED_USER, OTHER_CREATOR, MODEL_HIDDEN]
+      `INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId")
+       VALUES ($1, $2), ($1, $3), ($4, $5)`,
+      [CREATOR, DELETED_USER, SOFT_DELETED_USER, OTHER_CREATOR, MODEL_HIDDEN]
     );
 
     expect(await getCreatorGalleryHiddenUserIds(CREATOR)).toEqual([CREATOR_HIDDEN]);
+    expect((await getCreatorGalleryHiddenUsers(CREATOR)).map((u) => u.id)).toEqual([
+      CREATOR_HIDDEN,
+    ]);
     expect(await getCreatorGalleryHiddenUserIds(OTHER_CREATOR)).toEqual([MODEL_HIDDEN]);
+  });
+
+  it('refuses to hide an account that has been deleted', async () => {
+    await expect(
+      addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: SOFT_DELETED_USER })
+    ).rejects.toThrow('User not found');
+    expect(await rowsFor(CREATOR)).toEqual([]);
   });
 
   it("merges into a model's gallery settings without touching the model's own list", async () => {
@@ -161,6 +226,15 @@ describe('creator gallery hidden users', () => {
     });
 
     const settings = await getGallerySettingsByModelId({ id: MODEL_ID });
+
+    expect(settings?.hiddenUsers).toEqual([{ id: MODEL_HIDDEN, username: 'model-hidden' }]);
+    expect(settings?.creatorHiddenUserIds).toEqual([CREATOR_HIDDEN]);
+  });
+
+  it("merges into a 3D model's gallery settings the same way", async () => {
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+
+    const settings = await getModel3DGallerySettings({ id: MODEL3D_ID });
 
     expect(settings?.hiddenUsers).toEqual([{ id: MODEL_HIDDEN, username: 'model-hidden' }]);
     expect(settings?.creatorHiddenUserIds).toEqual([CREATOR_HIDDEN]);
@@ -201,15 +275,56 @@ describe('creator gallery hidden users', () => {
     ];
 
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
-    expect(redisMock.redis.del.mock.calls.flatMap((call) => call[0])).toEqual(keys);
+    expect(deletedKeys()).toEqual(keys);
 
     redisMock.redis.del.mockClear();
     await removeCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
-    expect(redisMock.redis.del.mock.calls.flatMap((call) => call[0])).toEqual(keys);
+    expect(deletedKeys()).toEqual(keys);
     expect(await getCreatorGalleryHiddenUserIds(CREATOR)).toEqual([]);
   });
 
-  it('edits a note without busting any gallery cache', async () => {
+  it('busts every model of a creator with more models than one delete batch', async () => {
+    creatorModelIds = Array.from({ length: 1201 }, (_, i) => i + 1);
+
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+
+    expect(new Set(deletedKeys()).size).toBe(1201);
+    expect(deletedKeys()).toContain(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:1201`);
+  });
+
+  // A rebuild that read the list before the write can SET after the first delete; the entry lives
+  // a week, so without the second delete that stale list would too.
+  it('deletes the gallery caches again after the rebuild window', async () => {
+    vi.useFakeTimers();
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+    expect(redisMock.redis.del).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(redisMock.redis.del).toHaveBeenCalledTimes(2);
+    expect(redisMock.redis.del.mock.calls[1][0]).toEqual(redisMock.redis.del.mock.calls[0][0]);
+  });
+
+  it("edits and removes only the caller's own entry, never another creator's for the same user", async () => {
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'mine' });
+    await addCreatorGalleryHiddenUser({
+      creatorId: OTHER_CREATOR,
+      userId: CREATOR_HIDDEN,
+      note: 'theirs',
+    });
+
+    await updateCreatorGalleryHiddenUserNote({
+      creatorId: CREATOR,
+      userId: CREATOR_HIDDEN,
+      note: 'edited',
+    });
+    await removeCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+
+    expect(await rowsFor(CREATOR)).toEqual([]);
+    expect(await rowsFor(OTHER_CREATOR)).toEqual([{ userId: CREATOR_HIDDEN, note: 'theirs' }]);
+  });
+
+  it('edits a note without busting any gallery cache, and stores a blank note as null', async () => {
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'a' });
     redisMock.redis.del.mockClear();
 
@@ -218,9 +333,28 @@ describe('creator gallery hidden users', () => {
       userId: CREATOR_HIDDEN,
       note: 'b',
     });
-
     expect((await getCreatorGalleryHiddenUsers(CREATOR))[0].note).toBe('b');
+
+    await updateCreatorGalleryHiddenUserNote({
+      creatorId: CREATOR,
+      userId: CREATOR_HIDDEN,
+      note: '',
+    });
+    expect((await getCreatorGalleryHiddenUsers(CREATOR))[0].note).toBeNull();
     expect(redisMock.redis.del).not.toHaveBeenCalled();
+  });
+
+  it('reports a note edit for a user who is no longer on the list', async () => {
+    await expect(
+      updateCreatorGalleryHiddenUserNote({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'x' })
+    ).rejects.toThrow('not on your hidden list');
+  });
+
+  it('updates the note when an existing entry is saved again', async () => {
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'old' });
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'new' });
+
+    expect(await rowsFor(CREATOR)).toEqual([{ userId: CREATOR_HIDDEN, note: 'new' }]);
   });
 
   it('refuses to hide the creator from their own galleries', async () => {
@@ -230,18 +364,36 @@ describe('creator gallery hidden users', () => {
     expect(await getCreatorGalleryHiddenUserIds(CREATOR)).toEqual([]);
   });
 
+  it("counts the cap per creator: another creator's full list does not block this one", async () => {
+    await seedRows(OTHER_CREATOR, CAP, 10000);
+
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+
+    expect(await rowsFor(CREATOR)).toEqual([{ userId: CREATOR_HIDDEN, note: null }]);
+  });
+
   it('refuses a new entry at the cap but still lets an existing entry be re-saved', async () => {
-    dbMock.dbWrite.creatorGalleryHiddenUser.count.mockResolvedValue(1000);
+    await seedRows(CREATOR, CAP - 1, 10000);
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
 
     await expect(
       addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: MODEL_HIDDEN })
-    ).rejects.toThrow('at most 1000');
+    ).rejects.toThrow(`at most ${CAP}`);
 
-    await q(`INSERT INTO "CreatorGalleryHiddenUser" ("creatorId", "userId") VALUES ($1, $2)`, [
-      CREATOR,
-      CREATOR_HIDDEN,
-    ]);
     await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN, note: 'x' });
-    expect((await getCreatorGalleryHiddenUsers(CREATOR))[0].note).toBe('x');
+    expect((await rowsFor(CREATOR)).find((r) => r.userId === CREATOR_HIDDEN)?.note).toBe('x');
+    expect(await rowsFor(CREATOR)).toHaveLength(CAP);
+  });
+
+  // The cap check and the write share one transaction behind a per-creator advisory lock.
+  it('takes the per-creator lock inside the transaction that checks the cap', async () => {
+    await addCreatorGalleryHiddenUser({ creatorId: CREATOR, userId: CREATOR_HIDDEN });
+
+    const lockCall = dbMock.dbWrite.$executeRaw.mock.calls.find((call) =>
+      String(call[0]).includes('pg_advisory_xact_lock')
+    );
+    expect(lockCall).toBeDefined();
+    expect(lockCall?.slice(1)).toContain(CREATOR);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalled();
   });
 });

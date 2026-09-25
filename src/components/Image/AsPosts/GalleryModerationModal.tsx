@@ -32,6 +32,7 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { constants } from '~/server/common/constants';
 import { showErrorNotification } from '~/utils/notifications';
+import { toHideableOptions } from '~/components/Account/hidden-users-options';
 
 export function GalleryModerationModal({
   modelId,
@@ -196,6 +197,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
           name="tag"
           ref={searchInputRef}
           placeholder="Search users to hide"
+          comboboxProps={{ withinPortal: true, zIndex: 500 }}
           data={options}
           value={search}
           onChange={setSearch}
@@ -255,10 +257,7 @@ function CreatorHiddenUsersSection() {
     { query: debouncedSearch.trim(), limit: 10 },
     { enabled: debouncedSearch !== '' }
   );
-  const options =
-    data
-      ?.filter((x) => x.username && !hiddenUsers.some((h) => h.id === x.id))
-      .map(({ id, username }) => ({ id, value: username ?? '' })) ?? [];
+  const options = toHideableOptions(data, hiddenUsers);
 
   const onSuccess = async () => {
     await Promise.all([
