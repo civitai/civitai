@@ -87,14 +87,33 @@ import {
   IMAGE_UPLOAD_RELAY_OUTCOMES,
   __resetImageUploadRelayMetricsForTest,
 } from '~/server/prom/image-upload-relay.metrics';
+import {
+  IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
+  IMAGE_UPLOAD_RELAY_PRODUCERS,
+} from '~/utils/image-upload-relay-producer';
+// Globally stubbed in `src/__tests__/setup.ts` (the only export of that module with an
+// I/O side effect). Imported here so the `image-upload-relayed` event's SHAPE can be
+// asserted — the producer rides both signals, and a field that exists on the counter but
+// not in the event stream cannot be used to go and look at an individual rescue.
+import { logToAxiom } from '~/server/logging/client';
 
 /** Records the order in which the handler wrote a status vs destroyed the request. */
 type Trace = string[];
 
-function makeReq(
-  chunks: Buffer[],
-  opts?: { method?: string; contentType?: string; trace?: Trace; contentLength?: number }
-): NextApiRequest {
+type ReqOpts = {
+  method?: string;
+  contentType?: string;
+  trace?: Trace;
+  contentLength?: number;
+  /**
+   * Raw value for the producer header. `undefined` OMITS it entirely — which is the
+   * shape a browser on a pre-header bundle sends, i.e. most relay traffic right after
+   * this ships, so it stays the default for every pre-existing case in this file.
+   */
+  producerHeader?: string | string[];
+};
+
+function makeReq(chunks: Buffer[], opts?: ReqOpts): NextApiRequest {
   return decorate(Readable.from(chunks) as unknown as NextApiRequest, opts);
 }
 
@@ -109,7 +128,7 @@ function makeReq(
  */
 function makeCountingReq(
   chunks: Buffer[],
-  opts?: { contentLength?: number }
+  opts?: ReqOpts
 ): { req: NextApiRequest; pulled: Buffer[] } {
   const pulled: Buffer[] = [];
   const gen = (function* () {
@@ -124,10 +143,7 @@ function makeCountingReq(
   };
 }
 
-function decorate(
-  stream: NextApiRequest,
-  opts?: { method?: string; contentType?: string; trace?: Trace; contentLength?: number }
-): NextApiRequest {
+function decorate(stream: NextApiRequest, opts?: ReqOpts): NextApiRequest {
   stream.method = opts?.method ?? 'POST';
   stream.headers = {
     'content-type': opts?.contentType ?? 'image/png',
@@ -135,6 +151,12 @@ function decorate(
     // the no-declared-length path (a chunked sender) rather than silently switching
     // to the Content-Length guards added for the truncation fix.
     ...(opts?.contentLength !== undefined ? { 'content-length': String(opts.contentLength) } : {}),
+    // Same principle for the producer header: absent unless a case asks, so the default
+    // fixture is the stale-bundle client and `unknown` is exercised everywhere by
+    // default rather than only in the one case that names it.
+    ...(opts?.producerHeader !== undefined
+      ? { [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: opts.producerHeader }
+      : {}),
   };
   stream.query = {};
   const trace = opts?.trace;
@@ -560,6 +582,45 @@ describe('image-upload relay', () => {
     expect(wire).not.toContain('REQ-123');
   });
 
+  // Registry readers, shared by the two counter blocks below. Declared at this scope so
+  // the producer cases and the outcome cases read the SAME registry through the SAME
+  // helpers — two private copies would be free to disagree about what a series is.
+  type MetricJSON = { values: { value: number; labels: Record<string, string> }[] };
+
+  /** Every child series with both labels intact. */
+  async function rows(): Promise<{ outcome: string; producer: string; value: number }[]> {
+    const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as
+      | { get: () => Promise<MetricJSON> }
+      | undefined;
+    if (!metric) return [];
+    const data = await metric.get();
+    return data.values.map((v) => ({
+      outcome: v.labels.outcome,
+      producer: v.labels.producer,
+      value: v.value,
+    }));
+  }
+
+  /**
+   * Counts keyed by outcome, SUMMED across producers.
+   *
+   * ⚠ The summing is a deliberate loss of information: this view cannot see a wrong
+   * producer label. It exists so the outcome-level cases keep making the outcome claim
+   * they were written for. Producer assertions use `rows()` / `forProducer()`.
+   */
+  async function series(): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    for (const { outcome, value } of await rows()) out[outcome] = (out[outcome] ?? 0) + value;
+    return out;
+  }
+
+  /** Counts for ONE producer, keyed by outcome. */
+  async function forProducer(producer: string): Promise<Record<string, number>> {
+    return Object.fromEntries(
+      (await rows()).filter((r) => r.producer === producer).map((r) => [r.outcome, r.value])
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Usage counter
   // -------------------------------------------------------------------------
@@ -576,17 +637,6 @@ describe('image-upload relay', () => {
   // the mutations that matter — a deleted increment, a hardcoded label, a branch that
   // settles the response without naming an outcome, a double count.
   describe('usage counter', () => {
-    type MetricJSON = { values: { value: number; labels: Record<string, string> }[] };
-
-    async function series(): Promise<Record<string, number>> {
-      const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as
-        | { get: () => Promise<MetricJSON> }
-        | undefined;
-      if (!metric) return {};
-      const data = await metric.get();
-      return Object.fromEntries(data.values.map((v) => [v.labels.outcome, v.value]));
-    }
-
     /**
      * Assert the handler recorded EXACTLY the given outcome, once.
      *
@@ -768,6 +818,233 @@ describe('image-upload relay', () => {
       const s = await series();
       expect(Object.keys(s).sort()).toEqual([...IMAGE_UPLOAD_RELAY_OUTCOMES].sort());
       expect(Object.values(s).every((v) => v === 0)).toBe(true);
+      // 🔴 And the CROSS PRODUCT, not just the outcomes. A pod that has never relayed
+      // must expose `producer="multipart"` at 0 too, or the newer caller's rows read as
+      // `no data` — indistinguishable from "that path was never wired", which is the
+      // exact question the producer label was added to answer.
+      expect(await rows()).toHaveLength(
+        IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Producer discriminator
+  // -------------------------------------------------------------------------
+  //
+  // WHY THIS EXISTS. The relay has TWO callers — the single-PUT path
+  // (`src/hooks/useCFImageUpload.tsx`) and the multipart path
+  // (`src/hooks/useS3Upload.tsx` via `relayImageFallback`) — and the counter could not
+  // tell them apart. The single-PUT caller shipped first, so the `success` count it has
+  // accumulated is attributable entirely to it; grading the newer multipart path on that
+  // undifferentiated number returns a confident FALSE POSITIVE, and reading the number
+  // more carefully cannot fix it, because the discriminating fact is not in the series.
+  //
+  // These cases drive the REAL emitter and the REAL registry, for the reason given at the
+  // import of `prom-client` above: a mocked emitter can only witness that a function was
+  // called, not that the right label reached the right series.
+  describe('producer discriminator', () => {
+    /** The one series that moved, as `outcome|producer`. Empty when nothing moved. */
+    async function moved(): Promise<string[]> {
+      return (await rows()).filter((r) => r.value !== 0).map((r) => `${r.outcome}|${r.producer}`);
+    }
+
+    /** The `image-upload-relayed` event payloads this case produced. */
+    function relayEvents(): Record<string, unknown>[] {
+      return (logToAxiom as unknown as { mock: { calls: [Record<string, unknown>][] } }).mock.calls
+        .map(([payload]) => payload)
+        .filter((payload) => payload?.name === 'image-upload-relayed');
+    }
+
+    it.each([
+      ['single_put', 'the single-PUT path'],
+      ['multipart', 'the multipart path'],
+    ])('attributes a relay from %s (%s) to its OWN series and log event', async (producer) => {
+      await handler(makeReq([Buffer.from('bytes')], { producerHeader: producer }), makeRes());
+
+      // 🔴 Both halves of the requirement, in one case, because a discriminator present
+      // on one signal and absent from the other is only half a discriminator: the counter
+      // tells you a number moved, the event is what lets you go and look at the rescues
+      // behind it.
+      expect(await moved()).toEqual([`success|${producer}`]);
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ name: 'image-upload-relayed', producer });
+    });
+
+    it('🔴 records an ABSENT header as `unknown`, on BOTH signals, not as a gap', async () => {
+      // 🔴 THE ROLLOUT CASE, and the one most likely to be treated as noise. Every
+      // browser running a bundle older than this change sends no header, so for a while
+      // after the deploy `unknown` legitimately DOMINATES. It must be a readable row —
+      // a dropped label, an omitted event field, or a skipped increment would each make
+      // "an old client rescued this upload" indistinguishable from "the discriminator
+      // was never wired".
+      await handler(makeReq([Buffer.from('bytes')]), makeRes());
+
+      expect(await moved()).toEqual(['success|unknown']);
+      // ONE event, not two: this file is the first to observe `logToAxiom` at all, so
+      // nothing else in the tree would notice a duplicated rescue in the event stream —
+      // and that stream is the only per-user source for this population.
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
+      // Explicitly: the field is PRESENT, not merely falsy-and-omitted.
+      expect(Object.keys(relayEvents()[0])).toContain('producer');
+    });
+
+    it.each([
+      ['garbage', 'chrome-extension://whatever'],
+      ['a near-miss', 'single-put'],
+      ['a wrong-case value', 'MULTIPART'],
+      // 🔴 RESTORED. It was deleted on the claim that it is "covered by the absent-header
+      // case above" — and that was false: the absent case sends NO header key at all and
+      // exercises the `typeof value !== 'string'` clause, while this one sends a present
+      // but empty value. (A trailing sentence here narrated deleting "the empty-string
+      // branch". There is no such branch any more — `''` reaches `other` emergently,
+      // because the declarable set does not contain it — so the measurement named code that
+      // cannot be mutated. The justification above carries the whole load and is checkable.)
+      ['an empty header value', ''],
+      // 🔴 A CLIENT DECLARING A SERVER BUCKET — the exact input class a round-6 review
+      // found ACCEPTED verbatim onto the row a rollout is graded on. It is pinned in the
+      // sanitiser's own unit test, but the end-to-end claim (which counter row moves, and
+      // what the log event says) was unasserted here: widening the accept set turns two
+      // tests red and NEITHER is in this file.
+      ['a client-declared `unknown`', 'unknown'],
+      ['a client-declared `other`', 'other'],
+      ['a label-injection attempt', 'multipart"} 99\ncivitai_image_upload_relay_total{outcome="x'],
+    ])('buckets %s into `other` and mints NO new series', async (_name, header) => {
+      // 🔴 `other`, not `unknown`: a header that ARRIVED and was not recognised is a
+      // different population from a request that carried none, and `unknown` is the row
+      // the rollout is graded on.
+      await handler(makeReq([Buffer.from('bytes')], { producerHeader: header }), makeRes());
+
+      expect(await moved()).toEqual(['success|other']);
+      // 🔴 THE CARDINALITY CLAIM. prom-client retains every distinct label set for the
+      // life of the process, so a pass-through would hand any caller an unbounded series
+      // generator on a route that takes a raw body. Asserting the crafted value is
+      // absent is weaker than this — it would pass against a mutant that invented some
+      // OTHER series.
+      const labelSets = (await rows()).map((r) => `${r.outcome}|${r.producer}`);
+      expect(labelSets).toHaveLength(
+        IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+      );
+      for (const r of await rows()) {
+        expect(
+          (IMAGE_UPLOAD_RELAY_PRODUCERS as readonly string[]).includes(r.producer),
+          `series producer=${r.producer} is outside the closed set`
+        ).toBe(true);
+      }
+      // 🔴 AND THE EVENT, on exactly this input class. The route's comment claims one
+      // derivation feeds BOTH signals so they "can never disagree" — and crafted input is
+      // the ONLY class on which a second, divergent derivation would show: for a valid
+      // label, an absent header or an array, a naive re-read of the header produces the
+      // same answer the sanitiser does. Without this line a mutant that re-reads
+      // `req.headers[...]` in the log payload keeps the counter perfectly bounded (so the
+      // 44-row check above stays green) while putting an unbounded caller-controlled
+      // string into a structured log. Verified as a surviving mutant before this was added.
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'other' });
+    });
+
+    it('keeps `unknown` and `other` on SEPARATE rows', async () => {
+      // 🔴 The split, asserted as a relationship rather than as two independent facts: a
+      // request that carried no header and one that carried a value we did not recognise
+      // must not be summed into a single number. Folding them is this change's own defect
+      // — two populations behind one row — reintroduced on the row a rollout is read from.
+      await handler(makeReq([Buffer.from('b')]), makeRes()); // stale bundle
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'nonsense' }), makeRes());
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'nonsense' }), makeRes());
+
+      expect((await forProducer('unknown')).success).toBe(1);
+      expect((await forProducer('other')).success).toBe(2);
+    });
+
+    it('takes the FIRST value of a repeated header, as the sibling label narrowers do', async () => {
+      // Node hands back an array when a header arrives more than once in a way it cannot
+      // join. The first element is taken, matching `firstValue`/`boundedClientLabel` in
+      // `src/server/prom/trpc-batch.metrics.ts` — the closest sibling in this repo, doing
+      // the same job on the same class of input.
+      //
+      // ⚠ An earlier draft bucketed ANY array to `unknown`. That bought no safety (the
+      // closed-set test below is the bound, and a caller able to send the header twice can
+      // send it once) and cost attribution in the harmful direction: `unknown` is the row
+      // the rollout is graded on, so a legitimate rescue demoted into it corrupts the one
+      // signal that can answer the question.
+      await handler(
+        makeReq([Buffer.from('bytes')], { producerHeader: ['multipart', 'single_put'] }),
+        makeRes()
+      );
+
+      expect(await moved()).toEqual(['success|multipart']);
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'multipart' });
+    });
+
+    it('still bounds a repeated header whose FIRST value is crafted', async () => {
+      // The other half of the case above, and the one that keeps taking [0] safe: the
+      // closed-set test still runs on whatever the first element is, so element order
+      // decides WHICH label is believed and never WHETHER an arbitrary string becomes one.
+      await handler(
+        makeReq([Buffer.from('bytes')], { producerHeader: ['evil"} 1', 'multipart'] }),
+        makeRes()
+      );
+
+      expect(await moved()).toEqual(['success|other']);
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'other' });
+      expect(await rows()).toHaveLength(
+        IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+      );
+    });
+
+    it('labels a NON-success outcome with its producer too', async () => {
+      // The producer must ride every outcome, not just the happy path: "is the multipart
+      // fallback being refused for size?" is exactly the follow-up question a moving
+      // `success|multipart` prompts, and it is unanswerable if only successes carry the
+      // label.
+      await handler(
+        makeReq([Buffer.from('a')], {
+          contentLength: MAX_RELAY_BYTES + 1,
+          producerHeader: 'multipart',
+        }),
+        makeRes()
+      );
+
+      expect(await moved()).toEqual(['too_large|multipart']);
+      expect((await forProducer('multipart')).too_large).toBe(1);
+      expect((await forProducer('single_put')).too_large).toBe(0);
+    });
+
+    it('labels a handler_error with its producer — the path that never names an outcome', async () => {
+      // 🔴 The reason the header is sanitised in the WRAPPER rather than inside
+      // `runRelay`. `handler_error` is recorded from the `catch` around `runRelay`, so a
+      // producer derived inside `runRelay` would be unavailable on exactly the
+      // invocation class that throws before naming anything — leaving the one outcome
+      // that is supposed to stay at 0 as the one outcome that could never be attributed.
+      const boom = new Error('session lookup exploded');
+      mockGetServerAuthSession.mockRejectedValue(boom);
+
+      await expect(
+        handler(makeReq([Buffer.from('bytes')], { producerHeader: 'multipart' }), makeRes())
+      ).rejects.toBe(boom);
+
+      expect(await moved()).toEqual(['handler_error|multipart']);
+    });
+
+    it('keeps two producers on separate series across a mixed sequence', async () => {
+      // 🔴 THE CASE THE WHOLE CHANGE EXISTS FOR, and the one a hardcoded or dropped
+      // label fails: distinct counts per producer on the SAME outcome, none equal to
+      // another and none equal to the total. Before this label, the reading below was a
+      // single `success = 4` from which no attribution could be recovered.
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'single_put' }), makeRes());
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'multipart' }), makeRes());
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'multipart' }), makeRes());
+      await handler(makeReq([Buffer.from('b')]), makeRes()); // stale bundle
+
+      expect((await forProducer('single_put')).success).toBe(1);
+      expect((await forProducer('multipart')).success).toBe(2);
+      expect((await forProducer('unknown')).success).toBe(1);
+      // And the summed view is still the route's invocation count — the property the
+      // extra label must not cost us.
+      expect((await series()).success).toBe(4);
     });
   });
 });

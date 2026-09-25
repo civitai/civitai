@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { attachUploadSettlement, relayImageFallback } from '~/utils/upload-settlement';
 import type { SettlementXhr } from '~/utils/upload-settlement';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 // AUDIT-F1 regression guard — the defect the first draft of the upload relay shipped,
 // and the one nothing in the tree could see.
@@ -316,9 +317,10 @@ describe('attachUploadSettlement', () => {
  * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
  * relay-minted key or `null`. The DECISION to call it lives in
  * `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is what
- * runs when the decision is yes, extracted from `useS3Upload` because that hook has no
- * test file and the fallback must never be able to mask the original failure it is
- * rescuing.
+ * runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing. (This said the
+ * hook "has no test file". `src/hooks/__tests__/useS3Upload.test.ts` exists, and this very
+ * change adds the multipart producer assertion to it.)
  *
  * 🔴 `null` is the contract for EVERY failure — a rejected relay, a non-ok response, a
  * mid-relay cancel. The caller falls through to the normal terminal-error path, so a
@@ -349,7 +351,17 @@ describe('relayImageFallback', () => {
       '/api/v1/image-upload/relay',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'image/png' },
+        // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
+        // attribute a rescue to THIS path; an `objectContaining` here would pass with it
+        // missing, which is the defect the discriminator exists to make impossible. The
+        // exact match also pins the VALUE, so a mutant sending `single_put` from this
+        // caller — the most damaging one available, since it silently re-creates the
+        // attribution error under the appearance of a fix — fails here. (A separate test
+        // asserting exactly that was removed as strictly subsumed by this line.)
+        headers: {
+          'Content-Type': 'image/png',
+          [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
+        },
         body: f,
       })
     );
