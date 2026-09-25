@@ -52,6 +52,17 @@ export async function syncOauthConsentFromGrant(opts: {
     budget == null ? null : { limit: budget, period: 'day' }
   );
 
+  await writeOauthConsent({ userId, clientId, scope, buzzLimit });
+  return { clientId, scope };
+}
+
+export async function writeOauthConsent(opts: {
+  userId: number;
+  clientId: string;
+  scope: number;
+  buzzLimit: BuzzLimit | null;
+}): Promise<void> {
+  const { userId, clientId, scope, buzzLimit } = opts;
   const existing = await dbWrite.oauthConsent.findUnique({
     where: { userId_clientId: { userId, clientId } },
     select: { buzzLimit: true },
@@ -74,8 +85,6 @@ export async function syncOauthConsentFromGrant(opts: {
       }).catch(() => undefined);
     }
   }
-
-  return { clientId, scope };
 }
 
 export async function revokeOauthConsentForBlock(opts: {

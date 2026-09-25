@@ -1898,6 +1898,7 @@ export const blocksRouter = router({
         // allowlist at write + re-gated (incl. the dedicated unsubmitted-spend flag)
         // at the mint. Bounded to blunt parse pressure; absent → read-only.
         declaredScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
+        declaredAuth: z.enum(['block-token', 'oauth']).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1955,6 +1956,7 @@ export const blocksRouter = router({
           // tunnel allowlist at write; the mint re-gates spend behind the dedicated
           // unsubmitted-spend flag. An old CLI omits this → read-only session.
           declaredScopes: input.declaredScopes,
+          ...(input.declaredAuth ? { declaredAuth: input.declaredAuth } : {}),
         });
       } catch (err) {
         throw new TRPCError({

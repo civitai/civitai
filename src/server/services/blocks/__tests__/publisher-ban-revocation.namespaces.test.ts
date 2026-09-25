@@ -527,8 +527,10 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       'pending rows.',
     'src/server/middleware/block-scope.middleware.ts':
       'Claims synthesised for a hub (OAuth) token on the block routes: `page_<appBlockId>` ' +
-      'for an APPROVED AppBlock row only, never an ephemeral app — the same shape and the ' +
-      'same coverage as the run surface above.',
+      'for an APPROVED AppBlock row, and for the author’s OWN dev tunnel `page_<apb_…>` ' +
+      '(owned non-approved row) or `page_ephemeral-<slug>` (the borrowed `appdev-` client), ' +
+      'both bound to an ACTIVE tunnel for that author — the same shapes and the same ' +
+      'coverage as the dev harness and run surface above.',
     'src/server/services/block-registry.service.ts':
       'The SQL synthesis in listForModel: `bus_pub_ || bus.id`, `bus_view_ || bus.id`, ' +
       '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',
