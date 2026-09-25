@@ -27,6 +27,22 @@ describe('classifyPushEnableError', () => {
     });
   });
 
+  it('classifies a push-service message under a DIFFERENT error name (the bare `push service` arm)', () => {
+    // 🔴 CONSTRUCTED fixture, and that is the honest label: no browser is confirmed to emit a
+    // push-service message under a non-AbortError name. Without this case the `/push service/i`
+    // disjunct is unexercised — every other fixture that reaches this branch is ALSO an AbortError
+    // carrying "registration failed", so the second disjunct answers first and deleting the first
+    // one changes no test result. This pins the intended contract: a message naming the push
+    // service is never demoted to `unknown` on the strength of its `name` alone.
+    const odd = Object.assign(new Error('Subscription failed: push service returned 500'), {
+      name: 'NotSupportedError',
+    });
+    expect(classifyPushEnableError(odd, { isBrave: false })).toEqual({
+      kind: 'push-service-unavailable',
+      isBrave: false,
+    });
+  });
+
   it('classifies other `Registration failed - …` AbortErrors as push-service failures', () => {
     const err = Object.assign(new Error('Registration failed - no sender id'), {
       name: 'AbortError',

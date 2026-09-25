@@ -97,6 +97,11 @@ async function runEnable() {
   await act(async () => {
     returned = await result.current.enable();
   });
+  // 🔴 Enforced HERE, not per-test, and that placement is the point: `toast` below reads calls[0],
+  // so every individual assertion is structurally blind to a SECOND toast. The single-exit-point
+  // property is exactly what this PR added, and a mutant that reported each failure twice passed a
+  // suite that killed fourteen others. One assertion in the shared helper covers all five branches.
+  expect(mocks.showErrorNotification.mock.calls.length).toBeLessThan(2);
   return {
     returned,
     calls: mocks.showErrorNotification.mock.calls,
@@ -161,6 +166,10 @@ describe('enable() reports every failure it used to swallow', () => {
     expect(toast?.title).toBe('Push notifications were not enabled');
     expect(toast?.error?.message).toMatch(/choose Allow/);
     expect(subscribe).not.toHaveBeenCalled();
+    // Pins `persist` in the OTHER direction. The persist-true cases assert `autoClose === false`, so
+    // without this a mutant hardcoding `autoClose: false` makes EVERY failure toast stick until
+    // dismissed and no test notices — the noise half of the field this PR added.
+    expect(toast?.autoClose).toBe(8000);
   });
 
   it('a DENIED prompt sends the user to site settings (previously a silent `return false`)', async () => {
@@ -245,7 +254,12 @@ describe('enable() reports every failure it used to swallow', () => {
 
   it('busy is released after a failure, so the button is clickable again', async () => {
     requestPermission.mockResolvedValue('denied');
-    await runEnable();
+    const { toast } = await runEnable();
+    // `busy: false` is also what beforeEach sets, so on its own this assertion cannot separate "the
+    // finally ran" from "enable() returned at its support/busy guard and never started". These two
+    // are the ran-at-all control: permission was actually requested, and a toast was produced.
+    expect(requestPermission).toHaveBeenCalledTimes(1);
+    expect(toast?.title).toBe('Notifications are blocked for Civitai');
     expect(usePushSubscriptionStore.getState().busy).toBe(false);
   });
 });

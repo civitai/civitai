@@ -63,8 +63,18 @@ export function classifyPushEnableError(
     return { kind: 'permission-denied' };
   }
 
-  // `push service` catches Chromium's wording directly; the AbortError arm catches the other
-  // `Registration failed - …` variants, which are all push-registration failures.
+  // Two disjuncts, and they are NOT redundant in the same way:
+  //  - the AbortError arm is the one every observed failure takes (Chromium's
+  //    `Registration failed - push service error`, and its `Registration failed - …` siblings).
+  //  - the bare `push service` arm is deliberate tolerance of wording variance, because this whole
+  //    function string-matches — there is no error code to switch on. 🔴 No browser is CONFIRMED to
+  //    produce a push-service message under a different `name`; it is not kept because we have seen
+  //    one. It is kept so that a message naming the push service is never silently demoted to
+  //    `unknown` on the strength of its `name` alone. The test fixture for it is constructed, and
+  //    says so.
+  // KNOWN GAP, stated rather than guessed: Firefox's subscribe rejection wording is not verified
+  // here, so a Firefox push-service failure may fall through to `unknown` and show its own message.
+  // That degrades to the pre-PR behaviour rather than to something wrong.
   if (
     /push service/i.test(message) ||
     (name === 'AbortError' && /registration failed/i.test(message))
