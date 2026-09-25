@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
+import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
@@ -255,6 +256,7 @@ export const jobs: Job[] = [
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
   announcementDismissalCleanupJob,
+  voidOrphanedAppealsJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   pushSubscriptionCleanupJob,

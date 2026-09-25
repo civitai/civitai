@@ -6122,6 +6122,7 @@ enum AppealStatus {
   Pending
   Approved
   Rejected
+  Void
 }
 
 model Appeal {

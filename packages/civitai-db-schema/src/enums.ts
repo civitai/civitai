@@ -960,6 +960,7 @@ export const AppealStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Void: 'Void',
 } as const;
 
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];

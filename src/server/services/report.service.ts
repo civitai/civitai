@@ -756,6 +756,84 @@ function appealEntityLink(
   }
 }
 
+type AppealFeeRef = {
+  id: number;
+  entityType: EntityType;
+  entityId: number;
+  buzzTransactionId: string;
+};
+
+function refundAppealFee(appeal: AppealFeeRef) {
+  return withRetries(async () => {
+    if (isAppealPrefix(appeal.buzzTransactionId)) {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: appeal.buzzTransactionId,
+        description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
+      });
+    } else {
+      await refundTransaction(
+        appeal.buzzTransactionId,
+        `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+      );
+    }
+  });
+}
+
+/**
+ * Closes appeals whose entity has been deleted. The moderator queue is driven from the entity row,
+ * so these can never be reviewed; left Pending they keep the user's fee and count toward their
+ * free-appeal allowance. Silent by decision: no notification, only the refund.
+ */
+export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
+  const voided = await dbWrite.$queryRaw<
+    (Omit<AppealFeeRef, 'buzzTransactionId'> & {
+      userId: number;
+      buzzTransactionId: string | null;
+    })[]
+  >`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT a.id FROM "Appeal" a
+      WHERE a.status = 'Pending'::"AppealStatus"
+        AND (
+          (a."entityType" = 'Image' AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = a."entityId"))
+          OR (a."entityType" = 'Model' AND NOT EXISTS (SELECT 1 FROM "Model" m WHERE m.id = a."entityId"))
+        )
+      LIMIT ${limit}
+    )
+      AND status = 'Pending'::"AppealStatus"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+
+  let refunded = 0;
+  let refundFailed = 0;
+  for (const appeal of voided) {
+    const { buzzTransactionId } = appeal;
+    if (buzzTransactionId) {
+      try {
+        await refundAppealFee({ ...appeal, buzzTransactionId });
+        refunded++;
+      } catch (e) {
+        refundFailed++;
+        // The appeal is already Void and will not be swept again: this is the only record that
+        // the user is still owed the fee.
+        logToAxiom({
+          type: 'error',
+          name: 'void-orphaned-appeals',
+          message: 'Failed to refund appeal fee',
+          appealId: appeal.id,
+          userId: appeal.userId,
+          buzzTransactionId,
+          error: (e as Error).message,
+        });
+      }
+    }
+  }
+
+  return { voided: voided.length, refunded, refundFailed };
+}
+
 export async function resolveEntityAppeal({
   ids,
   entityType,
@@ -842,21 +920,7 @@ export async function resolveEntityAppeal({
 
     if ((approved || refundBuzz) && appeal.buzzTransactionId) {
       try {
-        await withRetries(async () => {
-          if (isAppealPrefix(appeal.buzzTransactionId as string)) {
-            await refundMultiAccountTransaction({
-              externalTransactionIdPrefix: appeal.buzzTransactionId as string,
-              description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
-            });
-          } else {
-            await refundTransaction(
-              appeal.buzzTransactionId as string,
-              `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-            );
-          }
-
-          return;
-        });
+        await refundAppealFee({ ...appeal, buzzTransactionId: appeal.buzzTransactionId });
       } catch (e) {
         // Log but don't block appeal resolution if refund fails
         // (e.g., old transactions may no longer exist in buzz service)
