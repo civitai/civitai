@@ -228,9 +228,9 @@ describe('the producer contract itself', () => {
     // `ClientDeclarableProducer` — the two-value SUBSET, not this four-value union — so a
     // third call site is forced to reuse a real producer and compiles clean
     // — leaving this green while its traffic corrupts an already-attributed series, which
-    // is worse than the `unknown` pooling the old wording described. The caller side is
-    // pinned by `src/utils/__tests__/relay-caller-ledger.test.ts`, which walks the AST
-    // rather than the text; keep the two claims separate.
+    // is worse than the `unknown` pooling the old wording described. Nothing pins the
+    // CALLER side: a third call site reusing a real producer is not detectable here, and
+    // the mitigation is the type forcing it to pick one, not a test.
     //
     // It is still worth pinning: the seeding assertions in
     // `src/server/prom/__tests__/image-upload-relay.metrics.test.ts` and the row-count
