@@ -56,6 +56,7 @@ type ImageRow = {
   postId: number | null;
   ingestion: 'Pending' | 'Scanned' | 'Blocked';
   blockedFor: string | null;
+  needsReview?: string | null;
   metadata: Record<string, unknown>;
 };
 
@@ -247,6 +248,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       if (!current || row.createdAt > current) out.set(row.entityId, row.createdAt);
     }
     return [...out].map(([entityId, lastActedAt]) => ({ entityId, lastActedAt }));
+  }
+
+  // remove-blocked-images: images held back because an appeal is pending on them.
+  if (sql.includes(`"needsReview" = 'appeal'`)) {
+    return store.images
+      .filter((i) => i.needsReview === 'appeal' && i.ingestion === 'Blocked')
+      .map((i) => ({ id: i.id }));
   }
 
   // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.
