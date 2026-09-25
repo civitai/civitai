@@ -92,6 +92,79 @@ counts.
 
 ## Sizing
 
+### ✅ MEASURED at 100% on live traffic, 2026-08-18 — use these numbers
+
+The estimate below it was **5x too high**. These are from **full traffic**, measured
+directly rather than scaled from a sample: 401,787 rows in a 10-minute window at
+**669.6 rows/sec**.
+
+| | estimated | **measured** |
+| --- | --- | --- |
+| rows/day at 100% | ~320M | **~58M** |
+| vs the `views` insert rate | ~10x | **~2x** |
+| raw storage/day | ~2.3 GiB | **~0.35 GiB** (6.3 B/row) |
+| 30-day steady state | ~70 GB | **~10 GB** |
+| entities per session | 50–150 assumed | **~60 — the one part that was right** |
+
+**Why the estimate was high, and it is the same mistake twice.** It credited
+`/images` with 2.77M page-views/day of card-rendering traffic. Split by path that
+is **2.63M `/images/<id>` detail** — which renders a single image, no feed, and
+contributes ~0 impressions — and only **168k `/images` index feed**. So the surface
+the whole estimate was built around is 2% of what was assumed.
+
+Both errors were about *which pages render cards*, never about user behaviour: the
+first inflated the page denominator, the second inflated entities-per-view, and
+they compounded. **Before sizing a feed feature, `GROUP BY path` — do not reason
+from the route prefix.**
+
+Observed surface spread at 1% (`models` dominates; `home` confirms the homepage is
+covered with no homepage-specific code):
+
+```
+models 2076    home 1505    search 1161    user 715    other 249
+```
+
+`images` is absent from that list and that is expected, not a bug — at 168k/day it
+is ~2% of tracked traffic. Health at 1%: active parts fell 6 → 2 as merges kept
+ahead of ingest, and `daily_impressions` populated immediately, so the incremental
+MV works on live data.
+
+Also confirmed live, and it was the biggest pre-launch unknown: **`content-visibility: auto`
+does NOT hide cards from the observer.** `/models` is the top surface and
+`ModelsInfinite` renders through `MasonryColumnsVirtual`, the exact path that was
+feared would produce silent zeros.
+
+### Creator attribution: verified on live data, 2026-08-18
+
+The `impressions_daily_by_owner_mv` refresh ran at 04:00 against real rows for the
+first time — the model-ownership `argMinIf` aggregate and the id-restricted
+`images_created` dedupe had never been exercised before this.
+
+| | attributed |
+| --- | --- |
+| Image | **99.9%** (42,459 of 42,517) |
+| Model | **98.6%** (35,972 of 36,488) |
+
+Clean refresh, no exception, 6,031 image creators and 5,446 model creators. The
+1-2% shortfall is the designed behaviour, not loss: entities whose owner cannot be
+resolved are dropped by `HAVING ownerId != 0` rather than attributed to nobody.
+**Check this percentage, not just that the refresh succeeded** — a join that
+silently drops rows still reports success.
+
+### Cost on ClickHouse, measured
+
+Two replicas at 8 vCPU / 32 GiB each. At full traffic, impression inserts were
+**3.8 CPU-seconds out of 5,069** across a 15-minute window — under **0.1%** of
+ClickHouse's CPU work, with peak insert memory of ~1 MiB. Memory sat at 8.2 / 7.5
+GiB of 32.
+
+The reason it is that cheap is the batching, not the volume: **14,483 insert
+queries** carried ~400k rows. Without the client-side array batching and
+`async_insert` this would have been ~670 inserts/sec, and *that* is the version
+that would have hurt — part count, never row count, is the binding constraint.
+
+### The original estimate, kept for the reasoning
+
 ⚠️ **An earlier version of this section was wrong by roughly 5x, and the way it was
 wrong is worth keeping.** It sized the feature on *index feeds* — `/images`,
 `/videos`, `/`, `/search` — at 1.48M page-views/day. But `getImpressionSurface`
