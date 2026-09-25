@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 
 import { UploadType } from '~/server/common/enums';
 import { useS3Upload } from '~/hooks/useS3Upload';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 // React 18.3 exposes `act` on the `react` export, but our @types/react predates that typing.
 // Declared locally rather than imported from `react-dom/test-utils`: that module's types are
@@ -63,6 +64,15 @@ let relayTimes: number[];
 let relayHangsUntilAborted: boolean;
 /** Set once the parked relay POST has actually been issued. */
 let relayStarted: boolean;
+/**
+ * Request headers of each relay POST.
+ *
+ * Captured so the PRODUCER header can be asserted through the hook rather than only
+ * through `relayImageFallback` in isolation: the header exists to tell the server which
+ * of the two relay callers this is, and "the shared helper sends it" is a weaker claim
+ * than "the multipart hook's rescue arrives carrying it".
+ */
+let relayRequestHeaders: Record<string, string>[];
 let abortCalls: AbortBody[];
 
 class FakeXHR {
@@ -148,12 +158,15 @@ class FakeXHR {
   }
 }
 
+/** The `fetch` init shape these cases read. Named so the stub's signature stays one line. */
+type FetchInit = { body?: string; signal?: AbortSignal; headers?: Record<string, string> };
+
 function partUrl(partNumber: number) {
   return `https://store.test/upload?part=${partNumber}`;
 }
 
 function makeFetch(partCount: number) {
-  return vi.fn(async (url: string, init?: { body?: string; signal?: AbortSignal }) => {
+  return vi.fn(async (url: string, init?: FetchInit) => {
     // 🔴 HONOUR THE SIGNAL, because the browser does. A real `fetch` handed an
     // already-aborted signal rejects without sending anything, and the relay POST is
     // handed one. Without this the stub counts a request the browser would never have
@@ -178,6 +191,7 @@ function makeFetch(partCount: number) {
     }
     if (url === RELAY_ENDPOINT) {
       relayTimes.push(Date.now());
+      relayRequestHeaders.push((init?.headers ?? {}) as Record<string, string>);
       relayCalls++;
       const scripted = relayScriptedStatuses.shift();
       if (scripted !== undefined)
@@ -338,6 +352,7 @@ beforeEach(() => {
   relayTimes = [];
   relayHangsUntilAborted = false;
   relayStarted = false;
+  relayRequestHeaders = [];
   abortCalls = [];
   partHandler = () => ({ status: 200, etag: 'etag' });
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
@@ -382,6 +397,30 @@ describe('useS3Upload relay fallback', () => {
     // one open session apiece, and the abort stream would lose the reason that explains
     // why the direct path was abandoned.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
+    h.unmount();
+  });
+
+  it('🔴 identifies itself as the MULTIPART producer on the relay POST', async () => {
+    // 🔴 WHY THIS IS ASSERTED THROUGH THE HOOK. The relay's usage counter reads a
+    // non-zero success count earned entirely by the OTHER caller — the single-PUT path,
+    // which shipped first — so this path cannot be graded on it without a discriminator.
+    // `relayImageFallback` sending the header is pinned in
+    // `src/utils/__tests__/upload-settlement.test.ts`; what only this file can see is
+    // that the hook's real rescue arrives carrying it, which is the claim anyone reading
+    // `producer="multipart"` in production is relying on.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    const h = await mountHook();
+
+    await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // Positive control: without it, a run where no relay happened would satisfy an
+    // every()-style assertion over an empty list.
+    expect(relayRequestHeaders).toHaveLength(1);
+    expect(relayRequestHeaders[0][IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
+    // And not the other caller's label — the mutation that would silently restore the
+    // attribution error while looking like a working discriminator.
+    expect(relayRequestHeaders[0][IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).not.toBe('single_put');
     h.unmount();
   });
 

@@ -10,6 +10,11 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
+import {
+  IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
+  sanitizeImageUploadRelayProducer,
+  type ImageUploadRelayProducer,
+} from '~/utils/image-upload-relay-producer';
 
 // FALLBACK upload path, for clients that cannot reach the storage host directly.
 //
@@ -226,19 +231,37 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   // 5xx attribution, matching the direct presign route.
   instrumentApiResponse(req, res);
 
+  // 🔴 SANITISED ONCE, HERE, BEFORE ANY BRANCH CAN RUN — three properties, all
+  // load-bearing.
+  //
+  //  * It is caller-supplied input on a route that accepts a raw body, and it becomes a
+  //    Prometheus LABEL. Rebuilt from scratch against a closed set (the same shape as
+  //    `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`), so nothing a caller
+  //    sends can mint a label value; see `~/utils/image-upload-relay-producer`.
+  //  * Reading it before `runRelay` is what lets the `catch` below attribute a
+  //    `handler_error`. Derived inside `runRelay` it would be unavailable on exactly the
+  //    path that throws before naming an outcome — the one invocation class that would
+  //    otherwise have no producer at all.
+  //  * ONE derivation feeds BOTH signals (the counter and the `image-upload-relayed` log
+  //    event), so the two can never disagree about who asked for the relay.
+  const producer = sanitizeImageUploadRelayProducer(
+    req.headers[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]
+  );
+
   let outcome: ImageUploadRelayOutcome;
   try {
-    outcome = await runRelay(req, res);
+    outcome = await runRelay(req, res, producer);
   } catch (e) {
-    recordImageUploadRelay('handler_error');
+    recordImageUploadRelay('handler_error', producer);
     throw e;
   }
-  recordImageUploadRelay(outcome);
+  recordImageUploadRelay(outcome, producer);
 }
 
 async function runRelay(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse,
+  producer: ImageUploadRelayProducer
 ): Promise<ImageUploadRelayOutcome> {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -342,13 +365,22 @@ async function runRelay(
       // One event per relayed upload. The usage counter (below) says THAT relays
       // happen; this says WHO — the only signal that can size the population of
       // clients that cannot reach the storage host directly (the 2026-09
-      // image-upload investigation had no per-user source for this). Contained: the
+      // image-upload investigation had no per-user source for this). `producer` rides
+      // BOTH signals deliberately: the counter can tell you which upload path is being
+      // rescued in aggregate, and this event is what lets you go and look at the
+      // individual rescues behind a number that moved. Contained: the
       // bytes are already stored, so a telemetry failure must not fail the route.
       try {
         await logToAxiom({
           name: 'image-upload-relayed',
           userId,
           bytes: body.length,
+          // 🔴 UNCONDITIONAL, unlike `contentType` beside it. An absent or unrecognised
+          // header is already `unknown` by the time it gets here, and omitting the field
+          // for that case would make "an older bundle rescued this upload" and "the field
+          // was never added" the same observation in the event stream — the ambiguity
+          // this discriminator exists to remove.
+          producer,
           ...(contentType ? { contentType } : {}),
         });
       } catch {

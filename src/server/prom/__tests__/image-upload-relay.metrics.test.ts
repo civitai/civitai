@@ -9,6 +9,7 @@ import {
   __resetImageUploadRelayMetricsForTest,
   type ImageUploadRelayOutcome,
 } from '~/server/prom/image-upload-relay.metrics';
+import { IMAGE_UPLOAD_RELAY_PRODUCERS } from '~/utils/image-upload-relay-producer';
 
 // Pure unit test: this module imports only prom-client (no env / Prisma / DB), so
 // nothing here boots the app graph. Values are read back off the default registry —
@@ -18,13 +19,40 @@ import {
 
 type MetricJSON = { values: { value: number; labels: Record<string, string> }[] };
 
+/**
+ * Counts keyed by OUTCOME, summed across producers.
+ *
+ * ⚠ The summing is deliberate and it is a LOSS: this view cannot see a wrong producer
+ * label. It exists so the outcome-level cases below keep asserting the outcome claim they
+ * were written for. Anything about the producer must read `seriesByLabels` instead.
+ */
 async function seriesFromRegistry(): Promise<Record<string, number>> {
+  const byLabels = await seriesByLabels();
+  const out: Record<string, number> = {};
+  for (const { outcome, value } of byLabels) out[outcome] = (out[outcome] ?? 0) + value;
+  return out;
+}
+
+/** Every child series, both labels intact. */
+async function seriesByLabels(): Promise<{ outcome: string; producer: string; value: number }[]> {
   const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as
     | { get: () => Promise<MetricJSON> }
     | undefined;
-  if (!metric) return {};
+  if (!metric) return [];
   const data = await metric.get();
-  return Object.fromEntries(data.values.map((v) => [v.labels.outcome, v.value]));
+  return data.values.map((v) => ({
+    outcome: v.labels.outcome,
+    producer: v.labels.producer,
+    value: v.value,
+  }));
+}
+
+/** The counts for one producer, keyed by outcome. */
+async function seriesForProducer(producer: string): Promise<Record<string, number>> {
+  const rows = await seriesByLabels();
+  return Object.fromEntries(
+    rows.filter((r) => r.producer === producer).map((r) => [r.outcome, r.value])
+  );
 }
 
 beforeEach(() => {
@@ -54,30 +82,72 @@ describe('civitai_image_upload_relay_total registration', () => {
     expect(Object.keys(series).sort()).toEqual([...IMAGE_UPLOAD_RELAY_OUTCOMES].sort());
   });
 
+  it('🔴 SEEDS THE FULL CROSS PRODUCT — every outcome x every producer, at 0', async () => {
+    // 🔴 THE PROPERTY THE PRODUCER LABEL COULD HAVE BROKEN. Seeding the outcomes alone
+    // (each under one default producer) leaves
+    // `…{outcome="success",producer="multipart"}` ABSENT until the multipart path's first
+    // real rescue — so PromQL answers `no data`, which is indistinguishable from "that
+    // caller is not wired up". That is the same ambiguity the seeding exists to remove,
+    // reintroduced one level down, on exactly the question the label was added to settle.
+    //
+    // Enumerated as a cross product rather than as a count, so the case cannot be
+    // satisfied by the right NUMBER of series carrying the wrong LABELS.
+    ensureRegisterImageUploadRelayMetrics();
+    const rows = await seriesByLabels();
+    const seen = new Set(rows.map((r) => `${r.outcome}|${r.producer}`));
+    for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) {
+      for (const producer of IMAGE_UPLOAD_RELAY_PRODUCERS) {
+        expect(seen.has(`${outcome}|${producer}`), `${outcome}|${producer} must be seeded`).toBe(
+          true
+        );
+      }
+    }
+    // Exactly the cross product: no more (a leak) and no fewer (a gap).
+    expect(rows).toHaveLength(
+      IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+    );
+    expect(rows.every((r) => r.value === 0)).toBe(true);
+  });
+
+  it('seeds `unknown` like any other producer — it is the ROLLOUT reading, not a gap', async () => {
+    // 🔴 Called out separately from the cross-product case because it is the series that
+    // will carry nearly all the traffic immediately after this ships: a browser on an
+    // older cached bundle sends no header. If `unknown` were treated as an error bucket
+    // and left unseeded, the first weeks of rollout would read as `no data` on the only
+    // row that was moving.
+    ensureRegisterImageUploadRelayMetrics();
+    const unknownRows = (await seriesByLabels()).filter((r) => r.producer === 'unknown');
+    expect(unknownRows).toHaveLength(IMAGE_UPLOAD_RELAY_OUTCOMES.length);
+    expect(unknownRows.every((r) => r.value === 0)).toBe(true);
+  });
+
   it('is idempotent: re-registering neither throws nor resets counts', async () => {
     // prom-client throws on a duplicate metric name, and Next can evaluate a module
     // twice (HMR / route bundling). It is also called on every scrape, so a seeding
     // pass that zeroed live counts would erase the evidence between scrapes.
     ensureRegisterImageUploadRelayMetrics();
-    recordImageUploadRelay('success');
-    recordImageUploadRelay('success');
+    recordImageUploadRelay('success', 'single_put');
+    recordImageUploadRelay('success', 'single_put');
     expect(() => ensureRegisterImageUploadRelayMetrics()).not.toThrow();
     expect((await seriesFromRegistry()).success).toBe(2);
   });
 
-  it('holds the cardinality bound at exactly one label over a closed union', async () => {
-    // 🔴 A RELATIONSHIP, not a magic number: series-per-pod = |outcomes|, and nothing
-    // caller-supplied may widen it. Adding a second label, or one carrying a user id /
-    // key / host / size, fails this.
+  it('holds the cardinality bound at exactly two labels over two closed unions', async () => {
+    // 🔴 A RELATIONSHIP, not a magic number: series-per-pod = |outcomes| x |producers|,
+    // and nothing caller-supplied may widen it. Adding a third label, or one carrying a
+    // user id / key / host / size, fails this — including the tempting ones, since the
+    // producer header arrives on the same request as a Content-Type and a user session.
     ensureRegisterImageUploadRelayMetrics();
     const metric = client.register.getSingleMetric(IMAGE_UPLOAD_RELAY_METRIC) as unknown as {
       labelNames: string[];
       get: () => Promise<MetricJSON>;
     };
-    expect(metric.labelNames).toEqual(['outcome']);
+    expect([...metric.labelNames].sort()).toEqual(['outcome', 'producer']);
     const { values } = await metric.get();
-    expect(values).toHaveLength(IMAGE_UPLOAD_RELAY_OUTCOMES.length);
-    for (const v of values) expect(Object.keys(v.labels)).toEqual(['outcome']);
+    expect(values).toHaveLength(
+      IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+    );
+    for (const v of values) expect(Object.keys(v.labels).sort()).toEqual(['outcome', 'producer']);
   });
 });
 
@@ -86,7 +156,7 @@ describe('recordImageUploadRelay', () => {
     // The "and only that one" half is what a hardcoded label value fails: a mutant
     // that always writes `success` still increments something, so asserting a single
     // outcome moved would pass it.
-    recordImageUploadRelay('too_large');
+    recordImageUploadRelay('too_large', 'single_put');
     const series = await seriesFromRegistry();
     expect(series.too_large).toBe(1);
     for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) {
@@ -102,7 +172,7 @@ describe('recordImageUploadRelay', () => {
     IMAGE_UPLOAD_RELAY_OUTCOMES.forEach((outcome, i) => {
       const n = i + 1;
       expected.set(outcome, n);
-      for (let k = 0; k < n; k++) recordImageUploadRelay(outcome);
+      for (let k = 0; k < n; k++) recordImageUploadRelay(outcome, 'single_put');
     });
     const series = await seriesFromRegistry();
     for (const [outcome, n] of expected) expect(series[outcome], `outcome=${outcome}`).toBe(n);
@@ -118,14 +188,60 @@ describe('recordImageUploadRelay', () => {
     // returns BEFORE registration, so without this the registry is simply empty and the
     // "no new series" check would pass vacuously against a mutant that dropped nothing.
     ensureRegisterImageUploadRelayMetrics();
-    recordImageUploadRelay('surprise' as unknown as ImageUploadRelayOutcome);
-    recordImageUploadRelay('' as unknown as ImageUploadRelayOutcome);
-    recordImageUploadRelay(undefined as unknown as ImageUploadRelayOutcome);
+    recordImageUploadRelay('surprise' as unknown as ImageUploadRelayOutcome, 'single_put');
+    recordImageUploadRelay('' as unknown as ImageUploadRelayOutcome, 'single_put');
+    recordImageUploadRelay(undefined as unknown as ImageUploadRelayOutcome, 'single_put');
     const series = await seriesFromRegistry();
     expect(Object.keys(series).sort()).toEqual([...IMAGE_UPLOAD_RELAY_OUTCOMES].sort());
     for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) {
       expect(series[outcome], `outcome=${outcome}`).toBe(0);
     }
+  });
+
+  it('🔴 NARROWS an unknown producer to `unknown` instead of dropping the increment', async () => {
+    // 🔴 THE ASYMMETRY WITH THE CASE ABOVE, AND IT IS DELIBERATE. An outcome is
+    // code-owned, so an unrecognised one is our own defect and is dropped. A producer is
+    // CALLER-owned, so an unrecognised one is ordinary traffic — a stale bundle, a future
+    // client, or someone poking at the route — and dropping the increment would mean a
+    // caller could choose not to be counted. That breaks the counter's load-bearing
+    // property that `sum()` equals the route's invocation count.
+    //
+    // Both halves are asserted: the invocation IS counted, and it is counted on the
+    // `unknown` series rather than on an invented one.
+    ensureRegisterImageUploadRelayMetrics();
+    recordImageUploadRelay('success', 'chrome-extension://evil' as never);
+    recordImageUploadRelay('success', undefined as never);
+    recordImageUploadRelay('success', '' as never);
+
+    const rows = await seriesByLabels();
+    expect(rows).toHaveLength(
+      IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+    );
+    expect((await seriesForProducer('unknown')).success).toBe(3);
+    // And nowhere else: a narrowing that also leaked onto a real producer would make the
+    // multipart figure include traffic that never came from it.
+    expect((await seriesForProducer('multipart')).success).toBe(0);
+    expect((await seriesForProducer('single_put')).success).toBe(0);
+  });
+
+  it('keeps producers on SEPARATE series for the same outcome', async () => {
+    // 🔴 The whole point of the label, and the case that fails if the producer is
+    // hardcoded, folded, or dropped from the `inc` call: three distinct counts on one
+    // outcome, none of them equal to another and none equal to the total.
+    ensureRegisterImageUploadRelayMetrics();
+    recordImageUploadRelay('success', 'single_put');
+    recordImageUploadRelay('success', 'multipart');
+    recordImageUploadRelay('success', 'multipart');
+    recordImageUploadRelay('success', 'unknown');
+    recordImageUploadRelay('success', 'unknown');
+    recordImageUploadRelay('success', 'unknown');
+
+    expect((await seriesForProducer('single_put')).success).toBe(1);
+    expect((await seriesForProducer('multipart')).success).toBe(2);
+    expect((await seriesForProducer('unknown')).success).toBe(3);
+    // The summed view still reads as the route's invocation count — the property the
+    // label must not cost us.
+    expect((await seriesFromRegistry()).success).toBe(6);
   });
 
   it('never throws — a metrics failure must not break the upload it is observing', async () => {
@@ -161,7 +277,7 @@ describe('recordImageUploadRelay', () => {
       realInc.call(metric, labels, value);
     };
     try {
-      expect(() => recordImageUploadRelay('success')).not.toThrow();
+      expect(() => recordImageUploadRelay('success', 'single_put')).not.toThrow();
       // Positive control: without this, a stub that was never reached at all would let
       // the case pass as "the error was swallowed" having thrown nothing.
       expect(finalIncAttempts, 'the final inc({ outcome }) must have been reached').toBe(1);

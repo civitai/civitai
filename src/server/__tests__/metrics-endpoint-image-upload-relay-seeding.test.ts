@@ -7,12 +7,14 @@ import {
   IMAGE_UPLOAD_RELAY_METRIC,
   IMAGE_UPLOAD_RELAY_OUTCOMES,
 } from '~/server/prom/image-upload-relay.metrics';
+import { IMAGE_UPLOAD_RELAY_PRODUCERS } from '~/utils/image-upload-relay-producer';
 
 /**
  * 🔴 THE SEAM: the image-upload relay's usage counter is registered in ONE module and
  * seeded from ANOTHER, and neither half works alone.
  *
- * `image-upload-relay.metrics.ts` seeds all eleven outcome series at 0 on registration.
+ * `image-upload-relay.metrics.ts` seeds the full outcome x producer cross product at 0 on
+ * registration.
  * But prom-client materialises a child only on its first `inc()`, and Next.js loads an
  * API route lazily — so nothing evaluates that module on a pod until something calls
  * into it. For this counter that is the relay route itself, which is a FALLBACK that
@@ -87,17 +89,34 @@ describe('/api/metrics seeds the image-upload relay counter', () => {
     expect(body).toMatch(/process_cpu_user_seconds_total|nodejs_/);
   });
 
-  it('🔴 exposes ALL eleven outcome series at 0 on a pod where no relay has ever run', async () => {
+  it('🔴 exposes the FULL outcome x producer cross product at 0 on a pod where no relay has ever run', async () => {
     const body = await scrape();
     expect(body).toContain(IMAGE_UPLOAD_RELAY_METRIC);
     for (const outcome of IMAGE_UPLOAD_RELAY_OUTCOMES) {
-      // The exact exposition line, value included: presence alone would be satisfied by
-      // the HELP/TYPE header lines, which prom-client emits for a metric with no
-      // children at all — i.e. by exactly the unseeded state this guards against.
-      expect(body, `outcome=${outcome} must be exposed at 0`).toContain(
-        `${IMAGE_UPLOAD_RELAY_METRIC}{outcome="${outcome}"} 0`
-      );
+      for (const producer of IMAGE_UPLOAD_RELAY_PRODUCERS) {
+        // The exact exposition line, value included: presence alone would be satisfied by
+        // the HELP/TYPE header lines, which prom-client emits for a metric with no
+        // children at all — i.e. by exactly the unseeded state this guards against.
+        //
+        // 🔴 The CROSS PRODUCT, not the outcome list. The producer label exists to answer
+        // "is the multipart fallback working?", and it can only answer that if
+        // `producer="multipart"` is exposed at 0 before that path's first rescue —
+        // otherwise PromQL says `no data`, which reads as "never wired up". Seeding the
+        // outcomes under one default producer would satisfy an outcome-only assertion
+        // while leaving exactly that hole.
+        expect(body, `${outcome}/${producer} must be exposed at 0`).toContain(
+          `${IMAGE_UPLOAD_RELAY_METRIC}{outcome="${outcome}",producer="${producer}"} 0`
+        );
+      }
     }
+  });
+
+  it('exposes `unknown` as a seeded row — the reading a stale browser bundle produces', async () => {
+    // Called out separately because `unknown` is the row that will carry nearly all the
+    // traffic immediately after the header ships, and an unseeded one would make the only
+    // moving row read as `no data` for the whole rollout.
+    const body = await scrape();
+    expect(body).toContain(`${IMAGE_UPLOAD_RELAY_METRIC}{outcome="success",producer="unknown"} 0`);
   });
 
   it('renders it on the DEFAULT registry block, which is the one the scrape serves', async () => {

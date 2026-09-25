@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { attachUploadSettlement, relayImageFallback } from '~/utils/upload-settlement';
 import type { SettlementXhr } from '~/utils/upload-settlement';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 // AUDIT-F1 regression guard — the defect the first draft of the upload relay shipped,
 // and the one nothing in the tree could see.
@@ -349,10 +350,41 @@ describe('relayImageFallback', () => {
       '/api/v1/image-upload/relay',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'image/png' },
+        // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
+        // attribute a rescue to THIS path; an `objectContaining` here would pass with it
+        // missing, which is the defect the discriminator exists to make impossible.
+        headers: {
+          'Content-Type': 'image/png',
+          [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
+        },
         body: f,
       })
     );
+    vi.unstubAllGlobals();
+  });
+
+  it('🔴 identifies itself as the MULTIPART producer, not as the single-PUT one', async () => {
+    // WHY THIS MATTERS AT ALL. The relay's usage counter reads a non-zero success count
+    // that is entirely attributable to the single-PUT caller, which shipped first — so
+    // grading this path on the undifferentiated counter returns a confident FALSE
+    // POSITIVE. The header is the only thing that separates them.
+    //
+    // Asserted as an equality against the wrong value as well as the right one: a mutant
+    // that sends `single_put` here would be invisible to a presence-only check, and it is
+    // the single most damaging mutation available, since it silently re-creates the
+    // attribution error under the appearance of a fix.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await relayImageFallback(file(), opts());
+
+    const sent = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(sent[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
+    expect(sent[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).not.toBe('single_put');
     vi.unstubAllGlobals();
   });
 

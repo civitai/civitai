@@ -7,7 +7,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { attachUploadSettlement, relayWithRetry } from '~/utils/upload-settlement';
+import {
+  attachUploadSettlement,
+  postImageUploadRelay,
+  relayWithRetry,
+} from '~/utils/upload-settlement';
 
 type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
@@ -137,12 +141,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
      * an unreachable host.
      */
     async function postToRelay(signal: AbortSignal) {
-      return fetch('/api/v1/image-upload/relay', {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-        signal,
-      });
+      // `single_put`: this hook IS the single-PUT path. The request construction is
+      // shared with the multipart caller (`postImageUploadRelay`) so the producer header
+      // cannot be present on one and missing on the other — the two used to build
+      // near-identical fetches side by side.
+      return postImageUploadRelay(file, { signal, producer: 'single_put' });
     }
 
     async function relayUpload(signal: AbortSignal) {
