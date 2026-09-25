@@ -41,12 +41,13 @@ vi.mock('~/components/Resource/official-match', () => ({ resolveOfficialFileHash
 
 import { FilesProvider, useFilesContext } from '~/components/Resource/FilesProvider';
 
-type SeedFile = { id: number; name: string; sizeKB: number; fp?: string };
+type SeedFile = { id: number; name: string; sizeKB: number; sha256: string | null; fp?: string };
 
-const seed = ({ id, name, sizeKB, fp = 'int8' }: SeedFile) => ({
+const seed = ({ id, name, sizeKB, sha256, fp = 'int8' }: SeedFile) => ({
   id,
   name,
   sizeKB,
+  hashes: sha256 ? [{ type: 'SHA256', hash: sha256 }] : [],
   type: 'Model',
   metadata: { fp, format: 'SafeTensor' },
 });
@@ -87,45 +88,38 @@ async function validate(name: string) {
   return (button.element() as HTMLElement).dataset.result;
 }
 
-const fl2va = { id: 1, name: 'fl2va_int8.safetensors', sizeKB: 33241106 };
-const ref2va = { id: 2, name: 'ref2va_pruned_int8.safetensors', sizeKB: 20478886 };
-const copy = { id: 3, name: 'fl2va_int8_copy.safetensors', sizeKB: 33241106 };
-const bf16 = { id: 4, name: 'fl2va_bf16.safetensors', sizeKB: 64727038, fp: 'bf16' };
+const fl2va = { id: 1, name: 'fl2va_bf16.safetensors', sizeKB: 64727038, fp: 'bf16' };
+const ref2va = { id: 2, name: 'ref2va_bf16.safetensors', sizeKB: 64727038, fp: 'bf16' };
+const int8 = { id: 3, name: 'fl2va_int8.safetensors', sizeKB: 33241106 };
+const int8Pruned = { id: 4, name: 'fl2va_pruned_int8.safetensors', sizeKB: 20478886 };
 
-describe('FilesProvider save-time conflict check', () => {
+describe('FilesProvider save-time similar-files check', () => {
   beforeEach(() => {
     showErrorNotification.mockClear();
     showWarningNotification.mockClear();
   });
 
-  test('variants sharing type and precision save with a warning', async () => {
+  test('variants of the exact same size and settings save with a warning', async () => {
     renderVersion([fl2va, ref2va]);
 
     expect(await validate('all')).toBe('true');
-    expect(await validate(fl2va.name)).toBe('true');
+    expect(await validate(ref2va.name)).toBe('true');
     expect(showWarningNotification).toHaveBeenCalledTimes(2);
     expect(showErrorNotification).not.toHaveBeenCalled();
   });
 
-  test('the same file twice blocks the version save', async () => {
-    renderVersion([fl2va, copy]);
+  test('a per-file save only warns about groups that file is part of', async () => {
+    renderVersion([fl2va, ref2va, int8]);
 
-    expect(await validate('all')).toBe('false');
-    expect(showErrorNotification).toHaveBeenCalledTimes(1);
-  });
-
-  test('a per-file save is blocked only by a duplicate that file is part of', async () => {
-    renderVersion([fl2va, copy, ref2va, bf16]);
-
-    expect(await validate(copy.name)).toBe('false');
-    expect(await validate(bf16.name)).toBe('true');
+    expect(await validate(int8.name)).toBe('true');
     expect(showWarningNotification).not.toHaveBeenCalled();
   });
 
-  test('a variant in a group that also holds a duplicate is still warned about', async () => {
-    renderVersion([fl2va, copy, ref2va]);
+  test('a version save warns about every similar group', async () => {
+    renderVersion([fl2va, ref2va, int8, int8Pruned]);
 
-    expect(await validate(ref2va.name)).toBe('true');
+    expect(await validate('all')).toBe('true');
     expect(showWarningNotification).toHaveBeenCalledTimes(1);
+    expect(showErrorNotification).not.toHaveBeenCalled();
   });
 });
