@@ -166,10 +166,15 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  *
  * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
  * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
- * The derived membership is pinned (on growth AND shrink) in
- * `src/shared/constants/__tests__/app-storage-scopes.test.ts` — if that ledger fails
- * because a new storage scope DOES read middleware-resolved claims, update the ledger
- * and this docblock in the same commit.
+ * The derived membership is pinned (on growth AND shrink) by the
+ * `APP_STORAGE_SCOPES (the auth:"oauth" conflict set)` suite in
+ * `src/shared/constants/__tests__/block-scope.constants.test.ts` — if that ledger fails
+ * because a new storage scope DOES read middleware-resolved claims, update the ledger and
+ * this docblock in the same commit.
+ *
+ * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
+ * first of those empties out, this family stops needing the manifest refusal at all.
  */
 export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
 export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(
