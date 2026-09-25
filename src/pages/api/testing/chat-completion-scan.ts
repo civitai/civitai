@@ -40,6 +40,30 @@
  *     Up to 50 texts, concurrency-limited. Returns per-item outcomes plus a
  *     refusal-rate and score-distribution summary.
  *
+ * Text-scan pipeline actions (src/server/services/text-scan/harness.ts). Local and
+ * dev only: /api/testing is unreachable on production builds.
+ *
+ *   { "action": "getPrompts", "history"?: "<key>", "limit"?: 20 }
+ *     Active prompt row per key plus the runtime config; with `history`, every
+ *     version of that key (author, note, createdAt) newest first.
+ *
+ *   { "action": "putPrompt", "key": "base" | "label:<label>", "content": "...",
+ *     "note": "...", "createdById": <moderator id> }
+ *     Appends a new prompt version. `createdById` must be an active moderator.
+ *
+ *   { "action": "putConfig", "moderatorId": <id>, "config": { "model"?, "maxInputChars"?, "thinking"? } }
+ *     Merges the patch over the stored config and returns the result. The
+ *     moderator id must be an active moderator; the write is logged with it.
+ *
+ *   { "action": "scanEntity", "entityType": "...", "entityId": 1,
+ *     "promptOverrides"?: { "<key>": "..." }, "model"?, "thinking"?, "wait"? }
+ *     Dry-runs the production composition for one entity synchronously: no
+ *     callback, no EntityModeration write. Overridden keys report prompt id 0.
+ *
+ *   { "action": "batchEntities", "entityType": "...", "entityIds": [1, 2], ... }
+ *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
+ *     per-label firing counts. Text below the profile's minChars is not sent.
+ *
  * Label definitions and policy text are INPUTS, never defaults in this file.
  * `labels` are bare names; pass any definitions via `labelDefinitions` or
  * `systemPrompt` at call time.
@@ -50,6 +74,11 @@ import { getWorkflow, submitWorkflow } from '@civitai/client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import {
+  isTextScanHarnessAction,
+  runTextScanHarnessAction,
+  textScanHarnessSchema,
+} from '~/server/services/text-scan/harness';
 import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const DEFAULT_MODEL =
@@ -330,6 +359,24 @@ async function runOne(input: Omit<ScanInput, 'action'> & { text: string }) {
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (isTextScanHarnessAction((req.body as { action?: unknown } | undefined)?.action)) {
+    try {
+      const harnessInput = textScanHarnessSchema.safeParse(req.body);
+      if (!harnessInput.success)
+        return res
+          .status(400)
+          .json({ error: 'Invalid request', issues: harnessInput.error.issues });
+      const result = await runTextScanHarnessAction(harnessInput.data, {});
+      if (result.kind === 'csv') {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        return res.status(200).send(result.body);
+      }
+      return res.status(200).json(result.body);
+    } catch (e) {
+      return handleEndpointError(res, e);
+    }
+  }
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {

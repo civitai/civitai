@@ -1586,8 +1586,18 @@ export interface EntityModeration {
   triggeredLabels: string[];
   result: JsonValue | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface TextScanPrompt {
+  id: number;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface ImageEngagement {

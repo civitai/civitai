@@ -2267,6 +2267,14 @@ export const REDIS_SYS_KEYS = {
       URLS: 'packed:system:entity-moderation:urls',
     },
   },
+  TEXT_SCAN: {
+    /*
+      Use: runtime config for the text-scan pipeline, editable without a deploy
+        (text-scan harness `putConfig`).
+      Structure: json string, get/set ({ "model"?: string, "maxInputChars"?: number, "thinking"?: boolean })
+     */
+    CONFIG: 'system:text-scan:config',
+  },
   CONTENT: {
     /*
       Use: Store markdown content for region restrictions and other warnings
@@ -2376,6 +2384,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    TEXT_SCAN_PROMPTS: 'packed:caches:text-scan-prompts',
     RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
@@ -2597,6 +2606,13 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  TEXT_SCAN: {
+    /*
+      Use: throttles the "missing prompt rows" error to one log per key per interval.
+      Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
+     */
+    MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
   },
 } as const;
 
