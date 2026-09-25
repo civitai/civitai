@@ -54,7 +54,9 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
   'multipart',
   /**
    * 🔴 FIRST-CLASS, NOT A GAP. Three distinct populations land here and all three are
-   * legitimate readings rather than errors:
+   * legitimate readings rather than errors — note that a crafted value only lands here
+   * if it is OUTSIDE the set; an in-set value asserted by a caller is taken at face
+   * value, see the note on `sanitizeImageUploadRelayProducer`:
    *
    *  * A browser running an older cached bundle, which sends no header at all. Expect
    *    this to DOMINATE for as long as stale bundles are in circulation after the
@@ -85,12 +87,34 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
 /**
  * Narrow a caller-supplied header value to the closed set above.
  *
- * 🔴 TOTAL, and never `undefined`. Absent, unknown, malformed, an array (Node hands one
- * back when a header arrives more than once in a way it cannot join — ambiguous provenance,
- * so it is not trusted), a non-string, or a crafted value ALL become `unknown`. Returning
- * `undefined` for the absent case would let the label be omitted, which in Prometheus
- * creates a DIFFERENT series (one with no `producer` label) — the opposite of the closed
- * bound this module exists to hold.
+ * 🔴 TOTAL, and never `undefined`. Absent, unknown, malformed, a non-string, or a crafted
+ * value ALL become `unknown`. Returning `undefined` for the absent case would let the
+ * label be omitted, which in Prometheus creates a DIFFERENT series (one with no `producer`
+ * label) — the opposite of the closed bound this module exists to hold.
+ *
+ * An ARRAY takes its first element, matching `firstValue`/`boundedClientLabel` in
+ * `src/server/prom/trpc-batch.metrics.ts` — the closest sibling in this repo, which does
+ * the same job (a caller-supplied header narrowed to a bounded Prometheus label) and
+ * already settled this question. ⚠ An earlier draft bucketed any array to `unknown` on
+ * "ambiguous provenance" grounds; that diverged from three existing normalisers here and
+ * it diverged in the harmful direction — `unknown` is the row the rollout is GRADED on,
+ * so demoting a legitimate `multipart` rescue into it corrupts the one signal that can
+ * answer the question. It buys no safety either: the closed-set test below is what bounds
+ * the label, and a caller that can send the header twice can equally send it once.
+ *
+ * 🔴 THE BOUND IS THIS SET, NOT THE ROUTE'S AUTH. The relay sanitises the header before
+ * its origin guard and session lookup, so an unauthenticated or cross-origin caller still
+ * chooses which producer series moves for `forbidden_origin` / `unauthorized`. That is
+ * harmless only while the set is closed and every pair is pre-seeded. Anyone widening this
+ * to a prefix match, a pattern, or a length-bounded passthrough would be letting
+ * unauthenticated input drive cardinality on a public route — do not.
+ *
+ * ⚠ AND THE LABEL IS SELF-DECLARED. This rejects values outside the set; it cannot check
+ * that an in-set value is TRUE. Any same-origin logged-in caller can assert `multipart`.
+ * That grants nothing new — the same access already moved the undifferentiated counter —
+ * but it means the label records which caller CLAIMS to have produced the relay. When
+ * grading a path on it, corroborate against the `image-upload-relayed` events, which carry
+ * `userId` and can show whether the rescues belong to a plausible population.
  *
  * Contrast with `isImageUploadRelayOutcome`, which DROPS the increment on an unrecognised
  * value. The asymmetry is deliberate and the two inputs are not alike: an outcome is
@@ -101,8 +125,9 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  * rests on.
  */
 export function sanitizeImageUploadRelayProducer(input: unknown): ImageUploadRelayProducer {
-  if (typeof input !== 'string') return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
-  return PRODUCER_SET.has(input)
-    ? (input as ImageUploadRelayProducer)
+  const value = Array.isArray(input) ? input[0] : input;
+  if (typeof value !== 'string') return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
+  return PRODUCER_SET.has(value)
+    ? (value as ImageUploadRelayProducer)
     : UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
 }

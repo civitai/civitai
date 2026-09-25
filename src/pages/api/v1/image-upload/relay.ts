@@ -380,6 +380,17 @@ async function runRelay(
           // for that case would make "an older bundle rescued this upload" and "the field
           // was never added" the same observation in the event stream — the ambiguity
           // this discriminator exists to remove.
+          //
+          // 🔴 The VALUE must stay this `producer` binding rather than a second read of
+          // the header. Two derivations of one fact are two chances to disagree, and the
+          // divergence would be invisible: the counter would stay perfectly bounded while
+          // an unsanitised string went into the event. The pairing is asserted in
+          // `src/__tests__/pages/api/v1/image-upload/relay.test.ts` on crafted input,
+          // which is the only input class on which the two CAN differ.
+          //
+          // ⚠ Scope: this event fires only on a SUCCESSFUL relay. The counter is the
+          // signal that covers refusals; do not read the event stream as the population
+          // of relay attempts.
           producer,
           ...(contentType ? { contentType } : {}),
         });

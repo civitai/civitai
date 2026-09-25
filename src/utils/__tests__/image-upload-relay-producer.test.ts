@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'fs';
+import { join, relative } from 'path';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   IMAGE_UPLOAD_RELAY_PRODUCERS,
@@ -62,12 +64,28 @@ describe('sanitizeImageUploadRelayProducer', () => {
     }
   });
 
-  it('maps a REPEATED header (Node hands back an array) to unknown', () => {
-    // Ambiguous provenance: two callers, or one caller trying to confuse the parse. Not
-    // trusted, and specifically not by reading element [0] — that would let a crafted
-    // request pick which value the server believes.
-    expect(sanitizeImageUploadRelayProducer(['multipart', 'single_put'])).toBe('unknown');
-    expect(sanitizeImageUploadRelayProducer(['multipart'])).toBe('unknown');
+  it('takes the FIRST value of a repeated header, matching the sibling label narrowers', () => {
+    // Node hands back an array when a header arrives more than once in a way it cannot
+    // join. `firstValue`/`boundedClientLabel` in `src/server/prom/trpc-batch.metrics.ts`
+    // already settled this for the same class of input — a caller-supplied header narrowed
+    // to a bounded Prometheus label — and two normalisers in `src/pages/api/internal/`
+    // agree with it. ⚠ An earlier draft returned `unknown` for any array; that diverged
+    // from all three, and in the direction that demotes a legitimate rescue into the row
+    // the rollout is graded on.
+    expect(sanitizeImageUploadRelayProducer(['multipart', 'single_put'])).toBe('multipart');
+    expect(sanitizeImageUploadRelayProducer(['multipart'])).toBe('multipart');
+  });
+
+  it('still bounds an array whose first element is crafted, and an empty one', () => {
+    // 🔴 Why taking [0] costs no safety: the closed-set test runs on the element taken, so
+    // element order decides WHICH member is believed, never WHETHER an arbitrary string
+    // becomes a label. The empty array is the degenerate case — `input[0]` is `undefined`,
+    // which the `typeof` check catches.
+    expect(sanitizeImageUploadRelayProducer(['chrome-extension://evil', 'multipart'])).toBe(
+      'unknown'
+    );
+    expect(sanitizeImageUploadRelayProducer([])).toBe('unknown');
+    expect(sanitizeImageUploadRelayProducer([['multipart']])).toBe('unknown');
   });
 
   it('cannot be walked through a prototype key', () => {
@@ -142,14 +160,96 @@ describe('the producer contract itself', () => {
     expect(IMAGE_UPLOAD_RELAY_PRODUCERS).toContain(UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER);
   });
 
-  it('declares one producer per relay caller, and names them', () => {
-    // 🔴 A LEDGER, not a count. The relay has exactly two callers — the single-PUT path
-    // (`useCFImageUpload`) and the multipart path (`useS3Upload` via
-    // `relayImageFallback`) — plus the `unknown` bucket. A third caller added without a
-    // label of its own would silently pool into `unknown` and be unattributable, which is
-    // the defect this whole change fixes; this fails when the set grows OR shrinks.
+  it('pins the LABEL set — which is not the caller set; see the ledger below', () => {
+    // ⚠ SCOPED DELIBERATELY, because an earlier version of this comment claimed more than
+    // the assertion delivers. This pins the three LABEL values. It says nothing about how
+    // many CALLERS exist: `postImageUploadRelay`'s `producer` parameter is typed to this
+    // union, so a third call site is forced to reuse an existing label and compiles clean
+    // — leaving this green while its traffic corrupts an already-attributed series, which
+    // is worse than the `unknown` pooling the old wording described. The caller side is
+    // pinned by the source ledger in the next block; keep the two claims separate.
+    //
+    // It is still worth pinning: `passes every declared producer through unchanged` above
+    // iterates this tuple, so it would go vacuous if the tuple were shrunk to one member.
     expect([...IMAGE_UPLOAD_RELAY_PRODUCERS].sort()).toEqual(
       ['multipart', 'single_put', 'unknown'].sort()
     );
+  });
+});
+
+describe('the relay caller ledger', () => {
+  /**
+   * 🔴 THE SEAM NOBODY ELSE OWNS: the set of code paths that can reach the relay.
+   *
+   * Every other guard in this change is about one component — the sanitiser bounds a
+   * value, the metrics module bounds a series, each hook sends its own header. None of
+   * them can see a THIRD caller appearing, and a third caller is exactly how this
+   * change's own defect comes back: it would have to reuse `single_put` or `multipart`
+   * to compile, and its traffic would then be added to a series someone is already
+   * grading. `no-unledgered-settle-caller.test.ts` guards the same two-caller shape and
+   * is the precedent for doing it this way.
+   *
+   * Asserted as an exact set so it fails when the caller list GROWS or SHRINKS, and on
+   * the producer literal each site passes so two callers cannot quietly share one label.
+   */
+  const RELAY_CALLER_LEDGER: Record<string, string> = {
+    'src/hooks/useCFImageUpload.tsx': 'single_put',
+    'src/utils/upload-settlement.ts': 'multipart',
+  };
+
+  function sourceFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+        out.push(...sourceFiles(full));
+      } else if (/\.tsx?$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const SRC = join(process.cwd(), 'src');
+
+  it('finds EVERY relay caller in the ledger, and no caller outside it', () => {
+    const callers: Record<string, string[]> = {};
+    for (const file of sourceFiles(SRC)) {
+      const text = readFileSync(file, 'utf8');
+      const rel = relative(process.cwd(), file);
+      // Two ways to reach the route: through the shared helper, or by building a request
+      // against the path directly. The second is what the helper exists to prevent, so it
+      // has to be part of what this ledger looks for — a bare `fetch` to the path would
+      // otherwise be invisible to every guard in this change.
+      const viaHelper = [...text.matchAll(/postImageUploadRelay\(\s*\w+\s*,\s*\{([^}]*)\}/g)];
+      const viaPath = text.includes(`'/api/v1/image-upload/relay'`);
+      if (!viaHelper.length && !viaPath) continue;
+      // The definition site itself holds the literal and is a legitimate match; it is in
+      // the ledger under the caller it also hosts (`relayImageFallback`).
+      const producers = viaHelper
+        .map((m) => /producer:\s*'([^']+)'/.exec(m[1])?.[1])
+        .filter((p): p is string => Boolean(p));
+      callers[rel] = producers;
+    }
+
+    expect(Object.keys(callers).sort()).toEqual(Object.keys(RELAY_CALLER_LEDGER).sort());
+    for (const [file, expected] of Object.entries(RELAY_CALLER_LEDGER)) {
+      expect(callers[file], `${file} must pass producer: '${expected}'`).toEqual([expected]);
+    }
+    // And no two callers share a label — the failure the type system cannot express.
+    const labels = Object.values(RELAY_CALLER_LEDGER);
+    expect(new Set(labels).size, 'two callers share one producer label').toBe(labels.length);
+  });
+
+  it('POSITIVE CONTROL: the scan reaches real files and can see a caller', () => {
+    // 🔴 Without this, a scan pointed at the wrong directory, or a regex that matches
+    // nothing, returns an empty caller set — and an empty set compared against an empty
+    // set is the reassuring zero this whole change exists to stop believing. The ledger
+    // above is only meaningful if the scanner demonstrably finds something.
+    const files = sourceFiles(SRC);
+    expect(files.length).toBeGreaterThan(100);
+    expect(
+      files.some((f) => f.endsWith(join('src', 'hooks', 'useCFImageUpload.tsx'))),
+      'the scan must reach the known single-PUT caller'
+    ).toBe(true);
   });
 });

@@ -164,9 +164,11 @@ const HELP =
   'store_error = the store write threw (500, or 499 on a client disconnect); ' +
   'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
-  'producer: which client asked for the relay, sanitised server-side into a closed set. ' +
-  'single_put = the single-PUT upload path; multipart = the multipart upload path; ' +
-  'unknown = no header, an unrecognised value, or a crafted one — EXPECTED to dominate ' +
+  'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
+  'a closed set — the sanitiser rejects values outside the set but cannot verify one ' +
+  'inside it, so corroborate against the image-upload-relayed events before resting a ' +
+  'decision on it. single_put = the single-PUT upload path; multipart = the multipart ' +
+  'upload path; unknown = no header, or a value outside the set — EXPECTED to dominate ' +
   'while browsers still run a bundle older than the deploy that added the header, so read ' +
   'a large unknown share as stale clients rather than as a gap. Without this label a ' +
   'non-zero success count cannot be attributed to either caller. ' +
@@ -184,7 +186,6 @@ const HELP =
  * indistinguishable from "that caller was never wired up", which is the very question the
  * producer label was added to settle.
  *
-
  * 🔴 NOT COSMETIC, AND THIS COUNTER IS THE CASE WHERE IT MATTERS MOST. prom-client only
  * materialises a child on its first `inc()`, so without this a pod exposes NOTHING for
  * an outcome until that outcome occurs on that pod. A PromQL read then returns `no

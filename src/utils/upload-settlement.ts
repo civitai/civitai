@@ -10,6 +10,12 @@
  * the caller used to receive.
  *
  * The hook owns React state; this owns "who settles, and with what".
+ *
+ * It also owns the relay's EXECUTION half — `postImageUploadRelay`, `relayWithRetry` and
+ * `relayImageFallback` below. The DECISION half lives in `~/utils/upload-retry`
+ * (`shouldRelayOnPartFailure`, `RELAY_FALLBACK_MAX_BYTES`). That split is deliberate:
+ * a new relay constant belongs on the decide side if something reads it to choose whether
+ * to relay, and on this side if it shapes the request that gets sent.
  */
 
 import {
@@ -17,8 +23,19 @@ import {
   type ImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
 
-/** The route both upload paths fall back to. One literal, so the two cannot drift. */
-export const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
+/**
+ * The route both upload paths fall back to.
+ *
+ * Not exported: the only way to reach the relay is `postImageUploadRelay` below, and
+ * handing out the bare path would let a future caller build its own request — which is
+ * exactly how the producer header goes missing at one of two sites.
+ *
+ * ⚠ It is one literal for the two CALL SITES, not repo-wide: three test files still spell
+ * the path out, deliberately, so that renaming the route (whose real path comes from its
+ * filename, `src/pages/api/v1/image-upload/relay.ts`) turns them red rather than following
+ * the rename silently. Do not read this as a guarantee that the path exists in one place.
+ */
+const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
 
 /**
  * Build and send the relay POST.

@@ -104,9 +104,16 @@ describe('/api/metrics seeds the image-upload relay counter', () => {
         // otherwise PromQL says `no data`, which reads as "never wired up". Seeding the
         // outcomes under one default producer would satisfy an outcome-only assertion
         // while leaving exactly that hole.
-        expect(body, `${outcome}/${producer} must be exposed at 0`).toContain(
-          `${IMAGE_UPLOAD_RELAY_METRIC}{outcome="${outcome}",producer="${producer}"} 0`
+        // ⚠ LABEL-ORDER AGNOSTIC. prom-client renders labels in the insertion order of
+        // the object passed to `inc`, so a literal `{outcome="…",producer="…"}` string
+        // would turn red if someone wrote `inc({ producer, outcome })` — a change with no
+        // semantic effect at all, and a confusing failure to debug. The claim here is
+        // "this pair is exposed at 0", not "the labels are in this order".
+        const line = new RegExp(
+          `^${IMAGE_UPLOAD_RELAY_METRIC}\\{(?=[^}]*\\boutcome="${outcome}")(?=[^}]*\\bproducer="${producer}")[^}]*\\} 0$`,
+          'm'
         );
+        expect(body, `${outcome}/${producer} must be exposed at 0`).toMatch(line);
       }
     }
   });
@@ -116,7 +123,12 @@ describe('/api/metrics seeds the image-upload relay counter', () => {
     // traffic immediately after the header ships, and an unseeded one would make the only
     // moving row read as `no data` for the whole rollout.
     const body = await scrape();
-    expect(body).toContain(`${IMAGE_UPLOAD_RELAY_METRIC}{outcome="success",producer="unknown"} 0`);
+    expect(body).toMatch(
+      new RegExp(
+        `^${IMAGE_UPLOAD_RELAY_METRIC}\\{(?=[^}]*\\boutcome="success")(?=[^}]*\\bproducer="unknown")[^}]*\\} 0$`,
+        'm'
+      )
+    );
   });
 
   it('renders it on the DEFAULT registry block, which is the one the scrape serves', async () => {

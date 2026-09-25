@@ -881,6 +881,10 @@ describe('image-upload relay', () => {
       await handler(makeReq([Buffer.from('bytes')]), makeRes());
 
       expect(await moved()).toEqual(['success|unknown']);
+      // ONE event, not two: this file is the first to observe `logToAxiom` at all, so
+      // nothing else in the tree would notice a duplicated rescue in the event stream —
+      // and that stream is the only per-user source for this population.
+      expect(relayEvents()).toHaveLength(1);
       expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
       // Explicitly: the field is PRESENT, not merely falsy-and-omitted.
       expect(Object.keys(relayEvents()[0])).toContain('producer');
@@ -911,19 +915,53 @@ describe('image-upload relay', () => {
           `series producer=${r.producer} is outside the closed set`
         ).toBe(true);
       }
+      // 🔴 AND THE EVENT, on exactly this input class. The route's comment claims one
+      // derivation feeds BOTH signals so they "can never disagree" — and crafted input is
+      // the ONLY class on which a second, divergent derivation would show: for a valid
+      // label, an absent header or an array, a naive re-read of the header produces the
+      // same answer the sanitiser does. Without this line a mutant that re-reads
+      // `req.headers[...]` in the log payload keeps the counter perfectly bounded (so the
+      // 33-row check above stays green) while putting an unbounded caller-controlled
+      // string into a structured log. Verified as a surviving mutant before this was added.
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
     });
 
-    it('buckets a REPEATED header into `unknown` rather than picking one of the values', async () => {
+    it('takes the FIRST value of a repeated header, as the sibling label narrowers do', async () => {
       // Node hands back an array when a header arrives more than once in a way it cannot
-      // join. Reading element [0] would let a crafted request choose which value the
-      // server believes — so the provenance is ambiguous and the value is not trusted.
+      // join. The first element is taken, matching `firstValue`/`boundedClientLabel` in
+      // `src/server/prom/trpc-batch.metrics.ts` — the closest sibling in this repo, doing
+      // the same job on the same class of input.
+      //
+      // ⚠ An earlier draft bucketed ANY array to `unknown`. That bought no safety (the
+      // closed-set test below is the bound, and a caller able to send the header twice can
+      // send it once) and cost attribution in the harmful direction: `unknown` is the row
+      // the rollout is graded on, so a legitimate rescue demoted into it corrupts the one
+      // signal that can answer the question.
       await handler(
         makeReq([Buffer.from('bytes')], { producerHeader: ['multipart', 'single_put'] }),
         makeRes()
       );
 
+      expect(await moved()).toEqual(['success|multipart']);
+      expect(relayEvents()).toHaveLength(1);
+      expect(relayEvents()[0]).toMatchObject({ producer: 'multipart' });
+    });
+
+    it('still bounds a repeated header whose FIRST value is crafted', async () => {
+      // The other half of the case above, and the one that keeps taking [0] safe: the
+      // closed-set test still runs on whatever the first element is, so element order
+      // decides WHICH label is believed and never WHETHER an arbitrary string becomes one.
+      await handler(
+        makeReq([Buffer.from('bytes')], { producerHeader: ['evil"} 1', 'multipart'] }),
+        makeRes()
+      );
+
       expect(await moved()).toEqual(['success|unknown']);
       expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
+      expect(await rows()).toHaveLength(
+        IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
+      );
     });
 
     it('labels a NON-success outcome with its producer too', async () => {
