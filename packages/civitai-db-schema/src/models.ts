@@ -785,6 +785,13 @@ export interface Purchase {
   createdAt: Date;
 }
 
+export interface CreatorGalleryHiddenUser {
+  creatorId: number;
+  userId: number;
+  note: string | null;
+  createdAt: Date;
+}
+
 export interface UserEngagement {
   userId: number;
   user?: User;

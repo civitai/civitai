@@ -55,6 +55,10 @@ import {
   userModelCountCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  bustModelGallerySettings,
+  getCreatorGalleryHiddenUserIds,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
@@ -4236,7 +4240,9 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
 
   const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings)
-    return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+    return fromJson<
+      Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & { creatorHiddenUserIds?: number[] }
+    >(cachedSettings);
 
   const model = await getModel({
     id: id,
@@ -4245,9 +4251,12 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   if (!model) return null;
 
   const settings = model.gallerySettings
-    ? await getGalleryHiddenPreferences({
-        settings: model.gallerySettings as ModelGallerySettingsSchema,
-      })
+    ? {
+        ...(await getGalleryHiddenPreferences({
+          settings: model.gallerySettings as ModelGallerySettingsSchema,
+        })),
+        creatorHiddenUserIds: await getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
+      }
     : null;
   await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
@@ -5550,6 +5559,8 @@ export async function transferModelOwnership({
     // The gate row carries ownerId and the public donation goal carries userId, so both have to go.
     // bustMvCache busts the gate row too as of 868kwp6ne — this stays as the deliberate duplicate that
     // keeps the pair together, and a second bust of an already-busted key costs one SET.
+    // Built from the previous owner's creator-wide hidden list.
+    invalidation('bustModelGallerySettings', bustModelGallerySettings(modelIds)),
     invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
     invalidation(
       'bustPublicDonationGoals',

@@ -28,6 +28,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { getEffectiveGalleryHiddenUserIds } from '~/components/Image/AsPosts/gallery-hidden-users';
 import {
   useGallerySettings,
   useModel3DGallerySettings,
@@ -157,12 +158,16 @@ export function ImagesAsPostsInfinite({
       }
     );
 
+  const activeGallerySettings =
+    source.kind === 'model3d' ? model3dGallerySettings : gallerySettings;
   const hiddenUsers = useMemo(
     () =>
-      source.kind === 'model3d'
-        ? model3dGallerySettings?.hiddenUsers.map((x) => x.id)
-        : gallerySettings?.hiddenUsers.map((x) => x.id),
-    [source.kind, gallerySettings?.hiddenUsers, model3dGallerySettings?.hiddenUsers]
+      getEffectiveGalleryHiddenUserIds({
+        modelHiddenUserIds: activeGallerySettings?.hiddenUsers.map((x) => x.id),
+        creatorHiddenUserIds: activeGallerySettings?.creatorHiddenUserIds,
+        viewerId: currentUser?.id,
+      }),
+    [activeGallerySettings, currentUser?.id]
   );
   const hiddenTags = useMemo(
     () =>
@@ -215,11 +220,9 @@ export function ImagesAsPostsInfinite({
   const hasModerationPreferences =
     source.kind === 'model3d'
       ? !!hiddenImageIds.length ||
-        !!model3dGallerySettings?.hiddenUsers.length ||
+        !!hiddenUsers.length ||
         !!model3dGallerySettings?.hiddenTags.length
-      : !!hiddenImageIds.length ||
-        !!gallerySettings?.hiddenUsers.length ||
-        !!gallerySettings?.hiddenTags.length;
+      : !!hiddenImageIds.length || !!hiddenUsers.length || !!gallerySettings?.hiddenTags.length;
 
   const providerValue = useMemo(
     () => ({
@@ -318,7 +321,10 @@ export function ImagesAsPostsInfinite({
                             onClick={() =>
                               dialogStore.trigger({
                                 component: GalleryModerationModal,
-                                props: { modelId: source.model.id },
+                                props: {
+                                  modelId: source.model.id,
+                                  isOwner: currentUser?.id === source.model.user.id,
+                                },
                               })
                             }
                           >

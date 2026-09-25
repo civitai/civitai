@@ -2283,6 +2283,12 @@ export type CoveredCheckpoint = {
   model_id: number;
   version_id: number;
 };
+export type CreatorGalleryHiddenUser = {
+  creatorId: number;
+  userId: number;
+  note: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type CryptoDeposit = {
   paymentId: string;
   userId: number;
@@ -4666,6 +4672,7 @@ export type DB = {
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
+  CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;

@@ -255,6 +255,27 @@ export const updateGallerySettingsSchema = z.object({
   gallerySettings: modelGallerySettingsInput.nullable(),
 });
 
+const creatorGalleryHiddenUserNote = z
+  .string()
+  .trim()
+  .max(constants.modelGallery.maxCreatorHiddenUserNoteLength)
+  .nullish();
+
+export type UpsertCreatorGalleryHiddenUserInput = z.infer<
+  typeof upsertCreatorGalleryHiddenUserSchema
+>;
+export const upsertCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+  note: creatorGalleryHiddenUserNote,
+});
+
+export type RemoveCreatorGalleryHiddenUserInput = z.infer<
+  typeof removeCreatorGalleryHiddenUserSchema
+>;
+export const removeCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
 export type CopyGallerySettingsInput = z.infer<typeof copyGallerySettingsSchema>;
 export const copyGallerySettingsSchema = z.object({ id: z.number() });
 

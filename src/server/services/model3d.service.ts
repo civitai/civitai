@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getGetUrl,
   getS3Client,
@@ -1305,6 +1306,7 @@ export const getModel3DGallerySettings = async ({ id }: { id: number }) => {
     hiddenTags,
     hiddenUsers,
     hiddenImages: images ?? [],
+    creatorHiddenUserIds: await getCreatorGalleryHiddenUserIds(row.userId),
   };
 };
 

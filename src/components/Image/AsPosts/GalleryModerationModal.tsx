@@ -9,9 +9,10 @@ import {
   Paper,
   Stack,
   Text,
+  TextInput,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { IconAlertTriangle, IconCheck, IconSearch, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck, IconPencil, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useGallerySettings } from './gallery.utils';
@@ -29,8 +30,16 @@ import { openConfirmModal } from '@mantine/modals';
 import classes from './GalleryModerationModal.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { constants } from '~/server/common/constants';
+import { showErrorNotification } from '~/utils/notifications';
 
-export function GalleryModerationModal({ modelId }: { modelId: number }) {
+export function GalleryModerationModal({
+  modelId,
+  isOwner,
+}: {
+  modelId: number;
+  isOwner?: boolean;
+}) {
   const dialog = useDialogContext();
   const { copySettings, updating, copySettingsLoading } = useGallerySettings({ modelId: modelId });
 
@@ -62,6 +71,7 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
       <Stack>
         <HiddenTagsSection modelId={modelId} />
         <HiddenUsersSection modelId={modelId} />
+        {isOwner && <CreatorHiddenUsersSection />}
         <MatureContentSection modelId={modelId} />
 
         <Button
@@ -229,6 +239,188 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
         </Stack>
       </Card.Section>
     </Card>
+  );
+}
+
+function CreatorHiddenUsersSection() {
+  const queryUtils = trpc.useUtils();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebouncedValue(search, 300);
+  const [pending, setPending] = useState<{ id: number; username: string } | null>(null);
+  const [pendingNote, setPendingNote] = useState('');
+
+  const { data: hiddenUsers = [] } = trpc.model.getCreatorGalleryHiddenUsers.useQuery();
+  const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
+    { query: debouncedSearch.trim(), limit: 10 },
+    { enabled: debouncedSearch !== '' }
+  );
+  const options =
+    data
+      ?.filter((x) => x.username && !hiddenUsers.some((h) => h.id === x.id))
+      .map(({ id, username }) => ({ id, value: username ?? '' })) ?? [];
+
+  const onSuccess = async () => {
+    await Promise.all([
+      queryUtils.model.getCreatorGalleryHiddenUsers.invalidate(),
+      queryUtils.model.getGallerySettings.invalidate(),
+    ]);
+  };
+  const onError = (error: { message: string }) =>
+    showErrorNotification({ title: 'Could not update hidden users', error });
+  const addMutation = trpc.model.addCreatorGalleryHiddenUser.useMutation({ onSuccess, onError });
+  const removeMutation = trpc.model.removeCreatorGalleryHiddenUser.useMutation({
+    onSuccess,
+    onError,
+  });
+
+  const handleAdd = async () => {
+    if (!pending) return;
+    await addMutation
+      .mutateAsync({ userId: pending.id, note: pendingNote })
+      .then(() => {
+        setPending(null);
+        setPendingNote('');
+        setSearch('');
+      })
+      .catch(() => null);
+  };
+
+  return (
+    <Card withBorder>
+      <Card.Section withBorder inheritPadding py="xs">
+        <Text fw={500}>Hidden on All My Models</Text>
+      </Card.Section>
+      <Card.Section withBorder style={{ marginTop: -1 }}>
+        <Autocomplete
+          name="creatorHiddenUser"
+          ref={searchInputRef}
+          placeholder="Search users to hide on all your models"
+          comboboxProps={{ withinPortal: true, zIndex: 500 }}
+          data={options}
+          value={search}
+          onChange={setSearch}
+          leftSection={isLoading && isFetching ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onOptionSubmit={(value: string) => {
+            const { id } = options.find((x) => x.value === value) ?? {};
+            if (!id) return;
+            setPending({ id, username: value });
+          }}
+        />
+      </Card.Section>
+      {pending && (
+        <Card.Section withBorder inheritPadding py="xs" style={{ marginTop: -1 }}>
+          <Stack gap={6}>
+            <Text size="sm">
+              Hide <b>{pending.username}</b> on all your models
+            </Text>
+            <TextInput
+              size="xs"
+              placeholder="Private note (optional, only you can see it)"
+              value={pendingNote}
+              maxLength={constants.modelGallery.maxCreatorHiddenUserNoteLength}
+              onChange={(e) => setPendingNote(e.currentTarget.value)}
+            />
+            <Group gap={6} justify="flex-end">
+              <Button size="compact-xs" variant="default" onClick={() => setPending(null)}>
+                Cancel
+              </Button>
+              <Button size="compact-xs" onClick={handleAdd} loading={addMutation.isPending}>
+                Hide
+              </Button>
+            </Group>
+          </Stack>
+        </Card.Section>
+      )}
+      <Card.Section inheritPadding pt="md" pb="xs">
+        <Stack gap={5}>
+          {hiddenUsers.map((user) => (
+            <CreatorHiddenUserRow
+              key={user.id}
+              user={user}
+              onRemove={() => removeMutation.mutate({ userId: user.id })}
+            />
+          ))}
+          <Text c="dimmed" size="xs">
+            Content from these users will not show up in the gallery of any of your models,
+            including future ones. They can still see their own posts. Notes are only visible to
+            you.
+          </Text>
+        </Stack>
+      </Card.Section>
+    </Card>
+  );
+}
+
+function CreatorHiddenUserRow({
+  user,
+  onRemove,
+}: {
+  user: { id: number; username: string | null; note: string | null };
+  onRemove: () => void;
+}) {
+  const queryUtils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState(user.note ?? '');
+  const updateNoteMutation = trpc.model.updateCreatorGalleryHiddenUserNote.useMutation({
+    onSuccess: async () => {
+      setEditing(false);
+      await queryUtils.model.getCreatorGalleryHiddenUsers.invalidate();
+    },
+    onError: (error) => showErrorNotification({ title: 'Could not save note', error }),
+  });
+
+  return (
+    <Group gap={6} wrap="nowrap" align="center">
+      <Text size="sm" fw={500} className="shrink-0">
+        {user.username}
+      </Text>
+      {editing ? (
+        <>
+          <TextInput
+            size="xs"
+            className="flex-1"
+            placeholder="Private note"
+            value={note}
+            maxLength={constants.modelGallery.maxCreatorHiddenUserNoteLength}
+            onChange={(e) => setNote(e.currentTarget.value)}
+          />
+          <LegacyActionIcon
+            size="sm"
+            variant="subtle"
+            color="green"
+            aria-label="Save note"
+            loading={updateNoteMutation.isPending}
+            onClick={() => updateNoteMutation.mutate({ userId: user.id, note })}
+          >
+            <IconCheck size={14} />
+          </LegacyActionIcon>
+        </>
+      ) : (
+        <>
+          <Text size="xs" c="dimmed" className="flex-1" truncate>
+            {user.note}
+          </Text>
+          <LegacyActionIcon
+            size="sm"
+            variant="subtle"
+            aria-label="Edit note"
+            onClick={() => setEditing(true)}
+          >
+            <IconPencil size={14} />
+          </LegacyActionIcon>
+        </>
+      )}
+      <LegacyActionIcon
+        size="sm"
+        variant="subtle"
+        color="red"
+        aria-label={`Unhide ${user.username}`}
+        onClick={onRemove}
+      >
+        <IconX size={14} />
+      </LegacyActionIcon>
+    </Group>
   );
 }
 

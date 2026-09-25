@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 
 /**
@@ -297,6 +299,18 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     // it — and it is the one leg whose loss is permanent, since Meilisearch has no TTL to heal on.
     expect(mockQueueModelsIndex).toHaveBeenCalledWith(
       MODEL_IDS.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  });
+
+  it("busts each transferred model's gallery settings, which carry the owner's hidden list", async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    expect(redisMock.redis.del.mock.calls.flatMap((call) => call[0])).toEqual(
+      expect.arrayContaining(MODEL_IDS.map((id) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`))
     );
   });
 

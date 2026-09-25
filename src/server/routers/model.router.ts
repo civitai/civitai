@@ -82,7 +82,15 @@ import {
   toggleModelLockSchema,
   unpublishModelSchema,
   updateGallerySettingsSchema,
+  upsertCreatorGalleryHiddenUserSchema,
+  removeCreatorGalleryHiddenUserSchema,
 } from '~/server/schema/model.schema';
+import {
+  addCreatorGalleryHiddenUser,
+  getCreatorGalleryHiddenUsers,
+  removeCreatorGalleryHiddenUser,
+  updateCreatorGalleryHiddenUserNote,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
@@ -394,6 +402,28 @@ export const modelRouter = router({
     .input(updateGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(updateGallerySettingsHandler),
+  // Always the caller's own list: a moderator editing someone else's model never reaches it.
+  getCreatorGalleryHiddenUsers: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .query(({ ctx }) => getCreatorGalleryHiddenUsers(ctx.user.id)),
+  addCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .mutation(({ ctx, input }) =>
+      addCreatorGalleryHiddenUser({ creatorId: ctx.user.id, ...input })
+    ),
+  updateCreatorGalleryHiddenUserNote: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .mutation(({ ctx, input }) =>
+      updateCreatorGalleryHiddenUserNote({ creatorId: ctx.user.id, ...input })
+    ),
+  removeCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(removeCreatorGalleryHiddenUserSchema)
+    .mutation(({ ctx, input }) =>
+      removeCreatorGalleryHiddenUser({ creatorId: ctx.user.id, userId: input.userId })
+    ),
   toggleCheckpointCoverage: moderatorProcedure
     .input(toggleCheckpointCoverageSchema)
     .mutation(toggleCheckpointCoverageHandler),
