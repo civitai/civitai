@@ -614,9 +614,6 @@ export function ModerationControls({
             case CollectionType.Article:
               await queryUtils.article.getInfinite.invalidate();
               break;
-            case CollectionType.Model3D:
-              await queryUtils.model3d.getInfinite.invalidate();
-              break;
             default:
               break;
           }

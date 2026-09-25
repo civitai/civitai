@@ -16,8 +16,12 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
   homeBlockCacheBust: vi.fn(),
 }));
 
-const { saveItemInCollections, checkUserOwnsCollectionAndItem, removeCollectionItem } =
-  await import('~/server/services/collection.service');
+const {
+  saveItemInCollections,
+  checkUserOwnsCollectionAndItem,
+  removeCollectionItem,
+  upsertCollection,
+} = await import('~/server/services/collection.service');
 
 const USER_ID = 4944;
 const MODEL3D_ID = 7101;
@@ -102,6 +106,36 @@ describe('saving a 3D model to a collection', () => {
 
     await expect(save()).rejects.toThrow('3D models cannot be entered into contest collections');
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses a submission that would land in a review queue', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      collectionRow({ userId: 999, write: 'Review', read: 'Public' }),
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { ...permissionRow, userId: 999, write: 'Review', read: 'Public' },
+    ]);
+
+    await expect(save()).rejects.toThrow(
+      '3D models cannot be submitted to collections that review entries'
+    );
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('refuses creating a contest collection of 3D models', async () => {
+    await expect(
+      upsertCollection({
+        input: {
+          name: 'Contest',
+          type: 'Model3D',
+          mode: 'Contest',
+          model3dId: MODEL3D_ID,
+          userId: USER_ID,
+          isModerator: true,
+        },
+      } as never)
+    ).rejects.toThrow('3D model collections cannot be contests');
+    expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
   });
 });
 

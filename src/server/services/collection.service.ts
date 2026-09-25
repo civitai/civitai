@@ -1051,10 +1051,16 @@ export const saveItemInCollections = async ({
           followCollectionIds.push(collectionId);
         }
 
+        const status = submissionStatus(permission);
+        // The review queue (getAllCollectionItems) has no Model3D variant, so a pending entry could never be actioned.
+        if (itemKey === 'model3dId' && status === CollectionItemStatus.REVIEW) {
+          throw throwBadRequestError('3D models cannot be submitted to collections that review entries');
+        }
+
         return {
           addedById: userId,
           collectionId,
-          status: submissionStatus(permission),
+          status,
           [itemKey]: input[itemKey],
           tagId,
         };
@@ -1514,6 +1520,11 @@ export const upsertCollection = async ({
 
   if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
     throw throwAuthorizationError('A membership is required to open a collection to submissions.');
+  }
+
+  // The initial item below is written directly, skipping saveItemInCollections' contest refusal.
+  if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
+    throw throwBadRequestError('3D model collections cannot be contests');
   }
 
   // TODO allow cover image
