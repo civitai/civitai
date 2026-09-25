@@ -14,9 +14,9 @@ Before deleting any flag, grep for **all** of these patterns. The destructure pa
 | `ext.flags?.X`         | DataGraph node extensions (e.g. wan-graph.ts)                |
 | `isFlagProtected('X')` | tRPC router middleware                                       |
 | `'X'` literal          | component-config maps (e.g. AppFooter footer items)          |
-| Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FliptFlag.X)` calls |
+| Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FLIPT_FEATURE_FLAGS.X)` calls |
 
-Also check the `FliptFlag` enum in [src/server/flipt/client.ts](../src/server/flipt/client.ts).
+Also check the `FLIPT_FEATURE_FLAGS` enum in [src/server/flipt/client.ts](../src/server/flipt/client.ts).
 
 ## Tier 1 — Truly dead (already removed)
 
@@ -85,11 +85,11 @@ drifted repeatedly, always toward looking safer than it is:
    defaults — so inlining one removes an existing opt-out even when its `default` is `true`. With
    `default: false` it is additionally off for everyone who has not opted in.
 
-Derive it, don't trust the prose: the current split is 20 safe and 6 not.
+Derive it, don't trust the prose: the current split is 19 safe and 6 not.
 
 **Safe:** `canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`,
 `imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`,
-`appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`,
+`appTour`, `privateModels`, `toolSearch`, `membershipsV2`, `prepaidMemberships`,
 `newsroom`, `creatorComp`, `alternateHome`.
 
 **Not safe, and previously listed as if they were:**
@@ -113,7 +113,7 @@ toggleable entries: `air`, `assistant` and `chat` are `default: true` and all th
 condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
 `largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
 condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
-above: drop condition 3 and the split is 21/5, not 20/6. `nativeVideoControls` was never on the
+above: drop condition 3 and the split is 20/5, not 19/6. `nativeVideoControls` was never on the
 Tier 4 list so it does not move the split, but it is the same shape and is already in the registry —
 the flag this condition exists to catch is not hypothetical.
 

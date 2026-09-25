@@ -1,22 +1,14 @@
 /**
  * HiDream Ecosystem Handler
  *
- * Handles HiDream workflows using textToImage step type.
+ * Emits an imageGen step.
  * Uses HiDream-specific input transformation for variant handling.
  */
 
-import type {
-  ImageGenStepTemplate,
-  ImageJobNetworkParams,
-  Scheduler,
-  TextToImageStepTemplate,
-} from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/client';
 import type { ComfyHiDreamI1CreateImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import {
-  samplersToComfySamplers,
-  samplersToSchedulers,
-} from '~/shared/constants/generation.constants';
+import { samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import {
   getHiDreamInput,
   getHiDreamResourceFromVersionId,
@@ -34,10 +26,7 @@ type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
  * Creates step input for HiDream ecosystem.
  * Uses HiDream-specific input transformation for variant handling.
  */
-export const createHiDreamInput = defineHandler<
-  HiDreamCtx,
-  [TextToImageStepTemplate | ImageGenStepTemplate]
->((data, ctx) => {
+export const createHiDreamInput = defineHandler<HiDreamCtx, [ImageGenStepTemplate]>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for HiDream workflows');
   if (!data.model) throw new Error('Model is required for HiDream workflows');
 
@@ -67,78 +56,44 @@ export const createHiDreamInput = defineHandler<
     sampler: 'sampler' in data ? data.sampler : undefined,
   });
 
-  // Build additionalNetworks from transformed resources
-  const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
-  for (const resource of hiDreamResult.resources ?? []) {
-    if (resource.air) {
-      additionalNetworks[resource.air] = {
-        strength: resource.strength,
-        type: 'LORA',
-      };
-    }
-  }
-
   const { params } = hiDreamResult;
 
-  if (ctx.useImageGen) {
-    // The endpoint selects the checkpoint from variant+precision, so the model AIR is
-    // consumed as the selector rather than sent.
-    const selected = getHiDreamResourceFromVersionId(data.model.id);
-    if (!selected) throw new Error('Unrecognized HiDream model version');
-
-    const input: ComfyHiDreamI1CreateImageGenInput = {
-      engine: 'comfy',
-      ecosystem: 'hidream',
-      operation: 'createImage',
-      variant: selected.variant,
-      precision: selected.precision,
-      prompt: params.prompt ?? data.prompt,
-      negativePrompt:
-        params.negativePrompt ?? ('negativePrompt' in data ? data.negativePrompt : undefined),
-      width: params.width ?? data.aspectRatio.width,
-      height: params.height ?? data.aspectRatio.height,
-      steps: params.steps ?? ('steps' in data ? data.steps : undefined) ?? 25,
-      cfgScale: params.cfgScale ?? ('cfgScale' in data ? data.cfgScale : undefined) ?? 7,
-      sampler:
-        samplersToComfySamplers[(params.sampler ?? 'Euler') as keyof typeof samplersToComfySamplers]
-          .sampler,
-      seed,
-      quantity,
-      outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
-      loras: Object.keys(additionalNetworks).length
-        ? Object.fromEntries(
-            Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
-          )
-        : undefined,
-    };
-
-    return [{ $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate];
+  // Pre-cutover these went in via getHiDreamInput's echoed resource list, which carries no AIR,
+  // so the map was always empty and HiDream LoRAs were never sent. Sending them changes outputs
+  // and starts charging licensing fees.
+  const resourceLoras: Record<string, number> = {};
+  for (const r of 'resources' in data && data.resources ? data.resources : []) {
+    resourceLoras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;
   }
 
-  const scheduler = samplersToSchedulers[
-    (params.sampler ?? 'Euler') as keyof typeof samplersToSchedulers
-  ] as Scheduler;
+  // The endpoint selects the checkpoint from variant+precision, so the model AIR is
+  // consumed as the selector rather than sent.
+  const selected = getHiDreamResourceFromVersionId(data.model.id);
+  if (!selected) throw new Error('Unrecognized HiDream model version');
 
-  return [
-    {
-      $type: 'textToImage',
-      input: {
-        model: ctx.airs.getOrThrow(data.model.id),
-        additionalNetworks,
-        scheduler,
-        prompt: params.prompt ?? data.prompt,
-        negativePrompt:
-          params.negativePrompt ?? ('negativePrompt' in data ? data.negativePrompt : undefined),
-        steps: params.steps ?? ('steps' in data ? data.steps : undefined) ?? 25,
-        cfgScale: params.cfgScale ?? ('cfgScale' in data ? data.cfgScale : undefined) ?? 7,
-        clipSkip: 'clipSkip' in data ? data.clipSkip : undefined,
-        seed,
-        width: params.width ?? data.aspectRatio.width,
-        height: params.height ?? data.aspectRatio.height,
-        quantity,
-        batchSize: 1,
-        outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
-      },
-    } as TextToImageStepTemplate,
-  ];
+  const input: ComfyHiDreamI1CreateImageGenInput = {
+    engine: 'comfy',
+    ecosystem: 'hidream',
+    operation: 'createImage',
+    variant: selected.variant,
+    precision: selected.precision,
+    prompt: params.prompt ?? data.prompt,
+    negativePrompt:
+      params.negativePrompt ?? ('negativePrompt' in data ? data.negativePrompt : undefined),
+    width: params.width ?? data.aspectRatio.width,
+    height: params.height ?? data.aspectRatio.height,
+    steps: params.steps ?? ('steps' in data ? data.steps : undefined) ?? 25,
+    cfgScale: params.cfgScale ?? ('cfgScale' in data ? data.cfgScale : undefined) ?? 7,
+    sampler: (
+      samplersToComfySamplers[
+        (params.sampler ?? 'Euler') as keyof typeof samplersToComfySamplers
+      ] ?? samplersToComfySamplers['undefined']
+    ).sampler,
+    seed,
+    quantity,
+    outputFormat: 'outputFormat' in data ? data.outputFormat : undefined,
+    loras: Object.keys(resourceLoras).length ? resourceLoras : undefined,
+  };
+
+  return [{ $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate];
 });

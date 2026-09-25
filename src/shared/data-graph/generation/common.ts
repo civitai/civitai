@@ -842,7 +842,7 @@ function getWorkflowKey(
  *   .merge(
  *     (ctx) => createCheckpointGraph({
  *       versions: { options: fluxModeVersionOptions },
- *       modelLocked: ctx.workflow === 'txt2img:draft',
+ *       modelLocked: ctx.workflow === 'img2img',
  *     }),
  *     ['workflow']
  *   );

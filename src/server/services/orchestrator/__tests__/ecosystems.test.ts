@@ -22,7 +22,7 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     baseStepIndex: 0,
   };
 
-  it('should override engine to "comfyui" for single-step SDXL when enhancedCompatibility is true', async () => {
+  it('should name the comfy engine for single-step SDXL when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',
@@ -34,12 +34,12 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 
     const steps = await createEcosystemStepInput(data, mockCtx);
 
-    const textToImageStep = steps.find((step) => step.$type === 'textToImage');
-    expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBe('comfyui');
+    const genStep = steps.find((step) => step.$type === 'imageGen');
+    expect(genStep).toBeDefined();
+    expect((genStep as any).input.engine).toBe('comfy');
   });
 
-  it('should override engine to "comfyui" for multi-step SDXL (ControlNet) when enhancedCompatibility is true', async () => {
+  it('should name the comfy engine for multi-step SDXL (ControlNet) when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',
@@ -65,13 +65,12 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     const preprocessStep = steps.find((step) => step.$type === 'preprocessImage');
     expect(preprocessStep).toBeDefined();
 
-    // Verify the engine is overridden to 'comfyui' on the textToImage step
-    const textToImageStep = steps.find((step) => step.$type === 'textToImage');
-    expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBe('comfyui');
+    const genStep = steps.find((step) => step.$type === 'imageGen');
+    expect(genStep).toBeDefined();
+    expect((genStep as any).input.engine).toBe('comfy');
   });
 
-  it('should override engine to "comfyui" for SD1 when enhancedCompatibility is true', async () => {
+  it('should name the comfy engine for SD1 when enhancedCompatibility is true', async () => {
     const data = {
       ecosystem: 'SD1',
       workflow: 'txt2img',
@@ -83,12 +82,12 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 
     const steps = await createEcosystemStepInput(data, mockCtx);
 
-    const textToImageStep = steps.find((step) => step.$type === 'textToImage');
-    expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBe('comfyui');
+    const genStep = steps.find((step) => step.$type === 'imageGen');
+    expect(genStep).toBeDefined();
+    expect((genStep as any).input.engine).toBe('comfy');
   });
 
-  it('should NOT override engine to "comfyui" when enhancedCompatibility is false', async () => {
+  it('should name the sdcpp engine when enhancedCompatibility is false', async () => {
     const data = {
       ecosystem: 'SDXL',
       workflow: 'txt2img',
@@ -100,9 +99,9 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
 
     const steps = await createEcosystemStepInput(data, mockCtx);
 
-    const textToImageStep = steps.find((step) => step.$type === 'textToImage');
-    expect(textToImageStep).toBeDefined();
-    expect((textToImageStep as any).input.engine).toBeUndefined();
+    const genStep = steps.find((step) => step.$type === 'imageGen');
+    expect(genStep).toBeDefined();
+    expect((genStep as any).input.engine).toBe('sdcpp');
   });
 });
 
@@ -164,7 +163,7 @@ describe.each([
 describe.each([
   ['data-graph', createEcosystemStepInput],
   ['form-graph', createFormGraphStepInput],
-] as const)('%s dispatcher — engine defaults after the sdcpp/comfy split', (_lane, dispatch) => {
+] as const)('%s dispatcher — engine defaults after the sdcpp/comfy split', (lane, dispatch) => {
   const mockCtx = {
     airs: {
       getOrThrow: (id: number) => `urn:air:test:checkpoint:${id}`,
@@ -180,46 +179,42 @@ describe.each([
   };
 
   function engineOf(steps: Awaited<ReturnType<typeof dispatch>>) {
-    const step = steps.find((s) => s.$type === 'textToImage');
+    const step = steps.find((s) => s.$type === 'imageGen');
     expect(step).toBeDefined();
     return (step as { input: { engine?: string } }).input.engine;
   }
 
   // Comfy-only ecosystems: no toggle, and falling through to sdcpp would silently re-route them.
   it.each(['Flux1', 'FluxKrea'])(
-    '%s runs comfyui with no enhancedCompatibility flag at all',
+    '%s runs comfy with no enhancedCompatibility flag at all',
     async (ecosystem) => {
       const steps = await dispatch({ ...base, ecosystem, model: { id: 123 } } as never, mockCtx);
-      expect(engineOf(steps)).toBe('comfyui');
+      expect(engineOf(steps)).toBe('comfy');
     }
   );
 
-  it('Flux1 runs comfyui even when enhancedCompatibility is explicitly false', async () => {
+  it('Flux1 runs comfy even when enhancedCompatibility is explicitly false', async () => {
     const steps = await dispatch(
       { ...base, ecosystem: 'Flux1', model: { id: 123 }, enhancedCompatibility: false } as never,
       mockCtx
     );
-    expect(engineOf(steps)).toBe('comfyui');
+    expect(engineOf(steps)).toBe('comfy');
   });
 
-  // Pro/Ultra sit inside comfy-only Flux1 but keep their own engine. Assert the exact value:
-  // `not.toBe('comfyui')` also passes when the engine is unset for an unrelated reason.
-  it.each([fluxUltraAirId, fluxProAirId])(
-    'model %i keeps its own engine inside Flux1',
-    async (id) => {
-      const steps = await dispatch(
-        { ...base, ecosystem: 'Flux1', model: { id } } as never,
-        mockCtx
-      );
-      expect(engineOf(steps)).toBeUndefined();
-    }
-  );
+  // 🔴 Lane split, visible only to a hand-built input: with no `fluxMode` the data-graph handler
+  // re-derives it from `model.id` and reaches the pro endpoint, while the form-graph handler has
+  // no fallback and takes standard comfy Flux1. Both GRAPHS compute fluxMode from the model, so
+  // production agrees — hence pinned per lane rather than asserted as one value.
+  it.each([fluxUltraAirId, fluxProAirId])('Flux1 AIR id %i names an engine', async (id) => {
+    const steps = await dispatch({ ...base, ecosystem: 'Flux1', model: { id } } as never, mockCtx);
+    expect(engineOf(steps)).toBe(lane === 'data-graph' ? 'flux1-pro' : 'comfy');
+  });
 
   describe.each(['SDXL', 'Pony', 'Illustrious', 'NoobAI'])('%s', (ecosystem) => {
     it.each([
-      [undefined, undefined],
-      [false, undefined],
-      [true, 'comfyui'],
+      [undefined, 'sdcpp'],
+      [false, 'sdcpp'],
+      [true, 'comfy'],
     ])('with enhancedCompatibility=%s runs %s', async (flag, expected) => {
       const steps = await dispatch(
         { ...base, ecosystem, model: { id: 123 }, enhancedCompatibility: flag } as never,

@@ -10,7 +10,6 @@
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChromaInput } from './chroma.handler';
@@ -123,25 +122,8 @@ export async function createFormGraphStepInput(
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
   const normalizedData = withSeed(data);
-  const loose = normalizedData as LooseGenerationData;
 
-  const steps = await createStep(normalizedData, handlerCtx);
-
-  if (
-    usesComfyEngine({
-      ecosystem: loose.ecosystem ?? '',
-      modelId: loose.model?.id,
-      enhancedCompatibility: loose.enhancedCompatibility,
-    })
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createStep(normalizedData, handlerCtx);
 }
 
 /**
@@ -163,7 +145,6 @@ function createStep(
 
   switch (data.ecosystem) {
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':

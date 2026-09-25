@@ -1,15 +1,9 @@
-/**
- * Flux family handler for the form-graph lane (Flux1 + FluxKrea) —
- * textToImage steps; draft pins steps/cfg, pro drops resources, ultra routes
- * to the fixed ultra AIR with its raw-mode engine switch.
- */
+/** Flux family handler for the form-graph lane (Flux1 + FluxKrea). */
 
 import type {
   ImageGenStepTemplate,
   ImageJobNetworkParams,
   PreprocessImageStepTemplate,
-  Scheduler,
-  TextToImageStepTemplate,
 } from '@civitai/client';
 import type {
   ComfyFlux1CreateImageGenInput,
@@ -18,10 +12,8 @@ import type {
 } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import {
-  fluxUltraAir,
   getClosestFluxUltraAspectRatioLabel,
   samplersToComfySamplers,
-  samplersToSchedulers,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -33,7 +25,7 @@ type FluxData = EcosystemData<'Flux1' | 'FluxKrea'>;
 
 export const createFluxInput = defineHandler<
   FluxData,
-  (TextToImageStepTemplate | ImageGenStepTemplate | PreprocessImageStepTemplate)[]
+  (ImageGenStepTemplate | PreprocessImageStepTemplate)[]
 >((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Flux workflows');
 
@@ -41,9 +33,7 @@ export const createFluxInput = defineHandler<
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
   if (data.fluxMode === 'ultra') {
-    return [
-      ctx.useImageGen ? createFluxUltraImageGen(data, seed) : createFluxUltraInput(data, seed),
-    ];
+    return [createFluxUltraImageGen(data, seed)];
   }
 
   let steps = ('steps' in data ? data.steps : undefined) ?? 28;
@@ -61,87 +51,58 @@ export const createFluxInput = defineHandler<
     }
   }
 
-  // v1 parity: send Scheduler.UNDEFINED (the 'undefined' map entry) and let
-  // the orchestrator default the sampler
-  const scheduler = samplersToSchedulers[
-    'undefined' as keyof typeof samplersToSchedulers
-  ] as Scheduler;
-
   const { preprocessSteps, controlNets } = buildControlNetSteps(
     'controlNets' in data ? data.controlNets : undefined,
     ctx.baseStepIndex
   );
 
-  if (ctx.useImageGen) {
-    if (data.fluxMode === 'pro') {
-      const input: Flux1ProImageGenInput = {
-        engine: 'flux1-pro',
-        model: 'pro',
-        prompt: data.prompt,
-        width: data.aspectRatio.width,
-        height: data.aspectRatio.height,
-        seed,
-        quantity,
-        outputFormat: data.outputFormat,
-      };
-      return [
-        ...preprocessSteps,
-        { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
-      ];
-    }
-
-    if (!data.model) throw new Error('Model is required for Flux imageGen workflows');
-
-    const comfy = samplersToComfySamplers['undefined'];
-    const input: ComfyFlux1CreateImageGenInput = {
-      engine: 'comfy',
-      ecosystem: 'flux1',
-      operation: 'createImage',
-      model: ctx.airs.getOrThrow(data.model.id),
+  if (data.fluxMode === 'pro') {
+    const input: Flux1ProImageGenInput = {
+      engine: 'flux1-pro',
+      model: 'pro',
       prompt: data.prompt,
       width: data.aspectRatio.width,
       height: data.aspectRatio.height,
-      steps,
-      cfgScale,
-      sampler: comfy.sampler,
-      scheduler: comfy.scheduler,
       seed,
       quantity,
       outputFormat: data.outputFormat,
-      loras: Object.keys(additionalNetworks).length
-        ? Object.fromEntries(
-            Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
-          )
-        : undefined,
-      ...(controlNets.length ? { controlNets } : {}),
     };
-
     return [
       ...preprocessSteps,
       { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
     ];
   }
 
-  const genStep: TextToImageStepTemplate = {
-    $type: 'textToImage',
-    input: {
-      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
-      additionalNetworks,
-      scheduler,
-      prompt: data.prompt,
-      steps,
-      cfgScale,
-      seed,
-      width: data.aspectRatio.width,
-      height: data.aspectRatio.height,
-      quantity,
-      batchSize: 1,
-      outputFormat: data.outputFormat,
-      ...(controlNets.length ? { controlNets } : {}),
-    },
-  } as TextToImageStepTemplate;
+  if (!data.model) throw new Error('Model is required for Flux imageGen workflows');
 
-  return [...preprocessSteps, genStep];
+  const comfy = samplersToComfySamplers['undefined'];
+  const input: ComfyFlux1CreateImageGenInput = {
+    engine: 'comfy',
+    ecosystem: 'flux1',
+    operation: 'createImage',
+    model: ctx.airs.getOrThrow(data.model.id),
+    prompt: data.prompt,
+    width: data.aspectRatio.width,
+    height: data.aspectRatio.height,
+    steps,
+    cfgScale,
+    sampler: comfy.sampler,
+    scheduler: comfy.scheduler,
+    seed,
+    quantity,
+    outputFormat: data.outputFormat,
+    loras: Object.keys(additionalNetworks).length
+      ? Object.fromEntries(
+          Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
+        )
+      : undefined,
+    ...(controlNets.length ? { controlNets } : {}),
+  };
+
+  return [
+    ...preprocessSteps,
+    { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
+  ];
 });
 
 function createFluxUltraImageGen(
@@ -162,30 +123,4 @@ function createFluxUltraImageGen(
     outputFormat: data.outputFormat,
   };
   return { $type: 'imageGen', input: removeEmpty(input) };
-}
-
-/** Ultra mode: fixed ultra AIR, special aspect ratios, raw-mode engine switch. */
-function createFluxUltraInput(
-  data: Extract<FluxData, { fluxMode: 'ultra' }>,
-  seed: number
-): TextToImageStepTemplate {
-  const scheduler = samplersToSchedulers[
-    'undefined' as keyof typeof samplersToSchedulers
-  ] as Scheduler;
-  return {
-    $type: 'textToImage',
-    input: {
-      model: fluxUltraAir,
-      additionalNetworks: {},
-      prompt: data.prompt,
-      seed,
-      width: data.aspectRatio.width,
-      height: data.aspectRatio.height,
-      quantity: data.quantity ?? 1,
-      batchSize: 1,
-      outputFormat: data.outputFormat,
-      engine: data.fluxUltraRaw ? 'flux-pro-raw' : undefined,
-      scheduler,
-    },
-  } as TextToImageStepTemplate;
 }

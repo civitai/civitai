@@ -140,9 +140,8 @@ const CASES: Record<string, unknown>[] = [
     yue2Abc: 'X:1\nK:C\nC D E G |',
   },
 
-  // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
+  // SD family: imageGen, comfy (img2img + hires), controlnets
   { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'SD1', prompt: 'a cat', seed: 42, quantity: 4 },
   { workflow: 'img2img', ecosystem: 'Pony', prompt: 'a cat', seed: 42, images: [IMAGE] },
   { workflow: 'txt2img:hires-fix', ecosystem: 'Illustrious', prompt: 'a cat', seed: 42 },
   {
@@ -167,10 +166,8 @@ const CASES: Record<string, unknown>[] = [
   },
   // Chroma
   { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42, quantity: 2 },
-  // Flux: every mode + the draft coupling in both directions
+  // Flux: every mode
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 691639 },
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 699279 },
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 922358 },
   {
@@ -800,12 +797,12 @@ const CASES: Record<string, unknown>[] = [
   },
 ];
 
-const imageGenCtx = { ...ctx, useImageGen: true } as unknown as GenerationHandlerCtx;
-
-async function bothLanes(
-  { expectEcosystem, expectFlags, ...input }: Record<string, unknown>,
-  handlerCtx: GenerationHandlerCtx = ctx
-) {
+async function bothLanes({
+  expectEcosystem,
+  expectWorkflow,
+  expectFlags,
+  ...input
+}: Record<string, unknown>) {
   // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
   // in ext or the selection is hidden and falls back to the default
   const ext = expectFlags
@@ -823,9 +820,19 @@ async function bothLanes(
       )} — redirected, not testing the named handler`
     );
   }
+  // a retired or renamed workflow key migrates to txt2img, which turns a named case into a
+  // silent duplicate of another row — the ecosystem check above cannot see that.
+  const parsedWorkflow = (parsed.data as { workflow?: string }).workflow;
+  if (parsedWorkflow !== (expectWorkflow ?? input.workflow)) {
+    throw new Error(
+      `case labeled ${String(input.workflow)} parsed to ${String(
+        parsedWorkflow
+      )} — a migrated or retired workflow key, not testing the named workflow`
+    );
+  }
   const data = parsed.data as GenerationData;
-  const v1 = await createEcosystemStepInput(data, handlerCtx);
-  const v2 = await createFormGraphStepInput(data, handlerCtx);
+  const v1 = await createEcosystemStepInput(data, ctx);
+  const v2 = await createFormGraphStepInput(data, ctx);
   return { v1, v2 };
 }
 
@@ -983,7 +990,7 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
   });
 });
 
-describe('useImageGen routes the textToImage families to their specialised endpoints', () => {
+describe('the former textToImage families emit their specialised endpoints', () => {
   const MIGRATED: { name: string; input: Record<string, unknown>; engine: string }[] = [
     {
       name: 'SDXL txt2img keeps sdcpp',
@@ -1061,10 +1068,15 @@ describe('useImageGen routes the textToImage families to their specialised endpo
       input: { workflow: 'txt2img', ecosystem: 'PonyV7', prompt: 'a cat', seed: 42, quantity: 2 },
       engine: 'comfy',
     },
+    {
+      name: 'Chroma',
+      input: { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42 },
+      engine: 'comfy',
+    },
   ];
 
   it.each(MIGRATED)('$name emits one imageGen step in both lanes', async ({ input, engine }) => {
-    const { v1, v2 } = await bothLanes(input, imageGenCtx);
+    const { v1, v2 } = await bothLanes(input);
     expect(v2).toEqual(v1);
     expect(v2.filter((s) => s.$type === 'textToImage')).toHaveLength(0);
     const gen = v2.filter((s) => s.$type === 'imageGen');
@@ -1073,35 +1085,29 @@ describe('useImageGen routes the textToImage families to their specialised endpo
   });
 
   it('flux ultra carries its aspect-ratio label and raw flag', async () => {
-    const { v2 } = await bothLanes(
-      {
-        workflow: 'txt2img',
-        ecosystem: 'Flux1',
-        prompt: 'a cat',
-        seed: 42,
-        model: 1088507,
-        aspectRatio: '21:9',
-        fluxUltraRaw: true,
-      },
-      imageGenCtx
-    );
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux1',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1088507,
+      aspectRatio: '21:9',
+      fluxUltraRaw: true,
+    });
     expect(v2[0].input).toMatchObject({ model: 'ultra', aspectRatio: '21:9', raw: true });
   });
 
   it('the sdcpp route carries textual inversions as embeddings', async () => {
-    const { v2 } = await bothLanes(
-      {
-        workflow: 'txt2img',
-        ecosystem: 'SD1',
-        prompt: 'a cat',
-        seed: 42,
-        resources: [
-          { id: 111, baseModel: 'SD 1.5', model: { type: 'LORA' }, strength: 0.8 },
-          { id: 222, baseModel: 'SD 1.5', model: { type: 'TextualInversion' }, strength: 1 },
-        ],
-      },
-      imageGenCtx
-    );
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a cat',
+      seed: 42,
+      resources: [
+        { id: 111, baseModel: 'SD 1.5', model: { type: 'LORA' }, strength: 0.8 },
+        { id: 222, baseModel: 'SD 1.5', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
     expect(v2[0].input).toMatchObject({
       engine: 'sdcpp',
       embeddings: ['urn:air:test:222'],
@@ -1109,57 +1115,113 @@ describe('useImageGen routes the textToImage families to their specialised endpo
     });
   });
 
+  // `expect(v2).toEqual(v1)` is invariant under an edit applied to BOTH lanes, so every
+  // payload below needs an absolute assertion or a revert stays green.
+  it('chroma pins its imageGen payload, not just the engine', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Chroma',
+      prompt: 'a cat',
+      seed: 42,
+      quantity: 2,
+      resources: [{ id: 111, baseModel: 'Chroma', model: { type: 'LORA' }, strength: 0.8 }],
+    });
+    expect(v2).toEqual(v1);
+    expect(v2[0].input).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'chroma',
+      operation: 'createImage',
+      model: 'urn:air:test:2164239',
+      // the graph always supplies these, so the handler's own `?? 28` / `?? 3.5` never fire
+      steps: 25,
+      cfgScale: 3.5,
+      quantity: 2,
+    });
+    // toEqual, not toMatchObject: a subset match would not see an extra key appear here
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+  });
+
+  it('chroma drops a textual inversion rather than sending it as a lora', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Chroma',
+      prompt: 'a cat',
+      seed: 42,
+      resources: [
+        { id: 111, baseModel: 'Chroma', model: { type: 'LORA' }, strength: 0.8 },
+        { id: 222, baseModel: 'Chroma', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+    expect(v2[0].input).not.toHaveProperty('embeddings');
+  });
+
+  // Pre-cutover these reached the payload through getHiDreamInput's echoed list, which carries
+  // no AIR — so HiDream LoRAs were never sent at all.
+  it('hidream sends its loras', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1772448,
+      resources: [{ id: 321, baseModel: 'HiDream', model: { type: 'LORA' }, strength: 0.9 }],
+    });
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:321': 0.9 });
+  });
+
+  it('sdxl carries clipSkip now that both engines accept it', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SDXL',
+      prompt: 'a cat',
+      seed: 42,
+      clipSkip: 3,
+    });
+    expect(v2[0].input).toMatchObject({ ecosystem: 'sdxl', clipSkip: 3 });
+  });
+
   it('hidream sends variant and precision instead of a checkpoint AIR', async () => {
-    const { v2 } = await bothLanes(
-      { workflow: 'txt2img', ecosystem: 'HiDream', prompt: 'a cat', seed: 42, model: 1768731 },
-      imageGenCtx
-    );
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1768731,
+    });
     expect(v2[0].input).toMatchObject({ variant: 'fast', precision: 'fp16' });
     expect(v2[0].input).not.toHaveProperty('model');
   });
 
-  it.each([
-    {
-      name: 'SD1 draft, which needs batchSize',
-      input: {
-        workflow: 'txt2img:draft',
-        ecosystem: 'SD1',
-        prompt: 'a cat',
-        seed: 42,
-        quantity: 4,
-      },
-    },
-    {
-      name: 'SDXL on comfy with a textual inversion, which comfy cannot carry',
-      input: {
-        workflow: 'txt2img',
-        ecosystem: 'SDXL',
-        prompt: 'a cat',
-        seed: 42,
-        enhancedCompatibility: true,
-        resources: [
-          { id: 222, baseModel: 'SDXL 1.0', model: { type: 'TextualInversion' }, strength: 1 },
-        ],
-      },
-    },
-    {
-      name: 'SD1 on sdcpp with a controlnet, which sdcpp cannot carry',
-      input: {
-        workflow: 'txt2img',
-        ecosystem: 'SD1',
-        prompt: 'a cat',
-        seed: 42,
-        controlNets: [{ preprocessor: 'canny', image: { url: 'https://example.com/cn.png' } }],
-      },
-    },
-    {
-      name: 'Chroma, whose endpoint drops textual inversions',
-      input: { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42 },
-    },
-  ])('$name stays on textToImage in both lanes', async ({ input }) => {
-    const { v1, v2 } = await bothLanes(input, imageGenCtx);
+  it('a textual inversion rides the comfy route, which now carries embeddings', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SDXL',
+      prompt: 'a cat',
+      seed: 42,
+      enhancedCompatibility: true,
+      resources: [
+        { id: 222, baseModel: 'SDXL 1.0', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
     expect(v2).toEqual(v1);
-    expect(v2.some((s) => s.$type === 'textToImage')).toBe(true);
+    expect(v2[0].input).toMatchObject({ engine: 'comfy', embeddings: ['urn:air:test:222'] });
+  });
+
+  // sdcpp has no controlNets field, so the engine choice here is forced rather than preferred.
+  it('a controlnet forces the comfy engine even with enhancedCompatibility off', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a cat',
+      seed: 42,
+      controlNets: [{ preprocessor: 'canny', image: { url: 'https://example.com/cn.png' } }],
+    });
+    expect(v2).toEqual(v1);
+    const gen = v2.filter((s) => s.$type === 'imageGen');
+    expect(gen).toHaveLength(1);
+    expect(gen[0].input).toMatchObject({ engine: 'comfy' });
+    expect(gen[0].input).toHaveProperty('controlNets');
   });
 });
 

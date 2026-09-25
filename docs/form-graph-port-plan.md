@@ -288,7 +288,7 @@ branch member carries `defineGraph({ scope: familyScope })` (ecosystem group id,
 wan versions and klein variants share buckets); `SEED`, `controlNetsDef` and
 `controlVideoDef` opt out to bare keys (v1 stores them globally); images/video wrap their def fns
 in `workflowScoped` (per-workflow buckets); the hubs scope `ecosystem` per
-output type, `quantity` per workflow only on draft, `enhancedCompatibility`
+output type, `enhancedCompatibility`
 per family bucket; and the turbo-variant families (zimage/boogu/krea2/anima/ernie/lens/mage-flow — all seven ported
 entries of v1's TURBO_VARIANT_ECOSYSTEMS) refine
 cfgScale/steps `perModelScope` — per model version, v1's
@@ -409,8 +409,8 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
   their port wrapper; the production call site lands with the Phase 4 submit wiring,
   beside `normalizeInput`), and `modelSelectorRules` attached with `.effect` on both
   hubs so an interactive pick moves the selectors identically. Two ordering truths the
-  matrix forced: a LOCKED slot (ecosystem-defaults `modelLocked`, or flux's draft
-  workflow) beats a cross-family model — v1 substitutes it before its effect runs — but
+  matrix forced: a LOCKED slot (ecosystem-defaults `modelLocked`) beats a cross-family
+  model — v1 substitutes it before its effect runs — but
   version SIBLINGS (LTX↔LTX, wan↔wan) re-pick THROUGH the lock, since they are valid in
   the locked picker's own version list; and a gate-HIDDEN selection drops to the default
   before v1's model effect runs, an ordering the ext-free boundary reconciler cannot see,
@@ -439,11 +439,11 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | video hub (ecosystem/quantity, video-scoped) | DONE | DONE | workflow/output/input moved to the composed root |
 | composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | DONE | DONE | audio/model3d hubs arrive with their families |
 | image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | DONE | DONE | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
-| image: stable-diffusion (SD1/SD2/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2 supports no workflows |
+| image: stable-diffusion (SD1/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2's generation support was dropped and it is no longer in the family discriminator |
 | image: zimage (Turbo/Base) | DONE | DONE | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
 | image: chroma | DONE | DONE | no negative prompt, no images node |
 | video: seedance | DONE | DONE | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
-| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux — its draft coupling is two sync effects, resolved at parse as "the workflow wins" (both directions are `correct` policies on the model, probed 2026-09-01). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
+| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux. Its draft⇄workflow coupling — two sync effects, resolved at parse as "the workflow wins" (probed 2026-09-01) — went with the `txt2img:draft` retirement; Draft is now just one of the five `fluxMode` version picks and locks nothing. The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
 | image: flux-kontext (pro/max) | DONE | DONE | img2img-primary; both modes share one field set, so the mode is just a version pick — no branch |
 | image: flux2 (dev/flex/pro/max) | DONE | DONE | mode by model.id; only dev carries resources |
 | image: flux2-klein (9B/9B-base/4B/4B-base) | DONE | DONE | FOUR ecosystems share the graph — mode from ecosystem, not model. negativePrompt is NOT a snippet target (v1's own comment claims it self-registers; the differential says no). Handler pins distilled steps/cfg even though the graph exposes a steps slider — v1 quirk, mirrored |

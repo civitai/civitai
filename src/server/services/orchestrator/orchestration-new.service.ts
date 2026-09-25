@@ -32,13 +32,11 @@ import type {
   Priority as DownloadPriority,
   PreprocessVideoStepTemplate,
 } from '@civitai/orchestration-client';
-import { TimeSpan } from '@civitai/client';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import {
   attachEstimatedPreparation,
   normalizePreparation,
 } from '~/shared/orchestrator/download-preparation';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import {
@@ -290,12 +288,6 @@ export type GenerationHandlerCtx = {
    * what-if cost estimation, where refs aren't resolved).
    */
   baseStepIndex: number;
-  /**
-   * When true, families that have a specialised `imageGen` endpoint emit that
-   * instead of `textToImage`. Resolved once per submission so a mid-request
-   * flip cannot split one workflow across both step types.
-   */
-  useImageGen: boolean;
 };
 
 // =============================================================================
@@ -1339,10 +1331,6 @@ export async function createWorkflowStepsFromGraph({
     user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
     // Updated per variant inside the snippets-overlay loop below.
     baseStepIndex: 0,
-    useImageGen: await isFlipt(
-      FLIPT_FEATURE_FLAGS.IMAGE_GEN_SPECIALIZED,
-      user?.id != null ? String(user.id) : undefined
-    ),
   };
 
   // Resolve seed before creating step input and metadata so both use the same value.
