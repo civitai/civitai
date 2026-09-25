@@ -26,6 +26,8 @@ export const USER_ID_RANGE_WIDTH = 100_000;
 export const MEDIA_CHUNK_ROWS = 50_000;
 // 20M images. Hitting it throws rather than writing a total that silently stops partway.
 export const MAX_MEDIA_CHUNKS = 400;
+// Cold cost of one chunk, measured on the replica; sizes the lease against the longest single scan.
+export const MEDIA_CHUNK_SECONDS = 3.5;
 
 // Each claim takes one creator and holds it for the lease; a tick keeps claiming until its budget is
 // spent. Budget < job lock < lease, so the next tick cannot reclaim a creator still being scanned. The
@@ -33,7 +35,7 @@ export const MAX_MEDIA_CHUNKS = 400;
 export const MEDIA_CLAIM_LIMIT = 1;
 export const MEDIA_JOB_LOCK_SECONDS = 10 * 60;
 export const MEDIA_TICK_BUDGET_MS = 8 * 60 * 1000;
-export const MEDIA_LEASE_MINUTES = 30;
+export const MEDIA_LEASE_MINUTES = 45;
 
 // Bound as a parameter: inline, its backslash would have to survive both the JS template and the SQL
 // string literal, which treat it differently. 13 digits (~9 TB) keeps a forged size from overflowing.
@@ -194,8 +196,10 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
       count(*)::int,
       round(sum(f."sizeKB")::numeric * 1024)::bigint
     FROM (
-      SELECT 'BountyEntry' AS "entityType", id, "userId", 'public' AS "publicStatus"
-      FROM "BountyEntry" WHERE "userId" >= ${lo} AND "userId" < ${hi}
+      SELECT 'BountyEntry' AS "entityType", be.id, be."userId",
+        CASE WHEN b.availability <> 'Private' THEN 'public' ELSE 'notPublic' END AS "publicStatus"
+      FROM "BountyEntry" be JOIN "Bounty" b ON b.id = be."bountyId"
+      WHERE be."userId" >= ${lo} AND be."userId" < ${hi}
       UNION ALL
       SELECT 'Bounty', id, "userId",
         CASE WHEN availability <> 'Private' THEN 'public' ELSE 'notPublic' END
@@ -223,7 +227,8 @@ function toArrays(rows: StorageUsageRow[]) {
 }
 
 /**
- * Replaces the nightly kinds for users in [lo, hi), drops every storage row of deleted users, then
+ * Replaces the nightly kinds for users in [lo, hi), drops every storage row of deleted users (soft-deleted:
+ * the User row stays with deletedAt set), then
  * snapshots any public total that moved. The snapshot is its own statement so a failure there cannot
  * roll back the usage refresh.
  *
@@ -266,17 +271,17 @@ export async function writeNightlyUsage(lo: number, hi: number, rows: StorageUsa
     dbWrite.$executeRaw`
       DELETE FROM "UserStorageUsage" u
       WHERE u."userId" >= ${lo} AND u."userId" < ${hi}
-        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = u."userId")
+        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = u."userId" AND x."deletedAt" IS NULL)
     `,
     dbWrite.$executeRaw`
       DELETE FROM "UserStorageSnapshot" s
       WHERE s."userId" >= ${lo} AND s."userId" < ${hi}
-        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = s."userId")
+        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = s."userId" AND x."deletedAt" IS NULL)
     `,
     dbWrite.$executeRaw`
       DELETE FROM "UserStorageRollup" r
       WHERE r."userId" >= ${lo} AND r."userId" < ${hi}
-        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = r."userId")
+        AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = r."userId" AND x."deletedAt" IS NULL)
     `,
   ]);
   await snapshotRange(lo, hi);
@@ -402,11 +407,12 @@ export async function runMediaStorageUsage({
   log = logError,
   budgetMs = MEDIA_TICK_BUDGET_MS,
   now = Date.now,
+  isCanceled = () => false,
 } = {}) {
   const deadline = now() + budgetMs;
   let processed = 0;
   const failed: number[] = [];
-  while (now() < deadline) {
+  while (now() < deadline && !isCanceled()) {
     const userIds = await claim();
     if (!userIds.length) break;
     for (const userId of userIds) {

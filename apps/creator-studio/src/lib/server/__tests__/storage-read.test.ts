@@ -101,7 +101,7 @@ describe('loadStorageUsage', () => {
     const read = state.queries.find(
       (q) => q.includes('"UserStorageUsage"') && q.includes('SELECT')
     );
-    expect(read).toContain(
+    expect(read?.slice(read.indexOf('FROM')).trim()).toBe(
       'FROM (SELECT ?::int AS "userId") k LEFT JOIN "UserStorageRollup" r ON r."userId" = k."userId" LEFT JOIN "UserStorageUsage" u ON u."userId" = k."userId"'
     );
   });

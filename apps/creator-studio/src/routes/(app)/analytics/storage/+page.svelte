@@ -255,7 +255,7 @@
   {/if}
 {/if}
 
-{#if data.byModel && data.byModel.length > 0}
+{#if data.byModel && hasModelTable}
   <div class="cs-panel mt-4 p-4">
     <p class="mb-3 text-sm font-medium text-white">
       By model <span class="text-xs text-dark-2"

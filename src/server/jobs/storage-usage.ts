@@ -9,12 +9,12 @@ export const storageUsageNightlyJob = createJob(
   'storage-usage-nightly',
   '0 4 * * *',
   () => runNightlyStorageUsage(),
-  { lockExpiration: 60 * 60 }
+  { lockExpiration: 60 * 60, keepLockOnDisconnect: true }
 );
 
 export const storageUsageMediaJob = createJob(
   'storage-usage-media',
   '* * * * *',
-  () => runMediaStorageUsage(),
-  { lockExpiration: MEDIA_JOB_LOCK_SECONDS }
+  (ctx) => runMediaStorageUsage({ isCanceled: () => ctx.status === 'canceled' }),
+  { lockExpiration: MEDIA_JOB_LOCK_SECONDS, keepLockOnDisconnect: true }
 );

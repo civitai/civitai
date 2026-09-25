@@ -7,6 +7,8 @@ import {
   type FetchMediaChunk,
   type StorageUsageRow,
   MEDIA_JOB_LOCK_SECONDS,
+  MAX_MEDIA_CHUNKS,
+  MEDIA_CHUNK_SECONDS,
   MEDIA_LEASE_MINUTES,
   MEDIA_SIZE_PATTERN,
   MEDIA_TICK_BUDGET_MS,
@@ -319,18 +321,52 @@ describe('runMediaStorageUsage', () => {
   };
 
   // One creator a minute capped the queue at 1,440 a day while every dashboard visit adds to it.
-  it('keeps claiming within one tick until the queue is empty', async () => {
+  // The clock advances per read and gives out after 100 reads, so a loop that forgets to stop on an
+  // empty queue fails on the claim count in milliseconds instead of spinning until the real budget ends.
+  const countedClock = () => {
+    let reads = 0;
+    return () => {
+      if (++reads > 100) throw new Error('clock read 100 times: the loop did not stop');
+      return reads;
+    };
+  };
+
+  it('keeps claiming within one tick until the queue is empty, then stops', async () => {
     const written: number[] = [];
+    let claims = 0;
+    const next = queue([1, 2, 3]);
     const result = await runMediaStorageUsage({
-      claim: queue([1, 2, 3]),
+      claim: async () => {
+        claims++;
+        return next();
+      },
       sum: async () => [],
       write: async (userId) => {
         written.push(userId);
       },
       log: () => undefined,
+      now: countedClock(),
     });
     expect(written).toEqual([1, 2, 3]);
+    expect(claims).toBe(4);
     expect(result).toEqual({ processed: 3 });
+  });
+
+  it('stops claiming when the job is canceled', async () => {
+    const written: number[] = [];
+    let canceled = false;
+    await runMediaStorageUsage({
+      claim: queue([1, 2, 3]),
+      sum: async () => [],
+      write: async (userId) => {
+        written.push(userId);
+        canceled = true;
+      },
+      log: () => undefined,
+      now: countedClock(),
+      isCanceled: () => canceled,
+    });
+    expect(written).toEqual([1]);
   });
 
   it('stops claiming once the tick budget is spent', async () => {
@@ -365,6 +401,7 @@ describe('runMediaStorageUsage', () => {
           written.push(userId);
         },
         log: () => undefined,
+        now: countedClock(),
       })
     ).rejects.toThrow('1 rollup(s) failed');
     expect(written).toEqual([2]);
@@ -377,6 +414,10 @@ describe('media lease', () => {
   it('outlasts the job lock, which outlasts the tick budget, and is what the claim binds', async () => {
     expect(MEDIA_LEASE_MINUTES * 60).toBeGreaterThan(MEDIA_JOB_LOCK_SECONDS);
     expect(MEDIA_TICK_BUDGET_MS / 1000).toBeLessThan(MEDIA_JOB_LOCK_SECONDS);
+    // The budget is checked before a claim, so a creator claimed at the last moment still scans in full.
+    expect(MEDIA_LEASE_MINUTES * 60).toBeGreaterThan(
+      MEDIA_TICK_BUDGET_MS / 1000 + MAX_MEDIA_CHUNKS * MEDIA_CHUNK_SECONDS
+    );
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
     await claimMediaRollups();
     expect(lastQuery(dbMock.dbWrite.$queryRaw).values).toContain(MEDIA_LEASE_MINUTES);
@@ -384,14 +425,21 @@ describe('media lease', () => {
 });
 
 describe('nightly write order and pruning', () => {
-  it('snapshots after the usage transaction commits, in its own statement', async () => {
+  it('snapshots only after the usage transaction has committed', async () => {
     dbMock.dbWrite.$executeRaw.mockClear();
-    dbMock.dbWrite.$transaction.mockClear();
-    await writeNightlyUsage(0, 100, []);
-    const calls = executed();
-    expect(calls[calls.length - 1].text).toContain('INSERT INTO "UserStorageSnapshot"');
-    const snapshotOrder = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder.at(-1) as number;
-    expect(dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]).toBeLessThan(snapshotOrder);
+    let commit: () => void = () => undefined;
+    dbMock.dbWrite.$transaction.mockImplementationOnce(
+      () => new Promise<unknown[]>((resolve) => (commit = () => resolve([])))
+    );
+    const snapshots = () =>
+      executed().filter((q) => q.text.includes('INSERT INTO "UserStorageSnapshot"')).length;
+
+    const done = writeNightlyUsage(0, 100, []);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(snapshots()).toBe(0);
+    commit();
+    await done;
+    expect(snapshots()).toBe(1);
   });
 
   it('drops snapshots and rollup state of deleted users, not only their usage', async () => {
@@ -401,5 +449,11 @@ describe('nightly write order and pruning', () => {
       .filter((q) => q.text.includes('NOT EXISTS (SELECT 1 FROM "User"'))
       .map((q) => q.text.match(/DELETE FROM "(\w+)"/)?.[1]);
     expect(pruned).toEqual(['UserStorageUsage', 'UserStorageSnapshot', 'UserStorageRollup']);
+    // Users are soft-deleted: the row stays with deletedAt set, so "no User row" alone matches nobody.
+    for (const q of executed().filter((e) => e.text.includes('FROM "User" x'))) {
+      expect(q.text).toMatch(
+        /NOT EXISTS \(SELECT 1 FROM "User" x WHERE x\.id = \w\."userId" AND x\."deletedAt" IS NULL\)/
+      );
+    }
   });
 });

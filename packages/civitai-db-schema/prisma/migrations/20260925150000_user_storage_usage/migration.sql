@@ -4,7 +4,7 @@
 -- merge and those jobs write these tables from their first tick.
 --
 -- No foreign key to "User": adding one locks "User" while the constraint validates, and a row for a
--- deleted user is harmless — the nightly job prunes them.
+-- deleted user is harmless — the nightly job prunes them, including soft-deleted users.
 --
 -- Timestamps are UTC wall-clock, written as timezone('UTC', now()), so no session TimeZone can skew them.
 
