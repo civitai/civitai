@@ -365,6 +365,13 @@ type OauthMintOutcome =
  * row is mirrored from the grant right before asking, so grants that predate
  * the mirror still mint; a missing grant or a hub `consent_required` refusal
  * falls back to the JWT path with the consent signal set, never a 500.
+ *
+ * 🔴 #5127: the "missing grant" half of that sentence was a CLAIM, not a
+ * behaviour, until the mirror was fixed. `syncOauthConsentFromGrant` used to
+ * WRITE an `OauthConsent` row for a viewer with no grant at all — ORing in
+ * `UserRead` — so this function never saw the `null` it branches on and the hub
+ * validated consent against the row the platform had just manufactured. This
+ * comment described the intended design while the code did the opposite.
  */
 async function mintDevTunnelOauth(args: {
   userId: number;
