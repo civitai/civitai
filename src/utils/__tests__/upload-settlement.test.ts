@@ -369,10 +369,9 @@ describe('relayImageFallback', () => {
     // grading this path on the undifferentiated counter returns a confident FALSE
     // POSITIVE. The header is the only thing that separates them.
     //
-    // Asserted as an equality against the wrong value as well as the right one: a mutant
-    // that sends `single_put` here would be invisible to a presence-only check, and it is
-    // the single most damaging mutation available, since it silently re-creates the
-    // attribution error under the appearance of a fix.
+    // An EQUALITY, not a presence check: a mutant that sends `single_put` here is the
+    // single most damaging one available, because it silently re-creates the attribution
+    // error under the appearance of a fix, and a presence-only assertion cannot see it.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -384,7 +383,6 @@ describe('relayImageFallback', () => {
 
     const sent = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(sent[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
-    expect(sent[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).not.toBe('single_put');
     vi.unstubAllGlobals();
   });
 

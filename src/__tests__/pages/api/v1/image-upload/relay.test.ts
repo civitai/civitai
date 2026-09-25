@@ -958,6 +958,7 @@ describe('image-upload relay', () => {
       );
 
       expect(await moved()).toEqual(['success|unknown']);
+      expect(relayEvents()).toHaveLength(1);
       expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
       expect(await rows()).toHaveLength(
         IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length

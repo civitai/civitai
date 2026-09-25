@@ -271,11 +271,10 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
     // Positive control: without it, a hook that never reached the relay at all would
     // satisfy every assertion below vacuously.
     expect(relayCall, 'the relay POST must have been issued').toBeDefined();
-    // Equality against the WRONG value too: a mutant sending `multipart` here is the most
+    // An EQUALITY, not a presence check: a mutant sending `multipart` here is the most
     // damaging one available, because it re-creates the attribution error this change
     // exists to fix while looking like a working discriminator.
     expect(relayCall![1].headers?.[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('single_put');
-    expect(relayCall![1].headers?.[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).not.toBe('multipart');
     h.unmount();
   });
 

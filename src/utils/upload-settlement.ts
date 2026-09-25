@@ -30,10 +30,13 @@ import {
  * handing out the bare path would let a future caller build its own request — which is
  * exactly how the producer header goes missing at one of two sites.
  *
- * ⚠ It is one literal for the two CALL SITES, not repo-wide: three test files still spell
+ * ⚠ It is one literal for the two CALL SITES, not repo-wide: several test files still spell
  * the path out, deliberately, so that renaming the route (whose real path comes from its
  * filename, `src/pages/api/v1/image-upload/relay.ts`) turns them red rather than following
- * the rename silently. Do not read this as a guarantee that the path exists in one place.
+ * the rename silently. Do not read this as a guarantee that the path exists in one place,
+ * and do not put a COUNT here — an earlier version said "three", which was already four by
+ * the time it was written and is the kind of number a later reader uses to decide a sweep
+ * is complete.
  */
 const IMAGE_UPLOAD_RELAY_PATH = '/api/v1/image-upload/relay';
 

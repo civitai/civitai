@@ -150,7 +150,8 @@ export function isImageUploadRelayOutcome(value: unknown): value is ImageUploadR
 export const IMAGE_UPLOAD_RELAY_METRIC = 'civitai_image_upload_relay_total';
 
 const HELP =
-  'Invocations of the FALLBACK image-upload relay route, by terminal outcome. ' +
+  'Invocations of the FALLBACK image-upload relay route, by terminal outcome and by the ' +
+  'client that claims to have produced them. ' +
   'The relay exists for clients that cannot reach the storage host directly, so a ' +
   'non-zero success count is the only evidence that fallback is rescuing real uploads: ' +
   'a relayed 200 is not retained in the request-log stream, traces are head-sampled, and ' +
@@ -166,8 +167,11 @@ const HELP =
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
   'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
   'a closed set — the sanitiser rejects values outside the set but cannot verify one ' +
-  'inside it, so corroborate against the image-upload-relayed events before resting a ' +
-  'decision on it. single_put = the single-PUT upload path; multipart = the multipart ' +
+  'inside it. To corroborate, read the USER IDS on the image-upload-relayed events and ' +
+  'check the rescues belong to a plausible population; do NOT compare against those ' +
+  'events producer field, which is the same derivation as this label and agrees by ' +
+  'construction. Note those events cover SUCCESSFUL relays only, so there is no ' +
+  'corroborating event for the refusal outcomes. single_put = the single-PUT upload path; multipart = the multipart ' +
   'upload path; unknown = no header, or a value outside the set — EXPECTED to dominate ' +
   'while browsers still run a bundle older than the deploy that added the header, so read ' +
   'a large unknown share as stale clients rather than as a gap. Without this label a ' +

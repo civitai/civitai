@@ -68,6 +68,19 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
    *  * A crafted value. It is bucketed rather than rejected, because the route's own
    *    invocation count must stay equal to the sum of this metric; dropping the
    *    increment would make a hostile caller able to hide its requests from the counter.
+   *
+   * 🔴 ONE BUCKET, NOT TWO, AND THAT IS A KNOWN TRADE — recorded because the sibling this
+   * module cites elsewhere decided it the other way. `boundedClientLabel` in
+   * `src/server/prom/trpc-batch.metrics.ts` splits its equivalent into `none` (absent) and
+   * `other` (unrecognised); this collapses both into `unknown`, on the row the rollout is
+   * graded on, which is a mild instance of the same "one number, two populations" problem
+   * the producer label exists to remove. Accepted here because during the window that
+   * matters the second population is expected to be negligible — an unrecognised value can
+   * only come from a client we shipped or from a caller poking at the route, while the
+   * absent-header population is every stale browser bundle in circulation. If that
+   * expectation ever stops holding, the fix is to split this member into `none` + `other`:
+   * the tuple is the single declaration, so seeding and the runtime narrowing both follow
+   * automatically and the cost is 11 more fixed series.
    */
   'unknown',
 ] as const;
@@ -102,6 +115,13 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  * answer the question. It buys no safety either: the closed-set test below is what bounds
  * the label, and a caller that can send the header twice can equally send it once.
  *
+ * ⚠ AND THE BRANCH IS DEFENSIVE AGAINST THE TYPE, NOT AGAINST A BEHAVIOUR THIS HEADER HAS.
+ * Node joins duplicate headers with `', '` and returns an array only for `set-cookie`, so a
+ * genuinely repeated `x-civitai-upload-producer` arrives as the single string
+ * `"multipart, single_put"` — which is outside the set and becomes `unknown` either way.
+ * `IncomingHttpHeaders` still types the value `string | string[]`, so the branch has to
+ * exist; do not reason from it that duplicate custom headers reach us as arrays.
+ *
  * 🔴 THE BOUND IS THIS SET, NOT THE ROUTE'S AUTH. The relay sanitises the header before
  * its origin guard and session lookup, so an unauthenticated or cross-origin caller still
  * chooses which producer series moves for `forbidden_origin` / `unauthorized`. That is
@@ -110,11 +130,18 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  * unauthenticated input drive cardinality on a public route — do not.
  *
  * ⚠ AND THE LABEL IS SELF-DECLARED. This rejects values outside the set; it cannot check
- * that an in-set value is TRUE. Any same-origin logged-in caller can assert `multipart`.
- * That grants nothing new — the same access already moved the undifferentiated counter —
- * but it means the label records which caller CLAIMS to have produced the relay. When
- * grading a path on it, corroborate against the `image-upload-relayed` events, which carry
- * `userId` and can show whether the rescues belong to a plausible population.
+ * that an in-set value is TRUE. Any same-origin logged-in caller can assert `multipart`,
+ * so the label records which caller CLAIMS to have produced the relay.
+ *
+ * The new capability that buys them is MISATTRIBUTION, not inflation — say that precisely,
+ * because "the same access already moved the undifferentiated counter" is only half true:
+ * before this label they could move one aggregate number, and now they can move a NAMED
+ * path's row, which is the number a rollout decision rests on. To corroborate, read the
+ * `userId`s on the `image-upload-relayed` events and check the rescues belong to a
+ * plausible population. 🔴 Do NOT corroborate against those events' own `producer` field:
+ * the route feeds ONE derivation into both signals deliberately, so they agree by
+ * construction and the check cannot fail. Note also that those events are emitted on a
+ * SUCCESSFUL relay only, so the refusal outcomes have no corroborating event at all.
  *
  * Contrast with `isImageUploadRelayOutcome`, which DROPS the increment on an unrecognised
  * value. The asymmetry is deliberate and the two inputs are not alike: an outcome is

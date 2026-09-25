@@ -417,10 +417,10 @@ describe('useS3Upload relay fallback', () => {
     // Positive control: without it, a run where no relay happened would satisfy an
     // every()-style assertion over an empty list.
     expect(relayRequestHeaders).toHaveLength(1);
+    // An EQUALITY, not a presence check: sending the other caller's label here is the
+    // mutation that silently restores the attribution error while looking like a working
+    // discriminator, and only an equality can see it.
     expect(relayRequestHeaders[0][IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
-    // And not the other caller's label — the mutation that would silently restore the
-    // attribution error while looking like a working discriminator.
-    expect(relayRequestHeaders[0][IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).not.toBe('single_put');
     h.unmount();
   });
 
