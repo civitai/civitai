@@ -991,7 +991,8 @@ export async function writeBlockPost(input: {
     return created;
   });
 
-  if (input.title || input.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
+  if (input.title || input.detail)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return {
     postId: post.id,

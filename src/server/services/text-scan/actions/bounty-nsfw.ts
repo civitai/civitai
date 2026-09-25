@@ -32,7 +32,11 @@ async function markBountyNsfw({
   `;
 }
 
-async function notifyBountyNsfwCancelled(bountyId: number, ownerId: number | null, userIds: number[]) {
+async function notifyBountyNsfwCancelled(
+  bountyId: number,
+  ownerId: number | null,
+  userIds: number[]
+) {
   await Promise.all(
     userIds.map((userId) =>
       createNotification({

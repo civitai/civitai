@@ -54,7 +54,16 @@ describe('rated-entity profiles', () => {
 
   it('Model: an nsfw model is declared at the top level', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
-      { id: 1, userId: 9, name: 'x', description: null, nsfw: true, poi: false, minor: false, modelVersions: [] },
+      {
+        id: 1,
+        userId: 9,
+        name: 'x',
+        description: null,
+        nsfw: true,
+        poi: false,
+        minor: false,
+        modelVersions: [],
+      },
     ]);
     expect((await load('Model')).declared.nsfwLevel).toBe(NsfwLevel.XXX);
   });
@@ -72,11 +81,17 @@ describe('rated-entity profiles', () => {
     dbMock.dbWrite.post.findMany.mockResolvedValue([
       { id: 1, userId: 9, title: 'T', detail: '<p>D</p>', nsfwLevel: 5 },
     ]);
-    expect(await load('Post')).toMatchObject({ declared: { nsfwLevel: 5 }, text: { Title: 'T', Detail: 'D' } });
+    expect(await load('Post')).toMatchObject({
+      declared: { nsfwLevel: 5 },
+      text: { Title: 'T', Detail: 'D' },
+    });
     dbMock.dbWrite.bountyEntry.findMany.mockResolvedValue([
       { id: 1, userId: 9, description: '<p>E</p>', nsfwLevel: 1 },
     ]);
-    expect(await load('BountyEntry')).toMatchObject({ declared: { nsfwLevel: 1 }, text: { Description: 'E' } });
+    expect(await load('BountyEntry')).toMatchObject({
+      declared: { nsfwLevel: 1 },
+      text: { Description: 'E' },
+    });
   });
 
   it('Bounty: nsfw bounties declare the top level, and poi is declared', async () => {

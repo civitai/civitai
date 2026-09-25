@@ -106,17 +106,29 @@ describe('ratedEntityDerivedNsfwLevelText', () => {
 describe('ratedEntityContentNsfwLevelText', () => {
   it('is the derived text without the bounty flag, and identical for Post and BountyEntry', () => {
     expect(ratedEntityContentNsfwLevelText('Bounty', 'b')).not.toContain('nsfw = TRUE');
-    expect(ratedEntityDerivedNsfwLevelText('Bounty', 'b')).toContain(ratedEntityContentNsfwLevelText('Bounty', 'b'));
-    expect(ratedEntityContentNsfwLevelText('Post', 'p')).toBe(ratedEntityDerivedNsfwLevelText('Post', 'p'));
-    expect(ratedEntityContentNsfwLevelText('BountyEntry', 'be')).toBe(ratedEntityDerivedNsfwLevelText('BountyEntry', 'be'));
+    expect(ratedEntityDerivedNsfwLevelText('Bounty', 'b')).toContain(
+      ratedEntityContentNsfwLevelText('Bounty', 'b')
+    );
+    expect(ratedEntityContentNsfwLevelText('Post', 'p')).toBe(
+      ratedEntityDerivedNsfwLevelText('Post', 'p')
+    );
+    expect(ratedEntityContentNsfwLevelText('BountyEntry', 'be')).toBe(
+      ratedEntityDerivedNsfwLevelText('BountyEntry', 'be')
+    );
   });
 });
 
 describe('isTextScanRaised', () => {
-  const ts = (nsfwLevel: number | null, entityType = 'Post') => ({ entityType, nsfwLevel, result: { version: 1 } });
+  const ts = (nsfwLevel: number | null, entityType = 'Post') => ({
+    entityType,
+    nsfwLevel,
+    result: { version: 1 },
+  });
 
   it('uses the same minimum as the SQL predicate', () => {
-    expect(textScanVerdictPredicateText('em', textScanRaisedMinLevel('Post'))).toBe(textScanVerdictPredicateText('em'));
+    expect(textScanVerdictPredicateText('em', textScanRaisedMinLevel('Post'))).toBe(
+      textScanVerdictPredicateText('em')
+    );
     expect(textScanRaisedMinLevel('Model')).toBe(4);
   });
 
@@ -125,8 +137,12 @@ describe('isTextScanRaised', () => {
     expect(isTextScanRaised(ts(1))).toBe(false);
     expect(isTextScanRaised(ts(2, 'Model'))).toBe(false);
     expect(isTextScanRaised(ts(4, 'Model'))).toBe(true);
-    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: 8, result: { labels: [] } })).toBe(false);
-    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: null, result: { version: 1 } })).toBe(false);
+    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: 8, result: { labels: [] } })).toBe(
+      false
+    );
+    expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: null, result: { version: 1 } })).toBe(
+      false
+    );
   });
 });
 
@@ -160,7 +176,11 @@ describe('overrideBasisDropped', () => {
     expect(at(0)).toBe(false);
     expect(at(1, null)).toBe(false);
     expect(
-      overrideBasisDropped({ moderatorNsfwLevel: null, moderatorNsfwLevelBasis: 4, derivedLevel: 1 })
+      overrideBasisDropped({
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: 4,
+        derivedLevel: 1,
+      })
     ).toBe(false);
   });
 });
@@ -188,4 +208,3 @@ describe('greenBountyPredicateText', () => {
     expect(() => greenBountyPredicateText('b; --')).toThrow();
   });
 });
-

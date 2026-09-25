@@ -388,7 +388,9 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
 
     expect(evaluateAutoNsfw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
-    expect(submitModelTextModeration).toHaveBeenCalledWith(expect.objectContaining({ id: MODEL_ID }));
+    expect(submitModelTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL_ID })
+    );
   });
 
   const FLAGGED = {

@@ -78,7 +78,7 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(expect.objectContaining({ level: 8 }));
   });
 
-  it("names the detected level for a bounty pinned by its nsfw flag", async () => {
+  it('names the detected level for a bounty pinned by its nsfw flag', async () => {
     dbMock.dbWrite.bounty.findUnique
       .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: null, userId: 5, name: 'B' })
       .mockResolvedValueOnce({ nsfwLevel: 60, moderatorNsfwLevel: null, userId: 5, name: 'B' });
@@ -118,37 +118,48 @@ describe('applyRatingFloor', () => {
   it.each([
     ['newly detects', { detected: true, declared: false, newlyDetected: true }],
     ['detects an already-declared', { detected: true, declared: true, newlyDetected: false }],
-  ])('recomputes a bounty and returns the notice instead of sending it when the scan %s poi', async (_, poi) => {
-    dbMock.dbWrite.bounty.findUnique
-      .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: null, userId: 5, name: 'B' })
-      .mockResolvedValueOnce({ nsfwLevel: 4, moderatorNsfwLevel: null, userId: 5, name: 'B' });
-    const withPoi = args(4, true);
-    const result = await applyRatingFloor('Bounty', {
-      ...withPoi,
-      outcome: { ...withPoi.outcome, poi: { ...poi, names: ['A'], reason: 'r' } },
-    });
-    expect(updateBountyNsfwLevels).toHaveBeenCalledWith([7]);
-    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      deferredRatingNotice: {
-        entityType: 'Bounty',
-        entityId: 7,
-        userId: 5,
-        level: 4,
-        title: 'B',
-        url: '/bounties/7',
-        workflowId: 'wf-1',
-      },
-    });
-  });
+  ])(
+    'recomputes a bounty and returns the notice instead of sending it when the scan %s poi',
+    async (_, poi) => {
+      dbMock.dbWrite.bounty.findUnique
+        .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: null, userId: 5, name: 'B' })
+        .mockResolvedValueOnce({ nsfwLevel: 4, moderatorNsfwLevel: null, userId: 5, name: 'B' });
+      const withPoi = args(4, true);
+      const result = await applyRatingFloor('Bounty', {
+        ...withPoi,
+        outcome: { ...withPoi.outcome, poi: { ...poi, names: ['A'], reason: 'r' } },
+      });
+      expect(updateBountyNsfwLevels).toHaveBeenCalledWith([7]);
+      expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        deferredRatingNotice: {
+          entityType: 'Bounty',
+          entityId: 7,
+          userId: 5,
+          level: 4,
+          title: 'B',
+          url: '/bounties/7',
+          workflowId: 'wf-1',
+        },
+      });
+    }
+  );
 
   it('defers nothing when no notice was due', async () => {
-    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({ nsfwLevel: 4, moderatorNsfwLevel: null, userId: 5, name: 'B' });
+    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
+      nsfwLevel: 4,
+      moderatorNsfwLevel: null,
+      userId: 5,
+      name: 'B',
+    });
     const withPoi = args(4, true);
     expect(
       await applyRatingFloor('Bounty', {
         ...withPoi,
-        outcome: { ...withPoi.outcome, poi: { detected: true, declared: false, newlyDetected: true, names: ['A'], reason: 'r' } },
+        outcome: {
+          ...withPoi.outcome,
+          poi: { detected: true, declared: false, newlyDetected: true, names: ['A'], reason: 'r' },
+        },
       })
     ).toEqual({ deferredRatingNotice: null });
   });
@@ -160,7 +171,10 @@ describe('applyRatingFloor', () => {
   });
 
   it('does nothing without an nsfw verdict', async () => {
-    await applyRatingFloor('Post', { ...args(4, true), outcome: { triggeredLabels: [], nsfwLevel: null } });
+    await applyRatingFloor('Post', {
+      ...args(4, true),
+      outcome: { triggeredLabels: [], nsfwLevel: null },
+    });
     expect(dbMock.dbWrite.post.findUnique).not.toHaveBeenCalled();
     expect(updatePostNsfwLevels).not.toHaveBeenCalled();
   });

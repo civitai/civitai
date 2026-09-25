@@ -27,12 +27,19 @@ describe('articleModerationAdapter — text scan', () => {
   it('routes submit, keeping the XGuard call as the off/shadow path', async () => {
     vi.mocked(submitTextModerationOrScan).mockImplementation(async ({ xguard }) => xguard());
     vi.mocked(submitTextModeration).mockResolvedValue({ id: 'xg' } as never);
-    expect(await articleModerationAdapter.submit({ entityId: 4, content: 'T body' })).toEqual({ id: 'xg' });
+    expect(await articleModerationAdapter.submit({ entityId: 4, content: 'T body' })).toEqual({
+      id: 'xg',
+    });
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'Article', entityId: 4 })
     );
     expect(submitTextModeration).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: 'Article', entityId: 4, content: 'T body', labels: ['nsfw'] })
+      expect.objectContaining({
+        entityType: 'Article',
+        entityId: 4,
+        content: 'T body',
+        labels: ['nsfw'],
+      })
     );
   });
 

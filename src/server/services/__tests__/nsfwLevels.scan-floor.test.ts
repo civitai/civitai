@@ -42,12 +42,7 @@ beforeEach(() => {
 });
 
 describe.each([
-  [
-    'Post',
-    updatePostNsfwLevels,
-    'p',
-    'EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)',
-  ],
+  ['Post', updatePostNsfwLevels, 'p', 'EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)'],
   [
     'BountyEntry',
     updateBountyEntryNsfwLevels,

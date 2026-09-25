@@ -23,7 +23,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 // Hand-listed, as in model-moderation.submit.test.ts.
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
-vi.mock('~/server/services/model-version.service', () => ({ bustPublicModelResponseCache: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({
+  bustPublicModelResponseCache: vi.fn(),
+}));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 
 const { modelModerationAdapter, submitModelTextModeration, submitModelTextModerationBackfill } =
@@ -94,7 +96,9 @@ describe('submitModelTextModeration — routed', () => {
 describe('submitModelTextModerationBackfill — routed', () => {
   it('forces a text scan instead of XGuard once Model is active', async () => {
     vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
-    expect(await submitModelTextModerationBackfill({ id: 7, name: 'LoRA', description: null })).toEqual({
+    expect(
+      await submitModelTextModerationBackfill({ id: 7, name: 'LoRA', description: null })
+    ).toEqual({
       id: 'wf',
     });
     expect(submitTextModerationOrScan).toHaveBeenCalledWith(

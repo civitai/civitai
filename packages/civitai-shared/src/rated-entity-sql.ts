@@ -64,7 +64,9 @@ export function ratedEntityContentNsfwLevelText(entityType: DerivedNsfwEntityTyp
 export function ratedEntityDerivedNsfwLevelText(entityType: DerivedNsfwEntityType, alias: string) {
   const content = ratedEntityContentNsfwLevelText(entityType, alias);
   return entityType === 'Bounty'
-    ? `(CASE WHEN ${identifier(alias)}.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag} ELSE ${content} END)`
+    ? `(CASE WHEN ${identifier(
+        alias
+      )}.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag} ELSE ${content} END)`
     : content;
 }
 
@@ -72,9 +74,17 @@ export function textScanRaisedMinLevel(entityType: string) {
   return entityType === 'Model' ? NsfwLevel.R : NsfwLevel.PG13;
 }
 
-export function isTextScanRaised(row: { entityType: string; nsfwLevel: number | null; result: unknown }) {
+export function isTextScanRaised(row: {
+  entityType: string;
+  nsfwLevel: number | null;
+  result: unknown;
+}) {
   const version = (row.result as { version?: unknown } | null)?.version;
-  return version != null && row.nsfwLevel != null && row.nsfwLevel >= textScanRaisedMinLevel(row.entityType);
+  return (
+    version != null &&
+    row.nsfwLevel != null &&
+    row.nsfwLevel >= textScanRaisedMinLevel(row.entityType)
+  );
 }
 
 export function challengeDerivedNsfwLevel(allowedNsfwLevel: number) {
@@ -91,7 +101,9 @@ export function overrideBasisDropped({
   derivedLevel: number | null;
 }) {
   if (moderatorNsfwLevel == null || moderatorNsfwLevelBasis == null || !derivedLevel) return false;
-  return getHighestBrowsingLevelBit(derivedLevel) < getHighestBrowsingLevelBit(moderatorNsfwLevelBasis);
+  return (
+    getHighestBrowsingLevelBit(derivedLevel) < getHighestBrowsingLevelBit(moderatorNsfwLevelBasis)
+  );
 }
 
 export type BountyBuzzKind = 'green' | 'yellow' | 'unknown';
@@ -112,4 +124,3 @@ export function greenBountyPredicateText(alias: string) {
   const a = identifier(alias);
   return `(${a}."buzzType" = 'green' OR (${a}."buzzType" IS NULL AND ${a}.nsfw = FALSE AND 'nsfw' = ANY(${a}."lockedProperties")))`;
 }
-

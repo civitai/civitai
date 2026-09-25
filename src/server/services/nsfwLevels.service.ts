@@ -420,7 +420,10 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
     WITH next AS (
       SELECT
         b.id,
-        COALESCE(b."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('Bounty', 'b')}) "nsfwLevel"
+        COALESCE(b."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql(
+          'Bounty',
+          'b'
+        )}) "nsfwLevel"
       FROM "Bounty" b
       WHERE b.id IN (${Prisma.join(bountyIds)})
         AND EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'Bounty' AND ic."entityId" = b.id)
@@ -442,7 +445,10 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
     WITH next AS (
       SELECT
         be.id,
-        COALESCE(be."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('BountyEntry', 'be')}) "nsfwLevel"
+        COALESCE(be."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql(
+          'BountyEntry',
+          'be'
+        )}) "nsfwLevel"
       FROM "BountyEntry" be
       WHERE be.id IN (${Prisma.join(bountyEntryIds)})
         AND EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" = be.id)

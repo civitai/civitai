@@ -54,7 +54,10 @@ describe('applyChallengeTextScan', () => {
   it('ignores a deleted challenge and a verdict without nsfw', async () => {
     dbMock.dbWrite.challenge.findUnique.mockResolvedValue(null);
     await applyChallengeTextScan(args(NsfwLevel.X) as never);
-    await applyChallengeTextScan({ ...args(NsfwLevel.X), outcome: { triggeredLabels: [], nsfwLevel: null } } as never);
+    await applyChallengeTextScan({
+      ...args(NsfwLevel.X),
+      outcome: { triggeredLabels: [], nsfwLevel: null },
+    } as never);
     expect(applyChallengeNsfwEscalation).not.toHaveBeenCalled();
   });
 });
@@ -103,13 +106,16 @@ describe('settleSkippedChallengeScan', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
-  it.each(['missing-prompt', 'no-profile'] as const)('leaves %s Pending and logs it', async (reason) => {
-    await settleSkippedChallengeScan(3, reason);
-    expect(applyChallengeNsfwEscalation).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'text-scan', challengeId: 3, reason })
-    );
-  });
+  it.each(['missing-prompt', 'no-profile'] as const)(
+    'leaves %s Pending and logs it',
+    async (reason) => {
+      await settleSkippedChallengeScan(3, reason);
+      expect(applyChallengeNsfwEscalation).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'text-scan', challengeId: 3, reason })
+      );
+    }
+  );
 
   it('logs rather than guessing when an unchanged row holds no text-scan verdict', async () => {
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({

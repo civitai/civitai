@@ -17,7 +17,8 @@ function body(file: string, start: string) {
 }
 
 const FLAT_FLOOR = `'nsfw' = ANY(em."triggeredLabels")`;
-const SHARED_IMPORT = /import \{[^}]*\barticleModerationFloorText\b[^}]*\} from '@civitai\/shared\/rated-entity-sql'/;
+const SHARED_IMPORT =
+  /import \{[^}]*\barticleModerationFloorText\b[^}]*\} from '@civitai\/shared\/rated-entity-sql'/;
 
 describe('the moderator app renders the shared Article floor', () => {
   it.each([

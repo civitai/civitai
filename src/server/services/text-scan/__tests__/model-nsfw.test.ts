@@ -6,7 +6,9 @@ const { entityChangesMock } = vi.hoisted(() => ({ entityChangesMock: vi.fn() }))
 
 // Hand-listed, as in model-moderation.adapter.test.ts: each real module builds clients at load.
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
-vi.mock('~/server/services/model-version.service', () => ({ bustPublicModelResponseCache: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({
+  bustPublicModelResponseCache: vi.fn(),
+}));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/clickhouse/tracker', () => ({
   Tracker: class {

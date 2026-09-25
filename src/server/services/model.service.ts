@@ -4924,7 +4924,13 @@ export async function getModelModerationDetail({ id }: { id: number }) {
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Model', entityId: id } },
-      select: { status: true, nsfwLevel: true, triggeredLabels: true, result: true, updatedAt: true },
+      select: {
+        status: true,
+        nsfwLevel: true,
+        triggeredLabels: true,
+        result: true,
+        updatedAt: true,
+      },
     }),
   ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);

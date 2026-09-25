@@ -250,7 +250,10 @@ describe('upsertBounty — blurb reconciliation', () => {
 describe('applyBountyContentChange', () => {
   it('hands the text it just wrote to the text scan', async () => {
     await applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML });
-    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Bounty', entityId: BOUNTY_ID });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Bounty',
+      entityId: BOUNTY_ID,
+    });
   });
 
   it('writes the description column and nothing else', async () => {
@@ -304,7 +307,10 @@ describe('applyBountyContentChange — the auto-NSFW gate', () => {
 
     expect(evaluateAutoNsfw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.bounty.update).not.toHaveBeenCalled();
-    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Bounty', entityId: BOUNTY_ID });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Bounty',
+      entityId: BOUNTY_ID,
+    });
   });
 
   const FLAGGED = {

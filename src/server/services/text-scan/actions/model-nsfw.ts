@@ -84,7 +84,14 @@ export async function applyModelNsfwTextScan({
   if (!outcome.nsfw?.raised) return nothing;
   const model = await dbWrite.model.findUnique({
     where: { id: entityId },
-    select: { id: true, name: true, nsfw: true, nsfwLevel: true, lockedProperties: true, userId: true },
+    select: {
+      id: true,
+      name: true,
+      nsfw: true,
+      nsfwLevel: true,
+      lockedProperties: true,
+      userId: true,
+    },
   });
   if (!model) return nothing;
 

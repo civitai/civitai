@@ -29,16 +29,24 @@ beforeEach(() => {
 describe('submitTextModerationOrScan', () => {
   it('off: XGuard only', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('off');
-    expect(await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })).toEqual({ id: 'xg-1' });
+    expect(
+      await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })
+    ).toEqual({ id: 'xg-1' });
     expect(scanEntity).not.toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 
   it('shadow: XGuard keeps acting, and a shadow scan runs beside it', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('shadow');
-    expect(await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })).toEqual({ id: 'xg-1' });
+    expect(
+      await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })
+    ).toEqual({ id: 'xg-1' });
     expect(xguard).toHaveBeenCalledTimes(1);
-    expect(scanEntityInBackground).toHaveBeenCalledWith({ entityType: 'Article', entityId: 1, force: undefined });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Article',
+      entityId: 1,
+      force: undefined,
+    });
     expect(scanEntity).not.toHaveBeenCalled();
   });
 
@@ -56,21 +64,38 @@ describe('submitTextModerationOrScan', () => {
   ] as const)('active: text-scan replaces XGuard (%o)', async (result, expected) => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(scanEntity).mockResolvedValue(result as never);
-    expect(await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })).toEqual(expected);
+    expect(
+      await submitTextModerationOrScan({ entityType: 'Article', entityId: 1, xguard })
+    ).toEqual(expected);
     expect(xguard).not.toHaveBeenCalled();
   });
 
   it('active: a skip reaches the caller, a submit or failure does not', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'skipped', reason: 'unchanged' });
-    await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, xguard, onActiveSkip });
+    await submitTextModerationOrScan({
+      entityType: 'Challenge',
+      entityId: 3,
+      xguard,
+      onActiveSkip,
+    });
     expect(onActiveSkip).toHaveBeenCalledWith('unchanged');
 
     onActiveSkip.mockClear();
     vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'failed' });
-    await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, xguard, onActiveSkip });
+    await submitTextModerationOrScan({
+      entityType: 'Challenge',
+      entityId: 3,
+      xguard,
+      onActiveSkip,
+    });
     vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'submitted', workflowId: 'wf' });
-    await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, xguard, onActiveSkip });
+    await submitTextModerationOrScan({
+      entityType: 'Challenge',
+      entityId: 3,
+      xguard,
+      onActiveSkip,
+    });
     expect(onActiveSkip).not.toHaveBeenCalled();
   });
 
@@ -78,7 +103,12 @@ describe('submitTextModerationOrScan', () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
     expect(
-      await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, xguard, onActiveSkip })
+      await submitTextModerationOrScan({
+        entityType: 'Challenge',
+        entityId: 3,
+        xguard,
+        onActiveSkip,
+      })
     ).toEqual({ id: 'xg-1' });
     expect(onActiveSkip).not.toHaveBeenCalled();
   });

@@ -18,8 +18,13 @@ describe('text-scan-rating-raised', () => {
 
   it('omits a missing title', () => {
     expect(
-      render({ entityType: 'BountyEntry', entityId: 7, level: 8, title: null, url: '/bounties/3/entries/7' })
-        ?.message
+      render({
+        entityType: 'BountyEntry',
+        entityId: 7,
+        level: 8,
+        title: null,
+        url: '/bounties/3/entries/7',
+      })?.message
     ).toBe(
       'Your bounty entry is now rated X based on its text. If you believe this is a mistake, you can dispute the rating on its page.'
     );
@@ -34,4 +39,3 @@ describe('textScanRatingRaisedKey', () => {
     ).toBe('text-scan-rating-raised-Post-7-4-wf-1');
   });
 });
-

@@ -1151,4 +1151,3 @@ export async function voidBountyForNsfw(id: number): Promise<VoidBountyForNsfwRe
   await queueBountySearchIndexUpdate(id);
   return { voided: true, refundedUserIds };
 }
-
