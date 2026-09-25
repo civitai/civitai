@@ -11,13 +11,31 @@ import { describe, expect, it } from 'vitest';
  * both "worked" and only their failure behaviour differed. `src/components/Ads` has no tests of its
  * own, so without this guard that half of the consolidation is pinned by nothing.
  *
- * 🔴 The pattern matches the property ACCESS in every shape, not the word "Brave" — which appears
- * legitimately in user-facing copy (`pushEnableErrors.ts`) and in unrelated content constants. An
- * earlier version keyed on the optional chain `brave?.isBrave` and so missed a re-inline written with
- * `typeof x.isBrave === 'function'` instead, which is the shape the ORIGINAL duplicate used. Measured
- * at the time of writing: this pattern matches exactly 1 of 4480 production files (the owner), and
- * catches plain access, a cast then `.brave`, single- and double-quoted string keys, and
- * destructuring off `navigator`.
+ * 🔴 The pattern targets reads of the property, not the word "Brave" — which appears legitimately in
+ * user-facing copy (`pushEnableErrors.ts`) and in unrelated content constants.
+ *
+ * It is the UNION of two earlier drafts, because each caught a shape the other missed and an
+ * intermediate version shipped with only one half:
+ *   - draft 1 keyed on `navigator`-then-`.brave` plus the optional chain `brave?.isBrave`. It caught
+ *     an INDIRECT read (`const brave = getIt(); if (brave?.isBrave)`) but missed a read assigned to a
+ *     local first, because its `navigator…` alternative cannot cross the `)` of a cast containing `()`.
+ *   - draft 2 replaced it with literal property/key access. That caught the local-variable and
+ *     destructured shapes but DROPPED the optional-chain alternative, losing the indirect read.
+ *
+ * ⚠️ RETRACTED from draft 2's own docblock: it claimed draft 1 "missed … the shape the ORIGINAL
+ * duplicate used". Measured — it did not. `origin/main`'s duplicate was `nav.brave?.isBrave`, which
+ * draft 1 matched. The rewrite was still justified (draft 1 genuinely missed the local-variable shape)
+ * but not for the reason given, and acting on the wrong reason is what dropped an alternative.
+ *
+ * Measured at the time of writing: matches exactly 1 of 4480 production files (the owner), and catches
+ * plain access, a cast then `.brave`, a read assigned to a local, all three quote styles of a string
+ * key (including a template literal), destructuring off `navigator`, and an indirect `brave?.isBrave`.
+ *
+ * 🔴 WHAT IT DOES NOT CATCH, stated because two earlier docblocks here overclaimed. The indirect-read
+ * alternative is NAME-DEPENDENT: it matches `brave?.isBrave`, so a local called anything else
+ * (`probe?.isBrave`) walks it — found by writing that mutant and watching it survive. A computed key
+ * (`navigator[k]`), `Reflect.get`, and a nested destructure also pass. This guard raises the cost of
+ * re-inlining the obvious way; it is not a proof of absence, and "matches every shape" would be false.
  */
 
 // Resolved from THIS FILE, never from `process.cwd()`. An earlier version used cwd and, run from a
@@ -27,8 +45,9 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const SRC = path.join(REPO_ROOT, 'src');
 const OWNER = path.join(SRC, 'utils/device-helpers.ts');
-/** Reading the property, in any spelling. Not the word "Brave". */
-const BRAVE_READ = /\.\s*brave\b|\[\s*['"]brave['"]\s*\]|\{[^}\n]*\bbrave\b[^}\n]*\}\s*=/;
+/** Reading the property, in any spelling. Not the word "Brave". Union of both drafts — see above. */
+const BRAVE_READ =
+  /\.\s*brave\b|\[\s*['"`]brave['"`]\s*\]|\{[^}\n]*\bbrave\b[^}\n]*\}\s*=|\bbrave\?\.\s*isBrave/;
 /** Measured 4480. A floor near it catches a scan that silently lost most of the tree. */
 const MIN_CORPUS = 4000;
 
@@ -60,10 +79,16 @@ describe('navigator.brave is read in exactly one module', () => {
     // earlier version of this guard.
     const reInlines = [
       'navigator.brave?.isBrave()',
+      // The shape `origin/main` actually shipped, and the one draft 2's docblock wrongly said was missed.
+      "if (typeof nav.brave?.isBrave === 'function') { nav.brave.isBrave(); }",
+      // Assigned to a local first — draft 1 missed this, which is what justified the rewrite.
       'const braveApi = (navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } }).brave;',
       'const { brave } = navigator as any; if (brave) brave.isBrave();',
+      // Indirect read — draft 2 dropped this, which is what the union restores.
+      'const brave = getIt(); if (brave?.isBrave) brave.isBrave();',
       '(navigator as any)["brave"]',
       "(navigator as any)['brave']",
+      '(navigator as any)[`brave`]',
     ];
     for (const shape of reInlines) expect(BRAVE_READ.test(shape), shape).toBe(true);
 

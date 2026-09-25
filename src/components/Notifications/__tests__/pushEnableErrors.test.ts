@@ -165,15 +165,18 @@ describe('describePushEnableFailure', () => {
     // sentences asserting a state is unbounded, so any pattern over WORDS is walkable by REWORDING.
     // NOTHING JUSTIFIES A THIRD ATTEMPT — this assertion deliberately does not try.
     //
-    // What IS mechanical: the exact whole-string `toEqual` in the test above. That is the control —
-    // any reword fails it and lands in review, which is where a human reads whether the new sentence
-    // asserts something we cannot observe. Below is the one half that IS checkable: the already-on
-    // branch must be present, because a Brave user who has already enabled the setting reaches this
-    // same failure and needs it.
+    // What IS mechanical, and is kept: BOTH conditional branches must be present. These are substring
+    // presence checks on a literal, not patterns over an unbounded space, so they are not walkable in
+    // the way the two retired guards were — and unlike the exact `toEqual`, they SURVIVE a reword: an
+    // authorised reword updates the `toEqual` by construction, so `toEqual` cannot notice a reword that
+    // drops a branch. ⚠️ The off-branch line below was briefly deleted along with the walkable
+    // heuristic; a reword dropping it then passed, and the off-branch is the half carrying the remedy
+    // for the common case. Retiring a vacuous guard is not a reason to drop a sound assertion beside it.
     const { message } = describePushEnableFailure({
       kind: 'push-service-unavailable',
       isBrave: true,
     });
+    expect(message).toMatch(/if it is off/i);
     expect(message).toMatch(/if it is already on/i);
   });
 

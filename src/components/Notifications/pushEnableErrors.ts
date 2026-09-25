@@ -72,7 +72,8 @@ export function classifyPushEnableError(
   // Deterministic and permanent: every retry throws the same thing, and because the server holds no
   // row the device toggle renders unchecked, so its only action is `enable()` again. Left in
   // `unknown` this showed a raw Chromium sentence forever.
-  // 🔴 BOTH the name and the message must agree, and each half has already been wrong once:
+  // 🔴 THE MESSAGE ALONE DECIDES HERE — `name` is deliberately not read. Each of the two earlier
+  // drafts was wrong, in opposite directions:
   //  - a bare `gcm_sender_id` message test (draft 1) also matched Chromium's CONFIG error
   //    (`missing applicationServerKey, and gcm_sender_id not found in manifest`), swallowing the
   //    misclassification the branch below was narrowed to stop.
@@ -80,7 +81,10 @@ export function classifyPushEnableError(
   //    spec rejects `subscribe()` with it when the service-worker registration was unregistered, and
   //    the `try` around this also spans `register`, `ready` and the tRPC mutation. That handed
   //    "retrying will not clear it" to retryable failures.
-  // So the message must carry the ALREADY-EXISTS sense; the name alone never qualifies.
+  // So the message must carry the ALREADY-EXISTS sense, and no `name` grants entry.
+  // ⚠️ THIRD comment on this one branch; the previous two each described behaviour the code did not
+  // have (the second opened "BOTH the name and the message must agree" while `name` went unread).
+  // If you change the condition, change this sentence in the same edit.
   if (/a subscription with a different|already exists/i.test(message)) {
     return { kind: 'stale-subscription' };
   }
