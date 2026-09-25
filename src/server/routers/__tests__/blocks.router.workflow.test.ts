@@ -147,6 +147,8 @@ const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
+import { blockAuthorFeeQuotedCounter } from '~/server/prom/client';
+
 vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
   recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
   recordBlockPostSubjectRefusal: () => undefined,
@@ -1121,6 +1123,50 @@ describe('blocks.cancelWorkflow', () => {
     await expect(
       caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+});
+
+// 🔴 THE GUARD THAT DID NOT EXIST, AND ITS ABSENCE WAS MUTATION-PROVEN.
+//
+// `blockAuthorFeeQuotedCounter`'s `surface` label is derived from the
+// `workflowLabel` this router passes to `quoteBlockAuthorFee`. Two comments in
+// `author-fee-charge.service.ts` claimed that pairing was "pinned behaviourally
+// by blocks.router.workflow.test.ts". It was not: this file had no reference to
+// `workflowLabel` at all, and rewriting BOTH router literals to `'whatif'` left
+// the whole suite green.
+//
+// Making the router import the shared constant was necessary and NOT sufficient
+// — re-running that same mutant against the import-only fix STILL passed,
+// because the mutant replaces the reference with a literal rather than changing
+// the constant. Only an assertion on what the router actually passes closes it.
+//
+// This asserts through the REAL fee service (it is not mocked here) onto the
+// GLOBAL prom stub, so it reads the label the counter genuinely received rather
+// than one this test supplied. It does not depend on the author-fee flag: the
+// `surface` label is computed on every arm, `flag-disabled` included.
+describe("blocks — the author-fee quote counter's surface label", () => {
+  it('an ESTIMATE reaches the fee quote as the disclosure surface', async () => {
+    vi.mocked(blockAuthorFeeQuotedCounter.inc).mockClear();
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow.mockResolvedValue({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 12 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+
+    const labels = vi
+      .mocked(blockAuthorFeeQuotedCounter.inc)
+      .mock.calls.map((c) => c[0] as Record<string, string>);
+    expect(labels.length).toBeGreaterThan(0);
+    // EVERY quote this estimate produced must be on the disclosure surface. A
+    // `.some()` here would pass while a second, mislabelled quote leaked onto
+    // `gating` — which is the shape of the defect this guards.
+    expect(labels.every((l) => l.surface === 'disclosure')).toBe(true);
   });
 });
 

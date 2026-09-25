@@ -363,9 +363,15 @@ export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
   name: 'block_author_fee_buzz_total',
   // 🔴 "would have charged (dark)" until 2026-09-25. This is still the SIZING
   // figure — what the fee computes to on the attribution path — and is NOT what
-  // viewers were debited; that is `block_author_fee_charged_buzz_total` below.
-  // The two differ by every skip arm and by the reserve clamp, so quoting this
-  // one as revenue overstates it.
+  // viewers were debited.
+  //
+  // 🔴 THERE IS NO PROMETHEUS SERIES FOR BUZZ ACTUALLY DEBITED, and an earlier
+  // revision of this comment pointed at `block_author_fee_charged_buzz_total`,
+  // which does not exist: it was proposed in this same change and then deleted
+  // for duplicating an authoritative record. The authorities for money are the
+  // Buzz ledger (`TransactionType.Fee`, keyed by `blockAuthorFeeChargeKey`) and
+  // the `block_author_fee_accrual` table. This series differs from both by every
+  // skip arm and by the reserve clamp, so quoting it as revenue overstates it.
   help: 'Buzz the App Blocks per-generation author fee computes to on the sizing path (NOT what was debited), by coarse generation type',
   labelNames: ['coarse_type'] as const,
 });

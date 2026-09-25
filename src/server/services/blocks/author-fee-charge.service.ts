@@ -24,16 +24,27 @@ import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-f
 import { blockGenerationCoarseType } from './generation-type';
 
 /**
- * The `workflowLabel` both ESTIMATE call sites pass (`blocks.router.ts:5492`,
- * `:9444`); the two gating sites pass the block's external id instead
- * (`:5935`, `:9740`). It is what `surface` on `blockAuthorFeeQuotedCounter` is
- * derived from.
+ * The `workflowLabel` both ESTIMATE call sites pass; the two gating sites pass
+ * the block's external id instead. It is what `surface` on
+ * `blockAuthorFeeQuotedCounter` is derived from.
  *
- * 🔴 EXPORTED SO THE ROUTER CAN ADOPT IT — today the router passes the LITERAL
- * `'estimate'`, so this constant and those two call sites are a relationship
- * nothing type-checks. It is pinned behaviourally by
- * `blocks.router.workflow.test.ts`, which drives the real router and asserts the
- * label, rather than by a test that passes the string it then asserts on.
+ * 🔴 BOTH ESTIMATE SITES IMPORT THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
+ * THE LABEL TOGETHER. An earlier revision left them spelling `'estimate'` and
+ * claimed the pairing was "pinned behaviourally by
+ * `blocks.router.workflow.test.ts`". It was not: that file never mentions
+ * `workflowLabel`, and a round-1 audit proved the gap by mutation — rewriting
+ * both router literals to `'whatif'` left 482/482 tests green while the entire
+ * unbounded estimate population silently moved onto the `gating` series. A
+ * shared import cannot drift that way; a sentence about a test can.
+ *
+ * The GATING side needs no equivalent: both gating sites pass
+ * `blockExternalId`, which `composeBlockExternalId` /
+ * `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating caller
+ * cannot produce this value by construction.
+ *
+ * ⚠️ Deliberately NOT `as const`: `workflowLabel` is a plain `string` on both
+ * signatures, so widening buys nothing and a literal type would only make a
+ * future non-estimate caller's error message harder to read.
  */
 export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 
@@ -199,9 +210,24 @@ export async function quoteBlockAuthorFee(args: {
   // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
   // both gating sites (`:5935`, `:9740`), so it discriminates all four.
   //
-  // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING FOUR CALLERS PASS. Pinned by
-  // `blocks.router.workflow.test.ts`, which drives the real router rather than
-  // this function.
+  // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
+  // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
+  // `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL` RATHER THAN SPELLING `'estimate'`.
+  //
+  // 🔴 AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS "pinned behaviourally
+  // by `blocks.router.workflow.test.ts`, which drives the real router". THAT WAS
+  // FALSE, and a round-1 audit proved it by mutation: changing both router
+  // literals to `'whatif'` left 482/482 tests green. That file contains no
+  // reference to `workflowLabel` at all. A guard a comment CLAIMS and the tree
+  // does not have is worse than no guard, because it stops the next reader
+  // looking — which is exactly the failure the paragraph above describes, one
+  // level up. The coupling is now structural (a shared import) instead of a
+  // sentence about a test.
+  //
+  // The GATING side needs no such pin: both gating sites pass
+  // `blockExternalId`, which `composeBlockExternalId` /
+  // `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating
+  // caller cannot produce `'estimate'` by construction.
   //
   // Wrapped, because every sibling `blockAuthorFee*` inc in `author-fee.ts`
   // (`:658`, `:675`, `:693`) is, under the comment "swallow — telemetry must
@@ -209,9 +235,17 @@ export async function quoteBlockAuthorFee(args: {
   // prom-client throw here must not be what fails a charge.
   try {
     blockAuthorFeeQuotedCounter.inc({
-      coarse_type: quote.charge
-        ? quote.computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL
-        : BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+      // 🔴 DERIVED FROM THE ARGUMENT, NOT FROM THE COMPUTATION — so the type is
+      // present on every arm where it is DERIVABLE, not only on the charging
+      // one. Reading it off `quote.computation` labelled `zero-fee`,
+      // `self-dealing` and `app-missing` as `unknown` even though those arms
+      // return AFTER the computation exists, which made
+      // `{outcome="zero-fee"}` unable to separate `chat-completion` (0/0 by
+      // design) from a type that SHOULD be priced and is not — the exact
+      // per-type tuning question this counter is for. It also matches what the
+      // charge wrapper does, so the two agree.
+      coarse_type:
+        blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
       outcome: quote.charge ? 'quoted' : quote.reason,
       surface: args.workflowLabel === BLOCK_AUTHOR_FEE_ESTIMATE_LABEL ? 'disclosure' : 'gating',
     });
@@ -222,16 +256,13 @@ export async function quoteBlockAuthorFee(args: {
 }
 
 /** The quote itself. Wrapped by `quoteBlockAuthorFee`, which counts its result. */
-async function quoteBlockAuthorFeeUncounted(args: {
-  baseGenerationBuzz: number | null | undefined;
-  priceIsCap: boolean | null | undefined;
-  generationType: unknown;
-  appId: string;
-  viewerUserId: number;
-  workflowLabel: string;
-  suppressQuoteLogs?: boolean;
-  config?: BlockAuthorFeeConfig;
-}): Promise<BlockAuthorFeeQuote> {
+async function quoteBlockAuthorFeeUncounted(
+  // 🔴 DERIVED FROM THE PUBLIC SIGNATURE, NOT RESTATED. Restating it type-checked
+  // clean in ONE direction: `quoteBlockAuthorFeeUncounted(args)` passes a
+  // variable, so TypeScript's excess-property check does not apply, and a field
+  // added to the public type but not the inner one was silently ignored here.
+  args: Parameters<typeof quoteBlockAuthorFee>[0]
+): Promise<BlockAuthorFeeQuote> {
   try {
     if (!(await isAppBlocksAuthorFeeEnabled())) return { charge: false, reason: 'flag-disabled' };
   } catch {
@@ -426,18 +457,10 @@ export async function chargeBlockAuthorFee(args: {
 }
 
 /** The charge itself. Wrapped by `chargeBlockAuthorFee`, which counts its result. */
-async function chargeBlockAuthorFeeUncounted(args: {
-  workflowId: string;
-  appId: string;
-  appBlockId: string;
-  viewerUserId: number;
-  buzzType: BuzzAccountType;
-  baseGenerationBuzz: number | null | undefined;
-  priceIsCap: boolean | null | undefined;
-  generationType: string | null;
-  reservedAuthorFeeBuzz: number;
-  config?: BlockAuthorFeeConfig;
-}): Promise<ChargeBlockAuthorFeeResult> {
+async function chargeBlockAuthorFeeUncounted(
+  /** Derived, not restated — see `quoteBlockAuthorFeeUncounted`. */
+  args: Parameters<typeof chargeBlockAuthorFee>[0]
+): Promise<ChargeBlockAuthorFeeResult> {
   const { workflowId, appId, appBlockId, viewerUserId, buzzType } = args;
 
   // THE STRUCTURAL BOUND, AND IT IS FIRST. Nothing below — not the flag read, not
@@ -448,10 +471,29 @@ async function chargeBlockAuthorFeeUncounted(args: {
   }
 
   // Re-price against the REALIZED base and re-resolve the payee. This is where
-  // the self-dealing exclusion is read BEFORE the debit: `quoteBlockAuthorFee`
-  // returns `self-dealing` without a fee, and this function returns before it
-  // moves any money.
-  const quote = await quoteBlockAuthorFee({
+  // the self-dealing exclusion is read BEFORE the debit: the quote returns
+  // `self-dealing` without a fee, and this function returns before it moves any
+  // money.
+  //
+  // 🔴 THE *UNCOUNTED* QUOTE, DELIBERATELY — THIS IS THE FIFTH CALLER AND IT
+  // MUST NOT LAND ON `block_author_fee_quoted_total`. It used to call the
+  // counted wrapper, so every charge that got past `not-reserved` ALSO
+  // incremented `quoted_total{surface="gating"}` — inflating the denominator of
+  // `charged_total / quoted_total{surface="gating"}` by up to 2×, and
+  // asymmetrically, since only submits that reserved a fee got the second
+  // count. It also made the help string's "gating = the submit-time quote"
+  // false, and mixed pre-submit decisions with post-submit ones under the same
+  // label.
+  //
+  // Nothing is lost by not counting it: this quote's outcome is returned
+  // verbatim as the charge's `reason` on the very next line, so
+  // `charged_total{outcome=...}` already carries it — counting here recorded the
+  // same decision twice on two different series.
+  //
+  // ⚠️ The comment above the quote counter enumerates the callers by SURFACE, and
+  // this one is neither: it is a re-price, not a quote anybody is shown or
+  // gated on.
+  const quote = await quoteBlockAuthorFeeUncounted({
     baseGenerationBuzz: args.baseGenerationBuzz,
     priceIsCap: args.priceIsCap,
     generationType: args.generationType,

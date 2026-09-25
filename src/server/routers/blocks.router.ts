@@ -205,6 +205,7 @@ import { resolveBlockGenerationType } from '~/server/services/blocks/generation-
 // here, so a dynamic form would defer nothing. Everything it exports is
 // fail-closed behind `app-blocks-author-fee-enabled`.
 import {
+  BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
   chargeBlockAuthorFee,
   quoteBlockAuthorFee,
   reverseBlockAuthorFee,
@@ -5495,7 +5496,7 @@ export const blocksRouter = router({
         generationType: blockGenerationType,
         appId: claims.appId,
         viewerUserId: userId,
-        workflowLabel: 'estimate',
+        workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
         // Unbounded surface — see the flag's own note. The skip lines it silences
         // are re-derived at the submit, once per real generation.
         suppressQuoteLogs: true,
@@ -9447,7 +9448,7 @@ async function estimateStepWorkflow(opts: {
     generationType: step.id,
     appId: claims.appId,
     viewerUserId: userId,
-    workflowLabel: 'estimate',
+    workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
     suppressQuoteLogs: true,
   });

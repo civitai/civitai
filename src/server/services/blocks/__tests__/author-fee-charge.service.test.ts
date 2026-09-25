@@ -117,6 +117,13 @@ function resetOnceQueues() {
   mockDbWrite.blockAuthorFeeAccrual.create.mockReset();
   mockDbWrite.blockAuthorFeeAccrual.findUnique.mockReset();
   mockDbWrite.blockAuthorFeeAccrual.deleteMany.mockReset();
+  // 🔴 THE COUNTER SPIES TOO. `clearAllMocks` drops call history but NOT
+  // implementations, and the throwing-counter test below installs one. Left
+  // behind, a later test inherits throwing counters — and because the incs are
+  // SWALLOWED the failure is silent: `labelsOf(...)` returns undefined and reads
+  // like a production defect rather than a leaked fixture.
+  mockQuoted.mockReset();
+  mockCharged.mockReset();
 }
 
 beforeEach(() => {
@@ -680,17 +687,28 @@ describe('author-fee charge telemetry', () => {
     expect(labelsOf(mockQuoted)).toMatchObject({ outcome: 'quoted', surface: 'gating' });
   });
 
-  it('counts a SKIP arm under its own reason, with the unknown coarse type', async () => {
-    // A cap-priced generation returns before any computation exists, so there is
-    // genuinely no coarse type — `unknown` is the contract, the same convention
-    // `blockAuthorFeeObservedCounter` uses. Pinned so a later change that invents
-    // a type on this arm is visible.
+  it('counts a SKIP arm under its own reason, and still carries the type', async () => {
+    // 🔴 `unknown` IS ABOUT DERIVABILITY, NOT ABOUT WHICH ARM RETURNED. A
+    // cap-priced generation returns before any computation exists, but the
+    // generation TYPE is an argument, so it is known here and reported. An
+    // earlier revision asserted `unknown` on this arm — true only because the
+    // label was read off the computation, which is the defect that widened it.
     const quote = await quoteBlockAuthorFee(quoteArgs({ priceIsCap: true }));
     expect(quote.charge).toBe(false);
     expect(labelsOf(mockQuoted)).toMatchObject({
       outcome: 'price-is-cap',
-      coarse_type: 'unknown',
+      coarse_type: 'textToImage',
     });
+  });
+
+  it('falls back to the unknown type only when the type is NOT derivable', async () => {
+    // The other half of the pair: `unknown` still has a population, and it is
+    // the one the label name claims — a generation type nothing can resolve.
+    const quote = await quoteBlockAuthorFee(
+      quoteArgs({ generationType: 'not-a-registered-type', priceIsCap: true })
+    );
+    expect(quote.charge).toBe(false);
+    expect(labelsOf(mockQuoted)).toMatchObject({ coarse_type: 'unknown' });
   });
 
   it('counts every quote arm exactly once — including the one that throws', async () => {
@@ -711,6 +729,38 @@ describe('author-fee charge telemetry', () => {
     const result = await chargeBlockAuthorFee(chargeArgs());
     expect(result).toMatchObject({ charged: true, feeBuzz: EXPECTED_FEE });
     expect(labelsOf(mockCharged)).toMatchObject({ outcome: 'charged' });
+  });
+
+  // 🔴 F2 — THE CHARGE PATH RE-QUOTES, AND THAT RE-QUOTE MUST NOT BE COUNTED.
+  // It used to call the COUNTED wrapper, so every charge past `not-reserved`
+  // also incremented `quoted_total{surface="gating"}` — inflating the
+  // denominator of `charged_total / quoted_total{surface="gating"}` by up to 2x,
+  // and asymmetrically. Nothing is lost: the re-quote's outcome is returned as
+  // the charge's `reason`, so `charged_total` already carries it.
+  it('a CHARGE does not also increment the quote counter', async () => {
+    const result = await chargeBlockAuthorFee(chargeArgs());
+    expect(result).toMatchObject({ charged: true });
+    expect(mockCharged).toHaveBeenCalledTimes(1);
+    expect(mockQuoted).not.toHaveBeenCalled();
+  });
+
+  // 🔴 F3 — `coarse_type` is derived from the ARGUMENT, so it is present on every
+  // arm where it is derivable. Reading it off the computation labelled
+  // `zero-fee` as `unknown` even though that arm returns AFTER the computation
+  // exists — which made the series unable to separate `chat-completion` (0/0 by
+  // design) from a type that SHOULD be priced and is not.
+  it('carries the coarse type on a POST-computation skip arm', async () => {
+    // `chat-completion` is seeded {0,0}, so this reaches `zero-fee` with the
+    // generation type fully known.
+    const quote = await quoteBlockAuthorFee(quoteArgs({ generationType: 'chat-completion' }));
+    expect(quote).toEqual({ charge: false, reason: 'zero-fee' });
+    expect(labelsOf(mockQuoted)).toMatchObject({
+      outcome: 'zero-fee',
+      coarse_type: 'chat-completion',
+    });
+    // The control: this is a real type, not the fallback — the fix widened the
+    // population rather than swapping one constant for another.
+    expect(labelsOf(mockQuoted)?.coarse_type).not.toBe('unknown');
   });
 
   it('counts a skipped charge under its own reason', async () => {
