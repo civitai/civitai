@@ -49,80 +49,14 @@ export function grantedPageScopes(
   return declaredScopes.filter((s) => !withheld.has(s));
 }
 
-/** What an un-grantable (prod-path) REQUEST_CONSENT should produce. */
-export type UngrantableConsentNotice = {
-  /**
-   * Whether the refusal is surfaced at all — the trigger for BOTH the host toast
-   * and the CONSENT_UNAVAILABLE bridge push. Computed on the UNFILTERED
-   * un-grantable set, so an un-grantable scope outside the known vocabulary
-   * still refuses out loud instead of vanishing.
-   */
-  notify: boolean;
-  /**
-   * The refused scopes safe to NAME back to the block: the un-grantable subset
-   * filtered to the known block-scope vocabulary. Can legitimately be EMPTY
-   * while `notify` is true (every requested scope was unrecognised) — the
-   * refusal is the signal, the names are advisory.
-   */
-  scopes: string[];
-};
-
-/**
- * Issue B (defensive UX): decide whether a REQUEST_CONSENT whose grantable set is
- * EMPTY should surface a user-visible "not available in this preview" message
- * instead of the silent no-op that makes an app look dead.
- *
- * A block MAY send an advisory `scopes` hint listing what it wants. The host does
- * NOT use it to GRANT anything (the grant set is bounded server-side to
- * `missingScopes`), but it CAN use it to tell apart two otherwise-identical
- * silent-drop cases when nothing is grantable-via-consent:
- *   - BENIGN (drop silently): every requested scope is ALREADY granted — a block
- *     re-requesting a scope its token already carries.
- *   - UN-GRANTABLE (surface a message): a requested scope is neither currently
- *     granted NOR addable via consent (`missingScopes`) — it was clamped/withheld
- *     at mint (e.g. a dev-tunnel token that stripped a scope the tunnel allowlist
- *     doesn't carry), so the block's consent round-trip can never resolve it.
- *
- * `notify` is false when the hint is absent/garbage OR everything requested is
- * already granted — the caller then keeps the silent no-op (no fragile heuristic:
- * without an explicit requested scope proven un-grantable, we never surface).
- *
- * 🔴 WHY THIS RETURNS TWO FIELDS RATHER THAN ONE LIST (same split, and same
- * reason, as `resolveReviewConsentNotice` below). `rawScopesHint` is UNTRUSTED —
- * it is whatever the block's own frame posted, so it can carry markup, junk, or a
- * 5 KB string. The returned `scopes` therefore pass `isKnownBlockScope`, so only
- * the fixed platform vocabulary is ever echoed back out of the host.
- *
- * That filter must NOT reach the DECISION. The un-grantable set is the trigger as
- * well as the payload: filter the trigger and a block requesting an un-grantable
- * scope the vocabulary doesn't know would get no toast and no bridge message at
- * all — the exact silent dead end this whole path exists to remove, reintroduced
- * by the security fix. So the decision is taken on the unfiltered set and only the
- * NAMES are filtered.
- *
- * Splitting it also depends on `isKnownBlockScope` being an OWN-property test: it
- * used to use `in`, which walks the prototype chain and let 12 inherited
- * `Object.prototype` keys (`constructor`, `__proto__`, `toString`, …) through as
- * "known scopes". Fixed at the predicate; pinned again in the unit tests here,
- * because this is a caller that feeds untrusted runtime input to it.
- */
-export function resolveUngrantableConsentNotice(
-  rawScopesHint: unknown,
-  grantedScopes: string[],
-  missingScopes: string[] | undefined
-): UngrantableConsentNotice {
-  if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
-  const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
-  if (requested.length === 0) return { notify: false, scopes: [] };
-  const granted = new Set<string>(grantedScopes);
-  const missing = new Set<string>(missingScopes ?? []);
-  const ungrantable = Array.from(
-    new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
-  ).sort();
-  // Decision on the UNFILTERED set — see above.
-  if (ungrantable.length === 0) return { notify: false, scopes: [] };
-  return { notify: true, scopes: ungrantable.filter((s) => isKnownBlockScope(s)) };
-}
+// 🔴 `resolveUngrantableConsentNotice` + `UngrantableConsentNotice` MOVED OUT of
+// this module, to `requestConsentGate.ts`. They were never page-specific: they are
+// the REFUSAL half of the gate `resolveRequestConsent` opens, and both host
+// surfaces need them. While they lived here the model-slot host (`IframeHost`) —
+// which deliberately does NOT import this module, the page host being a sibling
+// surface rather than a dependency — emitted no CONSENT_UNAVAILABLE at all, so a
+// block that asked got a `requestGrants` promise that could never resolve `false`.
+// Do NOT re-add a copy here; import from the gate.
 
 /** What a reviewMode REQUEST_CONSENT should surface to the moderator. */
 export type ReviewConsentNotice = {
@@ -143,8 +77,9 @@ export type ReviewConsentNotice = {
  * round-trip can NEVER resolve. Dropping it silently (the old behaviour) left the
  * app parked on its consent card with zero feedback at the reviewer.
  *
- * Differs from `resolveUngrantableConsentNotice` in exactly one way, and that
- * difference is the bug this fixes: with NO usable `scopes` hint the prod path
+ * Differs from `resolveUngrantableConsentNotice` (now in `requestConsentGate`) in
+ * exactly one way, and that difference is the bug this fixes: with NO usable
+ * `scopes` hint the prod path
  * must stay silent (it can't tell "already granted" from "clamped"), but in
  * review there is nothing to tell apart — consent is structurally unavailable, so
  * a hint-less request is still a dead end and still deserves the notice. (The
