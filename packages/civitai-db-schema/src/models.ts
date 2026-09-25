@@ -256,6 +256,8 @@ export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersio
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
+export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
+
 export interface Account {
   id: number;
   userId: number;
@@ -698,6 +700,8 @@ export interface User {
   placementsMade?: Placement[];
   placementsSold?: Placement[];
   pricingSlots?: PricingSlot[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface CustomerSubscription {
@@ -1534,6 +1538,8 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface ImageTagForReview {
@@ -5579,6 +5585,50 @@ export interface BlurbReference {
   materializedHash: string;
   materializedAt: Date;
   pendingSince: Date | null;
+}
+
+export interface Crucible {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  nsfwLevel: number;
+  contentType: MediaType;
+  entryFee: number;
+  seededPrizePool: number;
+  entryLimit: number;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: JsonValue;
+  allowedResources: JsonValue | null;
+  duration: number;
+  startAt: Date | null;
+  endAt: Date | null;
+  status: CrucibleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  entries?: CrucibleEntry[];
+}
+
+export interface CrucibleEntry {
+  id: number;
+  crucibleId: number;
+  crucible?: Crucible;
+  userId: number;
+  user?: User;
+  imageId: number;
+  image?: Image;
+  score: number;
+  voteCount: number;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

@@ -147,7 +147,7 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { imageSelect, publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
@@ -7918,6 +7918,7 @@ export async function createImageResources({
 
 export const getMyImages = async ({
   mediaTypes,
+  publishedOnly,
   userId,
   limit,
   cursor = 0,
@@ -7926,14 +7927,29 @@ export const getMyImages = async ({
 
   try {
     const media = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true, type: true },
+      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+      // over a crucible's maxClipSeconds before the user spends a click on them.
+      select: {
+        id: true,
+        url: true,
+        meta: true,
+        metadata: true,
+        createdAt: true,
+        type: true,
+        nsfwLevel: true,
+        ingestion: true,
+      },
       where: {
         userId,
         type: {
           in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
         },
         postId: { not: null },
-        ingestion: ImageIngestionStatus.Scanned,
+        // Published-only callers render still-scanning images as pending rather than hiding them.
+        ingestion: publishedOnly
+          ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
+          : ImageIngestionStatus.Scanned,
+        ...(publishedOnly ? publishedImageWhere() : {}),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

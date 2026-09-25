@@ -208,6 +208,13 @@ export enum BountyBenefactorSort {
   Newest = 'Newest',
 }
 
+export enum CrucibleSort {
+  PrizePool = 'Prize Pool',
+  EndingSoon = 'Ending Soon',
+  Newest = 'Newest',
+  MostEntries = 'Most Entries',
+}
+
 export enum BountyStatus {
   Open = 'Open',
   Expired = 'Expired',

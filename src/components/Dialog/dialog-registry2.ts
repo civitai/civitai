@@ -96,6 +96,9 @@ export const dialogs = dialogFactory({
       () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
     ),
   },
+  'crucible-submit-entry': {
+    component: dynamic(() => import('~/components/Crucible/CrucibleSubmitEntryModal')),
+  },
 });
 
 export type DialogRegistry = typeof dialogs;

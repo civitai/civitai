@@ -1109,4 +1109,12 @@ export class Tracker {
       affected: values.affected ? JSON.stringify(values.affected) : '',
     });
   }
+
+  public crucibleVote(values: { crucibleId: number; winnerEntryId: number; loserEntryId: number }) {
+    return this.track(
+      'crucible_votes',
+      { ...values, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
+  }
 }

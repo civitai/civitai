@@ -661,4 +661,6 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);
+export const getMyImagesInput = infiniteQuerySchema
+  .merge(imageSelectProfileFilterSchema)
+  .extend({ publishedOnly: z.boolean().optional() });
