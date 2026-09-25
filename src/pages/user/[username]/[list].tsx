@@ -11,14 +11,17 @@ import {
   Title,
 } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
+import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ownFollowerFollowsYou } from '~/components/FollowUserButton/useFollowsYou';
+import { deriveHiddenUsers } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import FourOhFour from '~/pages/404';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -48,8 +51,8 @@ function UserListContent({
   onPageChange,
   isOwnList,
 }: UserListContentProps) {
-  const { blockedUsers, blockedByUsers } = useHiddenPreferencesData();
-  const blockedPairIds = new Set([...blockedUsers, ...blockedByUsers].map((u) => u.id));
+  const { data: hidden, isSuccess: hiddenLoaded } = useQueryHiddenPreferences();
+  const { blockRelations } = useMemo(() => deriveHiddenUsers(hidden, false), [hidden]);
   const totalPages = Math.ceil(totalCount / LIST_LIMIT);
 
   const getEmptyMessage = () => {
@@ -88,7 +91,12 @@ function UserListContent({
                 {type === 'followers' && (
                   <FollowUserButton
                     userId={user.id}
-                    followsYou={isOwnList && !blockedPairIds.has(user.id)}
+                    followsYou={ownFollowerFollowsYou({
+                      isOwnList,
+                      userId: user.id,
+                      hiddenLoaded,
+                      blockRelations,
+                    })}
                     size="compact-sm"
                   />
                 )}
@@ -156,6 +164,7 @@ export default function UserLists() {
   const page = pageQuery ? parseInt(pageQuery, 10) : 1;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const { data: listOwner } = trpc.userProfile.get.useQuery({ username });
 
   const { data: countsData } = trpc.user.getLists.useQuery({ username });
   const { data: listData, isLoading: loadingList } = trpc.user.getList.useQuery({
@@ -228,7 +237,7 @@ export default function UserLists() {
                   totalCount={listData?.totalItems ?? 0}
                   page={page}
                   onPageChange={handlePageChange}
-                  isOwnList={isSameUser}
+                  isOwnList={!!currentUser && listOwner?.id === currentUser.id}
                 />
               )}
             </Tabs.Panel>

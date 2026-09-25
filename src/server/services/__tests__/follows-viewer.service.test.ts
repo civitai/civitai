@@ -49,7 +49,13 @@ describe('getFollowsViewer', () => {
     queryRaw.mockResolvedValue([follow, viewerBlocks]);
     await expect(getFollowsViewer({ viewerId, userId })).resolves.toBe(false);
     expect(queryRaw).toHaveBeenCalledTimes(1);
-    const [, ...values] = queryRaw.mock.calls[0];
+    const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...number[]];
+    // Nothing here executes SQL, so the statement is pinned as text: `AND` for `OR`, or a
+    // swapped column, would read one direction only and still bind these same four values.
+    expect(strings.join('$').replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT "userId", "targetUserId", "type" FROM "UserEngagement" ' +
+        'WHERE ("userId" = $ AND "targetUserId" = $) OR ("userId" = $ AND "targetUserId" = $)'
+    );
     expect(values).toEqual([userId, viewerId, viewerId, userId]);
   });
 

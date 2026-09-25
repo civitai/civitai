@@ -13,34 +13,52 @@ export function followButtonLabel({
 }
 
 /**
- * `followsYou: true` is for surfaces that already know the answer (your own followers list), and
- * never fetches. `checkFollowsYou` asks the server, once, and only when the answer can change the
- * label.
+ * Everyone on your own followers list follows you, so the list needs no request. A block in
+ * either direction still suppresses it, as `getFollowsViewer` does on the server, moderators
+ * included. Until hidden preferences load the blocks are unknown, so nobody is labelled.
  */
-export function useFollowsYou({
+export function ownFollowerFollowsYou({
+  isOwnList,
   userId,
-  following,
-  followingLoaded,
-  followsYou,
+  hiddenLoaded,
+  blockRelations,
+}: {
+  isOwnList: boolean;
+  userId: number;
+  hiddenLoaded: boolean;
+  blockRelations: Map<number, boolean>;
+}) {
+  return isOwnList && hiddenLoaded && !blockRelations.has(userId);
+}
+
+/**
+ * `followsYou: true` is for surfaces that already know the answer, and never fetches.
+ * `checkFollowsYou` asks the server, once, and only when the answer can change the label.
+ */
+export function useFollowButtonState({
+  userId,
+  followsYou: knownFollowsYou,
   checkFollowsYou,
 }: {
   userId: number;
-  following: boolean;
-  followingLoaded: boolean;
   followsYou?: boolean;
   checkFollowsYou?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const enabled =
-    !!checkFollowsYou &&
-    !followsYou &&
-    !!currentUser &&
-    currentUser.id !== userId &&
-    followingLoaded &&
-    !following;
+  const isOther = !!currentUser && currentUser.id !== userId;
 
-  const { data: fetched = false } = trpc.user.getFollowsMe.useQuery({ id: userId }, { enabled });
+  const { data: followingIds = [], isSuccess: followingLoaded } =
+    trpc.user.getFollowingUsers.useQuery(undefined, { enabled: !!currentUser });
+  const following = followingIds.includes(userId);
 
-  if (!currentUser || currentUser.id === userId) return false;
-  return !!followsYou || (!!checkFollowsYou && fetched);
+  const { data: fetched = false } = trpc.user.getFollowsMe.useQuery(
+    { id: userId },
+    { enabled: !!checkFollowsYou && !knownFollowsYou && isOther && followingLoaded && !following }
+  );
+
+  // Gated again here, not only in `enabled`: a disabled query still returns whatever another
+  // surface cached for the same id.
+  const followsYou = isOther && (!!knownFollowsYou || (!!checkFollowsYou && fetched));
+
+  return { following, label: followButtonLabel({ following, followsYou }) };
 }

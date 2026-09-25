@@ -3,7 +3,7 @@ import { Button } from '@mantine/core';
 import type { MouseEventHandler } from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { followButtonLabel, useFollowsYou } from '~/components/FollowUserButton/useFollowsYou';
+import { useFollowButtonState } from '~/components/FollowUserButton/useFollowsYou';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -17,17 +17,8 @@ export function FollowUserButton({
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
-  const { data: following = [], isSuccess: followingLoaded } = trpc.user.getFollowingUsers.useQuery(
-    undefined,
-    {
-      enabled: !!currentUser,
-    }
-  );
-  const alreadyFollowing = following.includes(userId);
-  const followsYou = useFollowsYou({
+  const { following: alreadyFollowing, label } = useFollowButtonState({
     userId,
-    following: alreadyFollowing,
-    followingLoaded,
     followsYou: knownFollowsYou,
     checkFollowsYou,
   });
@@ -94,7 +85,7 @@ export function FollowUserButton({
         style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}
         {...buttonProps}
       >
-        {followButtonLabel({ following: alreadyFollowing, followsYou })}
+        {label}
       </Button>
     </LoginRedirect>
   );
