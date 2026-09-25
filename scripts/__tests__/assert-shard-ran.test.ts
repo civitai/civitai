@@ -13,9 +13,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  * is deleted:
  *
  *   - dropping 'failed' from the EXECUTED set        -> 'counts a FAILED test as executed'
- *   - floor  `<` -> `<=`                             -> 'exactly at the floor passes'
- *   - ceiling `>` -> `>=`                            -> 'exactly at the ceiling passes'
- *   - dropping the `total < 1` guard                 -> 'rejects a zero/negative shard total'
+ *   - floor  `<` -> `<=`                             -> 'accepts exactly the floor …'
+ *   - ceiling `>` -> `>=`                            -> 'accepts exactly the file ceiling …'
+ *   - a zero/negative total (now the range check)    -> 'rejects a zero or negative shard total …'
  *   - `skipped += 1` -> `+= 0`                       -> 'reports the skipped count'
  *
  * The lesson worth keeping: every one of those survived a suite that LOOKED thorough. A
@@ -46,15 +46,17 @@ const SCRIPT = resolve(__dirname, '../ci/assert-shard-ran.mjs');
  * The `?? throw` is the point — a rename must fail loudly here rather than silently fall
  * back to a default and take every boundary case with it.
  */
-const BASE_TESTS = (() => {
+const readConstant = (name: string) => {
   const src = readFileSync(SCRIPT, 'utf8');
-  const m = src.match(/^const BASE_TESTS = (\d+);$/m);
-  if (!m) throw new Error(`could not read BASE_TESTS out of ${SCRIPT} — was it renamed?`);
+  const m = src.match(new RegExp(String.raw`^const ${name} = (\d+);$`, 'm'));
+  if (!m) throw new Error(`could not read ${name} out of ${SCRIPT} — was it renamed?`);
   return Number(m[1]);
-})();
-const expectedFor = (total: number) => BASE_TESTS / total;
-const floorFor = (total: number) => Math.max(100, Math.round(expectedFor(total) * 0.3));
-const ceilingFor = (total: number) => Math.round(expectedFor(total) * 1.8);
+};
+const BASE_TESTS = readConstant('BASE_TESTS');
+const BASE_FILES = readConstant('BASE_FILES');
+const floorFor = (total: number) => Math.max(100, Math.round((BASE_TESTS / total) * 0.3));
+/** In FILES — vitest shards by file count, so that is the unit a whole-suite shard inflates. */
+const ceilingFor = (total: number) => Math.round((BASE_FILES / total) * 1.8);
 
 let dir: string;
 beforeAll(() => {
@@ -137,9 +139,9 @@ describe('assert-shard-ran', () => {
     expect(run(report('below-floor', { passed: floor - 1 })).status).toBe(1);
   });
 
-  // The inverse failure: --shard stops reaching vitest, so every shard runs everything.
+  // The inverse failure: --shard stops reaching vitest, so every shard runs every file.
   it('fails a shard carrying the whole suite', () => {
-    const r = run(report('whole-suite', { passed: BASE_TESTS, files: 1417 }));
+    const r = run(report('whole-suite', { passed: BASE_TESTS, files: BASE_FILES }));
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/ceiling/i);
   });
@@ -148,43 +150,43 @@ describe('assert-shard-ran', () => {
   // indistinguishable from inside one shard, so asserting either one alone is a gate that
   // lies about why it is red.
   it('names both causes when the ceiling trips, not just a broken --shard', () => {
-    const r = run(report('over-ceiling', { passed: BASE_TESTS, files: 1417 }));
+    const r = run(report('over-ceiling', { passed: BASE_TESTS, files: BASE_FILES }));
     expect(r.stderr).toMatch(/not reaching vitest/);
-    expect(r.stderr).toMatch(/grown past BASE_TESTS/);
+    expect(r.stderr).toMatch(/grown past BASE_FILES/);
   });
 
   // MUTANT: ceiling `>` -> `>=`. Exactly at the ceiling is acceptable; one above is not.
-  it('accepts exactly the ceiling and rejects one above it', () => {
+  it('accepts exactly the file ceiling and rejects one file above it', () => {
     const ceiling = ceilingFor(4);
-    expect(run(report('at-ceiling', { passed: ceiling })).status).toBe(0);
-    expect(run(report('above-ceiling', { passed: ceiling + 1 })).status).toBe(1);
+    expect(run(report('at-ceiling', { passed: 9000, files: ceiling })).status).toBe(0);
+    expect(run(report('above-ceiling', { passed: 9000, files: ceiling + 1 })).status).toBe(1);
   });
 
-  // 🔴 The bounds must SCALE with `total`. A count that is a healthy quarter is a collapsed
-  // half and an impossible sixteenth — the same number, three verdicts.
-  it('scales its band with the shard total — one count, three verdicts', () => {
-    // The interesting region is above N=16's ceiling and below N=2's floor — a count that
-    // is a healthy quarter, a collapsed half and an impossible sixteenth all at once.
-    //
-    // 🔴 GENUINELY COMPUTED NOW. This read `const count = 3000` under a comment claiming it
-    // was "computed rather than hardcoded so it follows BASE_TESTS" — it did not follow it,
-    // and when BASE_TESTS moved 22,157 -> 37,857 the region slid out from under it (it
-    // became 4259..5679, leaving 3000 below N=16's ceiling) and this test failed. The
-    // comment described what the code should have done rather than what it did.
-    const lo = ceilingFor(16);
-    const hi = floorFor(2);
-    // Fail loudly if the multipliers ever close this region, rather than silently picking a
-    // midpoint that satisfies neither bound.
-    expect(hi).toBeGreaterThan(lo + 1);
-    const count = Math.round((lo + hi) / 2);
-    expect(count).toBeGreaterThan(ceilingFor(16));
-    expect(count).toBeLessThan(floorFor(2));
+  // 🔴 The ceiling counts files so that one parametrised table cannot trip it. Shard 3 below
+  // carries image-parity.test.ts (8,620 cases) and reddened `main` under a test-count ceiling
+  // of 17,036 while sharding was working. Counts are the four shards of run 36084791308.
+  it.each([
+    [1, 9027, 0, 515],
+    [2, 7442, 1, 514],
+    [3, 17079, 27, 514],
+    [4, 11926, 4, 514],
+  ])('passes shard %i/4 as measured on main (%i executed)', (shard, passed, skipped, files) => {
+    const r = run(report(`main-shard-${shard}`, { passed, skipped, files }), shard, 4);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+  });
 
-    expect(run(report('n4', { passed: count }), 1, 4).status).toBe(0);
-    // Same count at N=2 is barely a quarter of the half it should be — collapsed.
-    expect(run(report('n2', { passed: count }), 1, 2).status).toBe(1);
-    // Same count at N=16 is double a sixteenth — it is carrying other shards' work.
-    expect(run(report('n16', { passed: count }), 1, 16).status).toBe(1);
+  it('scales its floor and ceiling with the shard total', () => {
+    const quarter = { passed: Math.round(BASE_TESTS / 4), files: Math.round(BASE_FILES / 4) };
+    expect(run(report('n4', quarter), 1, 4).status).toBe(0);
+    // A quarter of the files is four sixteenths — carrying other shards' work.
+    const n16 = run(report('n16', quarter), 1, 16);
+    expect(n16.status).toBe(1);
+    expect(n16.stderr).toMatch(/ceiling/);
+    // A quarter's floor of tests is a collapsed half.
+    const n2 = run(report('n2', { passed: floorFor(4), files: Math.round(BASE_FILES / 2) }), 1, 2);
+    expect(n2.status).toBe(1);
+    expect(n2.stderr).toMatch(/floor/);
   });
 
   it('fails when the report is missing or unparseable', () => {
