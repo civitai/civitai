@@ -133,7 +133,9 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
   it('includesPoi / includesMinor / getTagsFromPrompt complete fast on every adversarial input', () => {
     for (const { label, input } of pathological) {
       const poiMs = timeCall(() => includesPoi(input));
-      expect(poiMs, `includesPoi too slow on ${label} (${poiMs.toFixed(1)}ms)`).toBeLessThan(MAX_MS);
+      expect(poiMs, `includesPoi too slow on ${label} (${poiMs.toFixed(1)}ms)`).toBeLessThan(
+        MAX_MS
+      );
       const minorMs = timeCall(() => includesMinor(input));
       expect(minorMs, `includesMinor too slow on ${label} (${minorMs.toFixed(1)}ms)`).toBeLessThan(
         MAX_MS
@@ -176,6 +178,19 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       expect(includesMinor('young pretty little girl')).toBeTruthy();
     });
 
+    it('includesMinor scales linearly on whitespace-and-newline runs (paragraph lookahead)', () => {
+      expectSubQuadraticScaling(
+        'includesMinor newline+space run',
+        (n) => 'young\n' + ' '.repeat(n),
+        (input) => includesMinor(input)
+      );
+      expectSubQuadraticScaling(
+        'includesMinor repeated adjective+newline',
+        (n) => 'small\n'.repeat(Math.ceil(n / 6)),
+        (input) => includesMinor(input)
+      );
+    });
+
     it('includesMinor scales linearly across several adjective+long-run shapes', () => {
       for (const adj of ['young', 'little', 'small', 'teeny', 'loli']) {
         for (const sep of ['a', ' a', '.-_']) {
@@ -194,10 +209,9 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       // right guard here, not a scaling ratio.
       const input = 'young ' + 'a'.repeat(60000); // > MAX_AUDIT_PROMPT_LENGTH
       const ms = timeCall(() => auditPrompt(input));
-      expect(
-        ms,
-        `auditPrompt too slow on Latin \\w-run (${ms.toFixed(1)}ms)`
-      ).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
+      expect(ms, `auditPrompt too slow on Latin \\w-run (${ms.toFixed(1)}ms)`).toBeLessThan(
+        ABSOLUTE_HANG_CEILING_MS
+      );
     });
 
     it('auditPrompt BLOCKS input beyond MAX_AUDIT_PROMPT_LENGTH (#2727 M2: no truncate-then-scan evasion)', () => {
@@ -245,6 +259,36 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       const input = 'young ' + 'word '.repeat(60) + 'girl';
       expect(input.length).toBeGreaterThan(200 + 'young girl'.length);
       expect(includesMinor(input)).toBeFalsy();
+    });
+  });
+
+  describe('composed young-noun gap across paragraphs', () => {
+    it('does not join an adjective to a noun in a later paragraph', () => {
+      expect(auditPrompt('skinny, small butt\n\n\n\n1boy, nude').success).toBe(true);
+      expect(includesMinor('small cute\n\nboy')).toBeFalsy();
+      expect(includesMinor('small cute\r\n\r\nboy')).toBeFalsy();
+      expect(includesMinor('small cute\n  \t\nboy')).toBeFalsy();
+    });
+
+    it('still joins across a single line break, or a gap of only whitespace/punctuation', () => {
+      expect(includesMinor('small brown\nboy')).toBeTruthy();
+      expect(includesMinor('small brown\r\nboy')).toBeTruthy();
+      expect(includesMinor('small\n\nboy')).toBeTruthy();
+      expect(includesMinor('small brown boy')).toBeTruthy();
+      expect(includesMinor('young\tpretty girl')).toBeTruthy();
+      expect(includesMinor('young pretty girl')).toBeTruthy();
+    });
+
+    it('keeps the minor + nsfw combination whole-prompt: a paragraph break never separates them', () => {
+      for (const prompt of [
+        'schoolgirl\n\nnude',
+        'young girl\n\n\n\nmasterpiece, detailed\n\nnude',
+        'nude\n\nsmall brown boy',
+      ]) {
+        const result = auditPrompt(prompt);
+        expect(result.success, prompt).toBe(false);
+        expect(result.blockedFor, prompt).toContain('Inappropriate minor content');
+      }
     });
   });
 

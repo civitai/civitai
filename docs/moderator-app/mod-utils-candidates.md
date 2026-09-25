@@ -36,8 +36,14 @@ data), but anything that imports a component or a client is not.
 1. Porting a page, you find a pure moderation util duplicated across apps (or about to be) → add a row below.
 2. Move it deliberately in its **own scoped change**. A move that also touches the main app (re-pointing its
    imports) is its own PR-sized unit — not folded into an unrelated page port, and not a bulk sweep.
-3. Wiring reminder: `workspace:*` dep in `apps/moderator/package.json` + add the name to `ssr.noExternal` in
-   `vite.config.ts`, then `pnpm install`.
+3. Wiring reminder — **each consuming app needs its own**, and the main app's is the half that gets
+   forgotten:
+   - **Spoke** (`apps/moderator`): `workspace:*` dep in its `package.json` + the name in `ssr.noExternal`
+     in `vite.config.ts`.
+   - **Main app**: `workspace:*` dep in the root `package.json` + the name in `transpilePackages` in
+     `next.config.mjs`. A workspace package ships raw TS/JSON, so Next will not build it without that.
+
+   Then `pnpm install`.
 
 ## Candidates
 
@@ -47,5 +53,8 @@ data), but anything that imports a component or a client is not.
 | Browsing levels — `NsfwLevel`, `browsingLevels`, `getBrowsingLevelLabel`, `validNsfwLevels`, `ingestionErrorLevels` | `src/shared/constants/browsingLevel.constants.ts` (still a second copy; `NsfwLevel` from `~/server/common/enums`) | `@civitai/shared` — `packages/civitai-shared/src/browsing-levels.ts` | ✅ | **Spoke done; main app not repointed** | The spoke no longer has a copy: it imports all five from `@civitai/shared` (`nsfw-levels.ts`, `ImageQueueGrid.svelte`, `articles/ratings/+page.svelte`, `article-rating-review-actions.ts`). What is left is repointing the main app's imports at the shared package and deleting its duplicate — its own scoped change. **Not a `mod-utils` candidate**: these are browsing levels, not moderation utils, and `@civitai/shared` is already their home. The earlier entry named `apps/moderator/src/lib/browsing-levels.ts`; no such file exists. |
 | Scanner-audit verdict/mode helpers — `verdictFromAnswer`, `verdictShort`, `verdictClass`, `VERDICT_ORDER`, `SCANNER_MODES`, `modeToScanner`, `isValidMode` | (deleted with scanner-review) | `apps/moderator/src/lib/scanner-audit.ts` | ✅ (class strings ok) | **Hold** | Spoke-only today (main-app scanner-review was removed in this migration). Move only if a second app needs them. `ReviewVerdict` enum itself comes from the DB-schema enums, not here. |
 | Scanner label regex specs — `SCANNER_LABEL_REGEX` (familial, nonconsent-keyword, diaper, menstruation, scat, urine, bestiality) `triggers`/`phrasePatterns`/`carveOutPatterns` | `src/server/services/scanner-label-regex.ts` (still used by the main-app scanner) | — | ✅ (data is pure; detector fns too) | **TODO** | The per-label term source for highlighting. Only `young` (an XGuard label) has hand-curated highlight terms today, so regex labels highlight nothing from policy. Share the specs here, repoint the main-app scanner's import, and feed `triggers` into `computeHighlightSegments`. `triggers` are literal words (easy); `phrasePatterns`/`carveOutPatterns` are regex (need pattern-aware highlighting). Genuinely shared (scanner + spoke) → strong fit. |
+
+| Prompt-audit vocabulary — 9 JSON word lists, `harmfulCombinations`, the stated-age table (`ages`/`templates`/`templateParts`/`canonicalNumberWords`), the external-classifier rewrite map, and `prepareWordRegex`/`prepareWordRegexBody` | `src/utils/metadata/lists/` + inline consts in `audit.ts` (both deleted) | `packages/civitai-mod-utils/src/prompt-audit/lists/` — 6 of the lists were already a byte-for-byte second copy | ✅ (JSON + string helpers; no env, no DB) | **Moved** | Consumers import the `lists/index.ts` barrel, **never** a `*.json` subpath — a raw JSON subpath would be the only cross-workspace JSON import in the Next app. Subpaths: `./prompt-audit/lists`, `./prompt-audit/lists/ages`, `./prompt-audit/word-regex`. The regex **engine** is still duplicated between `src/utils/metadata/audit.ts` and `prompt-audit/index.ts` (they diverge on the enriched/debug branches); only the vocabulary has one home. `words-nsfw.json` was dropped rather than moved — no importer. |
+| Profanity vocabulary — `blocked-words.json`, `whitelist-words.json` | `src/utils/metadata/lists/` (deleted) | `packages/civitai-mod-utils/src/profanity/lists/` | ✅ | **Moved** | Kept separate from `prompt-audit/lists` because it feeds `src/libs/profanity-simple`, which is cross-cutting (`RenderHtml`, `useCheckProfanity`, `auto-nsfw`, the bounty/model controllers). Note it is **also** the green-domain prompt blocklist — `checkProfanity` in `promptAuditing.ts`. Subpath `./profanity/lists`. Docs: [`docs/features/profanity-filter.md`](../features/profanity-filter.md). |
 
 Add rows as new shared utils surface (cosmetic-type humanization, report-reason maps, bitwise-flag helpers, …).

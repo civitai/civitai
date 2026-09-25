@@ -140,6 +140,7 @@
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
     "@civitai/generation-metadata": "^0.3.0",
+    "@civitai/mod-utils": "workspace:*",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/orchestration-client": "0.2.0-beta.110",

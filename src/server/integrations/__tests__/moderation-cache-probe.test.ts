@@ -240,15 +240,15 @@ describe('cache probe — hit/miss', () => {
 describe('cache probe — fidelity to what the classifier actually receives', () => {
   it('hashes the PREPARED prompt, so two raw prompts that normalise to one call are a HIT', async () => {
     // 🔴 THIS IS THE CASE THAT PINS THE CALL SITE. `removeFalsePositiveTriggers` rewrites
-    // /\d*girl/ -> 'woman', so these two RAW strings differ but produce a byte-identical request
+    // /\d*girls/ -> 'women', so these two RAW strings differ but produce a byte-identical request
     // body. A real cache keyed on the request would hit; a probe hashing the raw prompt would
     // record two misses and understate the repeat rate — with every other test here still green.
     installRedisFake();
     stubFetchOk();
 
-    await extModeration.moderatePrompt('1girl in a field', 'generate');
+    await extModeration.moderatePrompt('1girls in a field', 'generate');
     await untilProbeTotal(2);
-    await extModeration.moderatePrompt('girl in a field', 'generate');
+    await extModeration.moderatePrompt('girls in a field', 'generate');
     await untilProbeTotal(4);
 
     expect(await probeCount('generate', '5m', 'hit')).toBe(1);
@@ -261,9 +261,9 @@ describe('cache probe — fidelity to what the classifier actually receives', ()
     installRedisFake();
     stubFetchOk();
 
-    await extModeration.moderatePrompt('1girl in a field', 'generate');
+    await extModeration.moderatePrompt('1girls in a field', 'generate');
     await untilProbeTotal(2);
-    await extModeration.moderatePrompt('1boy in a field', 'generate');
+    await extModeration.moderatePrompt('1boys in a field', 'generate');
     await untilProbeTotal(4);
 
     expect(await probeCount('generate', '5m', 'hit')).toBe(0);

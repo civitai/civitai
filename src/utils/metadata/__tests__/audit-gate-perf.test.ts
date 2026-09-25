@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { checkable } from '~/utils/metadata/audit';
-import poiWords from '~/utils/metadata/lists/words-poi.json';
-import nsfwPromptWords from '~/utils/metadata/lists/words-nsfw-prompt.json';
-import nsfwWordsPaddle from '~/utils/metadata/lists/words-paddle-nsfw.json';
-import youngWords from '~/utils/metadata/lists/words-young.json';
+import {
+  poiWords,
+  nsfwPromptWords,
+  nsfwWordsPaddle,
+  youngWords,
+} from '@civitai/mod-utils/prompt-audit/lists';
 import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**

@@ -1,15 +1,24 @@
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { normalizeText } from '~/utils/normalize-text';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
-import blockedNSFW from './lists/blocklist-nsfw.json';
-import blockedNSFWOverridable from './lists/blocklist-nsfw-overridable.json';
-import promptTags from './lists/prompt-tags.json';
-import nsfwPromptWords from './lists/words-nsfw-prompt.json';
-import nsfwWordsSoft from './lists/words-nsfw-soft.json';
-import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
-import poiWords from './lists/words-poi.json';
-import youngWords from './lists/words-young.json';
-import { harmfulCombinations } from './lists/harmful-combinations';
+import {
+  blockedNSFW,
+  nsfwPromptWords,
+  nsfwWordsSoft,
+  nsfwWordsPaddle,
+  poiWords,
+  youngWords,
+  harmfulCombinations,
+  blockedNSFWOverridable,
+  promptTags,
+} from '@civitai/mod-utils/prompt-audit/lists';
+import { prepareWordRegex, prepareWordRegexBody } from '@civitai/mod-utils/prompt-audit/word-regex';
+import {
+  ages,
+  canonicalNumberWords,
+  templateParts,
+  templates,
+} from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { AuditTimer } from '~/utils/metadata/audit-slow-log';
@@ -258,7 +267,11 @@ export const auditPromptEnriched = (
   if (checkProfanity) {
     const profanityResults = timer.time('profanity', () => {
       const profanityFilter = createProfanityFilter();
-      return profanityFilter.analyze(prompt);
+      // Strip Danbooru rating/score/source tags first, for the same reason
+      // `includesMinorAge` does: they are metadata, not language. `rating_explicit` is
+      // how a booru labels an image, and obscenity matches inside it — so the tag alone
+      // refused prompts whose images the SFW domain publishes.
+      return profanityFilter.analyze(prompt.replace(falsePositiveTagPattern, ' '));
     });
     if (profanityResults.isProfane) {
       timer.finish(prompt, negativePrompt);
@@ -310,83 +323,11 @@ export function hasNsfwPrompt(text?: string | null) {
 
 // #region [minorCheck]
 // --------------------------------------
-// Age Check Definition
-// --------------------------------------
-const ages = [
-  { age: 17, matches: ['seven{teen}', 'sevn{teen}', 'sevem{teen}', 'seve{teen}', '7{teen}', '17'] },
-  { age: 16, matches: ['six{teen}', 'sicks{teen}', 'sixe{teen}', '6{teen}', '16'] },
-  {
-    age: 15,
-    matches: ['fif{teen}', 'fiv{teen}', 'five{teen}', 'fife{teen}', 'fivve{teen}', '5{teen}', '15'],
-  },
-  { age: 14, matches: ['four{teen}', 'for{teen}', 'fore{teen}', 'foure{teen}', '4{teen}', '14'] },
-  {
-    age: 13,
-    matches: [
-      'thir{teen}',
-      '3{teen}',
-      'ther{teen}',
-      'three{teen}',
-      'tree{teen}',
-      'thee{teen}',
-      'thre{teen}',
-      'thri{teen}',
-      '3{teen}',
-      '13',
-    ],
-  },
-  { age: 12, matches: ['twelve', 'twelv', 'twelf', '2{teen}', 'twel', '12'] },
-  { age: 11, matches: ['eleven', 'eleve', 'elevn', '1{teen}', 'elvn', '11'] },
-  { age: 10, matches: ['ten', 'tenn', 'tene', '10'] },
-  { age: 9, matches: ['nine', 'nien', 'nein', 'niene', '9'] },
-  { age: 8, matches: ['eight', 'eigt', 'eigh', '8'] },
-  { age: 7, matches: ['seven', 'sevn', 'sevem', 'seve', '7'] },
-  { age: 6, matches: ['six', 'sicks', 'sixe', '6'] },
-  { age: 5, matches: ['five', 'fiv', 'fife', 'fivve', '5'] },
-  { age: 4, matches: ['four', 'fore', 'foure', '4'] },
-  { age: 3, matches: ['three', 'thee', 'thre', 'thri', '3'] },
-  { age: 2, matches: ['two', '2'] },
-  { age: 1, matches: ['one', 'uno', '1'] },
-];
-
-const templateParts = {
-  teen: ['teen', 'ten', 'tein', 'tien', 'tn'],
-  years: ['y', 'yr', 'yrs', 'years', 'year', 'anos'],
-  old: ['o', 'old'],
-};
-const templates = [
-  'aged {age}',
-  'age {age}',
-  'age of {age}',
-  '{age} age',
-  '{age} {years} {old}',
-  '{age} {years}',
-  '{age}th birthday',
-];
-
-// --------------------------------------
 // Prepare Regexes - Two Phase Approach
 // --------------------------------------
 // Phase 1: Quick screening pattern - rejects most prompts instantly
 const quickScreenPattern =
   /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
-
-// Phase 2: Per-age regex patterns (much smaller than one giant alternation)
-// Expand teen variations for ages 13-17
-for (const age of ages) {
-  const newMatches = new Set<string>();
-  for (const match of age.matches) {
-    if (!match.includes('{teen}')) newMatches.add(match);
-    else {
-      const base = match.replace('{teen}', '').trim();
-      for (const teen of templateParts.teen) {
-        newMatches.add(base + teen);
-        newMatches.add(base + ' ' + teen);
-      }
-    }
-  }
-  age.matches = Array.from(newMatches);
-}
 
 // TEST-ONLY. Exposes the POST-teen-expansion `ages` table so the age-path oracle in
 // `__tests__/audit-matching-equivalence.test.ts` can replicate `highlightMinor`'s
@@ -402,31 +343,8 @@ export function __getAgesForTest() {
 const yearsPattern = templateParts.years.join('|');
 const oldPattern = templateParts.old.join('|');
 
-// Canonical English number words. These require a trailing `\b` so that compound
-// words don't match — e.g. "eight" must not match "eighty" via the {age} {years}
-// template (single-letter "y" year unit), and "seven" must not match "seventy".
-// Truncated/typo variants (eigt, eigh, sevn, sevem, etc.) intentionally skip the
-// boundary so that they still catch ordinal forms via the {age}th birthday
-// template ("eigh" + "th" → "eighth birthday").
-const canonicalNumberWords = new Set([
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-  'ten',
-  'eleven',
-  'twelve',
-  'thirteen',
-  'fourteen',
-  'fifteen',
-  'sixteen',
-  'seventeen',
-]);
+// The trailing `\b` goes on canonical spellings only; `canonicalNumberWords` in
+// `lists/ages.ts` carries why the typo variants must not get one.
 const buildAgePattern = (matches: string[]) =>
   matches.map((m) => (canonicalNumberWords.has(m) ? `${m}\\b` : m)).join('|');
 
@@ -563,38 +481,12 @@ export function includesMinorAge(prompt: string | undefined) {
 // ("gate") in `checkable` can reuse the EXACT same body inside the EXACT same
 // `(?<![a-zA-Z0-9])` / `(?![a-zA-Z0-9])` boundaries that `prepareWordRegex` uses,
 // guaranteeing the gate is the literal union of the per-word regexes (superset).
-function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
-  let regexStr = word;
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]+`);
-  if (leet && !word.includes('[')) {
-    regexStr = regexStr
-      .replace(/i/g, '[i|l|1]')
-      .replace(/o/g, '[o|0]')
-      .replace(/s/g, '[s|z]')
-      .replace(/e/g, '[e|3]');
-  }
-  if (pluralize) regexStr += '[s|z]*';
-  return regexStr;
-}
-
-function prepareWordRegex(word: string, pluralize = false, leet = true) {
-  const body = prepareWordRegexBody(word, pluralize, leet);
-  // Zero-width word boundaries instead of CONSUMING non-alnum runs. The old form
-  // `([^a-zA-Z0-9]+|^)…([^a-zA-Z0-9]+|$)` had a greedy `[^a-zA-Z0-9]+` group on each
-  // side; run UNANCHORED over a long non-Latin (CJK/Japanese/…) prompt — one giant
-  // `[^a-zA-Z0-9]` run — across hundreds of word regexes, the leading group
-  // backtracks at every position → O(regexes × n²) → seconds of synchronous CPU
-  // (proven 1.6s–84s prod api event-loop pin = user-triggerable DoS / "504 wave").
-  // The lookbehind/lookahead are LOGICALLY EQUIVALENT for the boolean match
-  // ("preceded/followed by non-alnum or string edge" ≡ "not preceded/followed by an
-  // alnum") but, being zero-width, have nothing to backtrack over → linear. The
-  // proof is audit-matching-equivalence.test.ts (brute-force oracle, unchanged).
-  // NOTE: match[0] no longer includes the boundary char(s); callers run it through
-  // trimNonAlphanumeric (now a near-no-op) so the highlight path is unaffected.
-  const regexStr = `(?<![a-zA-Z0-9])` + body + `(?![a-zA-Z0-9])`;
-  const regex = new RegExp(regexStr, 'i');
-  return regex;
-}
+// The builder is shared with audit-base.ts and the mod-utils prompt-audit copy; the
+// ReDoS rationale for the zero-width boundaries lives with it. The proof that the
+// boundaries are equivalent to the old consuming form is
+// audit-matching-equivalence.test.ts (brute-force oracle, deliberately independent).
+// NOTE: match[0] does not include the boundary char(s); callers run it through
+// trimNonAlphanumeric (a near-no-op) so the highlight path is unaffected.
 
 export function promptWordReplace(prompt: string, word: string, replacement = '') {
   const regex = prepareWordRegex(word);
@@ -753,8 +645,14 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
 // — closing that recall gap while staying linear. Verified equal to the old form
 // on the equivalence-oracle corpus, whose `youngComposedNouns` reference mirrors
 // this exact body.
+//
+// The word-run gap cannot cross a blank line: a user who puts an adjective and a
+// noun in separate paragraphs is describing separate subjects. This applies only
+// to rules where one word describes another — never to includesInappropriate's
+// minor-AND-nsfw check, which must stay whole-prompt.
+const composedNounGap = '((?:[\\w|]|[^\\S\\n]|\\n(?![^\\S\\n]{0,200}\\n)){0,200}|[^\\w]{1,200})';
 const composedNouns = youngWords.partialNouns.flatMap((word) => {
-  return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,200}|[^\\w]{1,200})' + word);
+  return youngWords.adjectives.map((adj) => adj + composedNounGap + word);
 });
 const words = {
   nsfw: checkable(nsfwWords),
