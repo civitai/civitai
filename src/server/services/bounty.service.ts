@@ -16,7 +16,9 @@ import {
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
+  refundTransaction,
 } from '~/server/services/buzz.service';
+import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
 import {
   createEntityImages,
   updateEntityImages,
@@ -51,6 +53,8 @@ import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema'
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { BlurbUse } from '~/server/services/blurb-materialize.service';
 import {
@@ -228,6 +232,7 @@ export const createBounty = async ({
       const bounty = await tx.bounty.create({
         data: {
           ...data,
+          buzzType,
           lockedProperties: lockedProperties.length ? lockedProperties : undefined,
           startsAt,
           expiresAt,
@@ -534,7 +539,7 @@ export const upsertBounty = async ({
   await throwOnBlockedUserContent(data.description, { isModerator, surface: 'bounty' });
 
   const addLockedProperties: string[] = [];
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -568,7 +573,10 @@ export const upsertBounty = async ({
       addLockedProperties,
       blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
-    if (updated) await queueBountySearchIndexUpdate(updated.id);
+    if (updated) {
+      await queueBountySearchIndexUpdate(updated.id);
+      scanEntityInBackground({ entityType: 'Bounty', entityId: updated.id });
+    }
     return updated;
   } else {
     if (data.poi) {
@@ -585,6 +593,7 @@ export const upsertBounty = async ({
       blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
     await queueBountySearchIndexUpdate(created.id);
+    scanEntityInBackground({ entityType: 'Bounty', entityId: created.id });
     return created;
   }
 };
@@ -642,12 +651,14 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
-  const flagged = evaluateAutoNsfw({
-    name: stored.name,
-    description,
-    alreadyNsfw: stored.nsfw,
-    lockedProperties: stored.lockedProperties,
-  });
+  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
+    ? evaluateAutoNsfw({
+        name: stored.name,
+        description,
+        alreadyNsfw: stored.nsfw,
+        lockedProperties: stored.lockedProperties,
+      })
+    : null;
   if (flagged) {
     const details = {
       ...((stored.details as MixedObject | null) ?? {}),
@@ -664,6 +675,7 @@ export async function applyBountyContentChange({
   }
 
   await queueBountySearchIndexUpdate(id);
+  scanEntityInBackground({ entityType: 'Bounty', entityId: id });
 
   return true;
 }
@@ -690,7 +702,7 @@ export const deleteBountyById = async ({
 }: GetByIdInput & { isModerator: boolean }) => {
   const bounty = await getBountyById({
     id,
-    select: { userId: true, expiresAt: true, complete: true, refunded: true },
+    select: { userId: true, expiresAt: true },
   });
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
@@ -708,69 +720,63 @@ export const deleteBountyById = async ({
       throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
   }
 
-  // Fetch benefactor data BEFORE deletion to avoid cascade delete issues
-  const bountyCreator =
-    bounty.userId && !bounty.complete && !bounty.refunded
-      ? await dbRead.bountyBenefactor.findUnique({
-          where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
-          select: { unitAmount: true, currency: true, buzzTransactionId: true },
-        })
-      : null;
+  // Read under the payout lock: a void or refund that claimed the bounty first has already
+  // returned the creator's funds.
+  const deleted = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, id);
+    if (!locked) return null;
+    const creatorFunds =
+      locked.userId && !locked.complete && !locked.refunded
+        ? await tx.bountyBenefactor.findUnique({
+            where: { bountyId_userId: { userId: locked.userId, bountyId: id } },
+            select: { unitAmount: true, currency: true, buzzTransactionId: true },
+          })
+        : null;
 
-  const deletedBounty = await dbWrite.$transaction(async (tx) => {
     const deletedBounty = await tx.bounty.delete({ where: { id } });
-    if (!deletedBounty) return null;
-
     await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
-    return deletedBounty;
+    return { deletedBounty, creatorId: locked.userId, creatorFunds };
   });
-  if (!deletedBounty) return null;
+  if (!deleted) return null;
+  const { deletedBounty, creatorId, creatorFunds } = deleted;
 
-  // Refund the bounty creator using pre-fetched data
-  if (bounty.userId && !bounty.complete && !bounty.refunded && bountyCreator) {
-    switch (bountyCreator.currency) {
-      case Currency.BUZZ: {
-        if (bountyCreator.buzzTransactionId && bountyCreator.buzzTransactionId.length > 0) {
-          // Refund all transactions for the creator
-          const txResults = await Promise.allSettled(
-            bountyCreator.buzzTransactionId.map((txId) =>
-              refundMultiAccountTransaction({
-                externalTransactionIdPrefix: txId,
-                description: isModerator
-                  ? 'Refund reason: moderator deleted bounty'
-                  : 'Refund reason: owner deleted bounty',
-                details: { bountyId: id },
-              })
-            )
-          );
-
-          // Log any failures
-          txResults.forEach((result, index) => {
-            if (result.status === 'rejected') {
-              // Log failure
-              logToAxiom({
-                name: 'bounty-refund',
-                type: 'error',
-                message: `Bounty ${id}: Failed to refund transaction ${
-                  bountyCreator.buzzTransactionId[index]
-                } - ${String(result.reason)}`,
-              }).catch(() => null);
-            }
-          });
-        } else {
-          // Fallback: No transaction IDs (legacy data)
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: bounty.userId,
-            amount: bountyCreator.unitAmount,
-            type: TransactionType.Refund,
-            description: 'Refund reason: owner deleted bounty',
-          });
-        }
-        break;
+  if (creatorId && creatorFunds?.currency === Currency.BUZZ) {
+    const description = isModerator
+      ? 'Refund reason: moderator deleted bounty'
+      : 'Refund reason: owner deleted bounty';
+    try {
+      if (creatorFunds.buzzTransactionId && creatorFunds.buzzTransactionId.length > 0) {
+        const txResults = await Promise.allSettled(
+          creatorFunds.buzzTransactionId.map((txId) =>
+            refundMultiAccountTransaction({
+              externalTransactionIdPrefix: txId,
+              description,
+              details: { bountyId: id },
+            })
+          )
+        );
+        txResults.forEach((result, index) => {
+          if (result.status === 'rejected')
+            logBountyPayoutError({
+              bountyId: id,
+              userId: creatorId,
+              message: `Failed to refund transaction ${
+                creatorFunds.buzzTransactionId[index]
+              } - ${String(result.reason)}`,
+            });
+        });
+      } else {
+        // Legacy rows carry no transaction ids.
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: creatorId,
+          amount: creatorFunds.unitAmount,
+          type: TransactionType.Refund,
+          description,
+        });
       }
-      default: // Do no checks
-        break;
+    } catch (e) {
+      logBountyPayoutError({ bountyId: id, userId: creatorId, message: String(e) });
     }
   }
 
@@ -955,6 +961,93 @@ export const getImagesForBounties = async ({
   return groupedImages;
 };
 
+function logBountyPayoutError({
+  bountyId,
+  userId,
+  message,
+}: {
+  bountyId: number;
+  userId?: number | null;
+  message: string;
+}) {
+  logToAxiom({
+    name: 'bounty-refund',
+    type: 'error',
+    message: `Bounty ${bountyId}: ${message}`,
+    bountyId,
+    userId,
+  }).catch(() => null);
+}
+
+/**
+ * Returns every benefactor's Buzz (only the unawarded ones with `onlyUnawarded`). Call it only
+ * after a committed claim under `lockBountyForPayout`. A failed refund is logged per benefactor
+ * and the rest continue; the ids returned are the benefactors refunded in full.
+ */
+export async function refundBountyBenefactorFunds({
+  bountyId,
+  currency,
+  onlyUnawarded = false,
+  description = 'Reason: Bounty refund',
+}: {
+  bountyId: number;
+  currency: Currency;
+  onlyUnawarded?: boolean;
+  description?: string;
+}): Promise<number[]> {
+  if (currency !== Currency.BUZZ) return [];
+  const benefactors = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, currency, ...(onlyUnawarded ? { awardedToId: null } : {}) },
+    select: { userId: true, unitAmount: true, buzzTransactionId: true },
+  });
+
+  const refundedUserIds: number[] = [];
+  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
+    if (unitAmount <= 0) continue;
+    try {
+      if (buzzTransactionId && buzzTransactionId.length > 0) {
+        const txResults = await Promise.allSettled(
+          buzzTransactionId.map((txId) =>
+            isBountyTransactionPrefix(txId)
+              ? refundMultiAccountTransaction({
+                  externalTransactionIdPrefix: txId,
+                  description,
+                  details: { bountyId, userId, unitAmount },
+                })
+              : refundTransaction(txId, description)
+          )
+        );
+        const failed = txResults.flatMap((result, index) =>
+          result.status === 'rejected'
+            ? [`${buzzTransactionId[index]} - ${String(result.reason)}`]
+            : []
+        );
+        if (failed.length) {
+          logBountyPayoutError({
+            bountyId,
+            userId,
+            message: `Failed to refund transactions ${failed.join(', ')}`,
+          });
+          continue;
+        }
+      } else {
+        // Legacy rows carry no transaction ids.
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: userId,
+          amount: unitAmount,
+          type: TransactionType.Refund,
+          description,
+        });
+      }
+      refundedUserIds.push(userId);
+    } catch (e) {
+      logBountyPayoutError({ bountyId, userId, message: `Refund failed - ${String(e)}` });
+    }
+  }
+  return refundedUserIds;
+}
+
 export const refundBounty = async ({
   id,
   isModerator,
@@ -968,9 +1061,6 @@ export const refundBounty = async ({
     select: {
       name: true,
       id: true,
-      complete: true,
-      refunded: true,
-      userId: true,
       user: { select: { id: true, email: true } },
     },
   } as const;
@@ -979,87 +1069,39 @@ export const refundBounty = async ({
     return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
   });
 
-  const { user } = bounty;
+  const { updated, currency } = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, id);
+    if (!locked) throw throwNotFoundError('Bounty not found');
+    if (locked.complete || locked.refunded)
+      throw throwBadRequestError('This bounty has already been awarded or refunded');
 
-  if (bounty.complete || bounty.refunded) {
-    throw throwBadRequestError('This bounty has already been awarded or refunded');
-  }
+    const benefactors = await tx.bountyBenefactor.findMany({
+      where: { bountyId: id },
+      select: { userId: true, currency: true, awardedToId: true },
+    });
+    if (benefactors.some((b) => b.awardedToId !== null))
+      throw throwBadRequestError(
+        'At least one benefactor has awarded an entry. This bounty is not refundable.'
+      );
 
-  const benefactors = await dbRead.bountyBenefactor.findMany({
-    where: { bountyId: id },
+    const currency = benefactors.find((b) => b.userId === locked.userId)?.currency;
+    if (!currency) throw throwBadRequestError('No currency found for bounty');
+
+    const updated = await tx.bounty.update({
+      where: { id },
+      data: { complete: true, refunded: true },
+    });
+    return { updated, currency };
   });
 
-  if (benefactors.find((b) => b.awardedToId !== null)) {
-    throw throwBadRequestError(
-      'At least one benefactor has awarded an entry. This bounty is not refundable.'
-    );
-  }
+  await refundBountyBenefactorFunds({ bountyId: id, currency });
 
-  const currency = benefactors.find((b) => b.userId === bounty.userId)?.currency;
-
-  if (!currency) {
-    throw throwBadRequestError('No currency found for bounty');
-  }
-
-  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
-    if (unitAmount > 0) {
-      switch (currency) {
-        case Currency.BUZZ: {
-          if (buzzTransactionId && buzzTransactionId.length > 0) {
-            // Refund all transactions for this benefactor
-            const txResults = await Promise.allSettled(
-              buzzTransactionId.map((txId) =>
-                refundMultiAccountTransaction({
-                  externalTransactionIdPrefix: txId,
-                  description: 'Reason: Bounty refund',
-                  details: { bountyId: id, userId, unitAmount },
-                })
-              )
-            );
-
-            // Log any failures
-            txResults.forEach((result, index) => {
-              if (result.status === 'rejected') {
-                // Log failure
-                logToAxiom({
-                  name: 'bounty-refund',
-                  type: 'error',
-                  message: `Bounty ${id}: Failed to refund transaction ${
-                    buzzTransactionId[index]
-                  } - ${String(result.reason)}`,
-                }).catch(() => null);
-              }
-            });
-          } else {
-            // Fallback: No transaction IDs (legacy data or edge case)
-            await createBuzzTransaction({
-              fromAccountId: 0,
-              toAccountId: userId,
-              amount: unitAmount,
-              type: TransactionType.Refund,
-              description: 'Reason: Bounty refund',
-            });
-          }
-
-          break;
-        }
-        default: // Do nothing just yet.
-          break;
-      }
-    }
-  }
-
-  if (user) {
+  if (bounty.user) {
     bountyRefundedEmail.send({
       bounty,
-      user,
+      user: bounty.user,
     });
   }
-
-  const updated = await dbWrite.bounty.update({
-    where: { id },
-    data: { complete: true, refunded: true },
-  });
 
   if (updated.userId) {
     await userBountyCountCache.refresh(updated.userId);
@@ -1067,3 +1109,45 @@ export const refundBounty = async ({
 
   return updated;
 };
+
+export type VoidBountyForNsfwResult =
+  | { voided: true; refundedUserIds: number[] }
+  | { voided: false; reason: 'missing' | 'no-currency' | 'already-refunded' | 'in-payout' };
+
+/**
+ * Cancels a bounty and refunds every benefactor, for a green-Buzz bounty the text scan rated R
+ * or above. Claims under the payout lock first; a lost claim moves no Buzz.
+ */
+export async function voidBountyForNsfw(id: number): Promise<VoidBountyForNsfwResult> {
+  const claim = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, id);
+    if (!locked) return { voided: false as const, reason: 'missing' as const };
+    if (locked.refunded) return { voided: false as const, reason: 'already-refunded' as const };
+
+    const creator = locked.userId
+      ? await tx.bountyBenefactor.findUnique({
+          where: { bountyId_userId: { bountyId: id, userId: locked.userId } },
+          select: { currency: true },
+        })
+      : null;
+    if (!creator) return { voided: false as const, reason: 'no-currency' as const };
+
+    const awarded = await tx.bountyBenefactor.count({
+      where: { bountyId: id, awardedToId: { not: null } },
+    });
+    if (locked.complete || awarded > 0)
+      return { voided: false as const, reason: 'in-payout' as const };
+
+    await tx.bounty.update({ where: { id }, data: { complete: true, refunded: true } });
+    return { voided: true as const, currency: creator.currency, ownerId: locked.userId };
+  });
+  if (!claim.voided) return claim;
+
+  const refundedUserIds = await refundBountyBenefactorFunds({
+    bountyId: id,
+    currency: claim.currency,
+  });
+  if (claim.ownerId) await userBountyCountCache.refresh(claim.ownerId);
+  await queueBountySearchIndexUpdate(id);
+  return { voided: true, refundedUserIds };
+}

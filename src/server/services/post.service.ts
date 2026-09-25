@@ -50,6 +50,7 @@ import {
 } from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   canViewModelVersion,
   MODEL_VERSION_NOT_FOUND,
@@ -895,6 +896,7 @@ export const createPost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
+  if (data.title || data.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -1003,6 +1005,8 @@ export const updatePost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
+  if (data.title !== undefined || data.detail !== undefined)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   // A publishedAt change moves the images' feed sort position
   // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven

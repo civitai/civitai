@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { articleModerationFloorText } from '@civitai/shared/rated-entity-sql';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/article-rating-review';
@@ -189,24 +190,7 @@ export async function computeArticleDerivedNsfwLevel(articleId: number): Promise
       GROUP BY a.id
     ),
     moderation_floor AS (
-      SELECT
-        a.id,
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM "EntityModeration" em
-            WHERE em."entityType" = 'Article'
-              AND em."entityId" = a.id
-              AND em.status = 'Succeeded'::"EntityModerationStatus"
-              AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))
-          ) OR EXISTS (
-            SELECT 1 FROM "ArticleReport" ar
-            JOIN "Report" r ON r.id = ar."reportId"
-            WHERE ar."articleId" = a.id
-              AND r.reason = 'NSFW'::"ReportReason"
-              AND r.status = 'Actioned'::"ReportStatus"
-          ) THEN 4
-          ELSE 0
-        END AS "floor"
+      SELECT a.id, ${sql.raw(articleModerationFloorText('a.id'))} AS "floor"
       FROM "Article" a
       WHERE a.id = ${articleId}
     )

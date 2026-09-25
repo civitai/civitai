@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 
 // Unit tests for bounty lock enforcement — locks come from the stored row, never from the
 // client payload. bounty.service.ts has a large import graph, so its transitive
@@ -20,6 +22,11 @@ const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction }
   })
 );
 
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
 }));
@@ -89,6 +96,7 @@ const baseUpdate = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockStored();
   mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
   mockDbWrite.bounty.update.mockResolvedValue({ id: BOUNTY_ID, userId: OWNER_ID });
@@ -178,6 +186,18 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     });
   });
 
+  it('does not run once Bounty text scan is active for this bounty', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+
+    await upsert({ nsfw: false });
+
+    const data = updateData();
+    expect(data.nsfw).toBe(false);
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.details ?? {}).not.toHaveProperty('profanityMatches');
+    expect(getTextScanMode).toHaveBeenCalledWith('Bounty', BOUNTY_ID);
+  });
+
   it('marks the bounty nsfw and locks nsfw when nothing is locked yet', async () => {
     await upsert({});
 
@@ -238,6 +258,11 @@ describe('upsertBounty — create path', () => {
 
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
+
+  it('stores the Buzz type the bounty was paid in', async () => {
+    await create({ buzzType: 'green' });
+    expect(createData().buzzType).toBe('green');
+  });
 
   it('charges green buzz when the caller asked for green', async () => {
     await create({ buzzType: 'green' });

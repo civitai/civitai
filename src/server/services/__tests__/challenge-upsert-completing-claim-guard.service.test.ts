@@ -21,6 +21,7 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 
 const { mockTx, mockCreateImage, mockGenerateThemeElements } = vi.hoisted(() => {
   const tx = {
+    $executeRaw: vi.fn(async () => 0),
     challenge: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 1 }),

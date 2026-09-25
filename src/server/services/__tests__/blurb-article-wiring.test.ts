@@ -5,6 +5,7 @@ import type * as BlurbMaterializeService from '~/server/services/blurb-materiali
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
+import type * as TextScanRoute from '~/server/services/text-scan/route';
 
 // The ordering contract of the article save path: expand -> persist -> moderate -> reconcile.
 // These assertions run against the real `upsertArticle` / `applyArticleContentChange`, so
@@ -45,6 +46,13 @@ vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) =>
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
   submitTextModeration,
+}));
+// Pass-through: the real router awaits a Flipt read before the XGuard submit these tests order.
+vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanRoute>()),
+  submitTextModerationOrScan: vi.fn(async ({ xguard }: { xguard: () => Promise<unknown> }) =>
+    xguard()
+  ),
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
