@@ -147,6 +147,48 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 
 /**
+ * The APP-STORAGE scope family — the one family whose runtime resolvers do NOT read
+ * the claims `withBlockScope` already resolved, but re-verify the caller's RAW bearer
+ * as a block JWS:
+ *
+ *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
+ *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
+ *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
+ *     back down after the middleware already verified it.
+ *
+ * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
+ * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
+ * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * for exactly this reason — see `oauthAppStorageConflictError`.
+ *
+ * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
+ * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
+ * The derived membership is pinned (on growth AND shrink) in
+ * `src/shared/constants/__tests__/app-storage-scopes.test.ts` — if that ledger fails
+ * because a new storage scope DOES read middleware-resolved claims, update the ledger
+ * and this docblock in the same commit.
+ */
+export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
+export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(
+  BLOCK_SCOPE_TO_OAUTH_BIT
+).filter((scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX));
+
+/**
+ * The app-storage scopes present in a manifest's declared `scopes`, in the order the
+ * manifest declared them (so the error names them the way the author typed them).
+ * Non-string entries are ignored — the per-element `scopes` validation upstream already
+ * reports those, and this predicate must not turn one malformed entry into a second,
+ * confusing error.
+ */
+export function appStorageScopesIn(scopes: readonly unknown[]): string[] {
+  const storage = new Set(APP_STORAGE_SCOPES);
+  return scopes.filter((scope): scope is string => typeof scope === 'string' && storage.has(scope));
+}
+
+/**
  * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
  * ceiling a moderator's OWN account can spend across ALL run-for-real
  * generations of ONE pending publish request. This is the number surfaced in

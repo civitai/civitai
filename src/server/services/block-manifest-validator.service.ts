@@ -1,9 +1,16 @@
 import {
+  appStorageScopesIn,
   isKnownBlockScope,
   sensitiveScopeJustificationError,
   unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
+// The SAME predicate the two mint paths branch on (`/api/v1/block-tokens` page mint and
+// dev-tunnel mint) — so the manifest gate below and the runtime that would hand this app
+// an opaque OAuth token cannot come to disagree about what `auth: "oauth"` means. The
+// module imports only `~/shared/constants/*`, so this keeps the validator
+// client-bundle-safe (it is imported by `ManifestEditForm.tsx`).
+import { manifestWantsOauthToken } from '~/server/services/blocks/block-oauth-scope';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
@@ -172,6 +179,40 @@ export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
 export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
 export type ManifestAuthMode = 'block-token' | 'oauth';
 export const ALLOWED_AUTH_MODES = new Set<ManifestAuthMode>(['block-token', 'oauth']);
+
+/**
+ * The refusal for `auth: "oauth"` + any `apps:storage:*` scope.
+ *
+ * 🔴 THE MESSAGE IS THE FEATURE. Without the guard this combination is a SILENT
+ * catastrophic failure: `/api/v1/block-tokens` mints an opaque OAuth access token for an
+ * `auth: "oauth"` app ONLY when there is a signed-in viewer (`userId != null &&
+ * manifestWantsOauthToken(...)`), so an anonymous viewer still gets a block JWT and every
+ * storage path works — and then each app-storage resolver re-verifies the RAW bearer with
+ * `verifyBlockToken` (which requires a JWS `kid`), so the moment ANYONE signs in every read
+ * and every write 401s. The app looks healthy in exactly the state most authors test first.
+ * A bare "invalid" here would reproduce that problem one layer up, so the text names the
+ * conflicting scopes, the `auth` mode, WHY it fails, both ways out, and that the limitation
+ * is current rather than permanent.
+ *
+ * Built here rather than interpolated at the call site so a test can pin the WHOLE
+ * normalised string: a guard on individual WORDS is walkable by rewording, and this string
+ * is the entire user-visible product of the guard. See
+ * `block-manifest-validator.service.test.ts`.
+ */
+export function oauthAppStorageConflictError(conflictingScopes: readonly string[]): string {
+  const named = conflictingScopes.join(', ');
+  return (
+    `auth "oauth" cannot be combined with app storage: this manifest declares ${named}. ` +
+    `App storage is served to a BLOCK TOKEN only today — an auth "oauth" app is minted an ` +
+    `opaque OAuth access token instead of a block JWT, and the app-storage resolvers ` +
+    `re-verify that bearer as a block JWT, so every storage read and write returns 401 as ` +
+    `soon as a viewer signs in (it appears to work while signed out, because an anonymous ` +
+    `viewer is still minted a block JWT). Fix it either way: set "auth" to "block-token", ` +
+    `or remove ${named} from "scopes". This is a CURRENT limitation, not a permanent one — ` +
+    `teaching the app-storage resolvers to accept the claims the block-scope middleware ` +
+    `has already resolved is the intended fix, and this rule is expected to be lifted then.`
+  );
+}
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
 
@@ -517,6 +558,23 @@ export class BlockManifestValidator {
         errors.push(
           `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
         );
+      }
+
+      // CROSS-FIELD: `auth: "oauth"` × any `apps:storage:*` scope is refused. Placed
+      // INSIDE the `Array.isArray(m.scopes)` arm, after the per-element checks, because it
+      // is a statement about the declared scope SET — a manifest whose `scopes` is not an
+      // array already has its own error and nothing to cross-check. Deliberately does NOT
+      // depend on `m.auth` being a VALID mode: `manifestWantsOauthToken` is an equality
+      // test, so a garbage `auth` value yields false here and is reported once, by the
+      // auth-mode check above, instead of twice.
+      //
+      // Why a refusal and not a downgrade to `block-token`: the `auth` mode is the author's
+      // declared credential shape and the whole OAuth surface (consent, refresh, the app's
+      // own REST calls) is built on it. Silently rewriting it would hand back a manifest the
+      // author did not write; refusing tells them which of the two things to change.
+      const storageScopes = appStorageScopesIn(m.scopes as unknown[]);
+      if (manifestWantsOauthToken(m) && storageScopes.length > 0) {
+        errors.push(oauthAppStorageConflictError(storageScopes));
       }
     }
 
