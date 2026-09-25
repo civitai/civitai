@@ -894,12 +894,17 @@ describe('image-upload relay', () => {
       ['garbage', 'chrome-extension://whatever'],
       ['a near-miss', 'single-put'],
       ['a wrong-case value', 'MULTIPART'],
+      // 🔴 RESTORED. It was deleted on the claim that it is "covered by the absent-header
+      // case above" — and that was false: the absent case sends NO header key at all and
+      // exercises the `typeof value !== 'string'` clause, while this one sends a present
+      // but empty value. Measured at the time: deleting the empty-string branch turned two
+      // tests red and NEITHER was in this file, so the route had no coverage of it.
+      ['an empty header value', ''],
       ['a label-injection attempt', 'multipart"} 99\ncivitai_image_upload_relay_total{outcome="x'],
     ])('buckets %s into `other` and mints NO new series', async (_name, header) => {
       // 🔴 `other`, not `unknown`: a header that ARRIVED and was not recognised is a
       // different population from a request that carried none, and `unknown` is the row
-      // the rollout is graded on. An empty header value is "carried none" and is covered
-      // by the absent-header case above.
+      // the rollout is graded on.
       await handler(makeReq([Buffer.from('bytes')], { producerHeader: header }), makeRes());
 
       expect(await moved()).toEqual(['success|other']);
@@ -924,7 +929,7 @@ describe('image-upload relay', () => {
       // label, an absent header or an array, a naive re-read of the header produces the
       // same answer the sanitiser does. Without this line a mutant that re-reads
       // `req.headers[...]` in the log payload keeps the counter perfectly bounded (so the
-      // 33-row check above stays green) while putting an unbounded caller-controlled
+      // 44-row check above stays green) while putting an unbounded caller-controlled
       // string into a structured log. Verified as a surviving mutant before this was added.
       expect(relayEvents()).toHaveLength(1);
       expect(relayEvents()[0]).toMatchObject({ producer: 'other' });

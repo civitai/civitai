@@ -68,10 +68,11 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
    * 🔴 A HEADER ARRIVED AND WAS NOT RECOGNISED — kept SEPARATE from `unknown`, which is
    * this label's whole reason for existing applied to itself.
    *
-   * Two populations land here: a client we shipped that got the spelling wrong or is
-   * newer than this server, and a caller sending something crafted. Both are bucketed
-   * rather than dropped, because the route's invocation count must stay equal to the sum
-   * of this metric — dropping the increment would let a hostile caller hide its requests.
+   * Three populations land here: a client we shipped that got the spelling wrong or is
+   * newer than this server, a client that computed an EMPTY value, and a caller sending
+   * something crafted. All are bucketed rather than dropped, because the route's invocation
+   * count must stay equal to the sum of this metric — dropping the increment would let a
+   * hostile caller hide its requests.
    *
    * ⚠ IT USED TO BE FOLDED INTO `unknown`, AND THE REASONING FOR THAT WAS UNFALSIFIABLE.
    * The argument was "the unrecognised population is negligible during the window that
@@ -114,12 +115,20 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  * label be omitted, which in Prometheus creates a DIFFERENT series (one with no `producer`
  * label) — the opposite of the closed bound this module exists to hold.
  *
- * 🔴 TWO REJECTION BUCKETS, NOT ONE, AND THE SPLIT IS THE POINT. Nothing present (absent
+ * 🔴 TWO REJECTION BUCKETS, NOT ONE, AND THE SPLIT IS THE POINT. Nothing ARRIVED (no
  * header, a non-string, an array with no usable first element) -> `unknown`; something
- * present but not a member -> `other`. Those are different populations — stale bundles
+ * arrived and is not a member -> `other`. Those are different populations — stale bundles
  * versus a client that got it wrong or a caller probing the route — and folding them puts
  * two causes behind one number, on the row the rollout is graded on, which is the exact
  * defect the producer label exists to remove.
+ *
+ * ⚠ AN EMPTY STRING IS `other`, NOT `unknown` — it is a header that ARRIVED carrying
+ * nothing, which is a client computing a bad value, not a client too old to send one. An
+ * earlier revision put it in `unknown` while three separate comments and the `HELP` string
+ * all said `unknown` meant "no header at all", and while `boundedClientLabel` — the sibling
+ * this module cites AS the model for the split — maps `''` to its own `other`. Citing a
+ * sibling for a decision and then diverging from it on that decision's boundary is how the
+ * two copies drift.
  *
  * An ARRAY takes its first element, matching `firstValue`/`boundedClientLabel` in
  * `src/server/prom/trpc-batch.metrics.ts` — the closest sibling in this repo, which does
@@ -170,8 +179,9 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  */
 export function sanitizeImageUploadRelayProducer(input: unknown): ImageUploadRelayProducer {
   const value = Array.isArray(input) ? input[0] : input;
-  // Nothing usable arrived at all — the stale-bundle population.
-  if (typeof value !== 'string' || value.length === 0) return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
+  // Nothing arrived at all — the stale-bundle population. An empty STRING is not this: it
+  // arrived, so it belongs in `other` with the rest of the unrecognised values.
+  if (typeof value !== 'string') return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
   // Something arrived and was not a member. A DIFFERENT fact, so a different bucket.
   return PRODUCER_SET.has(value)
     ? (value as ImageUploadRelayProducer)

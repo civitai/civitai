@@ -38,8 +38,6 @@ describe('sanitizeImageUploadRelayProducer', () => {
     // different series — the opposite of a closed set.
     expect(sanitizeImageUploadRelayProducer(undefined)).toBe('unknown');
     expect(sanitizeImageUploadRelayProducer(null)).toBe('unknown');
-    // An empty header value is "nothing arrived" too, not "something unrecognised".
-    expect(sanitizeImageUploadRelayProducer('')).toBe('unknown');
   });
 
   it('🔴 maps an unrecognised value to `other`, NOT to `unknown`', () => {
@@ -65,6 +63,10 @@ describe('sanitizeImageUploadRelayProducer', () => {
       ' multipart',
       'multipart ',
       'relay',
+      // 🔴 The empty string is HERE, not with the absent cases. It is a header that
+      // ARRIVED carrying nothing — a client computing a bad value, not a client too old to
+      // send one — and `boundedClientLabel`, the sibling this module follows, agrees.
+      '',
     ]) {
       expect(sanitizeImageUploadRelayProducer(bad), JSON.stringify(bad)).toBe('other');
     }
@@ -91,8 +93,9 @@ describe('sanitizeImageUploadRelayProducer', () => {
   it('still bounds an array whose first element is crafted, and an empty one', () => {
     // 🔴 Why taking [0] costs no safety: the closed-set test runs on the element taken, so
     // element order decides WHICH member is believed, never WHETHER an arbitrary string
-    // becomes a label. The empty array is the degenerate case — `input[0]` is `undefined`,
-    // which the `typeof` check catches.
+    // becomes a label. The empty ARRAY is the degenerate case — `input[0]` is `undefined`,
+    // so nothing arrived and it is `unknown`; contrast the empty STRING, which arrived and
+    // is `other`.
     expect(sanitizeImageUploadRelayProducer(['chrome-extension://evil', 'multipart'])).toBe(
       'other'
     );
@@ -183,7 +186,7 @@ describe('the producer contract itself', () => {
 
   it('pins the LABEL set — which is not the caller set; see the ledger in its own file', () => {
     // ⚠ SCOPED DELIBERATELY, because an earlier version of this comment claimed more than
-    // the assertion delivers. This pins the three LABEL values. It says nothing about how
+    // the assertion delivers. This pins the four LABEL values. It says nothing about how
     // many CALLERS exist: `postImageUploadRelay`'s `producer` parameter is typed to this
     // union, so a third call site is forced to reuse an existing label and compiles clean
     // — leaving this green while its traffic corrupts an already-attributed series, which

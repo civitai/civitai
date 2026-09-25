@@ -217,10 +217,12 @@ describe('recordImageUploadRelay', () => {
     expect(rows).toHaveLength(
       IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
     );
-    // The string that arrived but is not a member lands in `other`; the two that carried
-    // nothing usable land in `unknown`. Both are narrowings, neither is a drop.
-    expect((await seriesForProducer('other')).success).toBe(1);
-    expect((await seriesForProducer('unknown')).success).toBe(2);
+    // The two STRINGS that arrived but are not members land in `other` — including the
+    // empty one, which arrived carrying nothing rather than not arriving. `undefined` is
+    // the only one where nothing arrived, so it is the only `unknown`. Both are
+    // narrowings; neither is a drop.
+    expect((await seriesForProducer('other')).success).toBe(2);
+    expect((await seriesForProducer('unknown')).success).toBe(1);
     // And nowhere else: a narrowing that also leaked onto a real producer would make the
     // multipart figure include traffic that never came from it.
     expect((await seriesForProducer('multipart')).success).toBe(0);
@@ -232,8 +234,8 @@ describe('recordImageUploadRelay', () => {
 
   it('keeps producers on SEPARATE series for the same outcome', async () => {
     // 🔴 The whole point of the label, and the case that fails if the producer is
-    // hardcoded, folded, or dropped from the `inc` call: three distinct counts on one
-    // outcome, none of them equal to another and none equal to the total.
+    // hardcoded, folded, or dropped from the `inc` call. The per-producer counts below are
+    // all distinct and none equals the total.
     ensureRegisterImageUploadRelayMetrics();
     recordImageUploadRelay('success', 'single_put');
     recordImageUploadRelay('success', 'multipart');
