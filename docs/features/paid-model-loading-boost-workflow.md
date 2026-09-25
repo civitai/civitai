@@ -1,9 +1,13 @@
 # Paid model loading — boosting as a separate workflow
 
-**Status: proposed, nothing built.** This is a successor design for how a boost is paid for and
-displayed. What ships today is described in [paid-model-loading.md](paid-model-loading.md); nothing
-here contradicts what is built, but several items change decisions recorded there, and those are
-called out.
+**Status: deferred to after the current release. Nothing built.** This is a successor design for how a
+boost is paid for and displayed. What ships today is described in
+[paid-model-loading.md](paid-model-loading.md); nothing here contradicts what is built, but several
+items change decisions recorded there, and those are called out.
+
+Because it ships later, the shipped boost stays as it is — including
+`BOOST_NON_REFUNDABLE`, which is accurate for the `PUT`-upgrade boost and only becomes wrong when this
+design lands.
 
 ## Why the shape changes
 
@@ -43,27 +47,52 @@ The list does exist, but only after submit: the **generation workflow's own resp
 resources being prepared**, and that list includes the behind-the-scenes ones. So the boost's step
 list is derived from the submitted generation workflow, not computed on the form.
 
-That forces an ordering decision:
+**`whatif` does not carry the job-type resources — only the submitted workflow's response does.** So
+the two entry points differ in what they can cover, and both exist:
 
-| | Where the boost is offered | What it covers |
+| Entry point | Submits | Covers |
 | --- | --- | --- |
-| **Pre-submit** | the generation form, priced from `whatif`, as today | only what `whatif` reports — behind-the-scenes resources are missed |
-| **Post-submit** | the generation's queue item, once its prepared-resource list is known | everything that will actually download |
+| **Boost toggled on the form** | two workflows — the generation, and a load workflow beside it | what `whatif`'s `preparation` reports |
+| **Boost from the queue item** | one workflow — the load workflow alone | everything, read off the submitted generation's response |
 
-Post-submit is complete, and it fits decision 1 — if a boost is its own queue item, "boost this" being
-an action on an existing entry is coherent, and by then the real ETA is known. The cost is a product
-change: boosting stops being a checkbox priced in the form footer.
+The form path is the common one and its gap is accepted: job-type resources are rare and largely
+resident, so the missed set is usually empty. The queue path is complete, and doubles as the recovery
+route when a form-path boost is unavailable or fails.
 
-Pre-submit remains viable if the gap is judged acceptable — behind-the-scenes models are reported to
-be rare and largely resident already, in which case the missed set is usually empty. That is a
-judgement call, not a technical blocker, and it needs making before either is built.
+What `whatif` *does* carry is better than first assumed: `preparation` has **one entry per resource
+needing download, of any type** — a checkpoint and a LoRA in the same generation each get their own
+`resource`, `sizeBytes`, `lane`, `queuePosition` and `etaSeconds`. The form path can therefore
+enumerate and price every resource it can see.
 
-It is also stronger than it first appears. A `whatif` step's `preparation` array already carries **one
-entry per resource needing download, of any type** — a checkpoint and a LoRA in the same generation
-each get their own `resource`, `sizeBytes`, `lane`, `queuePosition` and `etaSeconds`. So a pre-submit
-boost can enumerate and price everything `whatif` knows about; the only thing it cannot see is
-resources the job type adds. Whether those appear in `preparation` too is untested — the sample that
-established the rest had none needing download.
+### Two submits are not one submit
+
+The form path replaces an atomic `PUT` with two independent submissions, so it can half-fail in a way
+today's boost cannot. **The generation submits first and a failed boost is non-fatal**: failing the
+generation because its boost failed is strictly worse than running it unboosted, and the queue path
+is already the way to retry. A boost that does not go through has to say so rather than silently
+leaving the user believing they paid.
+
+It also splits the price the form shows. The generation's cost no longer carries
+`cost.fixed.downloadPriority` — that moves to the load workflow, in whatever currency it was chosen
+to draw from.
+
+**The two prices still add up.** Buzz colours are accounts, not currencies with exchange rates — the
+helpers sum across them — so the footer shows one total as it does today. What it does not say is
+which account pays, and it never did: `currencies` is a drain *order*, spent in array order until
+satisfied, so a single generation already splits across accounts according to balances at charge time.
+Two workflows double an indeterminacy that is already there and already accepted.
+
+### The boost does not inherit the generation's currency preference
+
+`appendDomainCurrency` seeds blue first, then the domain currency — green on a SFW domain, yellow on a
+mature one. Under one shared order, "generating on yellow while boosting with blue" cannot occur:
+anyone generating on yellow is there because blue is empty. That case exists only because the submit
+control lets a user deliberately deprioritise blue for the generation.
+
+So the boost takes the **default drain order** rather than the generation's override. Someone who
+chose yellow for their generation still wants blue spent on the boost, which is what the default
+already does. This needs no second currency control; one would only be needed for a user who wants a
+*non-default* boost order, and nobody has asked for that.
 
 ## Decisions
 
@@ -77,6 +106,20 @@ Three things follow from that and are the reason for it:
 - **Cancellation has a natural affordance** — the user cancels the thing they bought.
 - **Coarse step status is survivable.** `preparing → processing → succeeded` works on a dedicated
   card in a way it does not when it has to drive a countdown embedded in a generation card.
+
+**Boost workflows carry their own tag rather than reusing `resource-load`.** That tag is also on the
+moderator tool's explicit purchases, which are not generation-queue material; selecting the queue on
+it would drag them in. A distinguishing tag makes the queue show boosts and nothing else, and avoids
+having to decide whether moderators mind seeing their loads there.
+
+**The card vanishes on success and persists whenever money came back** — a full or partial refund is
+the only state whose whole value is being readable afterwards. "Was there a refund" is the right
+predicate rather than "was it cancelled": a cancel that refunded nothing, because everything had
+already started, has as little to say as a success.
+
+The refund amount is the orchestrator's to decide and ours only to display, and the surface for
+showing it already exists. We do not apportion the fee, which also means we cannot quote a figure
+*before* a cancel — a confirmation can say un-started downloads are refunded, without a number.
 
 ### 2. It does NOT replace the per-generation download display
 
@@ -152,6 +195,12 @@ their steps and needs no new query.
 visible to us and does not need to be — `isWorthBoosting` already declines when the lane is `high`,
 whoever put it there.
 
+Stated as the button's full enable rule, a resource is boostable when it is **not resident**, **not
+already in the high lane**, and **not already covered by one of your in-flight boosts**. The three
+clauses have three different sources — residency, the live lane, and your own queue — and the first
+two are already implemented, in the cold check and in `isWorthBoosting` respectively. The queue-path
+button needs the same rule as the form-path one.
+
 ### 6. Cancellation
 
 Cancelling a load workflow cancels the steps whose downloads have **not started** and issues a
@@ -177,13 +226,24 @@ boost's, and here it does not.
   Those already ship and are currently invisible. Possibly an improvement, but it is a live behaviour
   change riding along on this one.
 
+## Assumed, not confirmed
+
+Three things below are expectations of how the orchestrator behaves, taken as the basis for the design
+above. Each is cheap to check and expensive to be wrong about, so none should be treated as settled
+until it is.
+
+| Assumption | How it gets confirmed |
+| --- | --- |
+| A multi-step load workflow returns a usable `whatif` — i.e. C2 is closed for this shape | one `whatif` against a two-step `prepareResource` workflow |
+| Load steps carry a `preparation` block like generation steps do | the same call — read whether `preparation` is present |
+| Live per-version availability re-reports against a lane raised by a *different* workflow | boost a cold model, watch an unboosted generation's live ETA on the same model — it drops, or it does not |
+
+The third is the one to check first: decision 3 rests entirely on it, and it is the only one of the
+three we can answer without the orchestrator changing anything.
+
 ## Open
 
 | Question | Closes when |
 | --- | --- |
-| **Pricing.** `CalculateCost` returns an empty cost for a prepare step, so `whatif` reports 0 — tracked as C2 in [paid-model-loading.md](paid-model-loading.md). Submitting a load workflow with a chosen currency implies it *charges*, so the gap may be `whatif` alone. Nothing can be shown before submit until this resolves. | a multi-step `prepareResource` workflow returns a non-zero `whatif` cost, or C2 closes stating it never will |
-| **Do load steps carry download ETAs?** The answer covering multiple models per workflow did not separate this from it. Only the boost card is affected — per decision 3 the generation card reads live status and is unaffected — but without one the boost card has no countdown of its own. | the orchestrator states whether a `prepareResource` step reports an ETA |
-| **How is a flat boost fee apportioned across a partial refund?** `cost.fixed.downloadPriority` is one figure for the whole workflow, not per resource, while cancellation refunds *per un-started step*. Step count is the wrong divisor when one step is a 4 GB checkpoint and another a 130 MB LoRA. | the orchestrator states the apportionment, or states that the fee is per-step in a load workflow |
-| **Is the boost fee per workflow or per prepare step?** Today one fee covers however many resources a generation needs. A load workflow with N steps may charge once or N times, which changes the price of boosting a multi-resource generation. | a multi-step load workflow's `whatif` shows which |
-| **Pre-submit or post-submit boost.** The ordering decision above. Not blocked on anything — it needs a product call. | Briant decides, and it is recorded here |
-| **Queue-item lifecycle.** The success path is meaningless after seconds; the cancel/refund path is the one whose whole value is being readable afterwards. | the asymmetry is specified before the card is built — Justin or Briant reviews a mock |
+| **Does raising the lane speed a transfer already in progress, or only queued ones?** Decides whether a generation whose big checkpoint is already downloading is worth boosting at all — the small resources behind it would gain, the large one in flight might not. Answered by the same experiment as the third assumption above. | the experiment is run |
+| **What a failed form-path boost shows.** The generation ran, the boost did not; the user must not be left believing they paid. | the copy exists and the queue path is reachable from it |
