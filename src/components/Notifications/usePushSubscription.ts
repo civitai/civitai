@@ -9,7 +9,10 @@ import { trpc } from '~/utils/trpc';
 function getPushSupport(): PushSupport {
   if (typeof window === 'undefined') return 'unsupported';
   if (!env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) return 'unsupported';
-  if ('serviceWorker' in navigator && 'PushManager' in window) return 'supported';
+  // 'Notification' can be absent while PushManager exists (Firefox with web notifications
+  // disabled) — reading Notification.permission there is a ReferenceError, not a denial.
+  if ('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window)
+    return 'supported';
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
   if (isIos && !isStandalone) return 'needs-standalone';
