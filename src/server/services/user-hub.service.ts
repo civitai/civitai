@@ -1668,7 +1668,10 @@ async function assertExcludedModelsFit(modelIds: number[]) {
 const hubTagWhere = {
   unlisted: false,
   adminOnly: false,
-  target: { hasEvery: [...HUB_TAG_SOURCE_FILTER.entityType] },
+  // Real image usage, not `Tag.target`: the tagger applies image tags whose target never
+  // gains Image, and gating on target refused them though images carry them. AllTime
+  // `imageCount` is what `searchHubTags` already ranks by. See `HUB_TAG_SOURCE_FILTER`.
+  metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
   type: { in: [...HUB_TAG_SOURCE_FILTER.types] },
 };
 
