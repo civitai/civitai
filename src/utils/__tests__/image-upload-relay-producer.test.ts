@@ -224,8 +224,9 @@ describe('the producer contract itself', () => {
   it('pins the LABEL set — which is not the caller set; see the ledger in its own file', () => {
     // ⚠ SCOPED DELIBERATELY, because an earlier version of this comment claimed more than
     // the assertion delivers. This pins the four LABEL values. It says nothing about how
-    // many CALLERS exist: `postImageUploadRelay`'s `producer` parameter is typed to this
-    // union, so a third call site is forced to reuse an existing label and compiles clean
+    // many CALLERS exist: `postImageUploadRelay`'s `producer` parameter is typed to
+    // `ClientDeclarableProducer` — the two-value SUBSET, not this four-value union — so a
+    // third call site is forced to reuse a real producer and compiles clean
     // — leaving this green while its traffic corrupts an already-attributed series, which
     // is worse than the `unknown` pooling the old wording described. The caller side is
     // pinned by `src/utils/__tests__/relay-caller-ledger.test.ts`, which walks the AST

@@ -900,6 +900,13 @@ describe('image-upload relay', () => {
       // but empty value. Measured at the time: deleting the empty-string branch turned two
       // tests red and NEITHER was in this file, so the route had no coverage of it.
       ['an empty header value', ''],
+      // 🔴 A CLIENT DECLARING A SERVER BUCKET — the exact input class a round-6 review
+      // found ACCEPTED verbatim onto the row a rollout is graded on. It is pinned in the
+      // sanitiser's own unit test, but the end-to-end claim (which counter row moves, and
+      // what the log event says) was unasserted here: widening the accept set turns two
+      // tests red and NEITHER is in this file.
+      ['a client-declared `unknown`', 'unknown'],
+      ['a client-declared `other`', 'other'],
       ['a label-injection attempt', 'multipart"} 99\ncivitai_image_upload_relay_total{outcome="x'],
     ])('buckets %s into `other` and mints NO new series', async (_name, header) => {
       // 🔴 `other`, not `unknown`: a header that ARRIVED and was not recognised is a

@@ -68,11 +68,19 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
    * 🔴 A HEADER ARRIVED AND WAS NOT RECOGNISED — kept SEPARATE from `unknown`, which is
    * this label's whole reason for existing applied to itself.
    *
-   * Three populations land here: a client we shipped that got the spelling wrong or is
-   * newer than this server, a client that computed an EMPTY value, and a caller sending
-   * something crafted. All are bucketed rather than dropped, because the route's invocation
-   * count must stay equal to the sum of this metric — dropping the increment would let a
-   * hostile caller hide its requests.
+   * FOUR populations land here. Three are client-side: a client we shipped that got the
+   * spelling wrong or is newer than this server, a client that computed an EMPTY value, and
+   * a caller sending something crafted (including one declaring a SERVER bucket — see
+   * `CLIENT_DECLARABLE_PRODUCERS`). All are bucketed rather than dropped, because the
+   * route's invocation count must stay equal to the sum of this metric, and dropping the
+   * increment would let a hostile caller hide its requests.
+   *
+   * 🔴 The fourth is OURS: a value reaching the metric's emitter that is not one of the four
+   * labels at all. That is a defect in our own derivation, and it lands here rather than in
+   * `unknown` because `unknown` is a claim about the REQUEST — that it carried no header —
+   * and the row a rollout is graded on must not absorb our bugs. Unreachable today (the
+   * route is the only emitter and always passes the sanitiser's total output), but it is
+   * what someone reading a moving `other` should be able to rule in or out.
    *
    * ⚠ IT USED TO BE FOLDED INTO `unknown`, AND THE REASONING FOR THAT WAS UNFALSIFIABLE.
    * The argument was "the unrecognised population is negligible during the window that

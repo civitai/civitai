@@ -167,7 +167,8 @@ const HELP =
   'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
   'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
-  'a closed set — the sanitiser rejects values outside the set but cannot verify one ' +
+  'a closed set — the sanitiser rejects anything that is not one of the two declarable ' +
+  'producers (single_put, multipart) but cannot verify one that is; ' +
   'inside it. To corroborate, read the USER IDS on the image-upload-relayed events and ' +
   'check the rescues belong to a plausible population; do NOT compare against those ' +
   'events producer field, which is the same derivation as this label and agrees by ' +
@@ -176,8 +177,10 @@ const HELP =
   'upload path; unknown = no header at all, EXPECTED to dominate ' +
   'while browsers still run a bundle older than the deploy that added the header, so read ' +
   'a large unknown share as stale clients rather than as a gap; other = a header arrived ' +
-  'and was not recognised, which is a DIFFERENT population (a client that got it wrong, or ' +
-  'a caller probing the route) and is kept on its own row so neither hides in the other. ' +
+  'and was not recognised, which is a DIFFERENT population (a client that got it wrong, a ' +
+  'caller probing the route, a caller declaring one of the server buckets, or — rarely — a ' +
+  'value our own emitter failed to recognise, which is a bug on our side rather than a ' +
+  'statement about the request) and is kept on its own row so neither hides in the other. ' +
   'Without this label a ' +
   'non-zero success count cannot be attributed to either caller. ' +
   'RARE per-pod counter, and prom-client counts die with the pod: for "has it ever helped?" ' +

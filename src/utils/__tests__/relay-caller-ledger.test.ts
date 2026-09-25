@@ -60,8 +60,13 @@ import { describe, expect, it } from 'vitest';
  *      fall behind the module it describes.
  *
  * ⚠ (2) bounds USES OF THE CONSTANT, not requests: a one-line `relayUrl()` indirection
- * keeps the count at two while adding a second request. What bounds requests is (3) — the
- * second request has to be exported to be reachable, and an unclassified export fails.
+ * keeps the count at two while adding a second request. (3) bounds NEW REACHABLE ENTRY
+ * POINTS — a second request has to be exported to be reachable, and an unclassified export
+ * fails. Neither bounds a second request added INSIDE an existing entry point, which needs
+ * no new export at all; that one is bounded BEHAVIOURALLY, by the exact-headers assertions
+ * in `src/utils/__tests__/upload-settlement.test.ts` and the hook-level case in
+ * `src/hooks/__tests__/useS3Upload.test.ts`. Measured: planting it turns three of those
+ * red and nothing in this file. Do not read (3) as covering it.
  *
  * It answers "who CAN reach the relay", never "with what arguments" — so it is
  * deliberately silent about which producer each caller declares. That claim is behavioural
@@ -83,6 +88,12 @@ import { describe, expect, it } from 'vitest';
  *     (`'/api/v1/image-upload' + '/relay'`). Pinned by a case below, so closing it makes
  *     that case fail and this line gets updated.
  *   - Reachability is not evaluated: a call behind a flag still counts as a reference.
+ *   - `export * from './x'` is not enumerated as an export of THIS module. A re-export
+ *     barrel in the helper module would therefore not be classified. Measured: planting one
+ *     still turned the ledger red, but via the SIBLING module appearing in the set rather
+ *     than via the classification — so the redness is incidental and the consumer importing
+ *     the re-exported name stayed invisible. Recorded rather than closed, because resolving
+ *     a star export means following the module graph.
  *   - The PREFILTER is a spelling — only files whose raw text mentions the identifier or
  *     the path tail are parsed. Its own control is below, and it is deliberately built on a
  *     hard-coded corpus rather than on `TEXT_HINTS`, because a control that interpolates
@@ -320,16 +331,30 @@ function referencesRelay(sf: ts.SourceFile): { helper: boolean; pathLiterals: nu
  */
 function exportedValueNames(sf: ts.SourceFile): string[] {
   const names: string[] = [];
+  // 🔴 An unnamed default has no identifier to report, so it is spelled `default` — which
+  // is also how it must be classified. See the `export default` note below.
+  const DEFAULT = 'default';
   const isExported = (node: ts.Node): boolean =>
     !!ts.getCombinedModifierFlags(node as ts.Declaration).valueOf() &&
     (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
 
   const visit = (node: ts.Node): void => {
-    if (ts.isFunctionDeclaration(node) && node.name && isExported(node)) {
-      names.push(node.name.text);
+    // 🔴 `node.name` is OPTIONAL here, and requiring it was a live escape. An anonymous
+    // `export default function () {}` has none, so the branch skipped it silently — and
+    // with it every export-shape check downstream. Measured: an anonymous default calling
+    // the helper, plus a consumer importing it, left all 132 tests green.
+    if (ts.isFunctionDeclaration(node) && isExported(node)) {
+      names.push(node.name ? node.name.text : DEFAULT);
     }
-    if (ts.isClassDeclaration(node) && node.name && isExported(node)) {
-      names.push(node.name.text);
+    if (ts.isClassDeclaration(node) && isExported(node)) {
+      names.push(node.name ? node.name.text : DEFAULT);
+    }
+    // 🔴 `export default <expr>` is an ExportAssignment, not a declaration with a modifier,
+    // so NONE of the branches above sees it. This is not a hypothetical shape in this repo
+    // — `src/utils/lazy-motion.ts` uses it, and no lint rule forbids it. It was the escape
+    // that made this guard's "adding ANY export fails" claim false.
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      names.push(DEFAULT);
     }
     if (ts.isVariableStatement(node) && isExported(node)) {
       for (const decl of node.declarationList.declarations) {
@@ -361,6 +386,15 @@ function countPathConstantRefs(sf: ts.SourceFile): number {
   return count;
 }
 
+/** Every production file under `ROOTS`. Shared by the sweep and the narrowing ledger. */
+function allProductionFiles(): string[] {
+  const files: string[] = [];
+  for (const root of ROOTS) walkFiles(path.join(REPO_ROOT, root), files);
+  return files.filter((abs) =>
+    isProductionFile(path.relative(REPO_ROOT, abs).split(path.sep).join('/'))
+  );
+}
+
 function scan(): {
   referencing: string[];
   candidates: string[];
@@ -368,8 +402,7 @@ function scan(): {
   helperExportNames: string[];
   pathLiteralsByFile: Record<string, number>;
 } {
-  const files: string[] = [];
-  for (const root of ROOTS) walkFiles(path.join(REPO_ROOT, root), files);
+  const files = allProductionFiles();
 
   const referencing: string[] = [];
   const candidates: string[] = [];
@@ -378,7 +411,6 @@ function scan(): {
   let helperExportNames: string[] = [];
   for (const abs of files) {
     const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
-    if (!isProductionFile(rel)) continue;
     const text = fs.readFileSync(abs, 'utf8');
     const ledgered = CALLER_LEDGER.includes(rel);
     // Ledgered files are parsed unconditionally, so the prefilter can never drop one.
@@ -467,6 +499,55 @@ describe('the relay caller ledger', () => {
     }
   });
 
+  it('🔴 pins WHICH module uses WHICH of the two narrowings', () => {
+    // 🔴 THE TWO NARROWINGS ARE CONFUSABLE BY DESIGN, and choosing wrong in either
+    // direction is a shipped defect this change has already measured twice:
+    //
+    //   `sanitizeImageUploadRelayProducer` narrows CLIENT input against the two declarable
+    //   producers. Used by the ROUTE, on the header. Using it on a server-derived value
+    //   rewrites every stale-bundle rescue to `other` and empties the row a rollout is
+    //   graded on.
+    //
+    //   `isImageUploadRelayProducer` narrows a value OUR OWN code derived, against the four
+    //   labels. Used by the METRIC EMITTER. Using it on a header would accept a client
+    //   declaring `unknown` — writing to that same row.
+    //
+    // Both wrong directions are red today. What was holding the CHOICE for a future site
+    // was two docstrings — which is the shape this file spent three rounds proving is not a
+    // guard. So the consumer set is pinned like everything else here.
+    const NARROWING_CONSUMERS: Record<string, string[]> = {
+      sanitizeImageUploadRelayProducer: ['src/pages/api/v1/image-upload/relay.ts'],
+      isImageUploadRelayProducer: ['src/server/prom/image-upload-relay.metrics.ts'],
+    };
+    const DEFINING_MODULE = 'src/utils/image-upload-relay-producer.ts';
+
+    const found: Record<string, string[]> = {
+      sanitizeImageUploadRelayProducer: [],
+      isImageUploadRelayProducer: [],
+    };
+    for (const abs of allProductionFiles()) {
+      const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
+      if (rel === DEFINING_MODULE) continue; // it declares both, by definition
+      const text = fs.readFileSync(abs, 'utf8');
+      if (!Object.keys(found).some((n) => text.includes(n))) continue;
+      const sf = parse(rel, text);
+      const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && node.text in found && !isInertContext(node)) {
+          if (!found[node.text].includes(rel)) found[node.text].push(rel);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
+    }
+
+    for (const [fn, expected] of Object.entries(NARROWING_CONSUMERS)) {
+      expect(found[fn].sort(), `consumers of ${fn}`).toEqual([...expected].sort());
+    }
+    // POSITIVE CONTROL: the scan must have found something, or two empty sets would match
+    // two empty expectations.
+    expect(Object.values(found).flat().length, 'the narrowing scan found nothing').toBe(2);
+  });
+
   it('POSITIVE CONTROL: the export scan sees exports written in every shape', () => {
     // 🔴 Without this the classification assertion is satisfiable by an export scan that
     // sees nothing: an empty set compared against an empty classification. Each shape below
@@ -479,6 +560,13 @@ describe('the relay caller ledger', () => {
       ['class', 'export class F {}', ['F']],
       ['named re-export of locals', 'const g = 1;\nexport { g };', ['g']],
       ['async function', 'export async function h() {}', ['h']],
+      // 🔴 The four default-export shapes, every one of which the scan missed. The first
+      // was planted as a live third caller and left every test green.
+      ['default expression', 'const i = 1;\nexport default i;', ['default']],
+      ['default arrow', 'export default () => 1;', ['default']],
+      ['default anonymous function', 'export default function () {}', ['default']],
+      ['default anonymous class', 'export default class {};', ['default']],
+      ['default NAMED function', 'export default function j() {}', ['j']],
     ];
     for (const [name, source, expected] of shapes) {
       expect(exportedValueNames(parse('src/x.ts', source)).sort(), `shape "${name}"`).toEqual(
