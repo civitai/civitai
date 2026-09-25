@@ -519,6 +519,7 @@ export interface PageBlockHostProps {
   /** The minted, viewer-scoped page token (no money scopes). */
   token: string | null;
   expiresAt: string | null;
+  tokenKind?: 'block' | 'oauth';
   /** #3/#6: the page manifest's declared scopes. The host posts the ACTUAL
    *  granted set (declared − missingScopes) in BLOCK_INIT so the block sees the
    *  scopes the JWT actually carries (e.g. `apps:storage:*`), not `[]`. */
@@ -708,6 +709,7 @@ export function PageBlockHost({
   slug,
   token,
   expiresAt,
+  tokenKind,
   declaredScopes,
   missingScopes,
   needsConsent,
@@ -1187,6 +1189,7 @@ export function PageBlockHost({
         // about the capabilities it holds.
         scopes: grantedScopes,
         expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
       },
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
@@ -1213,6 +1216,7 @@ export function PageBlockHost({
       blockInstanceId,
       buildContext,
       expiresAt,
+      tokenKind,
       grantedScopes,
       token,
       viewer,
@@ -1403,9 +1407,14 @@ export function PageBlockHost({
   useEffect(() => {
     if (!initSentRef.current || !token) return;
     send('TOKEN_REFRESH', {
-      token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
+      token: {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
+      },
     });
-  }, [token, expiresAt, grantedScopes, send]);
+  }, [token, expiresAt, tokenKind, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
   //
@@ -1452,7 +1461,12 @@ export function PageBlockHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
+      const wrapped = {
+        raw: token,
+        scopes: grantedScopes,
+        expiresAt: expiresAt ?? '',
+        ...(tokenKind ? { kind: tokenKind } : {}),
+      };
       if (requestId === undefined) {
         send('TOKEN_REFRESH', { token: wrapped });
         return;
@@ -1460,7 +1474,7 @@ export function PageBlockHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, grantedScopes, send, onMessage, reportNoToken]);
+  }, [token, expiresAt, tokenKind, grantedScopes, send, onMessage, reportNoToken]);
 
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
@@ -1934,7 +1948,9 @@ export function PageBlockHost({
   const getMyBuzzAccountsMutation = trpc.blocks.getMyBuzzAccounts.useMutation();
   const getMyDailyCompensationMutation = trpc.blocks.getMyDailyCompensation.useMutation();
   // Viewer self-read bridge (a page block reading "who am I") — backs the SDK
-  // `useViewer()` hook and is the host-mediated successor to GET /blocks/me. A
+  // `useViewer()` hook and is the host-mediated TWIN of GET /blocks/me, not its
+  // successor — both stay; the REST route is the default surface for a viewer
+  // read (see "Direction" under Routes in docs/features/app-blocks.md). A
   // MUTATION for the same bearer-token reason as getMyBuzzBalance; requires the
   // `user:read:self` scope server-side.
   const getMyViewerMutation = trpc.blocks.getMyViewer.useMutation();
@@ -2489,9 +2505,11 @@ export function PageBlockHost({
   }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack, reportNoToken]);
 
   // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
-  // that backs the SDK `useViewer()` hook — the host-mediated successor to the
-  // GET /blocks/me REST call, so a page block can render the viewer's name /
-  // gate write UI on their moderation status without holding the scope directly.
+  // that backs the SDK `useViewer()` hook — the host-mediated TWIN of the
+  // GET /blocks/me REST call (not its successor; both stay, and the REST route
+  // is the default surface for this read), so a page block can render the
+  // viewer's name / gate write UI on their moderation status without holding
+  // the scope directly.
   // Host-MEDIATED: the iframe never sees a session; the identity is derived from
   // the token's SELF-BOUND `sub` server-side (never client input), gated on the
   // `user:read:self` scope. GET_VIEWER takes NO params, so only the host page

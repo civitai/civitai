@@ -39,12 +39,13 @@ import { describe, expect, it } from 'vitest';
  *
  * ## 🔴 THE NAME IS AMBIGUOUS AND MATCHING ON IT IS WRONG
  *
- * `apps.router.ts` declares its OWN module-private `assertAppBlocksEnabledForTokenUser`,
+ * `services/apps/app-storage.service.ts` declares its OWN module-private
+ * `assertAppBlocksEnabledForTokenUser`,
  * taking `(userId, op)` and incrementing `appStorageOpsCounter` on both refusals. It is a
  * deliberate, documented divergence — NOT a consumer of the shared gate. A ledger that
  * grepped the bare name would count it, then "reconcile" two functions that are separate on
  * purpose. So consumption is resolved by IMPORT of the service module, never by name, and
- * `apps.router.ts` is asserted as an explicit NEGATIVE control below: if it ever starts
+ * that module is asserted as an explicit NEGATIVE control below: if it ever starts
  * matching, the discriminator has broken and every number here is suspect.
  */
 
@@ -61,7 +62,10 @@ const DEFINING_MODULE = 'src/server/services/blocks/block-token-access.service.t
  * the positive control that import-resolution really is discriminating, rather than this
  * file silently matching nothing at all.
  */
-const NAME_COLLISION_MODULE = 'src/server/routers/apps.router.ts';
+// (It lived in `src/server/routers/apps.router.ts` until the per-viewer storage
+// implementation moved out so the `/api/v1/blocks/app-storage/*` routes could import it
+// without module-evaluating `appsRouter`. Same private function, new file.)
+const NAME_COLLISION_MODULE = 'src/server/services/apps/app-storage.service.ts';
 
 /**
  * Every PRODUCTION consumer of the SHARED gate, with its call count and why it is allowed
@@ -73,9 +77,27 @@ const NAME_COLLISION_MODULE = 'src/server/routers/apps.router.ts';
  */
 const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> = {
   'src/server/routers/blocks.router.ts': {
-    calls: 17,
+    // 17 → 15, in TWO independent extractions that each moved one inline call out of this
+    // router and into a body shared with a new REST twin. Neither dropped a gate:
+    //   -1  `getImagesByIds`      → block-gated-images-read.service.ts (GET /gated-images)
+    //   -1  `updateUserSettings`  → user-settings.service.ts          (POST /user-checkpoint/set)
+    // Both landed as their own ledger entries below, so net production call sites are
+    // unchanged — the count moved between rows, it did not leave the table.
+    calls: 15,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject.',
+    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
+  },
+  'src/server/services/blocks/block-gated-images-read.service.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims verified by the caller — authorizeBlockBridgeToken on the bridge, withBlockScope on REST',
+    why: 'The shared body of the per-viewer gated image read, called by BOTH blocks.getImagesByIds and GET /api/v1/blocks/gated-images. It is the first entry here that is neither a router nor a route: the gate sits in the shared body precisely so the two transports cannot disagree about whether the kill-switch ran. The subject is still self-bound — the function takes CLAIMS, never a user id, and derives the subject itself, so no caller can pass one in.',
+  },
+  'src/server/services/blocks/user-settings.service.ts': {
+    calls: 1,
+    selfBinds:
+      'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken — taken by the CALLER (the router proc, or this module’s own token-taking wrapper) and passed in as verified claims, never as a client-supplied id',
+    why: 'The per-viewer block-settings write, shared by BOTH transports: the tRPC bridge proc blocks.updateUserSettings and the REST route /api/v1/blocks/user-checkpoint/set. Sharing this exact function is what makes the two doors agree about the kill switch — the same reason me.ts is in this set. The subject it binds to is also the subject the write is KEYED on (block_user_settings.user_id), so a gate evaluated against anything else would be checking a different person than the row belongs to.',
   },
   'src/pages/api/v1/blocks/me.ts': {
     calls: 1,
@@ -143,7 +165,7 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     expect(actual).toEqual(expected);
   });
 
-  it('NEGATIVE CONTROL: the same-named private function in apps.router.ts is NOT counted', () => {
+  it('NEGATIVE CONTROL: the same-named private function in app-storage.service.ts is NOT counted', () => {
     // It declares its own `(userId, op)` variant and imports nothing from the service. If
     // this ever flips, the import discriminator has broken and both assertions above are
     // measuring the wrong population rather than passing honestly.
@@ -159,7 +181,9 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // walk reached a meaningful number of files, and that the detector fires on a known
     // consumer's actual source.
     expect(files.length).toBeGreaterThan(500);
-    expect(consumers.length).toBe(2);
+    // 2 → 4: `block-gated-images-read.service.ts` (the extracted gated-image read body)
+    // and `user-settings.service.ts` (the extracted viewer-settings write body).
+    expect(consumers.length).toBe(4);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

@@ -389,11 +389,21 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           py="md"
           style={{ borderColor: 'var(--mantine-color-dark-4)' }}
         >
-          <Group gap="xs">
-            <IconLayersLinked size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
-            <Text fw={600} c="white">
-              Additional Components
-            </Text>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
+            <Group gap="xs">
+              <IconLayersLinked size={20} style={{ color: 'var(--mantine-color-dimmed)' }} />
+              <Text fw={600} c="white">
+                Additional Components
+              </Text>
+            </Group>
+            {modelVersionId && (
+              <AddFromImportsButton
+                modelVersionId={modelVersionId}
+                types={additionalFileTypes}
+                label="Add components from imports"
+                title="Add components from Hugging Face imports"
+              />
+            )}
           </Group>
           <Text size="sm" c="dimmed" mt={4}>
             Components and files that accompany this model. Mark each as required or optional.

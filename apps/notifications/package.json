@@ -1,6 +1,6 @@
 {
   "name": "@civitai/notifications-app",
-  "version": "0.0.12",
+  "version": "0.0.14",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -22,6 +22,7 @@
     "lodash-es": "^4.17.21",
     "pg-format": "^1.0.4",
     "prom-client": "^14.2.0",
+    "web-push": "^3.6.7",
     "zod": "^4.0.17"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "@types/node": "^20.19.9",
     "@types/pg": "^8.11.10",
     "@types/pg-format": "^1.0.5",
+    "@types/web-push": "^3.6.4",
     "tsup": "^8.5.0",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2",

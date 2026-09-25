@@ -30,7 +30,13 @@ export const transactionMetadataSchema = z.discriminatedUnion('type', [buzzPurch
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
 export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  // Whole minor units, same rule as the Stripe and Coinbase routes — the purchase form's
+  // Buzz-to-cents division is the shared source of a fraction. See `coinbase.schema.ts`.
+  unitAmount: z
+    .number()
+    .int('The transaction amount must be a whole number of cents')
+    .min(constants.buzz.minChargeAmount)
+    .max(constants.buzz.maxChargeAmount),
   currency: z
     .string()
     .default('USD')

@@ -96,14 +96,24 @@ const {
   };
 });
 
-vi.mock('~/env/server', () => ({
-  env: {
+const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
+  mockEnv: {
     NEXTAUTH_URL: 'https://civitai.com',
-    TRPC_ORIGINS: [],
+    TRPC_ORIGINS: [] as string[],
     BLOCK_TOKEN_PRIVATE_KEY: 'fake-private',
     BLOCK_TOKEN_PUBLIC_KEY: 'fake-public',
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: false,
+  },
+  mockDevOauth: {
+    mintDevTunnelOauthToken: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      token: 'civ_dev_oauth',
+      expiresAt: '2099-01-01T00:15:00Z',
+    })),
+    devTunnelClientId: (userId: number, slug: string) => `appdev-${userId}-${slug}`,
   },
 }));
+vi.mock('~/env/server', () => ({ env: mockEnv }));
+vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -202,6 +212,7 @@ async function invoke(body: unknown) {
 describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = false;
     mockSession.value = MOD;
     mockRedis.incrBy.mockResolvedValue(1);
     mockRedis.ttl.mockResolvedValue(60);
@@ -424,6 +435,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
         sessionId: 'bki_testsession',
         scopes: ['ai:write:budgeted', 'user:read:self'],
         spendGranted: true,
+        kind: 'block',
       });
       // DUAL-SINK RELATIONSHIP: the mirror is exactly the Axiom payload plus `event`.
       const axiom = log.info.mock.calls.find(
@@ -485,6 +497,37 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(res._status).toBe(200);
     // The non-approved branch never ran for an approved app.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).not.toHaveBeenCalled();
+  });
+
+  it('mints a hub token on the app’s REAL client when the tunnel declares auth: "oauth", consenting the owner directly', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'oauth',
+    });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ token: 'civ_dev_oauth', kind: 'oauth', needsConsent: false });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(mockDevOauth.mintDevTunnelOauthToken).toHaveBeenCalledWith({
+      userId: MOD.user.id,
+      clientId: 'appblk-my-app',
+      scopes: ['ai:write:budgeted', 'user:read:self'],
+    });
+  });
+
+  it('the stored manifest’s auth decides when the CLI declared nothing', async () => {
+    mockEnv.APP_BLOCK_OAUTH_TOKENS_ENABLED = true;
+    mockBlockRegistry.resolveOwnedNonApprovedPageBlock.mockResolvedValue(
+      OWNED_RESOLUTION({ manifest: { ...OWNED_RESOLUTION().manifest, auth: 'oauth' } })
+    );
+    expect((await invoke(DEV_BODY()))._body.kind).toBe('oauth');
+
+    mockDevTunnelService.getActiveDevTunnel.mockResolvedValue({
+      sessionId: 'bki_testsession',
+      declaredAuth: 'block-token',
+    });
+    expect((await invoke(DEV_BODY()))._body.kind).toBe('block');
   });
 
   it('an ephemeral-<slug> id is NOT handled by this branch (belongs to tryDevTunnelScopedMint)', async () => {

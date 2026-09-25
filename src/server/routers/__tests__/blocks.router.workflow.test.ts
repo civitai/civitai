@@ -484,6 +484,10 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket, not the catalog one. Declared here
+  // because the router imports it: a factory that omits an export the module under test binds
+  // makes every call through it throw `No "…" export is defined on the mock`.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 // 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
 // BOUNDARY. The customComfy INLINE arm's entitlement belt
@@ -10107,24 +10111,34 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // physically enforces. It must track the DECLARED number, never the
     // reservation — an app that declares 20 has consented to 20 seconds of
     // runtime, not to whatever the quote came back as.
-    it('stamps a step timeout derived from maxBuzz, NOT from the reservation', async () => {
+    it('stamps NO step timeout once the orchestrator has quoted the job', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(31, 31);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBeUndefined();
+      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBeUndefined();
+    });
+
+    // The control for the one above: with no quote the timeout is the only bound
+    // on spend, so it is still derived from maxBuzz — never from the reservation.
+    it('stamps the maxBuzz timeout when the orchestrator gives no quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(null, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
       // 20 s → HH:MM:SS. 31 would render `00:00:31`, so this cannot pass on the
       // reservation.
       expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:00:20');
-      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:00:20');
     });
 
-    it('scales the timeout with maxBuzz (two points, not one)', async () => {
+    it('scales the unquoted timeout with maxBuzz (two points, not one)', async () => {
       // 125 is above the default per-call budget, so raise it — otherwise the
       // static gate refuses before a step is ever built and the assertion below
       // reads `undefined`, which is how this case first failed.
       mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 200 }));
       happyUser();
-      ptQuoting(1, 1);
+      ptQuoting(null, 1);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ maxBuzz: 125 }) });
       expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:02:05');
     });

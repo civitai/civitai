@@ -105,7 +105,30 @@ export function Krea2StyleReferencesInput({
           max={limit}
           aspect="square"
         >
-          {() => <SourceImageUploadMultiple.Dropzone className="h-24" />}
+          {(previewItems) => {
+            // Completed images are rendered as strength rows below, so surface only
+            // the in-flight and errored uploads here. Without this the uploader's
+            // pending/error items are invisible yet still count toward `max`, so a
+            // slow or blocked upload silently eats a slot and hides the dropzone
+            // with no way to see or clear it.
+            const pending = previewItems
+              .map((item, index) => ({ item, index }))
+              .filter(({ item }) => item.status !== 'complete');
+            return (
+              <Stack gap="sm">
+                <SourceImageUploadMultiple.Dropzone className="h-24" />
+                {pending.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {pending.map(({ item, index }) => (
+                      <div key={item.id ?? index} className="w-20">
+                        <SourceImageUploadMultiple.Image index={index} {...item} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Stack>
+            );
+          }}
         </SourceImageUploadMultiple>
 
         {entries.length > 0 && (

@@ -108,6 +108,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket; declared so the poll cases here reach
+  // the moderation path instead of failing on a missing mock export.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');

@@ -2,6 +2,7 @@ import type { GetObjectCommandInput } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
@@ -358,6 +359,172 @@ export async function urlsSafeToDelete(
 }
 
 /**
+ * Why this reports an OUTCOME rather than returning void.
+ *
+ * Every early return below is a case where the object is STILL THERE: the refcount guard
+ * declined, the bucket is not allowlisted, the url did not parse. A caller that treats "did not
+ * throw" as "deleted" therefore records a deletion that did not happen — and for the two callers
+ * that keep their row and set `dataPurged: true`, that writes a durable lie: the row leaves the
+ * eligible set forever while the bytes remain. That is strictly worse than a thrown error, which
+ * at least leaves the row to be retried.
+ *
+ * So a skip is reported, not silent. `deleted: false` is not an error and must not be logged as
+ * one — `still-referenced` in particular is the guard working as designed.
+ */
+export type DeleteModelFileObjectOutcome =
+  | { deleted: true }
+  | {
+      deleted: false;
+      reason:
+        | 'empty-url'
+        | 'still-referenced'
+        | 'bucket-not-allowed'
+        | 'unparseable'
+        // 🔴 THE THREE BELOW ARE QUARANTINE REFUSALS AND THEY ALL MEAN THE SAME THING TO A
+        // CALLER: THE OBJECT IS STILL THERE. They are separated because they need different
+        // human responses — `not-configured` is an operator task, `copy-failed` is usually the
+        // backend, `verify-failed` means the copy landed but did not match and is the one worth
+        // waking up for. Collapsing them into one reason would be the same mistake
+        // `bucket-not-allowed` was fixed for above: a refusal nobody can act on.
+        | 'quarantine-not-configured'
+        | 'quarantine-copy-failed'
+        | 'quarantine-verify-failed';
+    };
+
+/**
+ * The quarantine bucket for a backend, or `undefined` when none is configured.
+ *
+ * 🔴 ONLY `b2` HAS ONE TODAY, AND THE ASYMMETRY IS DELIBERATE RATHER THAN UNFINISHED. The
+ * `default` (R2) backend returns `undefined`, so a caller that opts into quarantine for an R2
+ * url is REFUSED rather than hard-deleted. That is the safe direction and it is the whole reason
+ * this returns `undefined` instead of falling back to the source bucket: a fallback would delete
+ * for real while the call site's code reads as if it quarantined.
+ *
+ * To extend to R2, add its bucket here — not a special case at a call site.
+ */
+export function getQuarantineBucket(backend: 'b2' | 'default'): string | undefined {
+  if (backend === 'b2') return env.S3_UPLOAD_B2_QUARANTINE_BUCKET || undefined;
+  return undefined;
+}
+
+/**
+ * A client for the quarantine path, or `undefined` when one is not configured.
+ *
+ * 🔴 WHY THIS IS NOT `getB2S3Client()`, WHICH WOULD HAVE BEEN ONE LINE INSTEAD OF THIS BLOCK.
+ * A server-side copy is a single call that reads from one bucket and writes to another, so ONE
+ * credential has to be authorised for both. B2 pins a restricted application key to exactly one
+ * bucket, so no bucket-scoped key can ever perform this copy — the copying credential is
+ * necessarily account-wide.
+ *
+ * The upload credential is bucket-scoped, and it is used by every model-file upload, download and
+ * presign in the application. Reusing it here is impossible; widening IT to account-wide to make
+ * this work would broaden the hottest storage path in the product from one bucket to the whole
+ * account, to enable a nightly cleanup job. So the wide credential is confined to this path
+ * instead, and it is the only thing that uses it.
+ *
+ * 🔴 The whole quarantine sequence uses this one client — head source, copy, head copy, delete
+ * source. Mixing clients mid-sequence would mean the delete ran under a different authorisation
+ * than the copy it is predicated on, which is how a verified copy ends up paired with a delete
+ * that was never actually permitted to be conditional on it.
+ *
+ * Endpoint and region are shared with the upload client deliberately: it is the same B2 account,
+ * and a second copy of those values is a second thing to get wrong.
+ */
+export function getQuarantineS3Client(): S3Client | undefined {
+  if (!env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY || !env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY)
+    return undefined;
+  if (!env.S3_UPLOAD_B2_ENDPOINT) return undefined;
+  // 🔴 INSTRUMENTED, LIKE `getB2S3Client()` — and this is not symmetry for its own sake.
+  // `opForCommand` in the B2 PUT metrics middleware counts `CopyObjectCommand` explicitly, and a
+  // copy is the ONE write this client exists to make. An uninstrumented client here would leave
+  // the B2 write metrics blind to a capped batch of copies every night — the operation would be
+  // the largest single source of B2 writes outside user uploads, and would appear in the counters
+  // as nothing at all. The middleware self-guards and cannot throw into the operation.
+  return instrumentB2Client(
+    new S3Client({
+      credentials: {
+        accessKeyId: env.S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY,
+        secretAccessKey: env.S3_UPLOAD_B2_QUARANTINE_SECRET_KEY,
+      },
+      region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+      endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+      forcePathStyle: true,
+    })
+  );
+}
+
+/**
+ * Where an object lands in quarantine: its source bucket, then its original key.
+ *
+ * 🔴 THE SOURCE BUCKET PREFIX IS LOAD-BEARING, NOT DECORATION. Keys are only unique WITHIN a
+ * bucket, and this codebase deletes from several (the allowlist names six). Quarantining on the
+ * bare key would let an object from one bucket silently overwrite a same-keyed object from
+ * another — turning a safety net into a second way to lose data. It also makes a restore
+ * unambiguous: the prefix names the bucket to put it back into.
+ */
+export function quarantineKeyFor(sourceBucket: string, key: string): string {
+  return `${sourceBucket}/${key}`;
+}
+
+/**
+ * Copy an object into quarantine and prove the copy arrived intact.
+ *
+ * Returns the SOURCE version that was copied, when the backend reports one. That value is what
+ * makes the subsequent delete precise: see the call in {@link deleteModelFileObject}.
+ *
+ * 🔴 IT VERIFIES BY SIZE AND FAILS CLOSED ON "UNKNOWN". `headObject` reports `size: null` when
+ * the backend did not give one, and its own docs say a size check must not FIRE on that — which
+ * is correct for a check guarding a read path and exactly wrong here. This one guards a DELETE:
+ * an unverifiable copy must block it, so `null` on either side is a refusal, not a pass. The two
+ * rules are not in conflict; they are different questions about the same `null`.
+ *
+ * ⚠ A single `CopyObject` is capped by the backend (5 GiB on B2/S3-compatible). Above that this
+ * throws, which lands on `copy-failed`, which refuses the delete — so an oversized object is
+ * skipped and reported rather than deleted without a copy. That is the correct failure, but it
+ * is a SKIP that recurs every pass, so a persistent `copy-failed` on the same id means the
+ * object needs a multipart copy this function does not implement.
+ */
+async function copyToQuarantine(args: {
+  s3: S3Client;
+  sourceBucket: string;
+  key: string;
+  quarantineBucket: string;
+}): Promise<
+  { ok: true; sourceVersionId?: string } | { ok: false; reason: 'copy-failed' | 'verify-failed' }
+> {
+  const { s3, sourceBucket, key, quarantineBucket } = args;
+  const destKey = quarantineKeyFor(sourceBucket, key);
+
+  // Read the source size BEFORE the copy. Doing it after would race a concurrent overwrite and
+  // compare the new object against the copy of the old one.
+  const source = await headObject(sourceBucket, key, s3);
+  if (source.status !== 'present' || typeof source.size !== 'number')
+    return { ok: false, reason: 'copy-failed' };
+
+  let sourceVersionId: string | undefined;
+  try {
+    const res = await s3.send(
+      new CopyObjectCommand({
+        Bucket: quarantineBucket,
+        Key: destKey,
+        // `CopySource` is a single bucket/key string and must be URL-encoded: model file keys
+        // contain characters that otherwise truncate or re-point the source.
+        CopySource: `${sourceBucket}/${key}`.split('/').map(encodeURIComponent).join('/'),
+      })
+    );
+    sourceVersionId = res?.CopySourceVersionId ?? undefined;
+  } catch {
+    return { ok: false, reason: 'copy-failed' };
+  }
+
+  const dest = await headObject(quarantineBucket, destKey, s3);
+  if (dest.status !== 'present' || typeof dest.size !== 'number' || dest.size !== source.size)
+    return { ok: false, reason: 'verify-failed' };
+
+  return { ok: true, sourceVersionId };
+}
+
+/**
  * Delete the S3 object referenced by a ModelFile URL.
  * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
  * never assumes a single bucket env var, since ModelFile URLs span historical
@@ -368,44 +535,169 @@ export async function urlsSafeToDelete(
  * pointing the delete at an arbitrary bucket (defense in depth — schema
  * validation is z.url() only).
  *
- * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`)
- * — see `urlsSafeToDelete`.
+ * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`,
+ * `delete-old-training-data`) — see `urlsSafeToDelete`.
+ *
+ * 🔴 Returns a `DeleteModelFileObjectOutcome`; see the type above for why. A caller that only
+ * cares about "best effort, don't block" may ignore it, and several do.
  */
-export async function deleteModelFileObject(url: string, excludeId?: number) {
-  if (!url) return;
+/**
+ * Where a ModelFile url would be deleted from, or why it would not be — the LOCAL half of the
+ * decision, with no database access and no network.
+ *
+ * 🔴 IT EXISTS SO THERE IS ONE AUTHORITY, NOT TWO. A caller that wants to preview a delete
+ * without performing one (a dry run) otherwise has to re-implement backend selection and the
+ * allowlist, and the copy drifts from the original the first time either changes — which is
+ * exactly the defect class this whole change came out of. `deleteModelFileObject` below is a
+ * consumer of this function, not a parallel implementation of it.
+ *
+ * What it deliberately CANNOT tell you: whether the object is still referenced. That answer needs
+ * a query, so a preview built on this function must say it has not checked rather than imply the
+ * delete would succeed.
+ */
+export type ModelFileDeleteTarget =
+  | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
+  | { ok: false; reason: 'empty-url' | 'unparseable' }
+  // 🔴 `bucket-not-allowed` CARRIES THE BUCKET, and the other two refusals cannot. A refusal that
+  // only says "not allowed" is unqueryable: the field that names WHICH foreign bucket was
+  // targeted is the whole value of this event to anyone investigating. An earlier version of this
+  // type collapsed all three refusals into a bare `reason`, which silently dropped that field
+  // from the warn below — the plural helper still logs it, so one event name had two payload
+  // shapes and nothing said so.
+  | { ok: false; reason: 'bucket-not-allowed'; backend: 'b2' | 'default'; bucket: string };
+
+export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
+  if (!url) return { ok: false, reason: 'empty-url' };
+  const b2 = parseB2Url(url);
+  if (b2) {
+    if (!isAllowedModelFileBucket(b2.bucket))
+      return { ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: b2.bucket };
+    return { ok: true, backend: 'b2', bucket: b2.bucket, key: b2.key };
+  }
+  const { key, bucket } = parseKey(url);
+  if (!key || !bucket) return { ok: false, reason: 'unparseable' };
+  if (!isAllowedModelFileBucket(bucket))
+    return { ok: false, reason: 'bucket-not-allowed', backend: 'default', bucket };
+  return { ok: true, backend: 'default', bucket, key };
+}
+
+export async function deleteModelFileObject(
+  url: string,
+  excludeId?: number,
+  // 🔴 QUARANTINE IS OPT-IN PER CALL SITE, AND THAT IS A POLICY DECISION, NOT AN OVERSIGHT.
+  // The mechanics live here so there is one authority — the same argument this file already
+  // makes for `resolveModelFileDeleteTarget`. What is NOT shared is the choice: turning it on
+  // globally would change the behaviour of every existing caller in the same commit that
+  // introduced it, including ones whose deletes nobody has re-examined. A caller adopts it
+  // deliberately, and its absence leaves that caller byte-for-byte as it was.
+  { quarantine = false }: { quarantine?: boolean } = {}
+): Promise<DeleteModelFileObjectOutcome> {
+  // ⚠ THE LOCAL CHECKS NOW RUN BEFORE THE REFCOUNT QUERY, WHERE THEY USED TO RUN AFTER. Both are
+  // still required before anything is deleted, so the guarantee is unchanged; what changes is
+  // that a url which can never be deleted no longer costs a database round-trip, and a url that
+  // is both still-referenced and non-allowlisted now reports the latter. Ordering the free checks
+  // first is also what lets a dry run reuse this decision without touching the database.
+  const target = resolveModelFileDeleteTarget(url);
+  if (!target.ok) {
+    if (target.reason === 'bucket-not-allowed') {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        // 'r2' rather than 'default' so this payload stays identical to the plural helper's,
+        // which is the other producer of this event name. Two shapes under one name is how a
+        // group-by silently returns half the truth.
+        backend: target.backend === 'b2' ? 'b2' : 'r2',
+        bucket: target.bucket,
+        url,
+      });
+    }
+    return { deleted: false, reason: target.reason };
+  }
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
   const { safe } = await urlsSafeToDelete([url], excludeId);
-  if (safe.length === 0) return;
-  const b2 = parseB2Url(url);
-  if (b2) {
-    if (!isAllowedModelFileBucket(b2.bucket)) {
-      logToAxiom({
-        type: 'warn',
-        name: 'model-file-delete-s3-object-blocked',
-        backend: 'b2',
-        bucket: b2.bucket,
-        url,
-      });
-      return;
-    }
-    return deleteObject(b2.bucket, b2.key, getB2S3Client());
+  if (safe.length === 0) return { deleted: false, reason: 'still-referenced' };
+
+  if (!quarantine) {
+    // Constructed inside the branch: both client factories THROW on unconfigured credentials, and
+    // the quarantine path below does not use this client at all. Building it up-front would let a
+    // missing UPLOAD credential fail a quarantine delete that never needed it.
+    await deleteObject(
+      target.bucket,
+      target.key,
+      target.backend === 'b2' ? getB2S3Client() : getS3Client()
+    );
+    return { deleted: true };
   }
-  const { key, bucket } = parseKey(url);
-  if (!key || !bucket) return;
-  if (!isAllowedModelFileBucket(bucket)) {
-    logToAxiom({
-      type: 'warn',
-      name: 'model-file-delete-s3-object-blocked',
-      backend: 'r2',
-      bucket,
-      url,
-    });
-    return;
-  }
-  await deleteObject(bucket, key);
+
+  const quarantineBucket = getQuarantineBucket(target.backend);
+  // 🔴 A QUARANTINE BUCKET EQUAL TO THE SOURCE IS NOT A CONFIGURATION, IT IS A TYPO, AND IT IS
+  // THE ONE MISCONFIGURATION THAT CAUSES REAL HARM RATHER THAN A REFUSAL. The copy would land in
+  // the LIVE bucket under a doubled key, the original would then be deleted for real, and the
+  // retention rule this design depends on — written for a bucket that holds only condemned
+  // objects — would be expiring live ones. Refused for the same reason and with the same remedy
+  // as an unset value: there is no usable quarantine destination, so fix the configuration.
+  if (!quarantineBucket || quarantineBucket === target.bucket)
+    return { deleted: false, reason: 'quarantine-not-configured' };
+
+  // 🔴 A DIFFERENT CLIENT FROM `s3` ABOVE, AND NOT AN OPTIMISATION — THE COPY IS IMPOSSIBLE
+  // WITHOUT IT. `s3` is the upload client, which B2 pins to a single bucket; a server-side copy
+  // needs one credential authorised for both source and destination. Measured against the live
+  // account: the upload key HEADs its own bucket fine and its CopyObject to another bucket is
+  // refused `not entitled`.
+  //
+  // Absent config lands on the same refusal as an absent bucket, for the same reason: there is no
+  // usable quarantine path, and guessing by falling back to the upload client would produce a
+  // delete with no copy behind it.
+  const quarantineS3 = getQuarantineS3Client();
+  if (!quarantineS3) return { deleted: false, reason: 'quarantine-not-configured' };
+
+  const copied = await copyToQuarantine({
+    s3: quarantineS3,
+    sourceBucket: target.bucket,
+    key: target.key,
+    quarantineBucket,
+  });
+  if (!copied.ok)
+    return {
+      deleted: false,
+      reason:
+        copied.reason === 'copy-failed' ? 'quarantine-copy-failed' : 'quarantine-verify-failed',
+    };
+
+  // 🔴 DELETE THE VERSION WE COPIED, NOT "THE OBJECT" — and the difference decides whether this
+  // frees anything at all.
+  //
+  // On a VERSIONED bucket a delete with no `VersionId` writes a delete marker: the object stops
+  // resolving, every byte stays, and nothing ever reclaims it unless a lifecycle rule does. A
+  // quarantine built on that would hold the data in TWO places and release it from NEITHER —
+  // strictly worse than the plain delete it replaced, while reading in the log as a success.
+  // Naming the version makes the removal real, which is only safe because the verified copy
+  // above is now the recovery path.
+  //
+  // 🔴 It also closes a race no wall-clock check could: `CopySourceVersionId` is the version
+  // this call actually copied, so an overwrite landing between the copy and the delete is left
+  // alone rather than destroyed. Deleting "the current version" instead would destroy the newer
+  // bytes and quarantine the older ones.
+  //
+  // `undefined` is the correct value for an UNVERSIONED backend — there the plain delete already
+  // removes the bytes — so this one call is right for both without branching on the backend.
+  //
+  // 🔴 `quarantineS3`, the SAME client that made the copy — not `s3`. The delete is predicated on
+  // that copy, so running it under a different authorisation splits one conditional action across
+  // two credentials: the copy could be permitted and the delete refused, or vice versa, and which
+  // half survives would depend on config nobody was looking at. One client for the whole
+  // sequence keeps "verified copy, then remove the source" a single decision.
+  await quarantineS3.send(
+    new DeleteObjectCommand({
+      Bucket: target.bucket,
+      Key: target.key,
+      VersionId: copied.sourceVersionId,
+    })
+  );
+  return { deleted: true };
 }
 
 /**

@@ -3,6 +3,7 @@
 <script lang="ts">
   import { setHostContext, type StudioLocation } from '$lib/host';
   import { elementBackend, type StudioElementHost } from '$lib/element/backend';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
   import StudioApp from '$lib/element/StudioApp.svelte';
 
   // Both land as JS properties (post-upgrade): `host` carries the credential provider + config;
@@ -48,6 +49,8 @@
       return;
     }
     const h = studioHost;
+    // The embed host KNOWS its domain color; the element must not guess (or offer a toggle).
+    if (h.config.buzzMode) buzzMode.lock(h.config.buzzMode);
     setHostContext({
       backend: elementBackend(h),
       config: {
@@ -61,6 +64,7 @@
       generateUrl: h.generateUrl?.bind(h),
       publishUrl: h.publishUrl?.bind(h),
       modelPageUrl: h.modelPageUrl?.bind(h),
+      pickModel: h.pickModel?.bind(h),
       refresh: async () => {
         reloadTick += 1;
       },

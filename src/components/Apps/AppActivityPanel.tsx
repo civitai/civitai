@@ -1,14 +1,4 @@
-import {
-  Anchor,
-  Badge,
-  Button,
-  Center,
-  Group,
-  Loader,
-  Stack,
-  Table,
-  Text,
-} from '@mantine/core';
+import { Anchor, Badge, Button, Center, Group, Loader, Stack, Table, Text } from '@mantine/core';
 import { IconHistory } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
@@ -100,6 +90,74 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   // covers both set and delete). The endpoint string is the source of
   // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
+  // The REST workflow twins (`/api/v1/blocks/workflows/*`). All FIVE routes are
+  // wrapped with `requiredScope: 'ai:write:budgeted'`, so WITHOUT an arm here
+  // their access rows fall past READ_SCOPE_LABELS into SCOPE_ACTION_LABELS and
+  // render as 'Submit AI workflow' — false for these four, and at the SDK's
+  // poll cadence roughly thirty times per generation.
+  // `===`, not a prefix: `normalizeEndpoint` strips the query string and leaves
+  // these segments literal (they are in KNOWN_STATIC_ENDPOINT_SEGMENTS), so the
+  // value is exact — and an exact match cannot silently swallow a future
+  // sibling route the way a `/workflows/` prefix would.
+  // `/workflows/submit` is deliberately ABSENT: for that one route the
+  // 'Submit AI workflow' label is TRUE, so it keeps falling through.
+  if (endpoint === '/api/v1/blocks/workflows/poll') return 'Checked an AI workflow';
+  if (endpoint === '/api/v1/blocks/workflows/estimate') return 'Priced an AI workflow';
+  if (endpoint === '/api/v1/blocks/workflows/cancel') return 'Canceled an AI workflow';
+  // `/workflows/query` — the app-subqueue read. It is a LIST, not a read of one
+  // workflow, so it is deliberately not worded like `/poll`'s 'Checked an AI
+  // workflow': the two would otherwise be indistinguishable in this column while
+  // describing very different reads (one workflow the app already knows about,
+  // versus every generation the app has ever made for this viewer).
+  // THIRD PERSON, matching the other four arms and 'Generated an image'. It read
+  // 'Listed YOUR AI workflows' until review: that was the only second-person
+  // string among them, and the possessive is redundant anyway — this column
+  // already only ever describes what an app did to THIS viewer's data.
+  if (endpoint === '/api/v1/blocks/workflows/query') return 'Listed AI workflows';
+  // The REST app-storage WRITE twins (`/api/v1/blocks/app-storage/{set,delete}`).
+  // Both routes are wrapped with `requiredScope: 'apps:storage:write'`, which is
+  // in NEITHER `READ_SCOPE_LABELS` nor `SCOPE_ACTION_LABELS` — so WITHOUT an arm
+  // here their access rows fall all the way through and render the RAW SCOPE
+  // STRING `apps:storage:write` to the viewer. That is a different failure from
+  // the workflow arms above: those rendered a WRONG label, these render no label
+  // at all.
+  //
+  // The three READ twins (`/get`, `/list`, `/quota`) deliberately have NO arm:
+  // `apps:storage:read` IS in `READ_SCOPE_LABELS`, so they already render
+  // 'Read your app storage', which is true for all three.
+  //
+  // ⚠ WHY THESE READ AS A SECOND ROW RATHER THAN A DUPLICATE. A REST write
+  // produces TWO rows: `setAppStorageValue` writes its own richer row
+  // (`endpoint: 'storage:set'`, carrying the key) which renders below as 'Wrote
+  // app-local storage', and `withBlockScope` then writes an access row for the
+  // HTTP call itself. The same write over the postMessage bridge produces only
+  // the first. Giving the access row the SAME text would render one action as two
+  // identical entries; the '(API)' suffix makes the pair read as "what the app
+  // did" plus "the call that did it". Removing the second row entirely would need
+  // a new `withBlockScope` suppression option — a middleware change on every
+  // route's audit path — and THAT is the real fix if this is judged too noisy,
+  // NOT deleting these arms.
+  //
+  // `===`, not a prefix: `normalizeEndpoint` leaves these segments literal (they
+  // are in KNOWN_STATIC_ENDPOINT_SEGMENTS), so the value is exact — and an exact
+  // match cannot silently swallow a future sibling route.
+  if (endpoint === '/api/v1/blocks/app-storage/set') return 'Wrote app-local storage (API)';
+  if (endpoint === '/api/v1/blocks/app-storage/delete') return 'Deleted app-local storage (API)';
+  // The REST per-viewer checkpoint override write. It declares NO `requiredScope`
+  // (matching the bridge, which enforces no block scope on this write), so its
+  // access row carries the `'(any-token)'` sentinel — a scope that is in NEITHER
+  // label map. WITHOUT this arm the row falls all the way through and renders the
+  // literal string `(any-token)` to the viewer: the app-storage failure in its
+  // worst form, not a wrong label but a meaningless one.
+  //
+  // Same TWO-ROW shape as the app-storage writes above, and the same reason for the
+  // '(API)' suffix: the shared body writes its own richer row
+  // (`endpoint: 'user-settings:write'`, carrying `detail.action`) which the table
+  // renders through `describeBlockAction`, and `withBlockScope` then writes the
+  // access row for the HTTP call itself. The bridge produces only the first, so
+  // identical text would render one action as two identical entries.
+  if (endpoint === '/api/v1/blocks/user-checkpoint/set')
+    return 'Saved your checkpoint choice (API)';
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   // Prefix (not `===`) so BOTH the bounded template written today
   // (`storage:set`) and the historical per-key value (`storage:set:<key>`)
@@ -137,10 +195,7 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
  * a pre-W13 workflow row has no `detail` at all). Dropping the parse would have
  * silently degraded every one of those rows to "(no workflow id)".
  */
-export function humaniseScopeEndpoint(
-  endpoint: string,
-  detail?: BlockActionDetail | null
-): string {
+export function humaniseScopeEndpoint(endpoint: string, detail?: BlockActionDetail | null): string {
   if (endpoint.startsWith('workflow:submit')) {
     // Legacy tail (`workflow:submit:<id>`); 'pending' was the historical
     // stand-in for "no id yet" and is not a real workflow id.
@@ -382,7 +437,9 @@ export function AppActivityPanel({
       Array.from(
         new Set(
           items.flatMap((i) =>
-            i.kind === 'scope' && i.detail?.entityType === 'ModelVersion' && i.detail.entityId != null
+            i.kind === 'scope' &&
+            i.detail?.entityType === 'ModelVersion' &&
+            i.detail.entityId != null
               ? [i.detail.entityId]
               : []
           )
@@ -494,11 +551,7 @@ export function AppActivityPanel({
                   {/* `linkable` is FALSE in per-app drill-down (the run-frame drawer) —
                       see the prop's own docstring: a top-level navigation out of a
                       RUNNING full-page app is not something a read-only panel may do. */}
-                  <ActivityAppName
-                    name={item.appName}
-                    slug={item.appSlug}
-                    linkable={!appBlockId}
-                  />
+                  <ActivityAppName name={item.appName} slug={item.appSlug} linkable={!appBlockId} />
                   {/* Only when there IS a slug. The badge used to render `item.appSlug`
                       unconditionally, which on an unresolvable row printed the AppBlock
                       PRIMARY KEY as though it were the app's public slug. */}
@@ -521,8 +574,7 @@ export function AppActivityPanel({
                             ? usernameById.get(item.detail.toUserId)
                             : null,
                         subjectName:
-                          item.detail.entityType === 'ModelVersion' &&
-                          item.detail.entityId != null
+                          item.detail.entityType === 'ModelVersion' && item.detail.entityId != null
                             ? versionNameById.get(item.detail.entityId)
                             : null,
                       })
@@ -537,10 +589,7 @@ export function AppActivityPanel({
                       : '(no cost)'}
                   </Text>
                 ) : (
-                  <Text
-                    size="xs"
-                    style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
-                  >
+                  <Text size="xs" style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
                     {/* The Action cell carries the human sentence when a rich
                         detail is present; the Detail cell always shows the raw
                         technical ref (workflow id / storage key / endpoint) —

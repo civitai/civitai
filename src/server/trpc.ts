@@ -36,6 +36,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
+import { errorFormatter } from '~/server/trpc/error-formatter';
 import type { Context } from './createContext';
 
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
@@ -108,23 +109,7 @@ const t = initTRPC
         )
       )
     ),
-    errorFormatter({ shape, error }) {
-      // `cause.softBlock` is set only by the generation gate (auditPromptServer)
-      // and read only by the generator form. Keep it off the message: consumers
-      // match that with `startsWith`.
-      const cause = error.cause as
-        | { softBlock?: boolean; tosReacceptRequired?: boolean }
-        | undefined;
-      if (cause?.softBlock === true) {
-        return { ...shape, data: { ...shape.data, softBlock: true } };
-      }
-      // The client opens the ToS modal on this rather than showing the refusal — see
-      // `server/common/tos-reacceptance.ts`. Off the message, same reason as softBlock.
-      if (cause?.tosReacceptRequired === true) {
-        return { ...shape, data: { ...shape.data, tosReacceptRequired: true } };
-      }
-      return shape;
-    },
+    errorFormatter,
   });
 
 export const { router, middleware, createCallerFactory } = t;

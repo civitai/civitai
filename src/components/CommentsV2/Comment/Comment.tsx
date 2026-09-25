@@ -54,12 +54,18 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { type Comment } from '~/server/services/commentsv2.service';
+import { type Comment as CommentModel } from '~/server/services/commentsv2.service';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';
 import { useMutateComment } from '../commentv2.utils';
+import {
+  HiddenCommentAvatar,
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from './HiddenComment';
 import classes from './Comment.module.css';
 import { CommentForm } from './CommentForm';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
@@ -77,7 +83,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: Comment;
+  comment: CommentModel;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
@@ -104,6 +110,7 @@ export function CommentContent({
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden);
 
   const seededThreads = useSeededReplyThreads();
   const seededThread = seededThreads.byCommentId.get(comment.id);
@@ -232,37 +239,44 @@ export function CommentContent({
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
         )} */}
-        <UserAvatar user={comment.user} size="sm" linkToProfile />
+        {concealed ? (
+          <HiddenCommentAvatar size={26} />
+        ) : (
+          <UserAvatar user={comment.user} size="sm" linkToProfile />
+        )}
       </Group>
 
       <Stack gap={0} style={{ flex: 1 }}>
         <Group justify="space-between">
-          {/* AVATAR */}
-          <Group gap={8} align="center">
-            <UserAvatar
-              user={comment.user}
-              size="md"
-              linkToProfile
-              includeAvatar={false}
-              withUsername
-              badge={badge ? <CommentBadge {...badge} /> : null}
-            />
-            <Text c="dimmed" size="xs" mt={2}>
-              <DaysFromNow date={comment.createdAt} />
-            </Text>
-            {comment.pinnedAt && (
-              <ThemeIcon size="sm" color="orange">
-                <IconPinned size={16} stroke={2} />
-              </ThemeIcon>
-            )}
-            {currentUser?.isModerator && comment.tosViolation && (
-              <Tooltip label="Has TOS Violation">
-                <ThemeIcon color="orange" size="xs">
-                  <IconExclamationCircle />
+          {concealed ? (
+            <HiddenCommentLabel onShow={reveal} />
+          ) : (
+            <Group gap={8} align="center">
+              <UserAvatar
+                user={comment.user}
+                size="md"
+                linkToProfile
+                includeAvatar={false}
+                withUsername
+                badge={badge ? <CommentBadge {...badge} /> : null}
+              />
+              <Text c="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
+              {comment.pinnedAt && (
+                <ThemeIcon size="sm" color="orange">
+                  <IconPinned size={16} stroke={2} />
                 </ThemeIcon>
-              </Tooltip>
-            )}
-          </Group>
+              )}
+              {currentUser?.isModerator && comment.tosViolation && (
+                <Tooltip label="Has TOS Violation">
+                  <ThemeIcon color="orange" size="xs">
+                    <IconExclamationCircle />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
+            </Group>
+          )}
 
           {/* CONTROLS */}
           <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
@@ -394,35 +408,40 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
-              <Box my={5}>
-                <LineClamp className="text-sm" lineClamp={3} variant="block">
-                  <RenderHtml
-                    html={comment.content}
-                    allowCustomStyles={false}
-                    withMentions
-                    withProfanityFilter
-                    allowStickers
-                  />
-                </LineClamp>
-              </Box>
+              {!concealed && (
+                <Box my={5}>
+                  <LineClamp className="text-sm" lineClamp={3} variant="block">
+                    <RenderHtml
+                      html={comment.content}
+                      allowCustomStyles={false}
+                      withMentions
+                      withProfanityFilter
+                      allowStickers
+                    />
+                  </LineClamp>
+                </Box>
+              )}
               {/* COMMENT INTERACTION */}
-              <Group gap={4}>
-                <CommentReactions comment={comment} />
-                {canReply && !viewOnly && (
-                  <Button
-                    variant="subtle"
-                    radius="xl"
-                    onClick={() => setReplying(true)}
-                    size="compact-xs"
-                    color="gray"
-                  >
-                    <Group gap={4}>
-                      <IconArrowBackUp size={14} />
-                      Reply
-                    </Group>
-                  </Button>
-                )}
-              </Group>
+              {!concealed && (
+                <Group gap={4}>
+                  <CommentReactions comment={comment} />
+                  {comment.hidden && <HideAgainButton onClick={conceal} />}
+                  {canReply && !viewOnly && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      onClick={() => setReplying(true)}
+                      size="compact-xs"
+                      color="gray"
+                    >
+                      <Group gap={4}>
+                        <IconArrowBackUp size={14} />
+                        Reply
+                      </Group>
+                    </Button>
+                  )}
+                </Group>
+              )}
             </>
           ) : (
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
@@ -469,6 +488,7 @@ export function CommentContent({
 function CommentReplies({ commentId, replyCount }: { commentId: number; replyCount: number }) {
   const { level, badges } = useCommentsContext();
   const { setRootThread } = useRootThreadContext();
+  const { resourceOwnerId } = useCommentV2Context();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -487,7 +507,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
           ) : (
             <Stack>
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
               {/* A thread too long to sit inline opens on its own rather than paging in place —
                   paging here grows an already-indented block with no end in sight, behind a
@@ -507,7 +527,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
                 </Group>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
             </Stack>
           )

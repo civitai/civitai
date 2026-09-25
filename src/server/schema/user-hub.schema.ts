@@ -89,11 +89,11 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  * offer 0 of 2 tags. Moderation is 51 of 53 by that same count — the two it leaves out
  * (`self injury`, `extremist`) are `unlisted` too, not a carve-out. Prod, 2026-09-17.
  *
- * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
- * `getTags`, which matches it with array OVERLAP (`target && ARRAY[...]`, i.e. ANY);
- * the server's `hubTagWhere` uses `hasEvery` (ALL). Identical at one element, and
- * they part company at two — in the dangerous direction, with the picker offering
- * tags the server then refuses. Add a second target only with that reconciled.
+ * The picker and the write path now read this through ONE `hubTagWhere`, so the
+ * vocabulary cannot be offered and refused by two different rules. It used to be two:
+ * the client picker called `getTags` (array OVERLAP, ANY) while the server used
+ * `hasEvery` (ALL) — identical at one `entityType` and divergent at two. Adding a
+ * second target is safe now; keep it that way by not reintroducing a client-side copy.
  *
  * See `hub-moderation-tag-vocabulary.test.ts` before narrowing any of this.
  */
@@ -282,29 +282,40 @@ export type UpsertUserHubInput = z.infer<typeof upsertUserHubSchema>;
 export type UserHubSourceInput = z.infer<typeof userHubSourceSchema>;
 export type SetUserHubOrderInput = z.infer<typeof setUserHubOrderSchema>;
 
+// A hub built from something the user already has, rather than from an empty one they
+// then have to fill. The template names WHAT to gather; the sources it resolves to are
+// a point-in-time copy, so a model published afterwards is not in the hub.
+export const hubTemplateSchema = z.enum(['my-models', 'following', 'bookmarks']);
+
+export type HubTemplate = z.infer<typeof hubTemplateSchema>;
+
+export const getHubSourceCandidatesSchema = z.object({ template: hubTemplateSchema });
+
+export type GetHubSourceCandidatesInput = z.infer<typeof getHubSourceCandidatesSchema>;
+
 export const resolveHubSourceSchema = z.object({
   url: z.string().trim().min(1).max(500),
 });
 
 export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
 
-// One type per request: each arm is a multi-query fan-out over sets that scale
-// with how much the viewer follows, so searching all three per keystroke does not
-// pay for itself.
-export const hubSuggestionTypeSchema = z.enum([
-  UserHubSourceType.User,
-  UserHubSourceType.Model,
-  UserHubSourceType.Collection,
-]);
+/**
+ * What the picker is looking through. A tab, not a filter: the search box under it
+ * searches WITHIN the chosen scope, so "no results" means no results of that kind —
+ * which is why the server also reports where the matches actually were.
+ *
+ * `tags` is the odd one: nothing of yours to browse, so it holds nothing until typed.
+ */
+export const hubSourceScopeSchema = z.enum(['all', 'following', 'my-models', 'bookmarks', 'tags']);
 
-export const getHubSourceSuggestionsSchema = z.object({
-  type: hubSuggestionTypeSchema.default(UserHubSourceType.User),
+export type HubSourceScope = z.infer<typeof hubSourceScopeSchema>;
+
+export const getHubSourceScopeSchema = z.object({
+  scope: hubSourceScopeSchema,
   query: z.string().trim().max(100).optional(),
 });
 
-export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
-
-export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;
+export type GetHubSourceScopeInput = z.infer<typeof getHubSourceScopeSchema>;
 
 // One source at a time, addressed by what it points at rather than by row id: the
 // caller is a model or creator page that knows the target and nothing about the
@@ -315,6 +326,11 @@ export const userHubSourceRefSchema = z.object({
   type: z.enum(UserHubSourceType),
   targetId: z.number().int().positive(),
 });
+
+// One target, no hub: "where does this already sit across my hubs".
+export const hubSourceTargetSchema = userHubSourceRefSchema.omit({ hubId: true });
+
+export type HubSourceTargetInput = z.infer<typeof hubSourceTargetSchema>;
 
 export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
   alias: userHubSourceSchema.shape.alias,

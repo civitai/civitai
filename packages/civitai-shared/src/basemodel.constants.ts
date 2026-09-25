@@ -137,6 +137,7 @@ export const ECO = {
   Flux2Klein_4B_base: 57,
   Qwen: 10,
   Qwen2: 62,
+  Qwen21: 88,
   Qwen3: 80,
   Chroma: 11,
   HyDit1: 12,
@@ -240,6 +241,10 @@ export const ECO = {
 
   // Meta
   MuseImage: 86,
+
+  // inclusionAI: distinct weights; addon compatibility is not established.
+  Ming: 89,
+  MingLayer: 90,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -603,11 +608,18 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 91,
   },
   {
+    id: ECO.Qwen21,
+    key: 'Qwen21',
+    displayName: 'Qwen 2.1',
+    familyId: 10,
+    sortOrder: 92,
+  },
+  {
     id: ECO.Qwen3,
     key: 'Qwen3',
     displayName: 'Qwen 3',
     familyId: 10,
-    sortOrder: 92,
+    sortOrder: 93,
   },
 
   // ZImage Family (familyId: 11)
@@ -788,7 +800,8 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.MiniMaxH3,
     key: 'MiniMaxH3',
-    displayName: 'Hailuo H3 by MiniMax',
+    displayName: 'MiniMax H3',
+    familyId: 26,
     sortOrder: 211,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -820,6 +833,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.Seedance,
     key: 'Seedance',
     displayName: 'Seedance',
+    familyId: 12,
     sortOrder: 215,
   },
   { id: ECO.Lens, key: 'Lens', displayName: 'Lens', sortOrder: 207 },
@@ -843,6 +857,22 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 999,
   },
 
+  // inclusionAI
+  {
+    id: ECO.Ming,
+    key: 'Ming',
+    displayName: 'Ming Image Design',
+    familyId: 27,
+    sortOrder: 270,
+  },
+  {
+    id: ECO.MingLayer,
+    key: 'MingLayer',
+    displayName: 'Ming Image Design Layer',
+    familyId: 27,
+    sortOrder: 271,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -854,6 +884,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.MiniMaxMusic3,
     key: 'MiniMaxMusic3',
     displayName: 'MiniMax Music 3',
+    familyId: 26,
     // 301-305 were taken by the 3D block before this landed.
     sortOrder: 306,
   },
@@ -959,6 +990,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ernie',
   'Lens',
   'HiDream-O1',
+  'Ming',
   // SdCppImageGenInput
   'ZImageTurbo',
   'ZImageBase',
@@ -1065,6 +1097,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
+
+  // Qwen 2.1 - hosted checkpoint and release-specific LoRAs
+  { ecosystemId: ECO.Qwen21, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Qwen 3 - checkpoint only
   { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
@@ -1217,6 +1252,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
+
+  // Ming - checkpoint and LORA; the Layer checkpoint has no backend route yet
+  { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Boogu - checkpoint and LORA (training upcoming per orchestrator)
   { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1405,6 +1443,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Qwen2,
     defaults: {
       model: { id: 2744101 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Qwen21,
+    defaults: {
+      model: { id: 3352534 },
       modelLocked: true,
     },
   },
@@ -1749,6 +1794,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MageFlow,
     defaults: {
       model: { id: 3172038 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Ming,
+    defaults: {
+      model: { id: 3355635 },
       modelLocked: true,
     },
   },
@@ -2214,6 +2266,7 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  Qwen21: 107,
   Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
@@ -2241,6 +2294,8 @@ export const BM = {
   MiniMaxMusic3: 104,
   MuseImage: 105,
   YuE2: 106,
+  Ming: 108,
+  MingLayer: 109,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2526,10 +2581,11 @@ export const licenses: LicenseRecord[] = [
     // commit, and section III.1 obliges us to hand over a stable copy.
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     notice:
-      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
-    // Section IV.2 demands this exact string in the product UI. "Powered by
-    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
-    attribution: 'MiniMax H3',
+      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+    // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
+    // header and ecosystem label both render it, so no `attribution` line is
+    // needed under the generate button. "Powered by MiniMax H3" is the separate,
+    // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
   },
   {
@@ -2554,6 +2610,14 @@ export const licenses: LicenseRecord[] = [
     id: 44,
     name: 'CC BY-NC 4.0',
     url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+  },
+  {
+    id: 45,
+    name: 'Qwen Research License Agreement',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
+    nonCommercial: true,
   },
 ];
 
@@ -2688,6 +2752,16 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 25,
     name: 'Meta',
     description: "Meta Superintelligence Labs' agentic image generation and editing models",
+  },
+  {
+    id: 26,
+    name: 'MiniMax',
+    description: "MiniMax's video, image and music generation models",
+  },
+  {
+    id: 27,
+    name: 'inclusionAI',
+    description: "inclusionAI's image generation and design models",
   },
 ];
 
@@ -3158,6 +3232,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
   {
+    // The 7B 2.1 weights have their own addon compatibility. The shared Qwen
+    // family groups the picker without accepting older 20B Qwen LoRAs.
+    id: BM.Qwen21,
+    name: 'Qwen 2.1',
+    description: "Qwen's 7B model for text-to-image generation and multi-reference image editing",
+    type: 'image',
+    ecosystemId: ECO.Qwen21,
+    licenseId: 45,
+  },
+  {
     id: BM.Qwen3,
     name: 'Qwen 3',
     description: "Alibaba's Qwen 3 image generation model",
@@ -3578,6 +3662,24 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
 
+  // Ming Image: separate checkpoints for generation and layer decomposition.
+  {
+    id: BM.Ming,
+    name: 'Ming Image Design 0.1',
+    description: "inclusionAI's image generation and editing model for graphic design",
+    type: 'image',
+    ecosystemId: ECO.Ming,
+    licenseId: 19,
+  },
+  {
+    id: BM.MingLayer,
+    name: 'Ming Image Design Layer 0.1',
+    description: "inclusionAI's model for decomposing designs into transparent RGBA layers",
+    type: 'image',
+    ecosystemId: ECO.MingLayer,
+    licenseId: 19,
+  },
+
   // Vidu Q1
   {
     id: BM.Vidu,
@@ -3589,7 +3691,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 32,
   },
 
-  // Hailuo H3 by MiniMax
+  // MiniMax H3
   {
     id: BM.MiniMaxH3,
     name: 'MiniMax H3',

@@ -48,7 +48,8 @@ const featureAvailability = [
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
-// Tracks which flags have ENV overrides so Flipt is skipped for those
+// Tracks which flags an ENV override was actually APPLIED to, so Flipt is skipped for those.
+// A flag declared `availability: []` that has a `fliptKey` is never added — see `isDeclaredDark`.
 const envOverriddenFlags = new Set<string>();
 const featureFlags = createFeatureFlags({
   canWrite: ['public'],
@@ -212,10 +213,12 @@ const featureFlags = createFeatureFlags({
   // default, flag-off is an 800px webp and flag-on a 1600px one, so failing open costs ~2.2x the
   // bytes. That was the opposite way round before compressed became the default.
   //
-  // 🔴 DO NOT create `hi-dpi-previews` in flipt-state to ship this. While it does not exist,
-  // evaluation returns null and static evaluation keeps it on; creating it as a boolean with
-  // `enabled: false` and no rollout IS the kill switch — Flipt's answer overrides static
-  // evaluation in both directions.
+  // 🔴 Flipt is authoritative over this static `['public']` in BOTH directions wherever the
+  // `hi-dpi-previews` key exists: `enabled: false` with no rollout IS the kill switch. The
+  // `['public']` decides only when the key is absent or Flipt is unreachable. Read the live value
+  // from Flipt — a comment cannot hold flag state (see the as-merged-note warning in
+  // `src/server/services/app-blocks-flag.ts`). An earlier note here said this key must not be
+  // created; that instruction is retired.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
@@ -238,7 +241,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
-  flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
+  flux2Training: { availability: ['mod'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
   zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
@@ -265,7 +268,8 @@ const featureFlags = createFeatureFlags({
   trainingStudioUi: {
     toggleable: true,
     default: false,
-    displayName: 'Training Studio (new)',
+    displayName: 'Training Studio',
+    badge: 'Beta',
     description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
@@ -317,10 +321,22 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired by default (see 868m4c2dn): the `images_v6` search index is no longer fed or served.
-  // Static availability is empty so image search is off for everyone; re-enable without a deploy
-  // by turning on the `image-search` Flipt flag, which is authoritative when it exists.
+  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served, and the
+  // index itself has now been DELETED from the search backend. Static availability is empty so
+  // image search is off for everyone.
+  // 🔴 This is NO LONGER a no-deploy toggle. Turning on the `image-search` Flipt flag (which is
+  // still authoritative when it exists) would point image search at an index that does not
+  // exist. Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
+  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
+  // several days and badly degrades search for every other index while it runs. Measured on the
+  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
+  // So: treat re-enabling as a planned project, not a flag flip.
   imageSearch: { availability: [], fliptKey: 'image-search' },
+  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
+  // (which gates whether image search actually RUNS) so the entry can stay visible with a
+  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
+  // Set to [] to hide the entry entirely again and redirect /search/images to /search/models.
+  imageSearchEntry: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -537,25 +553,11 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
-  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface), so each can ship dark and roll out independently via
-  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
-  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
-  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
+  // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
-  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
-  hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
-  pixal3dGenerator: { availability: ['mod'], fliptKey: 'pixal3d-generator' },
-  trellis2Generator: { availability: ['mod'], fliptKey: 'trellis2-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
-  // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
-  // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
-  // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
-  // flag exists (absent ⇒ this static fallback), which is also the widen and
-  // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
-  // version id falls back to the ecosystem default (see grok-graph.ts).
-  grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
   // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
   // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
   // reads it from the generation ctx). Every parse shadow-compares regardless.
@@ -901,7 +903,7 @@ const hasFeature = (
   // --- Static evaluation (used when no Flipt override or Flipt unavailable) ---
 
   // Check environment availability
-  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+  const envRequirement = availability.includes('dev') ? isDev : !isDeclaredDark(availability);
 
   // Check granted access
   const grantedAccess = availability.includes('granted')
@@ -1112,6 +1114,7 @@ export const toggleableFeatures = Object.entries(featureFlags)
     key: key as FeatureFlagKey,
     displayName: value.displayName,
     description: value.description,
+    badge: value.badge,
     default: value.default ?? true,
   }));
 
@@ -1226,6 +1229,8 @@ type FeatureFlag = {
   availability: FeatureAvailability[];
   toggleable: boolean;
   default?: boolean;
+  /** Chip rendered beside the settings toggle's label (e.g. 'Beta') — presentation only. */
+  badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
 };
@@ -1234,6 +1239,10 @@ type FeatureFlag = {
 type FeatureFlagInput =
   | FeatureAvailability[] // Legacy format: ['public']
   | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
+
+function isDeclaredDark(availability: FeatureAvailability[]) {
+  return availability.length === 0;
+}
 
 function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
@@ -1252,9 +1261,24 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    if (override) {
+    // `availability: []` plus a `fliptKey` hands the decision to Flipt alone, so no
+    // `FEATURE_FLAG_<KEY>` variable applies: it would grant the access the registry withheld, and
+    // adding the key to `envOverriddenFlags` would also stop `hasFeature` consulting Flipt,
+    // leaving the flag unreachable from the switch that owns it. A dark flag with no `fliptKey`
+    // has no other switch, so its override still applies.
+    const fliptOwnsFlag = !!flagData.fliptKey && isDeclaredDark(flagData.availability);
+    if (override && !fliptOwnsFlag) {
       features[key as keyof T].availability = override;
       envOverriddenFlags.add(key);
+    } else if (override && typeof window === 'undefined') {
+      // Discarding silently is the same defect one level up: an operator sets the variable, sees
+      // no effect, and has nothing to read. Module-scope, so this is once per process.
+      console.warn(
+        `[feature-flags] "${key}" is declared dark (availability: []) with fliptKey ` +
+          `"${flagData.fliptKey}", so Flipt owns it and its FEATURE_FLAG_* override is ignored. ` +
+          `Change the flag in Flipt, or set FLIPT_LOCAL_OVERRIDES=${flagData.fliptKey}=on ` +
+          `for local development.`
+      );
     }
   }
 

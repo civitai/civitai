@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, num } from '$lib/format';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
@@ -37,7 +37,8 @@
       Transcript — chat {chatId} ({num(transcript.rows.length)}{transcript.truncated ? '+' : ''})
     </h3>
     <p class="mb-3 text-xs text-dark-2">
-      Private messages, oldest first. System join lines are excluded.
+      Private messages, oldest first. System join lines are excluded. Deleted messages are shown —
+      they are hidden from both participants, which is usually why a report was filed about one.
     </p>
 
     {#if transcript.truncated}
@@ -65,9 +66,49 @@
 
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
-          <li>
+          {@const edits = transcript.edits?.[m.id]}
+          <li class={m.deletedAt ? 'rounded-md border-l-2 border-red-500/50 pl-2' : ''}>
             <MessageMeta {...m} />
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
+
+            {#if m.editedAt}
+              {#if edits?.length}
+                <!-- Every superseded version, each labelled with the edit that REPLACED it — so a
+                     timestamp always belongs to the text beside it. The final version is the message
+                     body above, so it is not repeated here. -->
+                <details class="mt-1 text-xs">
+                  <summary class="cursor-pointer text-dark-2">
+                    {edits.length === 1
+                      ? `Before this edit (${dateTime(edits[0].at)})`
+                      : `${edits.length} edits — every earlier version`}
+                  </summary>
+                  <ol class="mt-1 space-y-1">
+                    {#each edits as e, i (e.at + i)}
+                      <li>
+                        <span class="text-dark-2">
+                          {i === 0 ? 'As written' : `Version ${i + 1}`} — replaced {dateTime(e.at)}{e.actorRole ===
+                          'moderator'
+                            ? ' by a moderator'
+                            : ''}
+                        </span>
+                        <p class="wrap-break-word whitespace-pre-wrap text-amber-200/80">
+                          {e.oldValue}{e.truncated ? '…' : ''}
+                        </p>
+                      </li>
+                    {/each}
+                  </ol>
+                </details>
+              {:else if transcript.edits === null}
+                <p class="mt-1 text-xs text-amber-300">
+                  Edited — the audit log could not be read, so the original is unknown here, not
+                  absent.
+                </p>
+              {:else}
+                <p class="mt-1 text-xs text-dark-2">
+                  Edited — the original was not recorded, so what it said before is unrecoverable.
+                </p>
+              {/if}
+            {/if}
           </li>
         {/each}
       </ul>

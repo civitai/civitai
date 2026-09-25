@@ -332,6 +332,10 @@ export const userSettingsSchema = z.object({
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
+  // Web-push soft-ask dismissals. Server-side, not localStorage — a cache clear must not re-nag
+  // the same person. Re-ask cadence and lifetime cap are enforced client-side in PushSoftAsk.
+  pushPromptDismissedCount: z.number().optional(),
+  pushPromptDismissedAt: z.coerce.date().nullish(),
   // Opt-in: leave blue buzz out of the header badge, which otherwise adds blue and the domain's
   // main type into one number. Blue is granted and non-transferable, so a creator watching what
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
@@ -364,7 +368,6 @@ export const userSettingsSchema = z.object({
   ).optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
@@ -407,6 +410,8 @@ export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
+  pushPromptDismissedCount: z.number().int().min(0).optional(),
+  pushPromptDismissedAt: z.date().optional(),
   allowAds: z.boolean().optional(),
   isEarlyAdopter: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),
@@ -514,6 +519,15 @@ export const userMeta = z.object({
   // Stamped at onboarding when the account ends up without a verified address. Read by
   // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
   emailVerificationRequired: z.boolean().optional(),
+  // Retry state for the Stripe scrub of a deleted account, so one account that keeps failing
+  // cannot consume every run. Removed with `customerId` once the scrub finishes.
+  gdprStripeScrub: z
+    .object({
+      attempts: z.number(),
+      lastAttemptAt: z.string(),
+      lastError: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -525,7 +539,6 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
-  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;

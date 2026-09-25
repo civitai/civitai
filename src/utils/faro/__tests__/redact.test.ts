@@ -448,3 +448,25 @@ describe('redactValue (structural-leaf scrub)', () => {
     expect(redactValue(hexId)).toBe(hexId);
   });
 });
+
+// The RUM geo session attributes (see ~/utils/faro/geoAttributes.ts) ride on
+// meta.session.attributes — an arbitrary structural leaf, so deepRedact routes them through
+// redactValue. A country code and an IANA timezone name match no PII pattern and must reach
+// Loki byte-identical, or the per-region grouping splits into redacted buckets.
+describe('geo session attributes pass through deepRedact unredacted', () => {
+  it('leaves region=US and a raw IANA timezone untouched', () => {
+    const out = deepRedact({
+      session: { attributes: { region: 'US', timezone: 'America/New_York' } },
+    });
+    expect(out.session.attributes.region).toBe('US');
+    expect(out.session.attributes.timezone).toBe('America/New_York');
+  });
+
+  it('leaves the unknown sentinel and multi-segment zone names untouched', () => {
+    const out = deepRedact({
+      session: { attributes: { region: 'unknown', timezone: 'America/Argentina/Buenos_Aires' } },
+    });
+    expect(out.session.attributes.region).toBe('unknown');
+    expect(out.session.attributes.timezone).toBe('America/Argentina/Buenos_Aires');
+  });
+});

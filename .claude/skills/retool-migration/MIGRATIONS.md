@@ -204,7 +204,7 @@ same call) and has a `notify` action. What remains on User Lookup is wiring its 
 
 `UserRank`, `ReportsSubmitted`, `PotentialSpammer` v1, `SubTierStatus`, `CreatorClub`/`CreatorClubBuzz`,
 `GeneratorCount`, `ReactionsAll`, `DistinctUsersWithSocialLinks`, `TopChats`, `Reactions` (raw rows),
-`deservedMute`/`spamWhitelist` flags, the chat transcript on User Lookup (Chat Audit owns it), `BANAPI`/
+`deservedMute`/`spamWhitelist` flags, `BANAPI`/
 `SetNote`/`LogBan` on Chat Audit (User Lookup owns enforcement), the App enable/disable plumbing on User
 Reports, and both **Workflows** (inert four ways over; reimplemented as `challenge-health-check`).
 
@@ -367,8 +367,11 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       marks a mute as a person's decision. Not ported: scheduled **start** — there is no `muteStartsAt`,
       so that is a schema change plus a second job.
 - [x] **Subscription + Buzz** — `UserSubscriptionStatus` (Postgres, in the page load) plus the Buzz
-      balance from `GetAccountBuzz`, served via `/api/user-account/[userId]` since it is an external
-      HTTP call. Buzz failures degrade to "Balance unavailable" rather than blanking the panel.
+      balance from `GetAccountBuzz`, on its own `/api/user-buzz-balance/[userId]`: three external HTTP
+      calls, issued in parallel via `Promise.allSettled`, kept off `/api/user-account` because that
+      bundle waits on `getReactionTargets` — an aggregate over 744M rows — and the balance is what a
+      moderator reads first. Yellow failing gives "Balance unavailable" rather than blanking the panel;
+      a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
 - [x] **Reviews / comments** — `ReviewList`, `ComboComments` as read-only lists in
@@ -413,20 +416,53 @@ slice); the four left are unbuilt rather than blocked.
       trained, base model, status, epoch progress, image count, Buzz cost, dataset-shared.
       Retool filtered `type = Training Data OR type IS NULL` in the WHERE, which drops a version whose
       only files are of another type; moved into the JOIN so the run stays visible.
-- [x] **Buzz history** — `Receipts` + `Payments` merged into one timeline (they differ only in which
-      side of the transaction the account is on), plus `ReceiptsUsers`/`PaymentsUsers` for counterparty
-      names. Its own endpoint: `buzzTransactions` is **1.5B rows sorted by date ASC**, so even bounded to
+- [x] **Buzz history** — `Receipts` and `Payments` are **two columns that share nothing**: one request
+      each (`/api/user-buzz-history/[userId]?side=`), its own cap, its own type filter, its own paging,
+      plus `ReceiptsUsers`/`PaymentsUsers` for counterparty names. `getBuzzLedgerSide` serves one side;
+      there is deliberately no both-sides call, because every version that had one coupled them again.
+
+      Each separation fixed a defect the previous one left behind. **One cap** across both sides let the
+      busy side eat it — on user 2557503 all 200 rows of a 90-day window were receipts spanning two
+      days, so its 128 payments were invisible. **One request** made either column's filter reload the
+      other and blank it meanwhile, for an answer that had not changed. `?limit=` is clamped 1..2000
+      (default 200) behind a per-column "Load 200 more", and `truncated` is per side.
+
+      🔴 **The per-column TYPE filter is the SERVER's, and the cap applies after it.** Selecting a type
+      re-queries that side for `limit` rows OF that type; filtering the fetched page could only shrink
+      it, so on a reward-heavy account a purchase behind thousands of rewards was unreachable at any
+      window — measured across 300 crypto buyers, **52% of their Buzz purchases** sat outside the newest
+      200 receipts. The options come from a separate uncapped `SELECT DISTINCT type` per side for the
+      same reason: built from the loaded rows, the dropdown could not offer a type the cap had pushed
+      out, so the one thing that would have fetched it was the one thing not on the menu. `bank` is
+      withheld from both the rows and the options unless granted, or the filter would return nothing and
+      read as "no such transactions". The value reaches ClickHouse as text (`$query` does not escape),
+      so it is shape-validated — a bare identifier — and dropped to "no filter" otherwise.
+      The DESCRIPTION search stays client-side over the page: `description` has no index.
+
+      Its own endpoint: `buzzTransactions` is **1.5B rows sorted by date ASC**, so even bounded to
       90 days a descending read measures ~2.5s. The window bound is mandatory, not tuning — Retool bounded
       it too. Account id 0 is Civitai itself (generation spend, purchases, rewards).
       Not ported: "add / subtract buzz", which the ticket itself flags as probably a separate app.
-- [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", in
-      `/api/user-account`. The concentration is the signal; a normal account spreads reactions over
-      hundreds of creators.
+- [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", on its own
+      `/api/user-reactions/[userId]`. The concentration is the signal; a normal account spreads
+      reactions over hundreds of creators.
       **`UserStat.reactionCountAllTime` is NOT this number** — it counts reactions *received*
       (measured: 51,775 received against 312 given on the same account). The total comes from a
       `sum(count(*)) over ()` window instead, which totals every group before `LIMIT` trims them.
-      `ImageReaction` is 744M rows but indexed on `userId`: ~47ms at 49K reactions, ~605ms for the
-      heaviest account on the site (6M). Off the page load for that reason.
+      **It is unbounded, and it is the slowest thing this page can ask for.** Measured 2026-09-21:
+      **1.9s** at 46,744 reactions over 2,058 creators, **20s** at 852,729 over 7,131. 317 accounts are
+      past 100k, and they are disproportionately the ones a farming investigation looks up. There is no
+      `statement_timeout` on the pool, so it does not fail — it waits.
+
+      🔴 **The cost is the `Image` join, not the `ImageReaction` scan.** On the same account the scan
+      alone is **0.6s** and the scan plus `JOIN "Image"` is **20.4s** — 34x, with the grouping and
+      window functions on top of it measuring nothing. The earlier figures here (~47ms, ~605ms) are
+      scan-shaped and describe only the indexed half, which is why nothing about this read looked
+      expensive until a moderator reported the panel as broken. Any future attempt to bound this should
+      bound what reaches the join.
+      Hence its OWN endpoint rather than a slot in `/api/user-account`: sharing that `Promise.all` made
+      ten other panels wait on it, and a moderator reported the result as the reactions panel failing
+      to load. Pinned by `user-account-bundle-latency.test.ts`.
       `ReactionsAll` (every raw reaction row) not ported — unbounded, and the grouped view answers
       what the raw rows were being scanned for.
 - [x] **Civitai score** — `SocialScore`, in the page load, rendered in `ReputationPanel`.
@@ -467,8 +503,12 @@ slice); the four left are unbuilt rather than blocked.
       **Retool hardcoded sixteen moderator user ids inline**; derived from `User.isModerator` instead. The
       hardcoded list was already stale (there are 24) and would silently under-report as the team changes
       — a failure a moderator could never notice. 60ms.
-      Not ported: the transcript (`UserChats`, `WarrantChatLog`) — that is the **Chat Audit** app
-      (`868kn7m9r`), and the ticket's "DMs sent" is the same data.
+      The transcript (`UserChats`, `WarrantChatLog`) was deferred to Chat Audit (`868kn7m9r`) and is
+      now **partly here too**: the Chat section renders the newest 50 messages this account SENT
+      (`/api/user-chat-messages/[userId]` → `getUserMessagesById`), so spam can be read without
+      reconstructing it from a list of chat ids. Gated on Chat Audit's own page grant
+      (`/retool/chat-audit`), not User Lookup's — User Lookup is granted far more widely and message
+      bodies must not reach it by a side door. The other side of a conversation is still Chat Audit's.
 - [ ] **Notification history** — `GetNotifications` / `ViewNotifications` against the Notifications DB,
       which the spoke has no connection to. Not in the ticket text; noting it so the export's use of a
       seventh datasource is not rediscovered later.

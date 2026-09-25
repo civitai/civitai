@@ -14,7 +14,15 @@
 {#await data.fromPrices}
   <div class="grid place-items-center py-20 font-mono text-sm text-dark-2">Loading pricing…</div>
 {:then prices}
-  <TrainingFlow {prices} onExit={() => navigate({ view: 'home' })} />
+  <TrainingFlow
+    {prices}
+    enabledModelFlags={data.enabledModelFlags}
+    onExit={() => navigate({ view: 'home' })}
+  />
 {:catch}
-  <TrainingFlow prices={{}} onExit={() => navigate({ view: 'home' })} />
+  <TrainingFlow
+    prices={{}}
+    enabledModelFlags={data.enabledModelFlags}
+    onExit={() => navigate({ view: 'home' })}
+  />
 {/await}

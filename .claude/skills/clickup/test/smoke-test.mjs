@@ -42,6 +42,11 @@ let failed = 0;
 let skipped = 0;
 const failures = [];
 const cleanupTasks = [];
+const cleanupPages = [];
+let leaked = [];
+// Set by Ctrl+C. No test starts after it, so nothing new is created while the single
+// cleanup in main's finally runs.
+let aborting = false;
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -52,8 +57,10 @@ function run(args, { timeout = 30000 } = {}) {
       if (err && err.killed) {
         reject(new Error(`Timed out after ${timeout}ms`));
       } else {
-        // Some commands exit(1) for usage errors - that's expected for validation tests
-        resolve({ code: err?.code || 0, output: output.trim(), stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
+        // Some commands exit(1) for usage errors - that's expected for validation tests.
+        // A child killed by a signal has a null code; that is a failure, not exit 0.
+        const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+        resolve({ code, output: output.trim(), stdout: (stdout || '').trim(), stderr: (stderr || '').trim() });
       }
     });
   });
@@ -64,6 +71,10 @@ function runJson(args, options) {
 }
 
 async function test(name, fn) {
+  if (aborting) {
+    skip(name, 'interrupted');
+    return;
+  }
   try {
     await fn();
     passed++;
@@ -178,7 +189,6 @@ async function writeTests() {
   let testSubtaskId = null;
   let testCommentId = null;
   let testListId = null;
-  const testPageIds = [];  // Track pages to archive in cleanup
 
   // ── Task CRUD ──
 
@@ -192,7 +202,7 @@ async function writeTests() {
   });
 
   if (!testTaskId) {
-    skip('Remaining write tests', 'task creation failed');
+    skip('Remaining write tests', aborting ? 'interrupted' : 'task creation failed');
     return;
   }
 
@@ -305,6 +315,8 @@ async function writeTests() {
       testCommentId = null;
     });
   }
+  // Still set if the delete test failed or was skipped by a Ctrl+C.
+  if (testCommentId) cleanupTasks.push({ type: 'comment', id: testCommentId });
 
   // ── @Mentions ──
 
@@ -352,6 +364,78 @@ async function writeTests() {
     assertContains(output, 'Subtask');
   });
 
+  // ── Reparenting an existing task ──
+
+  let reparentChildId = null;
+
+  await test('parent: makes an existing task a subtask', async () => {
+    const { stdout } = await runJson(['create', TEST_LIST_ID, 'SMOKE TEST: reparent child']);
+    reparentChildId = assertJson(stdout).id;
+    assert(reparentChildId, 'Expected created task ID');
+    cleanupTasks.push({ type: 'task', id: reparentChildId });
+
+    const { code } = await run(['parent', reparentChildId, testTaskId]);
+    assert(code === 0, `Expected exit 0, got ${code}`);
+
+    const reread = assertJson((await runJson(['get', reparentChildId])).stdout);
+    assert(
+      reread.parent === testTaskId,
+      `Expected parent ${testTaskId} on re-read, got ${reread.parent}`
+    );
+  });
+
+  await test('parent: refuses a move that would create a cycle', async () => {
+    const { code, output } = await run(['parent', testTaskId, reparentChildId]);
+    assert(code !== 0, 'Expected a non-zero exit for a cycle');
+    assertContains(output, 'cycle');
+
+    // The refusal is only worth anything if nothing was written.
+    const reread = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      reread.parent !== reparentChildId,
+      `Refused move still wrote: ${testTaskId} now has parent ${reread.parent}`
+    );
+  });
+
+  await test('parent: refuses a task as its own parent', async () => {
+    const { code, output } = await run(['parent', reparentChildId, reparentChildId]);
+    assert(code !== 0, 'Expected a non-zero exit for a self-parent');
+    assertContains(output, 'own parent');
+  });
+
+  // ── Milestones ──
+
+  await test('milestone: on then off, verified by re-read', async () => {
+    const { code: onCode } = await run(['milestone', testTaskId, 'on']);
+    assert(onCode === 0, `Expected exit 0 turning milestone on, got ${onCode}`);
+    const asMilestone = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      asMilestone.custom_item_id !== 0,
+      `Expected a milestone type on re-read, got custom_item_id ${asMilestone.custom_item_id}`
+    );
+
+    const { code: offCode } = await run(['milestone', testTaskId, 'off']);
+    assert(offCode === 0, `Expected exit 0 turning milestone off, got ${offCode}`);
+    const asTask = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      asTask.custom_item_id === 0,
+      `Expected custom_item_id 0 on re-read, got ${asTask.custom_item_id}`
+    );
+  });
+
+  await test('milestone: requires a mode and writes nothing without one', async () => {
+    const before = assertJson((await runJson(['get', testTaskId])).stdout);
+    const { code, output } = await run(['milestone', testTaskId]);
+    assert(code !== 0, 'Expected a non-zero exit with no mode');
+    assertContains(output, 'Mode required');
+
+    const after = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      after.custom_item_id === before.custom_item_id,
+      `A bare "milestone <task>" wrote: custom_item_id ${before.custom_item_id} -> ${after.custom_item_id}`
+    );
+  });
+
   // ── List CRUD ──
 
   await test('create-list: creates a list', async () => {
@@ -393,9 +477,11 @@ async function writeTests() {
   });
 
   // Get the first page to test page read
-  const { stdout: docJson } = await runJson(['doc', testDocId]);
-  const docData = JSON.parse(docJson);
-  const firstPageId = docData.pages?.[0]?.id;
+  let firstPageId = null;
+  await test('doc --json: first page id', async () => {
+    const { stdout } = await runJson(['doc', testDocId]);
+    firstPageId = assertJson(stdout).pages?.[0]?.id ?? null;
+  });
 
   if (firstPageId) {
     await test('page: reads page content', async () => {
@@ -408,13 +494,13 @@ async function writeTests() {
     const { stdout } = await runJson(['create-page', testDocId, 'SMOKE TEST Page', '--content', '## Test\\nCreated by smoke test']);
     const data = assertJson(stdout);
     assert(data.id, 'Expected page ID');
-    testPageIds.push(data.id);
+    cleanupPages.push(data.id);
     if (VERBOSE) console.log(`    Created page: ${data.id}`);
   });
 
-  if (testPageIds.length > 0) {
+  if (cleanupPages.length > 0) {
     await test('edit-page: updates page content', async () => {
-      const { output } = await run(['edit-page', testDocId, testPageIds[0], '--content', '# Updated\\nEdited by smoke test', '--name', 'SMOKE TEST Page (edited)']);
+      const { output } = await run(['edit-page', testDocId, cleanupPages[0], '--content', '# Updated\\nEdited by smoke test', '--name', 'SMOKE TEST Page (edited)']);
       assertContains(output, 'updated');
     });
   }
@@ -432,36 +518,33 @@ async function writeTests() {
     assertContains(output, 'restored');
   });
 
-  return { testPageIds };
 }
 
 // ─── Cleanup ───────────────────────────────────────────────────────────
 
-async function cleanup(testPageIds = []) {
+// Called from exactly one place, main's finally. A second caller racing it would find the
+// trackers drained and exit while this one's archives are still in flight.
+// run() resolves on a nonzero exit, so the exit code is what says the object is gone.
+async function cleanup() {
+  if (cleanupPages.length === 0 && cleanupTasks.length === 0) return;
   console.log('\n\x1b[1mCleanup\x1b[0m');
 
-  // Archive test pages created during doc CRUD tests
-  for (const pageId of testPageIds) {
-    try {
-      await run(['edit-page', PERSISTENT_DOC_ID, pageId, '--archive']);
-      console.log(`  Archived page ${pageId}`);
-    } catch (err) {
-      console.log(`  ⚠ Failed to archive page ${pageId}: ${err.message}`);
-    }
+  for (const pageId of cleanupPages.splice(0)) {
+    const { code, output } = await run(['edit-page', PERSISTENT_DOC_ID, pageId, '--archive']).catch((err) => ({ code: 1, output: err.message }));
+    if (code === 0) console.log(`  Archived page ${pageId}`);
+    else leaked.push({ type: 'page', id: pageId, why: output.slice(0, 200) });
   }
 
-  for (const item of cleanupTasks.reverse()) {
-    try {
-      if (item.type === 'task') {
-        await run(['archive', item.id]);
-        console.log(`  Archived task ${item.id}`);
-      } else if (item.type === 'list') {
-        await run(['delete-list', item.id]);
-        console.log(`  Deleted list ${item.id}`);
-      }
-    } catch (err) {
-      console.log(`  ⚠ Failed to clean up ${item.type} ${item.id}: ${err.message}`);
-    }
+  for (const item of cleanupTasks.splice(0).reverse()) {
+    const verb = { list: 'delete-list', comment: 'delete-comment', task: 'archive' }[item.type];
+    const { code, output } = await run([verb, item.id]).catch((err) => ({ code: 1, output: err.message }));
+    if (code === 0) console.log(`  ${{ list: 'Deleted list', comment: 'Deleted comment', task: 'Archived task' }[item.type]} ${item.id}`);
+    else leaked.push({ ...item, why: output.slice(0, 200) });
+  }
+
+  if (leaked.length > 0) {
+    console.log(`\n\x1b[31m\x1b[1mLEAKED ${leaked.length} live ClickUp object(s). Remove them by hand:\x1b[0m`);
+    for (const l of leaked) console.log(`  ${l.type} ${l.id}: ${l.why}`);
   }
 }
 
@@ -472,11 +555,21 @@ async function main() {
   console.log('========================');
   console.log(`Mode: ${READONLY ? 'read-only' : 'full (read + write)'}`);
 
+  // Only a console Ctrl+C reaches this. A second Ctrl+C, taskkill or a harness timeout
+  // kills the process with no cleanup at all.
+  process.once('SIGINT', () => {
+    aborting = true;
+    console.log('\nInterrupted: finishing the current test, then cleaning up. Ctrl+C again skips cleanup.');
+  });
+
   await readOnlyTests();
 
   if (!READONLY) {
-    const { testPageIds } = await writeTests();
-    await cleanup(testPageIds);
+    try {
+      await writeTests();
+    } finally {
+      await cleanup();
+    }
   }
 
   // Summary
@@ -484,6 +577,7 @@ async function main() {
   console.log(`  Passed:  ${passed}`);
   if (failed > 0) console.log(`  \x1b[31mFailed:  ${failed}\x1b[0m`);
   if (skipped > 0) console.log(`  Skipped: ${skipped}`);
+  if (leaked.length > 0) console.log(`  \x1b[31mLeaked:  ${leaked.length}\x1b[0m`);
 
   if (failures.length > 0) {
     console.log('\n\x1b[31mFailures:\x1b[0m');
@@ -493,10 +587,10 @@ async function main() {
   }
 
   console.log('');
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit(leaked.length > 0 ? 3 : aborting ? 130 : failed > 0 ? 1 : 0);
 }
 
 main().catch(err => {
   console.error('Fatal error:', err);
-  process.exit(2);
+  process.exit(leaked.length > 0 ? 3 : 2);
 });

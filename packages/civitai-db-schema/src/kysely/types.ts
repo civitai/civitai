@@ -2471,7 +2471,14 @@ export type GenerationBaseModel = {
 export type GenerationCoverage = {
   modelId: number;
   modelVersionId: number;
+  /**
+   * The live rule. A row exists when EITHER column is true, so test the column, not existence.
+   */
   covered: boolean;
+  /**
+   * The staged rule: community checkpoints qualify on their own and load on demand.
+   */
+  coveredNext: boolean;
 };
 export type GenerationPreset = {
   id: Generated<number>;
@@ -2680,7 +2687,6 @@ export type ImageTag = {
   tagId: number;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -3119,6 +3125,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
@@ -3635,6 +3642,18 @@ export type Purchase = {
   status: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type PushSubscription = {
+  id: Generated<number>;
+  userId: number;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastSuccessAt: Timestamp | null;
+  failureCount: Generated<number>;
+};
 export type Question = {
   id: Generated<number>;
   userId: number;
@@ -3919,7 +3938,10 @@ export type Tag = {
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;
@@ -4341,6 +4363,11 @@ export type UserPurchasedRewards = {
   meta: Generated<unknown>;
   code: string;
 };
+export type UserPushSetting = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserRank = {
   userId: number;
   leaderboardRank: number | null;
@@ -4407,6 +4434,29 @@ export type UserStat = {
   thumbsUpCountAllTime: number;
   thumbsDownCountAllTime: number;
   reactionCountAllTime: number;
+};
+export type UserStorageRollup = {
+  userId: number;
+  imagesRequestedAt: Timestamp | null;
+  imagesStartedAt: Timestamp | null;
+  imagesComputedAt: Timestamp | null;
+};
+export type UserStorageSnapshot = {
+  userId: number;
+  date: Timestamp;
+  kind: string;
+  fileCount: number;
+  bytes: string;
+};
+export type UserStorageUsage = {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: Generated<string>;
+  month: Timestamp;
+  fileCount: number;
+  bytes: string;
+  computedAt: Generated<Timestamp>;
 };
 export type UserStrike = {
   id: Generated<number>;
@@ -4747,6 +4797,7 @@ export type DB = {
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
+  PushSubscription: PushSubscription;
   Question: Question;
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
@@ -4818,6 +4869,7 @@ export type DB = {
   UserPaymentConfiguration: UserPaymentConfiguration;
   UserProfile: UserProfile;
   UserPurchasedRewards: UserPurchasedRewards;
+  UserPushSetting: UserPushSetting;
   UserRank: UserRank;
   UserReferral: UserReferral;
   UserReferralCode: UserReferralCode;
@@ -4825,6 +4877,9 @@ export type DB = {
   UserRestriction: UserRestriction;
   UserRole: UserRole;
   UserStat: UserStat;
+  UserStorageRollup: UserStorageRollup;
+  UserStorageSnapshot: UserStorageSnapshot;
+  UserStorageUsage: UserStorageUsage;
   UserStrike: UserStrike;
   Vault: Vault;
   VaultItem: VaultItem;

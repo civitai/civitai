@@ -22,10 +22,14 @@ import type {
   ResourceFilter,
   ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  resourceSort,
+  showsPricingFilter,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -42,7 +46,12 @@ export function ResourceSelectFiltersDropdown() {
     resources,
     filters: selectFilters,
     setFilters: setSelectFilters,
+    selectSource,
   } = useResourceSelectContext();
+  // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the
+  // generator" — several non-generator callers pass it deliberately, and the generate-price question
+  // is still the right one for them.
+  const showPaidFilter = showsPricingFilter(selectSource);
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -74,12 +83,15 @@ export function ResourceSelectFiltersDropdown() {
     : baseModelsList;
 
   const filterLength =
-    (selectFilters.types.length > 0 ? 1 : 0) + (selectFilters.baseModels.length > 0 ? 1 : 0);
+    (selectFilters.types.length > 0 ? 1 : 0) +
+    (selectFilters.baseModels.length > 0 ? 1 : 0) +
+    (showPaidFilter && selectFilters.hidePaid ? 1 : 0);
 
   const clearFilters = () => {
     const reset: Required<ResourceFilter> = {
       types: [],
       baseModels: [],
+      hidePaid: false,
     };
     setSelectFilters(reset);
   };
@@ -165,6 +177,20 @@ export function ResourceSelectFiltersDropdown() {
             )}
           </Group>
         </Chip.Group>
+        {showPaidFilter && (
+          <>
+            <Divider label="Cost" className="text-sm font-bold" />
+            <Group gap={8} my={4}>
+              <Chip
+                {...chipProps}
+                checked={!!selectFilters.hidePaid}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, hidePaid: checked }))}
+              >
+                <span>Hide paid</span>
+              </Chip>
+            </Group>
+          </>
+        )}
       </Stack>
 
       {filterLength > 0 && (
@@ -189,7 +215,7 @@ export function ResourceSelectFiltersDropdown() {
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
-          zIndex={400}
+          zIndex={mobileMenuSheetZIndex}
           styles={{
             content: {
               height: 'auto',

@@ -8,14 +8,14 @@
     IconPlus,
     IconX,
     IconArrowRight,
+    IconSearch,
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
+  import { pickModel } from '$lib/host';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
-    CUSTOM_MODEL_SURCHARGE,
     MEDIA_OPTIONS,
-    cardByType,
     cardsForMedia,
     releasedLabel,
     typesForMedia,
@@ -34,6 +34,7 @@
     nextRunId,
     recommendedCardFor,
     runCard,
+    runVersion,
     runVersionLabel,
     selectionFromTotal,
     type Run,
@@ -43,19 +44,27 @@
   let {
     onContinue,
     prices,
+    enabledModelFlags = [],
     initial = null,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`), resolved server-side in `/new`'s
+     *  load. Cards whose gate isn't in this set are hidden from every offer surface below. */
+    enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
 
+  // The resolved gate set from the page load. Used by every card-offering surface (seed, recommendation,
+  // featured/other lists). Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  const enabledFlags = $derived(new Set(enabledModelFlags));
+
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
-  function price(cardType: string, custom = false): number | null {
-    return cardFromPrice(prices, cardType, custom);
+  function price(cardType: string): number | null {
+    return cardFromPrice(prices, cardType);
   }
 
   // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
@@ -63,7 +72,9 @@
   let media = $state<Media>(untrack(() => initial?.media ?? 'image'));
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
-    untrack(() => (initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image'))]))
+    untrack(() =>
+      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags))]
+    )
   );
   let focus = $state(0);
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
@@ -75,7 +86,13 @@
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
   const recommendedType = $derived(type.recommended[media]);
-  const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
+  // Undefined when the type has no recommendation for this media, or when the recommended model is gated
+  // off for this user — the banner then simply doesn't show.
+  const recommendedCard = $derived(
+    recommendedType
+      ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
+      : undefined
+  );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
@@ -84,7 +101,7 @@
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
-    const cards = cardsForMedia(media);
+    const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
     return featured
@@ -95,7 +112,7 @@
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
-    return cardsForMedia(media).filter((c) => !featuredSet.has(c.type));
+    return cardsForMedia(media, enabledFlags).filter((c) => !featuredSet.has(c.type));
   });
   let showAllModels = $state(false);
   // Keep the tail open when the chosen model lives there, so the selection is never hidden.
@@ -115,7 +132,7 @@
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m))];
+    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
     focus = 0;
     sweepOpen = false;
   }
@@ -123,7 +140,7 @@
   function pickType(id: string) {
     loraType = id;
     if (runs.length === 1) {
-      runs = [newRun(recommendedCardFor(id, media))];
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
       focus = 0;
     }
   }
@@ -142,10 +159,42 @@
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
   }
   function setCustomAir(runIndex: number, value: string) {
-    runs = runs.map((r, i) => (i === runIndex ? { ...r, customAir: value } : r));
+    // A hand-edited AIR is no longer the picked model — drop its name.
+    runs = runs.map((r, i) =>
+      i === runIndex ? { ...r, customAir: value, customName: undefined } : r
+    );
+    pickErrorRunId = null;
   }
   // A Custom run needs a valid pasted AIR before it can continue.
   const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
+
+  // The host's model picker (the embed's resource-select modal); absent standalone — the paste
+  // input then stands alone. Resolved at use time, like every other capability accessor.
+  let pickingRunId = $state<number | null>(null);
+  let pickErrorRunId = $state<number | null>(null);
+
+  async function browseModel(run: Run) {
+    const pick = pickModel();
+    if (!pick || pickingRunId !== null) return;
+    pickingRunId = run.id;
+    pickErrorRunId = null;
+    const airAtStart = run.customAir;
+    try {
+      const picked = await pick({ ecosystem: runVersion(run).ecosystem });
+      // Keyed by run id (a sweep row can be removed while the picker is open), and only onto an
+      // untouched input — a hand-edit during the pick beats a late resolution.
+      if (picked)
+        runs = runs.map((r) =>
+          r.id === run.id && r.customAir === airAtStart
+            ? { ...r, customAir: picked.air, customName: picked.name }
+            : r
+        );
+    } catch {
+      pickErrorRunId = run.id;
+    } finally {
+      pickingRunId = null;
+    }
+  }
 
   function addRun() {
     if (runs.length >= MAX_RUNS) return;
@@ -165,8 +214,8 @@
 
   function versionsFor(card: ModelCard) {
     return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label, surcharge: 0 })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom', surcharge: CUSTOM_MODEL_SURCHARGE },
+      ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+      { key: CUSTOM_VERSION_KEY, label: 'Custom' },
     ];
   }
 
@@ -202,7 +251,8 @@
   {/if}
 {/snippet}
 
-<!-- The Custom… base: paste a Civitai model AIR to train on (we don't have a model picker yet). -->
+<!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
+     when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
   <div class="mt-2.5">
     <label
@@ -211,16 +261,36 @@
     >
       Civitai model AIR
     </label>
-    <Input
-      id={`custom-air-${run.id}`}
-      value={run.customAir ?? ''}
-      oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
-      placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-      class="mt-1 font-mono text-xs"
-    />
+    <div class="mt-1 flex items-center gap-2">
+      <Input
+        id={`custom-air-${run.id}`}
+        value={run.customAir ?? ''}
+        oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+        placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
+        class="min-w-0 flex-1 font-mono text-xs"
+      />
+      {#if pickModel()}
+        <Button
+          variant="outline"
+          size="sm"
+          class="shrink-0"
+          disabled={pickingRunId !== null}
+          onclick={() => browseModel(run)}
+        >
+          <IconSearch size={13} stroke={2} class="mr-1 inline" />
+          {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
+        </Button>
+      {/if}
+    </div>
     <p class="mt-1 text-xs leading-snug text-dark-2">
       {#if run.customAir && !isValidAir(run.customAir)}
         <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
+      {:else if pickErrorRunId === run.id}
+        <span class="text-buzz">Couldn't open the model browser — paste the AIR instead.</span>
+      {:else if run.customName}
+        Training on <span class="font-semibold text-dark-0">{run.customName}</span>
+      {:else if pickModel()}
+        Browse for a Civitai model to train on, or paste its AIR from the model's page.
       {:else}
         Paste the AIR of a Civitai model to train on (copy it from the model's page).
       {/if}
@@ -425,7 +495,7 @@
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
         {@const card = selectedCard}
-        {@const runPrice = price(primary.cardType, isCustom(primary))}
+        {@const runPrice = price(primary.cardType)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -434,11 +504,7 @@
                 {runVersionLabel(primary)}
               </div>
               <div class="font-mono text-xs text-dark-2">
-                {labelNoun(card)}{#if isCustom(primary)} · custom (+<IconBoltFilled
-                    size={10}
-                    stroke={2}
-                    class="inline"
-                  />{CUSTOM_MODEL_SURCHARGE}){/if}
+                {labelNoun(card)}{#if isCustom(primary)} · custom{/if}
               </div>
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
@@ -464,13 +530,6 @@
                 >
                   <div class="flex items-center gap-2">
                     <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                    {#if v.surcharge}
-                      <span
-                        class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                      >
-                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                      </span>
-                    {/if}
                   </div>
                 </button>
               {/each}
@@ -504,7 +563,7 @@
           {#each runs as r, ri (r.id)}
             {@const card = runCard(r)}
             {@const focusedRow = ri === focus}
-            {@const runPrice = price(r.cardType, isCustom(r))}
+            {@const runPrice = price(r.cardType)}
             <div
               class="rounded-md border p-3 transition
                 {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}"
@@ -522,11 +581,7 @@
                       {runVersionLabel(r)}
                     </div>
                     <div class="font-mono text-xs text-dark-2">
-                      {labelNoun(card)}{#if isCustom(r)} · custom (+<IconBoltFilled
-                          size={10}
-                          stroke={2}
-                          class="inline"
-                        />{CUSTOM_MODEL_SURCHARGE}){/if}{focusedRow ? ' · editing' : ''}
+                      {labelNoun(card)}{#if isCustom(r)} · custom{/if}{focusedRow ? ' · editing' : ''}
                     </div>
                   </div>
                 </button>
@@ -557,13 +612,6 @@
                   >
                     <div class="flex items-center gap-2">
                       <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                      {#if v.surcharge}
-                        <span
-                          class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                        >
-                          +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                        </span>
-                      {/if}
                     </div>
                   </button>
                 {/each}

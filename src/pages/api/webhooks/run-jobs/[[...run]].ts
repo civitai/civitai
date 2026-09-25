@@ -7,6 +7,7 @@ import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-chec
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
@@ -44,6 +45,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
+import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
@@ -80,7 +82,9 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
+import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
@@ -130,8 +134,11 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
+  gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  storageUsageNightlyJob,
+  storageUsageMediaJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,
@@ -192,6 +199,7 @@ export const jobs: Job[] = [
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
+  syncGeneratorLoadedResources,
   updateUserScore,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
@@ -249,6 +257,7 @@ export const jobs: Job[] = [
   announcementDismissalCleanupJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
+  pushSubscriptionCleanupJob,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -17,8 +17,18 @@ import {
   DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
-import { ANON_SUBJECT, isValidSubject, USER_SUB_RE } from '~/server/services/block-token-subject';
+import {
+  ANON_SUBJECT,
+  isValidSubject,
+  subjectForUserId,
+  USER_SUB_RE,
+} from '~/server/services/block-token-subject';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  allBrowsingLevelsFlag,
+  domainBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   isBlockActionDetail,
   type BlockActionDetail,
@@ -31,6 +41,8 @@ import {
  * Behavior matrix:
  *   - No Authorization: Bearer header           → fall through to existing handler (session auth)
  *   - Authorization: Bearer <opaque API key>    → fall through (legacy API key path)
+ *   - Authorization: Bearer <hub OAuth token>   → if its OauthClient owns an AppBlock: build block
+ *                                                 claims from the viewer's grant, set req.blockClaims
  *   - Authorization: Bearer <RS256 block JWT>   → validate, bind to context, set req.blockClaims
  *
  * See docs/features/app-blocks.md for the overall architecture.
@@ -237,8 +249,21 @@ export interface WithBlockScopeOpts {
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
    * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
-   * `enforceContextBinding` for the token's scopes — the standard per-scope
+   * `enforceContextBinding` FOR THIS SCOPE — the standard per-scope
    * authorization path (me.ts, submit-version, settings, etc.).
+   *
+   * 🔴 It is the binding for THIS scope only, not for every scope the token
+   * carries (#5063). If a handler consults a SECOND scope off `claims.scopes`
+   * to widen what it returns — today only `collections:read:private`, in
+   * `blocks/collections/index.ts:614` and `blocks/collections/[id]/index.ts:132`
+   * — that scope's own binding is NOT run by the middleware and the handler
+   * owns it. Both of today's sites are safe for reasons that hold without any
+   * test: the scope is CONSENT-GATED (absent from `CONSENT_EXEMPT_SCOPES`) so
+   * the anon mint strips it, AND both routes require `collections:read:self`,
+   * whose non-anon binding does still run. A third such site must make its own
+   * argument rather than inherit theirs — see the note at the foot of
+   * `block-scope.required-scope-binding.test.ts`, which also records why the
+   * mechanical ledger that briefly lived there was deleted rather than patched.
    *
    * When OMITTED ("any valid block token" mode), the middleware STILL performs
    * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,
@@ -743,8 +768,8 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
 }
 
 /**
- * Enforces context binding per scope type. Each scope can require
- * additional request-shape checks beyond having-the-scope:
+ * Enforces context binding for THE SCOPE THE ROUTE REQUIRES. Each scope can
+ * require additional request-shape checks beyond having-the-scope:
  *   - models:read:self   → query.id ≡ claims.ctx.modelId (integer match)
  *   - buzz:read:self     → claims.sub != 'anon'
  *   - social:tip:self    → claims.sub != 'anon'
@@ -752,17 +777,59 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - ai:write:budgeted  → claims.buzzBudget > 0
  *   - posts:write:self   → claims.sub != 'anon'
  *
+ * 🔴 THE BINDING SWITCH IS SCOPED TO `requiredScope`, NOT TO EVERY SCOPE ON THE
+ * TOKEN (#5063), and that is deliberate. A binding answers "is THIS request
+ * shaped correctly for the capability it is exercising" — it is a statement
+ * about a route, not about a token. Running every scope's binding on every
+ * request made two cases on this very switch contradict each other: the
+ * `apps:storage:shared:read` case below says anon reads ARE allowed, while the
+ * `apps:storage:shared:write` case one below it 403s the same anon token on
+ * that same read. Likewise `models:read:self`'s query binding cannot be
+ * satisfied by a buzz request that has no model in it, so a manifest declaring
+ * it 403'd every non-models block REST route.
+ *
+ * WHAT DID NOT NARROW, and must not:
+ *   - The unknown-scope deny-by-default below still sweeps the WHOLE token. An
+ *     unknown scope is never legitimate on any route, so that gate is not
+ *     route-specific.
+ *   - The caller (`withBlockScope`) still enforces
+ *     `claims.scopes.includes(requiredScope)` BEFORE calling this — which is
+ *     also what guarantees `requiredScope` reaches the switch already proven
+ *     known, so the `default:` arm below only ever sees an under-wired scope.
+ *   - The "every known scope has a binding case" property that the `default:`
+ *     arm used to police incidentally (by 403ing every request a token carrying
+ *     an unwired scope made) is now pinned STATICALLY, and therefore earlier and
+ *     louder, by `block-scope.required-scope-binding.test.ts`.
+ *   - Each route's own authorization is untouched: `resolveSharedContext`'s
+ *     min-trust gate + per-op `READ_OPS` check, the collections
+ *     visibility/ownership checks, the tip gates, etc.
+ *
  * Throws ForbiddenError on mismatch.
  */
-export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequest): void {
+export function enforceContextBinding(
+  claims: BlockTokenClaims,
+  req: NextApiRequest,
+  requiredScope: string
+): void {
+  // Deny-by-default, TOKEN-WIDE: tokens carrying scopes we don't know about are
+  // rejected here. The manifest validator is the registration-time gate;
+  // this is the runtime gate. Together they bound the trust surface even
+  // if a future scope ships without all its plumbing.
   for (const scope of claims.scopes) {
-    // Deny-by-default: tokens carrying scopes we don't know about are
-    // rejected here. The manifest validator is the registration-time gate;
-    // this is the runtime gate. Together they bound the trust surface even
-    // if a future scope ships without all its plumbing.
     if (!isKnownBlockScope(scope)) {
       throw forbidden(`unknown scope: ${scope}`);
     }
+  }
+
+  // The bare block + the `scope` alias are deliberate: they hold the switch at
+  // its original indentation and keep every `${scope}` in the error messages
+  // spelled the same, so the diff shows ONE semantic change — what the switch is
+  // fed — rather than a reindent-and-rename of the 140 lines around it.
+  {
+    // `requiredScope` is guaranteed to be one of `claims.scopes` by the caller's
+    // presence check, and every member of `claims.scopes` was just proven known
+    // — so reaching `default:` means an under-wired scope, never an unknown one.
+    const scope = requiredScope;
     switch (scope) {
       case 'models:read:self': {
         const modelIdStr = readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
@@ -853,30 +920,192 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // `blocks.createPostFromApp` (approval + revocation + write-trust +
         // per-source ownership/provenance + the host-chrome consent confirm).
         //
-        // 🔴 THIS CASE IS NOT OPTIONAL AND ITS ABSENCE IS NOT SCOPED TO POSTING.
-        // The loop walks EVERY scope on the token, and the `default:` arm below
-        // throws. A known scope with no case here therefore 403s every REST
-        // request the token makes — a models read, a catalog read, anything — so
-        // omitting it bricks the whole app and reads as a bug in an unrelated
-        // endpoint. It must land in the same commit as the
-        // BLOCK_SCOPE_TO_OAUTH_BIT entry.
+        // 🔴 THIS CASE IS NOT OPTIONAL. The `default:` arm below throws, so a
+        // known scope with no case here 403s EVERY request to the route that
+        // declares it as `requiredScope` — the route is simply dead. It must
+        // land in the same commit as the BLOCK_SCOPE_TO_OAUTH_BIT entry, and
+        // `block-scope.required-scope-binding.test.ts` fails statically if it
+        // does not. (Before #5063 the damage was WIDER, not narrower: the switch
+        // ran for every scope on the token, so an unwired scope 403'd a models
+        // read and a catalog read too. That blast radius is gone; the
+        // requirement to wire the case is not.)
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
       }
       default:
-        // Fail closed (L-M6). Reaching here means a scope passed the
-        // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
-        // but has no explicit binding case in this switch — i.e. someone
-        // added a scope to the constant without wiring its runtime binding.
-        // Rather than accept it with no contextual binding (the prior
-        // implicit fall-through), reject it. Every scope currently in
-        // BLOCK_SCOPE_TO_OAUTH_BIT has a case above, so this never fires for
-        // a valid token today; it only catches a future under-wired scope.
+        // Fail closed (L-M6). Reaching here means the ROUTE'S `requiredScope`
+        // passed the `isKnownBlockScope` gate above (it's in
+        // BLOCK_SCOPE_TO_OAUTH_BIT) but has no explicit binding case in this
+        // switch — i.e. someone added a scope to the constant, declared it on a
+        // route, and never wired its runtime binding. Rather than accept it with
+        // no contextual binding (the prior implicit fall-through), reject it.
+        // Every scope currently in BLOCK_SCOPE_TO_OAUTH_BIT has a case above —
+        // asserted statically in `block-scope.required-scope-binding.test.ts`,
+        // which is the gate that now catches an under-wired scope at CI time
+        // instead of leaving it to 403 in production.
         throw forbidden(`scope has no runtime binding: ${scope}`);
     }
   }
+}
+
+// Same instance id the page host mints under, so storage, rate-limit buckets and the
+// publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
+const HUB_INSTANCE_PREFIX = 'page_';
+// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+const HUB_BUZZ_BUDGET_DEFAULT = 10;
+const HUB_BUZZ_BUDGET_CAP = 1000;
+
+function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
+  const raw = manifest.page?.buzzBudgetPerGen;
+  const candidate =
+    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
+  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+}
+
+/**
+ * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
+ * Null for anything else — a personal API key is never elevated. Scopes are what the
+ * JWT mint would sign for this viewer: manifest ∩ approved ∩ (granted ∪ consent-exempt).
+ * With several blocks on one client the oldest approved one is chosen.
+ */
+/**
+ * A hub token from an author's own dev tunnel: either the borrowed dev client of a
+ * never-submitted app, or the real client of an owned app that is not approved.
+ * The consent the mint wrote is what bounds the scopes.
+ */
+async function resolveDevTunnelHubClaims(args: {
+  userId: number;
+  clientId: string;
+  apiKeyId: number;
+}): Promise<BlockTokenClaims | null> {
+  const { userId, clientId, apiKeyId } = args;
+  const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
+    await Promise.all([
+      import('~/server/services/blocks/dev-tunnel-oauth.service'),
+      import('~/server/services/blocks/dev-tunnel.service'),
+      import('~/server/db/client'),
+    ]);
+
+  const dev = parseDevTunnelClientId(clientId);
+  if (dev && dev.userId !== userId) return null;
+  const owned = dev
+    ? null
+    : await dbRead.appBlock.findFirst({
+        where: { appId: clientId, app: { userId } },
+        select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+      });
+  if (!dev && !owned) return null;
+
+  const blockId = dev ? dev.slug : owned!.blockId;
+  const appBlockId = dev ? `${EPHEMERAL_APP_ID_PREFIX}${dev.slug}` : owned!.id;
+  const tunnel = await getActiveDevTunnel(userId, blockId);
+  if (!tunnel) return null;
+  const consent = await dbRead.oauthConsent.findUnique({
+    where: { userId_clientId: { userId, clientId } },
+    select: { scope: true },
+  });
+  if (!consent) return null;
+
+  const {
+    clampTunnelDeclaredScopes,
+    parseManifestBuzzBudget,
+    resolveDevBuzzBudget,
+    FORCED_SFW_CEILING,
+  } = await import('~/server/services/blocks/dev-scoped-mint.service');
+  const source = dev
+    ? tunnel.grantedScopes ?? []
+    : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
+  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const manifestBudget = owned
+    ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
+    : undefined;
+  const buzzBudget = resolveDevBuzzBudget(scopes, undefined, manifestBudget);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${apiKeyId}`,
+    blockId,
+    appId: clientId,
+    appBlockId,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${appBlockId}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    dev: true,
+    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  };
+}
+
+const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
+
+async function resolveHubTokenClaims(
+  bearer: string,
+  req: NextApiRequest
+): Promise<BlockTokenClaims | null> {
+  const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+  const session = await getSessionFromBearerToken(bearer);
+  if (!session || session.subject.type !== 'oauth') return null;
+  const userId = session.user?.id;
+  if (typeof userId !== 'number') return null;
+  const clientId = session.subject.id;
+
+  const { dbRead } = await import('~/server/db/client');
+  const block = (await dbRead.appBlock.findFirst({
+    where: { appId: clientId, status: 'approved' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+  })) as {
+    id: string;
+    blockId: string;
+    manifest: unknown;
+    approvedScopes: string[];
+  } | null;
+  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
+
+  const { getGrantedScopes, partitionByConsent } = await import(
+    '~/server/services/blocks/scope-grant.service'
+  );
+  const granted = await getGrantedScopes({ userId, appBlockId: block.id });
+  const manifest = (block.manifest ?? {}) as {
+    scopes?: unknown;
+    page?: { buzzBudgetPerGen?: unknown };
+  };
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  const scopes = partitionByConsent(declared, granted).signable;
+
+  const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
+  const host = req.headers.host ?? '';
+  const domainColor = getRequestDomainColor(req);
+  const maxBrowsingLevel =
+    host !== '' && isHostForColor(host, 'red')
+      ? allBrowsingLevelsFlag
+      : domainBrowsingCeiling(domainColor);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${session.apiKeyId}`,
+    blockId: block.blockId,
+    appId: clientId,
+    appBlockId: block.id,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
+    maxBrowsingLevel,
+  };
 }
 
 export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts): NextApiHandler {
@@ -889,13 +1118,15 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       ? authHeader.slice('bearer '.length).trim()
       : '';
 
-    // No block bearer present (or it's an opaque API key, not a 3-part JWS)
+    // No block bearer present (or it's an opaque API key, not a 3-part JWS,
+    // that does not resolve to a block's hub token below)
     // — hand off to the wrapped handler so it can run its own auth/CORS path.
     // This is what keeps pre-PR behavior (PublicEndpoint's ACAO:*,
     // AuthedEndpoint's allow-credentials path) intact for legacy callers.
-    if (!bearer || !isBlockJwt(bearer)) {
+    if (!bearer) {
       return handler(req, res);
     }
+    const isJwt = isBlockJwt(bearer);
 
     // Decision 4: gate block-JWT verification on the dedicated GLOBAL runtime
     // flag (`app-blocks-runtime-enabled`) rather than the global eval of the
@@ -921,8 +1152,13 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       return handler(req, res);
     }
 
-    const claims = await verifyBlockToken(bearer);
+    const claims = isJwt
+      ? await verifyBlockToken(bearer)
+      : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await resolveHubTokenClaims(bearer, req)
+      : null;
     if (!claims) {
+      if (!isJwt) return handler(req, res);
       res.status(401).json({ error: 'invalid block token' });
       return;
     }
@@ -1155,7 +1391,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       }
 
       try {
-        enforceContextBinding(claims, req);
+        // #5063: the binding runs for THIS ROUTE'S scope only. An unrelated
+        // scope the token also happens to carry (a declared `models:read:self`
+        // on a buzz read; a consent-exempt `apps:storage:shared:write` on an
+        // anon shared READ) no longer 403s a request that never invoked it.
+        enforceContextBinding(claims, req, opts.requiredScope);
       } catch (err) {
         if (err instanceof ForbiddenError) {
           res.status(403).json({ error: err.message });
@@ -1287,36 +1527,97 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
  * and nothing else. This is the allowlist `normalizeEndpoint` templates against.
  *
  * It is a CLOSED set by construction: Next.js only dispatches a request to a
- * wrapped handler when the URL matches one of the 12 route files verbatim except
- * for their `[id]` positions, so any segment not listed here arrived in a dynamic
- * position and is caller-supplied. Kept in lockstep with those route files by
+ * wrapped handler when the URL matches one of the wrapped route files verbatim
+ * except for their `[id]` positions, so any segment not listed here arrived in a
+ * dynamic position and is caller-supplied. (The count is deliberately not
+ * written here — it was stale at "12" while the population was 13, and it moved
+ * again when `blocks/buzz.ts` was restored. The drift test below is the
+ * authority.) Kept in lockstep with those route files by
  * `block-scope.normalize-endpoint.test.ts`, which derives the set by walking
  * `src/pages/api` for every page extension Next accepts and matching both the
  * direct and indirect `withBlockScope(` wrap, rather than trusting this
  * comment.
  *
- * Not listed on purpose: `submissions`, `submit-version`, `withdraw`,
- * `dev-token`, `block-tokens`. Those routes live under `/api/v1/blocks` too but
- * authenticate with an API key, not a block JWT — they never call this
- * middleware, so listing them would be an unfalsifiable claim about a path this
- * function cannot see.
+ * Not listed on purpose: `submissions`, `submit-version`, `dev-token`,
+ * `block-tokens`. Those routes live under `/api/v1/blocks` too but authenticate
+ * with an API key, not a block JWT — they never call this middleware, so listing
+ * them would be an unfalsifiable claim about a path this function cannot see.
+ *
+ * ⚠️ `withdraw` USED TO BE on that not-listed line and no longer is, which is a
+ * collision worth naming rather than silently resolving. There are now TWO
+ * routes whose last segment is `withdraw`: the API-key `blocks/withdraw` (still
+ * invisible to this middleware, still not a reason for the entry) and the
+ * block-JWT `blocks/shared-storage/withdraw`, which IS wrapped and is what the
+ * entry is for. The allowlist is a flat set of SEGMENTS, not of paths, so it
+ * cannot distinguish them — and it does not need to: the full normalized path is
+ * what lands in the `endpoint` column, and those two differ.
  */
 export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'api',
   'v1',
+  'append',
+  // The per-viewer app-storage surface. Note what is NOT here: a KEY. All five
+  // routes carry the key in the POST body precisely so it never becomes a path
+  // segment (it is one viewer's private data — see app-storage/get.ts), so there
+  // is no `:seg` position on this surface to lose and no per-key value that could
+  // fragment the `endpoint` column.
+  'app-storage',
   'blocks',
+  'buzz',
+  'cancel',
   'collections',
+  'counts',
+  'delete',
+  'estimate',
   'follow',
+  'get',
+  // The per-viewer gated image read. Note what is NOT here: an IMAGE ID. The ids
+  // ride the query string (`?ids=1,2,3`), which `normalizeEndpoint` strips
+  // wholesale, so this surface has no `:seg` position at all and nothing that
+  // could fragment the `endpoint` column.
+  'gated-images',
   'generation-resources',
   'images',
   'increment',
+  'item',
+  'list',
   'me',
   'models',
+  'poll',
+  // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging
+  // cursor and page size ride the POST body, so there is no `:seg` position on
+  // this route and nothing per-viewer that could fragment the `endpoint` column.
+  'query',
+  'quota',
+  'report',
+  'set',
   'shared-storage',
+  'submit',
   'tip',
   'tip-allowance',
   'tools',
   'top',
+  'unvote',
+  'update',
+  // The per-viewer checkpoint override write. Like `app-storage`, nothing
+  // identifying is in the path: the install and the viewer both come from the
+  // JWT, and the only body field is a bounded integer — so there is no `:seg`
+  // position on this surface to lose. Without this entry the audit row records
+  // `/api/v1/blocks/:seg/set`, which loses the route's name in the
+  // `topEndpoints` rollup and leaves `AppActivityPanel`'s label arm — an exact
+  // `===` on the literal path — with nothing to match, so the row renders the
+  // raw `(any-token)` scope sentinel to the viewer.
+  //
+  // ⚠ An earlier version of this comment said the templated form COLLIDES with
+  // `app-storage/set.ts`. That was FALSE and is retracted: `'app-storage'` is
+  // itself in this set (above), so that route normalises to the literal
+  // `/api/v1/blocks/app-storage/set` and never to `:seg/set`. There is no other
+  // unlisted segment to collide with either. The entry is still required — for
+  // the naming reason above — but not for that reason.
+  'user-checkpoint',
+  'vote',
+  'withdraw',
+  'workflows',
 ]);
 
 /**

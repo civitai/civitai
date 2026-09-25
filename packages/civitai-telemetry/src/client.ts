@@ -387,15 +387,30 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
-// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path swallows a TRANSIENT
-// ClickHouse connection/transport failure (socket hang up / Code 279 / Code 210 — see
-// isClickHouseConnectionError) instead of 500-ing the request. The `path` label names where it
-// happened. A query/schema error (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A
-// SUSTAINED nonzero rate is the alert signal that ClickHouse Cloud is in a real outage that fail-soft
-// is now masking.
+// ClickHouse TRANSPORT-error fail-soft counter. Incremented when an INSTRUMENTED call site
+// degrades on a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 /
+// Code 210 — see isClickHouseConnectionError) instead of 500-ing the request. The `path` label
+// names where it happened.
+//
+// 🔴 OPT-IN PER CALL SITE, NOT A PROPERTY OF THE PREDICATE. A site that swallows or re-maps a
+// CH transient off isClickHouseConnectionError WITHOUT incrementing this is invisible here —
+// `src/server/games/new-order/utils.ts` is one such site today — so the total UNDER-reports
+// CH-transient degradation. Read a rate as "at least this much", and add the increment when
+// you instrument a site.
+//
+// A query/schema error (UNKNOWN_TABLE etc.) is never counted, because every increment sits behind
+// isClickHouseConnectionError, which excludes query/schema faults — those still throw and 500.
+// A SUSTAINED nonzero rate is a ClickHouse transport problem at those sites that no longer shows
+// up as a 500. It does not on its own localise the fault to ClickHouse Cloud: the predicate keys
+// on the syscall code, not on which dependency raised it, and the `image-feed` site catches
+// around a call that also reaches Meilisearch — a Meili transport error that the preceding
+// `isTransientMeiliError` branch did not already claim would land here. Confirm against
+// ClickHouse-side signals before calling a spike a ClickHouse outage.
 export const clickhouseFailSoftCounter = registerCounterWithLabels({
-  name: 'civitai_app_clickhouse_failsoft_total',
-  help: 'Transient ClickHouse transport errors swallowed (failed soft) instead of 500-ing, by path',
+  // registerCounterWithLabels prepends PROM_PREFIX — a name carrying it emits
+  // `civitai_app_civitai_app_…`.
+  name: 'clickhouse_failsoft_total',
+  help: 'Transient transport errors degraded (swallowed or re-mapped to 503) instead of 500-ing, by INSTRUMENTED path — opt-in, so an undercount. An error object carrying a transport syscall code counts here whatever raised it (image-feed also reaches Meilisearch), so confirm against ClickHouse-side signals before calling a spike a ClickHouse outage.',
   labelNames: ['path'] as const,
 });
 

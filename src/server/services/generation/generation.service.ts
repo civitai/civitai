@@ -58,12 +58,11 @@ import {
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
-import { Flags } from '~/shared/utils/flags';
 import {
   ModelVersionFlag,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { pickPreviewImage } from '~/shared/utils/resource-preview';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
@@ -251,11 +250,11 @@ export type GenerationData = {
 export const getGenerationData = async ({
   query,
   user,
-  sfwOnly = false,
+  browsingLevel,
 }: {
   query: GetGenerationDataSchema;
   user?: SessionUser;
-  sfwOnly?: boolean;
+  browsingLevel?: number;
 }): Promise<GenerationData> => {
   switch (query.type) {
     case 'image':
@@ -265,7 +264,7 @@ export const getGenerationData = async ({
         user,
         generation: query.generation,
         withPreview: query.withPreview,
-        sfwOnly,
+        browsingLevel,
       });
     case 'modelVersion':
       return await getModelVersionGenerationData({
@@ -273,7 +272,7 @@ export const getGenerationData = async ({
         user,
         generation: query.generation,
         withPreview: query.withPreview,
-        sfwOnly,
+        browsingLevel,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({
@@ -281,7 +280,7 @@ export const getGenerationData = async ({
         versionIds: query.ids,
         generation: query.generation,
         withPreview: query.withPreview,
-        sfwOnly,
+        browsingLevel,
       });
     default:
       // 🔴 REACHABLE, and it is a CLIENT error: `getGenerationDataSchema` accepts
@@ -310,7 +309,7 @@ async function swapGenerationAliases(
     user?: { id?: number; isModerator?: boolean };
     generation?: boolean;
     withPreview?: boolean;
-    sfwOnly?: boolean;
+    browsingLevel?: number;
   }
 ): Promise<(GenerationResource & { air: string })[]> {
   const aliasIds = [...new Set(resources.map((r) => r.aliasId).filter(isDefined))];
@@ -427,13 +426,13 @@ async function getMediaGenerationData({
   user,
   generation,
   withPreview = false,
-  sfwOnly = false,
+  browsingLevel,
 }: {
   id: number;
   user?: SessionUser;
   generation: boolean;
   withPreview?: boolean;
-  sfwOnly?: boolean;
+  browsingLevel?: number;
 }): Promise<GenerationData> {
   const media = await dbRead.image.findUnique({
     where: { id },
@@ -487,7 +486,7 @@ async function getMediaGenerationData({
     user,
     generation,
     withPreview,
-    sfwOnly,
+    browsingLevel,
   })
     .then((data) =>
       data.map((item) => {
@@ -500,7 +499,7 @@ async function getMediaGenerationData({
     )
     // Redirect any cover resources to their alias target (carrying the image's
     // recorded strength) before the data is used for the remix.
-    .then((data) => swapGenerationAliases(data, { user, generation, withPreview, sfwOnly }));
+    .then((data) => swapGenerationAliases(data, { user, generation, withPreview, browsingLevel }));
   const baseModel = getBaseModelFromResources(
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
@@ -607,13 +606,13 @@ const getModelVersionGenerationData = async ({
   user,
   generation,
   withPreview = false,
-  sfwOnly = false,
+  browsingLevel,
 }: {
   versionIds: { id: number; epoch?: number }[] | number[];
   user?: SessionUser;
   generation: boolean;
   withPreview?: boolean;
-  sfwOnly?: boolean;
+  browsingLevel?: number;
 }): Promise<GenerationData> => {
   if (!versionIds.length) throw new Error('missing version ids');
 
@@ -641,7 +640,7 @@ const getModelVersionGenerationData = async ({
     user,
     generation,
     withPreview,
-    sfwOnly,
+    browsingLevel,
   });
 
   // Apply alias strength overrides to the redirected resources.
@@ -1220,12 +1219,12 @@ export async function getResourceData(
     user = {},
     generation = false,
     withPreview = false,
-    sfwOnly = false,
+    browsingLevel,
   }: {
     user?: { id?: number; isModerator?: boolean };
     generation?: boolean;
     withPreview?: boolean;
-    sfwOnly?: boolean;
+    browsingLevel?: number;
   } = {}
 ): Promise<(GenerationResource & { air: string })[]> {
   if (!versionIds.length) return [];
@@ -1453,9 +1452,7 @@ export async function getResourceData(
     const imageCache = await imagesForModelVersionsCache.fetch(resources.map((r) => r.id));
     for (const resource of resources as (GenerationResource & { air: string })[]) {
       const images = imageCache[resource.id]?.images ?? [];
-      const first = sfwOnly
-        ? images.find((i) => Flags.intersects(i.nsfwLevel, sfwBrowsingLevelsFlag))
-        : images[0];
+      const first = pickPreviewImage(images, browsingLevel);
       if (first) {
         resource.image = {
           id: first.id,
@@ -1685,11 +1682,11 @@ export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | und
 export async function resolveImageMeta({
   input,
   user,
-  sfwOnly = false,
+  browsingLevel,
 }: {
   input: ResolveImageMetaInput;
   user?: SessionUser;
-  sfwOnly?: boolean;
+  browsingLevel?: number;
 }): Promise<{ resources: GenerationResource[]; params: Record<string, unknown> }> {
   const metadata = input.metadata;
   const resourceInput = extractResourceInputFromMeta(metadata);
@@ -1768,15 +1765,15 @@ export async function resolveImageMeta({
   let allResources: GenerationResource[] = [];
   if (resolved.size > 0) {
     const versionIds = [...resolved.keys()];
-    allResources = (await getResourceData(versionIds, { user, withPreview: true, sfwOnly })).map(
-      (resource) => {
-        const candidate = resolved.get(resource.id);
-        if (candidate?.strength != null) {
-          return { ...resource, strength: candidate.strength / 100 };
-        }
-        return resource;
+    allResources = (
+      await getResourceData(versionIds, { user, withPreview: true, browsingLevel })
+    ).map((resource) => {
+      const candidate = resolved.get(resource.id);
+      if (candidate?.strength != null) {
+        return { ...resource, strength: candidate.strength / 100 };
       }
-    );
+      return resource;
+    });
   }
 
   // --- Normalize metadata + map to graph params (same pipeline as getMediaGenerationData) ---

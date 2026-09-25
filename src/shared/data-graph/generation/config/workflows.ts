@@ -52,6 +52,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 const EDIT_IMG_IDS = [
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.Seedream,
   ECO.NanoBanana,
@@ -71,6 +72,7 @@ const EDIT_IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
+  ECO.Ming,
 ];
 
 /** Image ecosystems that support image:create */
@@ -95,6 +97,7 @@ const TXT2IMG_IDS = [
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.HiDream,
   ECO.HiDreamO1,
@@ -116,6 +119,7 @@ const TXT2IMG_IDS = [
   ECO.Reve,
   ECO.MuseImage,
   ECO.MageFlow,
+  ECO.Ming,
 ];
 
 /** Video ecosystems that support video:create */

@@ -119,6 +119,24 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     expect(fetchFeedPrimary).not.toHaveBeenCalled();
   });
 
+  it('hides challenge entries in the feed by excluding the challenge tag', async () => {
+    primaryOn.mockReturnValue(true);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({ ...request(), hideChallenges: true });
+    const query = new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
+    expect(query.get('excludedTags')?.split(',')).toContain('676575');
+  });
+
+  it('refuses a cursor it cannot read instead of restarting the page from the search index', async () => {
+    primaryOn.mockReturnValue(true);
+    for (const cursor of ['feed', -1]) {
+      await expect(getAllImagesIndex({ ...request(), cursor })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    }
+    expect(fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
   it('scopes the feed to the new-creator board', async () => {
     primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);

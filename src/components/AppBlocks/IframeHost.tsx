@@ -94,6 +94,7 @@ interface IframeHostProps {
   token: string;
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
+  tokenKind?: 'block' | 'oauth';
   /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
    *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
    *  block sees a token without them and fires REQUEST_CONSENT on the action;
@@ -1122,6 +1123,7 @@ export function IframeHost({
   context,
   token,
   expiresAt,
+  tokenKind,
   missingScopes,
   domain,
   maxBrowsingLevel,
@@ -1492,6 +1494,7 @@ export function IframeHost({
       raw: token,
       scopes: grantedScopes,
       expiresAt,
+      ...(tokenKind ? { kind: tokenKind } : {}),
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     },
     // Data-minimization (security audit — MEDIUM): project the slot context
@@ -1561,10 +1564,11 @@ export function IframeHost({
         raw: token,
         scopes: grantedScopes,
         expiresAt,
+        ...(tokenKind ? { kind: tokenKind } : {}),
         ...(buzzBudget !== undefined ? { buzzBudget } : {}),
       },
     });
-  }, [token, expiresAt, buzzBudget, grantedScopes, send]);
+  }, [token, expiresAt, tokenKind, buzzBudget, grantedScopes, send]);
 
   // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and PageBlockHost
   // places it the same way. React runs effects in declaration order, so on the
@@ -1659,6 +1663,7 @@ export function IframeHost({
         raw: token,
         scopes: grantedScopes,
         expiresAt,
+        ...(tokenKind ? { kind: tokenKind } : {}),
         ...(buzzBudget !== undefined ? { buzzBudget } : {}),
       };
       if (requestId === undefined) {
@@ -1668,7 +1673,7 @@ export function IframeHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage, reportNoToken]);
+  }, [token, expiresAt, tokenKind, buzzBudget, grantedScopes, send, onMessage, reportNoToken]);
 
   // Init handshake. Start the moment we're ALLOWED to init — token present and
   // the effective-checkpoint query resolved (`isLoading` false; the error path

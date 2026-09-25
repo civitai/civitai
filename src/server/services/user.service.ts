@@ -1160,27 +1160,49 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         meta,
       },
     }),
+    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
+    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
+    // subscription -> customer -> charges, whose receipt_email and billing_details.name
+    // still identify the person.
+    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+
+  // The account is deleted from here on. A failing step must not skip a later one (a skipped
+  // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
+  // an error: the user would read a completed deletion as a failed one and retry.
+  const runStep = async (step: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (error) {
+      await logToAxiom({
+        name: step,
+        type: 'error',
+        source: 'deleteUser',
+        userId: user.id,
+        message: (error as Error)?.message,
+      }).catch(() => null);
+    }
+  };
+
+  await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('cancel-stripe-subscription', () =>
+    cancelSubscription({ userId: user.id, removeRecord: true })
+  );
 
   // The engagement rows are gone for real now, so the deleted user's own follow set
   // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
   // their own TTL — a popular account has six figures of them, and what each holds
   // is an id whose content this same call has already removed.
-  await userFollowsCache.bust(user.id);
-
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  await deleteBasicDataForUser(id);
-
-  // Cancel their subscription
-  await cancelSubscription({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  await runStep('bust-follows-cache', () => userFollowsCache.bust(user.id));
+  await runStep('search-index-delete', () =>
+    usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
-  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
-  await invalidateSession(id, 'moderation');
+  await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+
+  // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
+  await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
 
   return result;
 };
@@ -1197,8 +1219,12 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, name, paddleCustomerId, image, profilePictureId from the
- * User row and sets deletedAt. It also hard-deletes Account / Session / UserProfile / UserLink
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is not restored, and
+ * do NOT read that as "the subscription is gone": the cancels below run through runStep, which
+ * swallows, the Paddle one never deletes the CustomerSubscription row, and the Stripe one only
+ * deletes it for an active/past_due/trialing row. 6,816 soft-deleted accounts hold a surviving
+ * row today, 96 of them still live (prod, 2026-09-21). Check the billing record independently. It also hard-deletes Account / Session / UserProfile / UserLink
  * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
@@ -1281,7 +1307,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+  // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
+  // account would inherit its old attempt count, so its first failure would already be backed off
+  // for hours and it would alert as stuck long before it is.
+  const {
+    imageRemoval: _removalChoice,
+    gdprStripeScrub: _scrubState,
+    ...meta
+  } = (user.meta ?? {}) as UserMeta;
 
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a
@@ -2993,41 +3026,49 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
-  domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
-  if (
-    blurNsfw !== undefined ||
-    showNsfw !== undefined ||
-    // Red domain we'll store in the settings.
-    (browsingLevel !== undefined && domain !== 'red') ||
-    autoplayGifs !== undefined
-  ) {
-    await dbWrite.user.update({
-      where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+  try {
+    // Settings first: if the column write below then fails, the level did not change and the
+    // only loss is the retired red copy. The other order could commit a new level while
+    // leaving that copy for the one-off fold to apply over it.
+    if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
+      // Only the keys this call is changing. Re-reading the blob and writing it back
+      // would restore every other key to the value it held at read time, discarding a
+      // concurrent write to any of them (notice dismissals, feature toggles, …).
+      await patchUserSettings(userId, {
+        set: removeEmpty(data),
+        // A level set now supersedes any retired red-domain copy, so the one-off fold of those
+        // copies into the column never applies a stale value over it.
+        ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
+        location: 'user.service:updateContentSettings',
+      });
+    }
+    if (
+      blurNsfw !== undefined ||
+      showNsfw !== undefined ||
+      browsingLevel !== undefined ||
+      autoplayGifs !== undefined
+    ) {
+      await dbWrite.user.update({
+        where: { id: userId },
+        data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+      });
+      userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+      await userSettingsCache().bust([userId]);
+    }
+  } finally {
+    // Also when a later write throws: an earlier one may already have committed, and the
+    // cached session must not keep serving the old value for its whole lifetime.
+    //
+    // Await so the refresh marker is set in Redis before this mutation returns.
+    // Otherwise the fire-and-forget can race the next API call / session read
+    // and hand back a stale session.user, which then overrides the user's
+    // toggle client-side via BrowserSettingsProvider's smart-merge.
+    await refreshSession(userId, { caller: 'profile' }).catch((err) => {
+      console.error('Failed to refresh session for user', userId, err);
     });
-    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
-    await userSettingsCache().bust([userId]);
   }
-  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
-    // Only the keys this call is changing. Re-reading the blob and writing it back
-    // would restore every other key to the value it held at read time, discarding a
-    // concurrent write to any of them (notice dismissals, feature toggles, …).
-    await setUserSetting(userId, {
-      ...removeEmpty(data),
-      ...(domain === 'red' && browsingLevel !== undefined
-        ? { redBrowsingLevel: browsingLevel }
-        : {}),
-    });
-  }
-  // Await so the refresh marker is set in Redis before this mutation returns.
-  // Otherwise the fire-and-forget can race the next API call / session read
-  // and hand back a stale session.user, which then overrides the user's
-  // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
-    console.error('Failed to refresh session for user', userId, err);
-  });
 }
 
 // #region [user settings]

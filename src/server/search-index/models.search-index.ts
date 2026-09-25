@@ -15,7 +15,11 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SearchIndexContext } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
-import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
+import { modelVersionPricingSignals } from '@civitai/buzz';
+import {
+  getModelPaidAccessGates,
+  getModelVersionPaidAccessTerms,
+} from '~/server/services/paid-access.service';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -182,6 +186,7 @@ type PullDataResult = {
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+
 type VersionMetricRow = {
   generationCount: number;
   downloadCount: number;
@@ -237,6 +242,9 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelIds = models.map((m) => m.id);
   const paidAccessGates = await getModelPaidAccessGates(modelIds);
 
+  const versionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
+  const paidAccessTerms = await getModelVersionPaidAccessTerms(versionIds);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -257,13 +265,20 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const { files, ...restVersion } = version;
 
-      const canGenerate = modelVersions.some((x) =>
+      const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
         isGenerationEligible({
-          covered: x.generationCoverage?.covered,
+          covered,
           baseModel: x.baseModel,
           modelType: model.type,
           flags: x.flags,
-        })
+        });
+
+      const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+      // What `canGenerate` becomes when the staged rule takes over — the same composition over the
+      // view's other column. Transitional: delete it, and its filterable entries, at the cutover,
+      // when `covered` answers this on its own.
+      const canGenerateNext = modelVersions.some((x) =>
+        eligible(x, x.generationCoverage?.coveredNext)
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
@@ -308,11 +323,18 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
+            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate: isGenerationEligible({
               covered: generationCoverage?.covered,
+              baseModel: x.baseModel,
+              modelType: model.type,
+              flags: x.flags,
+            }),
+            canGenerateNext: isGenerationEligible({
+              covered: generationCoverage?.coveredNext,
               baseModel: x.baseModel,
               modelType: model.type,
               flags: x.flags,
@@ -366,6 +388,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         hiddenMetrics: hidden,
         canGenerate,
+        canGenerateNext,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
       };

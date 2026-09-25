@@ -88,4 +88,46 @@ describe('remixProvenanceStore', () => {
     expect(remixProvenanceStore.getToken('url-59')).toBe('tok-59');
     expect(remixProvenanceStore.getToken('url-0')).toBeUndefined();
   });
+
+  /**
+   * The prompt token seeds no source image, so the image it was minted for is
+   * the only thing tying it to a submission. Reading it against a DIFFERENT
+   * image must return nothing: the footers pass the image their remix claim
+   * names, and a token that answered regardless would let one reuse click pay
+   * for unrelated later submits and credit the wrong creator's gallery.
+   */
+  it('returns the prompt token only for the image it was minted for', () => {
+    remixProvenanceStore.setPromptToken('prompt-tok', 111);
+
+    expect(remixProvenanceStore.getPromptToken(111)).toBe('prompt-tok');
+    expect(remixProvenanceStore.getPromptToken(222)).toBeUndefined();
+  });
+
+  /** No claim means no image to match, which must not read as "any image". */
+  it('refuses the prompt token when there is no claim to name an image', () => {
+    remixProvenanceStore.setPromptToken('prompt-tok', 111);
+
+    expect(remixProvenanceStore.getPromptToken(undefined)).toBeUndefined();
+  });
+
+  /**
+   * A second reuse replaces the first rather than joining it. Both images are
+   * asserted because varying the token and the id together cannot tell
+   * last-write-wins from "a new image replaces the entry".
+   */
+  it('supersedes an earlier prompt token', () => {
+    remixProvenanceStore.setPromptToken('first', 111);
+    remixProvenanceStore.setPromptToken('second', 222);
+
+    expect(remixProvenanceStore.getPromptToken(222)).toBe('second');
+    expect(remixProvenanceStore.getPromptToken(111)).toBeUndefined();
+  });
+
+  /** Re-clicking the SAME image takes the newer token, not the stored one. */
+  it('replaces the token when the image is unchanged', () => {
+    remixProvenanceStore.setPromptToken('first', 111);
+    remixProvenanceStore.setPromptToken('second', 111);
+
+    expect(remixProvenanceStore.getPromptToken(111)).toBe('second');
+  });
 });

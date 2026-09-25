@@ -4,6 +4,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -31,7 +32,15 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/utils/notifications', () => ({
+// Same spread, same reason as the FeatureFlagsProvider factory above — and this one is the
+// case that actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, reached from here through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
+// requested module '/src/utils/notifications.tsx' does not provide an export named
+// 'showWarningNotification'`. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));

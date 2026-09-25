@@ -12,7 +12,6 @@ export const useMutateComment = () => {
       await Promise.all([
         queryUtils.commentv2.getInfinite.invalidate(),
         queryUtils.commentv2.getCount.invalidate({ entityType, entityId }),
-        queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true }),
       ]);
     },
     onError(error) {
@@ -75,7 +74,6 @@ export const useMutateComment = () => {
       await Promise.all([
         queryUtils.commentv2.getInfinite.invalidate(),
         queryUtils.commentv2.getCount.invalidate({ entityType, entityId }),
-        queryUtils.commentv2.getCount.invalidate({ entityType, entityId, hidden: true }),
       ]);
     });
   }

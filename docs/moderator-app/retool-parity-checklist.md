@@ -318,8 +318,10 @@ Open, with the evidence each audit produced:
       ResourceReview joined the shared `REPORT_SOURCES`; Chat is fetched beside it because it owns by
       `ownerId`, and it was added to the count tiles at the same time so counts and rows still agree).
 - [x] **Buzz: Payments and Receipts side by side**, each with its own type filter, plus a Description
-      filter and an *After date* picker. Ours is one merged list on a fixed 90-day window with no
-      filters. 🎥 buzz is actively used to grant and deduct.
+      filter and an *After date* picker. Built 2026-08-11 as Payments | Receipts side by side with
+      per-column type and description filters on a selectable window; the two sides became two
+      capped queries later, so a busy receipts column can no longer hide the payments one.
+      🎥 buzz is actively used to grant and deduct.
       (The per-transaction **Color** is already rendered — that sub-claim was stale.)
 - [x] **A second row of aggregate tables** (2026-08-11 — counterparty × total, per side, top 10 by
       total). The transaction list answers "what happened"; this answers "who with, and how much in

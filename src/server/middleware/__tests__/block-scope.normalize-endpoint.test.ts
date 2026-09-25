@@ -116,6 +116,48 @@ describe('normalizeEndpoint — leaves genuinely static segments intact', () => 
     ['/api/v1/blocks/collections/77/follow', '/api/v1/blocks/collections/:id/follow'],
     ['/api/v1/blocks/shared-storage/top', '/api/v1/blocks/shared-storage/top'],
     ['/api/v1/blocks/shared-storage/increment', '/api/v1/blocks/shared-storage/increment'],
+    // The six shared-storage WRITE routes. Each is listed by hand rather than
+    // generated from the allowlist, so the expectation is an independent
+    // statement of what the audit column should read — deriving it from
+    // KNOWN_STATIC_ENDPOINT_SEGMENTS would make the assertion true by
+    // construction and blind to the thing it is checking.
+    ['/api/v1/blocks/shared-storage/append', '/api/v1/blocks/shared-storage/append'],
+    ['/api/v1/blocks/shared-storage/update', '/api/v1/blocks/shared-storage/update'],
+    ['/api/v1/blocks/shared-storage/vote', '/api/v1/blocks/shared-storage/vote'],
+    ['/api/v1/blocks/shared-storage/unvote', '/api/v1/blocks/shared-storage/unvote'],
+    ['/api/v1/blocks/shared-storage/withdraw', '/api/v1/blocks/shared-storage/withdraw'],
+    ['/api/v1/blocks/shared-storage/report', '/api/v1/blocks/shared-storage/report'],
+    // The four WORKFLOW routes, listed by hand for the same reason the six above
+    // are. `workflowId` is deliberately NOT a path segment on any of them (it
+    // embeds the viewer's user id — see poll.ts), so there is no `:seg` position
+    // here to lose and no per-workflow value that could fragment the column.
+    ['/api/v1/blocks/workflows/submit', '/api/v1/blocks/workflows/submit'],
+    ['/api/v1/blocks/workflows/estimate', '/api/v1/blocks/workflows/estimate'],
+    ['/api/v1/blocks/workflows/poll', '/api/v1/blocks/workflows/poll'],
+    ['/api/v1/blocks/workflows/cancel', '/api/v1/blocks/workflows/cancel'],
+    // The five PER-VIEWER app-storage routes, listed by hand for the same reason.
+    // The `key` is deliberately NOT a path segment on any of them — it is one
+    // viewer's private data and rides in the POST body (see app-storage/get.ts) —
+    // so there is no `:seg` position here to lose and no per-key value that could
+    // fragment the column. That is also why the under-templating half of this
+    // guard matters here: `get`, `set`, `delete` and `quota` are short, generic
+    // words, and without their entries in KNOWN_STATIC_ENDPOINT_SEGMENTS they
+    // would each degrade to `:seg` and collapse all five routes onto ONE row
+    // (`/api/v1/blocks/app-storage/:seg`), which is the over-templating failure
+    // this file's docblock warns is the easy one to ship unnoticed.
+    ['/api/v1/blocks/app-storage/get', '/api/v1/blocks/app-storage/get'],
+    ['/api/v1/blocks/app-storage/set', '/api/v1/blocks/app-storage/set'],
+    ['/api/v1/blocks/app-storage/delete', '/api/v1/blocks/app-storage/delete'],
+    ['/api/v1/blocks/app-storage/list', '/api/v1/blocks/app-storage/list'],
+    ['/api/v1/blocks/app-storage/quota', '/api/v1/blocks/app-storage/quota'],
+    // The PER-VIEWER gated image read, listed by hand for the same reason. The
+    // image ids are deliberately NOT path segments — they ride the query string,
+    // which `normalizeEndpoint` strips wholesale — so the second row here is the
+    // load-bearing one: it states that a request carrying ids still lands on the
+    // SAME bounded `endpoint` value as one without, rather than fragmenting the
+    // column per id set.
+    ['/api/v1/blocks/gated-images', '/api/v1/blocks/gated-images'],
+    ['/api/v1/blocks/gated-images?ids=1,2,3', '/api/v1/blocks/gated-images'],
     ['/api/v1/models/4201', '/api/v1/models/:id'],
   ])('%s survives as %s', (url, expected) => {
     expect(normalizeEndpoint(url)).toBe(expected);
@@ -241,15 +283,83 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
   it('pins the current set, so adding a route is a deliberate act', () => {
     expect(staticSegmentsFromRoutes()).toEqual([
       'api',
+      // `app-storage` / `get` / `set` / `delete` / `quota` — the PER-VIEWER app
+      // storage surface (`v1/blocks/app-storage/*.ts`), the v1 replacement for
+      // the postMessage APP_STORAGE_* bridge messages. (`list` was already in the
+      // vocabulary, earned by `shared-storage/list.ts`.) Pinned for the same
+      // reason as every surface below, with one extra edge: `get`, `set`,
+      // `delete` and `quota` are SHORT GENERIC WORDS, so without these entries
+      // `normalizeEndpoint` templates all four to `:seg` and collapses the whole
+      // surface onto ONE row, `/api/v1/blocks/app-storage/:seg`. That is the
+      // OVER-templating half this file's docblock calls the easy one to ship
+      // unnoticed — nothing looks broken, the panel just stops saying which
+      // storage operation an app performed.
+      'app-storage',
+      // `append` / `report` / `unvote` / `update` / `vote` / `withdraw` — the
+      // shared-storage WRITE surface (`v1/blocks/shared-storage/*.ts`), the v1
+      // replacement for the postMessage SHARED_* bridge writes. Six new STATIC
+      // segments, pinned for the same reason the read surface's three below are:
+      // without the entries `normalizeEndpoint` collapses them to a placeholder
+      // and the audit log stops distinguishing a submission from a vote from a
+      // deletion — on the one surface where that distinction is the point.
+      //
+      // ⚠️ `withdraw` is the one entry that is NOT new vocabulary:
+      // `v1/blocks/withdraw.ts` has always existed. It is API-KEY authed, never
+      // reaches this middleware and was never in the allowlist, so the entry is
+      // earned by `shared-storage/withdraw.ts` alone — see the note on
+      // KNOWN_STATIC_ENDPOINT_SEGMENTS itself.
+      'append',
       'blocks',
+      // `v1/blocks/buzz.ts` — the per-pool balance self-read, restored as a
+      // withBlockScope REST route (it had been retired in favour of the
+      // page-host bridge, which a non-page-hosted block cannot reach).
+      'buzz',
+      // `cancel` / `estimate` / `poll` / `query` / `submit` / `workflows` — the
+      // WORKFLOW surface (`v1/blocks/workflows/*.ts`), the v1 replacement for the
+      // postMessage {SUBMIT,ESTIMATE,POLL,CANCEL,QUERY_APP}_WORKFLOW(S) bridge
+      // messages. Six STATIC segments, pinned for the same reason the shared ones are:
+      // without them `normalizeEndpoint` collapses the last segment to a
+      // placeholder and the audit log stops distinguishing a SPEND from a price
+      // quote from a status poll — which on this surface is the only thing the
+      // row would have said.
+      'cancel',
       'collections',
+      // `counts` / `item` / `list` — the shared-storage READ surface
+      // (`v1/blocks/shared-storage/{counts,item,list}.ts`), the v1 replacement for
+      // the postMessage SHARED_* bridge reads. Three new STATIC segments, so all
+      // three are pinned here: without the entry, normalizeEndpoint would collapse
+      // them to a placeholder and the audit log would stop distinguishing a feed
+      // scan from a point read.
+      'counts',
+      'delete',
+      'estimate',
       'follow',
+      // `gated-images` — the PER-VIEWER gated image read
+      // (`v1/blocks/gated-images.ts`), the v1 replacement for the
+      // `GET_IMAGES_BY_IDS` postMessage message. ONE new static segment, and the
+      // only one this surface needs: the image ids ride the QUERY STRING, which
+      // `normalizeEndpoint` strips wholesale, so there is no `:seg` position here
+      // to lose. Without the entry the route's rows read `/api/v1/blocks/:seg`
+      // and merge with every other unlisted sibling — the over-templating half
+      // this file's docblock calls the easy one to ship unnoticed.
+      'gated-images',
       'generation-resources',
+      'get',
       'images',
       'increment',
+      'item',
+      'list',
       'me',
       'models',
+      'poll',
+      // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
+      // page size ride the POST body, so there is no `:seg` position to lose.
+      'query',
+      'quota',
+      'report',
+      'set',
       'shared-storage',
+      'submit',
       'tip',
       'tip-allowance',
       // The read-only chat-tool surface (#398 AC5). Added deliberately: this
@@ -257,7 +367,28 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // than something that silently widens the audit-log segment allowlist.
       'tools',
       'top',
+      'unvote',
+      'update',
+      // `user-checkpoint` — the per-viewer checkpoint override write
+      // (`v1/blocks/user-checkpoint/set.ts`), the REST twin of the
+      // SET_USER_CHECKPOINT bridge message. One new STATIC segment; `set` was
+      // already in the vocabulary, earned by `app-storage/set.ts`. Pinned for the
+      // OVER-templating reason this file's docblock names: without it
+      // `normalizeEndpoint` yields `/api/v1/blocks/:seg/set`, so the route loses its
+      // name in the `topEndpoints` rollup and `AppActivityPanel`'s label arm — an
+      // exact `===` on the literal path — has no value to match, leaving the row to
+      // render the raw `(any-token)` scope sentinel.
+      //
+      // ⚠ RETRACTED: an earlier version of this comment claimed the templated form
+      // COLLIDES with `app-storage/set.ts`. It does not — `'app-storage'` is itself
+      // a pinned segment (above), so that route normalises to its own literal path
+      // and never to `:seg/set`. The entry is still required, for the naming reason
+      // above; the collision was never the reason.
+      'user-checkpoint',
       'v1',
+      'vote',
+      'withdraw',
+      'workflows',
     ]);
   });
 });

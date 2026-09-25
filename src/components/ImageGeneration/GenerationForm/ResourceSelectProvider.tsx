@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { isSortAvailable } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import type {
   ResourceFilter,
   ResourceSelectOptions,
@@ -7,11 +9,16 @@ import type {
   ResourceSort,
   Tabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { resourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useStorage } from '~/hooks/useStorage';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 const defaultTab: Tabs = 'all';
+const defaultSort: ResourceSort = 'relevance';
+const modelTypes = Object.values(ModelType);
 
 /**
  * Which of the picker's jobs this instance is doing. Left undefined the modal
@@ -78,7 +85,8 @@ export function ResourceSelectProvider({
   // For modelVersion linking, start on the 'official' tab (and don't persist):
   // linking a canonical component is the intended path, and the persisted tab
   // ('recent'/'liked') depends on data that's often empty for new uploads.
-  const persistTab = selectSource !== 'modelVersion';
+  // Sort and the type filter follow the same rule.
+  const persist = selectSource !== 'modelVersion';
   const [storedTab, setStoredTab] = useStorage<Tabs>({
     type: 'localStorage',
     key: 'resource-select-tab',
@@ -90,14 +98,57 @@ export function ResourceSelectProvider({
   );
   // useStorage's value widens to `Tabs | undefined`; fall back to the default so
   // the context always exposes a concrete tab.
-  const tab = (persistTab ? storedTab : localTab) ?? defaultTab;
-  const setTab = persistTab ? setStoredTab : setLocalTab;
+  const tab = (persist ? storedTab : localTab) ?? defaultTab;
+  const setTab = persist ? setStoredTab : setLocalTab;
 
-  const [filters, setFilters] = useState<ResourceFilter>({
-    types: [],
-    baseModels: [],
+  const [storedSort, setStoredSort] = useStorage<ResourceSort>({
+    type: 'localStorage',
+    key: 'resource-select-sort',
+    defaultValue: defaultSort,
+    getInitialValueInEffect: false,
   });
-  const [sort, setSort] = useState<ResourceSort>('relevance');
+  const [localSort, setLocalSort] = useState<ResourceSort>(defaultSort);
+  // A stored sort may be one this viewer can no longer use (Newest without
+  // canViewNsfw), or not a sort at all — storage is unvalidated.
+  const sortAvailability = useSortAvailability();
+  const requestedSort = (persist ? storedSort : localSort) ?? defaultSort;
+  const sort =
+    requestedSort in resourceSort &&
+    isSortAvailable({ type: 'models', value: resourceSort[requestedSort] }, sortAvailability)
+      ? requestedSort
+      : defaultSort;
+  const setSort = persist ? setStoredSort : setLocalSort;
+
+  // Base models are not persisted: their options follow the checkpoint's
+  // ecosystem, so a remembered one would reappear on an unrelated picker.
+  const [storedTypes, setStoredTypes] = useStorage<ModelType[]>({
+    type: 'localStorage',
+    key: 'resource-select-types',
+    defaultValue: [],
+    getInitialValueInEffect: false,
+  });
+  const [localTypes, setLocalTypes] = useState<ModelType[]>([]);
+  const filterTypes = ((persist ? storedTypes : localTypes) ?? []).filter((type) =>
+    modelTypes.includes(type)
+  );
+  const setFilterTypes = persist ? setStoredTypes : setLocalTypes;
+  const [filterBaseModels, setFilterBaseModels] = useState<BaseModel[]>([]);
+  // Not persisted: the chip renders only where `showsPricingFilter` allows, but `hidePaid` is sent
+  // on every select source — a remembered `true` would filter a picker with no chip to clear it.
+  const [hidePaid, setHidePaid] = useState(false);
+  const setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>> = (action) => {
+    const next =
+      typeof action === 'function'
+        ? action({
+            types: filterTypes,
+            baseModels: filterBaseModels,
+            hidePaid,
+          })
+        : action;
+    setFilterTypes(next.types);
+    setFilterBaseModels(next.baseModels);
+    setHidePaid(!!next.hidePaid);
+  };
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const activeOptions = props.options;
   // Memoised because staging a resource now re-renders this provider, and a new
@@ -124,19 +175,24 @@ export function ResourceSelectProvider({
   );
   const resourceTypes = resources.map((x) => x.type);
   const types =
-    resources.length > 0
-      ? filters.types.filter((type) => resourceTypes.includes(type))
-      : filters.types;
+    resources.length > 0 ? filterTypes.filter((type) => resourceTypes.includes(type)) : filterTypes;
 
   const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   const baseModels =
     resourceBaseModels.length > 0
-      ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
-      : filters.baseModels;
+      ? filterBaseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
+      : filterBaseModels;
 
   // Same reason as `resources`: a fresh array each render re-runs the hit
   // list's version filter over every loaded model.
   const excludedIds = useMemo(() => activeOptions?.excludeIds ?? [], [activeOptions]);
+
+  // `types`/`baseModels` are fresh arrays each render; inlining this object re-runs every memo keyed
+  // on `filters`.
+  const filters = useMemo(
+    () => ({ types, baseModels, hidePaid }),
+    [types.join(), baseModels.join(), hidePaid] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   function handleSelect(value: GenerationResource) {
     props.onSelect(value);
@@ -174,10 +230,7 @@ export function ResourceSelectProvider({
         resources,
         tab,
         setTab,
-        filters: {
-          types,
-          baseModels,
-        },
+        filters,
         setFilters,
         sort,
         setSort,

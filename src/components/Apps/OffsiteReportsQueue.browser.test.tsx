@@ -3,6 +3,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -44,7 +45,15 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 
-vi.mock('~/utils/notifications', () => ({
+// Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
+// because it actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, reached from here through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
+// requested module '/src/utils/notifications.tsx' does not provide an export named
+// 'showWarningNotification'`. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));

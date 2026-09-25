@@ -4,6 +4,7 @@ import React from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { PushRegistrationManager } from '~/components/Notifications/PushRegistrationManager';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDev } from '~/env/other';
@@ -27,6 +28,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <MetaPWA />
+      <PushRegistrationManager />
       <div
         className={`flex flex-1 overflow-hidden`}
         // style={{ opacity: isClient ? 1 : 0 }}

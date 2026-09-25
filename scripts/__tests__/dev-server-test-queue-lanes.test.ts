@@ -5,7 +5,7 @@ import * as QueueModule from '../../.claude/skills/dev-server/scripts/test-queue
 
 // The module is plain .mjs, so TS infers `request`'s payload from nothing and lands on types no
 // call here can satisfy. Named once instead of cast at every call site.
-type Kind = 'unit' | 'typecheck';
+type Kind = 'unit' | 'typecheck' | 'typecheckApps';
 type View = {
   id: string;
   kind: Kind;
@@ -21,11 +21,17 @@ type Queue = {
   list: () => View[];
   setConcurrency: (value: number, kind?: Kind) => number;
   concurrencyFor: (kind: Kind) => number;
+  pausedFor: (kind: Kind) => boolean;
+  paused: boolean;
+  setMaxWorkers: (value: number | null) => number | null;
+  maxWorkers: number | null;
 };
 type Runner = EventEmitter & { finish: (code: number) => void; kind: Kind; worktree: string };
 type RunnerArgs = { worktree: string; kind: Kind };
 
-const { TestQueue } = QueueModule as unknown as {
+const { TestQueue, parseMaxWorkersFlag, RUN_KINDS } = QueueModule as unknown as {
+  parseMaxWorkersFlag: (raw: string | undefined) => number | null;
+  RUN_KINDS: Record<string, unknown>;
   TestQueue: new (options: Record<string, unknown>) => Queue;
 };
 
@@ -148,8 +154,88 @@ describe('configuring the lanes', () => {
 
   it('refuses an unknown kind without recording a run no lane would ever start', () => {
     const queue = build({ unit: 1, typecheck: 1 });
+    // 🔴 The premise, asserted rather than assumed. This test used to name `lint`, which was an
+    // unknown kind until the day someone added a `lint` LANE - at which point the request stopped
+    // throwing and the test failed for a reason that had nothing to do with what it checks. A name
+    // no lane will ever take needs to be checked, not chosen and trusted.
+    const notALane = '__not-a-lane__';
+    expect(Object.keys(RUN_KINDS)).not.toContain(notALane);
 
-    expect(() => queue.request({ worktree: '/wt/x', kind: 'lint' })).toThrow(/unknown run kind/);
+    expect(() => queue.request({ worktree: '/wt/x', kind: notALane })).toThrow(/unknown run kind/);
     expect(queue.list()).toEqual([]);
+  });
+
+  // `paused` is the unit lane, for the callers that predate lanes. A pause reported against the
+  // wrong lane is worse than none: a typecheck stopped by `--typecheck 0` sat at position 1 and
+  // read as merely waiting its turn.
+  it('reports a pause against the lane that is actually paused', () => {
+    const queue = build({ unit: 2, typecheck: 0 });
+
+    expect(queue.pausedFor('typecheck')).toBe(true);
+    expect(queue.pausedFor('unit')).toBe(false);
+    expect(queue.paused).toBe(false);
+  });
+});
+
+describe('the --max-workers operand', () => {
+  /**
+   * `none` has to be the only spelling that uncaps the pool. `Number('1O')` is NaN, JSON writes NaN
+   * as `null`, and the daemon reads null as "no cap" — so before this, a typo was indistinguishable
+   * from the deliberate escape hatch and silently removed the cap.
+   */
+  it.each([['1O'], ['eight'], ['--cache'], ['0'], ['-4'], ['2.5'], ['']])(
+    'refuses %j rather than uncapping',
+    (raw) => {
+      expect(() => parseMaxWorkersFlag(raw)).toThrow(/integer >= 1 or 'none'/);
+    }
+  );
+
+  it('accepts a positive integer and the explicit escape hatch', () => {
+    expect(parseMaxWorkersFlag('8')).toBe(8);
+    expect(parseMaxWorkersFlag('none')).toBeNull();
+  });
+
+  // A truncated `test config 4 --max-workers` is a typo, not a request to uncap — the same silent
+  // uncap this parser exists to stop, one keystroke away. `none` is how you say it on purpose.
+  it('refuses a missing operand rather than reading it as none', () => {
+    expect(() => parseMaxWorkersFlag(undefined)).toThrow(/integer >= 1 or 'none'/);
+  });
+
+  // Why the parser has to refuse rather than coerce: null IS the uncap, on the queue that the CLI
+  // is posting to. Nothing downstream can tell an accidental null from a deliberate one.
+  it('treats null as the uncap it is, so nothing may produce one by accident', () => {
+    const queue = build({ unit: 1, typecheck: 1 });
+    queue.setMaxWorkers(4);
+    expect(queue.maxWorkers).toBe(4);
+
+    queue.setMaxWorkers(null);
+    expect(queue.maxWorkers).toBeNull();
+  });
+});
+
+/**
+ * 🔴 The app typechecks were the check kind with no lane at all: only CI ran them, so locally they
+ * either did not run or ran beside a full suite with nothing arbitrating the box. A lane that is
+ * declared but shares another lane's limit would queue here instead of starting, which is the
+ * "everything waits behind the suite" condition the lanes exist to end.
+ */
+describe('the app-typecheck lane is its own lane', () => {
+  it('starts immediately while the unit lane is full and has runs queued ahead of it', () => {
+    const queue = build({ unit: 1, typecheck: 1, typecheckApps: 1 });
+    queue.request({ worktree: '/wt/suite-a' });
+    queue.request({ worktree: '/wt/suite-b' });
+
+    const apps = queue.request({ worktree: '/wt/apps', kind: 'typecheckApps' });
+
+    expect(apps.status).toBe('running');
+    expect(started.map((h) => h.kind)).toEqual(['unit', 'typecheckApps']);
+  });
+
+  it("does not share the root typecheck lane's limit", () => {
+    const queue = build({ unit: 1, typecheck: 1, typecheckApps: 1 });
+    const root = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+    const apps = queue.request({ worktree: '/wt/apps', kind: 'typecheckApps' });
+
+    expect([root.status, apps.status]).toEqual(['running', 'running']);
   });
 });

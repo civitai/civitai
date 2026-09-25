@@ -82,10 +82,17 @@ import type { SessionUser } from '~/types/session';
  * (`authorizeBlockBridgeToken` on the tRPC side, `withBlockScope` on the REST side).
  * ⚠️ THE SETS ARE NOT EQUAL, AND AN EARLIER DRAFT OF THIS SENTENCE SAID THEY WERE. The
  * REST wrapper additionally runs `enforceContextBinding` (`block-scope.middleware.ts`,
- * its only call site in `src/`), which is deny-by-default over EVERY scope on the token —
- * an unknown scope string 403s, and `models:read:self` must match the request's `?id`.
- * The bridge has no equivalent. So the REST door is the STRICTER of the two on tokens
- * carrying extra scopes; do not read "shares this gate" as "same pre-belt set".
+ * its only call site in `src/`). The bridge has no equivalent, so the REST door is the
+ * STRICTER of the two — but note WHAT it is stricter about, because #5063 narrowed half
+ * of it and this sentence used to overstate the other half:
+ *   - UNKNOWN scopes: deny-by-default over EVERY scope on the token. Unchanged, still
+ *     token-wide. An unknown scope string 403s on REST and is admitted on the bridge.
+ *   - REQUEST-SHAPE bindings (`models:read:self` must match the request's `?id`, the
+ *     `:self` scopes need a non-anon subject): run for the route's OWN `requiredScope`
+ *     ONLY. Since #5063 a token "carrying extra scopes" is NOT refused on their account
+ *     — that was the defect, not the feature. The extra scope must be the one the route
+ *     requires for its binding to have any say.
+ * Do not read "shares this gate" as "same pre-belt set".
  * Every other belt (the per-scope consent checks, budget cap, daily Buzz cap, the
  * per-(user, app) consent budget, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) is unchanged — this gate only decides which identity the FLAG sees.

@@ -206,13 +206,13 @@ describe('the remix menu', () => {
 
 describe('the content-generation remix steps', () => {
   /**
-   * `GenerationForm` used to cut the signed-out tour with `slice(0, 6)`, so
-   * inserting a step silently pushed `gen:submit` off the end. The cuts name
-   * their last step now; this fails if one goes back to an index.
+   * The tour used to cut the signed-out steps with `slice(0, 6)`, so inserting a
+   * step silently pushed `gen:submit` off the end. The cuts name their last step
+   * now; this fails if one goes back to an index.
    */
   it('is cut by target rather than by index', () => {
     const source = readFileSync(
-      path.join(SRC, 'components', 'generation_v2', 'GenerationForm.tsx'),
+      path.join(SRC, 'components', 'generation_v2', 'hooks', 'useGenerationTour.ts'),
       'utf-8'
     );
 

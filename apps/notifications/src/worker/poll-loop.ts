@@ -12,6 +12,7 @@ import { newNotificationSignal, type NotificationCategory } from '@civitai/notif
 import { notifDbWrite } from '../lib/server/clients/db';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
 import { notificationCache } from '../lib/server/cache';
+import { dispatchPush } from './push';
 import { signalsEndpoint } from '../env';
 import {
   notificationsFannedOutTotal,
@@ -262,6 +263,15 @@ export const run = async () => {
     }
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
     notificationsFannedOutTotal.inc(affectedUsers.length);
+
+    // Sibling of the signals POST below: runs after the DB write committed, on a recipient list
+    // that already passed the opt-out filter. Awaited (unlike signals) because it does its own
+    // pacing-sensitive outbound calls; it never throws.
+    await dispatchPush(
+      row.type,
+      row.details,
+      affectedUsers.map((u) => u.userId)
+    );
 
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);

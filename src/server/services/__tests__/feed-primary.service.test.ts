@@ -46,7 +46,7 @@ describe('serveFromFeed', () => {
     const hydrate = async () => [];
     expect(
       await serveFromFeed(
-        { ...base, followed: true },
+        { ...base, followed: true, currentUserId: 9 },
         { fetchFeed: async () => answer([1]), hydrate }
       )
     ).toEqual({

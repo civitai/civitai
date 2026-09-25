@@ -458,6 +458,8 @@ model User {
   comments             Comment[]
   commentReactions     CommentReaction[]
   notificationSettings UserNotificationSettings[]
+  pushSubscriptions    PushSubscription[]
+  pushSettings         UserPushSetting[]
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -1191,6 +1193,10 @@ model ModelVersion {
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
+  // Set while the orchestrator reports this version resident, cleared when it stops. Display and
+  // filtering only — the generation-time check stays the orchestrator's.
+  generatorLoaded Boolean @default(false)
+
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
@@ -1230,6 +1236,9 @@ model ModelVersion {
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
+  /// Also `ModelVersion_generatorLoaded_id_modelId_idx` — a PARTIAL covering index on (id) INCLUDE
+  /// ("modelId") WHERE "generatorLoaded", read index-only by sync-generator-loaded-resources. Prisma
+  /// cannot express it, so it lives in migration 20260921120000 and will not round-trip here.
 }
 
 // A version registered as a chargeable licensing root for its (baseModel,
@@ -2150,7 +2159,8 @@ model Tag {
   updatedAt  DateTime    @updatedAt
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
-  nsfw       NsfwLevel   @default(None)
+  /// Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+  nsfwTerm   Boolean     @default(false)
   nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
@@ -4121,6 +4131,37 @@ model UserNotificationSettings {
   @@unique([userId, type])
 }
 
+// One row per live browser push subscription (a user can hold several — one per browser/device).
+// Deleted from three places: the apps/notifications dispatcher (410/404 from the push service, or
+// 10 consecutive delivery failures), the push-subscription-cleanup job (no delivery in 180 days),
+// and user unsubscribe.
+model PushSubscription {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  lastSuccessAt DateTime?
+  failureCount  Int       @default(0)
+
+  @@index([userId])
+}
+
+// Row = push ON for this notification type; absence = no push. Single polarity for every type —
+// never add an `enabled` column (see the UserNotificationSettings polarity history).
+model UserPushSetting {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  createdAt DateTime @default(now())
+
+  @@id([userId, type])
+}
+
 model Webhook {
   id        Int      @id @default(autoincrement())
   url       String
@@ -5897,6 +5938,43 @@ model Vault {
   @@id([userId])
 }
 
+/// What a creator uploaded, bucketed for the Creator Studio storage page. Written only by the
+/// `storage-usage-*` jobs. `kind`: model | training | attachment | model3d | image | video | audio.
+/// `publicStatus`: public | notPublic. No FK to User: see the migration.
+model UserStorageUsage {
+  userId       Int
+  kind         String
+  publicStatus String
+  baseModel    String   @default("")
+  month        DateTime @db.Date
+  fileCount    Int
+  bytes        BigInt
+  computedAt   DateTime @default(dbgenerated("timezone('UTC'::text, now())"))
+
+  @@id([userId, kind, publicStatus, baseModel, month])
+}
+
+/// Lazy image/video rollup state. Creator Studio sets `imagesRequestedAt`; the
+/// `storage-usage-media` job claims via `imagesStartedAt` and finishes with `imagesComputedAt`.
+/// Its pending index is partial, so it lives in the migration only.
+model UserStorageRollup {
+  userId            Int       @id
+  imagesRequestedAt DateTime?
+  imagesStartedAt   DateTime?
+  imagesComputedAt  DateTime?
+}
+
+model UserStorageSnapshot {
+  userId    Int
+  date      DateTime @db.Date
+  kind      String
+  fileCount Int
+  bytes     BigInt
+
+  @@id([userId, date, kind])
+  @@index([userId, kind, date(sort: Desc)])
+}
+
 enum RedeemableCodeType {
   Buzz
   Membership
@@ -7076,7 +7154,6 @@ model ImageTag {
   tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagName      String
   tagType      TagType
-  tagNsfw      NsfwLevel
   tagNsfwLevel Int
   automated    Boolean
   confidence   Int?
@@ -7198,7 +7275,10 @@ model GenerationCoverage {
   model          Model        @relation(fields: [modelId], references: [id])
   modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id])
+  /// The live rule. A row exists when EITHER column is true, so test the column, not existence.
   covered        Boolean
+  /// The staged rule: community checkpoints qualify on their own and load on demand.
+  coveredNext    Boolean
 
   @@id([modelId, modelVersionId])
 }

@@ -59,11 +59,14 @@ describe('metrics registry', () => {
     expect(await counterValue('hub_email_login_failures_total')).toBe(1);
   });
 
-  it('hub_captcha_verifications_total increments per result label', async () => {
-    captchaVerificationsTotal.inc({ result: 'success' });
-    captchaVerificationsTotal.inc({ result: 'http_error' });
-    expect(await counterValue('hub_captcha_verifications_total', { result: 'success' })).toBe(1);
-    expect(await counterValue('hub_captcha_verifications_total', { result: 'http_error' })).toBe(1);
+  it('hub_captcha_verifications_total increments per result AND widget mode', async () => {
+    captchaVerificationsTotal.inc({ result: 'success', mode: 'invisible' });
+    captchaVerificationsTotal.inc({ result: 'success', mode: 'managed' });
+    captchaVerificationsTotal.inc({ result: 'http_error', mode: 'invisible' });
+    const name = 'hub_captcha_verifications_total';
+    expect(await counterValue(name, { result: 'success', mode: 'invisible' })).toBe(1);
+    expect(await counterValue(name, { result: 'success', mode: 'managed' })).toBe(1);
+    expect(await counterValue(name, { result: 'http_error', mode: 'invisible' })).toBe(1);
   });
 
   it('hub_unhandled_errors_total increments (no labels)', async () => {

@@ -18,6 +18,7 @@ import { krea2 } from './krea2.graph';
 import { imagen4 } from './imagen4.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
+import { ming } from './ming.graph';
 import { museImage } from './muse-image.graph';
 import { mai } from './mai.graph';
 import { ernie } from './ernie.graph';
@@ -93,6 +94,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
       [['MuseImage'], museImage],
+      [['Ming'], ming],
       [['MAI'], mai],
       [['Ernie'], ernie],
       [['Ideogram'], ideogram],
@@ -103,7 +105,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['HiDream-O1'], hiDreamO1],
       [['OpenAI'], openai],
       [['Lens'], lens],
-      [['Qwen', 'Qwen2', 'Qwen3'], qwen],
+      [['Qwen', 'Qwen2', 'Qwen21', 'Qwen3'], qwen],
       [['NanoBanana'], nanoBanana],
       [['WanImage27'], wanImage],
       [['Grok'], grokImage],

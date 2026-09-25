@@ -532,6 +532,8 @@ export interface User {
   comments?: Comment[];
   commentReactions?: CommentReaction[];
   notificationSettings?: UserNotificationSettings[];
+  pushSubscriptions?: PushSubscription[];
+  pushSettings?: UserPushSetting[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -1028,6 +1030,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -1665,7 +1668,7 @@ export interface Tag {
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
@@ -2516,6 +2519,27 @@ export interface UserNotificationSettings {
   user?: User;
   type: string;
   disabledAt: Date;
+}
+
+export interface PushSubscription {
+  id: number;
+  userId: number;
+  user?: User;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastSeenAt: Date;
+  lastSuccessAt: Date | null;
+  failureCount: number;
+}
+
+export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
 }
 
 export interface Webhook {
@@ -3716,6 +3740,32 @@ export interface Vault {
   items?: VaultItem[];
 }
 
+export interface UserStorageUsage {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: string;
+  month: Date;
+  fileCount: number;
+  bytes: bigint;
+  computedAt: Date;
+}
+
+export interface UserStorageRollup {
+  userId: number;
+  imagesRequestedAt: Date | null;
+  imagesStartedAt: Date | null;
+  imagesComputedAt: Date | null;
+}
+
+export interface UserStorageSnapshot {
+  userId: number;
+  date: Date;
+  kind: string;
+  fileCount: number;
+  bytes: bigint;
+}
+
 export interface RedeemableCode {
   code: string;
   unitValue: number;
@@ -4626,7 +4676,6 @@ export interface ImageTag {
   tag?: Tag;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -4726,6 +4775,7 @@ export interface GenerationCoverage {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   covered: boolean;
+  coveredNext: boolean;
 }
 
 export interface UserProfile {

@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import type * as ChildProcess from 'child_process';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { RunHandle } from '../../.claude/skills/dev-server/scripts/test-queue.mjs';
 
 const spawn = vi.fn();
 
@@ -11,9 +13,8 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath } = await import(
-  '../../.claude/skills/dev-server/scripts/test-queue.mjs'
-);
+const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath, RUN_KINDS } =
+  await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
 
 const fakeChild = () => {
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
@@ -73,6 +74,57 @@ describe('the queued run does not re-enter the queue', () => {
 });
 
 /**
+ * The queue suites all use fake runners, so nothing else reads the handle `defaultStartRun` builds.
+ * A member dropped from it - `kill` is the one that matters, since cancel, timeout and shutdown call
+ * it unguarded - otherwise passes every test in the repo.
+ */
+describe('the handle a real run hands back', () => {
+  const platform = process.platform;
+  const setPlatform = (value: NodeJS.Platform) =>
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+
+  afterEach(() => {
+    setPlatform(platform);
+    vi.restoreAllMocks();
+  });
+
+  const startOn = (value: NodeJS.Platform) => {
+    setPlatform(value);
+    return defaultStartRun({
+      worktree: '/repo',
+      args: [],
+      onLog: () => undefined,
+      onExit: () => undefined,
+    });
+  };
+
+  it('carries the child pid', () => {
+    const handle = startOn('linux');
+    handle.dispose();
+    expect(handle.pid).toBe(1234);
+  });
+
+  it('kills the whole process group off Windows', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const handle = startOn('linux');
+    handle.dispose();
+    handle.kill();
+    expect(kill).toHaveBeenCalledWith(-1234, 'SIGKILL');
+  });
+
+  it('kills the process tree with taskkill on Windows', () => {
+    const handle = startOn('win32');
+    handle.dispose();
+    handle.kill();
+    expect(spawn).toHaveBeenLastCalledWith(
+      'taskkill',
+      ['/pid', '1234', '/f', '/t'],
+      expect.objectContaining({ shell: true })
+    );
+  });
+});
+
+/**
  * The worker cap only exists because concurrency > 1 is on the table: vitest sizes its own pool at
  * `cpus - 1`, so two uncapped runs ask for 62 workers on a 32-core box. `VITEST_MAX_WORKERS` cannot
  * carry it — the daemon spawns the child with the daemon's own environment — so the CLI flag is the
@@ -86,8 +138,6 @@ describe('the queued run does not re-enter the queue', () => {
 describe("the queue caps each run's vitest pool", () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
 
-  // Typed here rather than at each call: the runner is a .mjs module, so TS infers a bare
-  // EventEmitter and does not see the `dispose` the handle actually carries.
   const start = (opts: Record<string, unknown>) => {
     const handle = defaultStartRun({
       worktree: '/repo',
@@ -95,7 +145,7 @@ describe("the queue caps each run's vitest pool", () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -140,14 +190,10 @@ describe("the queue caps each run's vitest pool", () => {
   // The cap is configured on the QUEUE and has to survive the hop into the runner. Asserting on
   // defaultStartRun alone would pass with that hop deleted.
   it("hands the queue's cap to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { maxWorkers: number | null }) => EventEmitter>(
-      () => new EventEmitter()
+    const startRun = vi.fn<(opts: { maxWorkers: number | null }) => RunHandle>(() =>
+      Object.assign(new EventEmitter(), { kill: vi.fn<RunHandle['kill']>() })
     );
-    // Cast for the same reason as the handle above — TestQueue comes from a .mjs module, so TS
-    // infers `request`'s payload from nothing and lands on `{ args?: never[] }`.
-    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const queue = new TestQueue({ concurrency: 1, maxWorkers: 15, startRun });
 
     queue.request({ worktree: '/repo', args: [] });
 
@@ -181,7 +227,7 @@ describe('result cache on queued runs', () => {
       onLog: () => undefined,
       onExit: () => undefined,
       ...opts,
-    }) as EventEmitter & { dispose: () => void };
+    });
     handle.dispose();
   };
 
@@ -219,6 +265,60 @@ describe('result cache on queued runs', () => {
     expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
   });
 
+  /**
+   * 🔴 The case the `capWorkers` / `resultCache` split exists for, and the only lane where the two
+   * disagree. A browser suite IS vitest, so `--max-workers` means something to it - but the cache
+   * sequencer only ever skips files in the `unit` projects, so the reporter would attach to a run
+   * it can skip nothing in and write ledger entries for it anyway. While one flag answered both
+   * questions this lane could not have had the cap without the cache. If you are here because you
+   * merged them back: this assertion is the reason not to.
+   */
+  it('caps a component run without caching it', () => {
+    start({ cacheMode: 'on', kind: 'component', maxWorkers: 4 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=4']);
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+  });
+
+  /**
+   * 🔴 A width ABOVE the ceiling, which is the only place a ceiling is observable. The case above
+   * asks for 4 and would pass identically with the ceiling deleted - measured, not assumed.
+   *
+   * The ceiling exists because `getThreadsCount` returns a caller's `--max-workers` UNCLAMPED for
+   * the browser pool, so the queue's own cap, set for vitest workers, would launch that many
+   * CHROMIUM instances instead. The daemon runs at 15 today; 12 is what upstream calls safe.
+   */
+  it('never hands the browser pool more instances than its ceiling', () => {
+    start({ kind: 'component', maxWorkers: 15 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=12']);
+  });
+
+  it('leaves a width under the ceiling alone rather than raising it', () => {
+    start({ kind: 'component', maxWorkers: 3 });
+    expect(argvOf(0)).toEqual(['run', 'test:component', '--max-workers=3']);
+  });
+
+  /**
+   * 🔴 A ceiling CLAMPS a width the caller asked for; it never invents one. When the daemon is
+   * uncapped — which is the default — the browser lanes must pass nothing and let vitest choose
+   * `min(12, cpus - 1)` for itself. Originating from the ceiling put `--max-workers=12` on every
+   * uncapped run, which on a box with 12 cores or fewer is MORE Chromium instances than before.
+   */
+  it.each(['component', 'geometry'] as const)('adds no width to an uncapped %s run', (kind) => {
+    start({ kind, maxWorkers: null });
+    expect(argvOf(0)).toEqual(['run', RUN_KINDS[kind].script]);
+  });
+
+  /**
+   * 🔴 Only the `unit` projects can be skipped by the cache sequencer, so every other vitest lane
+   * must be told the cache is off. A lane marked cacheable attaches the reporter to a run it can
+   * skip nothing in and writes ledger entries for it.
+   */
+  it.each(['packages', 'apps', 'geometry'])('never caches a %s run', (kind) => {
+    start({ cacheMode: 'on', kind });
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+    expect(argvOf(0).some((a) => String(a).startsWith('--reporter'))).toBe(false);
+  });
+
   // A tree without the cache files runs uncached rather than as a vitest that cannot load its
   // reporter and fails every queued suite.
   it('adds nothing when the reporter file is absent', () => {
@@ -226,10 +326,10 @@ describe('result cache on queued runs', () => {
   });
 
   it("hands the queue's cache mode to the runner it starts", () => {
-    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter>(() => new EventEmitter());
-    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun }) as unknown as {
-      request: (run: { worktree: string; args: string[] }) => unknown;
-    };
+    const startRun = vi.fn<(opts: { cacheMode: string }) => RunHandle>(() =>
+      Object.assign(new EventEmitter(), { kill: vi.fn<RunHandle['kill']>() })
+    );
+    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun });
     queue.request({ worktree: '/repo', args: [] });
     expect(startRun.mock.calls[0][0]).toMatchObject({ cacheMode: 'on' });
   });

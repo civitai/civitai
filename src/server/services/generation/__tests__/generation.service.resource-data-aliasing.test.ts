@@ -100,7 +100,10 @@ vi.mock('~/server/services/model-version.service', () => ({
   getLinkedVaeIds: vi.fn(),
   bustMvCache: vi.fn(),
 }));
-vi.mock('~/server/services/image.service', () => ({ imagesForModelVersionsCache: {} }));
+const { imagesFetchMock } = vi.hoisted(() => ({ imagesFetchMock: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({
+  imagesForModelVersionsCache: { fetch: imagesFetchMock },
+}));
 vi.mock('~/server/services/generation/paid-access-gating', () => ({
   applyPaidAccessGating: vi.fn(async () => undefined),
 }));
@@ -276,5 +279,52 @@ describe('getResourceData — per-user moderation-flag stripping is caller-local
     // The record itself is untouched — a later reader still sees the flags.
     expect(raw[0].model.sfwOnly).toBe(true);
     expect(raw[0].model.minor).toBe(true);
+  });
+});
+
+describe('getResourceData — preview image honours the viewer browsing level', () => {
+  // Cache order is the creator's showcase order, so an X video can sit ahead of PG stills.
+  const X_VIDEO = { id: 11, nsfwLevel: 8, type: 'video', url: 'x', width: 1, height: 1, hash: 'h' };
+  const BLOCKED = {
+    id: 12,
+    nsfwLevel: 32,
+    type: 'image',
+    url: 'b',
+    width: 1,
+    height: 1,
+    hash: 'h',
+  };
+  const PG13 = { id: 13, nsfwLevel: 2, type: 'image', url: 'p13', width: 1, height: 1, hash: 'h' };
+  const PG = { id: 14, nsfwLevel: 1, type: 'image', url: 'p', width: 1, height: 1, hash: 'h' };
+
+  const previewFor = async (images: object[], browsingLevel?: number) => {
+    queryRawMock.mockResolvedValue([dbRow()]);
+    imagesFetchMock.mockResolvedValue({ [VERSION_ID]: { modelVersionId: VERSION_ID, images } });
+    const [resource] = await getResourceData([VERSION_ID], {
+      user: ANON,
+      withPreview: true,
+      browsingLevel,
+    });
+    return resource.image?.id;
+  };
+
+  it('a viewer with no resolved level gets a PG preview, never the leading X video', async () => {
+    expect(await previewFor([X_VIDEO, PG13, PG])).toBe(PG.id);
+  });
+
+  it('a PG viewer skips mature leading images', async () => {
+    expect(await previewFor([X_VIDEO, PG13, PG], 1)).toBe(PG.id);
+  });
+
+  it('a viewer whose level admits X keeps the showcase order', async () => {
+    expect(await previewFor([X_VIDEO, PG13, PG], 1 | 2 | 4 | 8)).toBe(X_VIDEO.id);
+  });
+
+  it('a Blocked bit in the viewer level does not admit Blocked images', async () => {
+    expect(await previewFor([BLOCKED, PG13, PG], 1 | 2 | 32)).toBe(PG13.id);
+  });
+
+  it('no preview when nothing is within the level', async () => {
+    expect(await previewFor([X_VIDEO, BLOCKED], 1 | 2)).toBeUndefined();
   });
 });

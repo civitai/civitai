@@ -200,6 +200,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
   const {
     token,
     expiresAt,
+    kind,
     needsConsent,
     missingScopes,
     domain,
@@ -272,6 +273,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             slug={blockId}
             token={token}
             expiresAt={expiresAt}
+            tokenKind={kind}
             declaredScopes={scopes}
             missingScopes={missingScopes}
             needsConsent={needsConsent}

@@ -52,6 +52,7 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  * client-controlled input.
  */
 export type AppBlockEndpoint =
+  | 'buzz'
   | 'tip'
   | 'tip_allowance'
   | 'images'
@@ -63,6 +64,160 @@ export type AppBlockEndpoint =
   | 'collection_follow'
   | 'shared_storage_top'
   | 'shared_storage_increment'
+  // The shared READ surface (`/api/v1/blocks/shared-storage/{list,item,counts}`) —
+  // the v1 replacement for the postMessage SHARED_* bridge reads. THREE labels for
+  // three genuinely different workloads over one datastore: `list` is the paged
+  // feed scan (the only one of the three that can be slow, and the only one that
+  // paginates), `item` is a primary-key point read, `counts` is a bounded
+  // `ANY($1)` batch. Merging them would drop a constant-time point read into the
+  // same series as the scan and leave the p95 unreadable — the same argument that
+  // split 'tools' from 'tools_call' below.
+  | 'shared_storage_list'
+  | 'shared_storage_item'
+  | 'shared_storage_counts'
+  // The shared WRITE surface (`/api/v1/blocks/shared-storage/{append,update,vote,
+  // unvote,withdraw,report}`) — the v1 replacement for the postMessage SHARED_*
+  // bridge writes, completing the pair the three read labels above started. SIX
+  // labels, for the same reason there were three: these are not one workload.
+  // `append`/`update` run a BLOCKING EXTERNAL content-moderation call before
+  // touching the DB, so their latency is dominated by a third party;
+  // `vote`/`unvote` are a single round-trip CTE; `withdraw` is a transaction plus
+  // an FK cascade; `report` is a dedup insert. Merging them would put the only
+  // calls here that can be slow for an external reason into the same series as
+  // the ones that structurally cannot, and the p95 would answer no question at
+  // all. They also carry different rate-limit budgets (daily / per-minute /
+  // daily), which is the other dimension an operator reads these series for.
+  | 'shared_storage_append'
+  | 'shared_storage_update'
+  | 'shared_storage_vote'
+  | 'shared_storage_unvote'
+  | 'shared_storage_withdraw'
+  | 'shared_storage_report'
+  // The WORKFLOW surface (`/api/v1/blocks/workflows/{submit,estimate,poll,cancel}`)
+  // — the v1 replacement for the postMessage {SUBMIT,ESTIMATE,POLL,CANCEL}_WORKFLOW
+  // bridge messages. FOUR labels, and the split is not stylistic: these are the
+  // most different four workloads on this surface.
+  //
+  // `submit` is the only one that MOVES MONEY, and the only one whose latency
+  // includes a whatIf quote, several Redis reservations and an orchestrator
+  // submit. `estimate` is the whatIf alone — no spend, no queue, and the call a
+  // person makes repeatedly while adjusting parameters, so it outnumbers the
+  // others by an order of magnitude. `poll` is a block's watch loop: the
+  // highest-RATE label here by far AND the only one that can deliberately be held
+  // open for seconds (the `waitSeconds` long poll), so its duration histogram
+  // means something entirely different from the others'. `cancel` is GET + PATCH
+  // + GET against the orchestrator — the rarest and the heaviest per call.
+  //
+  // Merging any pair makes the RED series unreadable in the direction an operator
+  // actually reads it: a long-poll `poll` sharing a series with `submit` puts a
+  // deliberate multi-second hold into the p95 of the SPEND path, and a spend
+  // failure disappears into the volume of estimates. They also charge DIFFERENT
+  // rate-limit buckets — `poll` its own `:poll:` bucket, `estimate`/`cancel` the
+  // catalog bucket, `submit` none at all (bounded by the per-app velocity cap
+  // instead) — which is the other dimension these series get read for.
+  | 'workflows_submit'
+  | 'workflows_estimate'
+  | 'workflows_poll'
+  | 'workflows_cancel'
+  // The app-generator SUBQUEUE read (`/api/v1/blocks/workflows/query`) — the REST
+  // twin of QUERY_APP_WORKFLOWS. Its own label for the same reason the four above
+  // are split: it is a paged orchestrator LIST returning up to 50 projections per
+  // call, so its duration is a function of PAGE SIZE and of how much the viewer
+  // has generated through this app, which no other label here varies with. It
+  // also charges the CATALOG rate-limit bucket and — unlike `poll`, which sheds a
+  // 429 by RESOLVING a non-terminal snapshot — surfaces that refusal as a real
+  // non-2xx rather than a 200.
+  //
+  // 🔴 DO NOT READ THAT AS "the throttle is visible on this series". An earlier
+  // draft of this comment said the error rate here reads as "blocks are being
+  // throttled on the subqueue", and that is FALSE: `statusToRequestResult` below
+  // maps 401/403 to `forbidden`, >=500 to `server_error` and EVERYTHING ELSE >=400
+  // to `client_error` — so a 429 is indistinguishable from a 400 on
+  // `civitai_app_block_requests_total`, and 400 is exactly the class this route
+  // makes easiest to hit (its `unrecognized_keys` refusals). Compounding it,
+  // `queryAppWorkflows` does not call `recordBlockBridgeRateLimitRefusal`, so the
+  // subqueue throttle has NO dedicated signal on either surface. This label is for
+  // per-endpoint ATTRIBUTION and latency, which it does give.
+  //
+  // 🔴 THE MISSING RECORDER IS NOT A `queryAppWorkflows` PROBLEM, OR A TWO-
+  // PROCEDURE ONE. IT IS THE `catalog` BUCKET'S, AND YOU ARE READING THE FOURTH
+  // ATTEMPT AT THIS SENTENCE — the three before it were each wrong in the same
+  // direction, each written while fixing the one before:
+  //   1. "the one workflow label whose error rate reads as blocks being throttled"
+  //      — false; `statusToRequestResult` collapses 429 into `client_error`.
+  //   2. "`queryAppWorkflows` is the ONE rate-limited procedure in this family"
+  //      missing the recorder — false; `cancelAppWorkflow` is silent too.
+  //   3. "it is TWO procedures, not one" — false, and WIDER than draft 2 while
+  //      reading as a correction: dropping "in this family" made a bare count
+  //      router-wide, on evidence (an enumeration of RECORDERS) that cannot
+  //      establish a claim about the RATE-LIMITED population at all.
+  // 🔴 SO DO NOT REACH FOR A FIFTH NUMBER FROM THE RECORDER SIDE. The population
+  // is owned by `RATE_LIMIT_DECISION_LEDGER` in
+  // `services/__tests__/no-unlimited-block-bridge-proc.test.ts`, which is asserted
+  // as a SET against an AST walk of `blocks.router.ts` — read it there, do not
+  // re-count here.
+  //
+  // MEASURED against that ledger (2026-09-24): of 17 bridge procedures, 14 are
+  // rate-limited and 11 of those charge `catalog`. Exactly FOUR call sites record
+  // a refusal — `pollWorkflow` (`poll`), `cancelWorkflow`, `estimateWorkflow` and
+  // `getMyBuzzBalance` (`catalog`). So **10 of 14 rate-limited procedures are
+  // silent, 8 of the 11 on `catalog`**: both app-subqueue procs, plus
+  // `previewPostFromApp`, `getImagesByIds`, `getMyViewer` and the three buzz
+  // self-reads that reach the limiter through `authorizeBlockBuzzRead`.
+  // `recordBlockBridgeRateLimitRefusal`'s OWN docblock says it is "called from the
+  // refusal branch of each limiter site", which is a third in-tree claim this
+  // count contradicts — 4 of 14, not each.
+  //
+  // WHAT THAT MEANS FOR THE FILED FOLLOW-UP (civitai/civitai#5095): closing it
+  // delivers two of the eight. That is worth doing and does not make the
+  // `catalog` refusal series readable. Do not read this comment, or that issue,
+  // as saying the gap is shut.
+  | 'workflows_query'
+  // The PER-VIEWER app-storage surface (`/api/v1/blocks/app-storage/{get,set,
+  // delete,list,quota}`) — the v1 replacement for the postMessage APP_STORAGE_*
+  // bridge messages, and the per-viewer counterpart to the `shared_storage_*`
+  // labels above. FIVE labels, split on the same grounds those were: these are
+  // not one workload.
+  //
+  // `get` and `delete` are single-row primary-key operations against
+  // (block_instance, user, key) — constant time, and the only two here that
+  // structurally cannot be slow. `list` is the paged prefix scan and the only one
+  // that paginates, so it is the only one whose duration grows with how much a
+  // viewer has stored. `set` is the heaviest by a wide margin AND the only one
+  // that can refuse for a reason other than authorization: it runs a pre-flight
+  // quota read, a size-prediction round trip and then the insert.
+  // `quota` is a counter read that touches no `kv` row at all.
+  //
+  // Merging them would make the RED series unreadable in the direction an
+  // operator reads it: a prefix scan over a large keyspace sharing a series with
+  // a point read leaves the p95 meaningless, and — the one that actually matters
+  // — a rising `set` error rate is how an app hitting its 50MB app ceiling or a
+  // viewer hitting their 2MB sub-budget becomes visible, and that signal would
+  // vanish into the volume of reads.
+  | 'app_storage_get'
+  | 'app_storage_set'
+  | 'app_storage_delete'
+  | 'app_storage_list'
+  | 'app_storage_quota'
+  // The per-viewer checkpoint override write — the REST twin of the
+  // SET_USER_CHECKPOINT bridge message. Its own label rather than being folded
+  // into a settings-shaped bucket: it is the only REST route that writes
+  // `block_user_settings`, and its error rate is how "viewers cannot pin a
+  // checkpoint right now" becomes visible — a product question an operator
+  // asks on its own, not one to read out of a shared series.
+  | 'user_checkpoint_set'
+  // The per-viewer GATED image read (`/api/v1/blocks/gated-images`) — the v1
+  // replacement for the `GET_IMAGES_BY_IDS` bridge message. Its OWN label rather
+  // than folding into 'images', because the two share a noun and nothing else:
+  // 'images' is a Meilisearch catalog SEARCH over the whole public corpus, whose
+  // RED series is dominated by search latency and Meili brownouts, while this is
+  // a bounded `id = ANY(...)` row read on the replica, scoped to ONE app's own
+  // published rows. Merging them would drop a constant-shape point read into the
+  // p95 of the only block route that can be slow for an external reason — and, in
+  // the direction an operator actually reads these, a rising error rate here (a
+  // grid rendering blanks for every viewer) would vanish into the volume of
+  // catalog searches. Same bucket, different question when it fails.
+  | 'gated_images'
   | 'generation_resources'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
@@ -79,12 +234,23 @@ export type AppBlockEndpoint =
   // outnumbers the other, and the declarations GET outnumbers the calls.
   | 'tools'
   | 'tools_call';
-// NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
-// NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
-// withBlockScope REST routes, so they are not metered via this per-endpoint
-// label (mutations carry their own tRPC metrics). The former 'buzz' /
-// 'buzz_transactions' / 'buzz_daily_compensation' / 'buzz_accounts' REST
-// entries were retired with those endpoints (superseded by the bridges).
+// NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
+//
+// 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists
+// again: the balance readout was RESTORED as a `withBlockScope` REST route so a
+// block can read its viewer's balance by direct fetch, without a page host in
+// the middle (the bridge requires one, which leaves model-slot and
+// non-page-hosted blocks with no balance read at all). It is metered here like
+// every other REST endpoint. Its tRPC twin `blocks.getMyBuzzBalance` is
+// unchanged and still serves the page-host bridge; the two return the identical
+// `{ blue, green, yellow }` projection on purpose.
+//
+// The other three self-reads — transactions / daily-compensation / accounts —
+// remain RETIRED as REST routes and are host-mediated tRPC MUTATIONS only
+// (`blocks.getMyBuzz{Transactions,Accounts}`, `blocks.getMyDailyCompensation`),
+// so they are not metered via this per-endpoint label (mutations carry their own
+// tRPC metrics). The former 'buzz_transactions' / 'buzz_daily_compensation' /
+// 'buzz_accounts' entries were dropped with those endpoints and stay dropped.
 
 export type AppBlockRequestResult = 'success' | 'client_error' | 'server_error' | 'forbidden';
 
@@ -494,6 +660,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
+  bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -878,6 +1045,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface', 'namespace']
   );
 
+  // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
+  // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
+  // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
+  // solely by the REST `withBlockScope` wrapper — it never counts a bridge call — so
+  // before this there was no way to answer "has any of these limits ever fired?" for any
+  // bucket, old or new. Three separate comments in `block-catalog-rate-limit.ts` name a
+  // closing condition that depends on this series existing.
+  //
+  // REFUSALS ONLY, NOT A DENOMINATOR, and that asymmetry is deliberate. The question a
+  // ceiling has to answer is "is it biting?", and the blast radius on this surface is
+  // asymmetric: too tight throttles a paid generation and presents as a broken block.
+  // A refusal count answers that directly and costs one in-heap increment on a path that
+  // should be empty; a total-calls counter would add an increment to EVERY bridge call
+  // including the poll loop, for a number nothing currently acts on. Add the denominator
+  // when someone needs a RATE rather than an alarm.
+  //
+  // Cardinality: procedure (≤ ~20 bridge procs) × bucket (5 buckets) ≈ 100 worst case,
+  // and in practice far less — each procedure charges exactly one bucket. Both labels are
+  // SERVER-CHOSEN constants from the call site, never request input, so a hostile block
+  // cannot inflate the label set.
+  const bridgeRateLimitRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_bridge_rate_limit_refusals_total',
+    'App Block tRPC bridge rate-limit refusals by procedure and bucket',
+    ['procedure', 'bucket']
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1081,6 +1275,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
+    bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
@@ -1325,6 +1520,42 @@ export function recordBlockRevocationRefusal(
       surface,
       namespace: revocationNamespaceLabel(blockInstanceId),
     });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * The buckets a bridge procedure can charge. Mirrors the sub-namespaces in
+ * `~/server/utils/block-catalog-rate-limit` — a label, not a lookup, so adding a bucket
+ * there and forgetting it here yields a type error at the call site rather than a silent
+ * mislabel.
+ */
+export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+
+/**
+ * Fail-soft emit of ONE bridge rate-limit refusal.
+ *
+ * Called from the refusal branch of each limiter site in `blocks.router.ts` — the branch
+ * that either throws `TOO_MANY_REQUESTS` or (for `pollWorkflow` and `cancelWorkflow`)
+ * returns a non-terminal snapshot. Both are refusals; the difference is how the client is
+ * told, and the ceiling is equally worth grading either way.
+ *
+ * 🔴 TOTAL, like every emitter in this module: a metrics error must never convert a
+ * refusal the limiter has already decided into a 500, and on the two returning paths it
+ * must never convert one into a thrown error at all — which is precisely the failure the
+ * returning paths exist to avoid.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet under its
+ * ceilings emits zero, which is also the reading that says the ceilings are not biting.
+ */
+export function recordBlockBridgeRateLimitRefusal(
+  procedure: string,
+  bucket: AppBlockRateLimitBucket
+): void {
+  try {
+    const { bridgeRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

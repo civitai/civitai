@@ -68,6 +68,7 @@ export function deriveSelectorsFromModel(
 function familyOf(ecosystem: string): string {
   if (ecosystem.startsWith('LTX')) return 'LTX';
   if (ecosystem.startsWith('WanVideo')) return 'WanVideo';
+  if (ecosystem.startsWith('Flux2Klein')) return 'Flux2Klein';
   if (ecosystem === 'Flux1' || ecosystem === 'FluxKrea') return 'Flux';
   return ecosystem;
 }
