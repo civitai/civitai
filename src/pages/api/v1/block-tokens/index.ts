@@ -45,6 +45,7 @@ import {
 } from '~/server/services/blocks/scope-grant.service';
 import {
   isConsentRequiredError,
+  manifestCanMintOauthToken,
   manifestWantsOauthToken,
   oauthScopeBitsFor,
 } from '~/server/services/blocks/block-oauth-scope';
@@ -365,6 +366,16 @@ type OauthMintOutcome =
  * row is mirrored from the grant right before asking, so grants that predate
  * the mirror still mint; a missing grant or a hub `consent_required` refusal
  * falls back to the JWT path with the consent signal set, never a 500.
+ *
+ * 🔴 #5127: the "missing grant" half of that sentence was a CLAIM, not a
+ * behaviour, until the mirror was fixed. `syncOauthConsentFromGrant` used to
+ * WRITE an `OauthConsent` row for a viewer with no grant at all — ORing in
+ * `UserRead` — so this function never saw the `null` it branches on and the hub
+ * validated consent against the row the platform had just manufactured. This
+ * comment described the intended design while the code did the opposite. The
+ * mirror now also returns `null` for a grant row that does not carry
+ * `user:read:self`, so "a missing grant" reads more precisely as "consent that
+ * cannot support an OAuth token".
  */
 async function mintDevTunnelOauth(args: {
   userId: number;
@@ -1324,8 +1335,24 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // 🔴 #5127 (F1): `manifestCanMintOauthToken`, not `manifestWantsOauthToken`. An
+  // `auth: "oauth"` manifest that does not DECLARE `user:read:self` cannot mint —
+  // the token unavoidably carries `UserRead`, the consent mirror will not claim a
+  // bit the viewer never granted, and the hub refuses. Entering the branch anyway
+  // turns that refusal into a NON-TERMINATING consent loop: `withheld` below is
+  // `consentGatedScopes(manifestScopes)`, i.e. scopes this viewer ALREADY granted,
+  // which get stripped from the token and reported as missing, so the host renders
+  // its persistent "missing permissions" banner and re-consent re-offers the same
+  // already-granted set for ever. Skipping the branch gives such a manifest a clean
+  // block JWT with an honest, empty consent signal. `requestedScopes` (the DECLARED,
+  // approved-snapshot-intersected set) is the right input — not `manifestScopes`,
+  // which is this viewer's granted subset and would also skip the branch for the
+  // ungranted viewer of a correctly-declared manifest, suppressing the prompt they
+  // do need.
   const oauth =
-    userId != null && manifestWantsOauthToken(block.manifest) && env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+    userId != null &&
+    manifestCanMintOauthToken(block.manifest, requestedScopes) &&
+    env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await mintOauthAppToken({
           userId,
           appBlockId: block.id,
