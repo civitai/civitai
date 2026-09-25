@@ -164,7 +164,7 @@ describe('enable() reports every failure it used to swallow', () => {
     const { returned, toast } = await runEnable();
     expect(returned).toBe(false);
     expect(toast?.title).toBe('Push notifications were not enabled');
-    expect(toast?.error?.message).toMatch(/choose Allow/);
+    expect(toast?.error?.message).toMatch(/if no prompt appeared/i);
     expect(subscribe).not.toHaveBeenCalled();
     // Pins `persist` in the OTHER direction. The persist-true cases assert `autoClose === false`, so
     // without this a mutant hardcoding `autoClose: false` makes EVERY failure toast stick until
@@ -237,6 +237,59 @@ describe('enable() reports every failure it used to swallow', () => {
     expect(toast?.error?.message).toMatch(/incomplete push subscription/);
     // Nothing to deliver to, so the server must not be told about it.
     expect(mocks.subscribeMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('a NEVER-SETTLING isBrave() still reports, and still releases busy', async () => {
+    // 🔴 Regression test for a real stall. `finally` cannot run while its `catch` is suspended on a
+    // pending await, so an isBrave() that never settles left `busy` true forever — disabling every
+    // push control in the tab, with no toast — which is the inert-button defect this whole change
+    // removes, reintroduced by its own fix. The helper now bounds the probe.
+    //
+    // The existing "busy is released" test cannot catch this: it drives the DENIED path, which
+    // returns before ever awaiting isBrave(). The one branch made async is the one it does not reach.
+    Object.defineProperty(navigator, 'brave', {
+      // Never calls resolve or reject — the executor returns instead of capturing them, so the
+      // promise is permanently pending. That is the whole fixture.
+      value: { isBrave: () => new Promise<boolean>(() => undefined) },
+      configurable: true,
+    });
+    subscribe.mockRejectedValue(
+      Object.assign(new Error('No connection to push daemon'), { name: 'AbortError' })
+    );
+    const { returned, toast } = await runEnable();
+    expect(returned).toBe(false);
+    // Falls back to the generic copy — "no answer" is treated as "not Brave".
+    expect(toast?.title).toBe("Your browser's push service is unavailable");
+    expect(usePushSubscriptionStore.getState().busy).toBe(false);
+  });
+
+  it('a stale subscription under a different key is reported as unrecoverable', async () => {
+    subscribe.mockRejectedValue(
+      Object.assign(
+        new Error(
+          'Registration failed - A subscription with a different applicationServerKey (or gcm_sender_id) already exists'
+        ),
+        { name: 'InvalidStateError' }
+      )
+    );
+    const { returned, toast } = await runEnable();
+    expect(returned).toBe(false);
+    expect(toast?.title).toBe('This browser has an old push registration');
+    expect(toast?.error?.message).toMatch(/will not clear it/i);
+    expect(toast?.autoClose).toBe(false);
+  });
+
+  it('a Chromium config error is NOT blamed on the push service', async () => {
+    // Our misconfiguration must not be reported as the user's browser being at fault, and a Brave
+    // user must not be sent to an irrelevant toggle. Falls to `unknown`, quoting the browser.
+    setBrave(true);
+    const message =
+      'Registration failed - missing applicationServerKey, and gcm_sender_id not found in manifest';
+    subscribe.mockRejectedValue(Object.assign(new Error(message), { name: 'AbortError' }));
+    const { toast } = await runEnable();
+    expect(toast?.title).toBe('Could not enable push notifications');
+    expect(toast?.error?.message).toBe(message);
+    expect(toast?.error?.message).not.toMatch(/brave:\/\/settings/);
   });
 
   it('an unrecognised error keeps the browser wording instead of inventing a cause', async () => {

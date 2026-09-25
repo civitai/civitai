@@ -25,6 +25,11 @@ export type PushEnableFailure =
    * browser-specific, so the browser travels with the failure rather than being re-detected later.
    */
   | { kind: 'push-service-unavailable'; isBrave: boolean }
+  /**
+   * This browser holds a subscription minted under a different `applicationServerKey`, so
+   * `subscribe()` refuses. Deterministic, and not recoverable from our UI — hence its own copy.
+   */
+  | { kind: 'stale-subscription' }
   /** Subscribed, but the returned object lacked an endpoint or its keys — nothing to send to. */
   | { kind: 'subscription-incomplete' }
   /** Anything unrecognised: keep the browser's own words rather than inventing a cause. */
@@ -63,22 +68,37 @@ export function classifyPushEnableError(
     return { kind: 'permission-denied' };
   }
 
-  // Two disjuncts, and they are NOT redundant in the same way:
-  //  - the AbortError arm is the one every observed failure takes (Chromium's
-  //    `Registration failed - push service error`, and its `Registration failed - …` siblings).
-  //  - the bare `push service` arm is deliberate tolerance of wording variance, because this whole
-  //    function string-matches — there is no error code to switch on. 🔴 No browser is CONFIRMED to
-  //    produce a push-service message under a different `name`; it is not kept because we have seen
-  //    one. It is kept so that a message naming the push service is never silently demoted to
-  //    `unknown` on the strength of its `name` alone. The test fixture for it is constructed, and
-  //    says so.
-  // KNOWN GAP, stated rather than guessed: Firefox's subscribe rejection wording is not verified
-  // here, so a Firefox push-service failure may fall through to `unknown` and show its own message.
-  // That degrades to the pre-PR behaviour rather than to something wrong.
-  if (
-    /push service/i.test(message) ||
-    (name === 'AbortError' && /registration failed/i.test(message))
-  ) {
+  // A subscription minted under a DIFFERENT applicationServerKey already exists in this browser.
+  // Deterministic and permanent: every retry throws the same thing, and because the server holds no
+  // row the device toggle renders unchecked, so its only action is `enable()` again. Left in
+  // `unknown` this showed a raw Chromium sentence forever.
+  // 🔴 The message test is `a subscription with a different`, NOT a bare `gcm_sender_id`. The first
+  // draft of this branch matched `gcm_sender_id` alone — which also appears in Chromium's CONFIG
+  // error (`missing applicationServerKey, and gcm_sender_id not found in manifest`), so it swallowed
+  // the very misclassification the branch below was narrowed to stop. Caught by that branch's own
+  // test. Both discriminators here require the "already exists" sense, not just the key's name.
+  if (name === 'InvalidStateError' || /a subscription with a different/i.test(message)) {
+    return { kind: 'stale-subscription' };
+  }
+
+  // 🔴 MATCH THE PUSH SERVICE, NOT `Registration failed`. `Registration failed - …` is Chromium's
+  // prefix for an unrelated FAMILY — `storage error`, `no service worker`, and
+  // `missing applicationServerKey, and gcm_sender_id not found in manifest`. Matching the prefix
+  // told a user their browser's push service was unavailable when the real cause was OUR
+  // misconfiguration (a malformed VAPID key survives `urlBase64ToUint8Array`, and `getPushSupport`
+  // only rejects a FALSY key), and additionally sent Brave users to flip an irrelevant toggle. That
+  // is the same "assert a cause you have not established" defect as naming Brave's default, pointed
+  // the other way — and it contradicted this module's own `unknown` principle two branches down.
+  // Anything not named here falls to `unknown`, which quotes the browser instead of guessing.
+  //
+  // `push daemon` is Safari's wording (`AbortError: No connection to push daemon`); `push service`
+  // covers Chromium and Gecko's `NetworkError: Push service unreachable.`
+  //
+  // KNOWN GAP, stated rather than guessed: Gecko also has `AbortError: Error retrieving push
+  // subscription.`, which names neither and so falls to `unknown`. Which of its two shapes a given
+  // failure yields is unverified, so this is "at least one common Firefox shape is uncovered", not
+  // "all of them are". Uncovered degrades to the pre-PR behaviour, never to a wrong cause.
+  if (/push service|push daemon/i.test(message)) {
     return { kind: 'push-service-unavailable', isBrave: opts.isBrave };
   }
 
@@ -89,10 +109,13 @@ export function classifyPushEnableError(
 export function describePushEnableFailure(failure: PushEnableFailure): PushEnableFailureCopy {
   switch (failure.kind) {
     case 'permission-dismissed':
+      // Not "click again and choose Allow": Chrome's quieter-permissions mode resolves 'default'
+      // WITHOUT ever prompting, so for those users there is no Allow to choose and that advice is
+      // inert. The copy covers both — a prompt that was dismissed, and a prompt that never appeared.
       return {
         title: 'Push notifications were not enabled',
         message:
-          'Your browser did not get an answer to the notification prompt. Click "Enable push notifications" again and choose Allow.',
+          'Your browser did not allow notifications for this site. If you saw a prompt, choose Allow; if no prompt appeared, your browser may be suppressing them — allow Notifications for this site in its permissions, then try again.',
         persist: false,
       };
 
@@ -105,20 +128,21 @@ export function describePushEnableFailure(failure: PushEnableFailure): PushEnabl
       };
 
     case 'push-service-unavailable':
-      // Brave is worth naming because it ships Google's push service switched OFF, so this is the
-      // DEFAULT experience there rather than a broken install, and the remedy is one named toggle.
+      // Brave is worth naming because it commonly ships Google's push service switched off, so the
+      // remedy there is one specific toggle rather than a general "check your settings".
       //
-      // 🔴 The copy instructs a CHECK and must not assert the toggle is off. `isBrave` only tells us
-      // WHICH browser this is — the page cannot read that setting — so a Brave user who already
-      // enabled it and then went offline (or whose network blocks the push service) hits this exact
-      // branch. Asserting the default would send them to flip a toggle that is already on and name a
-      // cause they had already fixed. Phrasing it as a check is also what survives Brave changing
-      // its default, which would otherwise make this string quietly wrong.
+      // 🔴 The copy ASSERTS NOTHING about that setting's current value, in either direction. Two
+      // separate reasons, and an earlier draft satisfied only the first: (a) `isBrave` tells us which
+      // BROWSER this is, never what the setting holds — the page cannot read it — so a Brave user who
+      // already enabled it and then went offline reaches this same branch; (b) a sentence like
+      // "Brave ships with this turned off" is a claim about Brave's DEFAULT, which goes quietly wrong
+      // the day Brave changes it, with every test still green. Naming the setting and asking the
+      // reader to check it is true under every combination of both.
       return failure.isBrave
         ? {
             title: 'Brave could not reach a push service',
             message:
-              'Brave ships with Google push messaging turned off. Open brave://settings/privacy, check "Use Google services for push messaging", then restart Brave and try again. If it is already on, check that you are online and that nothing is blocking the push service.',
+              'In Brave, check brave://settings/privacy for "Use Google services for push messaging" — if it is off, turn it on and restart Brave. If it is already on, check that you are online and that nothing is blocking the push service.',
             persist: true,
           }
         : {
@@ -127,6 +151,18 @@ export function describePushEnableFailure(failure: PushEnableFailure): PushEnabl
               "The browser could not reach its push service, so notifications cannot be registered. Check that you are online and that push messaging is not disabled in your browser's privacy settings, then try again.",
             persist: true,
           };
+
+    case 'stale-subscription':
+      // Deliberately does NOT say "reload and try again": retrying is exactly what cannot work here,
+      // and telling someone to retry a deterministic failure is the class of advice this module
+      // exists to stop. Clearing the site's notification permission drops the browser-side
+      // subscription with it, which is the one remedy available without new UI.
+      return {
+        title: 'This browser has an old push registration',
+        message:
+          'This browser is still holding a push registration from an earlier setup, which cannot be reused. Retrying will not clear it: reset Notifications for this site in your browser permissions, reload, then turn push on again.',
+        persist: true,
+      };
 
     case 'subscription-incomplete':
       return {

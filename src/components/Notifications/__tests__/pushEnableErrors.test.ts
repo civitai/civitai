@@ -27,29 +27,53 @@ describe('classifyPushEnableError', () => {
     });
   });
 
-  it('classifies a push-service message under a DIFFERENT error name (the bare `push service` arm)', () => {
-    // 🔴 CONSTRUCTED fixture, and that is the honest label: no browser is confirmed to emit a
-    // push-service message under a non-AbortError name. Without this case the `/push service/i`
-    // disjunct is unexercised — every other fixture that reaches this branch is ALSO an AbortError
-    // carrying "registration failed", so the second disjunct answers first and deleting the first
-    // one changes no test result. This pins the intended contract: a message naming the push
-    // service is never demoted to `unknown` on the strength of its `name` alone.
-    const odd = Object.assign(new Error('Subscription failed: push service returned 500'), {
-      name: 'NotSupportedError',
-    });
-    expect(classifyPushEnableError(odd, { isBrave: false })).toEqual({
-      kind: 'push-service-unavailable',
-      isBrave: false,
-    });
+  it('matches real non-Chromium push-service wordings across engines', () => {
+    // Real strings, not constructed: Safari says "push daemon", Gecko says "Push service
+    // unreachable." under a NetworkError. Matching the push service by NAME rather than by
+    // Chromium's `Registration failed` prefix is what makes these land in the right branch.
+    const engineErrors = [
+      Object.assign(new Error('No connection to push daemon'), { name: 'AbortError' }),
+      Object.assign(new Error('Push service unreachable.'), { name: 'NetworkError' }),
+    ];
+    for (const err of engineErrors) {
+      expect(classifyPushEnableError(err, { isBrave: false }), err.message).toEqual({
+        kind: 'push-service-unavailable',
+        isBrave: false,
+      });
+    }
   });
 
-  it('classifies other `Registration failed - …` AbortErrors as push-service failures', () => {
-    const err = Object.assign(new Error('Registration failed - no sender id'), {
-      name: 'AbortError',
-    });
+  it('🔴 does NOT blame the push service for Chromium `Registration failed - …` CONFIG errors', () => {
+    // This test previously asserted the OPPOSITE, and pinning that was the defect. `Registration
+    // failed - …` is Chromium's prefix for an unrelated family, so matching the prefix told users
+    // their browser's push service was unavailable — and sent Brave users to flip an irrelevant
+    // toggle — when the real cause was our own misconfiguration. These must fall to `unknown`, which
+    // quotes the browser rather than naming a cause we have not established.
+    const ourFault = [
+      'Registration failed - missing applicationServerKey, and gcm_sender_id not found in manifest',
+      'Registration failed - storage error',
+      'Registration failed - no service worker',
+    ];
+    for (const message of ourFault) {
+      const err = Object.assign(new Error(message), { name: 'AbortError' });
+      expect(classifyPushEnableError(err, { isBrave: true }), message).toEqual({
+        kind: 'unknown',
+        message,
+      });
+    }
+  });
+
+  it('classifies an existing subscription under a different key as a stale subscription', () => {
+    // Real Chromium wording. Deterministic and unrecoverable by retrying, so it must not land in
+    // `unknown` (whose copy invites a retry) nor in push-service (whose remedy is unrelated).
+    const err = Object.assign(
+      new Error(
+        'Registration failed - A subscription with a different applicationServerKey (or gcm_sender_id) already exists'
+      ),
+      { name: 'InvalidStateError' }
+    );
     expect(classifyPushEnableError(err, { isBrave: false })).toEqual({
-      kind: 'push-service-unavailable',
-      isBrave: false,
+      kind: 'stale-subscription',
     });
   });
 
@@ -98,23 +122,32 @@ describe('describePushEnableFailure', () => {
     expect(copy).toEqual({
       title: 'Brave could not reach a push service',
       message:
-        'Brave ships with Google push messaging turned off. Open brave://settings/privacy, check "Use Google services for push messaging", then restart Brave and try again. If it is already on, check that you are online and that nothing is blocking the push service.',
+        'In Brave, check brave://settings/privacy for "Use Google services for push messaging" — if it is off, turn it on and restart Brave. If it is already on, check that you are online and that nothing is blocking the push service.',
       persist: true,
     });
   });
 
-  it('instructs a CHECK and never asserts the toggle is off', () => {
-    // `isBrave` says which browser this is, not what that setting holds — the page cannot read it.
-    // A Brave user who already enabled push messaging and then went offline reaches this same
-    // branch, so copy asserting the default would name a cause they had already fixed. This also
-    // keeps the string correct if Brave ever changes the default.
+  it("asserts nothing about the setting's value, in EITHER direction", () => {
+    // 🔴 This guard replaces one that was mutation-proved vacuous: it forbade the words a previous
+    // draft happened to use (`disables`, `cannot be registered`), so a mutant asserting the same
+    // thing in different words — "Google push messaging is switched off in your Brave" — passed it.
+    // Forbidding WORDS is walkable by rewording, so this pins the SHAPE instead: every mention of
+    // the setting's state must be conditional. The page cannot read that setting, and a claim about
+    // Brave's default goes wrong the day Brave changes it.
     const { message } = describePushEnableFailure({
       kind: 'push-service-unavailable',
       isBrave: true,
     });
-    expect(message).toMatch(/If it is already on/);
-    expect(message).not.toMatch(/\bdisables\b/);
-    expect(message).not.toMatch(/cannot be registered/);
+    // Both branches are present, so no single state is being asserted.
+    expect(message).toMatch(/if it is off/i);
+    expect(message).toMatch(/if it is already on/i);
+    // And no sentence declares a state outright. These patterns are about GRAMMAR, not vocabulary:
+    // "<subject> is/ships/comes ... off/disabled/turned off" with no conditional governing it.
+    const assertsState =
+      /\b(?:ships?|comes?|is|are|has|have)\b[^.]{0,40}\b(?:turned off|switched off|disabled|off by default)\b/i;
+    const sentences = message.split(/(?<=\.)\s+/);
+    const offenders = sentences.filter((s) => assertsState.test(s) && !/\bif\b/i.test(s));
+    expect(offenders).toEqual([]);
   });
 
   it('gives non-Brave browsers generic push-service advice, and never mentions Brave', () => {
@@ -146,13 +179,30 @@ describe('describePushEnableFailure', () => {
     });
   });
 
-  it('tells a dismissing user to click again and choose Allow', () => {
-    expect(describePushEnableFailure({ kind: 'permission-dismissed' })).toEqual({
+  it('covers BOTH a dismissed prompt and a prompt that never appeared', () => {
+    // Chrome's quieter-permissions mode resolves 'default' without ever prompting, so advice that
+    // only says "choose Allow" is inert for those users — there was nothing to choose.
+    const copy = describePushEnableFailure({ kind: 'permission-dismissed' });
+    expect(copy).toEqual({
       title: 'Push notifications were not enabled',
       message:
-        'Your browser did not get an answer to the notification prompt. Click "Enable push notifications" again and choose Allow.',
+        'Your browser did not allow notifications for this site. If you saw a prompt, choose Allow; if no prompt appeared, your browser may be suppressing them — allow Notifications for this site in its permissions, then try again.',
       persist: false,
     });
+    expect(copy.message).toMatch(/if no prompt appeared/i);
+  });
+
+  it('tells a stale-subscription user that retrying will NOT help', () => {
+    // The one deterministic, permanently-unrecoverable failure. Advice to retry would be actively
+    // wrong here, which is why it does not share the `unknown` copy.
+    const copy = describePushEnableFailure({ kind: 'stale-subscription' });
+    expect(copy).toEqual({
+      title: 'This browser has an old push registration',
+      message:
+        'This browser is still holding a push registration from an earlier setup, which cannot be reused. Retrying will not clear it: reset Notifications for this site in your browser permissions, reload, then turn push on again.',
+      persist: true,
+    });
+    expect(copy.message).toMatch(/will not clear it/i);
   });
 
   it('distinguishes a dismissal from a denial — different advice, and only one is re-askable', () => {
@@ -190,6 +240,7 @@ describe('describePushEnableFailure', () => {
       { kind: 'permission-denied' },
       { kind: 'push-service-unavailable', isBrave: true },
       { kind: 'push-service-unavailable', isBrave: false },
+      { kind: 'stale-subscription' },
       { kind: 'subscription-incomplete' },
       { kind: 'unknown', message: '' },
     ];
