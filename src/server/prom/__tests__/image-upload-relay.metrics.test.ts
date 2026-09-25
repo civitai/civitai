@@ -255,12 +255,16 @@ describe('recordImageUploadRelay', () => {
   });
 
   it('🔴 NARROWS an unrecognised producer to a bucket instead of dropping the increment', async () => {
-    // 🔴 THE ASYMMETRY WITH THE CASE ABOVE, AND IT IS DELIBERATE. An outcome is
-    // code-owned, so an unrecognised one is our own defect and is dropped. A producer
-    // reaching the emitter is code-owned too, but dropping it would cost the counter's
-    // load-bearing property that `sum()` equals the route's invocation count — the header
-    // it came from is caller-supplied, so a drop would mean a caller could choose not to be
-    // counted. It is bucketed instead.
+    // 🔴 THE ASYMMETRY WITH THE CASE ABOVE, AND IT IS DELIBERATE. Both inputs are
+    // code-owned by the time they reach the emitter — the route has already sanitised the
+    // header — so an unrecognised value of either is our own defect. What differs is the
+    // cost of dropping it: an unrecognised outcome loses nothing we could trust anyway,
+    // while dropping a producer would cost the counter's load-bearing property that
+    // `sum()` equals the route's invocation count, which is what makes a bare `sum()`
+    // readable at all. It is bucketed instead. (This comment argued the producer must be
+    // kept because the header is caller-supplied. That is the SANITISER's argument, and
+    // restating it one layer downstream is a mistake this change has now made three
+    // times: no caller can reach this branch.)
     //
     // Both halves are asserted: the invocation IS counted, and it is counted on the
     // `other` series rather than on an invented one — and specifically NOT on `unknown`,
@@ -337,7 +341,7 @@ describe('recordImageUploadRelay', () => {
     // 🔴 Throw from the FINAL increment, not from the seeding pass. A stub that throws
     // on EVERY `inc` fires on `seedAllSeries`'s first call — inside
     // `ensureRegisterImageUploadRelayMetrics()` — and never reaches
-    // `imageUploadRelayTotal.inc({ outcome })`, so it only proves the try/catch swallows
+    // `imageUploadRelayTotal.inc({ outcome, producer })`, so it only proves the try/catch swallows
     // *a* throw from somewhere in the emit path. The guard's actual claim is about the
     // increment. Seeding always passes a second argument (0) and the real increment
     // never does, which is what discriminates the two call sites.

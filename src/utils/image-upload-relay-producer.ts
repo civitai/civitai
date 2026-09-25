@@ -39,8 +39,15 @@ export const IMAGE_UPLOAD_RELAY_PRODUCER_HEADER = 'x-civitai-upload-producer';
  *
  * Kept as a `const` tuple so the union, the runtime guard and the metric's seeding loop
  * are all derived from ONE declaration — exactly as `IMAGE_UPLOAD_RELAY_OUTCOMES` is in
- * `src/server/prom/image-upload-relay.metrics.ts`. A value added here is automatically
- * seeded and automatically accepted; one removed stops being accepted.
+ * `src/server/prom/image-upload-relay.metrics.ts`.
+ *
+ * ⚠ A value added here is automatically seeded and automatically EMITTABLE. It is NOT
+ * automatically ACCEPTED from a client — that is `CLIENT_DECLARABLE_PRODUCERS` below, and
+ * a label missing from that tuple is refused with `other`. Removing a value here stops it
+ * being seeded and makes the emitter bucket it to `other`. (This paragraph claimed adding
+ * a value made it "automatically accepted" for several rounds after acceptance was split
+ * out into its own tuple. It pointed a future edit at the wrong declaration, which is the
+ * one direction that matters: the two tuples are confusable by construction.)
  *
  * snake_case, deliberately, to match the outcome vocabulary on the SAME metric
  * (`method_not_allowed`, `too_large`, `store_error`, …). A reader filtering that counter
@@ -119,7 +126,20 @@ export type ImageUploadRelayProducer = (typeof IMAGE_UPLOAD_RELAY_PRODUCERS)[num
  * row — while three comments and the ledger's own docstring claimed a new call site is
  * "FORCED to reuse single_put or multipart to compile". It was not.
  */
-export const CLIENT_DECLARABLE_PRODUCERS = ['single_put', 'multipart'] as const;
+/**
+ * 🔴 `satisfies` IS THE GUARD, NOT DECORATION — the subset above was stated as load-bearing
+ * and enforced by nothing. Measured: adding a value to THIS tuple alone left all 138 tests
+ * green while `sanitizeImageUploadRelayProducer` returned it verbatim, typed as a label it
+ * is not; it then went into the log event's `producer` field as-is, and the counter bucketed
+ * it to `other` — so the new caller was silently mis-attributed, forever, on the row it was
+ * added to be graded on. The `as ImageUploadRelayProducer` cast in the sanitiser is what
+ * launders it, and the cast cannot be removed (the `Set` erases the narrowing). This
+ * annotation makes the compiler check what the cast asserts.
+ */
+export const CLIENT_DECLARABLE_PRODUCERS = [
+  'single_put',
+  'multipart',
+] as const satisfies readonly ImageUploadRelayProducer[];
 
 export type ClientDeclarableProducer = (typeof CLIENT_DECLARABLE_PRODUCERS)[number];
 

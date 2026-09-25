@@ -232,10 +232,42 @@ describe('the producer contract itself', () => {
     // pinned by `src/utils/__tests__/relay-caller-ledger.test.ts`, which walks the AST
     // rather than the text; keep the two claims separate.
     //
-    // It is still worth pinning: `passes every declared producer through unchanged` above
-    // iterates this tuple, so it would go vacuous if the tuple were shrunk to one member.
+    // It is still worth pinning: the seeding assertions in
+    // `src/server/prom/__tests__/image-upload-relay.metrics.test.ts` and the row-count
+    // checks in `src/__tests__/pages/api/v1/image-upload/relay.test.ts` are all derived
+    // from this tuple's LENGTH, so shrinking it would shrink the expectation with it.
+    // (This named the pass-through case above, which iterates the DECLARABLE tuple — its
+    // own comment says so — and is untouched by a change to this one.)
     expect([...IMAGE_UPLOAD_RELAY_PRODUCERS].sort()).toEqual(
       ['multipart', 'other', 'single_put', 'unknown'].sort()
     );
+  });
+
+  it('🔴 keeps the declarable set a STRICT SUBSET of the label set', () => {
+    // 🔴 THE SUBSET WAS DECLARED LOAD-BEARING AND ENFORCED BY NOTHING, and the escape is
+    // quiet in the worst way. Measured: adding a value to `CLIENT_DECLARABLE_PRODUCERS`
+    // alone left the whole suite green while the sanitiser returned it verbatim, typed as
+    // a label it is not — so it went into the log event's `producer` field as written, and
+    // the counter bucketed it to `other`. A caller added to be graded on its own row is
+    // silently mis-attributed instead, forever, and nothing anywhere says so.
+    //
+    // The module now carries a `satisfies` clause, which is the real guard: this is the
+    // RUNTIME half, because the type annotation is erased and someone can always widen the
+    // cast back. Both halves are cheap; the type one fails at the keyboard, this one fails
+    // for anyone who skips the typecheck.
+    for (const declarable of CLIENT_DECLARABLE_PRODUCERS) {
+      expect(
+        IMAGE_UPLOAD_RELAY_PRODUCERS as readonly string[],
+        `"${declarable}" is declarable but is not a label — it would be emitted verbatim ` +
+          `into the log event and bucketed to "other" on the counter`
+      ).toContain(declarable);
+    }
+    // STRICT, not merely a subset: the server's own buckets must stay undeclarable, which
+    // is the whole reason the two tuples are separate. Equality here would mean a client
+    // could write to `unknown` — the row a rollout is graded on.
+    expect(
+      CLIENT_DECLARABLE_PRODUCERS.length,
+      'the server buckets must stay undeclarable'
+    ).toBeLessThan(IMAGE_UPLOAD_RELAY_PRODUCERS.length);
   });
 });

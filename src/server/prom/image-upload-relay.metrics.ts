@@ -279,12 +279,18 @@ export function recordImageUploadRelay(
     //
     // ⚠ Do NOT restate the sanitiser's argument here — that a stale bundle is ordinary
     // traffic that must not be dropped. True there, false here: a stale bundle arrives at
-    // this function as `unknown`, which IS a label and passes untouched. It never reaches
-    // this fallback. That sentence stood in this comment for one round and invited the
-    // reader to believe the `other` row carries client traffic, which is the one thing it
-    // must not be read as. Re-sanitised here rather than trusting the call site, so the
-    // bound holds for every caller including a future one: see
-    // `~/utils/image-upload-relay-producer`.
+    // this function as `unknown`, which IS a label and passes untouched, so it never
+    // reaches this fallback. The increments THIS BRANCH produces are our own defect, never
+    // client traffic.
+    //
+    // 🔴 That is the opposite of how the ROW reads as a whole, and conflating the two is a
+    // correction this comment has now made in both directions. The sanitiser sends every
+    // unrecognised HEADER to `other` as well, and that is the dominant population by far —
+    // so a moving `other` should be read as "a client got it wrong" first, not as our bug.
+    // The HELP string enumerates all four populations; read it before investigating.
+    //
+    // Re-sanitised here rather than trusting the call site, so the bound holds for every
+    // caller including a future one: see `~/utils/image-upload-relay-producer`.
     // 🔴 NARROWED AGAINST THE LABEL SET, NOT THE CLIENT-DECLARABLE ONE. This value is
     // server-derived — the route has already sanitised the header — so it legitimately IS
     // `unknown` whenever no header arrived, which is most traffic during a rollout. Running
