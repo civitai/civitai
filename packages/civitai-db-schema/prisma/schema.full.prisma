@@ -5949,7 +5949,7 @@ model UserStorageUsage {
   month        DateTime @db.Date
   fileCount    Int
   bytes        BigInt
-  computedAt   DateTime @default(now())
+  computedAt   DateTime @default(dbgenerated("timezone('UTC'::text, now())"))
 
   @@id([userId, kind, publicStatus, baseModel, month])
 }
@@ -5972,6 +5972,7 @@ model UserStorageSnapshot {
   bytes     BigInt
 
   @@id([userId, date, kind])
+  @@index([userId, kind, date(sort: Desc)])
 }
 
 enum RedeemableCodeType {

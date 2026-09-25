@@ -5,6 +5,8 @@
 --
 -- No foreign key to "User": adding one locks "User" while the constraint validates, and a row for a
 -- deleted user is harmless — the nightly job prunes them.
+--
+-- Timestamps are UTC wall-clock, written as timezone('UTC', now()), so no session TimeZone can skew them.
 
 CREATE TABLE "UserStorageUsage" (
   "userId" INTEGER NOT NULL,
@@ -14,7 +16,7 @@ CREATE TABLE "UserStorageUsage" (
   "month" DATE NOT NULL,
   "fileCount" INTEGER NOT NULL,
   "bytes" BIGINT NOT NULL,
-  "computedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
+  "computedAt" TIMESTAMP(3) NOT NULL DEFAULT timezone('UTC', now()),
   CONSTRAINT "UserStorageUsage_pkey" PRIMARY KEY ("userId", "kind", "publicStatus", "baseModel", "month")
 );
 
@@ -39,3 +41,6 @@ CREATE TABLE "UserStorageSnapshot" (
   "bytes" BIGINT NOT NULL,
   CONSTRAINT "UserStorageSnapshot_pkey" PRIMARY KEY ("userId", "date", "kind")
 );
+
+-- The nightly change-only snapshot reads each creator's latest row per kind.
+CREATE INDEX "UserStorageSnapshot_userId_kind_date_idx" ON "UserStorageSnapshot" ("userId", "kind", "date" DESC);

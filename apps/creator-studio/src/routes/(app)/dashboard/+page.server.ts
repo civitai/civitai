@@ -5,8 +5,8 @@ import { getModelEarnings } from '$lib/server/models-earnings';
 import { getCreatorCash } from '$lib/server/cash';
 import { presetRange, previousRange } from '$lib/date-range';
 import { readBuzzCurrencyFilter } from '$lib/server/buzz-currency-filter';
-import { getStorageUsage } from '$lib/server/storage';
-import { isMediaCalculating, summarizeStorage } from '$lib/analytics/storage';
+import { loadStorageUsage } from '$lib/server/storage';
+import { summarizeStorage } from '$lib/analytics/storage';
 
 // Headline content activity (userId-keyed ClickHouse) + buzz earnings (A1 Part 1, buzzTransactions) + cash
 // balances (buzz service — authoritative, matches the Buzz dashboard) + top-earning model (A1 Part 2, the
@@ -24,12 +24,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
       getEarningsSummary({ userId, ...prev }).catch(() => null),
       getCreatorCash({ userId }).catch(() => null),
       getModelEarnings({ userId, ...range }).catch(() => null),
-      getStorageUsage(userId)
-        .then((u) =>
-          u.ready
-            ? { total: summarizeStorage(u.rows).total, calculating: isMediaCalculating(u.state) }
-            : null
-        )
+      loadStorageUsage(userId)
+        .then((u) => (u.ready ? { total: summarizeStorage(u.rows).total, media: u.media } : null))
         .catch(() => null),
     ]);
   // Applied at render, not in the queries: the payloads carry every currency, so a toggle re-runs this load

@@ -18,10 +18,10 @@
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import { modelUrl } from '$lib/model-url';
   import {
+    MODEL_STATUS_LABELS,
     STORAGE_KIND_LABELS,
-    STORAGE_KIND_ORDER,
     formatBytes,
-    isMediaCalculating,
+    kindRank,
     storageEmptyKind,
   } from '$lib/analytics/storage';
   import type { PageData } from './$types';
@@ -30,13 +30,14 @@
   const num = (n: number) => n.toLocaleString();
 
   const summary = $derived(data.summary);
-  const calculating = $derived(data.ready && (data.queued || isMediaCalculating(data.state)));
-  const emptyKind = $derived(summary ? storageEmptyKind(summary, data.byModel?.length ?? 0) : null);
+  const media = $derived(summary ? data.media : null);
+  const emptyKind = $derived(
+    summary ? storageEmptyKind(summary, data.byModel ? data.byModel.length : null) : null
+  );
+  const totalModels = $derived(data.byModel?.[0]?.totalModels ?? 0);
 
-  const kindColor = (kind: string) => {
-    const i = (STORAGE_KIND_ORDER as readonly string[]).indexOf(kind);
-    return chartColor(i === -1 ? STORAGE_KIND_ORDER.length : i);
-  };
+  const kindColor = (kind: string) => chartColor(kindRank(kind));
+  const bytesLabel = (ctx: { raw: unknown }) => formatBytes(Number(ctx.raw));
 
   const doughnutData = $derived({
     labels: summary?.byKind.map((k) => k.label) ?? [],
@@ -54,9 +55,7 @@
     cutout: '58%',
     plugins: {
       legend: { display: false },
-      tooltip: {
-        callbacks: { label: (ctx: { raw: unknown }) => formatBytes(Number(ctx.raw)) },
-      },
+      tooltip: { callbacks: { label: bytesLabel } },
     },
   };
 
@@ -85,7 +84,7 @@
     scales: { x: { beginAtZero: true, ticks: bytesTick } },
     plugins: {
       legend: { display: false },
-      tooltip: { callbacks: { label: (ctx: { raw: unknown }) => formatBytes(Number(ctx.raw)) } },
+      tooltip: { callbacks: { label: bytesLabel } },
     },
   };
 
@@ -131,6 +130,18 @@
   const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
+
+  const baseSummary = $derived(
+    baseRows.map((b) => `${b.baseModel} ${formatBytes(b.bytes)}`).join(', ')
+  );
+  const monthSummary = $derived(
+    (summary?.months ?? [])
+      .map(
+        (m) =>
+          `${m.month.slice(0, 7)} ${formatBytes(Object.values(m.bytesByKind).reduce((a, b) => a + b, 0))}`
+      )
+      .join(', ')
+  );
 </script>
 
 <AnalyticsHeader />
@@ -140,46 +151,54 @@
   what they cost to store or serve.
 </p>
 
-{#if calculating}
+{#if media && media !== 'done'}
   <div
     class="mb-4 flex items-center gap-2 rounded-lg border border-dashed border-dark-4 p-3 text-sm text-dark-2"
-    data-testid="storage-calculating"
   >
     <IconLoader2 size={16} class="animate-spin text-blue-4" />
-    Calculating your images and videos. This can take a few minutes, and the totals below leave them out
-    until it's done.
+    {#if media === 'first'}
+      Counting your images and videos for the first time. This can take a few minutes, and they're
+      left out of the totals until it's done.
+    {:else if media === 'refreshing'}
+      Updating your images and videos. Until it's done they show as of your last count.
+    {:else}
+      Counting your images and videos is taking longer than expected. They may be missing or out of
+      date below. We'll keep trying.
+    {/if}
   </div>
 {/if}
 
-{#if !data.ready}
+{#if data.ready === false}
   <div class="placeholder">Storage usage isn't available yet. Please check back soon.</div>
 {:else if summary === null}
   <div class="placeholder">Storage is temporarily unavailable. Please try again shortly.</div>
 {:else if emptyKind === 'overnight'}
-  <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Your totals update overnight.</strong> New uploads show up here by tomorrow.
+  <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-2">
+    <strong class="text-white">Your totals update overnight.</strong> New uploads show up here by tomorrow.
     Your models are listed below in the meantime.
   </div>
-{:else if emptyKind === 'none' && !calculating}
-  <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Nothing here yet.</strong> Once you upload models, images or videos, their
+{:else if emptyKind === 'none' && media !== 'done'}
+  <!-- The banner above already says what is happening; 0 B cards would only contradict it. -->
+{:else if emptyKind === 'none'}
+  <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-2">
+    <strong class="text-white">Nothing here yet.</strong> Once you upload models, images or videos, their
     size shows up here.
   </div>
 {:else}
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
     <StatCard label="Total uploaded" icon={IconDatabase} color="#4dabf7">
       <p class="mt-1 text-xl font-semibold text-white">{formatBytes(summary.total.bytes)}</p>
-      <p class="mt-2 text-xs text-dark-3">{num(summary.total.fileCount)} files, public only</p>
+      <p class="mt-2 text-xs text-dark-2">{num(summary.total.fileCount)} files, public only</p>
     </StatCard>
     {#each summary.byKind as k (k.kind)}
       <StatCard label={k.label} color={kindColor(k.kind)}>
         <p class="mt-1 text-xl font-semibold text-white">{formatBytes(k.bytes)}</p>
-        <p class="mt-2 text-xs text-dark-3">{num(k.fileCount)} files</p>
+        <p class="mt-2 text-xs text-dark-2">{num(k.fileCount)} files</p>
       </StatCard>
     {/each}
     <StatCard label="Not public" icon={IconEyeOff} color="#868e96">
       <p class="mt-1 text-xl font-semibold text-white">{formatBytes(summary.notPublic.bytes)}</p>
-      <p class="mt-2 text-xs text-dark-3">Drafts, unpublished and removed. Not in the total.</p>
+      <p class="mt-2 text-xs text-dark-2">Drafts, unpublished and removed. Not in the total.</p>
     </StatCard>
   </div>
 
@@ -209,9 +228,9 @@
       {#if baseRows.length > 0}
         <div class="cs-panel p-4">
           <p class="mb-3 text-sm font-medium text-white">
-            Model files by base model <span class="text-xs text-dark-3">· top 10</span>
+            Model files by base model <span class="text-xs text-dark-2">· top 10</span>
           </p>
-          <div class="h-64">
+          <div class="h-64" role="img" aria-label="Model files by base model: {baseSummary}">
             <Chart type="bar" data={baseData} options={baseOptions} class="h-full" />
           </div>
         </div>
@@ -220,11 +239,11 @@
 
     <div class="cs-panel mt-4 p-4">
       <p class="mb-3 text-sm font-medium text-white">
-        Uploaded per month <span class="text-xs text-dark-3"
+        Uploaded per month <span class="text-xs text-dark-2"
           >· content that's still on Civitai, by when you uploaded it</span
         >
       </p>
-      <div class="h-64">
+      <div class="h-64" role="img" aria-label="Uploaded per month: {monthSummary}">
         <Chart type="bar" data={monthData} options={monthOptions} class="h-full" />
       </div>
     </div>
@@ -234,20 +253,23 @@
 {#if data.byModel && data.byModel.length > 0}
   <div class="cs-panel mt-4 p-4">
     <p class="mb-3 text-sm font-medium text-white">
-      By model <span class="text-xs text-dark-3"
+      By model <span class="text-xs text-dark-2"
         >· every file on the model, training data included · click a column to sort</span
       >
     </p>
 
     {#snippet sortHead(key: string, label: string)}
       {@const active = sortKey === key}
-      <Table.Head class="text-right {active ? 'bg-dark-5/40' : ''}">
+      <Table.Head
+        class="text-right {active ? 'bg-dark-5/40' : ''}"
+        aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
         <button
           type="button"
           onclick={() => sorting.toggle(key)}
           class="flex w-full cursor-pointer items-center justify-end gap-1 hover:text-white {active
             ? 'font-medium text-white'
-            : 'text-dark-3'}"
+            : 'text-dark-2'}"
         >
           <span>{label}</span>
           {#if active}
@@ -262,6 +284,12 @@
       </Table.Head>
     {/snippet}
 
+    {#if totalModels > sorted.length}
+      <p class="mb-2 text-xs text-dark-2">
+        Showing your {num(sorted.length)} largest models of {num(totalModels)}. Sorting applies to
+        these.
+      </p>
+    {/if}
     <div class="mb-3">
       <Pagination total={sorted.length} noun="model" {curPage} {totalPages} />
     </div>
@@ -290,7 +318,7 @@
                 <IconExternalLink size={13} class="shrink-0 text-dark-3" />
               </a>
             </Table.Cell>
-            <Table.Cell class="text-dark-2">{m.status}</Table.Cell>
+            <Table.Cell class="text-dark-2">{MODEL_STATUS_LABELS[m.status] ?? m.status}</Table.Cell>
             <Table.Cell class="text-right tabular-nums">{num(m.versions)}</Table.Cell>
             <Table.Cell class="text-right tabular-nums">{num(m.files)}</Table.Cell>
             <Table.Cell class="text-right font-medium tabular-nums text-white"

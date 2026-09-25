@@ -13,8 +13,9 @@ export type StorageUsageRow = {
   bytes: bigint;
 };
 
-/** Kinds the nightly job owns. The image job owns everything else, so neither deletes the other's rows. */
+/** Kinds the nightly job owns. The media job owns the rest, so neither deletes the other's rows. */
 export const NIGHTLY_STORAGE_KINDS = ['model', 'training', 'attachment', 'model3d'] as const;
+/** Written through from `Image.type`, so this must list every `MediaType` value. */
 export const MEDIA_STORAGE_KINDS = ['image', 'video', 'audio'] as const;
 
 export const USER_ID_RANGE_WIDTH = 100_000;
@@ -26,11 +27,14 @@ export const MEDIA_CHUNK_ROWS = 50_000;
 // 20M images. Hitting it throws rather than writing a total that silently stops partway.
 export const MAX_MEDIA_CHUNKS = 400;
 
-export const MEDIA_CLAIM_LIMIT = 3;
+// One creator per tick, and a lease longer than the job's 10-minute lock, so a slow run cannot be
+// reclaimed by the next tick while it is still scanning.
+export const MEDIA_CLAIM_LIMIT = 1;
+export const MEDIA_LEASE_MINUTES = 15;
 
 // Bound as a parameter: inline, its backslash would have to survive both the JS template and the SQL
-// string literal, which treat it differently.
-export const MEDIA_SIZE_PATTERN = String.raw`^[0-9]+(\.[0-9]+)?$`;
+// string literal, which treat it differently. 13 digits (~9 TB) keeps a forged size from overflowing.
+export const MEDIA_SIZE_PATTERN = String.raw`^[0-9]{1,13}(\.[0-9]+)?$`;
 
 const bucketKey = (r: Pick<StorageUsageRow, 'kind' | 'publicStatus' | 'baseModel' | 'month'>) =>
   `${r.kind}\u0000${r.publicStatus}\u0000${r.baseModel}\u0000${r.month}`;
@@ -83,21 +87,38 @@ export async function sumUserMedia(
   );
 }
 
-type RawBucket = {
+export type RawMediaBucket = {
   kind: string;
   publicStatus: StoragePublicStatus;
-  baseModel: string;
   month: string;
   fileCount: number;
-  bytes: bigint;
+  /** numeric as text: a per-chunk sum can exceed what a JS number holds exactly. */
+  bytes: string;
+  /** Window totals over the whole chunk, identical on every row. */
+  chunkRows: number;
+  lastId: number;
 };
 
-type RawMediaBucket = RawBucket & { chunkRows: number; lastId: number };
+export function toMediaChunk(rows: RawMediaBucket[], afterId: number): MediaChunk {
+  return {
+    rows: rows[0]?.chunkRows ?? 0,
+    lastId: rows[0]?.lastId ?? afterId,
+    buckets: rows.map((r) => ({
+      kind: r.kind,
+      publicStatus: r.publicStatus,
+      baseModel: '',
+      month: r.month,
+      fileCount: r.fileCount,
+      bytes: BigInt(r.bytes),
+    })),
+  };
+}
 
 export const fetchMediaChunk: FetchMediaChunk = async (userId, afterId, limit) => {
   const rows = await dbRead.$queryRaw<RawMediaBucket[]>`
     WITH c AS (
-      SELECT i.id, i.type, i."createdAt", i."postId", i.metadata->>'size' AS size
+      SELECT i.id, i.type, i."createdAt", i."postId", i."tosViolation", i.ingestion,
+        i.metadata->>'size' AS size
       FROM "Image" i
       WHERE i."userId" = ${userId} AND i.id > ${afterId}
       ORDER BY i.id
@@ -105,22 +126,21 @@ export const fetchMediaChunk: FetchMediaChunk = async (userId, afterId, limit) =
     )
     SELECT
       c.type::text AS kind,
-      CASE WHEN p."publishedAt" IS NOT NULL AND p."publishedAt" <= now() THEN 'public' ELSE 'notPublic' END AS "publicStatus",
-      '' AS "baseModel",
+      CASE
+        WHEN p."publishedAt" IS NOT NULL AND p."publishedAt" <= now()
+          AND NOT c."tosViolation" AND c.ingestion <> 'Blocked' THEN 'public'
+        ELSE 'notPublic'
+      END AS "publicStatus",
       to_char(date_trunc('month', c."createdAt"), 'YYYY-MM-DD') AS month,
       count(*)::int AS "fileCount",
-      coalesce(sum(CASE WHEN c.size ~ ${MEDIA_SIZE_PATTERN} THEN c.size::numeric END), 0)::bigint AS bytes,
+      round(coalesce(sum(CASE WHEN c.size ~ ${MEDIA_SIZE_PATTERN} THEN c.size::numeric END), 0))::text AS bytes,
       (sum(count(*)) OVER ())::int AS "chunkRows",
       (max(max(c.id)) OVER ())::int AS "lastId"
     FROM c
     LEFT JOIN "Post" p ON p.id = c."postId"
-    GROUP BY 1, 2, 4
+    GROUP BY 1, 2, 3
   `;
-  return {
-    rows: rows[0]?.chunkRows ?? 0,
-    lastId: rows[0]?.lastId ?? afterId,
-    buckets: rows.map(({ chunkRows: _r, lastId: _l, ...b }) => b),
-  };
+  return toMediaChunk(rows, afterId);
 };
 
 export async function fetchNightlyUsage(lo: number, hi: number): Promise<StorageUsageRow[]> {
@@ -129,7 +149,7 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
       m."userId",
       CASE WHEN mf.type = 'Training Data' THEN 'training' ELSE 'model' END AS kind,
       CASE
-        WHEN m.status = 'Published' AND mv.status = 'Published'
+        WHEN m.status = 'Published' AND mv.status = 'Published' AND m.mode IS NULL
           AND m.availability <> 'Private' AND mv.availability <> 'Private' THEN 'public'
         ELSE 'notPublic'
       END AS "publicStatus",
@@ -165,20 +185,24 @@ export async function fetchNightlyUsage(lo: number, hi: number): Promise<Storage
     SELECT
       o."userId",
       'attachment',
-      'public',
+      o."publicStatus",
       '',
       to_char(date_trunc('month', f."createdAt"), 'YYYY-MM-DD'),
       count(*)::int,
       round(sum(f."sizeKB")::numeric * 1024)::bigint
     FROM (
-      SELECT 'BountyEntry' AS "entityType", id, "userId" FROM "BountyEntry" WHERE "userId" >= ${lo} AND "userId" < ${hi}
+      SELECT 'BountyEntry' AS "entityType", id, "userId", 'public' AS "publicStatus"
+      FROM "BountyEntry" WHERE "userId" >= ${lo} AND "userId" < ${hi}
       UNION ALL
-      SELECT 'Bounty', id, "userId" FROM "Bounty" WHERE "userId" >= ${lo} AND "userId" < ${hi}
+      SELECT 'Bounty', id, "userId", 'public'
+      FROM "Bounty" WHERE "userId" >= ${lo} AND "userId" < ${hi}
       UNION ALL
-      SELECT 'Article', id, "userId" FROM "Article" WHERE "userId" >= ${lo} AND "userId" < ${hi}
+      SELECT 'Article', id, "userId",
+        CASE WHEN status = 'Published' AND NOT "tosViolation" THEN 'public' ELSE 'notPublic' END
+      FROM "Article" WHERE "userId" >= ${lo} AND "userId" < ${hi}
     ) o
     JOIN "File" f ON f."entityType" = o."entityType" AND f."entityId" = o.id
-    GROUP BY 1, 5
+    GROUP BY 1, 3, 5
   `;
 }
 
@@ -195,22 +219,32 @@ function toArrays(rows: StorageUsageRow[]) {
 }
 
 /**
- * Replaces the nightly kinds for users in [lo, hi). Unchanged rows are skipped by the upsert's
- * DISTINCT guard, so a quiet night writes almost nothing. Rows for deleted users are pruned here too.
+ * Replaces the nightly kinds for users in [lo, hi) and snapshots any public total that moved.
+ *
+ * Unchanged rows are filtered out before the upsert: ON CONFLICT DO UPDATE locks every row it
+ * conflicts with even when its WHERE rejects the update, which would log a lock for every row nightly.
  */
 export async function writeNightlyUsage(lo: number, hi: number, rows: StorageUsageRow[]) {
   const a = toArrays(rows);
   await dbWrite.$transaction([
     dbWrite.$executeRaw`
+      WITH incoming AS (
+        SELECT * FROM unnest(
+          ${a.userIds}::int[], ${a.kinds}::text[], ${a.statuses}::text[], ${a.baseModels}::text[],
+          ${a.months}::date[], ${a.counts}::int[], ${a.bytes}::bigint[]
+        ) AS t("userId", kind, "publicStatus", "baseModel", month, "fileCount", bytes)
+      )
       INSERT INTO "UserStorageUsage" ("userId", kind, "publicStatus", "baseModel", month, "fileCount", bytes)
-      SELECT * FROM unnest(
-        ${a.userIds}::int[], ${a.kinds}::text[], ${a.statuses}::text[], ${a.baseModels}::text[],
-        ${a.months}::date[], ${a.counts}::int[], ${a.bytes}::bigint[]
+      SELECT i.* FROM incoming i
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "UserStorageUsage" u
+        WHERE u."userId" = i."userId" AND u.kind = i.kind AND u."publicStatus" = i."publicStatus"
+          AND u."baseModel" = i."baseModel" AND u.month = i.month
+          AND u."fileCount" = i."fileCount" AND u.bytes = i.bytes
       )
       ON CONFLICT ("userId", kind, "publicStatus", "baseModel", month) DO UPDATE
-        SET "fileCount" = EXCLUDED."fileCount", bytes = EXCLUDED.bytes, "computedAt" = now()
-        WHERE ("UserStorageUsage"."fileCount", "UserStorageUsage".bytes)
-          IS DISTINCT FROM (EXCLUDED."fileCount", EXCLUDED.bytes)
+        SET "fileCount" = EXCLUDED."fileCount", bytes = EXCLUDED.bytes,
+          "computedAt" = timezone('UTC', now())
     `,
     dbWrite.$executeRaw`
       DELETE FROM "UserStorageUsage" u
@@ -228,7 +262,39 @@ export async function writeNightlyUsage(lo: number, hi: number, rows: StorageUsa
       WHERE u."userId" >= ${lo} AND u."userId" < ${hi}
         AND NOT EXISTS (SELECT 1 FROM "User" x WHERE x.id = u."userId")
     `,
+    snapshotRange(lo, hi),
   ]);
+}
+
+/**
+ * One row per creator per kind on the days its public total changes, including a drop to zero, so the
+ * history is complete from launch without a row per creator per day.
+ */
+function snapshotRange(lo: number, hi: number) {
+  return dbWrite.$executeRaw`
+    WITH cur AS (
+      SELECT u."userId", u.kind, sum(u."fileCount")::int AS "fileCount", sum(u.bytes)::bigint AS bytes
+      FROM "UserStorageUsage" u
+      WHERE u."userId" >= ${lo} AND u."userId" < ${hi} AND u."publicStatus" = 'public'
+      GROUP BY 1, 2
+    ),
+    last AS (
+      SELECT DISTINCT ON (s."userId", s.kind) s."userId", s.kind, s."fileCount", s.bytes
+      FROM "UserStorageSnapshot" s
+      WHERE s."userId" >= ${lo} AND s."userId" < ${hi}
+      ORDER BY s."userId", s.kind, s.date DESC
+    )
+    INSERT INTO "UserStorageSnapshot" ("userId", date, kind, "fileCount", bytes)
+    SELECT coalesce(c."userId", l."userId"), timezone('UTC', now())::date, coalesce(c.kind, l.kind),
+      coalesce(c."fileCount", 0), coalesce(c.bytes, 0)
+    FROM cur c
+    FULL JOIN last l ON l."userId" = c."userId" AND l.kind = c.kind
+    WHERE (l."userId" IS NULL AND c."userId" IS NOT NULL)
+      OR (l."userId" IS NOT NULL
+        AND (coalesce(c."fileCount", 0) <> l."fileCount" OR coalesce(c.bytes, 0) <> l.bytes))
+    ON CONFLICT ("userId", date, kind) DO UPDATE
+      SET "fileCount" = EXCLUDED."fileCount", bytes = EXCLUDED.bytes
+  `;
 }
 
 export async function getMaxUserId() {
@@ -236,32 +302,18 @@ export async function getMaxUserId() {
   return row?.max ?? 0;
 }
 
-/** One public-only total per kind per day, for creators who opened the storage page in the last 30 days. */
-export async function writeDailySnapshots() {
-  await dbWrite.$executeRaw`
-    INSERT INTO "UserStorageSnapshot" ("userId", date, kind, "fileCount", bytes)
-    SELECT u."userId", current_date, u.kind, sum(u."fileCount")::int, sum(u.bytes)::bigint
-    FROM "UserStorageUsage" u
-    JOIN "UserStorageRollup" r ON r."userId" = u."userId"
-    WHERE r."imagesRequestedAt" > now() - interval '30 days' AND u."publicStatus" = 'public'
-    GROUP BY u."userId", u.kind
-    ON CONFLICT ("userId", date, kind) DO UPDATE
-      SET "fileCount" = EXCLUDED."fileCount", bytes = EXCLUDED.bytes
-  `;
-}
-
 /**
  * Claims pending media rollups. A row is pending when it was requested after its last completion; one
- * claimed in the last 10 minutes is in flight and skipped, and one older than that is a dead run.
+ * claimed within the lease is in flight and skipped, and one older than that is a dead run.
  */
 export async function claimMediaRollups(limit = MEDIA_CLAIM_LIMIT) {
   const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
-    UPDATE "UserStorageRollup" SET "imagesStartedAt" = now()
+    UPDATE "UserStorageRollup" SET "imagesStartedAt" = timezone('UTC', now())
     WHERE "userId" IN (
       SELECT "userId" FROM "UserStorageRollup"
       WHERE ("imagesComputedAt" IS NULL OR "imagesRequestedAt" > "imagesComputedAt")
         AND "imagesRequestedAt" IS NOT NULL
-        AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < now() - interval '10 minutes')
+        AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - make_interval(mins => ${MEDIA_LEASE_MINUTES}))
       ORDER BY "imagesRequestedAt"
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
@@ -284,9 +336,64 @@ export async function writeMediaUsage(userId: number, rows: StorageUsageRow[]) {
         ${a.userIds}::int[], ${a.kinds}::text[], ${a.statuses}::text[], ${a.baseModels}::text[],
         ${a.months}::date[], ${a.counts}::int[], ${a.bytes}::bigint[]
       )
+      ON CONFLICT ("userId", kind, "publicStatus", "baseModel", month) DO UPDATE
+        SET "fileCount" = EXCLUDED."fileCount", bytes = EXCLUDED.bytes,
+          "computedAt" = timezone('UTC', now())
     `,
     dbWrite.$executeRaw`
-      UPDATE "UserStorageRollup" SET "imagesComputedAt" = now() WHERE "userId" = ${userId}
+      UPDATE "UserStorageRollup" SET "imagesComputedAt" = timezone('UTC', now()) WHERE "userId" = ${userId}
     `,
   ]);
+}
+
+type Log = (message: string, error: unknown) => void;
+const logError: Log = (message, error) => console.error(message, error);
+
+/** Walks every user-id range; one failing range is logged and skipped rather than ending the night. */
+export async function runNightlyStorageUsage({
+  maxUserId = getMaxUserId,
+  fetchRange = fetchNightlyUsage,
+  writeRange = writeNightlyUsage,
+  log = logError,
+} = {}) {
+  const max = await maxUserId();
+  let ranges = 0;
+  let rows = 0;
+  const failed: number[] = [];
+  for (let lo = 0; lo <= max; lo += USER_ID_RANGE_WIDTH) {
+    const hi = lo + USER_ID_RANGE_WIDTH;
+    ranges++;
+    try {
+      const usage = await fetchRange(lo, hi);
+      await writeRange(lo, hi, usage);
+      rows += usage.length;
+    } catch (e) {
+      failed.push(lo);
+      log(`storage-usage-nightly: range [${lo}, ${hi}) failed`, e);
+    }
+  }
+  if (failed.length) {
+    throw new Error(`storage-usage-nightly: ${failed.length} of ${ranges} range(s) failed`);
+  }
+  return { ranges, rows };
+}
+
+export async function runMediaStorageUsage({
+  claim = claimMediaRollups,
+  sum = (userId: number) => sumUserMedia(userId),
+  write = writeMediaUsage,
+  log = logError,
+} = {}) {
+  const userIds = await claim();
+  const failed: number[] = [];
+  for (const userId of userIds) {
+    try {
+      await write(userId, await sum(userId));
+    } catch (e) {
+      failed.push(userId);
+      log(`storage-usage-media: user ${userId} failed`, e);
+    }
+  }
+  if (failed.length) throw new Error(`storage-usage-media: ${failed.length} rollup(s) failed`);
+  return { processed: userIds.length };
 }

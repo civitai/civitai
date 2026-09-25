@@ -306,13 +306,15 @@
     <a href="/analytics/storage" class="text-xs text-dark-2 hover:text-white">View storage →</a>
   </div>
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-    <StatCard label="Storage used" icon={IconDatabase} color="#4dabf7">
+    <StatCard label="Uploaded" icon={IconDatabase} color="#4dabf7">
       {#if data.storage}
         <p class="mt-1 text-xl font-semibold text-white">{formatBytes(data.storage.total.bytes)}</p>
-        <p class="mt-2 text-xs text-dark-3">
-          {data.storage.calculating
-            ? 'Images and videos not counted yet'
-            : 'What you uploaded, public only'}
+        <p class="mt-2 text-xs text-dark-2">
+          {data.storage.media === 'done'
+            ? 'Public files, all types'
+            : data.storage.media === 'refreshing'
+              ? 'Updating your images and videos'
+              : 'Counting your images and videos'}
         </p>
       {:else}
         <p class="mt-1 text-xl font-semibold text-dark-4">—</p>

@@ -57,7 +57,7 @@ const add = (t: StorageTotal, r: StorageRow) => {
   t.fileCount += r.fileCount;
 };
 
-const kindRank = (kind: string) => {
+export const kindRank = (kind: string) => {
   const i = (STORAGE_KIND_ORDER as readonly string[]).indexOf(kind);
   return i === -1 ? STORAGE_KIND_ORDER.length : i;
 };
@@ -133,16 +133,27 @@ export function summarizeStorage(rows: StorageRow[]): StorageSummary {
  */
 export function storageEmptyKind(
   summary: StorageSummary,
-  liveModelCount: number
+  /** null when the live query failed: then "nothing here" cannot be claimed either. */
+  liveModelCount: number | null
 ): 'none' | 'overnight' | null {
   if (summary.total.fileCount > 0 || summary.notPublic.fileCount > 0) return null;
-  return liveModelCount > 0 ? 'overnight' : 'none';
+  return liveModelCount === 0 ? 'none' : 'overnight';
 }
 
-/** True while the images/videos half is missing or a refresh is queued behind the last completed one. */
-export function isMediaCalculating(state: StorageRollupState | null): boolean {
-  if (!state?.computedAt) return true;
-  return !!state.requestedAt && state.requestedAt > state.computedAt;
+export const MEDIA_SLOW_MS = 60 * 60 * 1000;
+
+/**
+ * `first`: images/videos have never been counted, so the totals leave them out. `refreshing`: a refresh is
+ * queued and the totals show the previous count. `slow`: either, pending for over an hour.
+ */
+export type MediaStatus = 'first' | 'refreshing' | 'slow' | 'done';
+
+export function mediaStatus(state: StorageRollupState | null, now = Date.now()): MediaStatus {
+  const pending =
+    !state?.computedAt || (!!state.requestedAt && state.requestedAt > state.computedAt);
+  if (!pending) return 'done';
+  if (state?.requestedAt && now - Date.parse(state.requestedAt) > MEDIA_SLOW_MS) return 'slow';
+  return state?.computedAt ? 'refreshing' : 'first';
 }
 
 /** Whether a page view should queue a refresh: never computed, or last computed over 24h ago. */
@@ -151,6 +162,16 @@ export function needsMediaRefresh(state: StorageRollupState | null, now = Date.n
   if (state.requestedAt && state.requestedAt > state.computedAt) return false;
   return now - Date.parse(state.computedAt) > MEDIA_STALE_MS;
 }
+
+export const MODEL_STATUS_LABELS: Record<string, string> = {
+  Published: 'Published',
+  Draft: 'Draft',
+  Scheduled: 'Scheduled',
+  Training: 'Training',
+  Unpublished: 'Unpublished',
+  UnpublishedViolation: 'Removed for a violation',
+  GatherInterest: 'Gathering interest',
+};
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatBytes,
-  isMediaCalculating,
+  mediaStatus,
   needsMediaRefresh,
   storageEmptyKind,
   summarizeStorage,
@@ -96,6 +96,10 @@ describe('storageEmptyKind', () => {
     expect(storageEmptyKind(summarizeStorage([]), 0)).toBe('none');
   });
 
+  it('never claims nothing is here when the live table could not be read', () => {
+    expect(storageEmptyKind(summarizeStorage([]), null)).toBe('overnight');
+  });
+
   it('is not empty when only not-public content exists', () => {
     expect(storageEmptyKind(summarizeStorage([row({ publicStatus: 'notPublic' })]), 0)).toBeNull();
   });
@@ -106,10 +110,10 @@ describe('media rollup state', () => {
 
   it('queues a first visit and nothing while a request is pending', () => {
     expect(needsMediaRefresh(null, now)).toBe(true);
-    expect(isMediaCalculating(null)).toBe(true);
+    expect(mediaStatus(null, now)).toBe('first');
     const pending = { requestedAt: '2026-09-25T11:59:00.000Z', computedAt: null };
     expect(needsMediaRefresh(pending, now)).toBe(false);
-    expect(isMediaCalculating(pending)).toBe(true);
+    expect(mediaStatus(pending, now)).toBe('first');
   });
 
   it('refreshes only once the last completed rollup is over 24 hours old', () => {
@@ -118,13 +122,13 @@ describe('media rollup state', () => {
       computedAt: '2026-09-24T13:01:00.000Z',
     };
     expect(needsMediaRefresh(fresh, now)).toBe(false);
-    expect(isMediaCalculating(fresh)).toBe(false);
+    expect(mediaStatus(fresh, now)).toBe('done');
     const stale = {
       requestedAt: '2026-09-24T11:00:00.000Z',
       computedAt: '2026-09-24T11:01:00.000Z',
     };
     expect(needsMediaRefresh(stale, now)).toBe(true);
-    expect(isMediaCalculating(stale)).toBe(false);
+    expect(mediaStatus(stale, now)).toBe('done');
   });
 
   it('does not requeue a refresh that is already queued behind a completed rollup', () => {
@@ -133,7 +137,19 @@ describe('media rollup state', () => {
       computedAt: '2026-09-23T11:00:00.000Z',
     };
     expect(needsMediaRefresh(requeued, now)).toBe(false);
-    expect(isMediaCalculating(requeued)).toBe(true);
+    expect(mediaStatus(requeued, now)).toBe('refreshing');
+  });
+
+  it('reports a request pending for over an hour as slow, first count or refresh alike', () => {
+    expect(mediaStatus({ requestedAt: '2026-09-25T10:00:00.000Z', computedAt: null }, now)).toBe(
+      'slow'
+    );
+    expect(
+      mediaStatus(
+        { requestedAt: '2026-09-25T10:00:00.000Z', computedAt: '2026-09-23T10:00:00.000Z' },
+        now
+      )
+    ).toBe('slow');
   });
 });
 

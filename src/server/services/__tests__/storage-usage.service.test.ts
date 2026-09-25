@@ -2,14 +2,28 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   type FetchMediaChunk,
   type StorageUsageRow,
   MEDIA_SIZE_PATTERN,
+  MEDIA_STORAGE_KINDS,
+  NIGHTLY_STORAGE_KINDS,
   claimMediaRollups,
   fetchMediaChunk,
+  runMediaStorageUsage,
+  runNightlyStorageUsage,
   sumUserMedia,
+  toMediaChunk,
+  writeMediaUsage,
+  writeNightlyUsage,
 } from '~/server/services/storage-usage.service';
+
+const executed = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls.map(([strings, ...values]) => ({
+    text: (strings as unknown as TemplateStringsArray).join('?').replace(/\s+/g, ' '),
+    values,
+  }));
 
 const lastQuery = (fn: { mock: { calls: unknown[][] } }) => {
   const [strings, ...values] = fn.mock.calls[fn.mock.calls.length - 1] as [
@@ -30,6 +44,12 @@ describe('media size pattern', () => {
     expect(['abc', '', '12.', '.5', '1e5', '-3', '12.5.1'].filter((s) => re.test(s))).toEqual([]);
   });
 
+  // An unbounded client-supplied size would overflow the bigint sum and fail the creator's rollup forever.
+  it('rejects a size too large to be a real file', () => {
+    expect(re.test('9999999999999')).toBe(true);
+    expect(re.test('99999999999999')).toBe(false);
+  });
+
   it('reaches the chunk query as a bound value, not as SQL text', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
     await fetchMediaChunk(1, 0, 10);
@@ -48,9 +68,9 @@ describe('claimMediaRollups', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
     await claimMediaRollups();
     const { text } = lastQuery(dbMock.dbWrite.$queryRaw);
-    expect(text).not.toMatch(/"imagesStartedAt"\s*<\s*"imagesRequestedAt"/);
-    expect(text).toContain(
-      `("imagesStartedAt" IS NULL OR "imagesStartedAt" < now() - interval '10 minutes')`
+    const where = text.slice(text.indexOf('WHERE ('), text.indexOf(' ORDER BY'));
+    expect(where).toBe(
+      `WHERE ("imagesComputedAt" IS NULL OR "imagesRequestedAt" > "imagesComputedAt") AND "imagesRequestedAt" IS NOT NULL AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - make_interval(mins => ?))`
     );
   });
 
@@ -161,19 +181,150 @@ describe('sumUserMedia', () => {
   });
 
   it('throws instead of writing a partial total when the chunk cap is reached', async () => {
-    const endless: FetchMediaChunk = async (_u, afterId, limit) => ({
-      rows: limit,
-      lastId: afterId + limit,
-      buckets: [],
-    });
+    // Full chunks for 50 calls, then empty: if the cap is removed the loop still ends, and the call
+    // count says so instead of the run hanging.
+    let calls = 0;
+    const endless: FetchMediaChunk = async (_u, afterId, limit) => {
+      calls++;
+      return { rows: calls > 50 ? 0 : limit, lastId: afterId + limit, buckets: [] };
+    };
     await expect(sumUserMedia(1, endless, { chunkRows: 5, maxChunks: 4 })).rejects.toThrow(
       'more than 20 media rows'
     );
+    expect(calls).toBe(4);
   });
 
   it('returns nothing for a creator with no media', async () => {
     const empty = fakeChunks([]);
     expect(await sumUserMedia(1, empty.fetch)).toEqual([]);
     expect(empty.calls).toEqual([0]);
+  });
+});
+
+describe('fetchMediaChunk', () => {
+  // The loop's stop condition and cursor come from window totals repeated on every row, not from the
+  // number of grouped rows returned.
+  it('takes rows and lastId from the window totals, not from the bucket count', () => {
+    const chunk = toMediaChunk(
+      [
+        {
+          kind: 'image',
+          publicStatus: 'public',
+          month: '2026-01-01',
+          fileCount: 30,
+          bytes: '300',
+          chunkRows: 50,
+          lastId: 999,
+        },
+        {
+          kind: 'video',
+          publicStatus: 'public',
+          month: '2026-01-01',
+          fileCount: 20,
+          bytes: '12345678901234567890',
+          chunkRows: 50,
+          lastId: 999,
+        },
+      ],
+      7
+    );
+    expect(chunk.rows).toBe(50);
+    expect(chunk.lastId).toBe(999);
+    expect(chunk.buckets.map((b) => b.bytes)).toEqual([300n, 12345678901234567890n]);
+    expect(toMediaChunk([], 7)).toEqual({ rows: 0, lastId: 7, buckets: [] });
+  });
+
+  it('pages by id and counts the whole chunk', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([]);
+    await fetchMediaChunk(1, 0, 10);
+    const { text } = lastQuery(dbMock.dbRead.$queryRaw);
+    expect(text).toContain('AND i.id > ? ORDER BY i.id LIMIT ?');
+    expect(text).toContain('(sum(count(*)) OVER ())::int AS "chunkRows"');
+    expect(text).toContain('(max(max(c.id)) OVER ())::int AS "lastId"');
+  });
+});
+
+describe('which job owns which rows', () => {
+  // Each job deletes only its own kinds. If either DELETE took the other's, every nightly run would wipe
+  // image totals (or every media run the model totals) with nothing on the page to say so.
+  it('keeps the two kind sets disjoint and the media set equal to MediaType', () => {
+    const nightly = new Set<string>(NIGHTLY_STORAGE_KINDS);
+    expect(MEDIA_STORAGE_KINDS.filter((k) => nightly.has(k))).toEqual([]);
+    expect([...MEDIA_STORAGE_KINDS].sort()).toEqual(Object.values(MediaType).sort());
+  });
+
+  it('prunes only nightly kinds in the nightly write', async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    await writeNightlyUsage(0, 100, []);
+    const prune = executed().find((q) => q.text.includes('NOT IN ('));
+    expect(prune?.values).toContainEqual([...NIGHTLY_STORAGE_KINDS]);
+  });
+
+  it('replaces only media kinds, and marks the rollup done, in the media write', async () => {
+    dbMock.dbWrite.$executeRaw.mockClear();
+    await writeMediaUsage(5, []);
+    const statements = executed();
+    const del = statements.find((q) => q.text.startsWith(' DELETE'));
+    expect(del?.values).toEqual([5, [...MEDIA_STORAGE_KINDS]]);
+    const done = statements.find((q) => q.text.includes('UPDATE "UserStorageRollup"'));
+    expect(done?.text).toContain(
+      'SET "imagesComputedAt" = timezone(\'UTC\', now()) WHERE "userId" = ?'
+    );
+    expect(done?.values).toEqual([5]);
+  });
+});
+
+describe('runNightlyStorageUsage', () => {
+  it('logs a failing range and still walks every other one, then fails the run', async () => {
+    const seen: number[] = [];
+    const logged: string[] = [];
+    await expect(
+      runNightlyStorageUsage({
+        maxUserId: async () => 250_000,
+        fetchRange: async (lo) => {
+          if (lo === 100_000) throw new Error('canceling statement due to conflict with recovery');
+          return [];
+        },
+        writeRange: async (lo) => {
+          seen.push(lo);
+        },
+        log: (m) => logged.push(m),
+      })
+    ).rejects.toThrow('1 of 3 range(s) failed');
+    expect(seen).toEqual([0, 200_000]);
+    expect(logged).toEqual(['storage-usage-nightly: range [100000, 200000) failed']);
+  });
+
+  it('covers the highest user id', async () => {
+    const seen: number[] = [];
+    await runNightlyStorageUsage({
+      maxUserId: async () => 200_000,
+      fetchRange: async () => [],
+      writeRange: async (lo, hi) => {
+        seen.push(lo, hi);
+      },
+      log: () => undefined,
+    });
+    expect(seen).toEqual([0, 100_000, 100_000, 200_000, 200_000, 300_000]);
+  });
+});
+
+describe('runMediaStorageUsage', () => {
+  it('writes the users it can and fails the run for the one it cannot', async () => {
+    const written: number[] = [];
+    await expect(
+      runMediaStorageUsage({
+        claim: async () => [1, 2],
+        sum: async (userId) => {
+          if (userId === 1) throw new Error('boom');
+          return [];
+        },
+        write: async (userId) => {
+          written.push(userId);
+        },
+        log: () => undefined,
+      })
+    ).rejects.toThrow('1 rollup(s) failed');
+    expect(written).toEqual([2]);
   });
 });
