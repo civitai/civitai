@@ -194,6 +194,26 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  // App Blocks author-fee CHARGE rail. Reached from `blocks.router.ts` via
+  // `quoteBlockAuthorFee`/`chargeBlockAuthorFee`, so ANY suite exercising an
+  // estimate or a submit touches them — not only the fee's own tests.
+  //
+  // 🔴 OMITTING ONE NOW FAILS **SILENTLY**, AND AN EARLIER REVISION OF THIS
+  // COMMENT CLAIMED THE OPPOSITE. Vitest implements a missing mock export as a
+  // Proxy `get` trap, so the throw fires at PROPERTY ACCESS — and both accesses
+  // sit inside the `try { … } catch { /* swallow */ }` the fee service wraps its
+  // incs in. The counter would simply never fire and every suite would stay
+  // green. The corroboration is in this same tree: `blockAuthorFeeObservedCounter`,
+  // `blockAuthorFeeBuzzCounter` and `blockAuthorFeeBaseBuzzCounter` are ALREADY
+  // absent here, are read the same way inside try/catch in `author-fee.ts`, and
+  // nothing is red.
+  //
+  // So this list is load-bearing and unguarded. That is a real gap, not a
+  // reassurance — it is recorded rather than fixed because closing it means a
+  // completeness guard over a module on `PENDING_SPECIFIERS`, which is its own
+  // change.
+  blockAuthorFeeQuotedCounter: promMetricStub(),
+  blockAuthorFeeChargedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),

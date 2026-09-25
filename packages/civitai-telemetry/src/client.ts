@@ -346,7 +346,13 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
 // "no generation lacked a base" rather than "you spelled the label wrong".
 export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
   name: 'block_author_fee_observed_total',
-  help: 'App Blocks per-generation author-fee computations observed (dark — no money moves), by coarse generation type and governing leg',
+  // 🔴 "dark — no money moves" until 2026-09-25, when `app-blocks-author-fee-enabled`
+  // was flipped to true. This counter still sits on the SIZING path
+  // (`observeBlockAuthorFee`, spend attribution) and still moves no money itself —
+  // but it is no longer observing a feature that charges nobody, so the old
+  // wording now reads as an assurance about the FEE rather than about this
+  // counter's own position. The charge rail's own counters are below.
+  help: 'App Blocks per-generation author-fee computations observed on the sizing path, by coarse generation type and governing leg',
   labelNames: ['coarse_type', 'outcome'] as const,
 });
 
@@ -355,7 +361,18 @@ export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
 // volume slice 2 would have to settle.
 export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
   name: 'block_author_fee_buzz_total',
-  help: 'Buzz the App Blocks per-generation author fee would have charged (dark), by coarse generation type',
+  // 🔴 "would have charged (dark)" until 2026-09-25. This is still the SIZING
+  // figure — what the fee computes to on the attribution path — and is NOT what
+  // viewers were debited.
+  //
+  // 🔴 THERE IS NO PROMETHEUS SERIES FOR BUZZ ACTUALLY DEBITED, and an earlier
+  // revision of this comment pointed at `block_author_fee_charged_buzz_total`,
+  // which does not exist: it was proposed in this same change and then deleted
+  // for duplicating an authoritative record. The authorities for money are the
+  // Buzz ledger (`TransactionType.Fee`, keyed by `blockAuthorFeeChargeKey`) and
+  // the `block_author_fee_accrual` table. This series differs from both by every
+  // skip arm and by the reserve clamp, so quoting it as revenue overstates it.
+  help: 'Buzz the App Blocks per-generation author fee computes to on the sizing path (NOT what was debited), by coarse generation type',
   labelNames: ['coarse_type'] as const,
 });
 
@@ -365,6 +382,60 @@ export const blockAuthorFeeBaseBuzzCounter = registerCounterWithLabels({
   name: 'block_author_fee_base_buzz_total',
   help: 'Base generation Buzz the App Blocks author fee was computed against, by coarse generation type',
   labelNames: ['coarse_type'] as const,
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The CHARGE rail. The three counters above are a SIZING instrument on the spend
+// -attribution path (`observeBlockAuthorFee`); none of them sits on the path that
+// actually debits a viewer, so before these existed the live fee was unmeasured
+// in Prometheus on BOTH sides — quoted and charged alike.
+//
+// 🔴 WHY A COUNTER AND NOT A LOG, on the quote side specifically. The estimate
+// surface is UNBOUNDED — `estimateWorkflow` is a bare `publicProcedure` with no
+// rate limit, driven per-keystroke by third-party block code — which is why
+// `suppressQuoteLogs` exists and why every per-call log write on that path is
+// deliberately off. A counter is O(1) per call whatever the volume, so it buys
+// the visibility back without re-creating the write amplification the
+// suppression removed.
+
+/**
+ * Every `quoteBlockAuthorFee` outcome, including the DISCLOSURE-ONLY calls whose
+ * logs are suppressed. `surface` separates the unbounded estimate path from the
+ * submit-time quote that actually gates and reserves, because their call volumes
+ * differ by an unknown factor and summing them hides that.
+ *
+ * 🔴 `coarse_type` HERE MEANS "NOT DERIVABLE", AND ON `blockAuthorFeeObservedCounter`
+ * IT MEANS "NOT YET COMPUTED". THE TWO COUNTERS DISAGREE — DO NOT JOIN THEM ON IT.
+ *
+ * This counter derives the label from the generation type ARGUMENT, so every arm
+ * carries the real type whenever one can be resolved — `flag-disabled`,
+ * `price-is-cap` and `base-unavailable` included. `unknown` here means the type
+ * itself did not resolve. `blockAuthorFeeObservedCounter` still reads its label
+ * off the COMPUTATION, so it emits `unknown` on its pre-computation arms even
+ * when the type was perfectly well known.
+ *
+ * ⚠️ An earlier revision of this paragraph asserted the opposite — that the two
+ * followed the same convention — and added "it is not a spelling to fix", which
+ * would have steered the next reader away from exactly this divergence. It was
+ * true when written and falsified by a later commit of the same PR, which is the
+ * one shape no delta round can see.
+ *
+ * THE CONCRETE HAZARD: joining the two series on `coarse_type` silently drops
+ * cap-priced and base-unavailable traffic, because the observed side buckets it
+ * under `unknown` while this side buckets it under the real type. Nothing errors.
+ * Reconcile on `outcome` instead, or widen the observed counter to match.
+ */
+export const blockAuthorFeeQuotedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_quoted_total',
+  help: 'App Blocks author-fee quotes, by coarse generation type (unknown = the type did not resolve), outcome and surface (disclosure = the unbounded estimate path, gating = the submit-time quote)',
+  labelNames: ['coarse_type', 'outcome', 'surface'] as const,
+});
+
+/** Every `chargeBlockAuthorFee` outcome — `charged`, or the skip/failure reason. */
+export const blockAuthorFeeChargedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_charged_total',
+  help: 'App Blocks author-fee charge attempts, by coarse generation type and outcome (charged, or the skip/failure reason)',
+  labelNames: ['coarse_type', 'outcome'] as const,
 });
 
 // App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
