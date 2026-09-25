@@ -30,10 +30,7 @@ import {
 import clsx from 'clsx';
 import { useState } from 'react';
 import classes from '~/components/BrowsingLevel/SetBrowsingLevelModal.module.scss';
-import {
-  browsingLevels,
-  browsingLevelLabels,
-} from '~/shared/constants/browsingLevel.constants';
+import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { HideModel3DButton } from '~/components/HideModel3DButton/HideModel3DButton';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -44,10 +41,12 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { NsfwLevel } from '~/server/common/enums';
-import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 export type Model3DActionsMenuModel = {
@@ -125,6 +124,7 @@ export function Model3DActionsMenu({
   const isDraft = model3d.status === Model3DStatus.Draft;
   const lockedSet = new Set(model3d.lockedProperties ?? []);
   const canPublish = !!model3d.thumbnailImageId;
+  const canSave = features.collections && !isDeleted;
 
   const invalidate = async () => {
     await Promise.all([
@@ -260,11 +260,7 @@ export function Model3DActionsMenu({
 
   return (
     <>
-      <Menu
-        position="bottom-end"
-        transitionProps={{ transition: 'pop-top-right' }}
-        withinPortal
-      >
+      <Menu position="bottom-end" transitionProps={{ transition: 'pop-top-right' }} withinPortal>
         <Menu.Target>
           {/* Two trigger variants:
               - `sm` (card surface) mirrors the card's preview-eye button
@@ -439,32 +435,24 @@ export function Model3DActionsMenu({
                   image card menu — one mutation keyed by `field`. */}
               <Menu.Item
                 leftSection={<IconFlag size={14} stroke={1.5} />}
-                onClick={() =>
-                  toggleFlagMutation.mutate({ id: model3d.id, field: 'minor' })
-                }
+                onClick={() => toggleFlagMutation.mutate({ id: model3d.id, field: 'minor' })}
                 disabled={toggleFlagMutation.isPending}
               >
                 {model3d.minor ? 'Remove minor flag' : 'Flag as minor'}
               </Menu.Item>
               <Menu.Item
                 leftSection={<IconFlag size={14} stroke={1.5} />}
-                onClick={() =>
-                  toggleFlagMutation.mutate({ id: model3d.id, field: 'poi' })
-                }
+                onClick={() => toggleFlagMutation.mutate({ id: model3d.id, field: 'poi' })}
                 disabled={toggleFlagMutation.isPending}
               >
                 {model3d.poi ? 'Remove POI flag' : 'Flag as POI'}
               </Menu.Item>
               <Menu.Item
                 leftSection={<IconBan size={14} stroke={1.5} />}
-                onClick={() =>
-                  toggleFlagMutation.mutate({ id: model3d.id, field: 'tosViolation' })
-                }
+                onClick={() => toggleFlagMutation.mutate({ id: model3d.id, field: 'tosViolation' })}
                 disabled={toggleFlagMutation.isPending}
               >
-                {model3d.tosViolation
-                  ? 'Clear TOS Violation'
-                  : 'Remove as TOS Violation'}
+                {model3d.tosViolation ? 'Clear TOS Violation' : 'Remove as TOS Violation'}
               </Menu.Item>
 
               {/* Thumbnail-scoped mod helpers. Disabled when the model
@@ -489,21 +477,33 @@ export function Model3DActionsMenu({
             </>
           )}
 
-          {/* User-side hide/block + Report. The user-side items are
-              available to any logged-in non-owner (mods see them too,
-              alongside their mod tools). Report is gated to non-mod
-              non-owner only — mods don't need to report a Model3D they
-              can directly action. */}
-          {canHideUser && (
+          {/* User-side save/hide/block + Report. Hide/block are available
+              to any logged-in non-owner (mods see them too, alongside their
+              mod tools). Report is gated to non-mod non-owner only — mods
+              don't need to report a Model3D they can directly action. */}
+          {(canSave || canHideUser) && (
             <>
               {(isOwner || isModerator) && <Menu.Divider />}
-              <HideModel3DButton
-                as="menu-item"
-                model3dId={model3d.id}
-                ownerUserId={model3d.userId}
-              />
-              <HideUserButton as="menu-item" userId={model3d.userId} />
-              <BlockUserButton as="menu-item" userId={model3d.userId} />
+              {canSave && (
+                <AddToCollectionMenuItem
+                  onClick={() =>
+                    openAddToCollectionModal({
+                      props: { model3dId: model3d.id, type: CollectionType.Model3D },
+                    })
+                  }
+                />
+              )}
+              {canHideUser && (
+                <>
+                  <HideModel3DButton
+                    as="menu-item"
+                    model3dId={model3d.id}
+                    ownerUserId={model3d.userId}
+                  />
+                  <HideUserButton as="menu-item" userId={model3d.userId} />
+                  <BlockUserButton as="menu-item" userId={model3d.userId} />
+                </>
+              )}
             </>
           )}
 

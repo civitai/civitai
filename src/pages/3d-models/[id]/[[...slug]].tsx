@@ -68,7 +68,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getModel3DUrl } from '~/utils/string-helpers';
@@ -466,6 +466,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <ShareButton
                   url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
                   title={model3d.name}
+                  collect={{ model3dId: model3d.id, type: CollectionType.Model3D }}
                 >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
