@@ -360,3 +360,55 @@ describe("filterPreferences — 'challenges' isOwner keys off createdById, not t
     expect(items).toEqual([]);
   });
 });
+
+// ============================================================================
+// `case 'comics'` branch — a comic's nsfwLevel is a bit_or aggregate of all its
+// chapters, so the gate is "ALL bits within browsingLevel" (deliberately stricter
+// than the single-bit `intersects` rule the models/images branches use). The bug
+// this covers was NOT here: `ComicsInfinite` fetched at the raw saved browsing
+// level while re-filtering at the domain-capped one, so the server returned a
+// wider set than this branch would keep. These pin the branch's real semantics so
+// a PG+PG-13 comic (nsfwLevel 3, e.g. project 3682) shows at the logged-in green
+// level (PG|PG-13 = 3) that the fetch now also uses, and is correctly hidden from
+// an anonymous PG-only viewer.
+// ============================================================================
+
+const makeComic = (o: { id?: number; nsfwLevel: number; name?: string }) => ({
+  id: o.id ?? nextId++,
+  nsfwLevel: o.nsfwLevel,
+  name: o.name ?? 'comic',
+});
+
+const runComics = (data: ReturnType<typeof makeComic>[], browsingLevel: number) =>
+  filterPreferences({
+    type: 'comics',
+    data,
+    hiddenPreferences: emptyPrefs(),
+    browsingLevel,
+    currentUser: null as never,
+    canViewNsfw: true,
+  });
+
+describe("filterPreferences — 'comics' gates on ALL aggregate bits within the browsing level", () => {
+  it('keeps a PG+PG-13 comic (nsfwLevel 3) at the PG|PG-13 level (3)', () => {
+    const { items, hidden } = runComics([makeComic({ id: 3682, nsfwLevel: 3 })], 3);
+    expect(items.map((c) => c.id)).toEqual([3682]);
+    expect(hidden.browsingLevel).toBe(0);
+  });
+
+  it('drops that same comic for an anonymous PG-only viewer (level 1)', () => {
+    const { items, hidden } = runComics([makeComic({ id: 3682, nsfwLevel: 3 })], 1);
+    expect(items).toEqual([]);
+    expect(hidden.browsingLevel).toBe(1);
+  });
+
+  it('drops a comic carrying an R chapter (bit outside 3) even though it also has PG chapters', () => {
+    // nsfwLevel 5 = PG(1) | R(4). One out-of-range bit → the whole aggregate hides.
+    const { items, hidden } = runComics(
+      [makeComic({ id: 1, nsfwLevel: 3 }), makeComic({ id: 2, nsfwLevel: 5 })],
+      3
+    );
+    expect(items.map((c) => c.id)).toEqual([1]);
+    expect(hidden.browsingLevel).toBe(1);
+  });
+});
