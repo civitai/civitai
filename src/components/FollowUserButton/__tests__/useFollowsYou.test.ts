@@ -154,9 +154,11 @@ describe('ownFollowerFollowsYou', () => {
     );
   });
 
-  it('is false across a block for moderators too', () => {
+  const someoneHidden = { id: 99 };
+
+  it('is false when you have blocked the follower', () => {
     const blockRelations = ownListBlockRelations({
-      hiddenUsers: [],
+      hiddenUsers: [someoneHidden],
       blockedUsers: [{ id: userId }],
       blockedByUsers: [],
     });
@@ -165,11 +167,21 @@ describe('ownFollowerFollowsYou', () => {
 
   it('is false when the follower has blocked you', () => {
     const blockRelations = ownListBlockRelations({
-      hiddenUsers: [],
+      hiddenUsers: [someoneHidden],
       blockedUsers: [],
       blockedByUsers: [{ id: userId }],
     });
     expect(ownFollowerFollowsYou({ ...base, blockRelations })).toBe(false);
+  });
+
+  // Mirrors the server: hiding is not a block, so a hidden follower still reads Follow back.
+  it('is true for a follower you have only hidden', () => {
+    const blockRelations = ownListBlockRelations({
+      hiddenUsers: [{ id: userId }],
+      blockedUsers: [],
+      blockedByUsers: [],
+    });
+    expect(ownFollowerFollowsYou({ ...base, blockRelations })).toBe(true);
   });
 
   it('is false until hidden preferences have loaded', () => {
