@@ -87,7 +87,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
   const mainComment = parent;
   const commentCount = comments.length;
   const suggestedMentions = removeDuplicates(
-    [...comments, mainComment]
+    [...comments.filter((comment) => !comment.hidden), mainComment]
       .filter((comment) => comment && comment.user.id !== currentUser?.id)
       .map((comment) => ({
         id: comment?.user.id as number,
