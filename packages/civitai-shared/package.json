@@ -18,7 +18,8 @@
     "./missing-media": "./src/missing-media.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
-    "./job-queue": "./src/job-queue.ts"
+    "./job-queue": "./src/job-queue.ts",
+    "./rated-entity-sql": "./src/rated-entity-sql.ts"
   },
   "scripts": {
     "test": "vitest run",
