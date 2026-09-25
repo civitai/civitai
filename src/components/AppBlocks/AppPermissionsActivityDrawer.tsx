@@ -1,9 +1,11 @@
-import { Center, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
+import { Button, Center, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
+import { useState } from 'react';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -76,6 +78,24 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
 
   const grantsQuery = trpc.blocks.listMyScopeGrants.useQuery(undefined, { enabled: isAuthed });
   const grant = grantsQuery.data?.find((g) => g.appBlockId === appBlockId);
+
+  const utils = trpc.useUtils();
+  const [confirmingWithdraw, setConfirmingWithdraw] = useState(false);
+  const withdrawMutation = trpc.blocks.revokeScopeGrant.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMyScopeGrants.invalidate();
+      setConfirmingWithdraw(false);
+      showSuccessNotification({
+        title: 'Permissions withdrawn',
+        message: `${appName ?? 'This app'} can no longer act on your account.`,
+      });
+    },
+    onError: (e) =>
+      showErrorNotification({
+        title: 'Could not withdraw permissions',
+        error: new Error(e.message),
+      }),
+  });
 
   return (
     <Stack gap="lg">
@@ -244,6 +264,44 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
             emptyLabel={scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')}
           />
         )}
+        {isAuthed &&
+          grant &&
+          (confirmingWithdraw ? (
+            <Stack gap="xs" data-testid="withdraw-permissions-confirm">
+              <Text size="xs" c="dimmed">
+                Withdraw everything you granted {appName ?? 'this app'}? It stops working for you
+                until you allow it again.
+              </Text>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  color="red"
+                  loading={withdrawMutation.isPending}
+                  onClick={() => withdrawMutation.mutate({ appBlockId })}
+                >
+                  Withdraw
+                </Button>
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  disabled={withdrawMutation.isPending}
+                  onClick={() => setConfirmingWithdraw(false)}
+                >
+                  Cancel
+                </Button>
+              </Group>
+            </Stack>
+          ) : (
+            <Button
+              size="xs"
+              variant="light"
+              color="red"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => setConfirmingWithdraw(true)}
+            >
+              Withdraw permissions
+            </Button>
+          ))}
       </Stack>
 
       <Divider />

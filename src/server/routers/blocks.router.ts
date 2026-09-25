@@ -2925,6 +2925,17 @@ export const blocksRouter = router({
     return listMyScopeGrants(ctx.user.id);
   }),
 
+  revokeScopeGrant: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const { revokeScopeGrant } = await import(
+        '~/server/services/blocks/scope-grant-revocation.service'
+      );
+      await revokeScopeGrant({ userId: ctx.user.id, appBlockId: input.appBlockId });
+      return { success: true };
+    }),
+
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
    * current user is the spender (NOT the app owner). Powers the activity
