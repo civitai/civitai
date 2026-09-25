@@ -195,6 +195,95 @@ describe('parseCursor (via getCursor) — well-formed cursors parse unchanged', 
   });
 });
 
+/**
+ * REGRESSION. `keysetCursorSchema`'s int4 bound sits on the NUMBER and BIGINT
+ * members only; its STRING member is deliberately unbounded, because the
+ * composite form carries timestamps and `|` separators. The two REST routes that
+ * declare `cursor: keysetCursorSchema.optional()` —
+ * `src/pages/api/v1/images/index.ts` and `src/pages/api/v1/blocks/images.ts` —
+ * apply no coercion, and an HTTP query param is always a string, so the number
+ * member is unreachable there and the bound protected nothing.
+ *
+ * Measured before this guard: the SAME value is rejected as `999999999999` and
+ * accepted as `'999999999999'`, after which `getCursor` bound it into the SQL
+ * comparison against an int4 column and Postgres threw
+ * `value out of range for type integer` — i.e. the raw 500 the schema bound
+ * exists to prevent, reached purely by spelling.
+ *
+ * The first two cases below are the regression; the rest are the controls that
+ * keep them from passing for the wrong reason. `INT4_MAX` itself must still be
+ * ACCEPTED, or the guard is off by one; a 1e9-scale value must still be accepted,
+ * because `ct."sortKey"` is `abs(mod(hashtext(...), 1000000000))` and is a real
+ * cursor-reachable sort column.
+ */
+describe('parseCursor (via getCursor) — int4 range guard on a numeric STRING token', () => {
+  it('rejects an out-of-range numeric string token on a single-field sort → 400', () => {
+    expectBadRequest(() => getCursor('id DESC', '999999999999'));
+  });
+
+  it('rejects an out-of-range numeric token in the TAIL of a composite cursor → 400', () => {
+    expectBadRequest(() => getCursor('createdAt DESC, id DESC', '2024-01-15|999999999999'));
+  });
+
+  it('reports the offending token in the message, matching the sibling guards', () => {
+    let thrown: unknown;
+    try {
+      getCursor('id DESC', '999999999999');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe(
+      'Invalid cursor: numeric value out of range "999999999999"'
+    );
+  });
+
+  it('CONTROL: accepts int4 max itself, so the guard is not off by one', () => {
+    const { where } = getCursor('id DESC', '2147483647');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    expect(values).toContain(2147483647);
+  });
+
+  it('CONTROL: accepts a 1e9-scale token, the ct."sortKey" magnitude', () => {
+    const { where } = getCursor('id DESC', '999999999');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    expect(values).toContain(999999999);
+  });
+
+  it('KNOWN GAP, pinning TODAY’S WRONG BEHAVIOUR: a negative token is parsed as a DATE, not range-checked', () => {
+    // Not an endorsement — this asserts what the code does now, so that fixing it
+    // is a visible test change rather than a silent one.
+    //
+    // The date-vs-numeric split is `value.includes('-')`, which is true of every
+    // negative integer. So `'-5'` takes the date branch, and `dayjs.utc('-5')`
+    // reports VALID rather than failing: it yields 2001-05-01T00:00:00Z. That Date
+    // is then bound to an `int` sort column, which is a malformed comparison
+    // Postgres will reject — a different 500 from the overflow guarded above, and
+    // one no range check on this branch can reach, because control never gets here.
+    //
+    // Deliberately NOT fixed in range: correcting the discriminator changes how
+    // every token in every cursor is typed, which is a behaviour change across all
+    // callers rather than a guard.
+    //
+    // 🔴 The resulting instant is TIMEZONE-DEPENDENT, which is why nothing below
+    // asserts it literally. Measured under TZ=America/Chicago it is
+    // 2001-05-01T05:00:00.000Z — a local-midnight reading, not a UTC one, despite
+    // the `.utc()` call — so a UTC runner would produce a different instant and a
+    // literal assertion here would be a test that passes only on one machine. That
+    // the value moves with the runner's clock is itself further evidence this parse
+    // is junk. Assert only what holds everywhere: a Date came out, and the number
+    // did not.
+    const { where } = getCursor('id DESC', '-5');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    const dates = values.filter((v): v is Date => v instanceof Date);
+    expect(dates).toHaveLength(1);
+    expect(Number.isNaN(dates[0].getTime())).toBe(false);
+    expect(values).not.toContain(-5);
+  });
+});
+
 describe('getPagingData', () => {
   const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
 

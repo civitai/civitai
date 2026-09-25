@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
+import { INT4_MAX } from '~/server/schema/base.schema';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
@@ -178,6 +179,47 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
       const parsed = parseInt(value, 10);
       if (Number.isNaN(parsed))
         throwBadRequestError(`Invalid cursor: unparseable numeric value "${value}"`);
+      // Range guard, and it is NOT redundant with `keysetCursorSchema`'s int4
+      // bound. That bound sits on the schema's NUMBER and BIGINT members, so it
+      // only fires when the cursor arrives already typed as a number — i.e. from
+      // a JSON tRPC input. `keysetCursorSchema` leaves the STRING member
+      // deliberately unbounded (the composite form carries timestamps and `|`
+      // separators), so on the two REST routes that declare
+      // `cursor: keysetCursorSchema.optional()` with no coercion —
+      // `src/pages/api/v1/images/index.ts` and
+      // `src/pages/api/v1/blocks/images.ts` — an HTTP query param is ALWAYS a
+      // string and the number member is unreachable. Measured: the same value is
+      // rejected as `999999999999` and accepted as `'999999999999'`, which then
+      // bound into the SQL comparison against an int4 column and made Postgres
+      // throw `value out of range for type integer` — the raw 500 the schema
+      // bound exists to prevent, reached purely by spelling.
+      //
+      // Safe because every numeric sort column a cursor can actually reach is
+      // int4. Enumerated at this revision, not assumed: `i."index"`, `i."id"`,
+      // `ct."collectionItemId"`, `irr."imageId"` (`image.service.ts`),
+      // `ci."id"`, `p."modelId"` and the count columns
+      // (`thumbsUpCount`/`downloadCount`/`commentCount`/`collectedCount`/`imageCount`,
+      // `model.service.ts`) are all `int`; `ct."sortKey"` is
+      // `abs(mod(hashtext(...), 1000000000))`, so it is capped at 1e9; and
+      // timestamp columns carry `-`, so they take the date branch above. The one
+      // wider expression in the tree, `(i."postId"::bigint * 100) + COALESCE(i."index", 0)`,
+      // is unreachable with a cursor — that branch does
+      // `if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds')`,
+      // and `cursorProp` is computed before the reassignment. If a wider sort
+      // column is ever made cursor-reachable, this guard has to move with it.
+      //
+      // UPPER BOUND ONLY, and not as a judgement call: a negative token CANNOT
+      // REACH THIS BRANCH. The date-vs-numeric split above is
+      // `value.includes('-')`, so `'-5'` is routed to the date branch — where,
+      // measured at this revision, `dayjs.utc('-5')` reports VALID and yields
+      // `2001-05-01T00:00:00Z`, which is then bound to an `int` column. So a
+      // negative cursor token is mis-parsed as a Date rather than range-checked,
+      // and adding a floor here would be dead code. That mis-parse is a separate
+      // defect from the overflow this guard closes; it is pinned as a KNOWN GAP in
+      // `src/server/utils/pagination-helpers.test.ts` rather than fixed in range,
+      // because correcting the discriminator changes how every token is typed.
+      if (parsed > INT4_MAX)
+        throwBadRequestError(`Invalid cursor: numeric value out of range "${value}"`);
       result[fields[i].field] = parsed;
     }
   }
@@ -322,7 +364,9 @@ export function getCursorClauses(
   );
   const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
   equalityParts.push(
-    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${cursors[lastField.field]}`
+    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${
+      cursors[lastField.field]
+    }`
   );
   const equality = Prisma.sql`(${Prisma.join(equalityParts, ' AND ')})`;
 
