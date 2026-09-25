@@ -3,6 +3,7 @@ import {
   buildDownloadRows,
   describeDownload,
   downloadPollIds,
+  isDownloadBoosted,
   isWorthBoosting,
   mergeDownloadRow,
   summarizeDownloads,
@@ -391,5 +392,28 @@ describe('the lane cap on the card', () => {
       { lane: 'low', etaSeconds: 60, rateLimitBytesPerSecond: 5_625_000 },
     ]);
     expect(summary?.rateLimitBytesPerSecond).toBe(5_625_000);
+  });
+});
+
+describe('isDownloadBoosted', () => {
+  const at = (over: Parameters<typeof isDownloadBoosted>[0]) => isDownloadBoosted(over);
+
+  it('reads the two server signals', () => {
+    expect(at({ downloadPriority: 'high', hasReceipt: false })).toBe(true);
+    expect(at({ lane: 'high', hasReceipt: false })).toBe(true);
+    expect(at({ downloadPriority: 'normal', lane: 'normal', hasReceipt: false })).toBe(false);
+  });
+
+  /**
+   * The regression this exists for. Both server signals lag a refetch, and the offer returning
+   * inside that window is what had testers paying twice — once already, after the lane check alone
+   * shipped as the fix.
+   */
+  it('treats a receipt as boosted even while both server signals still say otherwise', () => {
+    expect(at({ downloadPriority: 'normal', lane: 'normal', hasReceipt: true })).toBe(true);
+  });
+
+  it('is not boosted with nothing known at all', () => {
+    expect(at({ hasReceipt: false })).toBe(false);
   });
 });

@@ -19,6 +19,7 @@ import {
   describeDownload,
   downloadPollIds,
   isAwaitingDownload,
+  isDownloadBoosted,
   isWorthBoosting,
   toDownloadRow,
   summarizeDownloads,
@@ -119,7 +120,11 @@ export function DownloadBoostPanel({
   downloads: WorkflowDownloads;
 }) {
   const receipt = useBoostReceipts((state) => state[request.id]);
-  const boosted = request.downloadPriority === 'high' || summary?.lane === 'high' || !!receipt;
+  const boosted = isDownloadBoosted({
+    downloadPriority: request.downloadPriority,
+    lane: summary?.lane,
+    hasReceipt: !!receipt,
+  });
   const offer = !boosted && isWorthBoosting(summary) ? summary : undefined;
   const receiptEta = receipt?.etaSeconds ?? null;
   const laneLabel = downloadLaneLabel(summary?.lane);

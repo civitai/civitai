@@ -194,6 +194,26 @@ export function isWorthBoosting(
   return boostBuysVisibleTime(summary.etaSeconds, summary.boostedEtaSeconds);
 }
 
+/**
+ * Whether this workflow's download has already been boosted.
+ *
+ * `hasReceipt` is the page's own record of the purchase and outranks both server signals, because
+ * they lag a refetch: testers paid twice in that window, once after the lane check alone was added
+ * as the fix. A receipt cannot be trusted across a reload — it is per page session — but the two
+ * server signals cover that case.
+ */
+export function isDownloadBoosted({
+  downloadPriority,
+  lane,
+  hasReceipt,
+}: {
+  downloadPriority?: string | null;
+  lane?: string | null;
+  hasReceipt: boolean;
+}) {
+  return hasReceipt || downloadPriority === BOOSTED_LANE || lane === BOOSTED_LANE;
+}
+
 export function describeDownload(row: DownloadRow) {
   const { progress, queuePosition } = row;
   const etaSeconds = settledEtaSeconds(row);
