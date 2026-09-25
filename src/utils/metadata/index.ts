@@ -97,7 +97,7 @@ function getMetadataFromTags(tags: Record<string, string>): ImageMetaProps | und
       const raw = generationMetadataSchema.safeParse(parser.parse(state, ctx));
       if (!raw.success) return undefined;
       const result = imageMetaSchema.safeParse(raw.data);
-      return result.success && Object.keys(result.data).length ? result.data : undefined;
+      return result.success ? result.data : undefined;
     }
   } catch {
     return undefined;

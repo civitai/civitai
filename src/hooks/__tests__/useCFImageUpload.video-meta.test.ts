@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Notifications from '~/utils/notifications';
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof Notifications>()),
+  showErrorNotification: vi.fn(),
+}));
 vi.mock('~/utils/media-preprocessors', () => ({
   preprocessFile: vi.fn(),
   auditImageMeta: vi.fn(async () => ({ blockedFor: undefined })),
@@ -29,6 +33,7 @@ describe('getDataFromFile generation meta', () => {
     const data = await getDataFromFile(new File([], 'file.mp4'));
     expect(data).not.toBeNull();
     expect(data?.meta).toBeUndefined();
+    expect(auditImageMeta).toHaveBeenCalledTimes(1);
     expect(auditImageMeta).toHaveBeenCalledWith(undefined, false);
   });
 
