@@ -72,7 +72,7 @@
     },
     "auth": {
       "type": "string",
-      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" opts the block into a real OAuth access token for its own OauthClient, accepted unchanged by /api/v1, the orchestrator and the MCP.",
+      "description": "Which credential the host hands the block: \"block-token\" (default when omitted) is the block-scoped JWT; \"oauth\" asks for an opaque OAuth access token for the block's own OauthClient, which ordinary /api/v1 routes accept as a viewer bearer. Minting it is gated on a server flag that is not generally enabled, and also requires a signed-in viewer and a declared \"user:read:self\" scope; when any of those is unmet the host hands back a block JWT instead of failing, so branch on the token kind the host reports rather than on this field. An OAuth token is refused by the postMessage bridge procedures, which verify a block JWT only, and declaring \"oauth\" alongside any \"apps:storage:*\" scope is refused at submit time.",
       "enum": ["block-token", "oauth"]
     },
     "trustTier": {
