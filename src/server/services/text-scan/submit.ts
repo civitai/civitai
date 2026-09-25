@@ -126,7 +126,8 @@ async function logMissingPrompts(ctx: { entityType: string; entityId: number; ke
         NX: true,
         EX: MISSING_PROMPT_LOG_SECONDS,
       })
-      .catch(() => 'OK');
+      // Fail closed: during a Redis outage every scan would otherwise log.
+      .catch(() => null);
     if (first) unlogged.push(key);
   }
   if (!unlogged.length) return;

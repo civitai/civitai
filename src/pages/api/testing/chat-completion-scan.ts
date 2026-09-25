@@ -41,8 +41,7 @@
  *     refusal-rate and score-distribution summary.
  *
  * Text-scan pipeline actions (src/server/services/text-scan/harness.ts). Local and
- * dev only: /api/testing is unreachable on production builds, so preview and prod
- * reach the same actions through the moderator-authenticated /api/mod/text-scan.
+ * dev only: /api/testing is unreachable on production builds.
  *
  *   { "action": "getPrompts", "history"?: "<key>", "limit"?: 20 }
  *     Active prompt row per key plus the runtime config; with `history`, every

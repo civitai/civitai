@@ -3,7 +3,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
-import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
@@ -56,7 +56,16 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     });
     return;
   }
-  const emEntityType = metadata.emEntityType ?? entityType;
+  const emEntityType = textScanEmEntityType(entityType, mode);
+  if (metadata.emEntityType !== undefined && metadata.emEntityType !== emEntityType) {
+    await log('warning', 'callback row key disagrees with its mode', {
+      workflowId,
+      entityType,
+      mode,
+      emEntityType: metadata.emEntityType,
+    });
+    return;
+  }
   const marker = metadata.externalId;
   const submittedActive = mode === 'active';
   const ctx = { workflowId, entityType, entityId, emEntityType };
@@ -68,7 +77,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   // Shadow verdicts must not drive the live adapter's failure hooks either (e.g. Article ingestion).
   const adapter = submittedActive ? getModerationAdapter(entityType) : undefined;
 
-  if (event.status in failureStatus) {
+  if (event.status && Object.hasOwn(failureStatus, event.status)) {
     const status = event.status as keyof typeof failureStatus;
     const recorded = await recordTextScanFailure({
       entityType: emEntityType,

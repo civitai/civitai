@@ -191,6 +191,36 @@ describe('handleTextScanCallback', () => {
     expect(adapter.applyFailure).not.toHaveBeenCalled();
   });
 
+  it('derives the shadow row from the mode when emEntityType is missing', async () => {
+    const { emEntityType: _omit, ...noKey } = shadowMetadata;
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'r' } }, undefined, noKey) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].where).toMatchObject({ entityType: 'Post:shadow' });
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when emEntityType disagrees with the mode', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'r' } }, undefined, {
+        ...shadowMetadata,
+        emEntityType: 'Post',
+      }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an inherited property name as a failure status', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(failed() as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'toString' } as any);
+    const writes = vi.mocked(updateMany).mock.calls.map(([args]) => args.data.status);
+    expect(writes.some((status) => typeof status === 'function')).toBe(false);
+    expect(adapter.applyFailure).not.toHaveBeenCalled();
+  });
+
   it('ignores a stale callback', async () => {
     updateMany.mockResolvedValue({ count: 0 });
     vi.mocked(getWorkflow).mockResolvedValue(

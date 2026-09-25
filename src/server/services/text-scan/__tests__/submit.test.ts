@@ -116,6 +116,15 @@ describe('scanEntity', () => {
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
+  it('does not log a missing prompt key when the throttle cannot be claimed', async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({ base: PROMPTS.base });
+    redisMock.redis.set.mockRejectedValueOnce(new Error('redis down'));
+    await scanEntity({ entityType: 'Post', entityId: 7 });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'missing prompt rows' })
+    );
+  });
+
   it('measures minChars on raw field text, not the composed message with headings', async () => {
     // "## A long heading here\nhi" is 25 chars; the raw text is 2.
     load.mockResolvedValue(
