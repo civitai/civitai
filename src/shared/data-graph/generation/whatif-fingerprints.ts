@@ -22,9 +22,14 @@ export type WhatIfFingerprint = (value: unknown) => unknown;
 
 export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
   // Strength changes don't affect cost; only the set of resource ids does.
+  //
+  // `model` is optional-chained because these run over the RAW node value, where a resource may still
+  // be the bare `{ id }` its input schema accepts. A throw here reaches the graph's watcher loop,
+  // which does not isolate its callbacks — it would take out the remaining watchers and, because the
+  // throw lands before the revision bumps, freeze the quoted cost at the previous selection.
   resources: (value) => {
     const resources = value as ResourceData[] | undefined;
-    return resources?.map((r) => ({ id: r.id, type: r.model.type })) ?? [];
+    return resources?.map((r) => ({ id: r.id, type: r.model?.type })) ?? [];
   },
 
   // Weight / startStep / endStep changes don't affect cost — only the
