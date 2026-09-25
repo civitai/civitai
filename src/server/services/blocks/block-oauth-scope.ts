@@ -1,6 +1,7 @@
 import {
   BLOCK_SCOPE_TO_OAUTH_BIT,
   isKnownBlockScope,
+  manifestWantsOauthToken,
 } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
