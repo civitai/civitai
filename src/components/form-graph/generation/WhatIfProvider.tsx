@@ -30,15 +30,32 @@ import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import type { GenerationStore } from './store';
 
-/** The first blocking message, in field declaration order. */
+const fieldLabel = (key: string) =>
+  key
+    .slice(key.lastIndexOf('.') + 1)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+
+/**
+ * The first blocking message, in field declaration order, named by its field.
+ * Only the required-content fields render their own error, and a schema message
+ * ("Invalid option") does not say which control to go and fix — which for a
+ * field inside a collapsed section leaves nowhere to look.
+ */
 export function getMissingFieldMessage(
   errors: Record<string, { message?: string }> | null
 ): string | null {
   if (!errors) return null;
-  for (const error of Object.values(errors)) {
-    if (error.message) return error.message;
+  const entries = Object.entries(errors);
+  for (const [key, error] of entries) {
+    if (!error.message) continue;
+    const label = fieldLabel(key);
+    return error.message.toLowerCase().includes(label.toLowerCase())
+      ? error.message
+      : `${label}: ${error.message}`;
   }
-  return null;
+  const first = entries[0];
+  return first ? `${fieldLabel(first[0])} is invalid.` : null;
 }
 
 /** Fields whose content never affects cost — placeholdered for estimation. */

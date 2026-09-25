@@ -138,6 +138,16 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
       }),
     output: z.object({ value: z.string(), width: z.number(), height: z.number() }),
     default: toValue(defaultOption),
+    // Output checks SHAPE, not membership, so an out-of-set ratio would validate
+    // and be submitted rather than blocked — the quiet half of the same problem
+    // the other defs' `correct` hooks solve loudly.
+    correct: (value) =>
+      options.some((o) => o.value === value.value)
+        ? undefined
+        : {
+            value: toValue(findClosestAspectRatio(value, options)),
+            reason: 'ratio_unavailable',
+          },
     meta: { options, ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}) },
   } satisfies FieldDef<AspectRatioValue, AspectRatioMeta>;
 });

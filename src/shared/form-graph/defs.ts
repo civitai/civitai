@@ -7,6 +7,13 @@ import type { FieldDef } from 'form-graph';
  * `src/shared/form-graph/` (generation today, training next). Anything tied
  * to a specific domain — seeds, resources, checkpoints, prompts — lives in
  * that graph's own `defs.ts`.
+ *
+ * Every def with a lenient `input` also declares `correct`, because `input` runs
+ * at the BOUNDARY only: `store.set` writes trusted intent (skipping it outright)
+ * and an untrusted parse is cached per stored entry, not per codec — so neither
+ * re-runs when a branch switch narrows the constraint under a value already in
+ * state. Without a per-pass correction the strict `output` refuses it, and the
+ * caller that sees the refusal is `validate()` at submit.
  */
 
 /** Snap to the nearest step, clamped — mirrors the UI slider's behaviour. */
@@ -44,6 +51,10 @@ export const sliderDef = cachedFactory(function sliderDef(opts: {
       .transform((val) => (val === undefined ? undefined : snapToStep(val, step, min, max))),
     output: z.number().min(min).max(max),
     default: opts.default ?? min,
+    correct: (value) => {
+      const snapped = snapToStep(value, step, min, max);
+      return snapped === value ? undefined : { value: snapped, reason: 'out_of_range' };
+    },
     meta: { min, max, step, presets: opts.presets },
   } satisfies FieldDef<number, NumberMeta>;
 });
@@ -62,19 +73,24 @@ function buildEnumDef<const T extends string | number>(opts: {
   const isNumeric = typeof values[0] === 'number';
   const base = (isNumeric ? z.coerce.number() : z.coerce.string()) as z.ZodType<unknown>;
   const schema = base.refine((v) => values.includes(v as T)) as unknown as z.ZodType<T>;
+  const resolvedDefault = opts.default ?? (values[0] as T);
   return {
     input: schema.optional(),
     output: schema,
-    default: opts.default ?? (values[0] as T),
+    default: resolvedDefault,
+    correct: (value) =>
+      values.includes(value) ? undefined : { value: resolvedDefault, reason: 'option_unavailable' },
     meta: { options: opts.options },
   } satisfies FieldDef<T, EnumMeta<T>>;
 }
 
 /**
- * A closed option set: coerces, then REFUSES values outside the options.
- * Deliberately NOT the lib's `enumOf`, which corrects to the first open
- * option — v1's nodes refuse, and the differential suites pin that. Don't
- * consolidate the two without accepting the wire change.
+ * A closed option set: coerces, then REFUSES values outside the options at the
+ * boundary — v1's nodes refuse, and the differential suites pin that. Still not
+ * the lib's `enumOf`, which corrects to the first UNGATED option and normalises
+ * trusted writes destructively; `correct` here falls back to the declared
+ * default and leaves the original in intent. Don't consolidate the two without
+ * accepting the wire change.
  */
 export function enumDef<const T extends string | number>(opts: {
   options: readonly { label: string; value: T }[];
@@ -94,7 +110,7 @@ export interface SelectMeta {
   presets?: { label: string; value: string }[];
 }
 
-/** A string select: unlike enumDef, an out-of-set input FALLS BACK to the default. */
+/** A string select: unlike enumDef, an out-of-set value FALLS BACK to the default. */
 export const selectDef = cachedFactory(function selectDef(opts: {
   options: readonly string[];
   default?: string;
@@ -114,6 +130,10 @@ export const selectDef = cachedFactory(function selectDef(opts: {
       }),
     output: z.enum(options as [string, ...string[]]),
     default: resolvedDefault,
+    correct: (value) =>
+      options.includes(value)
+        ? undefined
+        : { value: resolvedDefault, reason: 'option_unavailable' },
     meta: { options: options.map((s) => ({ label: s, value: s })), presets: opts.presets },
   } satisfies FieldDef<string, SelectMeta>;
 });

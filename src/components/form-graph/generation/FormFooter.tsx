@@ -753,6 +753,8 @@ export function FormFooter({
   const clearWarning = () => setPromptWarning(null);
 
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    setSubmitError(undefined);
+
     // One Generator_Submit event per click; validate FIRST so the invalid +
     // rate-limited overlap collapses to isValid:false, matching the v1 footer
     // (see generation_v2/FormFooter.tsx for the full ordering rationale)
@@ -778,6 +780,16 @@ export function FormFooter({
       } catch {
         // telemetry must never block a submission
       }
+      // The only judgement wired to footer copy was the whatIf PARSE, which re-runs the
+      // lenient input schemas and so disagrees with this one; the branch itself returned
+      // silently, leaving a dead button. Both surfaces now carry the strict verdict.
+      const message =
+        getMissingFieldMessage(result.errors as Record<string, { message?: string }>) ??
+        'Something in the form is incomplete or invalid.';
+      // eslint-disable-next-line no-console -- the field names are the only diagnosis available
+      console.error('[generation] form-graph submit blocked by validation:', result.errors);
+      setSubmitError(message);
+      showWarningNotification({ title: 'Check your settings', message });
       return;
     }
 
