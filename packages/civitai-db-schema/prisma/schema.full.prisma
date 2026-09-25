@@ -5938,6 +5938,42 @@ model Vault {
   @@id([userId])
 }
 
+/// What a creator uploaded, bucketed for the Creator Studio storage page. Written only by the
+/// `storage-usage-*` jobs. `kind`: model | training | attachment | model3d | image | video | audio.
+/// `publicStatus`: public | notPublic. No FK to User: see the migration.
+model UserStorageUsage {
+  userId       Int
+  kind         String
+  publicStatus String
+  baseModel    String   @default("")
+  month        DateTime @db.Date
+  fileCount    Int
+  bytes        BigInt
+  computedAt   DateTime @default(now())
+
+  @@id([userId, kind, publicStatus, baseModel, month])
+}
+
+/// Lazy image/video rollup state. Creator Studio sets `imagesRequestedAt`; the
+/// `storage-usage-media` job claims via `imagesStartedAt` and finishes with `imagesComputedAt`.
+/// Its pending index is partial, so it lives in the migration only.
+model UserStorageRollup {
+  userId            Int       @id
+  imagesRequestedAt DateTime?
+  imagesStartedAt   DateTime?
+  imagesComputedAt  DateTime?
+}
+
+model UserStorageSnapshot {
+  userId    Int
+  date      DateTime @db.Date
+  kind      String
+  fileCount Int
+  bytes     BigInt
+
+  @@id([userId, date, kind])
+}
+
 enum RedeemableCodeType {
   Buzz
   Membership

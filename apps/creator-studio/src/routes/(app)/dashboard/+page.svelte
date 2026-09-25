@@ -19,6 +19,7 @@
     IconClock,
     IconBuildingBank,
     IconTrophy,
+    IconDatabase,
   } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
@@ -31,6 +32,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
+  import { formatBytes } from '$lib/analytics/storage';
   import type { PageData } from './$types';
 
   type Stat = {
@@ -295,6 +297,27 @@
         {/if}
       </StatCard>
     {/each}
+  </div>
+</section>
+
+<section class="mb-8">
+  <div class="mb-2 flex items-center justify-between">
+    <p class="text-xs uppercase tracking-wide text-dark-2">Storage</p>
+    <a href="/analytics/storage" class="text-xs text-dark-2 hover:text-white">View storage →</a>
+  </div>
+  <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <StatCard label="Storage used" icon={IconDatabase} color="#4dabf7">
+      {#if data.storage}
+        <p class="mt-1 text-xl font-semibold text-white">{formatBytes(data.storage.total.bytes)}</p>
+        <p class="mt-2 text-xs text-dark-3">
+          {data.storage.calculating
+            ? 'Images and videos not counted yet'
+            : 'What you uploaded, public only'}
+        </p>
+      {:else}
+        <p class="mt-1 text-xl font-semibold text-dark-4">—</p>
+      {/if}
+    </StatCard>
   </div>
 </section>
 

@@ -3740,6 +3740,32 @@ export interface Vault {
   items?: VaultItem[];
 }
 
+export interface UserStorageUsage {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: string;
+  month: Date;
+  fileCount: number;
+  bytes: bigint;
+  computedAt: Date;
+}
+
+export interface UserStorageRollup {
+  userId: number;
+  imagesRequestedAt: Date | null;
+  imagesStartedAt: Date | null;
+  imagesComputedAt: Date | null;
+}
+
+export interface UserStorageSnapshot {
+  userId: number;
+  date: Date;
+  kind: string;
+  fileCount: number;
+  bytes: bigint;
+}
+
 export interface RedeemableCode {
   code: string;
   unitValue: number;
