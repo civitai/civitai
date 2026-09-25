@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { articlesSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
+import { articleModerationFloorSql } from '~/server/services/text-scan/scan-floor';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -60,8 +61,8 @@ export type AutoApproveGateResult =
 
 /**
  * Compute the derived NSFW level the article would settle at if no moderator
- * override were active. Mirrors the SQL in `updateArticleNsfwLevels` exactly
- * for the (cover, content images, moderation floor) components, deliberately
+ * override were active. Shares `articleModerationFloorSql` with
+ * `updateArticleNsfwLevels` and mirrors its cover and content-image components, deliberately
  * ignoring `userNsfwLevel` — when an override is in place, `userNsfwLevel` is
  * locked-stale and cannot be trusted as a ceiling.
  *
@@ -104,24 +105,7 @@ export async function computeArticleDerivedNsfwLevel(articleId: number): Promise
       GROUP BY a.id
     ),
     moderation_floor AS (
-      SELECT
-        a.id,
-        CASE
-          WHEN EXISTS (
-            SELECT 1 FROM "EntityModeration" em
-            WHERE em."entityType" = 'Article'
-              AND em."entityId" = a.id
-              AND em.status = 'Succeeded'::"EntityModerationStatus"
-              AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))
-          ) OR EXISTS (
-            SELECT 1 FROM "ArticleReport" ar
-            JOIN "Report" r ON r.id = ar."reportId"
-            WHERE ar."articleId" = a.id
-              AND r.reason = 'NSFW'::"ReportReason"
-              AND r.status = 'Actioned'::"ReportStatus"
-          ) THEN 4
-          ELSE 0
-        END AS "floor"
+      SELECT a.id, ${articleModerationFloorSql('a.id')} AS "floor"
       FROM "Article" a
       WHERE a.id = ${articleId}
     )
