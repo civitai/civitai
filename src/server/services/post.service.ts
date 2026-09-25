@@ -51,6 +51,11 @@ import {
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
+  canViewModelVersion,
+  MODEL_VERSION_NOT_FOUND,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
+import {
   createImage,
   createImageResources,
   deleteImageFromS3,
@@ -826,13 +831,28 @@ export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: Sessi
 
 export const createPost = async ({
   userId,
+  isModerator,
   tag,
   tags,
   ...data
 }: PostCreateInput & {
   userId: number;
+  isModerator?: boolean;
 }): Promise<PostDetailEditable> => {
   await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
+
+  let availability: Availability = Availability.Public;
+
+  if (data.modelVersionId) {
+    const modelVersion = await dbWrite.modelVersion.findUnique({
+      where: { id: data.modelVersionId },
+      select: modelVersionVisibilitySelect,
+    });
+    if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
+      throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+
+    availability = modelVersion.model.availability;
+  }
 
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
@@ -845,17 +865,6 @@ export const createPost = async ({
     tagsToAdd.push(tag);
   }
   const tagData = tagsToAdd.map((t) => ({ tagId: t }));
-
-  let availability: Availability = Availability.Public;
-
-  if (data.modelVersionId) {
-    const modelVersion = await dbWrite.modelVersion.findUnique({
-      where: { id: data.modelVersionId },
-      select: { model: { select: { availability: true } } },
-    });
-
-    availability = modelVersion?.model.availability ?? Availability.Public;
-  }
 
   // Anyone can post to any published 3D model (mirrors Models). Non-owners are
   // still blocked from attaching to a draft/unpublished/deleted 3D model so a
@@ -1556,7 +1565,10 @@ export const addResourceToPostImage = async ({
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
-      model: { select: { name: true, id: true, type: true } },
+      ...modelVersionVisibilitySelect,
+      model: {
+        select: { ...modelVersionVisibilitySelect.model.select, name: true, id: true, type: true },
+      },
       name: true,
       files: {
         select: {
@@ -1573,7 +1585,8 @@ export const addResourceToPostImage = async ({
     },
   });
 
-  if (!modelVersion) throw throwNotFoundError('Model version not found.');
+  if (!modelVersion || !(await canViewModelVersion(modelVersion, user)))
+    throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
 
   // Read from primary — users can attach a resource within seconds of posting
   // the image, so the replica (5-10s lag) would return fewer rows and throw

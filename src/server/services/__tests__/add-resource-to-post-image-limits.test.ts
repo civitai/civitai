@@ -4,7 +4,8 @@ import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
   MAX_MANUAL_RESOURCES_PER_IMAGE,
 } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type * as CommonService from '~/server/services/common.service';
+import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
 
 /**
@@ -84,13 +85,31 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
 }));
+const { hasEntityAccess } = vi.hoisted(() => ({ hasEntityAccess: vi.fn() }));
+vi.mock('~/server/services/common.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CommonService>()),
+  hasEntityAccess,
+}));
 
-const { addResourceToPostImage } = await import('~/server/services/post.service');
+const { addResourceToPostImage, createPost } = await import('~/server/services/post.service');
 
 const IMAGE_ID = 101;
 const OTHER_IMAGE_ID = 102;
 const NEW_VERSION_ID = 9_000_000;
+const OWNER_ID = 2;
 const user = { id: 1 } as Parameters<typeof addResourceToPostImage>[0]['user'];
+
+const publishedVersion = {
+  id: NEW_VERSION_ID,
+  status: ModelStatus.Published,
+  publishedAt: null as Date | null,
+  availability: Availability.Public,
+};
+const publishedModel = {
+  userId: OWNER_ID,
+  status: ModelStatus.Published,
+  availability: Availability.Public,
+};
 
 const mockVersionFindFirst = dbMock.dbRead.modelVersion.findFirst;
 const mockImageFindMany = dbMock.dbWrite.image.findMany;
@@ -123,8 +142,9 @@ function arrange({
   imageIds?: number[];
 }) {
   mockVersionFindFirst.mockResolvedValue({
+    ...publishedVersion,
     name: 'v1',
-    model: { id: 1, name: 'm', type: adding },
+    model: { ...publishedModel, id: 1, name: 'm', type: adding },
     files: [],
   });
   mockImageFindMany.mockResolvedValue(
@@ -236,5 +256,146 @@ describe('addResourceToPostImage manual resource limits', () => {
     expect(lockOrder).toBeLessThan(readOrder);
     expect(readOrder).toBeLessThan(writeOrder);
     expect(dbMock.dbWrite.imageResourceNew.createManyAndReturn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Both routes that take a model version id from the caller and write it: crediting a resource to an
+ * image, and creating a post on a version. A version the caller may not view must be refused with
+ * exactly the error a nonexistent id gets.
+ */
+describe('model version visibility on caller-supplied version ids', () => {
+  const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const moderator = { id: 3, isModerator: true } as typeof user;
+
+  type Case = {
+    name: string;
+    version?: Partial<typeof publishedVersion>;
+    model?: Partial<typeof publishedModel>;
+    viewer?: typeof user;
+    granted?: boolean;
+  };
+
+  const ALLOWED: Case[] = [
+    { name: 'a published version' },
+    { name: 'your own draft', version: { status: ModelStatus.Draft }, model: { userId: user.id } },
+    {
+      name: 'your own private model',
+      model: { userId: user.id, availability: Availability.Private },
+    },
+    {
+      name: "a moderator, on someone else's draft",
+      version: { status: ModelStatus.Draft },
+      viewer: moderator,
+    },
+    {
+      name: "someone else's private version you were granted",
+      version: { availability: Availability.Private },
+      granted: true,
+    },
+  ];
+
+  const REFUSED: Case[] = [
+    { name: "someone else's draft", version: { status: ModelStatus.Draft } },
+    {
+      name: "a published version of someone else's draft model",
+      model: { status: ModelStatus.Draft },
+    },
+    { name: "someone else's release scheduled for later", version: { publishedAt: FUTURE } },
+    {
+      name: "someone else's private version",
+      version: { availability: Availability.Private },
+      granted: false,
+    },
+    {
+      name: "a version of someone else's private model",
+      model: { availability: Availability.Private },
+      granted: false,
+    },
+  ];
+
+  const row = (c: Case) => ({
+    ...publishedVersion,
+    ...c.version,
+    model: { ...publishedModel, ...c.model },
+  });
+
+  const paths = {
+    attach: {
+      async run(found: ReturnType<typeof row> | null, viewer: typeof user) {
+        arrange({ adding: ModelType.LORA, existing: [] });
+        mockVersionFindFirst.mockResolvedValue(
+          found && {
+            ...found,
+            name: 'v1',
+            model: { ...found.model, id: 1, name: 'm', type: ModelType.LORA },
+            files: [],
+          }
+        );
+        return addResourceToPostImage({
+          id: [IMAGE_ID],
+          modelVersionId: NEW_VERSION_ID,
+          user: viewer,
+        });
+      },
+      written: () => tx.imageResourceNew.createManyAndReturn.mock.calls.length > 0,
+    },
+    createPost: {
+      async run(found: ReturnType<typeof row> | null, viewer: typeof user) {
+        dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue(found);
+        dbMock.dbWrite.post.create.mockResolvedValue({ id: 5, collectionId: null, tags: [] });
+        return createPost({
+          userId: viewer.id,
+          isModerator: viewer.isModerator,
+          modelVersionId: NEW_VERSION_ID,
+        });
+      },
+      written: () => dbMock.dbWrite.post.create.mock.calls.length > 0,
+    },
+  };
+
+  const errorOf = (p: Promise<unknown>) =>
+    p.then(
+      () => null,
+      (e: { code?: string; message?: string }) => ({ code: e.code, message: e.message })
+    );
+
+  describe.each(Object.entries(paths))('%s', (_, path) => {
+    it.each(ALLOWED.map((c) => [c.name, c] as const))('allows %s', async (_name, c) => {
+      hasEntityAccess.mockResolvedValue([{ hasAccess: !!c.granted }]);
+      await expect(path.run(row(c), c.viewer ?? user)).resolves.toBeDefined();
+      expect(path.written()).toBe(true);
+    });
+
+    it('refuses a nonexistent id as not found, and writes nothing', async () => {
+      expect(await errorOf(path.run(null, user))).toEqual({
+        code: 'NOT_FOUND',
+        message: 'Model version not found.',
+      });
+      expect(path.written()).toBe(false);
+    });
+
+    it.each(REFUSED.map((c) => [c.name, c] as const))(
+      'refuses %s with the nonexistent-id error, and writes nothing',
+      async (_name, c) => {
+        const missing = await errorOf(path.run(null, user));
+        vi.clearAllMocks();
+        hasEntityAccess.mockResolvedValue([{ hasAccess: !!c.granted }]);
+
+        const refused = await errorOf(path.run(row(c), c.viewer ?? user));
+
+        expect(missing).not.toBeNull();
+        expect(refused).toEqual(missing);
+        expect(path.written()).toBe(false);
+      }
+    );
+
+    // hasEntityAccess also refuses a paid-gated version to a non-purchaser; that is a usage gate,
+    // and consulting it for a public version would refuse every early-access release.
+    it('does not consult entity access for a public version', async () => {
+      hasEntityAccess.mockResolvedValue([{ hasAccess: false }]);
+      await expect(path.run(row({ name: 'public' }), user)).resolves.toBeDefined();
+      expect(hasEntityAccess).not.toHaveBeenCalled();
+    });
   });
 });

@@ -94,7 +94,11 @@ export const createPostHandler = async ({
     const { ip } = ctx;
     const today = new Date();
 
-    const post = await createPost({ userId: ctx.user.id, ...input });
+    const post = await createPost({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     const isPublished = !!post.publishedAt;
     const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
     const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(minimumScheduleTime); // Publishing more than minimum schedule time in the future
