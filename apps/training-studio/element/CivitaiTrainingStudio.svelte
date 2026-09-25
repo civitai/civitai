@@ -57,6 +57,8 @@
         imageLocation: h.config.imageLocation ?? null,
         // No live signals inside the embedded element yet — it runs on polling/reload alone.
         signalsEndpoint: null,
+        canGenerateUnpublished: h.config.canGenerateUnpublished,
+        pricingUrl: h.config.pricingUrl,
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),

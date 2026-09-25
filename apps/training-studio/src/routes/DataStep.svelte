@@ -39,14 +39,15 @@
   import {
     blobAirFromUrl,
     captionTriggerHit,
-    defaultStepsFor,
-    estimatedTotal,
+    defaultStepsForRun,
+    selectionFromTotal,
     isTrainable,
     isTriggerTag,
     labelOptions,
     labelString,
     parseLabel,
     runCard,
+    splitTags,
     tagsHaveTrigger,
     type Img,
     type Selection,
@@ -54,6 +55,7 @@
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
+  import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
@@ -63,6 +65,8 @@
     images = $bindable([]),
     trigger = $bindable(''),
     labelMode = $bindable('tag'),
+    autoLabel = $bindable('auto'),
+    excludeTags = $bindable([]),
     reuseItems = [],
     onContinue,
     onBack,
@@ -75,6 +79,10 @@
     /** The chosen dataset label format — owned by the flow. Fixed to the model's format for single-format
      *  models; user-selectable for a `bothLabels` model (e.g. Anima). */
     labelMode: LabelType;
+    /** Owned by the flow (survive Back/Continue): whether auto-label runs on its own as uploads
+     *  settle, and tags auto-label results must never apply (tag mode; a caption no-op). */
+    autoLabel: 'auto' | 'manual';
+    excludeTags: string[];
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -149,16 +157,19 @@
       // stay `labeling` forever and the whole step wedges (toggle disabled, Continue blocked).
       img.labeling = false;
     }
-    void ensureLabeling();
+    // 'relabel' is an explicit request to auto-label, so it runs even in manual mode.
+    if (choice === 'relabel') void ensureLabeling();
+    else void maybeAutoLabel();
   }
 
   const uploadedCount = $derived(images.filter(isTrainable).length);
-  // The dataset-aware estimate — the same figure the Review step shows at its defaults (each run scaled by
-  // the image-count-derived step budget, plus samples). Climbs as images upload, so the dataset's effect on
-  // price is visible here rather than only at Review. Null (unpriced) hides the badge. `estSteps` surfaces
-  // WHY the number moves.
-  const estTotal = $derived(estimatedTotal(prices, selection, uploadedCount));
-  const estSteps = $derived(defaultStepsFor(selection.loraType, selection.media, uploadedCount));
+  // The estimate at the Review step's default step budget (fixed per base model — dataset size no
+  // longer moves it). Null (unpriced) hides the badge.
+  const estTotal = $derived(selectionFromTotal(prices, selection.runs));
+  const stepBudgets = $derived(selection.runs.map(defaultStepsForRun));
+  const estSteps = $derived(Math.max(...stepBudgets));
+  // A multi-run sweep can mix budgets (anima 1500 + LTX 3000) — "up to" keeps the badge honest.
+  const mixedStepBudgets = $derived(new Set(stepBudgets).size > 1);
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
@@ -203,7 +214,7 @@
     if (tile) Object.assign(tile, values);
   }
 
-  async function addFiles(list: FileList | null | undefined) {
+  async function addFiles(list: Iterable<File> | null | undefined) {
     if (!list) return;
     const matched = [...list]
       .map((file) => ({ file, fileMediaType: fileMedia(file.type) }))
@@ -223,7 +234,7 @@
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     // Auto-label as soon as this batch's uploads settle. If a run is already going, it drains this batch too.
-    void ensureLabeling();
+    void maybeAutoLabel();
   }
 
   async function uploadOne(id: number, file: File) {
@@ -247,7 +258,7 @@
 
   function retry(id: number) {
     const tile = images.find((x) => x.id === id);
-    if (tile?.file) void uploadOne(id, tile.file).then(ensureLabeling);
+    if (tile?.file) void uploadOne(id, tile.file).then(maybeAutoLabel);
   }
 
   // Add items backed by EXISTING orchestrator blobs (a generation or a reused dataset): already uploaded
@@ -296,7 +307,7 @@
     });
     images = [...images, ...added];
     void hydrateBlobPreviews(toHydrate);
-    void ensureLabeling();
+    void maybeAutoLabel();
   }
 
   // Fetch reused-blob previews after the tiles exist. A failed preview stays a placeholder — the
@@ -325,7 +336,7 @@
     // Un-captioned reuse items only become labelable once `blobUrl` exists — the add-time drain
     // saw nothing to do, so run it again now (a failed hydration leaves the manual-label editor
     // as the fallback, same as before).
-    void ensureLabeling();
+    void maybeAutoLabel();
   }
 
   // Video models train on stills too (the on-site trainer has always accepted images for video
@@ -399,7 +410,7 @@
     });
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
-    void ensureLabeling();
+    void maybeAutoLabel();
   }
   function onPickZip(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
@@ -424,6 +435,14 @@
   let labelController: AbortController | null = null;
   let labelRun = $state<{ total: number; done: number; keys: Set<string> } | null>(null);
 
+  // The automatic trigger sites (upload settled, blobs added, previews hydrated) go through this so
+  // manual mode labels nothing until the Auto-label button is clicked. The button and other explicit
+  // requests call ensureLabeling directly.
+  function maybeAutoLabel(): Promise<void> | undefined {
+    if (autoLabel !== 'auto') return;
+    return ensureLabeling();
+  }
+
   async function ensureLabeling() {
     if (labelController) return; // a drain loop is already running; it will pick up new uploads
     const controller = new AbortController();
@@ -445,6 +464,9 @@
           },
           controller.signal
         );
+        // In manual mode label only the pass the user asked for — draining uploads that settled
+        // mid-run is the automatic behavior the toggle opts out of.
+        if (autoLabel !== 'auto') break;
       }
     } catch (err) {
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
@@ -466,14 +488,25 @@
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
     if (r.status === 'failed') return;
-    if (r.tags?.length) img.tags = [...new Set(r.tags)]; // chips are keyed on the tag string — keep unique
+    if (r.tags?.length) {
+      // The user's exclude list: auto-label results never apply these (case-insensitive exact tag).
+      // Captions are untouched — the list is a tag concept.
+      img.tags = [...new Set(r.tags)].filter((t) => !excludedSet.has(t.toLowerCase())); // chips are keyed on the tag string — keep unique
+    }
     if (r.caption) img.caption = r.caption;
   }
 
+  const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
+  const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
   function onDrop(e: DragEvent) {
     e.preventDefault();
     dragging = false;
-    void addFiles(e.dataTransfer?.files);
+    const files = [...(e.dataTransfer?.files ?? [])];
+    // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
+    // before. One zip per drop: `find` imports the first and the filter below discards the rest.
+    const zip = files.find(isZip);
+    if (zip) void importZip(zip);
+    void addFiles(files.filter((f) => !isZip(f)));
   }
   function onPick(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
@@ -507,12 +540,30 @@
     editorOpen = true;
   }
 
-  // This dataset's tags, frequency-ranked — feeds the editor's autocomplete.
-  const tagVocab = $derived.by(() => {
+  // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
+  // and the Manage-tags panel.
+  const tagFreq = $derived.by(() => {
     const freq = new Map<string, number>();
     for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
-    return [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+    return [...freq.entries()].sort((a, b) => b[1] - a[1]);
   });
+  const tagVocab = $derived(tagFreq.map(([t]) => t));
+
+  let manageOpen = $state(false);
+
+  // The exclude list's matcher — one definition so entry dedupe and result filtering can't drift.
+  const excludedSet = $derived(new Set(excludeTags.map((t) => t.toLowerCase())));
+
+  // ---- Exclude list editing: comma/Enter-separated entry, deduped case-insensitively.
+  let excludeDraft = $state('');
+  function addExcludeTags() {
+    const have = new Set(excludedSet); // grown while deduping within the draft itself
+    const added = splitTags(excludeDraft).filter(
+      (t) => !have.has(t.toLowerCase()) && (have.add(t.toLowerCase()), true)
+    );
+    if (added.length) excludeTags = [...excludeTags, ...added];
+    excludeDraft = '';
+  }
 
   // Re-run auto-label for one image (the editor's Re-run) — clears its label first so an already-attempted
   // image (labelTried) gets a fresh pass.
@@ -590,8 +641,9 @@
           <IconBoltFilled size={15} stroke={2} class="mb-0.5 inline" />{estTotal.toLocaleString()}
         </div>
         <div class="mt-0.5 font-mono text-xs text-dark-2">
-          {uploadedCount} image{uploadedCount === 1 ? '' : 's'} · ~{estSteps.toLocaleString()} steps · adjust
-          at Review
+          {uploadedCount} image{uploadedCount === 1 ? '' : 's'} · {mixedStepBudgets
+            ? 'up to '
+            : ''}~{estSteps.toLocaleString()} steps · adjust at Review
         </div>
       </div>
     {/if}
@@ -628,6 +680,124 @@
     onchange={onPickZip}
   />
 
+  <div class="rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
+    <div class="flex items-center gap-3">
+      <span class="grid h-8 w-8 shrink-0 place-items-center rounded bg-primary/15 text-primary">
+        {#if labelMode === 'tag'}<IconTag size={16} stroke={2} />{:else}<IconFileText
+            size={16}
+            stroke={2}
+          />{/if}
+      </span>
+      <div class="min-w-0">
+        <div class="text-sm font-bold text-dark-0">Auto-labeled as {noun} · free</div>
+        <div class="font-mono text-xs text-dark-2">
+          {labelMode === 'tag'
+            ? `${primaryCard.name} trains on booru-style tags`
+            : `${primaryCard.name} learns from natural-language captions`}{canChooseLabel
+            ? ' — switch the format below'
+            : ' — chosen automatically'}
+        </div>
+      </div>
+      {#if canChooseLabel}
+        <div class="ml-auto shrink-0">
+          <ToggleGroup
+            type="single"
+            bind:value={
+              () => labelMode,
+              (v) => {
+                // Ignores the '' a same-item deselect click emits; the function binding snaps
+                // the group back instead of latching it unpressed.
+                if (v === 'tag' || v === 'caption') switchLabelMode(v);
+              }
+            }
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="tag" aria-label="Label with tags" disabled={labelingActive}>
+              Tags
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="caption"
+              aria-label="Label with captions"
+              disabled={labelingActive}
+            >
+              Captions
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      {/if}
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-dark-4 pt-3">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-xs text-dark-2">Auto-label</span>
+        <ToggleGroup
+          type="single"
+          bind:value={
+            () => autoLabel,
+            (v) => {
+              if (v !== 'auto' && v !== 'manual') return;
+              autoLabel = v;
+              // Pick up any backlog the manual mode left behind.
+              if (v === 'auto') void ensureLabeling();
+            }
+          }
+          variant="outline"
+          size="sm"
+        >
+          <ToggleGroupItem value="auto" aria-label="Label new uploads automatically">
+            Automatic
+          </ToggleGroupItem>
+          <ToggleGroupItem value="manual" aria-label="Only label when I ask">
+            Manual
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      {#if labelMode === 'tag'}
+        <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+          <label for="exclude-tags" class="font-mono text-xs text-dark-2">Never apply</label>
+          <Input
+            id="exclude-tags"
+            bind:value={excludeDraft}
+            placeholder="tag, press Enter"
+            class="h-8 w-40 font-mono text-xs"
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addExcludeTags();
+              }
+            }}
+            onblur={addExcludeTags}
+          />
+          {#each excludeTags as t (t)}
+            <span
+              class="inline-flex items-center gap-1 rounded border border-dark-4 bg-dark-7 px-1.5 py-0.5 font-mono text-xs text-dark-2"
+            >
+              {t}
+              <button
+                type="button"
+                aria-label="Stop excluding {t}"
+                onclick={() => (excludeTags = excludeTags.filter((x) => x !== t))}
+                class="text-dark-2 transition-colors hover:text-white"
+              >
+                <IconX size={11} stroke={2} />
+              </button>
+            </span>
+          {/each}
+        </div>
+        {#if tagFreq.length}
+          <Button
+            variant="outline"
+            size="xs"
+            class="ml-auto"
+            onclick={() => (manageOpen = true)}
+          >
+            <IconTag size={13} stroke={2} class="mr-1 inline" />Manage tags
+          </Button>
+        {/if}
+      {/if}
+    </div>
+  </div>
+
   {#if images.length === 0}
     <button
       type="button"
@@ -658,56 +828,13 @@
         />
       </svg>
       <div class="mt-2 text-base font-semibold text-dark-0">
-        Drop your {media} files here, or click to browse
+        Drop your {media} files or a .zip here, or click to browse
       </div>
       <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
     </button>
   {:else}
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div class="min-w-0">
-        <div class="mb-4 flex items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
-          <span class="grid h-8 w-8 shrink-0 place-items-center rounded bg-primary/15 text-primary">
-            {#if labelMode === 'tag'}<IconTag size={16} stroke={2} />{:else}<IconFileText
-                size={16}
-                stroke={2}
-              />{/if}
-          </span>
-          <div class="min-w-0">
-            <div class="text-sm font-bold text-dark-0">Auto-labeled as {noun} · free</div>
-            <div class="font-mono text-xs text-dark-2">
-              {labelMode === 'tag'
-                ? `${primaryCard.name} trains on booru-style tags`
-                : `${primaryCard.name} learns from natural-language captions`}{canChooseLabel
-                ? ' — switch the format below'
-                : ' — chosen automatically'}
-            </div>
-          </div>
-          {#if canChooseLabel}
-            <div class="ml-auto shrink-0">
-              <ToggleGroup
-                type="single"
-                value={labelMode}
-                onValueChange={(v) => {
-                  if (v === 'tag' || v === 'caption') switchLabelMode(v);
-                }}
-                variant="outline"
-                size="sm"
-              >
-                <ToggleGroupItem value="tag" aria-label="Label with tags" disabled={labelingActive}>
-                  Tags
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="caption"
-                  aria-label="Label with captions"
-                  disabled={labelingActive}
-                >
-                  Captions
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-          {/if}
-        </div>
-
         <div
           class="mb-4 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm
             {enough
@@ -969,6 +1096,8 @@
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
+
+<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} />
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

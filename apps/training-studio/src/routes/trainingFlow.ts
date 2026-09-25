@@ -4,7 +4,7 @@ import {
   TE_TRAINING_UNSUPPORTED,
   cardByType,
   cardsForMedia,
-  seenFor,
+  versionStepDefault,
   versionSuffix,
   type LabelType,
   type Media,
@@ -15,11 +15,6 @@ import type { TrainingRunPayload } from '$lib/backend';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
-
-/** Floor under every default step budget. A small dataset multiplied by its per-image target lands
- *  well under what any base model needs to converge — 20 images of a character is 700 steps — so the
- *  floor, not the multiplier, is what sets the budget for small sets. Per Atif, 2026-09-21. */
-export const MIN_STEPS = 1500;
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate
@@ -207,17 +202,6 @@ export interface LaunchedRun {
   params: RunParams;
 }
 
-/** COARSE per-run Buzz estimate for the pre-Review steps, scaled from the model's "from ⚡X" quote
- * by the chosen step count. `null` when the orchestrator couldn't price the card, so the caller
- * shows "—" rather than a guessed number. The Review step does NOT use this — it re-quotes the
- * exact config via a real whatif (`quoteRun`), because orchestrator pricing has a base fee and
- * per-epoch terms this linear scale can't see (it over-read by 90-190⚡ before). No custom-model
- * surcharge: whatif-verified that the orchestrator charges none. */
-function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
-  if (fromPrice == null) return null;
-  return Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
-}
-
 // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same cost,
 // so fall back to the SDXL "from" quote when the orchestrator hasn't priced them directly.
 const PRICE_ALIAS: Record<string, string> = { pony: 'sdxl', illustrious: 'sdxl' };
@@ -236,8 +220,12 @@ export function cardFromPrice(prices: Record<string, number>, cardType: string):
   return cardBaseQuote(prices, cardType) ?? null;
 }
 
-/** Sum the "from" floor across a selection's runs; null if any run is unpriced. Used on Select, where no
- *  dataset exists yet — for a dataset-aware estimate use `estimatedTotal`. */
+/** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
+ *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif with no `steps`, so the
+ *  orchestrator already priced each card at its own default budget — which is exactly what the
+ *  Review step seeds (`defaultStepsForRun`). COARSE: Review replaces this with real per-config
+ *  whatif quotes (`quoteRun`); sample images are not billed separately (the quote covers them);
+ *  no custom-model surcharge (whatif-verified). */
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
@@ -248,28 +236,11 @@ export function selectionFromTotal(prices: Record<string, number>, runs: Run[]):
   return sum;
 }
 
-/** The default step budget for a lora type given the dataset size — each image "seen" ~N times, floored at
- *  MIN_STEPS. Dataset size drives the price through this. Shared with the Review step's default. */
-export function defaultStepsFor(loraTypeId: string, media: Media, imageCount: number): number {
-  return Math.max(MIN_STEPS, imageCount * seenFor(loraTypeId, media));
-}
-
-/** The dataset-aware price estimate for a selection: each run's cost scaled by the image-count-derived
- *  step budget. `null` if any run is unpriced. COARSE — the Review step replaces this with real
- *  per-config whatif quotes; sample images are not billed separately (the quote covers them). */
-export function estimatedTotal(
-  prices: Record<string, number>,
-  selection: Selection,
-  imageCount: number
-): number | null {
-  const steps = defaultStepsFor(selection.loraType, selection.media, imageCount);
-  let sum = 0;
-  for (const run of selection.runs) {
-    const cost = runCost(cardBaseQuote(prices, run.cardType), run, steps);
-    if (cost == null) return null;
-    sum += cost;
-  }
-  return sum;
+/** The default step budget for a run — the main app's fixed per-base default (`aiToolkitStepDefault`
+ *  parity). Dataset size does NOT scale it: repeats absorb the image count, so a big dataset lowers
+ *  per-image "seen" rather than inflating steps (and price). */
+export function defaultStepsForRun(run: Run): number {
+  return versionStepDefault(runVersion(run).key);
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption
@@ -278,20 +249,25 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
+/** Tag-text splitting, shared by every tag-entry path (parseLabel, the label editor, the exclude
+ *  list, mass rename) — one definition so a comma/newline paste can't split differently per path.
+ *  Dedupe stays at the call sites; their policies genuinely differ. */
+export function splitTags(text: string): string[] {
+  // Unique: `foo, foo` in a caption would otherwise reach img.tags, where chips key on the tag string.
+  return [
+    ...new Set(
+      text
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
 export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
   const t = text.trim();
-  return mode === 'tag'
-    ? {
-        tags: t
-          ? t
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : [],
-        caption: '',
-      }
-    : { tags: [], caption: t };
+  return mode === 'tag' ? { tags: splitTags(t), caption: '' } : { tags: [], caption: t };
 }
 
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
