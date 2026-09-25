@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   attachEstimatedPreparation,
+  ETA_WARMUP_PROGRESS,
   isEtaSettled,
   normalizePreparation,
   settledBoostedEtaSeconds,
@@ -158,7 +159,13 @@ describe('attachEstimatedPreparation', () => {
 describe('warm-up suppression', () => {
   it('drops the ETA of a transfer that has barely started', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.001,
+        etaSeconds: 7_200,
+      },
     ]);
 
     expect(result).toMatchObject({ progress: 0.001, etaSeconds: null });
@@ -166,7 +173,13 @@ describe('warm-up suppression', () => {
 
   it('believes it again once the transfer is under way', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.2, etaSeconds: 600 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.2,
+        etaSeconds: 600,
+      },
     ]);
 
     expect(result?.etaSeconds).toBe(600);
@@ -174,8 +187,14 @@ describe('warm-up suppression', () => {
 
   it('leaves a queued resource’s ETA alone while another warms up', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
-      { resource: vae, sizeBytes: 1, lane: 'low', queuePosition: 2, etaSeconds: 600 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.001,
+        etaSeconds: 7_200,
+      },
+      { resource: vae, sizeBytes: 4_000_000_000, lane: 'low', queuePosition: 2, etaSeconds: 600 },
     ]);
 
     expect(result?.etaSeconds).toBe(600);
@@ -202,6 +221,28 @@ describe('isEtaSettled', () => {
   // for minutes on a rate-capped lane.
   it('believes one that has moved enough bytes to sample, whatever the fraction', () => {
     expect(isEtaSettled({ progress: 0.005, sizeBytes: 20_000_000_000 })).toBe(true);
+  });
+
+  // The fraction alone is met almost immediately on a small file, which is where an ETA was being
+  // projected from a still-ramping stream and quoting hours on a download of minutes.
+  it('does not believe a small transfer that has only met the fraction', () => {
+    expect(isEtaSettled({ progress: ETA_WARMUP_PROGRESS, sizeBytes: 30_000_000 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.1, sizeBytes: 30_000_000 })).toBe(false);
+  });
+
+  it('still settles a file smaller than the byte floor', () => {
+    expect(isEtaSettled({ progress: 0.6, sizeBytes: 4_000_000 })).toBe(true);
+  });
+
+  // The sizes the boost is actually sold against keep the thresholds they had.
+  it('leaves large transfers where they were', () => {
+    expect(isEtaSettled({ progress: 0.019, sizeBytes: 1_000_000_000 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.021, sizeBytes: 1_000_000_000 })).toBe(true);
+  });
+
+  it('falls back to the fraction when the size is unknown', () => {
+    expect(isEtaSettled({ progress: 0.01 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.05 })).toBe(true);
   });
 });
 

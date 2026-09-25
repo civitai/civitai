@@ -42,11 +42,16 @@ const maxKnown = (values: (number | null | undefined)[]) => {
 /**
  * How much of a transfer must have moved before its own ETA is believed: a stream still ramping up
  * projects from a throughput it will not hold, which reads as hours on a ten-minute download.
- * Whichever comes first — the fraction alone would stay quiet for minutes on a rate-capped lane,
- * which is the lane the boost is sold against.
+ *
+ * The sample must be large in ABSOLUTE terms, which a fraction alone cannot express — on a small file
+ * it resolves to a size still inside the ramp-up, so the smaller the file the weaker the guard.
+ * `MIN_BYTES` sets that floor; `MAX_FRACTION` keeps it reachable on a file smaller than the floor, so
+ * every transfer still settles.
  */
 export const ETA_WARMUP_PROGRESS = 0.02;
 export const ETA_WARMUP_BYTES = 64 * 1024 * 1024;
+export const ETA_WARMUP_MIN_BYTES = 8 * 1024 * 1024;
+export const ETA_WARMUP_MAX_FRACTION = 0.5;
 
 type WarmupSource = {
   progress?: number | null;
@@ -54,14 +59,27 @@ type WarmupSource = {
   etaSeconds?: number | null;
 };
 
+/** Bytes that must have moved before this resource's own ETA means anything. */
+function warmupBytes(sizeBytes: number) {
+  return Math.min(
+    ETA_WARMUP_BYTES,
+    sizeBytes * ETA_WARMUP_MAX_FRACTION,
+    Math.max(ETA_WARMUP_MIN_BYTES, sizeBytes * ETA_WARMUP_PROGRESS)
+  );
+}
+
 /**
  * A resource that has not started downloading is settled: it is waiting behind other downloads, and
  * nothing has distorted the projection it was given. Only a transfer in progress can be too young to
  * believe.
+ *
+ * An unknown size leaves only the fraction to go on.
  */
 export function isEtaSettled(resource: WarmupSource) {
-  if (resource.progress == null || resource.progress >= ETA_WARMUP_PROGRESS) return true;
-  return (resource.sizeBytes ?? 0) * resource.progress >= ETA_WARMUP_BYTES;
+  if (resource.progress == null) return true;
+  const sizeBytes = resource.sizeBytes ?? 0;
+  if (sizeBytes <= 0) return resource.progress >= ETA_WARMUP_PROGRESS;
+  return sizeBytes * resource.progress >= warmupBytes(sizeBytes);
 }
 
 /** A resource's ETA once it is worth showing; null while its transfer is still ramping up. */
