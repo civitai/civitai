@@ -57,7 +57,7 @@
 // unseeded case — do not "simplify" an alert by removing the seeding or its call.
 //
 // 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 11
-// outcomes here, 3 producers in `~/utils/image-upload-relay-producer`. 11 x 3 = 33
+// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 11 x 4 = 44
 // series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
 // user id, NO object key, NO bucket, NO host, NO path, NO content type, NO byte size:
 // every one of those is caller-influenced or unbounded, and prom-client retains each
@@ -66,12 +66,12 @@
 // look. The bound rests on the runtime narrowing in `recordImageUploadRelay`, on code
 // rather than on erased types.
 //
-// 🔴 WHY `producer` IS WORTH A 3x IN SERIES COUNT. The relay has two callers and the
+// 🔴 WHY `producer` IS WORTH A 4x IN SERIES COUNT. The relay has two callers and the
 // counter could not tell them apart, so a non-zero `success` — earned entirely by the
 // single-PUT path, which shipped first — read as evidence for BOTH. Grading the newer
 // multipart path on the undifferentiated counter returns a confident false positive, and
 // no amount of reading the number more carefully fixes that: the discriminating fact is
-// simply not in the series. 33 fixed series is a cheap price for a signal that can answer
+// simply not in the series. 44 fixed series is a cheap price for a signal that can answer
 // the question it is consulted for. See that module for the header and the sanitiser.
 //
 // prom-client GOTCHA (same as the neighbouring metric modules): Next can evaluate a
@@ -172,16 +172,19 @@ const HELP =
   'events producer field, which is the same derivation as this label and agrees by ' +
   'construction. Note those events cover SUCCESSFUL relays only, so there is no ' +
   'corroborating event for the refusal outcomes. single_put = the single-PUT upload path; multipart = the multipart ' +
-  'upload path; unknown = no header, or a value outside the set — EXPECTED to dominate ' +
+  'upload path; unknown = no header at all, EXPECTED to dominate ' +
   'while browsers still run a bundle older than the deploy that added the header, so read ' +
-  'a large unknown share as stale clients rather than as a gap. Without this label a ' +
+  'a large unknown share as stale clients rather than as a gap; other = a header arrived ' +
+  'and was not recognised, which is a DIFFERENT population (a client that got it wrong, or ' +
+  'a caller probing the route) and is kept on its own row so neither hides in the other. ' +
+  'Without this label a ' +
   'non-zero success count cannot be attributed to either caller. ' +
   'RARE per-pod counter, and prom-client counts die with the pod: for "has it ever helped?" ' +
   'read sum(increase(...[30d])) or sum(max_over_time(...[30d])); a bare sum() only sees pods ' +
   'that are alive right now. Do not alert on rate() of a single child.';
 
 /**
- * Seed all 33 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
+ * Seed all 44 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
  *
  * 🔴 THE CROSS PRODUCT IS THE POINT, not the outcome list. Seeding only the outcomes
  * (with some default producer) would restore the exact ambiguity this seeding exists to
@@ -201,7 +204,7 @@ const HELP =
  * every pod the honest, useful reading of this counter is a row of zeros. That reading
  * only exists if the zeros are emitted.
  *
- * Free by construction: 33 series is the counter's entire cardinality budget, so
+ * Free by construction: 44 series is the counter's entire cardinality budget, so
  * seeding costs exactly what a fully-exercised pod already costs and cannot grow.
  *
  * 🔴 SEEDING ALONE IS NOT ENOUGH. Something must CALL this at scrape time or the module

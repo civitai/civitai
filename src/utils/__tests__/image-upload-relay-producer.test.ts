@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   IMAGE_UPLOAD_RELAY_PRODUCERS,
+  OTHER_IMAGE_UPLOAD_RELAY_PRODUCER,
   UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER,
   sanitizeImageUploadRelayProducer,
 } from '~/utils/image-upload-relay-producer';
@@ -37,11 +38,25 @@ describe('sanitizeImageUploadRelayProducer', () => {
     // different series — the opposite of a closed set.
     expect(sanitizeImageUploadRelayProducer(undefined)).toBe('unknown');
     expect(sanitizeImageUploadRelayProducer(null)).toBe('unknown');
+    // An empty header value is "nothing arrived" too, not "something unrecognised".
+    expect(sanitizeImageUploadRelayProducer('')).toBe('unknown');
   });
 
-  it('maps an unrecognised value to unknown', () => {
-    // Near-misses, not obvious junk: a sanitiser built from a prefix/substring test
-    // rather than set membership passes `single_put_`, `multi`, and the wrong case.
+  it('🔴 maps an unrecognised value to `other`, NOT to `unknown`', () => {
+    // 🔴 THE SPLIT, and it is this change's own thesis applied to itself. `unknown` means
+    // "no header at all" — the stale-bundle population, and the row a rollout is graded
+    // on. A header that ARRIVED and was not recognised is a different fact with different
+    // causes (a client that got it wrong, a caller probing the route), and folding the two
+    // puts two populations behind one number.
+    //
+    // ⚠ These used to assert `unknown`. The fold was defended as "the second population is
+    // negligible, split it later if that stops holding" — but nothing could ever reveal
+    // that it had: the raw value is discarded, and the only event carrying a producer is
+    // success-only and carries the sanitised one. An unobservable trigger is not a
+    // deferral.
+    //
+    // Near-misses, not obvious junk: a sanitiser built from a prefix/substring test rather
+    // than set membership passes `single_put_`, `multi`, and the wrong case.
     for (const bad of [
       'single_put_',
       'single-put',
@@ -49,14 +64,13 @@ describe('sanitizeImageUploadRelayProducer', () => {
       'MULTIPART',
       ' multipart',
       'multipart ',
-      '',
       'relay',
     ]) {
-      expect(sanitizeImageUploadRelayProducer(bad), JSON.stringify(bad)).toBe('unknown');
+      expect(sanitizeImageUploadRelayProducer(bad), JSON.stringify(bad)).toBe('other');
     }
   });
 
-  it('maps a non-string to unknown', () => {
+  it('maps a non-string to unknown — nothing usable arrived', () => {
     for (const bad of [0, 1, true, false, {}, [], () => 'multipart', Symbol('multipart')]) {
       expect(sanitizeImageUploadRelayProducer(bad), String(bad)).toBe('unknown');
     }
@@ -80,8 +94,10 @@ describe('sanitizeImageUploadRelayProducer', () => {
     // becomes a label. The empty array is the degenerate case — `input[0]` is `undefined`,
     // which the `typeof` check catches.
     expect(sanitizeImageUploadRelayProducer(['chrome-extension://evil', 'multipart'])).toBe(
-      'unknown'
+      'other'
     );
+    // An empty array and a nested one are "nothing usable arrived", so they are `unknown`
+    // rather than `other` — the same distinction the two buckets carry everywhere else.
     expect(sanitizeImageUploadRelayProducer([])).toBe('unknown');
     expect(sanitizeImageUploadRelayProducer([['multipart']])).toBe('unknown');
   });
@@ -99,7 +115,7 @@ describe('sanitizeImageUploadRelayProducer', () => {
       'hasOwnProperty',
       'valueOf',
     ]) {
-      expect(sanitizeImageUploadRelayProducer(bad), bad).toBe('unknown');
+      expect(sanitizeImageUploadRelayProducer(bad), bad).toBe('other');
     }
   });
 
@@ -125,10 +141,14 @@ describe('sanitizeImageUploadRelayProducer', () => {
         `input=${String(input)} produced ${out}`
       ).toBe(true);
       // And specifically: none of the crafted inputs is allowed to READ as a real
-      // producer. `new String('multipart')` is the interesting one — it is not a
-      // primitive string, so a `typeof` check must reject it rather than an `instanceof`
-      // one accepting it.
-      expect(out, `input=${String(input)}`).toBe(UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER);
+      // producer. They land in one of the two rejection buckets — a string one in `other`,
+      // and `new String('multipart')` in `unknown`, which is the interesting case: it is
+      // not a primitive string, so a `typeof` check must reject it rather than an
+      // `instanceof` one accepting it.
+      expect(
+        [UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER, OTHER_IMAGE_UPLOAD_RELAY_PRODUCER],
+        `input=${String(input)}`
+      ).toContain(out);
     }
   });
 });
@@ -152,13 +172,16 @@ describe('the producer contract itself', () => {
     );
   });
 
-  it('declares unknown as a member of the set, not as a value outside it', () => {
-    // The seeding loop in the metrics module iterates this tuple, so `unknown` being a
-    // member is what makes its series exist at 0 on a pod where nothing has relayed.
+  it('declares both rejection buckets as members of the set, not as values outside it', () => {
+    // The seeding loop in the metrics module iterates this tuple, so membership is what
+    // makes each series exist at 0 on a pod where nothing has relayed.
     expect(IMAGE_UPLOAD_RELAY_PRODUCERS).toContain(UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER);
+    expect(IMAGE_UPLOAD_RELAY_PRODUCERS).toContain(OTHER_IMAGE_UPLOAD_RELAY_PRODUCER);
+    // And they are DISTINCT — the whole point of the split.
+    expect(UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER).not.toBe(OTHER_IMAGE_UPLOAD_RELAY_PRODUCER);
   });
 
-  it('pins the LABEL set — which is not the caller set; see the ledger below', () => {
+  it('pins the LABEL set — which is not the caller set; see the ledger in its own file', () => {
     // ⚠ SCOPED DELIBERATELY, because an earlier version of this comment claimed more than
     // the assertion delivers. This pins the three LABEL values. It says nothing about how
     // many CALLERS exist: `postImageUploadRelay`'s `producer` parameter is typed to this
@@ -171,7 +194,7 @@ describe('the producer contract itself', () => {
     // It is still worth pinning: `passes every declared producer through unchanged` above
     // iterates this tuple, so it would go vacuous if the tuple were shrunk to one member.
     expect([...IMAGE_UPLOAD_RELAY_PRODUCERS].sort()).toEqual(
-      ['multipart', 'single_put', 'unknown'].sort()
+      ['multipart', 'other', 'single_put', 'unknown'].sort()
     );
   });
 });

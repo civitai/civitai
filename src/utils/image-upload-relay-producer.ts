@@ -53,42 +53,52 @@ export const IMAGE_UPLOAD_RELAY_PRODUCERS = [
   /** `useS3Upload` -> `relayImageFallback` — the multipart path. */
   'multipart',
   /**
-   * 🔴 FIRST-CLASS, NOT A GAP. Three distinct populations land here and all three are
-   * legitimate readings rather than errors — note that a crafted value only lands here
-   * if it is OUTSIDE the set; an in-set value asserted by a caller is taken at face
-   * value, see the note on `sanitizeImageUploadRelayProducer`:
+   * 🔴 NO HEADER AT ALL — FIRST-CLASS, NOT A GAP.
    *
-   *  * A browser running an older cached bundle, which sends no header at all. Expect
-   *    this to DOMINATE for as long as stale bundles are in circulation after the
-   *    deploy that adds the header — a rising `single_put`/`multipart` share against a
-   *    falling `unknown` is what rollout looks like here, and it is the only way to
-   *    read it.
-   *  * A caller that sent something unrecognised — a future producer talking to an old
-   *    server, or a client that got the spelling wrong.
-   *  * A crafted value. It is bucketed rather than rejected, because the route's own
-   *    invocation count must stay equal to the sum of this metric; dropping the
-   *    increment would make a hostile caller able to hide its requests from the counter.
-   *
-   * 🔴 ONE BUCKET, NOT TWO, AND THAT IS A KNOWN TRADE — recorded because the sibling this
-   * module cites elsewhere decided it the other way. `boundedClientLabel` in
-   * `src/server/prom/trpc-batch.metrics.ts` splits its equivalent into `none` (absent) and
-   * `other` (unrecognised); this collapses both into `unknown`, on the row the rollout is
-   * graded on, which is a mild instance of the same "one number, two populations" problem
-   * the producer label exists to remove. Accepted here because during the window that
-   * matters the second population is expected to be negligible — an unrecognised value can
-   * only come from a client we shipped or from a caller poking at the route, while the
-   * absent-header population is every stale browser bundle in circulation. If that
-   * expectation ever stops holding, the fix is to split this member into `none` + `other`:
-   * the tuple is the single declaration, so seeding and the runtime narrowing both follow
-   * automatically and the cost is 11 more fixed series.
+   * A browser running a bundle older than the deploy that added the header sends nothing,
+   * so expect this to DOMINATE for as long as stale bundles are in circulation. A rising
+   * `single_put`/`multipart` share against a falling `unknown` is what rollout looks like
+   * here, and it is the only way to read it. An absent value must therefore be a readable
+   * row rather than a dropped label or a skipped increment, either of which would make
+   * "an old client rescued this upload" and "the discriminator was never wired" the same
+   * observation.
    */
   'unknown',
+  /**
+   * 🔴 A HEADER ARRIVED AND WAS NOT RECOGNISED — kept SEPARATE from `unknown`, which is
+   * this label's whole reason for existing applied to itself.
+   *
+   * Two populations land here: a client we shipped that got the spelling wrong or is
+   * newer than this server, and a caller sending something crafted. Both are bucketed
+   * rather than dropped, because the route's invocation count must stay equal to the sum
+   * of this metric — dropping the increment would let a hostile caller hide its requests.
+   *
+   * ⚠ IT USED TO BE FOLDED INTO `unknown`, AND THE REASONING FOR THAT WAS UNFALSIFIABLE.
+   * The argument was "the unrecognised population is negligible during the window that
+   * matters, and we can split it later if that stops holding". But nothing could ever
+   * reveal that it had stopped holding: the sanitiser discards the raw value, the
+   * `image-upload-relayed` event is success-only and carries the already-sanitised
+   * producer, and there is no log line on this branch. The trigger for the deferred fix
+   * was unobservable, which makes it not a deferral but a permanent blind spot — on the
+   * row the rollout is graded on, and fed by input that reaches the sanitiser BEFORE the
+   * origin guard and the session lookup (see the note below), so its size is
+   * caller-controlled rather than bounded by our expectations.
+   *
+   * `boundedClientLabel` in `src/server/prom/trpc-batch.metrics.ts` — the sibling this
+   * module follows on the array question — splits its own equivalent the same way
+   * (`none` / `other`). The cost is 11 more fixed series, which is the same cheap price
+   * the rest of this counter's cardinality is argued on.
+   */
+  'other',
 ] as const;
 
 export type ImageUploadRelayProducer = (typeof IMAGE_UPLOAD_RELAY_PRODUCERS)[number];
 
-/** The bucket every unrecognised value lands in. Named so no call site spells it twice. */
+/** The bucket for a request that carried NO header. Named so no call site spells it twice. */
 export const UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER: ImageUploadRelayProducer = 'unknown';
+
+/** The bucket for a header that arrived and was not recognised. */
+export const OTHER_IMAGE_UPLOAD_RELAY_PRODUCER: ImageUploadRelayProducer = 'other';
 
 /**
  * A `Set`, not an object literal, for the same reason `sanitizeClientFailure` rebuilds
@@ -100,10 +110,16 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
 /**
  * Narrow a caller-supplied header value to the closed set above.
  *
- * 🔴 TOTAL, and never `undefined`. Absent, unknown, malformed, a non-string, or a crafted
- * value ALL become `unknown`. Returning `undefined` for the absent case would let the
+ * 🔴 TOTAL, and never `undefined`. Returning `undefined` for the absent case would let the
  * label be omitted, which in Prometheus creates a DIFFERENT series (one with no `producer`
  * label) — the opposite of the closed bound this module exists to hold.
+ *
+ * 🔴 TWO REJECTION BUCKETS, NOT ONE, AND THE SPLIT IS THE POINT. Nothing present (absent
+ * header, a non-string, an array with no usable first element) -> `unknown`; something
+ * present but not a member -> `other`. Those are different populations — stale bundles
+ * versus a client that got it wrong or a caller probing the route — and folding them puts
+ * two causes behind one number, on the row the rollout is graded on, which is the exact
+ * defect the producer label exists to remove.
  *
  * An ARRAY takes its first element, matching `firstValue`/`boundedClientLabel` in
  * `src/server/prom/trpc-batch.metrics.ts` — the closest sibling in this repo, which does
@@ -112,13 +128,14 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  * "ambiguous provenance" grounds; that diverged from three existing normalisers here and
  * it diverged in the harmful direction — `unknown` is the row the rollout is GRADED on,
  * so demoting a legitimate `multipart` rescue into it corrupts the one signal that can
- * answer the question. It buys no safety either: the closed-set test below is what bounds
+ * answer the question (it would land in `other` now, which is no better — that row is read
+ * as "a client got it wrong"). It buys no safety either: the closed-set test below is what bounds
  * the label, and a caller that can send the header twice can equally send it once.
  *
  * ⚠ AND THE BRANCH IS DEFENSIVE AGAINST THE TYPE, NOT AGAINST A BEHAVIOUR THIS HEADER HAS.
  * Node joins duplicate headers with `', '` and returns an array only for `set-cookie`, so a
  * genuinely repeated `x-civitai-upload-producer` arrives as the single string
- * `"multipart, single_put"` — which is outside the set and becomes `unknown` either way.
+ * `"multipart, single_put"` — which is outside the set and becomes `other` either way.
  * `IncomingHttpHeaders` still types the value `string | string[]`, so the branch has to
  * exist; do not reason from it that duplicate custom headers reach us as arrays.
  *
@@ -153,8 +170,10 @@ const PRODUCER_SET: ReadonlySet<string> = new Set(IMAGE_UPLOAD_RELAY_PRODUCERS);
  */
 export function sanitizeImageUploadRelayProducer(input: unknown): ImageUploadRelayProducer {
   const value = Array.isArray(input) ? input[0] : input;
-  if (typeof value !== 'string') return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
+  // Nothing usable arrived at all — the stale-bundle population.
+  if (typeof value !== 'string' || value.length === 0) return UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
+  // Something arrived and was not a member. A DIFFERENT fact, so a different bucket.
   return PRODUCER_SET.has(value)
     ? (value as ImageUploadRelayProducer)
-    : UNKNOWN_IMAGE_UPLOAD_RELAY_PRODUCER;
+    : OTHER_IMAGE_UPLOAD_RELAY_PRODUCER;
 }

@@ -217,11 +217,17 @@ describe('recordImageUploadRelay', () => {
     expect(rows).toHaveLength(
       IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
     );
-    expect((await seriesForProducer('unknown')).success).toBe(3);
+    // The string that arrived but is not a member lands in `other`; the two that carried
+    // nothing usable land in `unknown`. Both are narrowings, neither is a drop.
+    expect((await seriesForProducer('other')).success).toBe(1);
+    expect((await seriesForProducer('unknown')).success).toBe(2);
     // And nowhere else: a narrowing that also leaked onto a real producer would make the
     // multipart figure include traffic that never came from it.
     expect((await seriesForProducer('multipart')).success).toBe(0);
     expect((await seriesForProducer('single_put')).success).toBe(0);
+    // Every invocation is still counted — three in, three recorded. Dropping one would let
+    // a caller choose not to be counted.
+    expect((await seriesFromRegistry()).success).toBe(3);
   });
 
   it('keeps producers on SEPARATE series for the same outcome', async () => {
@@ -235,13 +241,17 @@ describe('recordImageUploadRelay', () => {
     recordImageUploadRelay('success', 'unknown');
     recordImageUploadRelay('success', 'unknown');
     recordImageUploadRelay('success', 'unknown');
+    for (let i = 0; i < 4; i++) recordImageUploadRelay('success', 'other');
 
+    // Four distinct counts on one outcome, none equal to another and none equal to the
+    // total — so a constant, a shifted mapping and a fold are all visibly wrong here.
     expect((await seriesForProducer('single_put')).success).toBe(1);
     expect((await seriesForProducer('multipart')).success).toBe(2);
     expect((await seriesForProducer('unknown')).success).toBe(3);
+    expect((await seriesForProducer('other')).success).toBe(4);
     // The summed view still reads as the route's invocation count — the property the
     // label must not cost us.
-    expect((await seriesFromRegistry()).success).toBe(6);
+    expect((await seriesFromRegistry()).success).toBe(10);
   });
 
   it('never throws — a metrics failure must not break the upload it is observing', async () => {

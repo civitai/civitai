@@ -352,7 +352,11 @@ describe('relayImageFallback', () => {
         method: 'POST',
         // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
         // attribute a rescue to THIS path; an `objectContaining` here would pass with it
-        // missing, which is the defect the discriminator exists to make impossible.
+        // missing, which is the defect the discriminator exists to make impossible. The
+        // exact match also pins the VALUE, so a mutant sending `single_put` from this
+        // caller — the most damaging one available, since it silently re-creates the
+        // attribution error under the appearance of a fix — fails here. (A separate test
+        // asserting exactly that was removed as strictly subsumed by this line.)
         headers: {
           'Content-Type': 'image/png',
           [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
@@ -360,29 +364,6 @@ describe('relayImageFallback', () => {
         body: f,
       })
     );
-    vi.unstubAllGlobals();
-  });
-
-  it('🔴 identifies itself as the MULTIPART producer, not as the single-PUT one', async () => {
-    // WHY THIS MATTERS AT ALL. The relay's usage counter reads a non-zero success count
-    // that is entirely attributable to the single-PUT caller, which shipped first — so
-    // grading this path on the undifferentiated counter returns a confident FALSE
-    // POSITIVE. The header is the only thing that separates them.
-    //
-    // An EQUALITY, not a presence check: a mutant that sends `single_put` here is the
-    // single most damaging one available, because it silently re-creates the attribution
-    // error under the appearance of a fix, and a presence-only assertion cannot see it.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ id: 'RELAY-KEY' }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await relayImageFallback(file(), opts());
-
-    const sent = fetchMock.mock.calls[0][1].headers as Record<string, string>;
-    expect(sent[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
     vi.unstubAllGlobals();
   });
 

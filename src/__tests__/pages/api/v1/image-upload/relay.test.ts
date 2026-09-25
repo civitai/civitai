@@ -894,12 +894,15 @@ describe('image-upload relay', () => {
       ['garbage', 'chrome-extension://whatever'],
       ['a near-miss', 'single-put'],
       ['a wrong-case value', 'MULTIPART'],
-      ['an empty string', ''],
       ['a label-injection attempt', 'multipart"} 99\ncivitai_image_upload_relay_total{outcome="x'],
-    ])('buckets %s into `unknown` and mints NO new series', async (_name, header) => {
+    ])('buckets %s into `other` and mints NO new series', async (_name, header) => {
+      // 🔴 `other`, not `unknown`: a header that ARRIVED and was not recognised is a
+      // different population from a request that carried none, and `unknown` is the row
+      // the rollout is graded on. An empty header value is "carried none" and is covered
+      // by the absent-header case above.
       await handler(makeReq([Buffer.from('bytes')], { producerHeader: header }), makeRes());
 
-      expect(await moved()).toEqual(['success|unknown']);
+      expect(await moved()).toEqual(['success|other']);
       // 🔴 THE CARDINALITY CLAIM. prom-client retains every distinct label set for the
       // life of the process, so a pass-through would hand any caller an unbounded series
       // generator on a route that takes a raw body. Asserting the crafted value is
@@ -924,7 +927,20 @@ describe('image-upload relay', () => {
       // 33-row check above stays green) while putting an unbounded caller-controlled
       // string into a structured log. Verified as a surviving mutant before this was added.
       expect(relayEvents()).toHaveLength(1);
-      expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
+      expect(relayEvents()[0]).toMatchObject({ producer: 'other' });
+    });
+
+    it('keeps `unknown` and `other` on SEPARATE rows', async () => {
+      // 🔴 The split, asserted as a relationship rather than as two independent facts: a
+      // request that carried no header and one that carried a value we did not recognise
+      // must not be summed into a single number. Folding them is this change's own defect
+      // — two populations behind one row — reintroduced on the row a rollout is read from.
+      await handler(makeReq([Buffer.from('b')]), makeRes()); // stale bundle
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'nonsense' }), makeRes());
+      await handler(makeReq([Buffer.from('b')], { producerHeader: 'nonsense' }), makeRes());
+
+      expect((await forProducer('unknown')).success).toBe(1);
+      expect((await forProducer('other')).success).toBe(2);
     });
 
     it('takes the FIRST value of a repeated header, as the sibling label narrowers do', async () => {
@@ -957,9 +973,9 @@ describe('image-upload relay', () => {
         makeRes()
       );
 
-      expect(await moved()).toEqual(['success|unknown']);
+      expect(await moved()).toEqual(['success|other']);
       expect(relayEvents()).toHaveLength(1);
-      expect(relayEvents()[0]).toMatchObject({ producer: 'unknown' });
+      expect(relayEvents()[0]).toMatchObject({ producer: 'other' });
       expect(await rows()).toHaveLength(
         IMAGE_UPLOAD_RELAY_OUTCOMES.length * IMAGE_UPLOAD_RELAY_PRODUCERS.length
       );
