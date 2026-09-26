@@ -21,10 +21,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - a row whose `type` column holds `'28'` comes back as the NUMBER 28, not
  *     the string `'AppAuthorFee'` that the enum's reverse mapping yields
  *
+ * 🔴 BOTH READ PATHS, and they are two independent expressions. The list
+ * (`hydrateTransactions`) and the CSV export (`formatExportBatch`) each resolve
+ * `row.type` on their own line; only the list one was covered when this file was
+ * first written, so reverting the export site alone survived the whole suite. The
+ * CSV column reading `28` is the symptom a user cannot work around, so it gets its
+ * own tests rather than riding on the shared filter.
+ *
  * ── WHAT IS MOCKED ──────────────────────────────────────────────────────────
- * Only the edges: the ClickHouse client (the seam under test — the mock is how
- * the SQL is captured and the row shape injected), `getUsers`, and the logger.
- * `buildBranchQuery`, `walkTransactionSlices` and `hydrateTransactions` all run
+ * The three this file mocks itself, on top of the project-wide mocks in
+ * `src/__tests__/setup.ts` (db, redis, env, prom, logging and others — so "only
+ * the edges" is true of this file, not of the process): the ClickHouse client
+ * (the seam under test — the mock is how the SQL is captured and the row shape
+ * injected), `getUsers`, and the logger. `buildBranchQuery`,
+ * `walkTransactionSlices`, `hydrateTransactions` and `formatExportBatch` all run
  * for real, which is the point.
  */
 
@@ -45,7 +55,10 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   getUsers: (...args: unknown[]) => mockGetUsers(...args),
 }));
 
-import { getUserBuzzTransactionsMulti } from '~/server/services/buzz.service';
+import {
+  getUserBuzzTransactionsMulti,
+  streamUserBuzzTransactionsCsv,
+} from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 loggingMock.logToAxiom.mockResolvedValue(null);
@@ -121,7 +134,10 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     const sql = sentSql();
     expect(sql.length).toBeGreaterThan(0);
-    for (const q of sql) expect(q).not.toContain('type IN (');
+    // Word-anchored: the query also carries `toAccountType IN ('yellow')`, which a
+    // plain `toContain('type IN (')` misses only because it is case-sensitive.
+    // Renaming that column to snake_case would redden a healthy query.
+    for (const q of sql) expect(q).not.toMatch(/\btype IN \(/);
   });
 
   /**
@@ -142,11 +158,15 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     expect(result.transactions).toHaveLength(1);
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.AppAuthorFee);
+    // `toBe` is `Object.is`, so this alone separates the number 28 from the string
+    // `'AppAuthorFee'` the reverse mapping returned. A `not.toBe('AppAuthorFee')`
+    // after it could never report, and is deliberately absent.
     expect(tx.type).toBe(28);
-    // What the base produced here, stated as the thing that must NOT come back.
-    expect(tx.type).not.toBe('AppAuthorFee');
-    // The label the UI derives from it. `28` is what a viewer saw.
+    // NOT subsumed: a duplicate enum value at 28 flips the reverse map, and this is
+    // the only line here that sees it.
     expect(TransactionType[tx.type]).toBe('AppAuthorFee');
+    // The credit/debit sign, which nothing else on this path asserted.
+    expect(tx.amount).toBe(3);
   });
 
   /**
@@ -162,10 +182,10 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
       ...WINDOW,
     } as Parameters<typeof getUserBuzzTransactionsMulti>[0]);
 
+    expect(result.transactions).toHaveLength(1);
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.LicenseFee);
     expect(tx.type).toBe(27);
-    expect(tx.type).not.toBe('LicenseFee');
   });
 
   /**
@@ -180,8 +200,67 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
       ...WINDOW,
     } as Parameters<typeof getUserBuzzTransactionsMulti>[0]);
 
+    expect(result.transactions).toHaveLength(1);
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.AppAuthorFee);
     expect(tx.type).toBe(28);
+  });
+});
+
+/**
+ * 🔴 THE SECOND HYDRATION SITE. `formatExportBatch` resolves `row.type` on its own
+ * line, independently of `hydrateTransactions`, so reverting only the export site
+ * left every other test in this file green. The filter half IS shared — both paths
+ * build their SQL through `buildBranchQuery` — which is exactly why the hydration
+ * half needed its own guard rather than being assumed covered.
+ */
+describe('streamUserBuzzTransactionsCsv — the same seam on the export path', () => {
+  /** Collect the whole streamed CSV, header included. */
+  async function csv(over: Record<string, unknown> = {}) {
+    const chunks: string[] = [];
+    for await (const chunk of streamUserBuzzTransactionsCsv({
+      accountId: ACCOUNT_ID,
+      ...WINDOW,
+      ...over,
+    } as Parameters<typeof streamUserBuzzTransactionsCsv>[0]))
+      chunks.push(chunk);
+    return chunks.join('');
+  }
+
+  it('writes the member NAME for a row stored as its number, not the bare number', async () => {
+    mockQuery.mockResolvedValueOnce([row({ type: '28', amount: 3 })]);
+
+    const out = await csv();
+    // A positive control: with no body row the assertions below are unreachable, and
+    // a header-only file is itself one of the two symptoms under test.
+    const lines = out.trim().split('\r\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(out).toContain('AppAuthorFee');
+    // The symptom: the type column carrying the raw enum value.
+    expect(lines[1]).not.toMatch(/(^|,)"?28"?,/);
+  });
+
+  it('does the same for the other past-26 member', async () => {
+    mockQuery.mockResolvedValueOnce([row({ type: '27', amount: 5 })]);
+
+    const out = await csv();
+    expect(out.trim().split('\r\n').filter(Boolean).length).toBeGreaterThan(1);
+    expect(out).toContain('LicenseFee');
+  });
+
+  it('still writes the name for a row stored as its camelCase name', async () => {
+    mockQuery.mockResolvedValueOnce([row({ type: 'appAuthorFee', amount: 2 })]);
+
+    const out = await csv();
+    expect(out.trim().split('\r\n').filter(Boolean).length).toBeGreaterThan(1);
+    expect(out).toContain('AppAuthorFee');
+  });
+
+  it('sends the numeric spelling of the type filter on the export query too', async () => {
+    await csv({ type: TransactionType.AppAuthorFee });
+
+    const sql = sentSql();
+    expect(sql.length).toBeGreaterThan(0);
+    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28')");
   });
 });

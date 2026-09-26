@@ -63,8 +63,13 @@ describe('fromClickhouseTransactionType', () => {
    * returned the string `'LicenseFee'` / `'AppAuthorFee'` out of the enum's
    * reverse mapping where a number was declared. `toBe` is `Object.is`, so it
    * separates the two on its own — which is why there is one assertion here and
-   * not four: `typeof`, a `not.toBe` against the name, and a re-derivation
-   * through the enum were all subsumed by this line and could never report.
+   * not four: a `typeof` check and a `not.toBe` against the name were both
+   * subsumed by this line and could never report.
+   *
+   * ⚠️ A re-derivation through the enum (`TransactionType[resolved]`) is subsumed
+   * HERE but is not dead everywhere: a duplicate enum value flips the reverse map,
+   * and that is the one mutation it catches. The seam suite keeps one for that
+   * reason — do not delete it there on the strength of this paragraph.
    */
   it('resolves a member stored as its NUMBER — the 0..26 ingest gap', () => {
     for (const [raw, member] of [
@@ -103,6 +108,20 @@ describe('fromClickhouseTransactionType', () => {
   it('falls back to Tip for a value that names no member, in either arm', () => {
     expect(fromClickhouseTransactionType('notAType')).toBe(TransactionType.Tip);
     expect(fromClickhouseTransactionType('999')).toBe(TransactionType.Tip);
+  });
+
+  /**
+   * 🔴 A PROTOTYPE KEY IS NOT AN ABSENT KEY, and the two cases above cannot tell
+   * the difference: `TransactionType['NotAType']` really is `undefined`, so `??`
+   * fires and they pass under the unguarded expression too. `'__proto__'` resolves
+   * up the chain to a non-nullish OBJECT, which `??` accepts — so without this
+   * line the `Object.hasOwn` guard is untestable and reverting it is invisible.
+   */
+  it('does not resolve a prototype key to an object', () => {
+    const resolved = fromClickhouseTransactionType('__proto__');
+    expect(resolved).toBe(TransactionType.Tip);
+    expect(typeof resolved).toBe('number');
+    expect(fromClickhouseTransactionType('constructor')).toBe(TransactionType.Tip);
   });
 });
 
