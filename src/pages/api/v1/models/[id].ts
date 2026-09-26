@@ -119,9 +119,8 @@ async function buildPublicModelResponse(
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
                 .map((file) => {
-                  // Named before `metadata` is destructured off: the variant suffix
-                  // that tells two Model files apart reads it, and this must match
-                  // the download route's name.
+                  // Pass the whole `file`, not `rest`: the variant suffix that tells
+                  // two Model files apart reads `metadata`.
                   const name = safeDecodeURIComponent(
                     getDownloadFilename({
                       model,

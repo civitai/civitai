@@ -249,13 +249,12 @@ export async function prepareModelVersionResponse(
       ? castedFiles
           .filter((file) => file.visibility === ModelFileVisibility.Public)
           .map((file) => {
-            // Named before `metadata`/`overrideName` are destructured off: the helper
-            // reads both, and this must match the download route's name.
+            // Pass the whole `file`, not `rest`: the variant suffix that tells two Model
+            // files apart reads `metadata`.
             const name = safeDecodeURIComponent(
               getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
             );
-            const { hashes, url, visibility, metadata, modelVersionId, overrideName, ...rest } =
-              file;
+            const { hashes, url, visibility, metadata, modelVersionId, ...rest } = file;
             return {
               ...rest,
               metadata: reduceToBasicFileMetadata(metadata),

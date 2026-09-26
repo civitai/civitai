@@ -211,16 +211,18 @@ describe('v1 files[].name — by-id routes name the file from its metadata', () 
   it('GET /api/v1/model-versions/:id (and by-hash, which shares the builder)', async () => {
     const files = byId(await namesFromModelVersionsById());
     expect(files.map((f) => f.name)).toEqual(EXPECTED_NAMES);
-    for (const file of files) {
-      expect(file.name).not.toMatch(/_1[123]\.safetensors$/);
-      expect(Object.keys(file)).not.toContain('overrideName');
-    }
+    for (const file of files) expect(file.name).not.toMatch(/_1[123]\.safetensors$/);
   });
 
-  it('both routes agree with each other', async () => {
-    const a = byId(await namesFromModelsById()).map((f) => f.name);
-    const b = byId(await namesFromModelVersionsById()).map((f) => f.name);
-    expect(a).toEqual(b);
+  it('both routes agree with each other, overrideName included', async () => {
+    const a = byId(await namesFromModelsById());
+    const b = byId(await namesFromModelVersionsById());
+    expect(a.map((f) => f.name)).toEqual(b.map((f) => f.name));
+    // `overrideName` is part of the public files[] shape on every v1 route (by-hash shares this
+    // builder); stripping it in one builder alone is the regression this pins.
+    const overrides = FILES.map((f) => f.overrideName);
+    expect(a.map((f) => f.overrideName)).toEqual(overrides);
+    expect(b.map((f) => f.overrideName)).toEqual(overrides);
   });
 
   // Textual pin: the parity cases feed prepareModelVersionResponse directly, so nothing in this
