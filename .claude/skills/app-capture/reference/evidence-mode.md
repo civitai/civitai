@@ -139,7 +139,7 @@ the UX defect read as **regressed** (gate G7).
   ever ADD a marker — the structural item count is what decides the verdict.
 - The corpus contains **no genuinely empty capture**, so the check's silence on
   the real fixtures is not evidence it works. Gate G5 therefore cuts real
-  elements out of real captures with `tests/fixtures/app-capture/domsurgery.py`
+  elements out of real captures with `.claude/skills/app-capture/tests/fixtures/domsurgery.py`
   (an independent tag-depth scanner that shares no code with the parser under
   test) and drives all three arms: empty-with-CTA, empty-with-nothing-to-do, and
   empty-with-an-unfilled-input.
@@ -299,7 +299,7 @@ cannot be the one the probe produced.
 
 ## Tests
 
-`tests/run-tests-app-capture.sh` groups **E** (E1–E12) and **G** (G1–G10),
+`.claude/skills/app-capture/tests/run-tests-app-capture.sh` groups **E** (E1–E12) and **G** (G1–G10),
 offline, no browser:
 pinned numbers over the real captures, the console sentinel, the network
 classifier boundary table, every a11y check from both sides, the testid
@@ -308,8 +308,8 @@ paired positive control, the diff, the plan shape, the `capture*` key ledger
 between `plan.py` and `capture.sh`, the actuation ban, the foreground/spend
 separation, the app-ready gate, the empty-state check from three arms, the
 per-id occurrence deltas, and end-to-end runs of `capture.sh` against
-`tests/fixtures/app-capture/fake-bridge.sh`.
+`.claude/skills/app-capture/tests/fixtures/fake-bridge.sh`.
 
-Fixtures: `tests/fixtures/app-capture/evidence/` — real captures, with their
+Fixtures: `.claude/skills/app-capture/tests/fixtures/evidence/` — real captures, with their
 provenance and the "do not regenerate these from `evidence.py`" warning in
-`tests/fixtures/app-capture/evidence/manifest.json`.
+`.claude/skills/app-capture/tests/fixtures/evidence/manifest.json`.

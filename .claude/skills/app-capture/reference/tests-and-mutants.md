@@ -4,8 +4,8 @@ Demoted from `SKILL.md` 2026-08-24 (size prune). VERBATIM from the pre-prune cor
 replaces an earlier summarised copy that had silently dropped the `apply_mutant` counting
 rule and the fixture provenance (caught by the prune's own gap audit).
 
-Tests (offline, no browser, no imagemagick): `tests/run-tests-app-capture.sh`, and the
-mutation battery `tests/mutants-app-capture.sh` (count it, don't quote one — "89" rotted).
+Tests (offline, no browser, no imagemagick): `.claude/skills/app-capture/tests/run-tests-app-capture.sh`, and the
+mutation battery `.claude/skills/app-capture/tests/mutants-app-capture.sh` (count it, don't quote one — "89" rotted).
 🔴 **They differ in cost by two orders of magnitude — the suite is ~100 s, the battery re-runs
 it once per mutant, so a full sweep is HOURS** (measured 2026-08-23: ~101 s per suite run,
 once for every `apply_mutant` line — count them, as above, rather than quoting a number).
@@ -22,12 +22,12 @@ pristine, the suite passes, and **the battery reads as coverage**. The preflight
 count (exit 1) — a claim about the battery's wiring, not about the box — and costs milliseconds
 against an hours-long sweep. Fixtures are REAL captured
 DOM; where a case needs a screen the corpus lacks — an empty list, a repeated grid — it is
-cut from a real capture by `tests/fixtures/app-capture/domsurgery.py`, an independent
+cut from a real capture by `.claude/skills/app-capture/tests/fixtures/domsurgery.py`, an independent
 scanner that shares no code with the parser under test.
 
 The two SCREEN fixtures follow the same rule and are the same kind of thing on the two axes:
-`tests/fixtures/app-capture/bannershift.py` cuts the rewards-banner layout (the frame moves
-DOWN at constant width), `tests/fixtures/app-capture/framewiden.py` cuts the re-tiled-window
+`.claude/skills/app-capture/tests/fixtures/bannershift.py` cuts the rewards-banner layout (the frame moves
+DOWN at constant width), `.claude/skills/app-capture/tests/fixtures/framewiden.py` cuts the re-tiled-window
 layout (the frame moves RIGHT at constant width). 🔴 **Both build the second state by
 TRANSLATING pixels, so "the app does not move relative to its frame" is true BY CONSTRUCTION
 in each and is not evidence about any real app.** They grade the resolution arithmetic — sign

@@ -30,7 +30,7 @@ Two independent detectors, both in `.claude/skills/app-capture/scripts/frame.py`
   first.
 
 Measured band values for a 1709×1314 capture are `chromeTop 182 / footer 110 /
-right 70`, pinned as data in `tests/fixtures/app-capture/manifest.json` — **not**
+right 70`, pinned as data in `.claude/skills/app-capture/tests/fixtures/manifest.json` — **not**
 as universal constants.
 
 🔴 **Both detectors have already earned their keep on live runs.** The first run
@@ -178,7 +178,7 @@ iframe's top edge**, the one edge the banner moves.
   declared rect does not state, so without it you cannot tell a working anchor
   from a rect that landed plausibly.
 - **What it costs is unchanged**: the identical-box check is inert for any
-  declared rect. `tests/run-tests-app-capture.sh` gate **F13** substitutes for it
+  declared rect. `.claude/skills/app-capture/tests/run-tests-app-capture.sh` gate **F13** substitutes for it
   by cropping *both* layouts and comparing the pixels, with the absolute form as
   the negative control — but that is a check on the mechanism, not on your rect.
   **Verify a new rect by eye.**
@@ -457,7 +457,7 @@ and gate D8 still passes. Mutants **M193**/**M208** pin the two tokens.
 Gate **F14** is the mechanism check: one rect, one record, two window widths
 (1709 and 2509), byte-identical crops, with the absolute form as the negative
 control. Its second window is cut from a real capture by
-`tests/fixtures/app-capture/framewiden.py`. ⚠ **That fixture builds the wider
+`.claude/skills/app-capture/tests/fixtures/framewiden.py`. ⚠ **That fixture builds the wider
 window by TRANSLATING the frame's pixels**, so "the app does not move relative to
 its frame" is true *there* by construction and is not evidence about any real
 app — exactly the caveat `bannershift.py` carries on the vertical axis. F14
@@ -476,7 +476,7 @@ therefore has two layouts a constant offset apart.
 Measured 2026-08-22 by gate F11, sweeping every candidate value over
 model-benchmarking's own capture of 2026-08-15 (`5-mb-combinations.png`) and over
 the banner state cut from it by
-`tests/fixtures/app-capture/bannershift.py`. That fixture is kept for its
+`.claude/skills/app-capture/tests/fixtures/bannershift.py`. That fixture is kept for its
 **layout**, not its content — the live store screenshots were re-shot on
 2026-08-22 from a much fuller app and it predates them:
 

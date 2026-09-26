@@ -1,0 +1,9 @@
+{
+ "ok": true,
+ "result": {
+  "ok": true,
+  "data": {
+   "value": "{\"schema\":\"app-capture/probe@1\",\"installed\":true,\"reinstalled\":false,\"selfTest\":true,\"sentinel\":\"__app_capture_probe_selftest__\",\"hooks\":{\"console\":true,\"errorEvents\":true,\"fetch\":true,\"xhr\":true,\"perfObserver\":true},\"dropped\":{\"console\":0,\"network\":0},\"console\":[{\"level\":\"debug\",\"text\":\"__app_capture_probe_selftest__\"},{\"level\":\"error\",\"text\":\"LIVE_PAGE_ERROR\"},{\"level\":\"warn\",\"text\":\"LIVE_PAGE_WARN\"},{\"level\":\"error\",\"text\":\"uncaught: Uncaught Error: LIVE_PAGE_THROW @https://custom-generators.civit.ai/:1\"}],\"network\":[{\"url\":\"https://custom-generators.civit.ai/assets/index-BMu2F_3C.js\",\"status\":200,\"via\":\"resource\",\"initiator\":\"script\"},{\"url\":\"https://custom-generators.civit.ai/assets/index-DDFqWrij.css\",\"status\":200,\"via\":\"resource\",\"initiator\":\"link\"},{\"url\":\"https://no-such-host-app-capture.invalid/x\",\"status\":0,\"via\":\"fetch\",\"error\":\"Failed to fetch\"},{\"url\":\"https://no-such-host-app-capture.invalid/x\",\"status\":0,\"via\":\"resource\",\"initiator\":\"fetch\"}],\"counts\":{\"networkTotal\":4}}"
+  }
+ }
+}

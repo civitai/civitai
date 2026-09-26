@@ -84,7 +84,7 @@ What still holds, unchanged:
 
 ### The test that proves they are separable
 
-Gate **G2** in `tests/run-tests-app-capture.sh` copies the scripts, plants an
+Gate **G2** in `.claude/skills/app-capture/tests/run-tests-app-capture.sh` copies the scripts, plants an
 actuation step in the emitter **both** paths share, and asserts three arms:
 
 1. refused in the **foreground** plan (`actuation_without_trusted`),
@@ -96,7 +96,7 @@ Gate G1 adds the mirror image from the permitted side, with a positive control
 that the actuation scan can *see* `xdotool` in a `--trusted` plan — a "no
 actuation found" from a scanner wired to nothing would look identical.
 
-Mutants `M59`–`M64` in `tests/mutants-app-capture.sh` are the lock: they kill the
+Mutants `M59`–`M64` in `.claude/skills/app-capture/tests/mutants-app-capture.sh` are the lock: they kill the
 ban outright, narrow it, **widen it back to `activate`** (which would silently
 return capture to being unable to run at all), stop the foregrounding, let a
 frame-scoped op into the foreground plan, and make `--trusted` decoration.
@@ -176,7 +176,7 @@ flag as a cure; check the RUNNING build first.
 
 Read this before the section below, which is kept for its measurements but whose
 **mechanism claim is retracted**. Re-measured 2026-08-24
-(`claudedocs/app-capture-occlusion-refutation-2026-08-24.md`):
+(`<datapacket-talos>/claudedocs/app-capture-occlusion-refutation-2026-08-24.md`):
 
 - The hang reproduces with the window on a **non-visible workspace and nothing drawn on
   top** — 3/3 `op_timeout:screenshot` at ~18.1 s — in the state the table below calls
