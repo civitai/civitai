@@ -84,7 +84,8 @@ describe('fromClickhouseTransactionType', () => {
       (v): v is TransactionType => typeof v === 'number'
     );
     expect(members.length).toBeGreaterThanOrEqual(29);
-    for (const member of members) expect(fromClickhouseTransactionType(String(member))).toBe(member);
+    for (const member of members)
+      expect(fromClickhouseTransactionType(String(member))).toBe(member);
   });
 
   /**
