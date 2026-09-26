@@ -2396,10 +2396,24 @@ if python3 - "$SKILL" "$REPO_ROOT" >"${WORK}/d2.txt" 2>&1 <<'PY'
 import glob, os, re, sys
 SKILL, ROOT = sys.argv[1:3]
 PREFIX = ".claude/skills/app-capture/"
-PAT = r"`(\.claude/skills/app-capture/[A-Za-z0-9_./-]+)`"
+# 🔴 THIS PATTERN WAS NARROWER THAN THE PASS MESSAGE CLAIMED, AND A ROUND-1 AUDIT
+# DEFEATED IT WITH FOUR PLANTED DEAD PATHS. It matched only BACKTICKED paths under
+# this skill's own prefix, so it was blind to: a backticked repo path outside the
+# prefix, an UNBACKTICKED path under it, a markdown link DESTINATION `](...)`, and a
+# path to a SIBLING skill. The first, third and fourth were all covered before the
+# D2/D2b merge, by the other repo's path validator -- a link destination is a
+# machine-followable claim and it scanned those too. Losing them was an accident of
+# the merge, not a decision. All four shapes are now matched, and each has a planted
+# control in the mutation battery's sibling checks.
+PATS = [
+    r"`(\.claude/[A-Za-z0-9_./-]+)`",          # any backticked .claude path, not just ours
+    r"\]\((\.claude/[A-Za-z0-9_./-]+)\)",       # markdown link DESTINATION
+    r"(?<![`\w./-])(\.claude/skills/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)",  # unbackticked, specific enough
+]
+PAT = PATS[0]
 docs = [SKILL] + sorted(glob.glob(os.path.join(os.path.dirname(SKILL), "reference", "*.md")))
 text = "\n".join(open(d).read() for d in docs)
-refs = sorted(set(re.findall(PAT, text)))
+refs = sorted(set(r for p in PATS for r in re.findall(p, text)))
 dead = [r for r in refs if not os.path.exists(os.path.join(ROOT, r))]
 # Positive control: the extractor must be able to SEE a dead path. Without this a
 # zero is indistinguishable from a regex that matches nothing at all.
@@ -2421,7 +2435,7 @@ print("\n".join("DEAD: " + d for d in dead))
 sys.exit(1 if dead else 0)
 PY
 then
-  pass "D2: every repo path the skill CORPUS names exists — SKILL.md plus its reference/ sidecars ($(grep -o 'SKILL_REFS=[0-9]*' "${WORK}/d2.txt")), including its own tests/ dir"
+  pass "D2: every \`.claude/…\` path the skill CORPUS names exists — SKILL.md plus its reference/ sidecars, in all three shapes a doc can spell one (backticked, markdown link destination, bare) ($(grep -o 'SKILL_REFS=[0-9]*' "${WORK}/d2.txt")), including its own tests/ dir. 🔴 It does NOT check paths outside .claude/ — `src/…` and `scripts/…` refs are unchecked here"
 else
   fail "D2: the skill corpus names a repo path that does not exist"
   sed 's/^/          /' "${WORK}/d2.txt" | head -8
@@ -5692,7 +5706,7 @@ else:
 # rewards banner, so its crop's top rows were host page chrome; the corrected
 # start is 64 BELOW the iframe top, which is a non-negative offset and therefore
 # expressible in the anchored form. It was never a legitimate absolute case, it
-# was an unfixed instance of the defect #1316 fixed for the other two apps. The
+# was an unfixed instance of the defect infra ticket #1316 fixed for the other two apps. The
 # form itself stays supported: a genuinely full-bleed app on a page with no
 # conditional banner would still want it.
 # 🔴 model-benchmarking moved detect -> appFrame on 2026-08-29, and the cause was

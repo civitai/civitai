@@ -4,7 +4,7 @@
     "They are here rather than synthesised on purpose: a clean synthetic page would not",
     "carry the FOOTER (full-width) or the RIGHT-EDGE furniture (full-height), and those",
     "two are exactly what made the cropper silently no-op twice. The negative controls in",
-    "tests/run-tests-app-capture.sh reproduce both failures out of THESE files by zeroing",
+    ".claude/skills/app-capture/tests/run-tests-app-capture.sh reproduce both failures out of THESE files by zeroing",
     "one exclusion band at a time.",
     "",
     "`box` is the expected content box under `bands`. These are PINNED VALUES, derived",

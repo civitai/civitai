@@ -3,7 +3,7 @@
     "SINGLE SOURCE OF TRUTH for the Civitai app-store asset bounds and the render",
     "canvas. Measured 2026-08-13. frame.py reads this file; nothing else may carry",
     "a copy of these numbers. If a bound moves, it moves HERE and every gate",
-    "follows. tests/run-tests-app-capture.sh gate B6 asserts frame.py actually",
+    "follows. .claude/skills/app-capture/tests/run-tests-app-capture.sh gate B6 asserts frame.py actually",
     "reads the file rather than a hardcoded fallback."
   ],
   "render": {

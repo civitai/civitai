@@ -15,7 +15,7 @@
 #      app source, because these apps ship NO source maps but DO carry testids
 #
 # Like plan.py, it performs no I/O beyond reading its inputs and printing JSON,
-# and every refusal lives HERE where tests/run-tests-app-capture.sh can watch it
+# and every refusal lives HERE where .claude/skills/app-capture/tests/run-tests-app-capture.sh can watch it
 # be decided. capture.sh only executes what this and plan.py print.
 #
 # 🔴 FIVE FACTS MEASURED IN A LIVE APP FRAME ON 2026-08-17, EACH ENCODED BELOW

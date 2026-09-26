@@ -12,7 +12,7 @@ versions and three methods apart. Reading the monorepo source and designing
 against it produces a plan that does not typecheck.
 
 ```bash
-APP=~/workspace/civit/civitai-app-requests
+APP=${APP:?set APP to your clone of the app repo, e.g. ~/src/civitai-app-requests}
 command grep -n '^\s*[a-z]' "$APP/node_modules/@civitai/blocks-react/dist/hooks/useSharedStorage.d.ts"
 ```
 
@@ -627,7 +627,7 @@ Every first-party app has a `dev:harness` script — vite plus the mock host —
 it can be rendered and screenshotted **headlessly**:
 
 ```bash
-APP=~/workspace/civit/gen-matrix-worktree
+APP=${APP:?set APP to your clone/worktree of the gen-matrix app repo}
 (cd "$APP" && nohup nix-shell -p pnpm nodejs_22 --run 'pnpm dev:harness' >/tmp/h.log 2>&1 &)
 nix-shell -p chromium --run "chromium --headless --no-sandbox --disable-gpu \
   --hide-scrollbars --virtual-time-budget=8000 --window-size=1100,1400 \
@@ -683,122 +683,34 @@ clear error.)
 Cloudflare 1010-bans the default Python-urllib UA on civitai.com — pass an
 ordinary client string, as `attach-offsite.py` does.
 
-## 18c. 🔴 THE COHORT GATE: it has MOVED, and the row that used to say "publish is author-only" is now WRONG
+## 18c. 🔴 THE COHORT GATE MOVES — verify it at the server, never from this file
 
-🔴 **RETRACTED FOR `publishGenerationOutputs`, 2026-09-16 — re-read at `civitai`
-`origin/release`.** The table below was measured 2026-09-05 at `d839654ce6` and its
-first row has since gone false: **`publishGenerationOutputs` is no longer gated by
-the app-developer cohort.** There is exactly **one** `await
-assertViewerIsAppDeveloper(...)` call site left in `blocks.router.ts`, and it is the
-block-**settings** persist proc (which additionally requires `claims.ctx.modelId`).
-Every other occurrence of the identifier in that file is a comment or the definition
-— so the discriminator is `command grep -n '^\s*await assertViewerIsAppDeveloper'`,
-never a bare grep for the name.
+🔴 **The detail that used to live here has been REMOVED, deliberately, and it is not
+coming back.** This repository is public and permanently world-readable. A
+per-procedure table of which App Blocks surfaces are and are not behind the
+app-developer cohort gate is an authorization map; written down with the
+consequences spelled out, it is a to-do list. `CLAUDE.md`'s Security section
+forbids both the open-finding list (clause 1) and the auth-posture inventory
+(clause 5), and warns in as many words that documenting why a guard exists and
+what it stops leaves you one sentence from naming the bypass. That is what the
+removed passage did.
 
-`publishGenerationOutputs`'s actual gates, read in order at that ref: the
-`ai:write:budgeted` scope, an authenticated viewer, `assertAppBlocksEnabledForTokenUser`,
-an image-weighted publish rate bucket, a durable (user, app, workflow) ownership
-proof, and the orchestrator's own app-tag. The change is recorded in the platform's
-own words in the sibling `getMyBuzz` docblock: *"Removing that gate (so the
-non-author cohort can use apps at all) would have left this proc readable by ANY
-valid block token"* — i.e. the cohort gate was deliberately withdrawn from the
-runtime procs and replaced by **scope grants**.
+**The analysis still exists — ask an infra owner.** It lives in the private infra
+repo, and the point of this note is that you should read it there rather than
+re-derive it here.
 
-🔴 **AND IT IS NOT ONE ROW — IT IS EVERY "YES" IN THE OLD TABLE.** The first draft of
-this correction said *"the rest of this section stands"*, which was itself false and
-was caught only by counting the call sites instead of asserting it. The cohort gate
-has been withdrawn from the **runtime** procs wholesale and replaced by scope grants:
+🔴 **What IS safe to say, and it is the part that generalises: a gate's LOCATION is
+as perishable as its existence, and "which procedures does it cover" decays faster
+than "does it exist".** An earlier revision of this file told you to check the
+server rather than the SDK, which was right — and the gate then moved between
+server files anyway, leaving this doc confidently wrong about where it lived.
 
-- `blocks.router.ts` — **one** call site, in `updateUserSettings` (block settings,
-  which also needs `claims.ctx.modelId`). So `pollWorkflow` / `listMyWorkflows` /
-  `cancelWorkflow` are **not** cohort-gated either.
-- `apps.router.ts` — **one** call site, and it sits **inside the
-  `claims.reviewRunForReal === true` branch** of the storage-context resolver: it
-  gates a MODERATOR running an *unapproved* app for real during review, nothing
-  else. The ordinary per-user KV ops (`get`/`set`/`delete`/`list`) gate on the
-  DECLARED SCOPES `apps:storage:read` / `apps:storage:write`. (Cross-check that
-  costs nothing: `custom-generators` has shipped per-user KV drafts to its ordinary
-  audience for months — had the KV been author-only, drafts would have been broken
-  for everyone but the author.)
-- Shared storage is unchanged and still deliberately open — see the row below.
-
-🔴 **Why this matters enough to write down: the stale row kills a whole class of
-design.** "Publish is author-only" means an app's audience cannot keep what they
-generate, which removes the only durable end-state a first-party block can own
-without `posts:write:self`. `custom-generators`' 0.7.0 taste pass was scoped on the
-corrected reading and ships its terminal on `ai:write:budgeted` alone — a
-submission that needs no new scope grant. Had the row been taken on trust, the pass
-would have concluded the app could not clear its bar.
-
-⚠️ **What DOES still stand**: the shared-storage row, the reasoning trap below, and
-the impersonation asymmetry. But re-read that last one with the correction in hand —
-publish being author-only was one half of the asymmetry it describes, so the
-asymmetry is now *narrower* than it was written (the remaining half, that `getImages`
-resolves images **the app** published rather than images **this viewer** published,
-is untouched and is the part that actually produces the impersonation surface).
-
-🔴 **General lesson, and it is the reusable part: a gate's LOCATION is as perishable
-as its existence, and "which procs does it cover" decays faster than "does it
-exist".** This file already told you to check the server rather than the SDK, and
-that was right — the server then moved anyway. **Count the call sites; do not grep
-the name.** Every other occurrence in these files is a comment or the definition, so
-a bare `grep assertViewerIsAppDeveloper` returns 7 hits in `blocks.router.ts` and
-reads as "heavily gated" when the answer is one:
-
-```bash
-CIVITAI=~/workspace/civit/civitai
-git -C "$CIVITAI" show origin/release:src/server/routers/blocks.router.ts \
-  | command grep -nE '^\s*await assertViewerIsAppDeveloper'
-```
-
-| surface | gated by the app-developer cohort? | authority (read at `origin/release`, 2026-09-16) |
-|---|---|---|
-| `blocks.publishGenerationOutputs` | ⚠️ **NO** — was YES at `d839654ce6` | no `assertViewerIsAppDeveloper` call on this proc; gates are `ai:write:budgeted` + auth + kill-switch + rate bucket + (user, app, workflow) ownership + orchestrator app-tag |
-| `blocks.pollWorkflow` / `listMyWorkflows` / `cancelWorkflow` | ⚠️ **NO** — was YES | same file; the sole call site is `updateUserSettings` |
-| `blocks.updateUserSettings` (block settings) | ✅ **YES** — the only one left | `<civitai>/src/server/routers/blocks.router.ts`, sole call site; also requires `claims.ctx.modelId` |
-| per-user KV (`apps.router` `get`/`set`/`delete`/`list`) | ⚠️ **NO** — gated on DECLARED SCOPES | `<civitai>/src/server/routers/apps.router.ts`; its one cohort call is inside the `reviewRunForReal` branch only |
-| **shared storage `append` / vote / report** | ✅ **NO, ON PURPOSE** | `<civitai>/src/server/routers/apps-shared.router.ts` |
-
-`resolveSharedContext`'s own comment states the design: it *"does NOT reuse
-resolveStorageContext / `assertViewerIsAppDeveloper` (that gates to app-authors only;
-**copying it would FORBID all general users**)"*. Its per-op asserts are a valid block
-token → approved AppBlock, the shared read/write scope, a fail-closed Flipt kill-switch,
-and for writes an authenticated subject plus a **min-trust gate**. Anon may READ; anon
-never writes or votes.
-
-### 🔴 The reasoning trap, and it cost a full audit round
-
-`usePublishGenerationOutputs`'s doc-comment enumerates publish's rejection causes as
-*"anon viewer / missing scope / not-owned workflow / rate-limit / upload or scan
-failure"* — and **omits the cohort gate entirely**. `assertViewerIsAppDeveloper` appears
-in the vendored SDK `.d.ts` exactly once, on a DIFFERENT call (inline `customComfy`
-submission).
-
-So a careful adversarial auditor searched the SDK, found the identifier only on the
-unrelated call, and filed a 🔴 saying the app's on-screen warning — *"if your account
-isn't one of those, the request is declined and nothing is published"* — asserted a gate
-that did not exist. **The warning was TRUE.** Acting on that finding would have deleted a
-true warning about an irreversible act, which is a worse outcome than the bug it claimed
-to fix.
-
-🔴 **An absence in the CLIENT's type declarations is evidence about the SDK's
-DOCUMENTATION, never about the server.** A `.d.ts` lists the rejections its author chose
-to document. For any question of the form *"is this call gated?"* the authority is the
-tRPC procedure in `civitai/civitai`, and nothing else settles it. Same family as the
-general rule that an empty result cannot distinguish two mechanisms: "the identifier is
-not in the SDK" is equally consistent with "there is no gate" and "the gate is not
-documented", and only the server tells you which.
-
-### The consequence for any app-block board or gallery
-
-Publish being author-only while `append` is open to every trusted viewer is an
-**asymmetry, not a matched pair**, and it produces an impersonation surface that is easy
-to miss: `getImages` resolves images **the app** published — not "images this viewer
-published" — so a non-author can read a genuine entry's image ids out of a gallery,
-`append` their own row carrying those same ids, and have **real images** render under
-whatever provenance the app's UI asserts. Any "posted by the app author" claim must
-therefore be gated on the host-stamped `authorUserId` that `list` returns, never inferred
-from the fact that publishing is restricted.
+**So, whenever you need to know whether a surface is gated: go and read it, at a
+named ref, and COUNT THE CALL SITES — do not grep the identifier.** A bare grep
+for a gate's name matches its definition, its import and every comment discussing
+it, so a healthy-looking hit count can be consistent with barely any real coverage.
+Anchor on the call, e.g. `grep -nE '^\s*await <gateFn>\('`, and report the ref you
+read it at, because the answer has a shelf life measured in weeks.
 
 ## 19. 🔴 The capture VIEWPORT is not stable, and `emulate` cannot be trusted to fix it
 

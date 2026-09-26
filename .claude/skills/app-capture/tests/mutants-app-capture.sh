@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # mutants-app-capture.sh — MUTATION BATTERY for .claude/skills/app-capture,
-# driven through tests/run-tests-app-capture.sh.
+# driven through .claude/skills/app-capture/tests/run-tests-app-capture.sh.
 #
 # WHY THIS EXISTS SEPARATELY FROM THE SUITE. The suite proves the runner does
 # what it says on the cases it names. This proves the SUITE would NOTICE if the

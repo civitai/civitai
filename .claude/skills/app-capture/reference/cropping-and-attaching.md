@@ -101,7 +101,7 @@ sensei sits on the same `apps/run/<slug>` shell as everything else, it is
 *required*: an absolute rect there is wrong in one banner layout by construction.
 
 **sensei was never a legitimate absolute-form case. It was an unfixed instance of
-the defect #1316 fixed for the other two apps**, preserved by a note that
+the defect infra ticket #1316 fixed for the other two apps**, preserved by a note that
 rationalised the number instead of measuring it.
 
 ⚠ **Stated, not hidden: this costs coverage — and the two halves are NOT the same

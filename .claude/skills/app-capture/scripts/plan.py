@@ -10,7 +10,7 @@
 # what this prints.
 #
 # 🔴 THE SEVEN BRIDGE FACTS THIS FILE ENCODES AS GUARDS RATHER THAN AS PROSE.
-# Every one was hit on 2026-08-13; each is a test in tests/run-tests-app-capture.sh.
+# Every one was hit on 2026-08-13; each is a test in .claude/skills/app-capture/tests/run-tests-app-capture.sh.
 #
 #  1. APP BLOCKS RENDER IN A CROSS-ORIGIN IFRAME (`<slug>.civit.ai` inside
 #     `civitai.com/apps/run/<slug>`). A top-frame selector finds nothing and
@@ -57,7 +57,7 @@
 #     🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #       hidden boot 4/4  -> claudedocs/app-capture-hidden-tab-boot-2026-08-24.md
 #       screenshot hang  -> claudedocs/app-capture-occlusion-refutation-2026-08-24.md
-#     (paths are repo-relative)
+#     (the claudedocs/... records below live in the PRIVATE infra repo, not here)
 #     🔴 ACTIVATION IS NOT ACTUATION, and the two are now enforced SEPARATELY:
 #     activation only puts a window in front; what makes a spend possible is an
 #     OS-level ACTUATION (`xdotool key`) landing on a focused control. So

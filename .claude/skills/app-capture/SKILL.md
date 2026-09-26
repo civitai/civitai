@@ -213,9 +213,9 @@ RETRACTED — measured 2026-08-30, do not re-derive it.** There is no `isTrusted
 `userActivation` return **zero** matches across `<civitai>/src/components/AppBlocks`,
 `blocks.router.ts` and `src/server/services/blocks` (positive control: `isTrusted` DOES match
 elsewhere in `src`, so the zero is a measurement, not a broken search), and
-`blocks.submitWorkflow` is a **`publicProcedure`** taking the block JWT as an *input*, not a
-cookie — a curl from outside any browser submits fine. What actually gates spend is **token
-scopes, `buzzBudget`, the author capability and the Buzz caps**. The likely source of the
+the spend path does not authenticate on browser-issued state at all. What actually gates
+spend is the ordinary token/scope/budget machinery, which is **not** a user-activation
+check. The likely source of the
 false belief: `openBuzzPurchaseGate.ts` and `requestConsentGate.ts` gate on handshake
 **readiness**, and the SDK bans the `allow-top-navigation-by-user-activation` sandbox token —
 all *about* user activation, none an `isTrusted` check, none on the spend path. The sensei
@@ -225,9 +225,9 @@ session on trusted-click theories"*), where the real blocker was a throttled bac
 
 🔴 **So the CAUSE of the dead in-frame click is NOT established** — only that it is not an
 untrusted-event rejection. **Keep using `trustedKey`**: the operational rule is unchanged and
-rests on the reproducible observation, not on the retracted mechanism. And the security
-corollary now that the mechanism is known: **a non-browser client with a valid scoped token
-can drive this path**, so "it came from a browser" is not a boundary here.
+rests on the reproducible observation, not on the retracted mechanism. Do not reason about
+this path's authorization from this file — it is public, so the posture is deliberately not
+written down here; read the server, or ask an infra owner.
 
 🔴 **TWO REFUSERS, NOT ONE** — "capture.sh emits no bridge op of its own" is retracted. It
 emits lifecycle/observe ops plus **one** DOM op (the top-frame rect probe), refused by

@@ -82,7 +82,41 @@ def prompt(title, tagline, hue, scene):
     )
 
 
-only = sys.argv[1:] or list(APPS)
+# 🔴 A BARE INVOCATION USED TO FAN OUT OVER EVERY APP AND SPEND REAL MONEY.
+# `sys.argv[1:] or list(APPS)` meant `python3 gen-banners.py` with no arguments
+# generated for all of APPS at ~208 Buzz per app (SKILL.md's own measured figure,
+# --quantity 2) with `--yes` already on the command line: no confirmation, no
+# dry-run, no way to find out except from the bill. It was inert only because
+# CLI below points at a binary that is not shipped in this repo -- a missing
+# file standing in for a guard.
+#
+# Now: naming slugs is required, --all is explicit, and --dry-run prints the
+# plan and the estimated cost without spending anything.
+args = [a for a in sys.argv[1:] if not a.startswith("-")]
+flags = {a for a in sys.argv[1:] if a.startswith("-")}
+DRY = "--dry-run" in flags
+if args:
+    unknown = [a for a in args if a not in APPS]
+    if unknown:
+        sys.exit("unknown slug(s): %s\nknown: %s" % (", ".join(unknown), ", ".join(APPS)))
+    only = args
+elif "--all" in flags:
+    only = list(APPS)
+else:
+    sys.exit(
+        "refusing to spend Buzz without being told what to generate.\n"
+        "  one or more slugs : %s\n"
+        "  every app         : --all  (%d apps, ~%d Buzz)\n"
+        "  cost only, no spend: --dry-run --all\n"
+        % (", ".join(APPS), len(APPS), 208 * len(APPS))
+    )
+
+if DRY:
+    print("DRY RUN - nothing is generated and no Buzz moves.")
+    for slug in only:
+        print("  would generate %-22s ~208 Buzz" % slug)
+    print("  estimated total: ~%d Buzz across %d app(s)" % (208 * len(only), len(only)))
+    raise SystemExit(0)
 
 for slug in only:
     title, tagline, hue, scene = APPS[slug]

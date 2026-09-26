@@ -5,7 +5,7 @@
 # Pure given a file: it reads pixels, it does arithmetic, it prints JSON. It
 # performs NO navigation, NO network, NO browser, and (unless you pass --exec to
 # `render`) it spawns nothing. That is the only reason any of this is testable
-# offline — see tests/run-tests-app-capture.sh.
+# offline — see .claude/skills/app-capture/tests/run-tests-app-capture.sh.
 #
 # Subcommands
 #   measure <png>          content bounding box of one capture       -> JSON
@@ -91,7 +91,7 @@ DEF_TOLERANCE = 8
 #     footer band dropped       -> 100.0% wide x  98.2% tall   (AND still fires)
 #     all bands dropped         -> 100.0% wide x  99.4% tall   (AND still fires)
 # So an AND rule looks fine on two of the three broken shapes and silently ships
-# the third. tests/mutants-app-capture.sh M21 is the lock on that.
+# the third. .claude/skills/app-capture/tests/mutants-app-capture.sh M21 is the lock on that.
 FULL_FRAME_FRAC = 0.97
 # ...and a box this small means it found nothing but antialiasing.
 MIN_FILL_FRAC = 0.02
@@ -234,7 +234,7 @@ VIEWPORT_RECORD_SLACK = 2
 # MODULE IS DEPENDENCY-FREE ON PURPOSE (see png_decode). This is injected JS: our
 # own code, in the MAIN world of a live, logged-in, mod-gated page, and it
 # interpolates a value that comes from a RECIPE. It may MEASURE and must not
-# ACTUATE. tests/run-tests-app-capture.sh F12 asserts this tuple still COVERS
+# ACTUATE. .claude/skills/app-capture/tests/run-tests-app-capture.sh F12 asserts this tuple still COVERS
 # evidence.PROBE_FORBIDDEN, so a token added there cannot quietly go unbanned
 # here — a two-file ledger rather than a copy that drifts.
 RECT_JS_FORBIDDEN = (".click(", ".submit(", "requestSubmit", "window.open",

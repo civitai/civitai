@@ -2,7 +2,7 @@
 # ============================================================================
 # capture.sh — the IMPURE half. It executes what plan.py emits, and decides
 # nothing. Every refusal, every guard and every constant lives in plan.py or
-# frame.py, where tests/run-tests-app-capture.sh can watch them work.
+# frame.py, where .claude/skills/app-capture/tests/run-tests-app-capture.sh can watch them work.
 #
 #   capture.sh <recipe.json> [--instance work] [--out DIR] [--state NAME]
 #              [--trusted] [--keep-tab] [--evidence] [--no-frame] [--no-render]
@@ -33,7 +33,7 @@
 # 🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #   hidden boot 4/4  -> claudedocs/app-capture-hidden-tab-boot-2026-08-24.md
 #   screenshot hang  -> claudedocs/app-capture-occlusion-refutation-2026-08-24.md
-# (paths are repo-relative)
+# (the claudedocs/... records below live in the PRIVATE infra repo, not here)
 #   --keep-tab        leave the tab open when the run ends, so the app can be
 #                     inspected by hand afterwards. Implied by --tab.
 #   --no-render       measure and check the crops but skip the imagemagick
@@ -144,7 +144,7 @@ SLUG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["slug"])'
 # carries a CONDITIONAL rewards banner above the iframe, so a fixed `chromeTop`
 # is not merely imprecise, it is unsatisfiable: the banner-absent and
 # banner-present layouts need values whose valid ranges do not overlap (measured
-# — tests/run-tests-app-capture.sh F11 sweeps both and finds an EMPTY
+# — .claude/skills/app-capture/tests/run-tests-app-capture.sh F11 sweeps both and finds an EMPTY
 # intersection). frame.py owns the JS and the arithmetic; this script only runs
 # the probe and hands the answer over.
 USE_APPFRAME="$(python3 -c 'import json,sys;print("1" if (json.load(open(sys.argv[1])).get("crop") or {}).get("fromAppFrame") else "")' "$RECIPE")"
@@ -156,7 +156,7 @@ echo "    out    : $OUT"
 echo "    trusted: $([ "$TRUSTED" = 1 ] && echo 'YES — THIS WILL SPEND AND TAKE THE SCREEN' || echo 'no (spend path unreachable)')"
 echo "    screen : $([ "$FOREGROUND" = 1 ] && echo 'the capture tab is made its window ACTIVE tab; the i3 WINDOW raise is a separate half — read the i3= line each step reports' || echo '--no-foreground: the tab stays in the BACKGROUND, so captures take the CDP path')"
 
-# --- orient. Both hosts are hostname `nixos`; confirm which bridge this is. ---
+# --- orient. Both hosts may share a hostname; confirm which bridge this is. ---
 "$BB" whoami >"$OUT/whoami.json" 2>&1 || { echo "bridge whoami failed:"; cat "$OUT/whoami.json"; exit 3; }
 
 if [ "$ATTACHED" = 1 ]; then
