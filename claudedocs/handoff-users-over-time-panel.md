@@ -39,24 +39,132 @@ the history is long (months), not window-limited.
     — same per-load heavy pattern, and Loki-side (72h retention).
   - `civitai-cohort-health.json` has 3 tier-count user panels — NOT yet inspected in
     detail (listed as next step 2).
-- What's IN FLIGHT: nothing.
-- Deploy/verify status: N/A — no code or dashboards changed.
+- 2026-09-25 (second session): 5 questions closed, design + job written and verified,
+  **PR #5159 open** (`zach/users-over-time-snapshot`), **DDL APPLIED**, 7-day
+  validation slice backfilled and reconciled.
+- What's IN FLIGHT: nothing running.
+- Deploy/verify status:
+  - ✅ **DDL applied to production ClickHouse** — `default.user_population_hourly`
+    (TTL 90d) and `default.user_population_daily` both exist, seven state columns
+    each, verified against `system.columns` and `create_table_query`.
+  - ✅ **7-day slice backfilled and reconciled** — signups and buyers EXACT, viewers
+    +0.05%, generators −0.21%. Idempotency confirmed on real data.
+  - ❌ **FULL-HISTORY backfill has NOT run.** The daily table holds 8 days, not years.
+    So a "users over time" panel shipped today would show 8 days and read as a
+    catastrophic collapse before that. This is the next gate.
+  - ❌ Job is NOT deployed (it ships with PR #5159) and NO dashboard has changed.
+  - ⏳ PR #5159 has had no audit round yet (`/audit-pr 5159`).
+
+## Decisions taken (2026-09-25) — all five questions are CLOSED
+Four were answered by the user; the fifth was settled from the repo and needed no ask.
+1. **Scope** — all four populations: active, generators, buyers, new signups.
+2. **Job home** — civitai app job (`src/server/jobs/`), registered in the run-jobs
+   webhook. Mirrors `user-activity-rollup.ts`, the closest live precedent.
+3. **Retention** — hourly for 90d, daily forever. Two tables, not one.
+4. **Alerting** — panel-only for now. No Prometheus gauges in the first PR.
+5. **Extend vs new table — NEW.** ⚠️ **The original wording here was "settled by
+   evidence, not preference", and the METHOD behind it was wrong — corrected after
+   round 0 of the audit caught it.** It enumerated TWO candidates out of the ~30+
+   aggregate tables and ~31 MVs in `containers/clickhouse/docker-init/init.sh`, then
+   generalised to a negative claim ("NEITHER has the right shape"). That is sampling
+   presented as enumeration — the exact shape CLAUDE.md's gotcha #13 warns about, and
+   the fuller sweep did turn up near-neighbours the pair had missed:
+   `default.daily_user_counts`, `default.daily_generation_user_counts`,
+   `cohorts_monthly_activity`, `uniqueViewsDaily`.
+   **The conclusion survives, but on different and now-measured grounds** (2026-09-25):
+   - `default.user_activity_rollup` is `ORDER BY userId` — a CURRENT-STATE table
+     (last-seen per user). It has no time bucket and cannot express history at all.
+     Adding one would change its semantics and break Creator Studio's audience panels.
+   - `default.daily_downloads_unique` is per `(modelId, modelVersionId, createdDate)`
+     — right shape, wrong subject.
+   - `default.daily_user_counts` — the one the original pair MISSED, and the closest
+     thing to a real counter-example. It is populated: 1,154 rows, 2023-08-08 → today,
+     incrementally maintained, zero cron, covering the logged-in-viewer population, and
+     agreeing with our `views_state` to within 0.01–1.05% on complete days. **It is
+     still not extendable, for a measured reason rather than an assumed one:** its
+     column is `AggregateFunction(uniqIf, Int32, UInt8)`, and `uniqCombinedMerge` over
+     it ERRORS — so it cannot be unioned with the other three activity sources, which
+     is the entire purpose of storing them as compatible states.
+   - `default.daily_generation_user_counts` — reads `orchestration.textToImageJobs`
+     (one job type, not the panel's population) and carries none of panel 21's guards.
+     Its own date range is 1970-01-01 → 2036-02-07, i.e. it has the sentinel-date
+     problem our `<= now()` bound exists to prevent.
+   So: new tables, with the above as TEMPLATES rather than hosts.
+   🔴 **Open, not settled: a REFRESHABLE materialized view was never considered.**
+   Seven are live in this deployment. The "why not an MV" argument this design
+   inherited is about INCREMENTAL MVs and does not transfer. See the migration's own
+   section on it — it is recorded as open, deliberately, rather than back-filled with
+   a justification.
+
+**The design is written and lives in the repo**, in this codebase's own idiom (a
+migration file carrying the reasoning, like `2026-09-04-user-activity-rollup.sql`):
+`src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql`
+on branch `zach/users-over-time-snapshot`. Tables `default.user_population_hourly`
+(TTL 90d) + `default.user_population_daily` (no TTL), seven HLL state columns each,
+`SharedAggregatingMergeTree`. Read that file before implementing — it carries the
+three preflights, the backfill arms and the reconciliation queries.
+🔴 It supersedes the placeholder name `metrics.users_hourly` used below: repo
+convention is the `default.` database (both precedents live there).
+
+**HLL states: YES, decided up front.** Two reasons, the second the operational one:
+- A stored COUNT cannot be summed into a window (a user active in nine hours counts
+  nine times), so rolling DAU/WAU/MAU needs the sketch. Retrofitting means
+  re-deriving every historical bucket from raw tables — the scan being eliminated.
+- Idempotency. `2026-09-04-user-activity-rollup.sql` warns in its own words that the
+  `SharedSummingMergeTree` targets "silently double when their refresh is re-run" and
+  says not to add "a `count`-shaped column". A uniq-state merges with itself as the
+  identity, exactly like the `max`/`argMax` that file relies on — so re-runs,
+  catch-ups and overlapping backfills cannot double.
+- 🔴 Accepted cost: `uniqCombined` is ~0.8% approximate where the panels use
+  `uniqExact`. The FILTER GUARDS stay byte-identical; only the aggregator changes.
+  Re-pointed panels will differ by <1% and that is the price of rolling windows, not
+  a defect. `signups_state` uses `uniqExact` (low cardinality, exact figures).
+
+**Seven columns, not one** — sketches union but do not SUBTRACT, so the column split
+is the other thing that cannot be retrofitted. The four activity sources are stored
+separately because panel 21's "Logged-in viewers" is `default.views` ALONE while
+DAU is the union of all four (the 2026-09-04 migration measured the three non-pageViews
+sources adding +7.5% users over 30d).
 
 ## Next steps (ranked)
-1. Get the user's answers to the 5 clarifying questions already asked (scope of
-   "users": DAU/WAU/MAU vs new signups vs buyers vs generators; job home — civitai
-   worker/scheduler vs standalone cron; retention horizon; alerting wanted or
-   panel-only; whether cohort-health/business-history already share a rollup to
-   extend instead of a new table). forcing: user
-2. Inspect `civitai-cohort-health.json` + `civitai-business-history-dashboard.json`
-   (same dir) for raw-table scans or an existing rollup table to extend — determines
-   new-table vs extend. forcing: user
-   (blocked behind 1's scope answer only for schema; the inspection itself is free)
-3. Design the snapshot table: one row per hour; DECIDE UP FRONT whether to store
-   `uniqCombinedState(userId)` HLL states per hour (enables any rolling 7d/30d/90d
-   DAU later without re-scanning raw tables — hard to retrofit). Backfill: re-run
-   safe per hour (ReplacingMergeTree or dedupe by hour bucket). forcing: none
-4. Implement the hourly job in civitai following existing patterns:
+1. ~~Get the 5 clarifying questions answered~~ — DONE, see Decisions above.
+2. ~~Inspect cohort-health + business-history for an existing rollup to extend~~ — DONE.
+   Findings in State now / Decisions. forcing: none
+3. ~~Design the snapshot table, HLL decided up front~~ — DONE, the migration file is
+   written on branch `zach/users-over-time-snapshot`. **Remaining: run the three
+   PREFLIGHTS at the top of that file before applying any DDL.** The load-bearing one
+   is #1 — whether `orchestration.jobs` is `ORDER BY createdAt` first. The per-run
+   cost model assumes every arm is a primary-key range scan; that was verified for the
+   four `default.*` activity sources on 2026-09-04 but `orchestration.jobs` is in
+   another database and was NOT part of that check, and this repo does not carry its
+   DDL. If it sorts otherwise, the generators arm is a full scan every hour and needs
+   rethinking. forcing: none
+4. ~~Implement the hourly job~~ — DONE and verified, on the same branch:
+   - `src/server/jobs/user-population-snapshot.sql.ts` — pure SQL builders, no imports
+     (same split as `src/server/metrics/appListing.metrics.sql.ts`, so the tests need no
+     ClickHouse mock).
+   - `src/server/jobs/user-population-snapshot.ts` — the job, `15 * * * *`,
+     `LOOKBACK_HOURS = 3`, seven arms serially then the daily roll.
+   - Registered in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
+   - `src/server/jobs/__tests__/user-population-snapshot.sql.test.ts` — 28 tests.
+   **Verified, with the instrument checked first in each case:**
+   - Every arm's SELECT run against LIVE ClickHouse (read-only, `INSERT INTO` stripped).
+     All seven parse and return the designed 4 buckets from a 3h window. Per-run cost
+     ≈3.4s total — 0.2s per arm except signups at 2.2s (the Postgres bridge).
+     Negative control: an arm with a nonexistent column returned `Code: 47`, so the
+     green is about the SQL and not a probe wired to nothing.
+   - Idempotency confirmed empirically, not assumed: merging a state with itself
+     returns 100, not 200. MergeState round-trip returns 100 for both combinators.
+   - Typecheck: 52 errors on the branch, **52 on an `origin/main` baseline worktree,
+     identical error sets** — zero introduced. (Those 52 are pre-existing.)
+   - Mutation sweep: 7 mutants, each killed by its SPECIFIC intended test, suite green
+     again on restore. Covers the cost bound, the future bound, the signups combinator,
+     a dropped ledger column, the buyers id column, MergeState→Merge, and the hour cast.
+   **Still NOT done for step 4:** the DDL is not applied and the backfill has not run,
+   so the tables do not exist and the job would fail if it ran. Apply the migration
+   manually first — that is deliberate, per repo policy.
+
+   Original notes for reference:
    `src/server/jobs/user-activity-rollup.ts` (closest precedent — CH rollup cron,
    idempotent-overlap design) and `src/server/jobs/update-metrics.ts` /
    `base.metrics.ts`. Register in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
@@ -77,6 +185,35 @@ the history is long (months), not window-limited.
 - (none yet — no audit ran; recon-only session)
 
 ## Gotchas / decisions / dead-ends
+- 🔴 **`civitai-business-history-dashboard.json` is NOT history, despite the name.** All 12
+  panels are `prometheus` targets (`civitai_business_*`), produced by the WEEKLY CronJob
+  `clusters/production/apps/civitai-business-digest/` (talos-infra) pushing gauges to
+  Pushgateway. CLAUDE.md records Pushgateway as last-value-wins and dp-1 Prometheus
+  retention as ~14 days — so a weekly producer leaves roughly TWO points per series
+  inside retention. Do not treat this dashboard as an existing long-history store, and
+  do not "extend" it; it is the exact problem the ClickHouse snapshot replaces. (It is
+  also a standing argument for later re-pointing those panels at
+  `default.user_population_daily`, which is out of scope here.)
+- The existing `civitai-business-digest` CronJob is still the best REFERENCE for the
+  cluster-side option (python stdlib → ClickHouse HTTP, creds already in a SOPS secret,
+  `concurrencyPolicy: Forbid`), and `spend-exporter/snapshot.py` + `snapshot-cronjob.yaml`
+  is the precedent for a cluster CronJob writing durable ClickHouse rollups — both were
+  weighed and NOT chosen (decision 2). Revisit only if the app-job route hits a blocker.
+- Exact guards to keep byte-identical (read off the live dashboard 2026-09-25):
+  - viewers — `default.views`, `userId > 0`, time col `time`
+  - generators — `orchestration.jobs`, `userId > 0`,
+    `match(jobType, '^[A-Za-z0-9_-]{2,40}$')`, `cost BETWEEN 0 AND 1000000`,
+    time col `createdAt`
+  - buyers — `default.buzzTransactions`, `type='purchase'`, `fromAccountId=0`,
+    `description LIKE 'Purchase of %'`, counts **`toAccountId`**, time col `date`
+    (a `DateTime`, so hourly bucketing is possible — confirmed in
+    `containers/clickhouse/docker-init/init.sh`)
+  - signups — `civitai_pg.User`, cols `id` / `createdAt` (reachable from ClickHouse;
+    this is the only arm that leaves ClickHouse and touches production Postgres)
+- 🔴 `uniqCombinedMerge(a) + uniqCombinedMerge(b)` DOUBLE-COUNTS users active in both
+  sources and returns a plausible larger number rather than an error. To union across
+  COLUMNS use `UNION ALL` of the state columns, then one merge. Worked query is in the
+  migration's "Reading these tables" section.
 - 🔴 Loki RUM is the WRONG store for users-over-time: `{source="faro-rum"}` has 72h
   retention (no `retention_stream` override), 10h unqualified-logfmt windows TIME OUT
   (measured, `datapacket-talos/faro.md` 2026-09-22), and `count(count by (session_id))`
