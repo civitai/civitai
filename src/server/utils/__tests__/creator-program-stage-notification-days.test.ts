@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { CreatorProgramStageNotification } from '~/server/utils/creator-program.utils';
 import {
   getPhases,
@@ -12,18 +12,38 @@ const STAGES: CreatorProgramStageNotification[] = [
   'extraction-phase-ending',
 ];
 
-// Every UTC day of the month, at the 00:00 the daily job fires plus a few seconds of scheduler lag.
+// Every UTC day of the month, at the 00:05 the daily job fires plus a few seconds of scheduler lag.
 function firingDays(stage: CreatorProgramStageNotification, year: number, monthIndex: number) {
   const days: string[] = [];
   const length = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
   for (let d = 1; d <= length; d++) {
-    const now = new Date(Date.UTC(year, monthIndex, d, 0, 0, 6));
+    const now = new Date(Date.UTC(year, monthIndex, d, 0, 5, 6));
     if (isStageNotificationDay(stage, now)) days.push(now.toISOString().slice(0, 10));
   }
   return days;
 }
 
-describe('creator program stage notification days', () => {
+// CI runs in UTC, where a slip to local time is invisible. West of UTC it moves a send a day
+// early at 00:00Z; east of UTC it moves one a day late at 23:59Z.
+describe.each([
+  { tz: 'America/Los_Angeles', localDayOfUtcMidnight: 26 },
+  { tz: 'Asia/Tokyo', localDayOfUtcMidnight: 27 },
+])('creator program stage notification days (local TZ $tz)', ({ tz, localDayOfUtcMidnight }) => {
+  const originalTZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = tz;
+  });
+  afterAll(() => {
+    process.env.TZ = originalTZ;
+  });
+
+  it('runs with the local timezone set', () => {
+    expect([
+      new Date(Date.UTC(2026, 8, 27, 0, 0)).getDate(),
+      new Date(Date.UTC(2026, 8, 27, 23, 59)).getDate(),
+    ]).toEqual([localDayOfUtcMidnight, tz === 'Asia/Tokyo' ? 28 : 27]);
+  });
+
   it.each([
     // 30-day month: the Sep 2026 case, where banking-ending went out on the 26th.
     {

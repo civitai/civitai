@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as NotificationService from '~/server/services/notification.service';
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +17,7 @@ import {
   extractionPhaseStartedNotification,
 } from '~/server/jobs/creators-program-jobs';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NotificationCategory } from '~/server/common/enums';
 
 const STAGE_JOBS = [
   bankingPhaseEndingNotification,
@@ -24,28 +25,53 @@ const STAGE_JOBS = [
   extractionPhaseEndingNotification,
 ];
 
-// Runs every stage job at 00:00:06Z (scheduler lag) on each UTC day of the month, and records
-// the day of month each notification type was created on, with its dedupe key.
+// Active members (the only ones banking-ending goes to) are user 1; everyone is users 1 and 2.
+// The membership filter is an interpolated Prisma.sql fragment, so its text is in the values.
+function queryRawFake(strings: TemplateStringsArray, ...values: unknown[]) {
+  const sql = [...strings, ...values.map((v) => (v as { strings?: string[] })?.strings ?? [])]
+    .flat()
+    .join('?');
+  return Promise.resolve(
+    sql.includes('CustomerSubscription') ? [{ userId: 1 }] : [{ userId: 1 }, { userId: 2 }]
+  );
+}
+
+// Runs every stage job at 00:05:06Z (its cron plus scheduler lag) on each UTC day of the month,
+// and records what each notification type sent and on which UTC day of the month.
 async function runMonth(year: number, monthIndex: number) {
-  const fired: Record<string, string[]> = {};
-  mocks.createNotification.mockImplementation(async (input: unknown) => {
-    const { type, key } = input as { type: string; key: string };
-    (fired[type] ??= []).push(`${new Date().getUTCDate()} ${key}`);
+  const fired: Record<string, unknown[]> = {};
+  mocks.createNotification.mockImplementation(async (input: Record<string, unknown>) => {
+    const { type, ...rest } = input;
+    (fired[type as string] ??= []).push({ day: new Date().getUTCDate(), ...rest });
   });
 
   const length = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
   for (let d = 1; d <= length; d++) {
-    vi.setSystemTime(new Date(Date.UTC(year, monthIndex, d, 0, 0, 6)));
+    vi.setSystemTime(new Date(Date.UTC(year, monthIndex, d, 0, 5, 6)));
     for (const job of STAGE_JOBS) await job.run({}).result;
   }
   return fired;
 }
 
+const sent = (day: number, key: string, userIds: number[]) => [
+  { day, key, userIds, category: NotificationCategory.Creator, details: {} },
+];
+
+// West of UTC, 00:05Z is still the previous local day, so a local-time slip moves every send
+// a day early here. CI runs in UTC, where local and UTC agree and such a slip would pass.
+const originalTZ = process.env.TZ;
+beforeAll(() => {
+  process.env.TZ = 'America/Los_Angeles';
+});
+afterAll(() => {
+  process.env.TZ = originalTZ;
+});
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   mocks.createNotification.mockReset();
-  dbMock.dbWrite.$queryRaw.mockClear();
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
+  dbMock.dbWrite.$queryRaw.mockReset();
+  dbMock.dbWrite.$queryRaw.mockImplementation(queryRawFake as never);
 });
 
 afterEach(() => {
@@ -53,49 +79,51 @@ afterEach(() => {
 });
 
 describe('creator program stage notification jobs', () => {
+  it('runs with a local timezone west of UTC', () => {
+    expect(new Date(Date.UTC(2026, 8, 27, 0, 5)).getDate()).toBe(26);
+  });
+
   it.each([
     // Sep 2026 is the month banking-ending went out on the 26th.
     { label: '30-day', year: 2026, month: 8, ym: '2026-09', bank: 27, start: 28, end: 30 },
     { label: '31-day', year: 2026, month: 9, ym: '2026-10', bank: 28, start: 29, end: 31 },
     { label: 'February', year: 2027, month: 1, ym: '2027-02', bank: 25, start: 26, end: 28 },
   ])(
-    '$label month: each stage notifies once, on the getPhases day',
+    '$label month: each stage notifies its audience once, on the getPhases day',
     async ({ year, month, ym, bank, start, end }) => {
       expect(await runMonth(year, month)).toEqual({
-        'creator-program-banking-phase-ending': [
-          `${bank} creator-program-banking-phase-ending:${ym}`,
-        ],
-        'creator-program-extraction-phase-started': [
-          `${start} creator-program-extraction-phase-started:${ym}`,
-        ],
-        'creator-program-extraction-phase-ending': [
-          `${end} creator-program-extraction-phase-ending:${ym}`,
-        ],
+        'creator-program-banking-phase-ending': sent(
+          bank,
+          `creator-program-banking-phase-ending:${ym}`,
+          [1]
+        ),
+        'creator-program-extraction-phase-started': sent(
+          start,
+          `creator-program-extraction-phase-started:${ym}`,
+          [1, 2]
+        ),
+        'creator-program-extraction-phase-ending': sent(
+          end,
+          `creator-program-extraction-phase-ending:${ym}`,
+          [1, 2]
+        ),
       });
     }
   );
 
-  it('banking-ending goes only to active members; the extraction notices go to everyone', async () => {
-    await runMonth(2026, 8);
-    // The membership filter is an interpolated Prisma.sql fragment, so read the values too.
-    const sql = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings, ...values]) =>
-      [
-        ...(strings as TemplateStringsArray),
-        ...values.map((v) => ((v as { strings?: string[] })?.strings ?? []).join('?')),
-      ].join('?')
-    );
-    // One query per sent notification, in send order: banking-ending is the earliest day.
-    expect(sql.map((q) => q.includes('CustomerSubscription'))).toEqual([true, false, false]);
-  });
-
-  it('runs daily under names the scheduler had not registered before', () => {
+  it('runs daily, off midnight, under names the scheduler had not registered before', () => {
     const scheduled = creatorProgramJobs.map(({ name, cron }) => ({ name, cron }));
+    expect(STAGE_JOBS.map(({ name, cron }) => ({ name, cron }))).toEqual([
+      { name: 'creator-program-notify-banking-phase-ending', cron: '5 0 * * *' },
+      { name: 'creator-program-notify-extraction-phase-started', cron: '5 0 * * *' },
+      { name: 'creator-program-notify-extraction-phase-ending', cron: '5 0 * * *' },
+    ]);
     for (const job of STAGE_JOBS) {
-      expect(scheduled).toContainEqual({ name: job.name, cron: '0 0 * * *' });
+      expect(scheduled).toContainEqual({ name: job.name, cron: job.cron });
     }
-    // The scheduler kept firing a stale `L-n` trigger registered under these names after their
-    // crons changed. Reusing a name risks the daily cron never being registered, which with the
-    // getPhases gate means the notification is never sent at all.
+    // After these jobs' `L-n` crons changed, the scheduler still fired them on the old days.
+    // Reusing a name risks the daily cron never being registered, which with the getPhases
+    // gate means the notification is never sent at all.
     const names = scheduled.map((j) => j.name);
     for (const retired of [
       'creator-program-banking-phase-ending',

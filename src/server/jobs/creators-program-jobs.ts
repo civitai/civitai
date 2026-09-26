@@ -302,10 +302,11 @@ function createStageNotificationJob(
   stage: CreatorProgramStageNotification,
   getUserIds: () => Promise<number[]>
 ) {
-  // Runs daily and gates on getPhases rather than encoding the day in an `L-n` cron: the
-  // scheduler kept firing a stale `L-n` for these jobs after their crons changed. The names
-  // differ from the old `creator-program-<stage>` jobs so the scheduler registers new triggers.
-  return createJob(`creator-program-notify-${stage}`, '0 0 * * *', async () => {
+  // Runs daily and gates on getPhases rather than encoding the day in an `L-n` cron: after
+  // these jobs' `L-n` crons changed, the scheduler still fired them on the old days. New names
+  // make the scheduler register new triggers. 00:05, not 00:00, so a pod clock a little behind
+  // the scheduler's cannot read yesterday's date and skip the month's only send.
+  return createJob(`creator-program-notify-${stage}`, '5 0 * * *', async () => {
     const now = new Date();
     if (!isStageNotificationDay(stage, now)) return;
 

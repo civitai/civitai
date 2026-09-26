@@ -172,9 +172,9 @@ Tiered: e.g., 200,000 buzz = 0% on first 100k + 5% on next 100k = 5,000 fee.
 | `creatorsProgramInviteTipalti` | `50 23 L * *` | Creates Tipalti payee for users above $50 threshold |
 | `creatorsProgramRollover` | `0 0 1 * *` | Flushes all caches for new month |
 | `creatorsProgramSettleCash` | `0 0 15 * *` | Moves `cashPending` -> `cashSettled`, notifies users |
-| `bankingPhaseEndingNotification` | `0 0 * * *` | Sends only on the last banking day per `getPhases` (L-3) |
-| `extractionPhaseStartedNotification` | `0 0 * * *` | Sends only on the first extraction day per `getPhases` (L-2) |
-| `extractionPhaseEndingNotification` | `0 0 * * *` | Sends only on the last day of the month |
+| `bankingPhaseEndingNotification` | `5 0 * * *` | Sends only on the last banking day per `getPhases` (L-3) |
+| `extractionPhaseStartedNotification` | `5 0 * * *` | Sends only on the first extraction day per `getPhases` (L-2) |
+| `extractionPhaseEndingNotification` | `5 0 * * *` | Sends only on the last day of the month |
 
 The three stage notifications run daily and gate on `getStageNotificationDays`, rather than encoding the day in an `L-n` cron: after `bankingPhaseEndingNotification` moved from `L-4` to `L-3`, the external scheduler still fired it on the `L-4` day. They are registered as `creator-program-notify-<stage>` so the scheduler picks them up as new jobs.
 
