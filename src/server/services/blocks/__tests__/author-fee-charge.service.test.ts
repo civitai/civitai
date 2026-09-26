@@ -84,6 +84,7 @@ import {
   quoteBlockAuthorFee,
   reverseBlockAuthorFee,
 } from '../author-fee-charge.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -275,6 +276,13 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(tx.toAccountType).toBe('yellow');
     expect(tx.externalTransactionId).toBe(blockAuthorFeeChargeKey(WORKFLOW_ID));
 
+    // 🔴 THE LEDGER TYPE IS THE RAIL'S ONLY NON-STRING IDENTITY. This leg shared
+    // `Fee` (25) with four placement-escrow leg kinds, so every rail-level query
+    // disambiguated on `description LIKE 'App author fee%'` — and a description
+    // copy edit has already reclassified revenue on a neighbouring rail.
+    expect(tx.type).toBe(TransactionType.AppAuthorFee);
+    expect(tx.type).not.toBe(TransactionType.Fee);
+
     // D1 — the author is owed exactly what the viewer was debited.
     const row = mockDbWrite.blockAuthorFeeAccrual.create.mock.calls[0][0].data;
     expect(row.feeBuzz).toBe(EXPECTED_FEE);
@@ -415,6 +423,16 @@ describe('chargeBlockAuthorFee — the debit', () => {
     const result = await chargeBlockAuthorFee(chargeArgs());
     expect(result).toEqual({ charged: true, feeBuzz: EXPECTED_FEE, accrualId: null });
     expect(refundTx()).toBeUndefined();
+  });
+
+  // AN INVARIANT GUARD, NOT REGRESSION COVERAGE — no bug ever violated it. It is
+  // here because the NUMBER, not the member name, is what crosses the wire: the
+  // external Buzz service takes an integer, does not validate it against its own
+  // enum, and persists it. So a renumber here is a breaking change for consumers
+  // outside this repo — a saved rail query, a dashboard filter — that nothing in
+  // this repo's type system can see.
+  it('the author-fee ledger type is 28 on the wire', () => {
+    expect(TransactionType.AppAuthorFee).toBe(28);
   });
 
   it('the charge key and the reversal key share no namespace', () => {

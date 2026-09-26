@@ -253,8 +253,8 @@ export async function persistCustomComfySettle(input: {
 //      and the comment beside the gate anticipates the flip in as many words
 //      ("a future `timeBounded` entry sets it true and reuses the same
 //      machinery customComfy does"). On that flip a settle-record-producing
-//      submit also carries a real `TransactionType.Fee` debit whose reversal
-//      runs only in these same guarded observers — so a strand would hold REAL
+//      submit also carries a real `TransactionType.AppAuthorFee` debit whose
+//      reversal runs only in these same guarded observers — so a strand would hold REAL
 //      MONEY rather than abuse counters, and this decision would have to be
 //      re-taken. See WHAT WOULD CHANGE THIS.
 //   4. Volume is what ruled out the background reconciler: 585

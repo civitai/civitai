@@ -89,11 +89,13 @@ export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 // `chargeBlockAuthorFee`.
 //
 // ── THE MONEY SHAPE ─────────────────────────────────────────────────────────
-// Viewer → account 0 at submit (`TransactionType.Fee`), account 0 → author on the
-// daily settlement run. The platform is a CONDUIT, not a party (D1): the author
-// is credited exactly what the viewer was debited, and account 0 is a way-station
-// rather than a share. A reversal is account 0 → viewer (`TransactionType.Refund`)
-// and only ever for a row that has NOT settled.
+// Viewer → account 0 at submit (`TransactionType.AppAuthorFee`), account 0 →
+// author on the daily settlement run under the same type. Rows written before
+// that member existed carry `Fee` (25) and are deliberately not back-filled.
+// The platform is a CONDUIT, not a party (D1): the author is credited exactly
+// what the viewer was debited, and account 0 is a way-station rather than a
+// share. A reversal is account 0 → viewer (`TransactionType.Refund`) and only
+// ever for a row that has NOT settled.
 //
 // ── LIVE, BEHIND ONE FLAG ───────────────────────────────────────────────────
 // ⚠️ This block was headed "DARK" and ended "merging this changes nothing until
@@ -534,7 +536,7 @@ async function chargeBlockAuthorFeeUncounted(
         toAccountType: buzzType,
         amount: feeBuzz,
         description: 'App author fee',
-        type: TransactionType.Fee,
+        type: TransactionType.AppAuthorFee,
         externalTransactionId: blockAuthorFeeChargeKey(workflowId),
       },
     ]);

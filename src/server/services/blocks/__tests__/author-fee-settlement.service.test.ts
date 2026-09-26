@@ -31,6 +31,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 
 import { settleBlockAuthorFees } from '../author-fee-settlement.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -117,6 +118,12 @@ describe('settleBlockAuthorFees', () => {
     const tx = mockCreateMany.mock.calls[0][0][0];
     expect(tx.amount).toBe(17);
     expect(tx.toAccountId).toBe(OWNER_ID);
+    // 🔴 THE MINT CARRIES THE RAIL'S OWN TYPE, not the shared `Fee` (25) the
+    // placement-escrow legs also write. Both hops must agree or a query keyed on
+    // the type sees the debit and not the credit, which reads as the platform
+    // keeping a cut it is only a conduit for (D1).
+    expect(tx.type).toBe(TransactionType.AppAuthorFee);
+    expect(tx.type).not.toBe(TransactionType.Fee);
     expect(result.rowsSettled).toBe(2);
     expect(result.buzzMinted).toBe(17);
   });

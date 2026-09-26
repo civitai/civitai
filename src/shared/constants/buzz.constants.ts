@@ -57,6 +57,17 @@ export enum TransactionType {
   Fee = 25,
   Bid = 26,
   LicenseFee = 27,
+  /**
+   * App Blocks per-generation author fee, both legs (viewer → platform conduit at
+   * submit, conduit → author at settlement).
+   *
+   * 🔴 ROWS WRITTEN BEFORE THIS MEMBER EXISTED CARRY `Fee` (25) AND ARE NOT
+   * BACK-FILLED — operator decision, no retroactive write to the Buzz ledger. A
+   * rail query that wants the whole history must also match
+   * `Fee` + `description LIKE 'App author fee%'`, which is how the rail was
+   * disambiguated while it shared 25 with the placement-escrow legs.
+   */
+  AppAuthorFee = 28,
 }
 
 type BuzzTypeConfig =
