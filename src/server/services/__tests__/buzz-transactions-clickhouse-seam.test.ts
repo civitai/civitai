@@ -97,7 +97,12 @@ const WINDOW = {
   start: new Date('2026-09-20T00:00:00Z'),
   end: new Date('2026-09-26T23:59:59Z'),
   // Required by the schema and by `buildBranchQuery`, which maps over it.
-  accountTypes: ['yellow'] as const,
+  //
+  // 🔴 DELIBERATELY NOT one of the account types the row fixtures carry. The
+  // account-type assertions below expect `yellow` and `green`; if the filter were
+  // either of those, a mutant reporting the REQUESTED filter instead of the row's
+  // own side would satisfy one of them for the wrong reason.
+  accountTypes: ['blue'] as const,
 };
 
 beforeEach(() => {
@@ -195,7 +200,7 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
         amount: 3,
         fromAccountId: ACCOUNT_ID,
         toAccountId: 77,
-        // Distinct, and neither is the account type this window filters on, so the
+        // Distinct from each other AND from `WINDOW.accountTypes`, so the
         // passthrough below cannot be satisfied by a constant or by the filter.
         fromAccountType: 'yellow',
         toAccountType: 'green',
