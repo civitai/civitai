@@ -59,6 +59,9 @@ function route(client: 'dbRead' | 'dbWrite', answer: (c: Call) => unknown) {
   ) => {
     const c = toCall(strings, ...values);
     calls.push(c);
+    // Every loop in the endpoint must end on its own; a fake that answers forever would turn a
+    // broken exit into a microtask spin the test timeout cannot interrupt.
+    if (calls.length > 50) throw new Error(`runaway ${client} loop: ${c.text.slice(0, 60)}`);
     return answer(c);
   }) as never);
   return calls;
@@ -74,6 +77,7 @@ async function call(query: Record<string, string>) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   dbMock.dbRead.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockReset();
@@ -89,11 +93,11 @@ const SQL = {
   deleteDangling:
     'WITH t AS ( SELECT irn."imageId", irn."modelVersionId" FROM "ImageResourceNew" irn WHERE irn."modelVersionId" = ANY(?::int[]) AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv.id = irn."modelVersionId") LIMIT ? ), d AS ( DELETE FROM "ImageResourceNew" irn USING t WHERE irn."imageId" = t."imageId" AND irn."modelVersionId" = t."modelVersionId" RETURNING irn.* ) INSERT INTO "_sweep_irn_20260925" ("imageId", "modelVersionId", "strength", "detected", "tier") SELECT "imageId", "modelVersionId", "strength", "detected", \'dangling\' FROM d RETURNING "imageId", "modelVersionId"',
   select:
-    'SELECT irn."imageId", irn."modelVersionId", CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END AS tier FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" JOIN "ImageResourceNew" irn ON irn."modelVersionId" = mv.id JOIN "Image" i ON i.id = irn."imageId" LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE mv.id >= ? AND mv.id < ? AND ( (mv.status = \'Draft\' AND NOT EXISTS ( SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL)) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) )',
+    'SELECT irn."imageId", irn."modelVersionId", CASE WHEN mv.status = \'Draft\' THEN \'draft\' ELSE \'private\' END AS tier FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId" JOIN "ImageResourceNew" irn ON irn."modelVersionId" = mv.id JOIN "Image" i ON i.id = irn."imageId" LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE mv.id >= ? AND mv.id < ? AND ( (mv.status = \'Draft\' AND mv."publishedAt" IS NULL AND NOT EXISTS ( SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL)) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.status = \'Draft\' THEN \'draft\' ELSE \'private\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) )',
   deleteNonVisible:
-    'WITH p AS ( SELECT * FROM unnest( ?::int[], ?::int[] ) AS p("imageId", "modelVersionId") ), d AS ( DELETE FROM "ImageResourceNew" irn USING p, "ModelVersion" mv, "Model" m, "Image" i LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE irn."imageId" = p."imageId" AND irn."modelVersionId" = p."modelVersionId" AND mv.id = irn."modelVersionId" AND m.id = mv."modelId" AND i.id = irn."imageId" AND ( (mv.status = \'Draft\' AND NOT EXISTS ( SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL)) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) ) RETURNING irn.*, CASE WHEN mv.availability = \'Private\' OR m.availability = \'Private\' THEN \'private\' ELSE \'never_published\' END AS tier ) INSERT INTO "_sweep_irn_20260925" ("imageId", "modelVersionId", "strength", "detected", "tier") SELECT "imageId", "modelVersionId", "strength", "detected", tier FROM d RETURNING "imageId", "modelVersionId", "tier"',
+    'WITH p AS ( SELECT * FROM unnest( ?::int[], ?::int[] ) AS p("imageId", "modelVersionId") ), d AS ( DELETE FROM "ImageResourceNew" irn USING p, "ModelVersion" mv, "Model" m, "Image" i LEFT JOIN "User" u ON u.id = i."userId" LEFT JOIN "Post" ps ON ps.id = i."postId" WHERE irn."imageId" = p."imageId" AND irn."modelVersionId" = p."modelVersionId" AND mv.id = irn."modelVersionId" AND m.id = mv."modelId" AND i.id = irn."imageId" AND ( (mv.status = \'Draft\' AND mv."publishedAt" IS NULL AND NOT EXISTS ( SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL)) OR (mv.status = \'Published\' AND m.status = \'Published\' AND (mv.availability = \'Private\' OR m.availability = \'Private\')) ) AND ( i."userId" <> m."userId" AND NOT coalesce(u."isModerator", false) AND ( (NOT irn.detected AND ps."modelVersionId" IS DISTINCT FROM irn."modelVersionId") OR (irn.detected AND jsonb_typeof(i.meta->\'civitaiResources\') = \'array\' AND i.meta->\'civitaiResources\' @> jsonb_build_array( jsonb_build_object(\'modelVersionId\', irn."modelVersionId"))) ) AND NOT ((CASE WHEN mv.status = \'Draft\' THEN \'draft\' ELSE \'private\' END) = \'private\' AND EXISTS ( SELECT 1 FROM "EntityAccess" ea WHERE ea."accessToId" = mv.id AND ea."accessToType" = \'ModelVersion\' AND ea."accessorType" = \'User\' AND ea."accessorId" = i."userId")) ) RETURNING irn.*, CASE WHEN mv.status = \'Draft\' THEN \'draft\' ELSE \'private\' END AS tier ) INSERT INTO "_sweep_irn_20260925" ("imageId", "modelVersionId", "strength", "detected", "tier") SELECT "imageId", "modelVersionId", "strength", "detected", tier FROM d RETURNING "imageId", "modelVersionId", "tier"',
   captured:
-    'SELECT DISTINCT "imageId", "modelVersionId" FROM "_sweep_irn_20260925" WHERE "sweptAt" >= ? AND "sweptAt" < ? AND "imageId" >= ? ORDER BY "imageId", "modelVersionId" LIMIT ?',
+    'SELECT DISTINCT "imageId", "modelVersionId" FROM "_sweep_irn_20260925" WHERE "sweptAt" >= ? AND "sweptAt" < ? AND ("imageId", "modelVersionId") >= (?, ?) ORDER BY "imageId", "modelVersionId" LIMIT ?',
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -151,14 +155,19 @@ describe('sweep-image-resources: dangling', () => {
   it('repeats a capped statement until it comes back short, one side-effect pass each', async () => {
     arrangeRead({ ids: [5] });
     let n = 0;
-    const writes = route('dbWrite', () =>
-      ++n === 1
+    // Throws past a few calls, so a loop that ignores a short batch fails fast instead of spinning
+    // until the budget.
+    const writes = route('dbWrite', () => {
+      if (++n > 5) throw new Error(`runaway delete loop: call ${n}`);
+      return n === 1
         ? [
             { imageId: 1, modelVersionId: 5 },
             { imageId: 2, modelVersionId: 5 },
           ]
-        : [{ imageId: 3, modelVersionId: 5 }]
-    );
+        : n === 2
+        ? [{ imageId: 3, modelVersionId: 5 }]
+        : [];
+    });
 
     const out = await call({ tier: 'dangling', dryRun: 'false', rowCap: '2' });
 
@@ -216,8 +225,8 @@ describe('sweep-image-resources: dangling', () => {
 
 describe('sweep-image-resources: visibility', () => {
   const PAIRS = [
-    { imageId: 1, modelVersionId: 10, tier: 'never_published' },
-    { imageId: 2, modelVersionId: 10, tier: 'never_published' },
+    { imageId: 1, modelVersionId: 10, tier: 'draft' },
+    { imageId: 2, modelVersionId: 10, tier: 'draft' },
     { imageId: 3, modelVersionId: 11, tier: 'private' },
   ];
 
@@ -235,7 +244,7 @@ describe('sweep-image-resources: visibility', () => {
     const out = await call({ tier: 'visibility', chunk: '100' });
 
     expect(reads.find((r) => r.text.startsWith('SELECT irn."imageId"'))!.text).toBe(SQL.select);
-    expect(out).toMatchObject({ rows: 3, byTier: { never_published: 2, private: 1 }, images: 3 });
+    expect(out).toMatchObject({ rows: 3, byTier: { draft: 2, private: 1 }, images: 3 });
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mocks.queueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mocks.bust).not.toHaveBeenCalled();
@@ -248,7 +257,7 @@ describe('sweep-image-resources: visibility', () => {
     route('dbRead', answerReads);
     const writes = route('dbWrite', (c) =>
       (c.values[0] as number[]).includes(1)
-        ? [{ imageId: 1, modelVersionId: 10, tier: 'never_published' }]
+        ? [{ imageId: 1, modelVersionId: 10, tier: 'draft' }]
         : [{ imageId: 3, modelVersionId: 11, tier: 'private' }]
     );
 
@@ -263,7 +272,7 @@ describe('sweep-image-resources: visibility', () => {
       ],
       [[3], [11]],
     ]);
-    expect(out).toMatchObject({ rows: 2, byTier: { never_published: 1, private: 1 }, images: 2 });
+    expect(out).toMatchObject({ rows: 2, byTier: { draft: 1, private: 1 }, images: 2 });
   });
 
   it('walks version chunks and reports no cursor once done', async () => {
@@ -300,9 +309,41 @@ describe('sweep-image-resources: visibility', () => {
     ]);
     spy.mockRestore();
   });
+
+  // Resuming from the chunk's own start is what makes an interrupted chunk safe: its remaining
+  // rows are selected again, and the ones already deleted are not.
+  it('stops inside a chunk at the budget and hands back that chunk’s start', async () => {
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    route('dbRead', answerReads);
+    const writes = route('dbWrite', (c) => {
+      now += 2 * DAY;
+      return [{ imageId: (c.values[0] as number[])[0], modelVersionId: 10, tier: 'draft' }];
+    });
+
+    const out = await call({ tier: 'visibility', dryRun: 'false', chunk: '100', rowCap: '1' });
+
+    expect(writes).toHaveLength(1);
+    expect(out).toMatchObject({ rows: 1, nextStart: 0 });
+  });
 });
 
 describe('sweep-image-resources: redrive', () => {
+  it('dry run counts captured rows and replays nothing', async () => {
+    let batch = 0;
+    route('dbRead', () => (++batch === 1 ? [{ imageId: 1, modelVersionId: 5 }] : []));
+
+    const out = await call({
+      tier: 'redrive',
+      since: '2026-09-25T00:00:00Z',
+      until: '2026-09-26T00:00:00Z',
+    });
+
+    expect(out).toMatchObject({ dryRun: true, rows: 1, nextStart: null });
+    expect(mocks.queueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    expect(mocks.bust).not.toHaveBeenCalled();
+  });
+
   it('needs a capture window', async () => {
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
     await (handler as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>)(
@@ -312,16 +353,19 @@ describe('sweep-image-resources: redrive', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
-  it('replays search and cache updates for captured rows, resuming at the last image', async () => {
+  it('replays search and cache updates for captured rows, resuming after the last pair', async () => {
     let batch = 0;
-    const reads = route('dbRead', () =>
-      ++batch === 1
+    const reads = route('dbRead', () => {
+      if (++batch > 5) throw new Error(`runaway redrive loop: call ${batch}`);
+      return batch === 1
         ? [
             { imageId: 1, modelVersionId: 5 },
             { imageId: 4, modelVersionId: 5 },
           ]
-        : [{ imageId: 4, modelVersionId: 6 }]
-    );
+        : batch === 2
+        ? [{ imageId: 4, modelVersionId: 6 }]
+        : [];
+    });
 
     const out = await call({
       tier: 'redrive',
@@ -332,7 +376,17 @@ describe('sweep-image-resources: redrive', () => {
     });
 
     expect(reads[0].text).toBe(SQL.captured);
-    expect(reads.map((r) => r.values[2])).toEqual([0, 4]);
+    expect(reads[0].values).toEqual([
+      new Date('2026-09-25T00:00:00Z'),
+      new Date('2026-09-26T00:00:00Z'),
+      0,
+      0,
+      2,
+    ]);
+    expect(reads.map((r) => [r.values[2], r.values[3]])).toEqual([
+      [0, 0],
+      [4, 6],
+    ]);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mocks.queueImageSearchIndexUpdate).toHaveBeenCalledTimes(2);
     expect(out).toMatchObject({ rows: 3, nextStart: null });

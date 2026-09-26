@@ -17,6 +17,7 @@ import { booleanString } from '~/utils/zod-helpers';
  * GET /api/admin/temp/sweep-image-resources?token=<WEBHOOK_TOKEN>&tier=dangling|visibility|redrive
  *   &dryRun=true|false   (default true) counts only
  *   &start=<id>          inclusive cursor: a version id, or an image id for `redrive`
+ *   &startVersion=<id>   `redrive` only: resumes inside an image, with `start`
  *   &end=<id>            exclusive; version tiers only
  *   &chunk=<n>           version ids per chunk (default 100000 dangling, 2000 visibility)
  *   &rowCap=10000        most rows one statement may delete
@@ -36,6 +37,7 @@ const schema = z.object({
   tier: z.enum(['dangling', 'visibility', 'redrive']),
   dryRun: booleanString().default(true),
   start: z.coerce.number().int().min(0).default(0),
+  startVersion: z.coerce.number().int().min(0).default(0),
   end: z.coerce.number().int().min(1).optional(),
   chunk: z.coerce.number().int().min(1).max(200_000).optional(),
   rowCap: z.coerce.number().int().min(1).max(50_000).default(10_000),
@@ -48,11 +50,10 @@ const schema = z.object({
 type Pair = { imageId: number; modelVersionId: number };
 type Tiered = Pair & { tier: string };
 
-const tierSql = Prisma.sql`CASE WHEN mv.availability = 'Private' OR m.availability = 'Private'
-  THEN 'private' ELSE 'never_published' END`;
+const tierSql = Prisma.sql`CASE WHEN mv.status = 'Draft' THEN 'draft' ELSE 'private' END`;
 
 const versionInScope = Prisma.sql`(
-  (mv.status = 'Draft' AND NOT EXISTS (
+  (mv.status = 'Draft' AND mv."publishedAt" IS NULL AND NOT EXISTS (
     SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL))
   OR (mv.status = 'Published' AND m.status = 'Published'
       AND (mv.availability = 'Private' OR m.availability = 'Private'))
@@ -160,10 +161,11 @@ function deleteNonVisible(pairs: Pair[]) {
   `;
 }
 
-function capturedSince(since: Date, until: Date, cursor: number, limit: number) {
+function capturedSince(since: Date, until: Date, after: Pair, limit: number) {
   return dbRead.$queryRaw<Pair[]>`
     SELECT DISTINCT "imageId", "modelVersionId" FROM ${CAPTURE}
-    WHERE "sweptAt" >= ${since} AND "sweptAt" < ${until} AND "imageId" >= ${cursor}
+    WHERE "sweptAt" >= ${since} AND "sweptAt" < ${until}
+      AND ("imageId", "modelVersionId") >= (${after.imageId}, ${after.modelVersionId})
     ORDER BY "imageId", "modelVersionId"
     LIMIT ${limit}
   `;
@@ -208,7 +210,7 @@ export default WebhookEndpoint(async (req, res) => {
   if (params.tier === 'redrive') {
     if (!params.since || !params.until)
       return res.status(400).json({ error: 'redrive needs since and until' });
-    let cursor = params.start;
+    let cursor: Pair = { imageId: params.start, modelVersionId: params.startVersion };
     let done = false;
     while (!done && !outOfBudget()) {
       const batch = await capturedSince(params.since, params.until, cursor, params.rowCap);
@@ -218,10 +220,9 @@ export default WebhookEndpoint(async (req, res) => {
       }
       record('redrive', batch);
       if (!params.dryRun) await settle(batch);
-      // Resuming at the last image replays it again, which is harmless: the updates are idempotent,
-      // and a batch cut inside an image must not skip that image's remaining pairs.
+      const last = batch[batch.length - 1];
       if (batch.length < params.rowCap) done = true;
-      else cursor = batch[batch.length - 1].imageId;
+      else cursor = { imageId: last.imageId, modelVersionId: last.modelVersionId + 1 };
       await pause();
     }
     return res.status(200).json({
@@ -231,7 +232,8 @@ export default WebhookEndpoint(async (req, res) => {
       images: imageIds.size,
       sideEffectFailures,
       failedImageIds,
-      nextStart: done ? null : cursor,
+      nextStart: done ? null : cursor.imageId,
+      nextStartVersion: done ? null : cursor.modelVersionId,
     });
   }
 
