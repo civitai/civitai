@@ -1,0 +1,61 @@
+{
+  "slug": "playable-collections",
+  "frameHost": "playable-collections.civit.ai",
+  "url": "https://civitai.com/apps/run/playable-collections",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "_ledgerNote": "the sort controls (`sort-popular`, `sort-newest`) were listed here first and no state used them — REFUSE[clickable_unused] on the very first live run. They are out until a state actually activates them; the ledger describes what this recipe does, not what it might.",
+  "_neverList": "🔴 `cover-reveal` (x24 live) is NOT a mutation, and is still excluded on purpose: it lifts a maturity gate, and the 2026-08-16 survey's finding stands — revealing them puts gated imagery into a capture. Harmless in `--evidence`, unacceptable in anything that could reach a listing, and a recipe should not carry a control whose safety depends on which flags the run was given.",
+  "_collectionCardReversal": "🔴 `collection-card` WAS on the never-list for the same reason as `cover-reveal` — 'what it opens is non-deterministic user content' — and it is now LEDGERED. Recording the reversal rather than quietly deleting the sentence. WHY: deferred taste phase 3's closing condition is literally 'an --evidence capture of the PLAYER states is taken and its a11y section read', and the player is unreachable without activating a card. The original objection is UNANSWERED, not withdrawn: what the card opens is still arbitrary user media. 🔴 So the `player` state below is EVIDENCE-ONLY and must never be rendered into a store asset — `--evidence --no-frame` discards the picture, which is the only mode it has been run in. There is no per-state flag enforcing that, so this note IS the enforcement: a run that frames `player` photographs a stranger's collection into a listing, which the shelf-life rules forbid ('never a specific dataset'). If a player screenshot is ever genuinely wanted, seed a first-party collection and pin it by id — do not shoot whatever happens to be rank 1.",
+  "clickable": [
+    "[data-testid=tab-discover]",
+    "[data-testid=tab-mine]",
+    "[data-testid=collection-card]"
+  ],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "rect": { "x": 306, "y": 0, "w": 1084, "h": 573, "yFrom": "appFrame" },
+    "_measuredGeometry": { "viewport": [1709, 1255], "appFrameTop": 141, "appFrameBottomGap": 64,
+                           "_why": "the LIVE reading this rect was chosen against, machine-readable so gate P18 can check the rect fits it. P18 also runs the rect through frame.py, but only against a 1709x1314 FIXTURE — 59px taller than this, so that arm alone would pass a rect that overruns the real iframe. These are the numbers that decide it: the live lower bound is 1255-64=1191." },
+    "_comment": "🔴 DETECTION CANNOT WORK HERE AND A BIGGER BAND CANNOT FIX IT. Measured live 2026-08-26 on a 1709x1255 capture: 63.9% x 100.0% of the usable band, so `full_frame` refuses — correctly, because this is a SCROLLING grid whose rows run past the viewport (talos-infra #1297). So the crop is DECLARED, and NOT absolute: `yFrom: appFrame` anchors `y` to the app iframe's top edge, the one edge the conditional rewards banner moves (~36px), so one rect is correct in both banner layouts. x/w/h stay absolute — only the top edge moves (measured; gate F13 compares the cropped PIXELS of both layouts). The band numbers stay as FLOORS: nothing detects any more, but `fromAppFrame` still runs the probe and its viewport reading is the only cross-check on an unseen devicePixelRatio.",
+    "_measured": "2026-08-26, banner PRESENT, viewport 1709x1255, app-frame top=141, bottom gap=64 (both read off the run's own APPFRAME_RECT probe answer, APPFRAME_RECT:141,64,-1,1709,1255 — so the lower bound this rect had to fit is 1255-64=1191). y=0 IS the iframe's top edge: the app draws its own 24px of padding there, so nothing is clipped. App column ink x=324..1372; x=306 w=1084 gives ~18px either side. h=573 ends at abs 714, inside the 13-row gutter after the FIRST grid row, so no card is cut mid-row. Aspect 1.892 against the canvas's 1.542, so expect a letterbox band top and bottom. 🔴 The identical-box check is INERT for a declared rect — verify by eye. Ending after row TWO instead would be h=899 (abs 1040) and aspect 1.21. 🔴 RECORD THE DISCREPANCY, though the anchor makes it irrelevant to the crop: top=141 is NUMERICALLY SMALLER than BOTH chromeTop windows (i.e. higher up the page) frame.py's header pins from the 2026-08-22 fixtures (163 banner-absent / 199 banner-present) — the iframe top MOVED UP ~58px in four days (where in the stack that height went is NOT measured). Measured on this capture: the banner occupies rows 68..104 (height 37), the breadcrumb ends at 139, so banner-ABSENT would be ~104. The premise is untouched; reading 163/199 as current is what is dead."
+  },
+  "ready": {
+    "testid": "tab-discover",
+    "loadingTestid": "app-loading",
+    "timeoutMs": 45000,
+    "_comment": "the tab strip — structural, and it serves every state, the analogue of model-benchmarking's `view-switch`. Measured live 2026-08-24: 15 unique testids over 107 occurrences, no app-loading. 🔴 NOT `collection-grid`: it is the tempting singleton but was only ever confirmed in the POPULATED state, and whether it survives an empty result set (Mine with no collections, a no-hit search) is unverified — which is exactly the reject-able shape. 🔴 NOT `cover-placeholder`: present x12 in the survey's first read and ABSENT in its second, i.e. transient image-loading art that only a two-read protocol catches. 🔴 NEVER `#root`: the static shell is a 1408-byte `<div id=\"root\"></div>` with 0 testids.",
+    "_notOnboarding": "🔴 `onboarding-coach` NO LONGER EXISTS — the \"How to play\" card was DELETED from the app in 0.2.14 on operator feedback, and its absence is pinned by `src/deleted-onboarding` guards in the app's `src/deleted-mature-gate.test.ts`. Any state or waitForText built on \"How to play\" is permanently red, and now for a durable reason. ⚠️ THE EARLIER WORDING HERE WAS WRONG AND IS KEPT AS A LESSON: it said the card \"reads 0 and will never return\" because a 2026-08-16 discovery run consumed the one-shot. That one-shot lived in `localStorage`, so it was a fact about ONE BROWSER PROFILE, never about the app — and the card was in fact still rendering for every new viewer right up to 0.2.13, measured against live 0.2.11. A per-profile observation generalised into a claim about the app is the shape to watch for in this file."
+  },
+  "states": [
+    {
+      "name": "discover",
+      "caption": "Browse playable collections other people have published.",
+      "_comment": "the sort is set EXPLICITLY (see `popular`) rather than relying on whatever the app defaults to, so two states cannot collide on the identical-box gate.",
+      "actions": [
+        { "click": "[data-testid=tab-discover]" }
+      ]
+    },
+    {
+      "name": "mine",
+      "caption": "Your own collections, ready to play.",
+      "_unverified": "🔴 THE EMPTY-SET RISK IS HERE, NOT IN `discover`. RE-MEASURED 2026-08-26 on a live --render run: still populated, 2 private collections, one of them holding 0 items. (Their NAMES are deliberately not recorded here — the point is the count, and the names are the operator's account state, which is the very thing the paragraph below says not to photograph.) If it is ever empty, the ready anchor still holds (`tab-discover` is in the tab strip, not the grid) but the capture is an empty state — which `--evidence` will report as a defect and a store shoot must not ship. 🔴 SEPARATE, AND NOT A CROP PROBLEM: what it photographs is the OPERATOR'S OWN account — the collections carry `by <the operator's username>` and one of them holds 0 items. The shelf-life rules forbid shooting account state, so this state is fine as a mechanism test and is NOT a shippable store asset as it stands.",
+      "actions": [
+        { "click": "[data-testid=tab-mine]" }
+      ]
+    },
+    {
+      "name": "player",
+      "caption": "EVIDENCE ONLY — never a store asset. See _collectionCardReversal.",
+      "_why": "deferred taste phase 3 is unmeasured because the recipe only ever drove `discover` and `mine`; its closing condition names an --evidence capture of the PLAYER states and a read of its a11y section. This state exists to close that, and to give the skin pass a per-state baseline on the surface that carries the most interaction (transport controls, scrubber, mode switcher, tip/follow chrome).",
+      "_waitChoice": "🔴 `waitForGone` matches TEXT, not a selector (plan.py emits a `text` dom op with expectAbsent), so this cannot wait on a testid. 'Sorted by most followed.' is the grid's sort hint — grid-only, and it is the exact string the 0.2.7 taste pass shipped as a sentence precisely so it could not be mistaken for a chip. Confirmed present in a live read of the grid 2026-09-06. 🔴 It is SORT-DEPENDENT: the app defaults to popular, and `discover` does not change the sort, so it holds — but if the default ever moves to Newest this string becomes 'Sorted newest first.' and this wait goes permanently red. That is the failure mode to expect here, and it is loud rather than silent.",
+      "actions": [
+        { "click": "[data-testid=tab-discover]" },
+        { "click": "[data-testid=collection-card]" },
+        { "waitForGone": "Sorted by most followed." }
+      ]
+    }
+  ]
+}

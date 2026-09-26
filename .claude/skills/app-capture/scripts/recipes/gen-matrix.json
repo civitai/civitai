@@ -1,0 +1,30 @@
+{
+  "slug": "gen-matrix",
+  "frameHost": "gen-matrix.civit.ai",
+  "url": "https://civitai.com/apps/run/gen-matrix",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "_noRender": "🔴 THIS RECIPE IS AN `--evidence` TARGET AND NOT A `--render` ONE, BY THE APP'S CEILING — do not 'fix' the `too_few_states` refusal. `check-states` needs >= 2 states because a single state cannot distinguish a working cropper from a broken one, and this app has exactly one state that does not spend Buzz (see the `configure` state's comment). The refusal is CORRECT and must stay red. Inventing a second state to satisfy it would either duplicate `configure` — which the identical-box gate then catches — or require spending, which `_neverList` forbids. And a well-framed capture of an empty configure screen makes the listing look worse than no screenshot, so there is nothing to gain. Decided 2026-08-25 on talos-infra #1297, which had proposed adding a second state.",
+  "_neverList": "🔴 `gm-generate` SPENDS BUZZ. It is the whole reason this app has no populated state to photograph. It must never enter `clickable`; a generated grid is reachable only through the `--trusted` path with a real operator keypress, which is a deliberate, attended act.",
+  "clickable": [],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "_comment": "same centred-column host page as custom-generators; the three numbers are FLOORS and `fromAppFrame` derives the real top boundary at capture time. NOT yet exercised by a --render run — driven so far only with --evidence --no-frame."
+  },
+  "ready": {
+    "testid": "gm-generate",
+    "loadingTestid": "app-loading",
+    "timeoutMs": 45000,
+    "_comment": "the central control, present in the only state this app renders. Measured live 2026-08-24: 6 testids, no app-loading. 🔴 NOT `gm-generate-reason` — its live text is the validation message \"Enter a prompt to generate.\", which exists ONLY while Generate is blocked, so it vanishes the moment the app becomes usable. It is the other singleton in this app and therefore the one an author would most plausibly reach for. 🔴 NEVER `#root`: the static shell is a 465-byte `<div id=\"root\"></div>` with 0 testids, present before boot and in a deadlocked frame."
+  },
+  "states": [
+    {
+      "name": "configure",
+      "caption": "Pick a checkpoint and a LoRA, write a prompt, and Gen Matrix builds the comparison grid.",
+      "_comment": "🔴 THE ONLY STATE THIS APP HAS WITHOUT SPENDING. Measured live 2026-08-24 and in the 2026-08-16 survey: CONFIGURE renders, and there are 0 previous results and 0 images. A populated grid sits behind `gm-generate`, which spends Buzz. So this recipe has ONE state and no actions — that is the app's ceiling, not an omission. It is an --evidence target, not a store-shoot candidate: a well-framed capture of an empty configure screen makes the listing look worse than no screenshot.",
+      "actions": []
+    }
+  ]
+}
