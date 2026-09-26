@@ -173,7 +173,18 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
       // mutant survived the whole suite twice. What kills it is two cases at the
       // SAME direction with DIFFERENT expected values — this one and
       // `hydrates the other past-26 member` below. Keep them different.
-      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'blue' }),
+      // 🔴 And a counterparty id that is NOT the `77` the other rows use, for the
+      // same reason the export suite varies one: a sign or side predicate keyed on a
+      // LITERAL id agrees with one keyed on `accountId` on every row where the
+      // counterparty is always the same, so the double-inverted mutant
+      // (`=== 77 ? +amount : -amount`) is equivalent and survives.
+      row({
+        type: '28',
+        amount: 3,
+        fromAccountId: 555,
+        fromAccountType: 'green',
+        toAccountType: 'blue',
+      }),
     ]);
 
     const result = await getUserBuzzTransactionsMulti({
