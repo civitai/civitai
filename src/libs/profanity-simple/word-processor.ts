@@ -1,5 +1,5 @@
 // Import all NSFW word lists
-import blockedWords from '~/utils/metadata/lists/blocked-words.json';
+import { blockedWords } from '@civitai/mod-utils/profanity/lists';
 
 /**
  * NSFW Word Processor Utility

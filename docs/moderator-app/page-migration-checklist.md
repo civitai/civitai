@@ -75,8 +75,9 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 - [x] **`/moderator/auditor`** — `src/pages/moderator/auditor.tsx` — flag: none — **Migrated.** The prompt tester
   runs the audit **server-side** (a form `action` calling `@civitai/mod-utils/prompt-audit`
-  `getPromptHighlightSegments` — the word lists are server-only, so it can't be the legacy's client-only
-  page) and renders pass/flagged with full-category highlighting. Deferred (not in mod-utils): the
+  `getPromptHighlightSegments` — `@civitai/mod-utils` is pure and would import client-side fine, but the
+  vocabulary is tens of KB of JSON the spoke has no reason to ship) and renders pass/flagged with
+  full-category highlighting. Deferred (not in mod-utils): the
   `cleanPrompt`/`getTagsFromPrompt` views and the profanity tester (`useCheckProfanity` stays in the main
   app — still used by search/UI). Legacy page deleted; `/moderator/auditor` redirects (catchall) to
   **`/audit/prompt-tester`** (label "Prompt Tester"), one of the three tools under the spoke's **Audit** nav

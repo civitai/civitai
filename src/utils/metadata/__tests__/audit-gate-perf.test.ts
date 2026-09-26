@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { checkable } from '~/utils/metadata/audit';
-import poiWords from '~/utils/metadata/lists/words-poi.json';
-import nsfwPromptWords from '~/utils/metadata/lists/words-nsfw-prompt.json';
-import nsfwWordsPaddle from '~/utils/metadata/lists/words-paddle-nsfw.json';
-import youngWords from '~/utils/metadata/lists/words-young.json';
+import {
+  poiWords,
+  nsfwPromptWords,
+  nsfwWordsPaddle,
+  youngWords,
+} from '@civitai/mod-utils/prompt-audit/lists';
 import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**
@@ -43,9 +45,10 @@ function buildCjkNoMatchPrompt(cjkCharsEachSide: number): string {
   return `${a} a serene landscape ${b} cinematic lighting ${c} masterpiece`;
 }
 
-// The young-noun list audit.ts uses, including the composed adj·([\s|\w]*|[^\w]+)·noun
-// bodies (unbounded interior quantifiers) — the highest-risk class for gate
-// alternation backtracking.
+// 🔴 The composed bodies here use the OLD UNBOUNDED gap on purpose, and must NOT be
+// swapped for the shared `composedNounGap`: unbounded interiors are the worst case the
+// old gate amplified across a 200-way alternation, and the bounded production gap cannot
+// exhibit it. Pointing this at the real list would leave the guard passing vacuously.
 const composedNouns = youngWords.partialNouns.flatMap((word) =>
   youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word)
 );

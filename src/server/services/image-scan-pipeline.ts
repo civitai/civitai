@@ -1,4 +1,4 @@
-import poiWords from '~/utils/metadata/lists/words-poi.json';
+import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';

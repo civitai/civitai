@@ -147,9 +147,9 @@ describe('shadow probe — what it compares', () => {
     // is the conclusion that gets acted on.
     const fetchSpy = stubFetchByModel({ [INCUMBENT]: false, 'cheap-text-model': false });
 
-    // 'girl' is rewritten to 'woman' by removeFalsePositiveTriggers, so the prepared string is
+    // 'girls' is rewritten to 'women' by removeFalsePositiveTriggers, so the prepared string is
     // observably different from the input.
-    await extModeration.moderatePrompt('a girl in a school uniform', 'generate');
+    await extModeration.moderatePrompt('a girls in a school uniform', 'generate');
     await untilShadowTotal(1);
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -160,9 +160,9 @@ describe('shadow probe — what it compares', () => {
     // Asserted as a pair so a missing shadow request fails HERE with a readable message, rather
     // than as a TypeError on the next line.
     expect([live?.model, shadow?.model]).toEqual([INCUMBENT, 'cheap-text-model']);
-    // Literal expected value, not derived from the implementation: 'girl'->'woman' and
+    // Literal expected value, not derived from the implementation: 'girls'->'women' and
     // 'school uniform'->'uniform'.
-    expect(shadow?.input).toBe('a woman in a uniform');
+    expect(shadow?.input).toBe('a women in a uniform');
     // Both models must see the SAME string, or the comparison measures the substitution.
     expect(shadow?.input).toBe(live?.input);
   });

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import nsfwPromptWords from '~/utils/metadata/lists/words-nsfw-prompt.json';
+import { nsfwPromptWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { hasNsfwWords } from '~/utils/metadata/audit-base';
 
 const COMBINING_ACUTE = String.fromCharCode(0x301);
