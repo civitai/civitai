@@ -52,7 +52,8 @@ const tierSql = Prisma.sql`CASE WHEN mv.availability = 'Private' OR m.availabili
   THEN 'private' ELSE 'never_published' END`;
 
 const versionInScope = Prisma.sql`(
-  (mv."publishedAt" IS NULL AND (mv.status <> 'Published' OR m.status <> 'Published'))
+  (mv.status = 'Draft' AND NOT EXISTS (
+    SELECT 1 FROM "Post" pp WHERE pp."modelVersionId" = mv.id AND pp."publishedAt" IS NOT NULL))
   OR (mv.status = 'Published' AND m.status = 'Published'
       AND (mv.availability = 'Private' OR m.availability = 'Private'))
 )`;
