@@ -96,13 +96,16 @@ function row(over: Record<string, unknown> = {}) {
 const WINDOW = {
   start: new Date('2026-09-20T00:00:00Z'),
   end: new Date('2026-09-26T23:59:59Z'),
-  // Required by the schema and by `buildBranchQuery`, which maps over it.
+  // Required by the schema and by `buildBranchQuery`, which maps over it. All three
+  // spend types, which is also the schema's own default — so every account type the
+  // fixtures carry is one this query could really return, and the own-side column is
+  // never asserted to a value production cannot emit.
   //
-  // 🔴 DELIBERATELY NOT one of the account types the row fixtures carry. The
-  // account-type assertions below expect `yellow` and `green`; if the filter were
-  // either of those, a mutant reporting the REQUESTED filter instead of the row's
-  // own side would satisfy one of them for the wrong reason.
-  accountTypes: ['blue'] as const,
+  // 🔴 A mutant reporting the REQUESTED filter instead of the row's own side is
+  // killed by the fixtures, not by this list: no single value satisfies the
+  // account-type expectations below, because two of them are at the SAME direction
+  // and differ. See the note on those tests before changing any of them.
+  accountTypes: ['blue', 'green', 'yellow'] as const,
 };
 
 beforeEach(() => {
@@ -164,13 +167,13 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    */
   it('hydrates a row stored as its NUMBER into the member, not into the name', async () => {
     mockQuery.mockResolvedValueOnce([
-      // 🔴 A SECOND, DIFFERENT account-type pair from the debit test below. Two
-      // cases that differ only in direction can be satisfied by any pure function
-      // of `isDebit` — `isDebit ? 'yellow' : 'green'` reproduced both and survived
-      // the whole suite. A third and fourth distinct value is what makes the
-      // columns prove they READ THE ROW, not just that the branch points the
-      // right way.
-      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'red' }),
+      // 🔴 CREDIT CASE ONE OF TWO, AND THE TWO MUST DIFFER. Distinct pairs alone are
+      // not enough: with one credit case and one debit case, ANY pure function of
+      // the direction reproduces both while reading nothing from the row, and such a
+      // mutant survived the whole suite twice. What kills it is two cases at the
+      // SAME direction with DIFFERENT expected values — this one and
+      // `hydrates the other past-26 member` below. Keep them different.
+      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'blue' }),
     ]);
 
     const result = await getUserBuzzTransactionsMulti({
@@ -192,10 +195,8 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     // stores comes back unchanged. The debit direction is the one worth guarding and
     // it gets its own test below.
     expect(tx.amount).toBe(3);
-    // The other half of the pair-distinctness above: with these values AND the
-    // debit test's, no constant and no function of direction alone satisfies both.
     expect(tx.fromAccountType).toBe('green');
-    expect(tx.toAccountType).toBe('red');
+    expect(tx.toAccountType).toBe('blue');
   });
 
   /**
@@ -213,10 +214,10 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
         amount: 3,
         fromAccountId: ACCOUNT_ID,
         toAccountId: 77,
-        // Distinct from each other AND from `WINDOW.accountTypes`, so the
-        // passthrough below cannot be satisfied by a constant or by the filter.
-        fromAccountType: 'yellow',
-        toAccountType: 'green',
+        // The DEBIT direction's pair. Distinctness that matters is between the two
+        // CREDIT cases above, not between a credit and this — see their notes.
+        fromAccountType: 'blue',
+        toAccountType: 'yellow',
       }),
     ]);
 
@@ -227,11 +228,41 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     expect(result.transactions).toHaveLength(1);
     expect(result.transactions[0].amount).toBe(-3);
-    // Pre-existing and unguarded until now: unlike the CSV path this one has no
-    // `isDebit` branch, it passes BOTH sides through, and swapping them passed the
-    // whole suite. Free to cover with the fixtures the sign test already needs.
-    expect(result.transactions[0].fromAccountType).toBe('yellow');
-    expect(result.transactions[0].toAccountType).toBe('green');
+    // The list path has no `isDebit` branch here — it passes BOTH sides through
+    // unchanged — so this pins the passthrough, and swapping the two reddens it.
+    expect(result.transactions[0].fromAccountType).toBe('blue');
+    expect(result.transactions[0].toAccountType).toBe('yellow');
+  });
+
+  /**
+   * 🔴 THE DIRECTION DISCRIMINATOR, not just which side gets reported. Every other
+   * fixture puts `ACCOUNT_ID` and `77` in fixed operand positions, so any predicate
+   * that merely AGREES with `row.fromAccountId === accountId` on that one pair
+   * survives — including `row.toAccountId !== accountId`, which is realistic and
+   * wrong for the case `buzz.service.ts` documents four lines from the branch: a
+   * transfer between the caller's own accounts matches BOTH sides. Production calls
+   * that a debit; the mutant calls it a credit, flipping the sign and, on the export
+   * path, the account-type column too.
+   */
+  it('treats a transfer between the account and itself as a DEBIT', async () => {
+    mockQuery.mockResolvedValueOnce([
+      row({
+        type: '28',
+        amount: 9,
+        fromAccountId: ACCOUNT_ID,
+        toAccountId: ACCOUNT_ID,
+        fromAccountType: 'green',
+        toAccountType: 'yellow',
+      }),
+    ]);
+
+    const result = await getUserBuzzTransactionsMulti({
+      accountId: ACCOUNT_ID,
+      ...WINDOW,
+    } as Parameters<typeof getUserBuzzTransactionsMulti>[0]);
+
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].amount).toBe(-9);
   });
 
   /**
@@ -240,7 +271,13 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    * pre-existing instance is covered by the same wiring.
    */
   it('hydrates the other past-26 member the same way', async () => {
-    mockQuery.mockResolvedValueOnce([row({ type: '27', amount: 5 })]);
+    mockQuery.mockResolvedValueOnce([
+      // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'28'` case above, and its
+      // account types DELIBERATELY DIFFER from it. This pair is the only reason a
+      // mutant cannot serve both credits from one value, i.e. the only reason the
+      // account-type columns are known to read the row at all.
+      row({ type: '27', amount: 5, fromAccountType: 'yellow', toAccountType: 'green' }),
+    ]);
 
     const result = await getUserBuzzTransactionsMulti({
       accountId: ACCOUNT_ID,
@@ -251,6 +288,8 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.LicenseFee);
     expect(tx.type).toBe(27);
+    expect(tx.fromAccountType).toBe('yellow');
+    expect(tx.toAccountType).toBe('green');
   });
 
   /**
@@ -293,11 +332,13 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
   }
 
   it('writes the member NAME for a row stored as its number, not the bare number', async () => {
-    // A THIRD account-type pair, distinct from the two directional cases below —
-    // see the list suite's note. Without it both of those carry the same pair and
-    // `isDebit ? 'yellow' : 'green'` satisfies them without reading the row.
+    // 🔴 CREDIT CASE ONE OF TWO on this path, and it must differ from the other
+    // credit (`reports the RECIPIENT side …`). Two cases differing only in direction
+    // are satisfied by any pure function of `isDebit` without reading the row — that
+    // mutant survived the whole suite until a second credit with a different value
+    // existed.
     mockQuery.mockResolvedValueOnce([
-      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'red' }),
+      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'blue' }),
     ]);
 
     const out = await csv();
@@ -310,8 +351,32 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     // whole-line `/(^|,)28,/` search would have matched the AMOUNT column instead,
     // and passed only because the fixture happens not to use 28 as an amount.
     expect(lines[1].split(',')[1]).toBe('AppAuthorFee');
-    // A credit, so the RECIPIENT side — and a value neither directional case uses.
-    expect(lines[1].split(',')[3]).toBe('red');
+    // A credit, so the RECIPIENT side — and distinct from the other credit's.
+    expect(lines[1].split(',')[3]).toBe('blue');
+  });
+
+  /**
+   * The direction discriminator on this path. Same reasoning as the list suite's
+   * self-transfer test: a predicate agreeing with `fromAccountId === accountId` on
+   * the fixtures' single id pair survives, and a self-transfer is where production's
+   * answer (debit) and the plausible wrong one diverge — here flipping the
+   * account-type column as well as the sign.
+   */
+  it('treats a self-transfer as a DEBIT, reporting the payer side', async () => {
+    mockQuery.mockResolvedValueOnce([
+      row({
+        type: '28',
+        amount: 9,
+        fromAccountId: ACCOUNT_ID,
+        toAccountId: ACCOUNT_ID,
+        fromAccountType: 'green',
+        toAccountType: 'yellow',
+      }),
+    ]);
+
+    const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
+    expect(fields[2]).toBe('-9');
+    expect(fields[3]).toBe('green');
   });
 
   it('does the same for the other past-26 member', async () => {
