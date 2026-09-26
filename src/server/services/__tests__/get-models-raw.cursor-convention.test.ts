@@ -59,6 +59,9 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   },
 }));
 
+const limitBindings = ({ text, values }: { text: string; values: unknown[] }) =>
+  [...text.matchAll(/LIMIT \$(\d+)/g)].map((m) => values[Number(m[1]) - 1]);
+
 const rank = {
   downloadCount: 0,
   thumbsUpCount: 0,
@@ -95,11 +98,30 @@ describe('getModelsRaw — nextCursor is the lookahead row', () => {
     });
 
     expect(captured).toHaveLength(1);
-    const limits = [...captured[0].text.matchAll(/LIMIT \$(\d+)/g)].map(
-      (m) => captured[0].values[Number(m[1]) - 1]
-    );
-    expect(limits.length).toBeGreaterThan(0);
-    expect(limits).toEqual(limits.map(() => take + 1));
+    expect(captured[0].text).not.toContain('UNION ALL');
+    expect(limitBindings(captured[0])).toEqual([take + 1]);
+    expect(result.items.map((m) => m.id)).toEqual([11, 12, 13]);
+    expect(result.nextCursor).toBe('2024-01-15T00:00:00.000Z|14');
+  });
+
+  it('with a cursor the query splits into UNION ALL, and all three LIMITs are take + 1', async () => {
+    const take = 3;
+    rowsToReturn.splice(0, rowsToReturn.length, ...[11, 12, 13, 14].map(row));
+    captured.length = 0;
+
+    const result = await getModelsRaw({
+      input: {
+        browsingLevel: 1,
+        take,
+        sort: 'Newest',
+        period: 'AllTime',
+        cursor: '2024-01-15T00:00:00.000Z|10',
+      } as never,
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].text).toContain('UNION ALL');
+    expect(limitBindings(captured[0])).toEqual([take + 1, take + 1, take + 1]);
     expect(result.items.map((m) => m.id)).toEqual([11, 12, 13]);
     expect(result.nextCursor).toBe('2024-01-15T00:00:00.000Z|14');
   });
