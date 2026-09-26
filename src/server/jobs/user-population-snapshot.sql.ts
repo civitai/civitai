@@ -8,6 +8,15 @@
  * src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql.
  */
 
+// How far back each run re-covers. A bucket is fully written by any run landing between one
+// and LOOKBACK_HOURS after that hour closed, so at an HOURLY cadence three hours of overlap
+// tolerates exactly TWO consecutive missed runs; the third loses the oldest bucket, silently
+// and permanently, recoverable only by a manual backfill of the range.
+//
+// 🔴 Do NOT copy the margin from user-activity-rollup.ts. Its comment reads "four consecutive
+// missed runs still leave no gap (4 × 30 min < 3 h)" and that is true THERE because it runs
+// every 30 minutes. Same 3 h lookback, half the period, double the margin. This job's margin is
+// two, and an earlier draft of this file restated the precedent's number without its cadence.
 export const LOOKBACK_HOURS = 3;
 
 // How far back the daily roll-up re-derives on each run. Cheap — it reads the hourly table
@@ -94,8 +103,8 @@ export const ARMS: Arm[] = [
     table: 'default.buzzTransactions',
     idColumn: 'toAccountId',
     timeColumn: 'date',
-    guards: `type = 'purchase'
-      AND fromAccountId = 0
+    guards: `type='purchase'
+      AND fromAccountId=0
       AND description LIKE 'Purchase of %'`,
   },
 
@@ -127,7 +136,7 @@ export function hourlyInsertSql({ column, table, idColumn, timeColumn, guards }:
   // measured zero out-of-range rows too; the bound is uniform so no arm is the exception.
   const bucket = `toDateTime(toStartOfHour(${timeColumn}))`;
   return `
-    INSERT INTO ${HOURLY_TABLE}
+    INSERT INTO ${HOURLY_TABLE} (bucket, ${STATE_COLUMNS.join(', ')})
     SELECT
       ${bucket} AS bucket,
       ${stateColumns(column, idColumn)}
@@ -148,7 +157,7 @@ export function dailyRollSql() {
     (column) => `${COMBINATOR[column]}MergeState(${column}) AS ${column}`
   ).join(',\n      ');
   return `
-    INSERT INTO ${DAILY_TABLE}
+    INSERT INTO ${DAILY_TABLE} (day, ${STATE_COLUMNS.join(', ')})
     SELECT
       toDate(bucket) AS day,
       ${columns}

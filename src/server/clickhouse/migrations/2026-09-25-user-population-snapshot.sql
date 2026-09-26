@@ -271,18 +271,40 @@ SETTINGS index_granularity = 8192;
 -- `*_state` column directly returns an unreadable blob, not a number — the same trap
 -- 2026-09-04-user-activity-rollup.sql calls out for `argMaxMerge(country)`.
 --
--- Panel 21's funnel, re-pointed (the $window variable keeps its current meaning):
+-- Panel 21's funnel, re-pointed. 🔴 READ IT FROM THE **DAILY** TABLE, NOT THE HOURLY ONE.
+--
+-- The dashboard's `$window` variable offers {7, 30, 90} DAYS, and the hourly table's TTL is
+-- `bucket + INTERVAL 90 DAY`. At `$window = 90` a query against the hourly table puts its lower
+-- bound exactly ON the TTL horizon, so the answer depends on when the last TTL merge happened
+-- to run — it under-reports by a drifting amount, with nothing to indicate it. An earlier draft
+-- of this section documented exactly that query, and the TTL-coupling note above reasoned only
+-- about the daily roll's 7-day lookback and never noticed the panel this file exists to re-point.
+--
+-- The daily table has no TTL and is the correct source for ANY window measured in days:
 --
 --   SELECT stage, users FROM (
 --     SELECT 1 AS ord, 'Logged-in viewers' AS stage, uniqCombinedMerge(views_state) AS users
---       FROM default.user_population_hourly WHERE bucket > now() - INTERVAL $window DAY
+--       FROM default.user_population_daily WHERE day > today() - $window
 --     UNION ALL
 --     SELECT 2, 'Generators', uniqCombinedMerge(generators_state)
---       FROM default.user_population_hourly WHERE bucket > now() - INTERVAL $window DAY
+--       FROM default.user_population_daily WHERE day > today() - $window
 --     UNION ALL
 --     SELECT 3, 'Buzz buyers', uniqCombinedMerge(buyers_state)
---       FROM default.user_population_hourly WHERE bucket > now() - INTERVAL $window DAY
+--       FROM default.user_population_daily WHERE day > today() - $window
 --   ) ORDER BY ord;
+--
+-- ⚠️ Two accuracy notes before anyone compares this panel to its old numbers.
+--   - The RECONCILIATION in the ACTUALS below was measured HOUR-ALIGNED on both sides. This
+--     query is DAY-aligned and the live panel it replaces is aligned to neither — it filters
+--     `time > now() - INTERVAL $window DAY` from an arbitrary instant. So the sub-1% agreement
+--     recorded below is not the agreement this panel will show. The boundary effect is the same
+--     order as the sketch error itself: measured 2026-09-25, an unaligned window read 0.2–0.5%
+--     low across all four populations, with signups off by exactly 19 accounts.
+--   - The newest `day` row is a PARTIAL day, rewritten by every run as more hours land. Any
+--     chart ending at `today()` therefore has a final point that is a fraction of a day and
+--     dips — the same "reads as a catastrophic collapse" shape this file warns about elsewhere,
+--     arrived at from the other direction. Nothing marks a day row partial; end a trend chart at
+--     `today() - 1`, or accept the dip and label it.
 --
 -- "Users over time" — DAU as a trailing 24h at each daily point, from the long table:
 --
@@ -350,6 +372,13 @@ SELECT
 FROM default.views
 WHERE userId > 0
   AND toYYYYMM(createdDate) = 202409
+  -- 🔴 BOUND THE BUCKET COLUMN, NOT JUST THE PARTITION COLUMN. The partition predicate is on
+  -- `createdDate`; the bucket is `toDate(time)`. They are DIFFERENT columns, so without the line
+  -- below nothing bounds `time` at all and one future-dated row mints a permanent day row in a
+  -- table that has NO TTL. This is the same hazard the `<= now()` bound in the job exists for,
+  -- and the same one `daily_generation_user_counts` already has (its range reaches 2036-02-07).
+  -- Carry both lines into EVERY arm you derive from this one.
+  AND time >= toDateTime('2022-01-01 00:00:00') AND time <= now()
 GROUP BY day;
 
 -- The `-StateIf(..., 0)` columns build an explicitly EMPTY state, which is the identity under
@@ -381,6 +410,8 @@ WHERE userId > 0
   AND cost BETWEEN 0 AND 1000000
   AND createdAt >= toDateTime('2024-09-01 00:00:00')
   AND createdAt <  toDateTime('2024-10-01 00:00:00')
+  AND createdAt <= now()   -- the ceiling the job carries; a future-dated row inside the
+                           -- final month's range would otherwise still land. See the views arm.
 GROUP BY day;
 
 -- Buyers — guards byte-identical to panels 15/16/21. Counts `toAccountId`, and the time column
@@ -403,6 +434,7 @@ WHERE type = 'purchase'
   AND description LIKE 'Purchase of %'
   AND date >= toDateTime('2024-09-01 00:00:00')
   AND date <  toDateTime('2024-10-01 00:00:00')
+  AND date <= now()
 GROUP BY day;
 
 -- Signups — the one arm that leaves ClickHouse (preflight 3). Chunk by month and run off-peak.
@@ -420,6 +452,7 @@ SELECT
 FROM civitai_pg.User
 WHERE createdAt >= toDateTime('2024-09-01 00:00:00')
   AND createdAt <  toDateTime('2024-10-01 00:00:00')
+  AND createdAt <= now()
 GROUP BY day;
 
 -- The HOURLY backfill is the same seven arms with `toStartOfHour(<time col>)` instead of

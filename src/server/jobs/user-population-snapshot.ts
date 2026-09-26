@@ -43,23 +43,63 @@ export const userPopulationSnapshotJob = createJob(
 
     // Serially, not Promise.all: seven concurrent GROUP BYs against the busiest tables on the
     // cluster buys nothing on a job with an hourly period, and `views` alone is 7.95B rows.
+    //
+    // 🔴 Each arm is isolated. A bare loop lets ONE failing source truncate every LATER arm and
+    // skip the daily roll entirely, and that failure is invisible downstream: the tables carry
+    // no per-arm marker, and AggregatingMergeTree collapses a bucket's seven arm-rows into one,
+    // so counting rows or buckets cannot tell a one-arm hour from a seven-arm hour. The shape
+    // that makes it likely rather than theoretical is a single flaky source — the
+    // `civitai_pg.User` bridge, or `orchestration.jobs` — outlasting LOOKBACK_HOURS: arms before
+    // it keep succeeding, arms after it are permanently missing, and a panel then shows viewers
+    // healthy while generators, buyers and signups collapse.
     const refreshed: string[] = [];
+    const failed: { column: string; error: string }[] = [];
     for (const arm of ARMS) {
       jobContext.checkIfCanceled();
-      await clickhouse.$exec(hourlyInsertSql(arm));
-      refreshed.push(arm.column);
+      try {
+        await clickhouse.$exec(hourlyInsertSql(arm));
+        refreshed.push(arm.column);
+      } catch (e) {
+        failed.push({ column: arm.column, error: e instanceof Error ? e.message : String(e) });
+      }
     }
 
-    // After the arms, so the roll sees this run's hours. Safe to re-run: the daily table is
-    // AggregatingMergeTree and re-merging the same states is the identity.
+    // Rolled from whatever landed, deliberately: a partial hour is still worth carrying into the
+    // daily table, and skipping the roll would freeze the FOREVER history for all seven
+    // populations because one arm's source was briefly unavailable. Safe to re-run — the daily
+    // table is AggregatingMergeTree and re-merging the same states is the identity — so the next
+    // successful run re-rolls the same days and repairs the gap on its own, provided the arm
+    // recovers within LOOKBACK_HOURS.
     jobContext.checkIfCanceled();
     await clickhouse.$exec(dailyRollSql());
 
+    // Throw AFTER the roll so the failure still reaches `job_errors_total` and the duration
+    // histogram (seeded by createJob — see the migration's monitoring section) rather than being
+    // swallowed into a success. Returning normally here would make a silently-partial hour
+    // indistinguishable from a healthy one in the only telemetry this job has.
+    if (failed.length) {
+      throw new Error(
+        `user-population-snapshot: ${failed.length} of ${ARMS.length} arm(s) failed (` +
+          `${failed.map((f) => `${f.column}: ${f.error}`).join('; ')}); ` +
+          `${refreshed.length} succeeded and the daily roll ran`
+      );
+    }
+
     return { columns: refreshed, lookbackHours: LOOKBACK_HOURS, dailyRollDays: DAILY_ROLL_DAYS };
   },
-  // 🔴 No `dedicated` flag: job.ts documents it as INERT — nothing reads it, and setting it
-  // would read as a duplicate-run mitigation that does not exist. The lock is what serialises
-  // runs. Seven scans plus the roll, so the lock outlives a slow run rather than freeing it
-  // for a competing one.
+  // 🔴 No `dedicated` flag: job.ts documents it as INERT — nothing reads it, and setting it would
+  // read as a duplicate-run mitigation that does not exist.
+  //
+  // ⚠️ And `lockExpiration` is NOT one either. It is a HARD CAP on total hold, not a floor: the
+  // refresh interval in the run-jobs route calls `release()` once the budget is spent WHILE the
+  // job is still running, so a slow run is precisely when the lock is freed. With
+  // `keepLockOnDisconnect` absent (the default) a client hang-up also releases, which job.ts
+  // documents as producing "a competing second run of the same work".
+  //
+  // That is acceptable here, and the reason is the design's own idempotency rather than any
+  // serialisation: two concurrent runs insert states that merge as a set union, so a duplicate
+  // run cannot double a count. An earlier draft of this comment claimed the lock "outlives a slow
+  // run rather than freeing it for a competing one", which is the opposite of what the mechanism
+  // does. 20 minutes is sized to cover seven scans plus the roll, not to guarantee exclusivity.
   { lockExpiration: 20 * 60 }
 );

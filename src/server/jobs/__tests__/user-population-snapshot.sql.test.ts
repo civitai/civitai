@@ -4,10 +4,21 @@ import type { Arm } from '~/server/jobs/user-population-snapshot.sql';
 import {
   ARMS,
   COMBINATOR,
+  DAILY_ROLL_DAYS,
+  DAILY_TABLE,
+  LOOKBACK_HOURS,
   STATE_COLUMNS,
   dailyRollSql,
   hourlyInsertSql,
 } from '~/server/jobs/user-population-snapshot.sql';
+
+/**
+ * The hourly table's TTL, transcribed from the migration's DDL
+ * (src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql). It lives in SQL,
+ * not in TypeScript, so nothing can import it — which is exactly why the daily roll's lookback
+ * could drift against it unnoticed. Stated here so the relationship is at least asserted.
+ */
+const HOURLY_TTL_DAYS = 90;
 
 /**
  * These tests exist for ONE failure mode that no type and no ClickHouse error can catch: the
@@ -46,13 +57,20 @@ describe('user-population snapshot — guards match the dashboard panels', () =>
 
   // Transcribed from panel 21 stage 3. Note it counts `toAccountId`, NOT `userId` — getting
   // that wrong would count the SENDER of every purchase, which is account 0, i.e. one "buyer".
+  //
+  // 🔴 The spacing is the POINT, not an accident. An earlier version of this assertion read
+  // `type = 'purchase' AND fromAccountId = 0` — the IMPLEMENTATION's spacing — while the docblock
+  // above claimed the expectations were transcribed from the dashboard. The live panel writes
+  // `type='purchase' AND fromAccountId=0` with no spaces around `=`. Same semantics, so no number
+  // moved; but the guard was then a spelled string with no provenance, and the drift it exists to
+  // catch (someone edits the panel) would have left it green. Byte-identical means byte-identical.
   it('buyers carry panel 21 stage-3 guards verbatim and count toAccountId', () => {
     const arm = armFor('buyers_state');
     expect(arm.table).toBe('default.buzzTransactions');
     expect(arm.idColumn).toBe('toAccountId');
     expect(arm.timeColumn).toBe('date');
     expect(norm(arm.guards ?? '')).toBe(
-      "type = 'purchase' AND fromAccountId = 0 AND description LIKE 'Purchase of %'"
+      "type='purchase' AND fromAccountId=0 AND description LIKE 'Purchase of %'"
     );
   });
 
@@ -63,6 +81,95 @@ describe('user-population snapshot — guards match the dashboard panels', () =>
     expect(arm.idColumn).toBe('userId');
     expect(arm.timeColumn).toBe('time');
     expect(norm(arm.guards ?? '')).toBe('userId > 0');
+  });
+});
+
+/**
+ * 🔴 EVERY ARM'S FULL SPEC, pinned as one table.
+ *
+ * Why this exists: the guard tests above covered viewers, generators and buyers only — 3 of 7
+ * arms — and the per-arm loops further down read each arm's OWN `idColumn`/`timeColumn`, so they
+ * are self-referential and cannot notice a wrong field. An independent mutation sweep found ten
+ * mutants surviving the whole green suite, and they were not exotic; they are the ordinary edits
+ * someone makes to this file next:
+ *   - the pageViews arm losing `userId > 0` (admits the entire anonymous population — `userId`
+ *     is `Int32 default 0` in every source table — into a column the documented DAU union reads)
+ *   - the reactions or signups arm pointed at the wrong TABLE
+ *   - the signups arm counting `userId` instead of `id`
+ *   - the userActivities arm bucketing on `createdDate` instead of `time` (a materialized `Date`,
+ *     so every row buckets to midnight and the 3 h window returns almost nothing — one of the
+ *     four DAU sources silently zeroed)
+ * A per-arm ledger kills all of them, and it fails when an arm is ADDED, REMOVED or RETARGETED.
+ * Keep it transcribed from the dashboard and the measured column types, never from ARMS itself.
+ */
+const EXPECTED_ARMS: Record<string, { table: string; idColumn: string; timeColumn: string; guards: string }> = {
+  views_state: {
+    table: 'default.views',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  pageviews_state: {
+    table: 'default.pageViews',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  reactions_state: {
+    table: 'default.reactions',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  useractivities_state: {
+    table: 'default.userActivities',
+    idColumn: 'userId',
+    // `time`, NOT `createdDate`. userActivities partitions by toYear(createdDate) and that
+    // column is a materialized Date, so bucketing on it collapses every row to midnight.
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  generators_state: {
+    table: 'orchestration.jobs',
+    idColumn: 'userId',
+    // DateTime64(3) — the only non-DateTime time column in the set.
+    timeColumn: 'createdAt',
+    guards: "userId > 0 AND match(jobType, '^[A-Za-z0-9_-]{2,40}$') AND cost BETWEEN 0 AND 1000000",
+  },
+  buyers_state: {
+    table: 'default.buzzTransactions',
+    // `toAccountId`, NOT `userId` — the sender of every purchase is account 0, so counting
+    // `userId` here would report exactly one buyer, forever.
+    idColumn: 'toAccountId',
+    timeColumn: 'date',
+    guards: "type='purchase' AND fromAccountId=0 AND description LIKE 'Purchase of %'",
+  },
+  signups_state: {
+    table: 'civitai_pg.User',
+    idColumn: 'id',
+    timeColumn: 'createdAt',
+    guards: '',
+  },
+};
+
+describe('user-population snapshot — every arm is fully pinned', () => {
+  it('pins exactly the arms that exist, no more and no fewer', () => {
+    expect(ARMS.map((a: Arm) => a.column).sort()).toEqual(Object.keys(EXPECTED_ARMS).sort());
+  });
+
+  for (const [column, expected] of Object.entries(EXPECTED_ARMS)) {
+    it(`${column}: table, id column, time column and guards`, () => {
+      const arm = armFor(column);
+      expect(arm.table).toBe(expected.table);
+      expect(arm.idColumn).toBe(expected.idColumn);
+      expect(arm.timeColumn).toBe(expected.timeColumn);
+      expect(norm(arm.guards ?? '')).toBe(expected.guards);
+    });
+  }
+
+  it('no two arms read the same table — a duplicated source double-counts one population', () => {
+    const tables = ARMS.map((a: Arm) => a.table);
+    expect(new Set(tables).size).toBe(tables.length);
   });
 });
 
@@ -85,7 +192,7 @@ describe('user-population snapshot — the column ledger', () => {
   });
 
   it('has exactly one arm per column, and no orphan arms', () => {
-    expect(ARMS.map((a) => a.column).sort()).toEqual([...STATE_COLUMNS].sort());
+    expect(ARMS.map((a: Arm) => a.column).sort()).toEqual([...STATE_COLUMNS].sort());
   });
 
   /**
@@ -138,7 +245,8 @@ describe('user-population snapshot — generated SQL shape', () => {
   for (const arm of ARMS) {
     it(`${arm.column} bounds the window at both ends, including the future`, () => {
       const sql = norm(hourlyInsertSql(arm));
-      expect(sql).toContain(`${arm.timeColumn} > now() - INTERVAL 3 HOUR`);
+      expect(LOOKBACK_HOURS).toBe(3);
+      expect(sql).toContain(`${arm.timeColumn} > now() - INTERVAL ${LOOKBACK_HOURS} HOUR`);
       expect(sql).toContain(`${arm.timeColumn} <= now()`);
     });
   }
@@ -152,6 +260,40 @@ describe('user-population snapshot — generated SQL shape', () => {
       );
     });
   }
+
+  /**
+   * 🔴 The daily roll's TARGET and WINDOW were both unpinned, and each survived a mutation.
+   * Writing `${HOURLY_TABLE}` instead of `${DAILY_TABLE}` is TYPE-VALID, so ClickHouse accepts
+   * it: midnight rows go back into the hourly table, the next roll re-reads them, and the daily
+   * table — the forever history — silently freezes. And `DAILY_ROLL_DAYS` carries a 🔴 coupling
+   * warning against the 90-day TTL on the line above its declaration while nothing asserted it,
+   * so 7 → 700 passed a green suite.
+   */
+  it('daily roll writes the DAILY table, bounded by DAILY_ROLL_DAYS', () => {
+    const sql = norm(dailyRollSql());
+    expect(DAILY_ROLL_DAYS).toBe(7);
+    expect(sql).toContain(`INSERT INTO ${DAILY_TABLE}`);
+    expect(sql).not.toContain('INSERT INTO default.user_population_hourly');
+    expect(sql).toContain('FROM default.user_population_hourly');
+    expect(sql).toContain(`WHERE bucket >= toStartOfDay(now() - INTERVAL ${DAILY_ROLL_DAYS} DAY)`);
+    // The roll must stay well inside the hourly TTL: a day whose hourly rows have expired can
+    // never be rolled up, only re-derived from raw. 90 is the TTL; assert real margin, not just
+    // inequality, so shrinking the TTL toward the lookback is a failure rather than a surprise.
+    expect(DAILY_ROLL_DAYS).toBeLessThan(HOURLY_TTL_DAYS / 2);
+  });
+
+  it('every INSERT names its columns explicitly — position is not the contract', () => {
+    // ClickHouse matches INSERT ... SELECT by POSITION, and six of the seven state columns are
+    // type-identical, so any permutation among them is accepted and silently wrong. The `AS`
+    // aliases are inert for INSERT ... SELECT; only an explicit column list binds by name.
+    const list = `(bucket, ${STATE_COLUMNS.join(', ')})`;
+    for (const arm of ARMS) {
+      expect(norm(hourlyInsertSql(arm))).toContain(norm(`INSERT INTO default.user_population_hourly ${list}`));
+    }
+    expect(norm(dailyRollSql())).toContain(
+      norm(`INSERT INTO ${DAILY_TABLE} (day, ${STATE_COLUMNS.join(', ')})`)
+    );
+  });
 
   it('daily roll re-emits every column as a state, with the matching combinator', () => {
     const sql = norm(dailyRollSql());
