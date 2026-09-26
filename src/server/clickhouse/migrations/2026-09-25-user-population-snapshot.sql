@@ -434,11 +434,45 @@ GROUP BY day;
 --   SELECT uniqCombinedMerge(views_state) FROM default.user_population_daily WHERE day = today() - 1;
 --   -- re-run the views arm for that day, then repeat the SELECT. Same number = idempotent.
 --
--- ACTUALS (fill in at apply time — leaving these blank makes the section decorative):
---   applied            <date>
---   daily rows         <n>      spanning <first> .. <last>
---   hourly rows        <n>      spanning <first> .. <last>
---   generators 30d     snapshot <n>  vs raw <n>  (<pct>% delta)
---   viewers 30d        snapshot <n>  vs raw <n>  (<pct>% delta)
---   buyers 30d         snapshot <n>  vs raw <n>  (<pct>% delta)
---   signups 30d        snapshot <n>  vs raw <n>  (expect EXACT)
+-- 🔴 A BACKFILL WINDOW MUST START ON AN HOUR BOUNDARY, or the first bucket is silently
+-- PARTIAL — it holds only the fraction of the hour after the window opened, and nothing ever
+-- repairs it. The job's rolling lookback only re-covers RECENT hours, so a partial bucket at
+-- the start of a backfill stays wrong forever, reading as a dip nobody can explain.
+--
+-- Measured 2026-09-25, and worth reading as a method rather than a fact: a 7-day slice was
+-- backfilled with `> now() - INTERVAL 7 DAY` at 03:12, so its first bucket (03:00) was missing
+-- 03:00–03:12 — exactly 19 signups. All four populations read ~0.2–0.5% low and that looked
+-- exactly like HLL approximation error. It was not. **`signups_state` is uniqExact and
+-- therefore CANNOT approximate, so its disagreement was proof the cause was structural.**
+-- Dropping the first bucket made signups reconcile EXACTLY, which confirmed it.
+--
+-- Keep that property in mind when something looks off: the exact column is a built-in control
+-- that separates "the sketch is approximating" from "the pipeline lost rows". Do not "simplify"
+-- it to uniqCombined for uniformity — that removes the only arm that can tell you which.
+--
+-- The fix is the same idempotent re-cover the design already promises:
+--   ... WHERE <timecol> >= toStartOfHour(now() - INTERVAL 8 DAY)   -- aligned, one day wider
+-- Re-covering good buckets is a no-op, so widening is always safe.
+--
+-- ACTUALS — applied 2026-09-25, 7-day validation slice (the full-history backfill had NOT run
+-- at this point; re-record these after it does):
+--   tables created     default.user_population_hourly, default.user_population_daily
+--                      SharedAggregatingMergeTree, ORDER BY bucket/day, no partition key
+--                      hourly TTL present, normalised by ClickHouse to `toIntervalDay(90)`
+--                      (⚠️ a regex looking for `INTERVAL 90 DAY` finds nothing and reads as a
+--                      MISSING TTL — read `create_table_query`, not a pattern match)
+--   hourly rows        1,183  spanning 2026-09-19 03:00 .. 2026-09-26 03:00
+--   daily rows         8      spanning 2026-09-19 .. 2026-09-26
+--   backfill cost      7 arms over 7 days: 0.3–1.9 s each, ~5 s total; daily roll 0.8 s
+--   per-run cost       ~3.4 s for all 7 arms over the job's 3 h window
+--
+--   reconciliation, hour-aligned on both sides (7 d):
+--     viewers          437,264 vs 437,033 raw    +0.05%
+--     generators        39,676 vs  39,761 raw    -0.21%
+--     buyers             3,408 vs   3,408 raw    EXACT   (cardinality below the sketch's
+--                                                         exact-representation threshold)
+--     signups           57,249 vs  57,249 raw    EXACT   (uniqExact — must always be exact;
+--                                                         if it is not, suspect the pipeline)
+--
+--   idempotency on real data: re-running the views arm left the merged 7-day figure at
+--   436,383 unchanged (not doubled).

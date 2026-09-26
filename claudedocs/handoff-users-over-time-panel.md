@@ -39,13 +39,21 @@ the history is long (months), not window-limited.
     — same per-load heavy pattern, and Loki-side (72h retention).
   - `civitai-cohort-health.json` has 3 tier-count user panels — NOT yet inspected in
     detail (listed as next step 2).
-- 2026-09-25 (second session): 5 questions closed, design written. Branch
-  `zach/users-over-time-snapshot` off `origin/main` carries the migration file +
-  this doc update. NOT pushed, no PR yet.
-- What's IN FLIGHT: nothing running. Branch is local and uncommitted upstream.
-- Deploy/verify status: **nothing applied.** No DDL has been run against ClickHouse,
-  no job deployed, no dashboard changed. The three preflights in the migration header
-  are unrun — in particular `orchestration.jobs`'s sorting key is ASSUMED, not measured.
+- 2026-09-25 (second session): 5 questions closed, design + job written and verified,
+  **PR #5159 open** (`zach/users-over-time-snapshot`), **DDL APPLIED**, 7-day
+  validation slice backfilled and reconciled.
+- What's IN FLIGHT: nothing running.
+- Deploy/verify status:
+  - ✅ **DDL applied to production ClickHouse** — `default.user_population_hourly`
+    (TTL 90d) and `default.user_population_daily` both exist, seven state columns
+    each, verified against `system.columns` and `create_table_query`.
+  - ✅ **7-day slice backfilled and reconciled** — signups and buyers EXACT, viewers
+    +0.05%, generators −0.21%. Idempotency confirmed on real data.
+  - ❌ **FULL-HISTORY backfill has NOT run.** The daily table holds 8 days, not years.
+    So a "users over time" panel shipped today would show 8 days and read as a
+    catastrophic collapse before that. This is the next gate.
+  - ❌ Job is NOT deployed (it ships with PR #5159) and NO dashboard has changed.
+  - ⏳ PR #5159 has had no audit round yet (`/audit-pr 5159`).
 
 ## Decisions taken (2026-09-25) — all five questions are CLOSED
 Four were answered by the user; the fifth was settled from the repo and needed no ask.
