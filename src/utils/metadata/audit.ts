@@ -11,6 +11,7 @@ import {
   harmfulCombinations,
   blockedNSFWOverridable,
   promptTags,
+  youngComposedNouns,
 } from '@civitai/mod-utils/prompt-audit/lists';
 import { prepareWordRegex, prepareWordRegexBody } from '@civitai/mod-utils/prompt-audit/word-regex';
 import {
@@ -631,33 +632,10 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
   return wrapped;
 }
 
-// The gap between a young-adjective and a partial-noun. BOUNDED quantifiers
-// ({0,200}/{1,200}) instead of the original unbounded `([\s|\w]*|[^\w]+)`: the
-// partial nouns end in `\w*` (e.g. `\w*girl+\w*`), so an unbounded gap sat
-// adjacent to another unbounded `\w*` over the SAME input run → O(n^2)
-// catastrophic backtracking on a long Latin `\w` run (`"young " + "a"*24000`
-// took ~2.8s of synchronous main-thread CPU through `words.young.nouns` — a
-// user-triggerable DoS of the same class as the #2722 CJK ReDoS, surfaced by the
-// #2725 audit). Any FINITE bound collapses this to linear, so a wider bound costs
-// nothing perf-wise. Widened 40→200 chars (#2727 M1 recall fix): `girl`/`boy` are
-// reachable ONLY via this composed path, and a 40-char (~7 word) window missed
-// real spaced "young … girl" phrasings >40 chars on the CSAM/minor-detection path
-// — closing that recall gap while staying linear. Verified equal to the old form
-// on the equivalence-oracle corpus, whose `youngComposedNouns` reference mirrors
-// this exact body.
-//
-// The word-run gap cannot cross a blank line: a user who puts an adjective and a
-// noun in separate paragraphs is describing separate subjects. This applies only
-// to rules where one word describes another — never to includesInappropriate's
-// minor-AND-nsfw check, which must stay whole-prompt.
-const composedNounGap = '((?:[\\w|]|[^\\S\\n]|\\n(?![^\\S\\n]{0,200}\\n)){0,200}|[^\\w]{1,200})';
-const composedNouns = youngWords.partialNouns.flatMap((word) => {
-  return youngWords.adjectives.map((adj) => adj + composedNounGap + word);
-});
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
-    nouns: checkable(youngWords.nouns.concat(composedNouns), {
+    nouns: checkable(youngWords.nouns.concat(youngComposedNouns), {
       pluralize: true,
     }),
     negativeNouns: checkable(youngWords.negativeNouns, {

@@ -21,6 +21,7 @@ import blockedNSFW from './lists/blocklist-nsfw.json';
 import { prepareWordRegex, prepareWordRegexBody } from './word-regex';
 import { ages, canonicalNumberWords, templateParts, templates } from './lists/ages';
 import { harmfulCombinations } from './lists/harmful-combinations';
+import { youngComposedNouns } from './lists/composed-nouns';
 
 // Defense-in-depth length cap (main app's MAX_AUDIT_PROMPT_LENGTH). Realistic prompts are <1500 chars;
 // anything past this is anomalous, so we bound the work rather than scan an adversarial input.
@@ -228,14 +229,10 @@ function minorAgeTerms(prompt: string): string[] {
 // #endregion
 
 // #region [detectors — verbatim]
-const composedNounGap = '((?:[\\w|]|[^\\S\\n]|\\n(?![^\\S\\n]{0,200}\\n)){0,200}|[^\\w]{1,200})';
-const composedNouns = youngWords.partialNouns.flatMap((word) =>
-  youngWords.adjectives.map((adj) => adj + composedNounGap + word)
-);
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
-    nouns: checkable(youngWords.nouns.concat(composedNouns), { pluralize: true }),
+    nouns: checkable(youngWords.nouns.concat(youngComposedNouns), { pluralize: true }),
     negativeNouns: checkable(youngWords.negativeNouns, { pluralize: true }),
   },
   poi: checkable(poiWords, {

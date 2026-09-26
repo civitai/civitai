@@ -27,3 +27,4 @@ export {
 };
 export { harmfulCombinations, type HarmfulCombination } from './harmful-combinations';
 export { EXTERNAL_CLASSIFIER_REWRITES } from './external-classifier-rewrites';
+export { youngComposedNouns } from './composed-nouns';

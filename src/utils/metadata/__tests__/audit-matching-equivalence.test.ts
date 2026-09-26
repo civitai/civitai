@@ -18,6 +18,7 @@ import {
   nsfwWordsSoft,
   nsfwWordsPaddle,
   youngWords,
+  youngComposedNouns,
   promptTags,
 } from '@civitai/mod-utils/prompt-audit/lists';
 
@@ -25,9 +26,10 @@ import {
  * Matching-correctness guard for `checkable().inPrompt` / `.highlight` in audit.ts.
  *
  * Originally written to prove the combined-regex pre-filter ("gate", PR #2452)
- * never changed matching results. That gate was removed (it caused catastrophic
- * regex backtracking / ReDoS on user prompts — single inPrompt calls burned
- * 11–47s of main-thread CPU on prod api pods). These tests are KEPT as a
+ * never changed matching results. That build of the gate was reverted in #2719
+ * (catastrophic backtracking — single inPrompt calls burned 11–47s of
+ * main-thread CPU on prod api pods); the zero-width rebuild is live. These tests
+ * are KEPT as a
  * standing correctness oracle: they reconstruct the brute-force per-word
  * matching loop independently and assert the public audit API agrees with it
  * across a broad sample of prompts (every real list entry as a positive case +
@@ -117,18 +119,15 @@ function refGetTags(prompt: string): string[] {
 }
 
 // --- Reference (pre-optimization) young.nouns matching ---
-// Mirrors audit.ts: words.young.nouns = checkable(youngWords.nouns.concat(composedNouns),
-// { pluralize: true }). leet defaults to true. The composed nouns interleave every
-// adjective with every partialNoun via the body `adj·((?:[\w|]|[^\S\n]|\n(?![^\S\n]{0,200}\n)){0,200}|[^\w]{1,200})·noun`
-// — the highest-risk class for alternation interaction. The gap quantifiers are
-// BOUNDED (must match audit.ts's composedNouns exactly so this stays a faithful
-// old-vs-new *boundary* comparison): the unbounded original was O(n^2) on a long
-// Latin `\w` run (the residual ReDoS lever closed alongside this oracle). Widened
-// 40→200 alongside audit.ts (#2727 M1 recall fix) — kept in lockstep here.
-const composedNounGap = '((?:[\\w|]|[^\\S\\n]|\\n(?![^\\S\\n]{0,200}\\n)){0,200}|[^\\w]{1,200})';
-const youngComposedNouns = youngWords.partialNouns.flatMap((word) =>
-  youngWords.adjectives.map((adj) => adj + composedNounGap + word)
-);
+// Mirrors audit.ts: words.young.nouns = checkable(youngWords.nouns.concat(youngComposedNouns),
+// { pluralize: true }). leet defaults to true. This is the highest-risk class for alternation
+// interaction — every adjective interleaved with every partialNoun across a bounded gap.
+//
+// 🔴 The composed nouns are IMPORTED, not re-derived. What this oracle copies is the MATCHER
+// (refPrepareWordRegex, the old boundary form); the terms are inputs, and it already imports
+// every other list for that reason. A hand-copied gap held in lockstep by a comment is what
+// this file had, and reverting audit.ts's gap alone still passed here. The gap's own semantics
+// belong to audit-composed-noun-gap.test.ts.
 const youngNounList = youngWords.nouns.concat(youngComposedNouns);
 const youngNounRefRegexes = youngNounList.map((w) => refPrepareWordRegex(w, true, true));
 

@@ -24,12 +24,13 @@ import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-per
  * caught single `inPrompt()` calls burning 11s / 25s / 47s of SYNCHRONOUS
  * main-thread CPU on user generation prompts, pegging the event loop until the
  * readiness probe timed out and the pod shed traffic (a user-triggerable DoS →
- * the recurring "504 wave"). The gate has been removed; `inPrompt`/`highlight`
- * now go straight to the per-word loop (the pre-#2452 behavior that ran fine
- * for years).
+ * the recurring "504 wave"). That build of the gate was reverted in #2719 and
+ * later RESTORED with zero-width boundaries (`checkable` in audit.ts), which have
+ * nothing to backtrack over a long non-alnum run; audit-gate-perf.test.ts guards
+ * its linearity.
  *
  * These tests are a HOT-PATH LATENCY guard for the public audit API. They feed
- * the adversarial input shapes that stress the removed gate — long runs of
+ * the adversarial input shapes that stressed the #2452 gate — long runs of
  * non-alphanumeric separators, whitespace ambiguously partitioned across
  * multiple greedy quantifiers, leet-class soup, and near-miss blocklist
  * fragments — through `auditPrompt`/`includesNsfw`/`includesPoi`/etc. and assert
@@ -42,16 +43,16 @@ import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-per
  * reproduce a multi-second hang on a current Node runtime. What they DO is bound
  * the audit hot path: if a quadratic/exponential pre-filter (the #2452 gate, or
  * any successor) is reintroduced and an input pushes it into seconds, the bound
- * (and/or vitest's default timeout) trips. Matching CORRECTNESS after removing
- * the gate is covered separately by audit-matching-equivalence.test.ts, which
- * reconstructs the brute-force per-word oracle and asserts the public API agrees.
+ * (and/or vitest's default timeout) trips. Matching CORRECTNESS of the gate is
+ * covered separately by audit-matching-equivalence.test.ts, which reconstructs
+ * the brute-force per-word oracle and asserts the public API agrees.
  */
 
 // Per-call upper bound on these SMALL (≤~300-char) adversarial inputs. There's no
 // input size to scale here (the ReDoS blows up on STRUCTURE, not length), so the
 // guard is a single generous absolute ceiling rather than a scaling ratio. The
-// removed exponential gate took 11-47 SECONDS on a single call in prod; the
-// gateless per-word loop is a few ms to low-tens-of-ms even on a loaded runner. We
+// #2452 exponential gate took 11-47 SECONDS on a single call in prod; the current
+// zero-width path is a few ms to low-tens-of-ms even on a loaded runner. We
 // use the shared hang ceiling (multiple seconds) so a true catastrophic backtrack
 // trips on ANY hardware while transient CPU contention never flakes it — a tighter
 // (e.g. 500ms) line measured "this CPU is fast", not "this regex is linear", and
@@ -68,7 +69,7 @@ function timeCall(fn: () => unknown): number {
   return performance.now() - start;
 }
 
-// Adversarial inputs crafted to maximize backtracking against the removed gate:
+// Adversarial inputs crafted to maximize backtracking against the #2452 gate:
 // a near-miss blocklist token prefix, then an ambiguous run that the leading
 // boundary group, any interior `[^a-zA-Z0-9]+`/`[\s|\w]*`, and the trailing
 // boundary group all compete to consume.
@@ -236,59 +237,6 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
         beyond.success,
         'an over-length prompt is blocked outright (banned phrase can no longer hide past the cap)'
       ).toBe(false);
-    });
-  });
-
-  // Recall-boundary coverage for the composed young-noun gap (#2727 M1). The
-  // composed path (`young…girl`) is the ONLY way `girl`/`boy` flag; a 40-char gap
-  // missed real spaced phrasings >40 chars. With the bound widened to 200, spaced
-  // phrasings inside the window still flag and a gap clearly over the bound does
-  // not — documenting the bound explicitly (replaces the tautological oracle
-  // coverage). Any FINITE bound stays linear, so the wider window costs no perf.
-  describe('composed young-noun recall boundary ({0,200} gap)', () => {
-    it('flags a spaced "young … girl" phrasing within the 200-char window (~150 chars)', () => {
-      // 'young ' + 'word ' x30 + 'girl' ≈ 150 spaced chars, comfortably < 200.
-      const input = 'young ' + 'word '.repeat(30) + 'girl';
-      expect(input.length).toBeLessThan(200);
-      expect(input.length).toBeGreaterThan(40); // would have been MISSED at the old {0,40} bound
-      expect(includesMinor(input)).toBeTruthy();
-    });
-
-    it('does NOT match when the gap is clearly over the 200-char bound', () => {
-      // 'young ' + 'word ' x60 + 'girl' ≈ 300 spaced chars of gap → beyond {0,200}.
-      const input = 'young ' + 'word '.repeat(60) + 'girl';
-      expect(input.length).toBeGreaterThan(200 + 'young girl'.length);
-      expect(includesMinor(input)).toBeFalsy();
-    });
-  });
-
-  describe('composed young-noun gap across paragraphs', () => {
-    it('does not join an adjective to a noun in a later paragraph', () => {
-      expect(auditPrompt('skinny, small butt\n\n\n\n1boy, nude').success).toBe(true);
-      expect(includesMinor('small cute\n\nboy')).toBeFalsy();
-      expect(includesMinor('small cute\r\n\r\nboy')).toBeFalsy();
-      expect(includesMinor('small cute\n  \t\nboy')).toBeFalsy();
-    });
-
-    it('still joins across a single line break, or a gap of only whitespace/punctuation', () => {
-      expect(includesMinor('small brown\nboy')).toBeTruthy();
-      expect(includesMinor('small brown\r\nboy')).toBeTruthy();
-      expect(includesMinor('small\n\nboy')).toBeTruthy();
-      expect(includesMinor('small brown boy')).toBeTruthy();
-      expect(includesMinor('young\tpretty girl')).toBeTruthy();
-      expect(includesMinor('young pretty girl')).toBeTruthy();
-    });
-
-    it('keeps the minor + nsfw combination whole-prompt: a paragraph break never separates them', () => {
-      for (const prompt of [
-        'schoolgirl\n\nnude',
-        'young girl\n\n\n\nmasterpiece, detailed\n\nnude',
-        'nude\n\nsmall brown boy',
-      ]) {
-        const result = auditPrompt(prompt);
-        expect(result.success, prompt).toBe(false);
-        expect(result.blockedFor, prompt).toContain('Inappropriate minor content');
-      }
     });
   });
 
