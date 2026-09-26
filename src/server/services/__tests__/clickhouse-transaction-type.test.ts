@@ -111,17 +111,14 @@ describe('fromClickhouseTransactionType', () => {
   });
 
   /**
-   * 🔴 A PROTOTYPE KEY IS NOT AN ABSENT KEY, and the two cases above cannot tell
-   * the difference: `TransactionType['NotAType']` really is `undefined`, so `??`
-   * fires and they pass under the unguarded expression too. `'__proto__'` resolves
-   * up the chain to a non-nullish OBJECT, which `??` accepts — so without this
-   * line the `Object.hasOwn` guard is untestable and reverting it is invisible.
+   * 🔴 A PROTOTYPE KEY IS NOT AN ABSENT KEY, and the case above cannot tell the
+   * difference: `TransactionType['NotAType']` really is `undefined`, so the obvious
+   * `TransactionType[name] ?? Tip` handles it. `'__proto__'` resolves up the chain
+   * to a non-nullish OBJECT, which `??` accepts — so this is the input that makes
+   * the `typeof` narrowing killable, and the only one here that does.
    */
   it('does not resolve a prototype key to an object', () => {
-    const resolved = fromClickhouseTransactionType('__proto__');
-    expect(resolved).toBe(TransactionType.Tip);
-    expect(typeof resolved).toBe('number');
-    expect(fromClickhouseTransactionType('constructor')).toBe(TransactionType.Tip);
+    expect(fromClickhouseTransactionType('__proto__')).toBe(TransactionType.Tip);
   });
 });
 

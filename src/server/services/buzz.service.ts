@@ -349,12 +349,12 @@ export function fromClickhouseTransactionType(raw: string): TransactionType {
     return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
   }
   const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
-  // 🔴 `hasOwn`, not a truthiness or `??` test. `TransactionType['__proto__']`
-  // resolves up the prototype chain to a non-nullish OBJECT, so `??` does not
-  // fire and this returned `Object.prototype` typed as a `TransactionType`. The
-  // ClickHouse column cannot produce that, but this function is exported, and
-  // the next caller with a less trustworthy source would inherit it.
-  const resolved = Object.hasOwn(TransactionType, name) ? TransactionType[name] : undefined;
+  // 🔴 A `typeof` test, not `??`. `TransactionType['__proto__']` resolves up the
+  // prototype chain to a non-nullish OBJECT, which `??` accepts — so the obvious
+  // `TransactionType[name] ?? Tip` returns `Object.prototype` typed as a
+  // `TransactionType`. Narrowing on the RESULT rejects that and every other
+  // non-member in one test.
+  const resolved: unknown = TransactionType[name];
   return typeof resolved === 'number' ? resolved : TransactionType.Tip;
 }
 

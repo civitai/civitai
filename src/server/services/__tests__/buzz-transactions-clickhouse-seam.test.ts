@@ -29,13 +29,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * own tests rather than riding on the shared filter.
  *
  * ── WHAT IS MOCKED ──────────────────────────────────────────────────────────
- * The three this file mocks itself, on top of the project-wide mocks in
- * `src/__tests__/setup.ts` (db, redis, env, prom, logging and others — so "only
- * the edges" is true of this file, not of the process): the ClickHouse client
- * (the seam under test — the mock is how the SQL is captured and the row shape
- * injected), `getUsers`, and the logger. `buildBranchQuery`,
- * `walkTransactionSlices`, `hydrateTransactions` and `formatExportBatch` all run
- * for real, which is the point.
+ * This file mocks TWO modules: the ClickHouse client (the seam under test — the
+ * mock is how the SQL is captured and the row shape injected) and `getUsers`. The
+ * logger is NOT one of them — `src/__tests__/setup.ts` already mocks it, along
+ * with the db, redis, env, prom and four others; the lines below only configure
+ * that existing mock. So "only the edges" describes this file, not the process the
+ * tests run in.
+ *
+ * `buildBranchQuery`, `walkTransactionSlices`, `hydrateTransactions` and
+ * `formatExportBatch` all run for real, which is the point.
  */
 
 // Top-level `import type * as`, not an inline `typeof import(...)` — the latter
@@ -169,11 +171,35 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     // `'AppAuthorFee'` the reverse mapping returned. A `not.toBe('AppAuthorFee')`
     // after it could never report, and is deliberately absent.
     expect(tx.type).toBe(28);
-    // NOT subsumed: a duplicate enum value at 28 flips the reverse map, and this is
-    // the only line here that sees it.
+    // NOT subsumed by the line above: a duplicate enum value at 28 flips the
+    // reverse map, and this reports it directly rather than as a knock-on.
     expect(TransactionType[tx.type]).toBe('AppAuthorFee');
-    // The credit/debit sign, which nothing else on this path asserted.
+    // A CREDIT — this row's counterparty is the payer — so the magnitude ClickHouse
+    // stores comes back unchanged. The debit direction is the one worth guarding and
+    // it gets its own test below.
     expect(tx.amount).toBe(3);
+  });
+
+  /**
+   * 🔴 THE SIGN, on both read paths. ClickHouse stores every amount as a positive
+   * magnitude and the direction lives in which side of the transaction the account
+   * is on, so a fee the viewer PAID and a fee the author RECEIVED are the same
+   * stored row read from two accounts. Dropping the negation made no test fail:
+   * every fixture here was a credit, so the flip was asserted only in its trivial
+   * direction.
+   */
+  it('negates the amount when the account is the PAYER, on the list path', async () => {
+    mockQuery.mockResolvedValueOnce([
+      row({ type: '28', amount: 3, fromAccountId: ACCOUNT_ID, toAccountId: 77 }),
+    ]);
+
+    const result = await getUserBuzzTransactionsMulti({
+      accountId: ACCOUNT_ID,
+      ...WINDOW,
+    } as Parameters<typeof getUserBuzzTransactionsMulti>[0]);
+
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0].amount).toBe(-3);
   });
 
   /**
@@ -242,9 +268,11 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     // a header-only file is itself one of the two symptoms under test.
     const lines = out.trim().split('\r\n').filter(Boolean);
     expect(lines.length).toBeGreaterThan(1);
-    expect(out).toContain('AppAuthorFee');
-    // The symptom: the type column carrying the raw enum value.
-    expect(lines[1]).not.toMatch(/(^|,)"?28"?,/);
+    // Column-anchored on the STATE, not searched for a spelling. `type` is field 1
+    // (`EXPORT_COLUMNS`), and the rows this generator emits are unquoted. A
+    // whole-line `/(^|,)28,/` search would have matched the AMOUNT column instead,
+    // and passed only because the fixture happens not to use 28 as an amount.
+    expect(lines[1].split(',')[1]).toBe('AppAuthorFee');
   });
 
   it('does the same for the other past-26 member', async () => {
@@ -261,6 +289,48 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     const out = await csv();
     expect(out.trim().split('\r\n').filter(Boolean).length).toBeGreaterThan(1);
     expect(out).toContain('AppAuthorFee');
+  });
+
+  /**
+   * 🔴 THE SAME SIGN GUARD, and the export carries a SECOND branch the list does
+   * not: `isDebit` also chooses which side's account type is reported. Dropping
+   * either failed nothing — every fixture was a credit. Columns are
+   * `date,type,amount,accountType,fromUser,toUser,…` per `EXPORT_COLUMNS`.
+   */
+  it('negates the amount and reports the PAYER side account type', async () => {
+    mockQuery.mockResolvedValueOnce([
+      row({
+        type: '28',
+        amount: 3,
+        fromAccountId: ACCOUNT_ID,
+        toAccountId: 77,
+        fromAccountType: 'yellow',
+        toAccountType: 'blue',
+      }),
+    ]);
+
+    const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
+    expect(fields[1]).toBe('AppAuthorFee');
+    expect(fields[2]).toBe('-3');
+    // The payer's side, not the recipient's — `blue` here is the wrong answer.
+    expect(fields[3]).toBe('yellow');
+  });
+
+  it('reports the RECIPIENT side account type when the account was paid', async () => {
+    mockQuery.mockResolvedValueOnce([
+      row({
+        type: '28',
+        amount: 3,
+        fromAccountId: 77,
+        toAccountId: ACCOUNT_ID,
+        fromAccountType: 'blue',
+        toAccountType: 'yellow',
+      }),
+    ]);
+
+    const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
+    expect(fields[2]).toBe('3');
+    expect(fields[3]).toBe('yellow');
   });
 
   it('sends the numeric spelling of the type filter on the export query too', async () => {
