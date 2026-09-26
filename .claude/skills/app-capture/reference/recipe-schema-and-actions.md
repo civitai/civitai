@@ -24,9 +24,10 @@ sliced rather than dropped.
 ```
 
 🔴 **`clickable` is a LEDGER, and it exists because a mutating control cannot be DETECTED —
-only declared.** "A synthetic in-frame click does nothing on a money button" is measured and
-**narrow**: it is a fact about the *spend* path. An ordinary authenticated mutation — post,
-vote, edit, withdraw — has no such rejection, and this skill's own docs say synthetic clicks
+only declared.** "A synthetic in-frame click does nothing on a money button" was measured on ONE
+button and does NOT generalise — elsewhere (sensei) exactly such a click submitted and spent.
+An ordinary authenticated mutation — post,
+vote, edit, withdraw — is equally reachable, and this skill's own docs say synthetic clicks
 "drive the vast majority of apps". Measured 2026-08-23 on **app-requests**, which now renders
 `submit-btn`, `vote-btn`, `edit-btn` and `withdraw-btn`: every one was frame-scoped clickable
 and nothing said no, so a plausible "voting" state would have cast a **real vote from the

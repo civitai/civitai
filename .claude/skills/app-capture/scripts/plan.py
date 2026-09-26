@@ -75,9 +75,16 @@
 # guarantee. IT IS NOT ONE, and the counter-example is in this skill's own
 # recipes: on sensei a synthetic in-frame click on the send button SUBMITTED FOR
 # REAL and spent Buzz (see sensei.json `_notShootable`, measured 2026-08-30).
-# What actually keeps a capture from spending is THIS FILE's refusals and the
-# per-recipe never-list -- not anything upstream. `trustedKey` remains the way to
-# drive a real activation deliberately, behind the explicit --trusted flag.
+# 🔴 AND NOTHING MECHANICAL PREVENTS IT -- do not substitute a new guarantee for
+# the one just retracted. Measured: this planner will happily emit an in-frame
+# click on a spending control with NO --trusted, because `validate_click_ledger`
+# requires the selector to be DECLARED, not to be safe; its own refusal text says
+# "a click cannot be checked for whether it MUTATES". The `_neverList` key some
+# recipes carry is prose read by no code, and it is absent from both spend apps.
+# So the ledger buys REVIEWABILITY, not prevention: the only mechanical bans are
+# on the OS-actuation path (--trusted / `trustedKey`) and on injected-JS
+# actuation. What keeps a capture from spending is a human reading the declared
+# `clickable` list and the per-recipe notes before the run.
 #
 # 🔴 DO NOT VERIFY A SPEND WITH A BUZZ-BALANCE DELTA. Some apps bill per GPU
 # second ON COMPLETION, so the balance does not move at submission. A misread of
@@ -289,12 +296,14 @@ def validate_click_ledger(r):
     """🔴 "capture never mutates" WAS ONLY TRUE OF THE SPEND PATH AND THE
     INJECTED JS. A recipe's own `click` had no restriction at all.
 
-    The skill's safety argument rests on THIS FILE's refusals and the
-    per-recipe never-list, NOT on any upstream rejection of synthetic events:
-    a synthetic in-frame click has been measured to submit and spend (sensei).
-    Whatever a given button does is a fact about that button. An ordinary
-    authenticated mutation — post, vote, edit, withdraw — has no such rejection,
-    and this skill's own docs say synthetic clicks "drive the vast majority of
+    🔴 There is NO mechanical prevention here, and this ledger is not one.
+    A synthetic in-frame click has been measured to submit and spend (sensei),
+    and this function refuses only an UNDECLARED selector — it cannot tell a
+    mutating control from an inert one, which the refusal below says outright.
+    Whatever a given button does is a fact about that button, not about a path.
+    An ordinary authenticated mutation — post, vote, edit, withdraw — is equally
+    reachable, and this skill's own docs say synthetic clicks "drive the vast
+    majority of
     apps". Measured 2026-08-23 on app-requests, which now renders `submit-btn`,
     `vote-btn`, `edit-btn` and `withdraw-btn`: every one is frame-scoped
     clickable and every one was permitted. A plausible "voting" state would have

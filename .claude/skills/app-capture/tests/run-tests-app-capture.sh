@@ -2390,7 +2390,7 @@ fi
 # 🔴 THE CORPUS IS SKILL.md *PLUS ITS SIDECARS*, and that is not cosmetic. The
 # 2026-08-24 size prune demoted the tests/battery block into reference/, taking
 # the domsurgery.py reference with it — so scanning SKILL.md alone dropped from 3
-# refs to 2 (tripping the control below) while the demoted path became checked by
+# refs to 2 (tripping the tests/ control below) while the demoted path became checked by
 # NOBODY. A prune must not be able to move a path out of coverage.
 if python3 - "$SKILL" "$REPO_ROOT" >"${WORK}/d2.txt" 2>&1 <<'PY'
 import glob, os, re, sys
@@ -2419,7 +2419,6 @@ PATS = [
 ]
 docs = [SKILL] + sorted(glob.glob(os.path.join(os.path.dirname(SKILL), "reference", "*.md")))
 bodies = [open(d).read() for d in docs]
-raw = "\n".join(bodies)
 
 # 🔴 THE BARE PATTERN IS FENCE-BLIND AND THAT IS A FALSE-POSITIVE SOURCE, measured
 # in round 2: a legitimate ```bash example writing to a path that does not exist yet
@@ -2469,9 +2468,15 @@ for i, (p, sample) in enumerate((
 # 🔴 THE DE-FENCING CONTROLS MUST EXERCISE A REAL FENCE. An earlier version applied
 # the substitution to a sample containing NO fence, so it was a no-op that could
 # never fail. Both directions are asserted here.
-_fenced = "prose %s here\n```bash\ntouch %s\n```\n" % (probe, probe + ".fenced")
+# 🔴 THE PROSE PROBE SITS *BETWEEN* TWO FENCES ON PURPOSE. With it before the only
+# fence, the canonical over-stripping bugs are invisible: a greedy `.*`, an
+# unanchored closer, or a closer of a different fence char all eat everything
+# between the FIRST opener and the LAST closer -- which a probe outside that span
+# never notices. Four such mutants survived the earlier form.
+_fenced = ("```bash\ntouch %s.a\n```\nprose %s here\n```bash\ntouch %s.b\n```\n"
+           % (probe, probe, probe))
 _out = FENCE.sub("", _fenced)
-if probe + ".fenced" in _out:
+if (probe + ".a") in _out or (probe + ".b") in _out:
     dead.append("POSITIVE CONTROL FAILED: de-fencing did not strip a fenced block")
 if probe not in _out:
     dead.append("POSITIVE CONTROL FAILED: de-fencing removed unfenced prose")
@@ -2483,6 +2488,15 @@ for _mark in ("~~~", "   ```"):
 # means the docs were reworded out of the gate's reach, not that they got cleaner.
 if len(refs) < 10:
     dead.append("POSITIVE CONTROL FAILED: only %d skill refs extracted" % len(refs))
+# 🔴 RESTORED after round 4 caught its deletion. The corpus must still name its
+# own tests/ dir: that is the property the 2026-08-24 prune broke when it moved a
+# reference out of coverage, and it is the documented reason D2b ever existed. The
+# wiring controls below are ORTHOGONAL -- they prove each pattern is connected to
+# the scan, not that the corpus still points at its own tests. Watched: with every
+# tests/ self-reference pruned away, refs drop 28 -> 19, which is ABOVE the floor
+# of 10, so nothing else here would have noticed.
+if not any(r.startswith(PREFIX + "tests/") for r in refs):
+    dead.append("POSITIVE CONTROL FAILED: the corpus names no tests/ path")
 # 🔴 A PATTERN CAN BE WELL-FORMED AND NOT WIRED TO THE SCAN. Round 3 measured that
 # PATS[1] and PATS[2] each match ZERO refs in the live corpus, so either could be
 # disconnected entirely and every other check here would still pass -- the floor is
@@ -2514,6 +2528,75 @@ then
 else
   fail "D2: the skill corpus names a repo path that does not exist"
   sed 's/^/          /' "${WORK}/d2.txt" | head -8
+fi
+
+# D2c 🔴 THE CLASS GATE. Four rounds of hand-sweeping did not clear one false claim,
+# because each sweep matched the SPELLING it was written against: "the spend path
+# rejects untrusted events" was fixed while "money path rejects", "refuses synthetic
+# input", "does NOT reject" and "rejecting synthetic events" survived, and twice a
+# later round found the same sentence in a file the previous sweep never opened.
+# The claim matters because it is a SAFETY argument: a recipe author who believes
+# something upstream refuses synthetic input will wire a synthetic click at a
+# spending control. It is false — measured on sensei, exactly such a click
+# submitted and spent Buzz.
+#
+# So this pins the CLASS, not a phrase: no file in this skill may ASSERT that
+# something upstream rejects synthetic or untrusted input. Saying so inside a
+# RETRACTION is fine and necessary — a retraction has to quote what it retracts —
+# so a match sharing a window with a retraction marker is allowed.
+if python3 - "$SKILL_DIR" >"${WORK}/d2c.txt" 2>&1 <<'PYD2C'
+import os, re, sys
+ROOT = sys.argv[1]
+ASSERT = re.compile(
+    r"(spend|money)[\s-]*path\s+(rejects|refuses|does\s+NOT\s+reject)"
+    r"|rejecting\s+synthetic"
+    r"|refuses\s+synthetic\s+input"
+    r"|no\s+such\s+rejection",
+    re.I)
+RETRACT = re.compile(
+    r"RETRACT|refuted|counter-example|used to (say|read)|do NOT justify"
+    r"|measured false|is FALSE|was wrong|does NOT generalise|no longer",
+    re.I)
+WINDOW = 400
+bad, scanned, found = [], 0, 0
+for dirpath, _dirs, files in os.walk(ROOT):
+    if os.path.basename(dirpath) == "__pycache__":
+        continue
+    for fn in sorted(files):
+        if not fn.endswith((".md", ".py", ".sh", ".json")):
+            continue
+        p = os.path.join(dirpath, fn)
+        try:
+            text = open(p, encoding="utf-8").read()
+        except Exception:
+            continue
+        scanned += 1
+        for m in ASSERT.finditer(text):
+            found += 1
+            ctx = text[max(0, m.start() - WINDOW): m.end() + WINDOW]
+            if not RETRACT.search(ctx):
+                ln = text[:m.start()].count("\n") + 1
+                bad.append("%s:%d: %s" % (os.path.relpath(p, ROOT), ln, m.group(0)))
+# Positive controls: the detector must catch an assertion, must not fire on
+# unrelated prose, must exempt a retraction, and must have actually read files.
+if not ASSERT.search("the spend path rejects untrusted events"):
+    bad.append("POSITIVE CONTROL FAILED: the detector cannot see an assertion")
+if ASSERT.search("wholly unrelated prose about cropping and framing"):
+    bad.append("POSITIVE CONTROL FAILED: the detector fires on unrelated prose")
+_r = "that claim is RETRACTED: 'the spend path rejects untrusted events' is false"
+if not (ASSERT.search(_r) and RETRACT.search(_r)):
+    bad.append("POSITIVE CONTROL FAILED: a retraction is not exempted")
+if scanned < 20:
+    bad.append("POSITIVE CONTROL FAILED: only %d file(s) scanned" % scanned)
+print("D2C_SCANNED=%d D2C_MATCHES=%d" % (scanned, found))
+print("\n".join("ASSERTED: " + b for b in bad))
+sys.exit(1 if bad else 0)
+PYD2C
+then
+  pass "D2c: no file in this skill ASSERTS that something upstream rejects synthetic/untrusted input — the CLASS, not a phrase ($(grep -o 'D2C_SCANNED=[0-9]*' "${WORK}/d2c.txt")). Occurrences inside a retraction are permitted, because a retraction must quote what it retracts"
+else
+  fail "D2c: a file asserts the retracted 'upstream rejects synthetic events' claim outside a retraction"
+  sed 's/^/          /' "${WORK}/d2c.txt" | head -10
 fi
 
 # A FAKE civitai CLI. It writes a sentinel; the sentinel's ABSENCE is what proves
@@ -4104,9 +4187,10 @@ fi
 
 # G19 🔴 THE MUTATING CLICK — the hazard the spend ban does NOT cover.
 #
-# "A synthetic in-frame click does nothing on a money button" is measured and
-# NARROW: it is about the SPEND path. An ordinary authenticated mutation — post,
-# vote, edit, withdraw — has no such rejection. Measured 2026-08-23 on
+# "A synthetic in-frame click does nothing on a money button" was measured on ONE
+# button and does NOT generalise — elsewhere (sensei) such a click submitted and
+# spent. An ordinary authenticated mutation — post,
+# vote, edit, withdraw — is equally reachable. Measured 2026-08-23 on
 # app-requests (`submit-btn`, `vote-btn`, `edit-btn`, `withdraw-btn` all live and
 # all clickable), nothing in plan.py said no.
 #
