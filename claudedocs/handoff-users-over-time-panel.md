@@ -22,28 +22,30 @@ the history is long (months), not window-limited.
   query no longer hits raw tables).
 
 ## State now
-- **civitai#5159 MERGED** 2026-09-26T17:15:49Z, squash `539b1428f0`. Verified by CONTENT
-  not ancestry (a squash never makes the head an ancestor): all three files on
-  `origin/main`, job registered in the run-jobs route. Branch auto-deleted.
-- **Released and deployed.** `origin/release` = `eb57472dbe`; `civitai-dp-prod-jobs` serves
-  `ghcr.io/civitai/civitai-prod:20260926172247-eb57472`, 3/3 pods Ready on it.
-- **The job is REGISTERED and ARMED, not yet observed running.**
-  - App serves it: `/api/internal/get-jobs` went 183 → 184 names;
-    `{"name":"user-population-snapshot","cron":"15 * * * *","options":{"lockExpiration":1200}}`
-  - Hangfire registry went 183 → 184 at 17:50Z (the refresh that ran DURING the pod roll
-    missed it; the next one caught it).
-  - Served cron `[15 * * * *]` == registered cron `[15 * * * *]`.
-  - Invocation is `CreateJob`, NOT `DisabledJob`. `NextExecution 2026-09-26T18:15:00Z`,
-    `LastExecution` absent (never run).
-- **DDL applied + full history backfilled** (both done 2026-09-26, before the merge):
-  `default.user_population_daily` 1,397 distinct days 2022-11-12..2026-09-26;
-  `default.user_population_hourly` holds only an 8-day validation slice.
-- **talos-infra#1642 is OPEN and DELIBERATELY A DRAFT.** Dashboard: pulse panel 21
-  re-pointed at the snapshot, new panel 22 "Users over time (daily)". Head `970e667e7`
-  after a round-0 rework. `tekton / gitops-ci` passed in-cluster (`gitops-ci-1642-htmh7`).
-- **Audit coverage:** civitai#5159 ran round 0 + rounds 1-5 (ladder stopped on round 5:
-  behavioural payload zero, one prose finding, auditor recommended stop). talos#1642 has
-  had round 0 only — **the nine correctness axes have NOT run on it.**
+- **BOTH PRs MERGED AND LIVE.**
+  - `civitai#5159` merged 2026-09-26T17:15:49Z (`539b1428f0`) — tables, hourly job, 39 tests.
+    Released as `eb57472dbe`, deployed as `civitai-prod:20260926172247-eb57472`.
+  - `talos-infra#1642` merged 2026-09-26T19:27:49Z (`42933794e`) — pulse panel 21 re-pointed,
+    panel 22 "Users over time (daily)" added. Flux reconciled it into the live
+    `dashboard-ui-civitai-business-pulse` ConfigMap within ~1 min; verified in-cluster
+    (panel 21 reads `user_population_daily`, `format: 1`; panel 22 present, `format: 2`).
+  - `civitai#5164` (handoff doc) — open.
+- **The job is RUNNING.** Registered in the Hangfire registry (183 → 184), cron `15 * * * *`
+  matching what `get-jobs` serves, invocation `CreateJob` not `DisabledJob`. First scheduled
+  run `2026-09-26T18:15:02.99Z`; both tables' `system.parts` advanced `05:19:16 → 18:15:08`.
+- **Backfill coverage (durable, carried forward):** `default.user_population_daily` holds
+  **1,397 distinct days, 2022-11-12 .. 2026-09-26**, zero gaps inside the span. The 18
+  dayless days (2022-11-14..12-04) are legitimately EMPTY — the raw sources hold zero rows
+  on each — not missing. `default.user_population_hourly` holds ~8 days plus today.
+- **Today's data reconciles:** generators +0.33%, viewers −0.05%, signups −0.02% (one account,
+  arrivals between the two queries) against live raw.
+- **Audit coverage:** `civitai#5159` round 0 + rounds 1–5. `talos#1642` round 0 + rounds 1–2.
+  Both ladders stopped on an auditor recommendation, not a cap.
+- 🔴 **NOT verified: the panels actually RENDERING in Grafana.** Verified instead: the SQL
+  runs at all three `$window` values, the ConfigMap is live, and `format` matches the
+  file-wide invariant (`2` ⟺ the query returns a `time` column). Both audits flagged the
+  render itself as unverifiable without Grafana access, and neither reasoned about plugin
+  internals. This is the one clause of the closing condition still open.
 
 ## Decisions taken (2026-09-25) — all five questions are CLOSED
 Four were answered by the user; the fifth was settled from the repo and needed no ask.
@@ -117,40 +119,28 @@ DAU is the union of all four (the 2026-09-04 migration measured the three non-pa
 sources adding +7.5% users over 30d).
 
 ## Next steps (ranked)
-1. **Confirm the 18:15Z run fired AND wrote** (both signals above), then confirm the
-   snapshot's today-figure converges toward the live count. Repo: none — observation only.
-   forcing: gate — talos#1642 must not leave draft until this holds.
-2. **Un-draft and merge talos-infra#1642** once (1) holds. `gh pr ready 1642 --repo
-   civitai/talos-infra` then merge. Touches
-   `clusters/production/apps/prometheus-stack/grafana-dashboards/civitai-business-pulse.json`.
-   IN FLIGHT: civitai/talos-infra#1642. forcing: gate — the closing condition needs a merged panel.
-3. **Run the nine correctness axes on talos#1642** — only round 0 has run; round 0 explicitly
-   cannot license skipping a round. `/audit-pr 1642`. forcing: gate — an unaudited production
-   dashboard change.
-4. **Backfill the HOURLY table to ~80 days** (it holds an 8-day slice). Statements are in
-   `<civitai>/src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql`
-   §Backfill. 🔴 Scope INSIDE the 90-day TTL — a bucket at/past the horizon is silently
-   dropped on insert. forcing: none
-5. **Decide the refreshable-MV question**, recorded as OPEN in the migration. Seven refreshable
-   MVs are live; the inherited "why not an MV" argument is about INCREMENTAL MVs and does not
-   transfer. forcing: none
-6. **Rotate/redesign the job-scheduler webhook token.** It is stored in PLAINTEXT in the
-   Hangfire registry arguments for all 184 jobs, so anyone with read access to
-   `civitai_job_scheduler` has it. Pre-existing, not introduced here. forcing: security
+1. **Look at the two panels in Grafana** — the last unverified clause of the closing
+   condition. forcing: user — needs a human at a screen, or explicit permission to drive one.
+2. **Close talos-infra#1645** — add the staleness alert for `user-population-snapshot`.
+   The panels now depend on a job whose failure is invisible: panel 21 keeps returning rows
+   from already-written days. Copy `bot-account-detection-alerts-configmap.yaml`; alert on
+   `civitai_app_job_duration_seconds_count{job="user-population-snapshot"}`, ~3h lookback.
+   forcing: gate — the issue's own closing condition is a `git grep` on trunk.
+3. **Backfill the HOURLY table to ~80 days** (holds ~8 days + today). 🔴 Scope INSIDE the
+   90-day TTL; a bucket at/past the horizon is silently dropped on insert. forcing: none
+4. **Decide the refreshable-MV question**, recorded as OPEN in the migration. forcing: none
+5. **Rotate the job-scheduler webhook token** — stored in PLAINTEXT in the Hangfire registry
+   arguments for all 184 jobs. Pre-existing, not introduced here. forcing: security
 
 ## Defects (batched)
-- **Round 0 (talos#1642), all fixed in `970e667e7`:** two of panel 22's four series duplicated
-  panels already on the same dashboard (buyers was byte-identical, diff 0 on all 7 days);
-  panel 22 was the only long-format ClickHouse timeseries in 147 dashboards (unverifiable
-  render, now wide format, one scan not seven); four series spanned three orders of magnitude
-  on one linear axis; a pre-existing `isMember` caveat was silently deleted; the PR body's
-  "Both panel descriptions now say so" was false; "zero gaps" was false (18 missing days).
-- **Rounds 1-5 (civitai#5159), all fixed before merge:** positional `INSERT … SELECT` with six
-  type-identical columns; a backfill arm bounding `createdDate` while bucketing on `time`
-  (unbounded, into a no-TTL table); one failing arm truncating the rest and skipping the daily
-  roll; a TTL guard that was vacuous (proved by mutating the DDL and watching the suite stay
-  green); a recycled measurement that disarmed the uniqExact control; ten mutants surviving a
-  green suite because guards covered 3 of 7 arms.
+- **talos#1642 rounds 1–2, all fixed before merge:** an undocumented `format` 1→2 flip on a
+  barchart (my generator hardcoded the timeseries value); then THREE consecutive calibration
+  errors in the same accuracy paragraph, each introduced by the fix for the last — an
+  unqualified "under 1%", its mirror-image unqualified "NOT UNDER 1%" plus a false "most
+  favourable hour" label, and a 90-day tolerance measured only at the favourable end. The
+  description now names no single tolerance figure.
+- Round 2 also found round 1's F3 had corrected a **non-defect**: HLL sketches genuinely
+  cannot express a row count or a sum, so panel 17's original clause was true.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **`civitai-business-history-dashboard.json` is NOT history, despite the name.** All 12
@@ -241,6 +231,25 @@ sources adding +7.5% users over 30d).
   dashboard IS blocked, but a bogus aggregate function name PASSES. It checks
   gauge-aggregation and LogQL invariants. What validates the SQL is running it.
 
+- 🔴 **A MEASUREMENT THAT CANNOT SEE THE THING THAT CHANGED IS NOT EVIDENCE ABOUT IT.** The
+  `format` flip shipped under a PR heading called "Measured, not asserted" — because every
+  measurement was taken by querying ClickHouse DIRECTLY, which never exercises the Grafana
+  plugin's format handling at all. Ask what your probe is structurally blind to before
+  offering it as proof.
+- 🔴 **A HEDGE CAN BE LITERALLY TRUE AND STILL MISLEADING.** "$window=90 stays within ~0.2%
+  **at the hours measured**" was accurate and wrong in effect: only the favourable hour had
+  been measured, on a quantity I had *just established varies monotonically with the hour*.
+  The worst hour is ~1%. Measure a dimension at BOTH ends before quoting a tolerance.
+- 🔴 **The pulse funnel's disagreement with its own history is HOUR-DEPENDENT**, and alignment
+  dominates the sketch error by an order of magnitude. `$window=7` at 00:05 UTC: viewers
+  −6.3%, generators −7.6%, buyers −12.2%; at 23:35: −0.09 / −0.12 / −0.18. 30d and 90d are
+  the same shape, smaller. Do not quote a single tolerance for this panel.
+- **One-time startup gap, and the rolling window cannot heal it.** The job's first run at
+  18:15 had a 3h lookback reaching back only to hour 15, while the last backfill covered to
+  hour 3 — leaving hours 4–14 missing, and today's daily row 52% understated. Filled by hand,
+  day-boundary aligned. Any future outage longer than `LOOKBACK_HOURS` needs the same repair;
+  the job will never reach back for it.
+
 ## How to verify
 1. **Job is running** (the current gate):
    ```bash
@@ -290,3 +299,25 @@ sources adding +7.5% users over 30d).
   `CNPG=$(KUBECONFIG=$KC_DPPROD kubectl get pods -n cnpg-database -l cnpg.io/cluster=cnpg-cluster-nvme0 -o name | grep '^pod/cnpg-cluster' | head -1); CNPG=${CNPG#pod/}; KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database "$CNPG" -c postgres -- psql -tA -d civitai_job_scheduler -c "select field||'='||value from hangfire.hash where key='recurring-job:user-population-snapshot' and field in ('LastExecution','NextExecution');"`
   🔴 Require BOTH signals: `LastExecution` advancing AND `system.parts` gaining a write past
   `2026-09-26 05:19:16`. A run that fires and writes nothing shows the first without the second.
+
+### Do panels 21 and 22 actually render? (merged and live, never looked at)
+- as-of: 2026-09-26
+- **Symptom + exact repro:** open Grafana → Civitai → "Civitai Business Pulse", row "Active
+  population funnel". Panel 21 should draw three horizontal bars; panel 22 below it should
+  draw two labelled lines with "New signups" on the right axis.
+- **Observed (with values):** nothing — no render has been observed by anyone. What IS
+  observed: both queries return the expected shapes live (panel 21 → 3 rows at 7/30/90;
+  panel 22 → 6/29/89 rows × 3 cols), the live ConfigMap carries the merged JSON, and the
+  deployed pre-PR ConfigMap carried panel 21 as a `format: 1` barchart — which is why the
+  round-1 revert to `1` is believed correct.
+- **Ruled out:** "panel 21 asks for a time-series frame it cannot supply" — `via: measurement`.
+  `format` reverted to `1`; the invariant holds for all 15 targets in the file.
+- **Ruled out:** "the wide frame might not resolve two labelled series" — `via: code`. Panels 5
+  and 17 are pre-existing `format: 2` timeseries returning `time` + multiple aliased numeric
+  columns, and the `byName` override string is byte-identical to the alias.
+- **Leading hypothesis:** both render correctly. Nothing observed contradicts it, and the
+  formats now match long-standing working panels of the same shape.
+- **Next probe:** a human opens the dashboard, or an agent is given explicit permission to
+  drive the operator's browser (the `browser` skill — a screen-stealing action, not to be
+  taken unasked). Check: three bars on 21, two lines on 22, signups on the right axis, and
+  that the funnel numbers are within the per-hour band panel 21's own description now states.
