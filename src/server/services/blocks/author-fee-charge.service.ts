@@ -95,12 +95,17 @@ export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 // rather than a share. A reversal is account 0 → viewer (`TransactionType.Refund`)
 // and only ever for a row that has NOT settled.
 //
-// ── DARK ────────────────────────────────────────────────────────────────────
+// ── LIVE, BEHIND ONE FLAG ───────────────────────────────────────────────────
+// ⚠️ This block was headed "DARK" and ended "merging this changes nothing until
+// the flag is flipped". The flag is flipped: this module has been debiting viewers
+// since 2026-09-25.
+//
 // `quoteBlockAuthorFee` reads `app-blocks-author-fee-enabled` FIRST and
 // fail-closed. With the flag off it returns a non-charging quote before touching
 // the database, so no fee is reserved, and a zero reservation then makes the
-// charge structurally impossible. Merging this changes nothing until the flag is
-// flipped.
+// charge structurally impossible. Turning the flag off therefore stops new fees
+// being quoted, reserved and debited — and does NOT stop `reverseBlockAuthorFee`,
+// which is outside the gate deliberately so refunds cannot be stranded.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Why a quote or a charge did not produce money. */

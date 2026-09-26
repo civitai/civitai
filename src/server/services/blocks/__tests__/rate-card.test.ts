@@ -420,9 +420,7 @@ describe('computeSubscriptionShare', () => {
       platform_default: 0,
       viewer_global: 0,
     });
-    // The subscription rate is the ONLY thing V5 changes. (V4 and V5 also
-    // carried a `spendSharePct`; the retired spend bounty's field has been
-    // removed from `RateCard` and from every card.)
+    // The subscription rate is the ONLY thing V5 changes.
     expect(RATE_CARD_V5.subscriptionSharePct).toBe(15);
     expect(RATE_CARD_V4.subscriptionSharePct).toBe(0);
   });

@@ -3548,21 +3548,17 @@ model BlockBuzzAttribution {
   @@map("block_buzz_attribution")
 }
 
-/// 🔴 UNREFERENCED BY APPLICATION CODE, AND EMPTY. This was the idempotency
-/// ledger for publisher revenue-share payouts — one row per
+/// 🔴 UNREFERENCED — no code reads or writes this table. It was the idempotency
+/// ledger for publisher revenue-share payouts, one row per
 /// (app_owner_user_id, period_key), written by a `mintPayoutForOwner` service
-/// function that never had a production caller. That function and the write-free
-/// `bulk-payout-block-attributions` cron that was one day going to call it have
-/// both been removed, so NOTHING in this repository now reads or writes this
-/// table. It held 0 rows when that removal landed.
+/// function that never had a production caller; that function and the write-free
+/// cron that was one day going to call it have both been removed.
 ///
-/// The table and this model are retained only because dropping them is a
-/// hand-applied DB migration rather than a code change. Do not add a writer:
-/// there is no payout rail, and the purchase rev-share it was built for still
-/// has no disbursement path anywhere in the tree.
+/// Retained only because dropping it is a hand-applied DB migration rather than a
+/// code change. Do not add a writer: there is no payout rail, and the purchase
+/// rev-share it was built for has no disbursement path anywhere in the tree.
 ///
-/// Application-generated id (`bba_payout_<ulid>`) — the helper that minted those
-/// ids is gone too.
+/// Application-generated id (`bba_payout_<ulid>`).
 model BlockAttributionPayout {
   id             String   @id
   appOwnerUserId Int      @map("app_owner_user_id")

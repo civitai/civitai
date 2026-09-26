@@ -104,31 +104,33 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *         dashboard. A forged row is therefore immediately visible in a third
  *         party's own analytics — misattribution with no payout involved and no
  *         flag in front of it.
- *      2. THE AUTHOR FEE. `recordSpendAttribution` now also drives
- *         `observeBlockAuthorFee` (`author-fee.ts`, #4922 slice 1), gated by
- *         `app-blocks-author-fee-enabled`. ⚠️ SLICE 1 IS OBSERVE-ONLY AND
- *         CARRIES NO RECIPIENT — it is keyed on `baseGenerationBuzz` /
- *         `generationType` alone, so `appId` is NOT load-bearing for it and a
- *         forged row cannot misdirect a fee today, flag on or off. Slice 2
- *         (settlement) is where a recipient appears, and that recipient is
- *         derived from exactly this app resolution.
+ *      2. THE AUTHOR FEE, AND IT NOW CARRIES A RECIPIENT. ⚠️ An earlier revision
+ *         of this paragraph said the fee was "OBSERVE-ONLY" and carried no
+ *         recipient, so `appId` was not load-bearing and a forged row could not
+ *         misdirect a fee "today, flag on or off". That has been false since
+ *         2026-09-25. `recordSpendAttribution` still drives the observe-only
+ *         `observeBlockAuthorFee` (`author-fee.ts`), but the fee also CHARGES on
+ *         the submit path, and `resolveBlockAuthorFeePayee`
+ *         (`author-fee-accrual.service.ts`) resolves the payee by
+ *         `OauthClient.id` — exactly this app resolution. A mis-resolved `appId`
+ *         is therefore a misdirected payee, not just a polluted dashboard.
  *
- *    GATE (re-pointed, and closable): BEFORE the author-fee SETTLEMENT slice
- *    (#4922 slice 2) lands a recipient derived from the spend-attribution app
- *    resolution, re-confirm no pending-path mint can ever land a real
- *    `OauthClient.id` in `appId`. WHAT RE-CONFIRMS IT: the S1 case in
- *    `src/tests/api/v1/blocks/dev-token.test.ts` — "a foreign-owned APPROVED app
- *    for the same slug does NOT pin the token appId to appblk-<slug>" — must
- *    still exist and pass, and the settlement PR's author must have read this
- *    block. CLOSED BY: that PR merging with the assertion green; if the
- *    assertion is ever deleted or weakened, this gate re-opens.
+ *    GATE: the condition this gate was waiting on HAS OCCURRED — settlement
+ *    shipped and a recipient is derived from this resolution — so it is no longer
+ *    a future trigger. WHAT DISCHARGES IT, and the only thing that does: the S1
+ *    case in `src/tests/api/v1/blocks/dev-token.test.ts` — "a foreign-owned
+ *    APPROVED app for the same slug does NOT pin the token appId to
+ *    appblk-<slug>" — must exist and pass, which it does as of this commit. It is
+ *    now a STANDING invariant rather than a one-off review step: if that
+ *    assertion is deleted or weakened, a pending-path mint can land a real
+ *    `OauthClient.id` in `appId` and money follows it. Do not relax it without
+ *    replacing it.
  *
- *    ⚠️ The flag's state is NOT the trigger, deliberately. It is a plain global
- *    boolean present at base `false`, i.e. one toggle away with no deploy and no
- *    review — but flipping it only starts the observation above, which moves no
- *    money and reads no `appId`. Tying the gate to the flag would make it fire
- *    on a change that cannot realise the hazard, and leave it silent on the one
- *    that can.
+ *    ⚠️ The flag's state is NOT what makes this live, and tying the gate to the
+ *    flag would still be wrong. The hazard is realised by the payee derivation
+ *    existing at all, which is a code property; the flag is one toggle with no
+ *    deploy and no review, so keying on it would fire on changes that cannot
+ *    realise the hazard and stay silent on the one that can.
  *
  *    PENDING-PATH AUDIT GATE (FIX 🟡-1): a pending-app dev mint has NO
  *    AppBlock-backed audit rows — recordSpendAttribution throws+swallows on the

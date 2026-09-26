@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -650,13 +649,15 @@ export async function recordSpendAttribution(
       },
     });
 
-    // PER-GENERATION AUTHOR FEE — DARK OBSERVATION ONLY (slice 1). Computes
-    // what the additive, author-set, viewer-paid fee WOULD be for this
-    // generation and reports it to the counters + the log line below. It moves
-    // no money, writes no column, and is unreachable unless
-    // `app-blocks-author-fee-enabled` is on. Settlement onto the licensing-fee
-    // rail is a later slice; this exists so that slice can be sized from real
-    // traffic before anyone is charged.
+    // PER-GENERATION AUTHOR FEE — OBSERVATION ONLY, BUT NOT OF A DARK RAIL.
+    // Computes what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. THIS CALL
+    // moves no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. ⚠️ An earlier revision added
+    // "settlement onto the licensing-fee rail is a later slice; this exists so
+    // that slice can be sized from real traffic before anyone is charged".
+    // Settlement has shipped and viewers ARE charged, on the submit path via
+    // `quoteBlockAuthorFee`; what this call buys now is sizing of a LIVE fee.
     //
     // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
     // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
@@ -667,13 +668,12 @@ export async function recordSpendAttribution(
     // this is a DIVERGENCE from how attribution behaves two lines up, where
     // `isSelfSpend` voids the row. The author fee is the VIEWER paying the
     // author, and an author using their own app is a viewer like any other.
-    // ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
-    // transaction from an account to ITSELF, which is at best a no-op and may be
-    // rejected outright. Slice 1's shape does not make that harder — the
-    // observation carries no recipient, and `isSelfSpend` is already on this
-    // log line beside the fee — but the settlement writer has to decide
-    // explicitly whether a self-transfer is skipped or netted, rather than
-    // discovering it from a rejected transaction.
+    // ⚠️ AT SETTLEMENT a self-spend would be a Buzz transaction from an account
+    // to ITSELF, at best a no-op and possibly rejected. That is no longer a
+    // flag-for-later: the charge path handles it, and
+    // `resolveBlockAuthorFeePayee` is where a self-dealing author is excluded.
+    // This observation is unaffected — it carries no recipient, and `isSelfSpend`
+    // is already on the log line beside the fee.
     //
     // 🔴 NO `.catch` HERE, DELIBERATELY. `observeBlockAuthorFee` is TOTAL by
     // contract — every throwing surface inside it (the flag read, each counter

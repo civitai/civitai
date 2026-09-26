@@ -48,17 +48,12 @@ export type RateCard = {
 
 // ---------------------------------------------------------------
 // PLACEHOLDER PERCENTAGES — confirm with monetization leadership
-// before announcing publicly. See the "Numbers worth getting from
-// leadership" section of
-// claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md.
+// before announcing publicly.
 //
-// Cards are defined below in order: V1 (the original spec placeholder,
-// 20/20/25/0), V2 (the recommended starting point, 15/15/25/0), V3 (V2
-// + the new W10 page scope `viewer_global` at 0%), V4 and V5 — see
-// each declaration for what it added. Rate cards are immutable — past
-// attribution rows stamp their version at write time and pay out under
-// it forever. To change percentages, add the NEXT card and leave the
-// existing ones in place for the rows that referenced them.
+// Rate cards are immutable: past attribution rows stamp their version
+// at write time and pay out under it forever. To change percentages,
+// add the NEXT card and leave the existing ones alone. See each
+// declaration below for what that card added.
 //
 // `viewer_global` (W10 page purchase, flow B) is a PLACEHOLDER 0% on
 // every card — no historical row ever used it (the scope is net-new
@@ -77,12 +72,10 @@ export type RateCard = {
 //   - Whether to apply different rates by buzz type (yellow vs blue).
 //   - Whether to cap monthly per-app earnings.
 //
-// Until those are signed off, treat any attribution payout as a
-// soft-launch. ⚠️ An earlier revision said "do NOT enable the bulk
-// payout job in production without explicit approval" — there is no
-// such job: it was a write-free stub and has been removed. Nothing in
-// this repo disburses a purchase-rail share, so a payout rail is a
-// thing to BUILD, not a thing to enable.
+// Nothing in this repo disburses a purchase-rail share — a payout rail
+// is a thing to BUILD, not a thing to enable. (An earlier revision of
+// this block said "do NOT enable the bulk payout job"; that job was a
+// write-free stub and has been removed.)
 // ---------------------------------------------------------------
 export const RATE_CARD_V1: RateCard = {
   version: 'v1',
@@ -202,14 +195,10 @@ export const RATE_CARD_V3: RateCard = {
  * (`author-fee.ts`); its compute and backpay rails were removed first, and the
  * card field itself has now been removed from `RateCard` and from every card.
  *
- * ⚠️ THAT REMOVAL DOES NOT VIOLATE CARD IMMUTABILITY, and the reason is measured
- * rather than assumed: `recordSpendAttribution` hardcodes
- * `UNRATED_RATE_CARD_VERSION`, so every spend row stamps 'unrated', never 'v4' or
- * 'v5'. A `GROUP BY rate_card_version` over the whole of `block_spend_attribution`
- * in production (2026-09-18) returned exactly ONE group — `'unrated'`. The
- * grouping is self-discriminating, so any other stamped version would have come
- * back as a second row; none did. No row anywhere paid out under V4's spend rate,
- * so nothing was reading the field that was deleted.
+ * 🔴 DO NOT RE-ADD A SPEND RATE TO A NEW CARD FOR SHAPE STABILITY. Deleting it did
+ * not violate card immutability: `recordSpendAttribution` hardcodes
+ * `UNRATED_RATE_CARD_VERSION`, so no spend row ever stamped 'v4' or 'v5' and none
+ * paid out under a card's spend rate.
  *
  * V4 itself is immutable and STAYS: it carries V3's purchase percentages
  * (15/15/25/0/0) and purchase rows DO stamp a real version via

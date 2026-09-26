@@ -14,18 +14,14 @@ const log = createLogger('block-author-fee-settlement', 'green');
  * this is the second hop, mirroring `deliver-creator-compensation` for the model
  * licensing fee.
  *
- * ✅ THIS JOB IS SCHEDULED AND RUNNING. An earlier revision of this comment said
- * the opposite — "a newly added cron is not picked up by a deploy… nobody has
- * scheduled it" — and it was false in the dangerous direction. Membership of the
- * `jobs` array in `src/pages/api/webhooks/run-jobs/[[...run]].ts` PLUS the cron
- * string below IS the registration: the external scheduler reads the array (names
- * and crons) from `/api/internal/get-jobs`, re-reads it periodically, and
- * registers a recurring trigger per entry that calls `run-jobs` back. No
- * out-of-band step is needed, and none was performed for this job — it simply
- * started being dispatched daily once the refresh picked it up. See
- * `CLAUDE.md` → "How a scheduled job actually gets scheduled"; reading only the
- * hand-written per-job CronJobs in the infra repo (which are exceptions, not the
- * mechanism) is what produced the wrong conclusion here, three times.
+ * ✅ SCHEDULED AND DISPATCHING. Membership of the `jobs` array in
+ * `src/pages/api/webhooks/run-jobs/[[...run]].ts` PLUS the cron string below IS the
+ * registration — see `CLAUDE.md` → "How a scheduled job actually gets scheduled".
+ * ⚠️ An earlier revision of this comment said the opposite ("a newly added cron is
+ * not picked up by a deploy… nobody has scheduled it"), and three separate readers
+ * concluded from it that this job would never run. The hand-written per-job
+ * CronJobs in the infra repo are exceptions, not the mechanism; no out-of-band step
+ * was performed for this job and it has been dispatching daily regardless.
  *
  * Scheduled at 02:30 UTC — thirty minutes after the creator-compensation job at
  * 02:00, deliberately. Both mint Buzz in batches through the same service, and
@@ -33,12 +29,10 @@ const log = createLogger('block-author-fee-settlement', 'green');
  * together for no benefit; nothing about this job is time-sensitive to the
  * minute.
  *
- * 🔴 GATED ON THE FLAG, AND THAT GATE IS NOW LOAD-BEARING. The accrual writer is
- * behind `app-blocks-author-fee-enabled` too, and while the flag was off this
- * gate was redundant — there was nothing to settle. The flag is ON, so accrued
- * rows now exist: if the fee is turned OFF again because something is wrong, an
- * ungated settlement job would keep paying out of the ledger built during the bad
- * window. Turning the flag off has to stop the money, not just the accrual.
+ * 🔴 GATED ON THE FLAG, AND THE GATE IS LOAD-BEARING. Accrued rows exist, so if the
+ * fee is turned off because something is wrong, an ungated settlement job would
+ * keep paying out of the ledger built during the bad window. Turning the flag off
+ * has to stop the money, not just the accrual.
  *
  * ⚠️ ROWS ARE NOT DROPPED WHEN THE FLAG IS OFF, only left unsettled. They stay
  * `accrued` and settle whenever the flag comes back on. That is the recoverable

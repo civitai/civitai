@@ -6248,7 +6248,7 @@ export const blocksRouter = router({
       // (which runs AFTER the try/catch) can read the REALIZED per-account
       // debit — `submitted` is a try-block `const` and is out of scope there.
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
-      // Hoisted for the same reason as `realizedTransactions` above: the DARK
+      // Hoisted for the same reason as `realizedTransactions` above: the
       // per-generation author-fee observation needs the orchestrator's BASE cost,
       // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
       // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
@@ -6678,7 +6678,7 @@ export const blocksRouter = router({
             // quote, the fee charge and this row must agree on the key or the fee
             // is priced under one generation type and recorded under another.
             generationType: blockGenerationType,
-            // BASE generation cost, for the DARK per-generation author-fee
+            // BASE generation cost, for the per-generation author-fee
             // observation only (never persisted). 🔴 `.base`, NOT `.total` and
             // NOT `buzzAmount` above: `total` already carries the per-resource
             // model licensing fees, the lineage fee and the viewer's tips, and

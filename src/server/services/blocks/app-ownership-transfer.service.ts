@@ -93,19 +93,13 @@ import {
  *   - 🔴 `BlockBuzzAttribution.appOwnerUserId` — NOT rewritten. Product decision: Buzz
  *     accrued before the transfer stays with the OLD owner; the transfer is a clean
  *     forward cut, so the old owner keeps what they accrued and the new owner starts
- *     at zero. ⚠️ An earlier revision also justified this by the payout rail: those rows
- *     were grouped by `appOwnerUserId` in a weekly stub cron, and the payout mint it was
- *     to call carried a `(app_owner_user_id, period_key)` UNIQUE that a mid-period
- *     rewrite could collide on. BOTH ARE GONE — the cron and the mint were deleted, and
- *     nothing disburses a purchase-rail share today. (The identifiers are deliberately
- *     not spelled here: `payout-copy-truthfulness.test.ts` asserts they appear nowhere
- *     outside itself.) The product decision is the whole of the reason now; there is no
- *     live payout-grouping hazard to invoke, and inventing a fresh justification would
- *     be worse than saying it has none.
- *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe pins the
- *     behaviour regardless (including the positive control that proves those mocks CAN
- *     record a call), which is what keeps the decision checkable now that its original
- *     justification has lapsed.
+ *     at zero. ⚠️ An earlier revision also justified this by a payout-grouping hazard —
+ *     a weekly stub cron grouped these rows by `appOwnerUserId` and the mint it was to
+ *     call carried a `(app_owner_user_id, period_key)` UNIQUE a mid-period rewrite could
+ *     collide on. Both were deleted and nothing disburses a purchase-rail share, so that
+ *     justification has lapsed and there is no replacement: the product decision is the
+ *     whole of the reason. `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE"
+ *     describe is what still pins the behaviour.
  *
  * ## Forgejo
  *

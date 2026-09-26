@@ -627,13 +627,10 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
  * settlement all read it.
  *
  * GLOBAL (no user context), like `app-blocks-pipeline-enabled` /
- * `app-blocks-backpay-enabled`. ⚠️ An earlier revision justified that with "the
- * only caller is the fire-and-forget spend-attribution writer", which is no longer
- * true — `quoteBlockAuthorFee`, `observeBlockAuthorFee`, `chargeBlockAuthorFee`
- * and the `settle-block-author-fees` job all read it. The reason it stays global is
- * unchanged: every one of those call sites is machine-side or fee-pricing, the
- * viewer identity is on the row rather than in the gate, and the fee is uniform
- * platform config rather than a per-cohort rollout.
+ * `app-blocks-backpay-enabled`: the viewer identity is on the row rather than in
+ * the gate, and the fee is uniform platform config rather than a per-cohort
+ * rollout. ⚠️ Deliberately NOT a list of the readers — an earlier revision named
+ * one ("the fire-and-forget spend-attribution writer") and it went stale.
  *
  * OPERATOR NOTE: `app-blocks-author-fee-enabled` is a PLAIN GLOBAL BOOLEAN — NO
  * segment, no variants, no rollouts. Keep it that shape. A global eval returns the
@@ -645,14 +642,12 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
  * Fail-safe, code half: an unreachable Flipt — and an absent key — evaluates
  * `false` unconditionally, so no fee can be quoted or charged by accident.
  *
- * 🔴 FLAG STATE: THIS IS ON. Earlier revisions of this comment said the key did not
- * exist, then that it existed at base `false` and the rail was "still dark". Both
- * are historical. Measured 2026-09-26 in the `civitai-app` environment:
- * `BOOLEAN_FLAG_TYPE`, `enabled: true`, empty `rules`/`rollouts`, global evaluation
- * `enabled:true, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`. The fee has been
- * charging since 2026-09-25. Do NOT read this flag's existence as a dark posture —
- * and read the value from Flipt rather than from any comment, including this one:
- * it is one toggle away in either direction, with no deploy and no review.
+ * 🔴 THE RAIL IS LIVE, AND ITS STATE IS NOT IN THIS COMMENT. Earlier revisions said
+ * the key did not exist, then that it was base `false` and the rail was dark; the
+ * fee has been charging since 2026-09-25. Read the current value from Flipt
+ * (`civitai-app` environment), never from a comment — one toggle flips the whole
+ * rail in either direction, with no deploy and no review, so any value written here
+ * is wrong the moment someone flips it. That is what went wrong twice already.
  */
 export const APP_BLOCKS_AUTHOR_FEE_FLAG = 'app-blocks-author-fee-enabled';
 

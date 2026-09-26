@@ -25,9 +25,10 @@ import { stripComments } from '../../../../test/strip-comments';
  * 🔴 BOTH ARE NOW GONE, WHICH MAKES THE STATE GUARDS STRONGER, NOT UNNECESSARY. The mint and
  * the stub cron were removed rather than kept inert, so the STATE half below no longer asks
  * "is the rail still unwired" — it asserts the rail DOES NOT EXIST: zero references to the
- * mint anywhere a caller could live, and no `bulk-payout-block-attributions` module and no
- * registration of it in the job array. Each half carries a positive control, because "0
- * occurrences" and "a scan wired to nothing" are otherwise the same observation.
+ * mint in any non-test code file under `src`/`packages`/`apps`/`scripts`, and no
+ * `bulk-payout-block-attributions` module and no registration of it in the job array. Each
+ * half carries a positive control, because "0 occurrences" and "a scan wired to nothing" are
+ * otherwise the same observation.
  *
  * 🔴 THIS ASSERTS A RELATIONSHIP, NOT A VOCABULARY, and it has both directions — the shape
  * `standaloneWordingCallSites.test.ts` uses in the next directory for the same reason.
@@ -99,15 +100,27 @@ function read(relPath: string) {
   return readFileSync(join(REPO_ROOT, relPath), 'utf8');
 }
 
-function walk(dir: string, out: string[] = []): string[] {
+/**
+ * `.ts`/`.tsx` only by default, which is what the COPY ledger below wants.
+ *
+ * 🔴 The mint ledger passes `CODE_FILES` instead, and the difference is the point: a
+ * caller could live in a `.mjs` script or an `apps/*` Svelte file, and a guard whose
+ * headline says "anywhere a caller could live" while walking `.tsx?` alone would stay
+ * green through exactly that. It is not a rounding error: the roots hold hundreds of
+ * such files — the `apps/*` Svelte sources, JS under `packages`, and `scripts/*.mjs`.
+ */
+function walk(dir: string, out: string[] = [], match = /\.tsx?$/): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.next') continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
+    if (statSync(full).isDirectory()) walk(full, out, match);
+    else if (match.test(entry)) out.push(full);
   }
   return out;
 }
+
+/** Every extension a production caller of the mint could be written in. */
+const CODE_FILES = /\.(tsx?|jsx?|mjs|cjs|svelte)$/;
 
 const rel = (p: string) =>
   p
@@ -207,9 +220,12 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // Scanning raw text also makes this guard wider than "no caller": a COMMENT naming the
     // mint fails it too. That is the right polarity now the mint is deleted — the failure
     // mode being prevented is a reader being pointed at a rail that is gone, exactly the
-    // class of defect this file exists for. Prose that needs to describe the removal
-    // describes it without spelling the identifier.
-    const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
+    // class of defect this file exists for. ⚠️ Its reach is CODE under these roots —
+    // `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.svelte`. PROSE is not scanned: `.md`,
+    // `.prisma` and migration `.sql` do name the mint deliberately — the Prisma docstring
+    // for the table it left behind, the GA handoff tracker, and the applied migrations,
+    // which are a historical record and must not be rewritten.
+    const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d), [], CODE_FILES));
     // Walk positive controls, one per root: a misrooted or empty walk finds no mentions
     // either, and would read as "the rail does not exist" no matter what the tree holds.
     // The total alone cannot see a dropped root — `src` by itself clears any threshold.
@@ -230,7 +246,7 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       const mentions = new Map<string, number>();
       for (const f of files) {
         const r = rel(f);
-        if (/\.test\.tsx?$/.test(r) || r.includes('__tests__/')) continue;
+        if (/\.(test|spec)\.[a-z]+$/.test(r) || r.includes('__tests__/')) continue;
         const n = (readFileSync(f, 'utf8').match(re) ?? []).length;
         if (n > 0) mentions.set(r, n);
       }
@@ -248,8 +264,8 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       'src/server/services/blocks/buzz-attribution.service.ts'
     );
 
-    // 🔴 THE LEDGER, NOW EMPTY BY CONSTRUCTION. Fails the moment ANY non-test file under
-    // these roots names the mint again — a call, an import, an alias, a bare callback
+    // 🔴 THE LEDGER, NOW EMPTY BY CONSTRUCTION. Fails the moment any non-test CODE file
+    // under these roots names the mint again — a call, an import, an alias, a callback
     // reference, `.call`/`.apply`, a computed access, or a comment. The control above is
     // what turns this `{}` into evidence rather than a coincidence.
     expect(countOf(PAYOUT_MINT)).toEqual({});
