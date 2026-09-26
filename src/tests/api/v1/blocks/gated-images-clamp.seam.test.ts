@@ -353,15 +353,36 @@ describe('GET /api/v1/blocks/gated-images — the gates ahead of the clamp', () 
   });
 
   it('propagates the App-Blocks kill-switch refusal and never reads the DB', async () => {
+    // 🔴 THE FIXTURE MUST BE THE CODE THE REAL COLLABORATOR THROWS, NOT A
+    // PLAUSIBLE ONE. This case used to reject with `FORBIDDEN` / "App Blocks is
+    // not enabled for this account" — a pairing `assertAppBlocksEnabledForTokenUser`
+    // has never emitted. Both of its refusals are `UNAUTHORIZED`
+    // (`block-token-access.service.ts`: "runtime block token subject could not be
+    // resolved" and "Apps are not enabled"), which is what the sibling pins assert
+    // — `blocks.router.createPostFromApp.test.ts`, `apps.router.storage.test.ts`,
+    // `blocks.router.flag-gate-hydrate.test.ts` — and `blocks.router.me-parity.test.ts`
+    // asserts the resulting status outright as **401**, not 403. Those pins drive the
+    // REAL function (they mock only `isAppBlocksEnabled`, one level below it), so
+    // they are evidence about the code; this case mocks the function itself, so its
+    // fixture is only ever as good as whoever typed it. The invented code was
+    // harmless to the old assertion and not harmless beside it: the route's docblock
+    // stated the kill-switch as 403, agreeing with this fixture and with nothing in
+    // the function. Both are corrected in the same commit.
     mockAssertEnabled.mockRejectedValue(
-      new TRPCError({ code: 'FORBIDDEN', message: 'App Blocks is not enabled for this account' })
+      new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' })
     );
 
     const { req, res } = createMocks({ query: { ids: '1' } });
     await (baseHandler as any)(req, res);
 
     expect(mockHandleEndpointError).toHaveBeenCalledTimes(1);
-    expect((mockHandleEndpointError.mock.calls[0][1] as TRPCError).code).toBe('FORBIDDEN');
+    const err = mockHandleEndpointError.mock.calls[0][1] as TRPCError;
+    expect(err.code).toBe('UNAUTHORIZED');
+    // Asserted on the MESSAGE too, because the anon refusal above is now the same
+    // CODE — without this the two cases stop being separable and this one would
+    // pass on the anon path firing instead.
+    expect(err.message).toBe('Apps are not enabled');
+    expect(err.message).not.toContain('could not be resolved');
     expect(queryRaw).not.toHaveBeenCalled();
   });
 
