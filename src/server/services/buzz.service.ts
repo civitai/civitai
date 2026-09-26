@@ -352,8 +352,16 @@ export function fromClickhouseTransactionType(raw: string): TransactionType {
   // 🔴 A `typeof` test, not `??`. `TransactionType['__proto__']` resolves up the
   // prototype chain to a non-nullish OBJECT, which `??` accepts — so the obvious
   // `TransactionType[name] ?? Tip` returns `Object.prototype` typed as a
-  // `TransactionType`. Narrowing on the RESULT rejects that and every other
-  // non-member in one test.
+  // `TransactionType`.
+  //
+  // Narrowing on the RESULT rejects that, and no input STRING can defeat it: every
+  // `Object.prototype` key that survives the capitalisation above starts with `_`
+  // and holds a function or an accessor. What it does NOT cover — stated because an
+  // earlier revision of this comment claimed nothing could — is a numeric-valued
+  // own property added to `Object.prototype` by something else in the process.
+  // That is prototype pollution, out of scope for this function rather than
+  // impossible; an `Object.hasOwn` check here would catch it and was removed as
+  // untestable by any reachable input.
   const resolved: unknown = TransactionType[name];
   return typeof resolved === 'number' ? resolved : TransactionType.Tip;
 }

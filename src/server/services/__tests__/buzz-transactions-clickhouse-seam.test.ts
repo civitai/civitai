@@ -190,7 +190,16 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    */
   it('negates the amount when the account is the PAYER, on the list path', async () => {
     mockQuery.mockResolvedValueOnce([
-      row({ type: '28', amount: 3, fromAccountId: ACCOUNT_ID, toAccountId: 77 }),
+      row({
+        type: '28',
+        amount: 3,
+        fromAccountId: ACCOUNT_ID,
+        toAccountId: 77,
+        // Distinct, and neither is the account type this window filters on, so the
+        // passthrough below cannot be satisfied by a constant or by the filter.
+        fromAccountType: 'yellow',
+        toAccountType: 'green',
+      }),
     ]);
 
     const result = await getUserBuzzTransactionsMulti({
@@ -200,6 +209,11 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     expect(result.transactions).toHaveLength(1);
     expect(result.transactions[0].amount).toBe(-3);
+    // Pre-existing and unguarded until now: unlike the CSV path this one has no
+    // `isDebit` branch, it passes BOTH sides through, and swapping them passed the
+    // whole suite. Free to cover with the fixtures the sign test already needs.
+    expect(result.transactions[0].fromAccountType).toBe('yellow');
+    expect(result.transactions[0].toAccountType).toBe('green');
   });
 
   /**
@@ -296,6 +310,13 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
    * not: `isDebit` also chooses which side's account type is reported. Dropping
    * either failed nothing — every fixture was a credit. Columns are
    * `date,type,amount,accountType,fromUser,toUser,…` per `EXPORT_COLUMNS`.
+   *
+   * 🔴 THE TWO EXPECTED ACCOUNT TYPES MUST DIFFER FROM EACH OTHER, and neither may
+   * be `WINDOW.accountTypes[0]`. Both cases originally expected `'yellow'`, so
+   * replacing the whole branch with the literal `'yellow'` passed — the direction
+   * was pinned while "does this column read the row at all" was not, and the
+   * surviving constant was one already in scope at the call site. `yellow`/`green`
+   * against a `blue` filter means no single constant satisfies both.
    */
   it('negates the amount and reports the PAYER side account type', async () => {
     mockQuery.mockResolvedValueOnce([
@@ -305,14 +326,14 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
         fromAccountId: ACCOUNT_ID,
         toAccountId: 77,
         fromAccountType: 'yellow',
-        toAccountType: 'blue',
+        toAccountType: 'green',
       }),
     ]);
 
     const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
     expect(fields[1]).toBe('AppAuthorFee');
     expect(fields[2]).toBe('-3');
-    // The payer's side, not the recipient's — `blue` here is the wrong answer.
+    // The payer's side, not the recipient's — `green` here is the wrong answer.
     expect(fields[3]).toBe('yellow');
   });
 
@@ -323,14 +344,15 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
         amount: 3,
         fromAccountId: 77,
         toAccountId: ACCOUNT_ID,
-        fromAccountType: 'blue',
-        toAccountType: 'yellow',
+        fromAccountType: 'yellow',
+        toAccountType: 'green',
       }),
     ]);
 
     const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
     expect(fields[2]).toBe('3');
-    expect(fields[3]).toBe('yellow');
+    // Distinct from the case above, so a constant cannot satisfy both.
+    expect(fields[3]).toBe('green');
   });
 
   it('sends the numeric spelling of the type filter on the export query too', async () => {
