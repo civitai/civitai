@@ -62,14 +62,39 @@ Four were answered by the user; the fifth was settled from the repo and needed n
    webhook. Mirrors `user-activity-rollup.ts`, the closest live precedent.
 3. **Retention** — hourly for 90d, daily forever. Two tables, not one.
 4. **Alerting** — panel-only for now. No Prometheus gauges in the first PR.
-5. **Extend vs new table — NEW, settled by evidence, not preference.** There are two
-   live ClickHouse rollups and NEITHER has the right shape:
+5. **Extend vs new table — NEW.** ⚠️ **The original wording here was "settled by
+   evidence, not preference", and the METHOD behind it was wrong — corrected after
+   round 0 of the audit caught it.** It enumerated TWO candidates out of the ~30+
+   aggregate tables and ~31 MVs in `containers/clickhouse/docker-init/init.sh`, then
+   generalised to a negative claim ("NEITHER has the right shape"). That is sampling
+   presented as enumeration — the exact shape CLAUDE.md's gotcha #13 warns about, and
+   the fuller sweep did turn up near-neighbours the pair had missed:
+   `default.daily_user_counts`, `default.daily_generation_user_counts`,
+   `cohorts_monthly_activity`, `uniqueViewsDaily`.
+   **The conclusion survives, but on different and now-measured grounds** (2026-09-25):
    - `default.user_activity_rollup` is `ORDER BY userId` — a CURRENT-STATE table
      (last-seen per user). It has no time bucket and cannot express history at all.
      Adding one would change its semantics and break Creator Studio's audience panels.
    - `default.daily_downloads_unique` is per `(modelId, modelVersionId, createdDate)`
      — right shape, wrong subject.
-   So: new tables, with those two as the TEMPLATES rather than the hosts.
+   - `default.daily_user_counts` — the one the original pair MISSED, and the closest
+     thing to a real counter-example. It is populated: 1,154 rows, 2023-08-08 → today,
+     incrementally maintained, zero cron, covering the logged-in-viewer population, and
+     agreeing with our `views_state` to within 0.01–1.05% on complete days. **It is
+     still not extendable, for a measured reason rather than an assumed one:** its
+     column is `AggregateFunction(uniqIf, Int32, UInt8)`, and `uniqCombinedMerge` over
+     it ERRORS — so it cannot be unioned with the other three activity sources, which
+     is the entire purpose of storing them as compatible states.
+   - `default.daily_generation_user_counts` — reads `orchestration.textToImageJobs`
+     (one job type, not the panel's population) and carries none of panel 21's guards.
+     Its own date range is 1970-01-01 → 2036-02-07, i.e. it has the sentinel-date
+     problem our `<= now()` bound exists to prevent.
+   So: new tables, with the above as TEMPLATES rather than hosts.
+   🔴 **Open, not settled: a REFRESHABLE materialized view was never considered.**
+   Seven are live in this deployment. The "why not an MV" argument this design
+   inherited is about INCREMENTAL MVs and does not transfer. See the migration's own
+   section on it — it is recorded as open, deliberately, rather than back-filled with
+   a justification.
 
 **The design is written and lives in the repo**, in this codebase's own idiom (a
 migration file carrying the reasoning, like `2026-09-04-user-activity-rollup.sql`):

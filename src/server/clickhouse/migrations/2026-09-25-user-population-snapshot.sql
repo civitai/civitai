@@ -10,17 +10,67 @@
 -- clusters/production/apps/prometheus-stack/grafana-dashboards/), panel 21
 -- "Funnel: viewers → generators → buyers" runs three `uniqExact` aggregations over
 -- `default.views`, `orchestration.jobs` and `default.buzzTransactions` across a `$window`-day
--- range, per load, per viewer. Panels 15/16/17 repeat the same shape.
+-- range, per load, per viewer. Both dashboards auto-refresh (pulse 5 m, business-ops 1 m).
+--
+-- 🔴 WHICH PANELS THIS CAN ACTUALLY SERVE — an earlier draft of this paragraph said "panels
+-- 15/16/17 repeat the same shape", which overstated the deliverable, and a reader would have
+-- planned the follow-up dashboard PR from it. The re-pointable set is TWO of the four:
+--   panel 21  three `uniqExact` stages                          SERVABLE
+--   panel 15  ratio of two `uniqExact`                          SERVABLE
+--   panel 16  countIf(userId NOT IN (SELECT ... buyers_90d))    NOT SERVABLE, EVER — that is a
+--             set DIFFERENCE, and sketches union but do not subtract (see the seven-column
+--             section below, which states the same property as a reason FOR the column split).
+--   panel 17  count() AS jobs, sum(cost) AS buzz, per day       NOT SERVABLE — two of its three
+--             series are row counts and a sum, neither of which is in these tables, so the
+--             panel keeps its full `orchestration.jobs` scan either way.
+-- Panels 16 and 17 keep paying the raw scan. Do not plan otherwise.
 --
 -- Two problems, and only one of them is cost:
 --   1. Every load pays a full window re-scan of three of the busiest tables on the cluster.
---   2. There is no HISTORY. The panels can only ever show the population as of NOW over a
---      trailing window. "Was DAU lower last March?" is not a question the current dashboards
---      can be asked at all.
+--   2. There is no history for the FUNNEL AS A WHOLE. The panels can only show the population
+--      as of NOW over a trailing window.
 --
--- These two tables fix both: the job writes one row per hour, and every panel reads merged
+-- 🔴 That second point was written as a flat "there is no HISTORY" and that is FALSE — corrected
+-- after an audit found the counter-example. `default.daily_user_counts` already holds a daily,
+-- incrementally-maintained, zero-cron HLL state for the logged-in-viewer population, measured
+-- 2026-09-25 at 1,154 rows spanning 2023-08-08 to the current day. On complete days it agrees
+-- with this table's `views_state` to within 0.01–1.05%.
+--
+-- It is NOT a substitute, for one measured reason: its column is
+-- `AggregateFunction(uniqIf, Int32, UInt8)`, and a `uniqCombinedMerge` over it ERRORS rather
+-- than returning a wrong number — so it cannot be unioned with the other three activity sources,
+-- which is the whole point of storing them as compatible states. Its guard also differs
+-- (`userId != 0` vs the panel's `userId > 0`). So it covers ONE population at ONE grain and
+-- cannot compose; these tables cover four populations that can.
+--
+-- These tables address both problems: the job writes one row per hour, and a panel reads merged
 -- pre-aggregated state instead of raw rows.
 --
+-- ── 🔴 A REFRESHABLE MV MAY BE THE RIGHT MECHANISM AND WAS NOT CONSIDERED ─
+-- Recording this as OPEN rather than supplying a justification after the fact.
+--
+-- This design inherited its "why a scheduled job and not an MV" argument from
+-- 2026-09-04-user-activity-rollup.sql, which says an MV "would have to hang off four tables,
+-- two of which are among the hottest ingest paths". That argument is about an INCREMENTAL MV,
+-- which fires per insert. It does NOT transfer to a REFRESHABLE MV, which is schedule-driven —
+-- and refreshable MVs are a live, first-class mechanism in this deployment, not a hypothetical:
+-- measured 2026-09-25, `system.view_refreshes` holds SEVEN, all `Scheduled` and refreshing on
+-- real cadences (`impressions_daily_by_owner_mv` daily, `transactions_final_mv` every 15 s).
+-- `src/server/jobs/clickhouse-refresh-monitor.ts` already monitors them.
+--
+-- So the job route was chosen without the alternative ever being priced. Two things follow, and
+-- the second is the one that matters:
+--   - the MV route would inherit that monitor and its alerting for free, whereas this job ships
+--     with NO staleness monitoring at all (a deliberate scope decision — panel-only, no
+--     Prometheus gauges) against a failure mode this file elsewhere describes as reading like
+--     "a catastrophic traffic collapse" rather than a missing backfill;
+--   - the `civitai_pg.User` arm reads a bridge engine, so it may not transfer to an MV at all.
+--     That arm is the reason this is an open question and not a straightforward switch.
+--
+-- I have not established which is better. Do not read this paragraph as a decision either way,
+-- and do not delete it in favour of a rationale composed later — the honest state is that the
+-- comparison was never run.
+
 -- ── Why HLL STATE columns and not counts — decided up front ───────────────
 -- This is the decision that cannot be retrofitted, so it is worth stating why.
 --
