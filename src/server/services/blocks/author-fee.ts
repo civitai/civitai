@@ -62,8 +62,8 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // submit), `author-fee-accrual.service.ts` (the ledger) and
 // `author-fee-settlement.service.ts` (the daily mint).
 //
-// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE — the shape that made
-// the "ONLY entry point" claim survive a rewrite. `observeBlockAuthorFee` is the
+// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE.
+// `observeBlockAuthorFee` is the
 // only one that reads the flag itself; the charge path enters at
 // `computeBlockAuthorFee`, whose gate is `quoteBlockAuthorFeeUncounted`'s flag read
 // in `author-fee-charge.service.ts`. So "flag-gated in this file" is not the same
@@ -555,9 +555,8 @@ export type BlockAuthorFeeObservation =
   | { readonly observed: true; readonly computation: BlockAuthorFeeComputation };
 
 /**
- * The TELEMETRY entry point, and the only one in this file that reads the flag.
- * `computeBlockAuthorFee` is the other production entry point here and is gated a
- * level up, in `author-fee-charge.service.ts` — see the banner at the top.
+ * The TELEMETRY entry point, and the only flag read in this file — see the banner at
+ * the top for the charge path's gate.
  *
  * 🔴 FAIL-CLOSED AND FIRST. The flag is read before anything else happens —
  * before the base is inspected and before any parameter is resolved. With

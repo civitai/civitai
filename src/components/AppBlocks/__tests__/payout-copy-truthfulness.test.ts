@@ -227,15 +227,15 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // for the table it left behind, the GA handoff tracker, and the applied migrations,
     // which are a historical record and must not be rewritten.
     const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d), [], CODE_FILES));
-    // 🔴 WALK POSITIVE CONTROLS — EXACT PATHS, ONE PER ROOT AND ONE PER EXTENSION CLASS.
-    // A misrooted or empty walk finds no mentions either, and would read as "the rail
-    // does not exist" no matter what the tree holds. ⚠️ An earlier revision matched each
-    // probe with `f === probe || f.startsWith(<root> + '/')`, which degenerates to "this
-    // root is non-empty": measured, reverting `CODE_FILES` to `/\.tsx?$/` — i.e. undoing
-    // the whole widening this ledger depends on — left every probe GREEN. One of those
-    // probes did not even exist on disk and had only ever passed via the fallback. So the
-    // membership test is exact, and the extension classes are probed by name, or the reach
-    // this test claims is unenforced.
+    // 🔴 WALK POSITIVE CONTROLS — EXACT PATHS, one per root and one per extension class
+    // that exists in the tree (`.cjs` by probe only; there are no `.jsx` files here). A
+    // misrooted or empty walk finds no mentions either, and would read as "the rail does
+    // not exist" no matter what the tree holds.
+    //
+    // 🔴 MEMBERSHIP IS EXACT, AND MUST STAY EXACT. A prefix test
+    // (`f.startsWith(<root> + '/')`) degenerates to "this root is non-empty" and stays
+    // GREEN when `CODE_FILES` narrows back to `/\.tsx?$/`, i.e. when the widening this
+    // ledger depends on is undone.
     const walked = new Set(files.map(rel));
     expect(files.length).toBeGreaterThan(3000);
     for (const probe of [
@@ -248,8 +248,8 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     ]) {
       expect(walked.has(probe)).toBe(true);
     }
-    // ...and a count per non-`.tsx?` class, so dropping one extension from CODE_FILES
-    // fails even if that class's named probe is later deleted from the tree.
+    // ...and a count for the three classes with enough files to floor, so dropping one of
+    // those extensions from `CODE_FILES` fails even if its named probe is later deleted.
     const byExt = (re: RegExp) => files.filter((f) => re.test(f)).length;
     expect(byExt(/\.svelte$/)).toBeGreaterThan(400);
     expect(byExt(/\.mjs$/)).toBeGreaterThan(40);

@@ -32,10 +32,12 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * that used to aggregate these rows and the mint it was to call were both removed,
  * so no purchase-rail share is paid out anywhere, and nothing writes `paid_out` any
  * more either. 🔴 It is still READ, and by user-facing surfaces: this write is what
- * `app-collaborator-earnings.service.ts` and `getRevenueForOwner` aggregate, and
- * what the two earnings panels render as "Confirmed earnings accrue here". Dropping
- * or repurposing it would silently zero those. held rows are the actionable ops
- * signal:
+ * `app-collaborator-earnings.service.ts` and `getRevenueForOwner` aggregate, what the
+ * two earnings panels show as their "Confirmed (unpaid)" bucket, and what
+ * /apps/revenue's subtitle describes as "Confirmed earnings accrue here". Dropping or
+ * repurposing it would silently zero all of those.
+ *
+ * held rows are the actionable ops signal:
  * a human reviews them and either confirms (re-run picks them up once
  * unparked back to pending, or a manual UPDATE confirms them) or voids.
  *
