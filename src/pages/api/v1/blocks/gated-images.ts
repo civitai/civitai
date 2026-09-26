@@ -211,20 +211,8 @@ export const baseHandler = withAxiom(async function handler(
     // `handleEndpointError`, so failures answer `{ message }` and this route
     // stays off the known-leak list in `rest-error-envelope-ledger.test.ts`.
     // Every refusal inside the shared body is a TRPCError and maps to its
-    // matching status here. 🔴 ALL THREE OF THEM ARE `UNAUTHORIZED` ⇒ **401** —
-    // the anon refusal (`block-gated-images-read.service.ts`) and BOTH kill-switch
-    // refusals (`assertAppBlocksEnabledForTokenUser`: unhydratable subject, and
-    // "Apps are not enabled"). Enumerated across the three modules the shared body
-    // reaches: three `TRPCError`s, zero `FORBIDDEN`, so **this route has no 403
-    // path at all**. This comment previously said "the kill-switch to 403", which
-    // matched only this route's own test fixture — itself inventing a code the
-    // function does not throw (fixed in the same commit). The sibling pins read the
-    // function correctly: `apps.router.storage.test.ts` and
-    // `blocks.router.createPostFromApp.test.ts` assert `UNAUTHORIZED` /
-    // "Apps are not enabled", and `blocks.router.me-parity.test.ts` asserts the
-    // resulting status literally as 401. Other routes on this surface DO answer
-    // 403 from their own gates; none of those is reachable from here. Read the
-    // status off the thrown code, never off a neighbouring route's.
+    // matching status here — the anon refusal and the kill-switch both to 401,
+    // since both throw `UNAUTHORIZED`.
     return handleEndpointError(res, error);
   }
 });
