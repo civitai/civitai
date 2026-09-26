@@ -1357,7 +1357,7 @@ apply_mutant M134 recipes/model-benchmarking.json P18 "model-benchmarking stops 
   's/^    "fromAppFrame": true,$/    "fromAppFrame": false,/' \
   '    "fromAppFrame": true,'
 
-# ── capture.sh: THE OP-FAILURE CLASS (the audit finding on #1271) ───────────
+# ── capture.sh: THE OP-FAILURE CLASS (the audit finding on infra ticket #1271) ───────────
 # 🔴 M136 IS THE REGRESSION THAT WAS ACTUALLY SHIPPED AND CAUGHT IN REVIEW: the
 # first version of this branch matched one error STRING, so a `click` answered
 # with the bridge generic `op_timeout:click` ran green and wrote its artifact.

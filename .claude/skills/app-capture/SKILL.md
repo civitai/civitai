@@ -208,26 +208,22 @@ real OS keypress on the focused control, bracketed by save/restore of the operat
 Unreachable without `--trusted`.
 
 🔴 **The OBSERVATION stands; the "spend path rejects untrusted events" EXPLANATION is
-RETRACTED — measured 2026-08-30, do not re-derive it.** There is no `isTrusted` /
-`userActivation` / transient-activation check anywhere on the spend path: `isTrusted` and
-`userActivation` return **zero** matches across `<civitai>/src/components/AppBlocks`,
-`blocks.router.ts` and `src/server/services/blocks` (positive control: `isTrusted` DOES match
-elsewhere in `src`, so the zero is a measurement, not a broken search), and
-the spend path does not authenticate on browser-issued state at all. What actually gates
-spend is the ordinary token/scope/budget machinery, which is **not** a user-activation
-check. The likely source of the
-false belief: `openBuzzPurchaseGate.ts` and `requestConsentGate.ts` gate on handshake
-**readiness**, and the SDK bans the `allow-top-navigation-by-user-activation` sandbox token —
-all *about* user activation, none an `isTrusted` check, none on the spend path. The sensei
-repo recorded the same retraction independently
+RETRACTED — measured 2026-08-30, do not re-derive it.** The retraction was established by
+reading the server and finding no user-activation check on that path. **The measurement
+itself is deliberately not reproduced here: this repository is public, and an account of
+what does and does not gate a spend path is an authorization map** (`CLAUDE.md`, Security —
+clause 5). It is recorded in the private infra repo; ask an infra owner if you need it.
+
+What you can safely take from it: the trusted-click theory is **dead**, and the likely
+source of the false belief was a cluster of nearby machinery that is *about* user
+activation — handshake-readiness gates, an SDK sandbox-token ban — none of which sits on
+the spend path. The sensei repo reached the same retraction independently
 (`<civitai-app-sensei>/claudedocs/handoff-civitai-sensei-bridge.md`: *"Don't burn another
 session on trusted-click theories"*), where the real blocker was a throttled background tab.
 
 🔴 **So the CAUSE of the dead in-frame click is NOT established** — only that it is not an
 untrusted-event rejection. **Keep using `trustedKey`**: the operational rule is unchanged and
-rests on the reproducible observation, not on the retracted mechanism. Do not reason about
-this path's authorization from this file — it is public, so the posture is deliberately not
-written down here; read the server, or ask an infra owner.
+rests on the reproducible observation, not on the retracted mechanism.
 
 🔴 **TWO REFUSERS, NOT ONE** — "capture.sh emits no bridge op of its own" is retracted. It
 emits lifecycle/observe ops plus **one** DOM op (the top-frame rect probe), refused by

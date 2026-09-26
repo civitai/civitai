@@ -2403,25 +2403,52 @@ PREFIX = ".claude/skills/app-capture/"
 # path to a SIBLING skill. The first, third and fourth were all covered before the
 # D2/D2b merge, by the other repo's path validator -- a link destination is a
 # machine-followable claim and it scanned those too. Losing them was an accident of
-# the merge, not a decision. All four shapes are now matched, and each has a planted
-# control in the mutation battery's sibling checks.
+# the merge, not a decision.
+#
+# 🔴 EACH PATTERN CARRIES ITS OWN POSITIVE CONTROL, BELOW, AND THAT IS NOT
+# DECORATION. A round-2 audit measured the live corpus and found PATS[1] and
+# PATS[2] matching ZERO refs in it -- so a typo in either would have left every
+# check green, the floor satisfied by PATS[0] alone, and the new coverage silently
+# gone. An earlier version of this comment claimed each shape "has a planted control
+# in the mutation battery"; that was FALSE -- the battery has no D2 mutant at all.
+# The controls live here instead, where they run on every invocation.
 PATS = [
     r"`(\.claude/[A-Za-z0-9_./-]+)`",          # any backticked .claude path, not just ours
     r"\]\((\.claude/[A-Za-z0-9_./-]+)\)",       # markdown link DESTINATION
-    r"(?<![`\w./-])(\.claude/skills/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)",  # unbackticked, specific enough
+    r"(?<![`\w./-])(\.claude/skills/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)",  # unbackticked
 ]
-PAT = PATS[0]
 docs = [SKILL] + sorted(glob.glob(os.path.join(os.path.dirname(SKILL), "reference", "*.md")))
-text = "\n".join(open(d).read() for d in docs)
-refs = sorted(set(r for p in PATS for r in re.findall(p, text)))
+raw = "\n".join(open(d).read() for d in docs)
+
+# 🔴 THE BARE PATTERN IS FENCE-BLIND AND THAT IS A FALSE-POSITIVE SOURCE, measured
+# in round 2: a legitimate ```bash example writing to a path that does not exist yet
+# (`cp shot.png .claude/skills/app-capture/out/shot.png`) is not a claim that the
+# path EXISTS, and the backticked-only pattern was structurally immune because fence
+# bodies carry no backticks. Stripping fenced blocks before applying the bare pattern
+# restores that immunity without giving up the shape. Backticked and link-destination
+# refs are still read from the WHOLE text: those spellings are claims wherever they sit.
+defenced = re.sub(r"^```.*?^```", "", raw, flags=re.S | re.M)
+refs = sorted(set(
+    [r for p in PATS[:2] for r in re.findall(p, raw)] +
+    re.findall(PATS[2], defenced)
+))
 dead = [r for r in refs if not os.path.exists(os.path.join(ROOT, r))]
-# Positive control: the extractor must be able to SEE a dead path. Without this a
-# zero is indistinguishable from a regex that matches nothing at all.
+
+# Positive control, PER PATTERN: each must be able to SEE a dead path in its own
+# spelling. Without this a zero is indistinguishable from a regex matching nothing.
 probe = PREFIX + "definitely-not-here.png"
 if os.path.exists(os.path.join(ROOT, probe)):
     dead.append("the control path unexpectedly exists")
-elif not re.findall(PAT, "see `%s` here" % probe):
-    dead.append("POSITIVE CONTROL FAILED: the extractor cannot match a skill path")
+for i, (p, sample) in enumerate((
+        (PATS[0], "see `%s` here" % probe),
+        (PATS[1], "see [doc](%s) here" % probe),
+        (PATS[2], "see %s here" % probe),
+)):
+    if not re.findall(p, sample):
+        dead.append("POSITIVE CONTROL FAILED: pattern %d cannot match its own shape" % i)
+# and the de-fencing must not eat ordinary prose
+if not re.findall(PATS[2], re.sub(r"^```.*?^```", "", "see %s here" % probe, flags=re.S | re.M)):
+    dead.append("POSITIVE CONTROL FAILED: de-fencing removed unfenced prose")
 # Floor: the corpus is known to name well over this many. A collapse to near-zero
 # means the docs were reworded out of the gate's reach, not that they got cleaner.
 if len(refs) < 10:
@@ -2435,7 +2462,7 @@ print("\n".join("DEAD: " + d for d in dead))
 sys.exit(1 if dead else 0)
 PY
 then
-  pass "D2: every \`.claude/…\` path the skill CORPUS names exists — SKILL.md plus its reference/ sidecars, in all three shapes a doc can spell one (backticked, markdown link destination, bare) ($(grep -o 'SKILL_REFS=[0-9]*' "${WORK}/d2.txt")), including its own tests/ dir. 🔴 It does NOT check paths outside .claude/ — `src/…` and `scripts/…` refs are unchecked here"
+  pass "D2: every \`.claude/…\` path the skill CORPUS names exists — SKILL.md plus its reference/ sidecars, in three shapes (backticked and markdown-link anywhere; bare only for `.claude/skills/**` paths WITH an extension, outside fenced blocks) ($(grep -o 'SKILL_REFS=[0-9]*' "${WORK}/d2.txt")), including its own tests/ dir. 🔴 It does NOT check paths outside .claude/ — `src/…` and `scripts/…` refs are unchecked here"
 else
   fail "D2: the skill corpus names a repo path that does not exist"
   sed 's/^/          /' "${WORK}/d2.txt" | head -8
@@ -3699,7 +3726,7 @@ echo "--- G: foregrounding vs spending, and the app-ready gate ---------------"
 # incapable of capturing any App Block.
 #
 # 🔴 THAT MEASUREMENT IS RETRACTED (2026-08-24): App Blocks boot hidden, 4/4, one
-# of them with no `activate` at all — claudedocs/app-capture-hidden-tab-boot-2026-08-24.md.
+# of them with no `activate` at all — the private infra repo's app-capture-hidden-tab-boot-2026-08-24.md.
 # The 5/5 is unexplained and is NOT evidence for the requirement, and the raise's
 # HOST-SIDE half is withheld besides (every capture-path activate sends
 # --no-focus, so the bridge answers i3: withheld). 🔴 "inert" — the word that

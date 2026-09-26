@@ -32,8 +32,8 @@ Driven through the browser bridge at `<devrc>/scripts/browser-bridge/browser` (i
    CDP `Input.dispatch*Event` and is `trusted:true`. That is a second route to a trusted event
    spelling no `xdotool`, so `guard_no_actuation` passes it: the two guards do not overlap.
    ⚠️ **The parenthetical "which is why the spend path rejects it" is RETRACTED** (measured
-   2026-08-30): there is no `isTrusted`/`userActivation` check on the spend path at all, and
-   `blocks.submitWorkflow` is a `publicProcedure` taking the block JWT as an input. The
+   2026-08-30): user activation is not what stops a spend. The mechanism is deliberately
+   not described here — this repo is public; see `SKILL.md` → "The spend path". The
    `trusted:false`/`trusted:true` distinction above is still **true of the events**; it simply
    is not what stops a spend. Full retraction and its controls: `SKILL.md` → "The spend path".
    The guard's own justification is unaffected — it rests on the event distinction, not on the

@@ -94,11 +94,29 @@ def prompt(title, tagline, hue, scene):
 # plan and the estimated cost without spending anything.
 args = [a for a in sys.argv[1:] if not a.startswith("-")]
 flags = {a for a in sys.argv[1:] if a.startswith("-")}
+
+# 🔴 UNKNOWN FLAGS ARE REFUSED, AND THAT IS THE POINT OF THIS BLOCK, NOT TIDINESS.
+# An earlier version of this guard only asked `"--dry-run" in flags`, so every
+# near-miss spelling an operator might reach for -- --dryrun, --dry, --dry-run=1,
+# -n, --DRY-RUN -- fell through to the SPEND path while the operator's intent was
+# explicitly "show me the cost, do not spend". Measured: each of those generated
+# for all 8 apps. The flag that expresses the intent to avoid spending must never
+# be the flag that silently permits it.
+KNOWN = {"--all", "--dry-run"}
+unknown_flags = sorted(flags - KNOWN)
+if unknown_flags:
+    sys.exit("unknown flag(s): %s\nknown: %s\n(did you mean --dry-run?)"
+             % (", ".join(unknown_flags), ", ".join(sorted(KNOWN))))
+
 DRY = "--dry-run" in flags
 if args:
     unknown = [a for a in args if a not in APPS]
     if unknown:
         sys.exit("unknown slug(s): %s\nknown: %s" % (", ".join(unknown), ", ".join(APPS)))
+    dupes = sorted({a for a in args if args.count(a) > 1})
+    if dupes:
+        sys.exit("slug(s) repeated, which would spend twice and log once: %s"
+                 % ", ".join(dupes))
     only = args
 elif "--all" in flags:
     only = list(APPS)

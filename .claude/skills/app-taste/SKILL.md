@@ -38,7 +38,7 @@ the repo name is not derivable from the slug. Constraints §12 has the full trap
 ```bash
 SLUG=app-requests
 civitai app status "$SLUG"            # per-app; see §13 — it reports the newest SUBMISSION
-git -C ~/workspace/civit/civitai-app-$SLUG show origin/main:block.manifest.json \
+git -C "${APP:?set APP to your clone of the app repo}" show origin/main:block.manifest.json \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["repository"])'
 ```
 
