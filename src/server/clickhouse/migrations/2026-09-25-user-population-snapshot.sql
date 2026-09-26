@@ -191,15 +191,38 @@
 --     Other measured types on that table: `userId` Int32, `cost` Float64,
 --     `jobType` LowCardinality(String).
 --
--- (2) NOT RUN — it writes, and the tables do not exist yet. It is an optimisation, not a
---     blocker: every arm below writes all seven columns explicitly, using `-StateIf(..., 0)`
---     for the six it does not own, so nothing depends on the answer. Run it after the CREATEs
---     only if you want to simplify the arms to a column subset:
+-- (2) ✅ RUN 2026-09-25, after the CREATEs. RESULT: a column-subset INSERT is ACCEPTED, and the
+--     omitted AggregateFunction columns read as an EMPTY state (0) rather than erroring —
+--     positive control: the column that WAS written read 1, so the probe measured something.
+--     Consequence, and it is the one that matters: omitting a column fails SILENTLY. That is
+--     what the warning beside the CREATE is about. The arms below still write all seven columns
+--     explicitly, which costs nothing and keeps each arm independent of this behaviour.
+--
+--     🔴 AND THE PROBE ITSELF TAUGHT SOMETHING THE FIRST TWO ATTEMPTS GOT WRONG — worth reading
+--     before you write any backfill: A ROW WHOSE `bucket` IS OUTSIDE THE 90-DAY TTL IS SILENTLY
+--     DROPPED ON INSERT. The INSERT returns success, no error is raised, and the row simply
+--     never appears. Measured both ways the same day: a bucket at `now() - 30 DAY` inserted and
+--     read back fine; the identical statement at `now() - 200 DAY` was ACCEPTED and the row
+--     never became visible. The first two runs of this preflight used a year-2000 sentinel and
+--     returned a confident `0` for every column — which read like "omitted columns are empty"
+--     and was actually "there is no row at all". Two different mechanisms, one observable.
+--     🔴 THE OPERATIONAL CONSEQUENCE: the HOURLY backfill below is scoped to "the last 90 days",
+--     i.e. exactly the TTL boundary. Anything you backfill into the HOURLY table older than the
+--     TTL vanishes with no error and no row count to check against. Backfill history into the
+--     DAILY table, which has no TTL; keep the hourly backfill comfortably inside 90 days; and
+--     when a bucket you wrote is missing, suspect the TTL before suspecting the query.
+--
+--     The probe, for re-running (use a bucket INSIDE the TTL, and keep the positive control):
 --       INSERT INTO default.user_population_hourly (bucket, views_state)
---         SELECT toDateTime('2000-01-01 00:00:00'), uniqCombinedState(toInt32(1));
+--         SELECT toStartOfHour(now() - INTERVAL 30 DAY), uniqCombinedState(toInt32(1));
+--       -- CONTROL FIRST: the row must be visible and views_state must read 1, or the next
+--       -- query's zeros mean "no row", not "empty state".
+--       SELECT count(), uniqCombinedMerge(views_state) FROM default.user_population_hourly
+--         WHERE bucket = toStartOfHour(now() - INTERVAL 30 DAY);            -- expect 1, 1
 --       SELECT uniqCombinedMerge(generators_state) FROM default.user_population_hourly
---         WHERE bucket = toDateTime('2000-01-01 00:00:00');   -- expect 0, not an error
---       ALTER TABLE default.user_population_hourly DELETE WHERE bucket = toDateTime('2000-01-01 00:00:00');
+--         WHERE bucket = toStartOfHour(now() - INTERVAL 30 DAY);            -- expect 0, not an error
+--       ALTER TABLE default.user_population_hourly DELETE
+--         WHERE bucket = toStartOfHour(now() - INTERVAL 30 DAY);
 --
 -- (3) ✅ REACHABLE, and the size is now known: `civitai_pg.User` holds 13,239,217 rows. Per-hour
 --     that arm is a narrow `createdAt` range and cheap. The FULL-HISTORY daily backfill is a
@@ -272,6 +295,12 @@ SETTINGS index_granularity = 8192;
 -- count mismatch, whereas a named insert simply OMITS the new column, which then reads as an
 -- empty state forever. Nothing checks the DDL against `STATE_COLUMNS` — verified by mutation,
 -- renaming a column here leaves the TypeScript suite fully green.
+--
+-- ✅ MEASURED 2026-09-25, so this is no longer an assertion: preflight (2) below has now been
+-- RUN against the live tables. A column-subset INSERT is ACCEPTED with no error, and the omitted
+-- columns read as a readable EMPTY state (0), not an error — with a positive control confirming
+-- the column that WAS written reads 1, so the probe was measuring something. The failure is
+-- therefore silent, exactly as this warning says.
 
 
 -- ── Reading these tables ──────────────────────────────────────────────────

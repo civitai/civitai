@@ -25,12 +25,18 @@
 // as the point where loss BEGINS, not as slack to spend.
 //
 // 🔴 Do NOT copy the margin from user-activity-rollup.ts. Its comment reads "four consecutive
-// missed runs still leave no gap (4 × 30 min < 3 h)" and that is true THERE because it runs every
-// 30 minutes — the same rule above, at half the period, giving double the margin. Two earlier
-// drafts of this comment got this wrong in different ways: the first restated the precedent's
-// number without its cadence, and the second stated the right number from a derivation that does
-// not produce it (it described a single run's window, which alone tolerates only ONE miss). The
-// union across runs is the part that must not be dropped again.
+// missed runs still leave no gap (4 × 30 min < 3 h)". Apply the rule above to ITS cadence and you
+// get FIVE, not four — (5+1) × 0.5 h = 3 h ≤ 3 h — so that comment is conservative rather than
+// wrong, and halving the period maps k → 2k+1, not 2k. Its number is not an output of this rule
+// and must not be carried across as one.
+//
+// THREE earlier drafts of this comment were wrong, in three different ways, and the pattern is
+// the point: the first restated the precedent's "four" without its cadence; the second stated the
+// right number from a derivation that does not produce it (it described a SINGLE run's window,
+// which alone tolerates only one miss — the union across consecutive runs is the mechanism); the
+// third kept that fixed rule but appended "at half the period, giving double the margin", which
+// contradicts the rule printed twelve lines above it. If you are about to reword this, you are
+// the fourth — derive the number from the rule and check it against both cadences before you do.
 export const LOOKBACK_HOURS = 3;
 
 // How far back the daily roll-up re-derives on each run. Cheap — it reads the hourly table

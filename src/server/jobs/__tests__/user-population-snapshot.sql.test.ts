@@ -35,10 +35,27 @@ const MIGRATION_PATH = join(
 );
 
 function hourlyTtlDaysFromMigration(): number {
-  const ddl = readFileSync(MIGRATION_PATH, 'utf8');
-  const match = ddl.match(/TTL bucket \+ INTERVAL (\d+) DAY/);
-  if (!match) throw new Error(`no hourly TTL found in ${MIGRATION_PATH}`);
-  return Number(match[1]);
+  const raw = readFileSync(MIGRATION_PATH, 'utf8');
+  // 🔴 STRIP `--` COMMENT LINES BEFORE PARSING. A parser fed the raw file is re-vacuumable by
+  // one sentence: put `TTL bucket + INTERVAL 90 DAY` inside a comment, change the real DDL to
+  // 30, and a raw parser returns the COMMENT's 90 while the live TTL is 30 — the suite goes
+  // green over exactly the drift this guard exists to catch. That is not hypothetical here: the
+  // lines immediately above the DDL are a 🔴 comment block ABOUT this TTL, which is the most
+  // likely place for someone to quote it. Same remedy, and the same reason, as
+  // src/server/clickhouse/__tests__/tracker-enum-drift.test.ts.
+  const ddl = raw
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('--'))
+    .join('\n');
+  const matches = [...ddl.matchAll(/TTL bucket \+ INTERVAL (\d+) DAY/g)];
+  // Exactly one, not "the first": two TTL clauses would mean the migration declares a second
+  // one and this would silently track whichever came first.
+  if (matches.length !== 1) {
+    throw new Error(
+      `expected exactly 1 hourly TTL in ${MIGRATION_PATH}, found ${matches.length}`
+    );
+  }
+  return Number(matches[0][1]);
 }
 
 const HOURLY_TTL_DAYS = hourlyTtlDaysFromMigration();
