@@ -401,12 +401,17 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
    * either failed nothing — every fixture was a credit. Columns are
    * `date,type,amount,accountType,fromUser,toUser,…` per `EXPORT_COLUMNS`.
    *
-   * 🔴 THE TWO EXPECTED ACCOUNT TYPES MUST DIFFER FROM EACH OTHER, and neither may
-   * be `WINDOW.accountTypes[0]`. Both cases originally expected `'yellow'`, so
-   * replacing the whole branch with the literal `'yellow'` passed — the direction
-   * was pinned while "does this column read the row at all" was not, and the
-   * surviving constant was one already in scope at the call site. `yellow`/`green`
-   * against a `blue` filter means no single constant satisfies both.
+   * 🔴 THE TWO EXPECTED ACCOUNT TYPES MUST DIFFER FROM EACH OTHER. Both cases
+   * originally expected `'yellow'`, so replacing the whole branch with the literal
+   * `'yellow'` passed — the direction was pinned while "does this column read the
+   * row at all" was not.
+   *
+   * 🔴 AND THE COUNTERPARTY IDS MUST NOT ALL BE THE SAME. With every row using only
+   * `ACCOUNT_ID` and one other id, a mutant that inverts BOTH the predicate and the
+   * branches — `row.fromAccountId === 77 ? toAccountType : fromAccountType` — is
+   * EQUIVALENT on every fixture and survives. It is only distinguishable on a row
+   * whose counterparty is neither of those ids, which is why the credit case below
+   * uses a third one.
    */
   it('negates the amount and reports the PAYER side account type', async () => {
     mockQuery.mockResolvedValueOnce([
@@ -432,7 +437,11 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
       row({
         type: '28',
         amount: 3,
-        fromAccountId: 77,
+        // 🔴 A THIRD counterparty id, not the `77` every other fixture uses. This is
+        // what makes a predicate keyed on a literal id distinguishable from one keyed
+        // on `accountId` — see the note above; with `77` here the two agree on every
+        // row and the mutant is equivalent.
+        fromAccountId: 555,
         toAccountId: ACCOUNT_ID,
         fromAccountType: 'yellow',
         toAccountType: 'green',
