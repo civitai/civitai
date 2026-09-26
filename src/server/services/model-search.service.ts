@@ -99,9 +99,13 @@ export class ModelSearchMeiliTimeoutError extends Error {
 }
 
 /**
- * Mirrors the catalog query's orderBy, not the website's (MostLiked is thumbs-up there, favourites
- * on the site). `Newest`/`Oldest` sort on `createdAt`: the catalog's `lastVersionAt` is not a
- * sortable attribute. `ImageCount`/`RecentlyAdded` have none and fall through to relevance.
+ * The same fields the site's search page sorts on, so `?query=&sort=` matches what a user sees there.
+ * Two of them are not the catalog's: `metrics.downloadCount` is the DISPLAYED count, masked to null
+ * (sorted last) for creators who hide downloads, and `Newest`/`Oldest` use `createdAt` where the
+ * catalog uses `lastVersionAt`. The real-value fields (`sortMetrics.downloadCount`,
+ * `lastVersionAtUnix`) exist in the index but are not sortable until an index reset ships; repoint
+ * here and in `model.parser.ts` together when it does. MostLiked is thumbs-up, as in the catalog.
+ * `ImageCount`/`RecentlyAdded` have no attribute and fall through to relevance.
  */
 export function meiliSortForModelSort(sort: ModelSort | undefined): string[] | undefined {
   let attribute: string | undefined;
