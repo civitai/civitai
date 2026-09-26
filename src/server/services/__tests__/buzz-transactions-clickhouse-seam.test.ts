@@ -148,9 +148,10 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     const sql = sentSql();
     expect(sql.length).toBeGreaterThan(0);
-    // Word-anchored: the query also carries `toAccountType IN ('yellow')`, which a
-    // plain `toContain('type IN (')` misses only because it is case-sensitive.
-    // Renaming that column to snake_case would redden a healthy query.
+    // Word-anchored: the `to`-direction query carries `toAccountType IN ('blue')`,
+    // which a plain `toContain('type IN (')` misses only because it is
+    // case-sensitive. Renaming that column to snake_case would redden a healthy
+    // query.
     for (const q of sql) expect(q).not.toMatch(/\btype IN \(/);
   });
 
@@ -162,7 +163,15 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    * rendered as a bare `28` on `/user/transactions`.
    */
   it('hydrates a row stored as its NUMBER into the member, not into the name', async () => {
-    mockQuery.mockResolvedValueOnce([row({ type: '28', amount: 3 })]);
+    mockQuery.mockResolvedValueOnce([
+      // 🔴 A SECOND, DIFFERENT account-type pair from the debit test below. Two
+      // cases that differ only in direction can be satisfied by any pure function
+      // of `isDebit` — `isDebit ? 'yellow' : 'green'` reproduced both and survived
+      // the whole suite. A third and fourth distinct value is what makes the
+      // columns prove they READ THE ROW, not just that the branch points the
+      // right way.
+      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'red' }),
+    ]);
 
     const result = await getUserBuzzTransactionsMulti({
       accountId: ACCOUNT_ID,
@@ -183,6 +192,10 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     // stores comes back unchanged. The debit direction is the one worth guarding and
     // it gets its own test below.
     expect(tx.amount).toBe(3);
+    // The other half of the pair-distinctness above: with these values AND the
+    // debit test's, no constant and no function of direction alone satisfies both.
+    expect(tx.fromAccountType).toBe('green');
+    expect(tx.toAccountType).toBe('red');
   });
 
   /**
@@ -280,7 +293,12 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
   }
 
   it('writes the member NAME for a row stored as its number, not the bare number', async () => {
-    mockQuery.mockResolvedValueOnce([row({ type: '28', amount: 3 })]);
+    // A THIRD account-type pair, distinct from the two directional cases below —
+    // see the list suite's note. Without it both of those carry the same pair and
+    // `isDebit ? 'yellow' : 'green'` satisfies them without reading the row.
+    mockQuery.mockResolvedValueOnce([
+      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'red' }),
+    ]);
 
     const out = await csv();
     // A positive control: with no body row the assertions below are unreachable, and
@@ -292,6 +310,8 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     // whole-line `/(^|,)28,/` search would have matched the AMOUNT column instead,
     // and passed only because the fixture happens not to use 28 as an amount.
     expect(lines[1].split(',')[1]).toBe('AppAuthorFee');
+    // A credit, so the RECIPIENT side — and a value neither directional case uses.
+    expect(lines[1].split(',')[3]).toBe('red');
   });
 
   it('does the same for the other past-26 member', async () => {
