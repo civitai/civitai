@@ -299,6 +299,11 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.LicenseFee);
     expect(tx.type).toBe(27);
+    // 🔴 The amount, which was unasserted here. That gap let a sign predicate keyed
+    // on a literal id survive: with the OTHER credit's counterparty varied, this is
+    // the only remaining row that exercises the predicate at `77` with an asserted
+    // output, so the three ids the suite uses now each pin a result.
+    expect(tx.amount).toBe(5);
     expect(tx.fromAccountType).toBe('yellow');
     expect(tx.toAccountType).toBe('green');
   });
