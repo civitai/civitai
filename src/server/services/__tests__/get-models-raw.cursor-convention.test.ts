@@ -7,14 +7,14 @@ redisMock.redis.packed.get.mockImplementation(async () => null);
 redisMock.redis.packed.set.mockImplementation(async () => undefined);
 
 const { captured, rowsToReturn } = vi.hoisted(() => ({
-  captured: [] as { sql: string; values: unknown[] }[],
+  captured: [] as { text: string; values: unknown[] }[],
   rowsToReturn: [] as Record<string, unknown>[],
 }));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {
-    cancellableQuery: vi.fn(async (query: { sql: string; values: unknown[] }) => {
-      captured.push(query);
+    cancellableQuery: vi.fn(async (query: { text: string; values: unknown[] }) => {
+      captured.push({ text: query.text, values: query.values });
       return {
         result: async () => rowsToReturn.map((r) => ({ ...r })),
         cancel: async () => undefined,
@@ -95,7 +95,11 @@ describe('getModelsRaw — nextCursor is the lookahead row', () => {
     });
 
     expect(captured).toHaveLength(1);
-    expect(captured[0].values).toContain(take + 1);
+    const limits = [...captured[0].text.matchAll(/LIMIT \$(\d+)/g)].map(
+      (m) => captured[0].values[Number(m[1]) - 1]
+    );
+    expect(limits.length).toBeGreaterThan(0);
+    expect(limits).toEqual(limits.map(() => take + 1));
     expect(result.items.map((m) => m.id)).toEqual([11, 12, 13]);
     expect(result.nextCursor).toBe('2024-01-15T00:00:00.000Z|14');
   });
