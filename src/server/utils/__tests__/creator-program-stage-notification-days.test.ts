@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CreatorProgramStageNotification } from '~/server/utils/creator-program.utils';
 import {
   getPhases,
@@ -29,12 +29,11 @@ describe.each([
   { tz: 'America/Los_Angeles', localDayOfUtcMidnight: 26 },
   { tz: 'Asia/Tokyo', localDayOfUtcMidnight: 27 },
 ])('creator program stage notification days (local TZ $tz)', ({ tz, localDayOfUtcMidnight }) => {
-  const originalTZ = process.env.TZ;
   beforeAll(() => {
-    process.env.TZ = tz;
+    vi.stubEnv('TZ', tz);
   });
   afterAll(() => {
-    process.env.TZ = originalTZ;
+    vi.unstubAllEnvs();
   });
 
   it('runs with the local timezone set', () => {

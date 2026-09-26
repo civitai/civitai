@@ -59,12 +59,11 @@ const sent = (day: number, key: string, userIds: number[]) => [
 
 // West of UTC, 00:05Z is still the previous local day, so a local-time slip moves every send
 // a day early here. CI runs in UTC, where local and UTC agree and such a slip would pass.
-const originalTZ = process.env.TZ;
 beforeAll(() => {
-  process.env.TZ = 'America/Los_Angeles';
+  vi.stubEnv('TZ', 'America/Los_Angeles');
 });
 afterAll(() => {
-  process.env.TZ = originalTZ;
+  vi.unstubAllEnvs();
 });
 
 beforeEach(() => {
@@ -91,7 +90,10 @@ describe('creator program stage notification jobs', () => {
   ])(
     '$label month: each stage notifies its audience once, on the getPhases day',
     async ({ year, month, ym, bank, start, end }) => {
-      expect(await runMonth(year, month)).toEqual({
+      const fired = await runMonth(year, month);
+      // Recipients are queried only on a send day, not on every daily run.
+      expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(3);
+      expect(fired).toEqual({
         'creator-program-banking-phase-ending': sent(
           bank,
           `creator-program-banking-phase-ending:${ym}`,
