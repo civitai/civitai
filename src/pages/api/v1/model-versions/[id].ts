@@ -108,6 +108,7 @@ export default MixedAuthEndpoint(async function handler(
                 'url', mf.url,
                 'sizeKB', mf."sizeKB",
                 'name', mf.name,
+                'overrideName', mf."overrideName",
                 'type', mf.type,
                 'visibility', mf.visibility,
                 'metadata', mf.metadata,
@@ -247,32 +248,39 @@ export async function prepareModelVersionResponse(
     files: includeDownloadUrl
       ? castedFiles
           .filter((file) => file.visibility === ModelFileVisibility.Public)
-          .map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
-            ...file,
-            metadata: reduceToBasicFileMetadata(metadata),
-            hashes: hashesAsObject(hashes),
-            name: safeDecodeURIComponent(
+          .map((file) => {
+            // Named before `metadata`/`overrideName` are destructured off: the helper
+            // reads both, and this must match the download route's name.
+            const name = safeDecodeURIComponent(
               getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
-            ),
-            primary: primaryFile.id === file.id,
-            // Pin the URL to THIS file — see the matching note in
-            // src/pages/api/v1/models/[id].ts. Without `fileId` the download
-            // route re-resolves the file from the caller's filePreferences, so
-            // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
-            // served can disagree on a multi-file version.
-            //
-            // `castedFiles` is NOT all this version's own files: the `vaeId`
-            // splice above pushes files that live on the LINKED VAE version.
-            // createSerializedFileDownloadUrl pins ONLY a file this version
-            // owns; a spliced one keeps its original discriminator URL, which
-            // the download route resolves through the linked-component
-            // fallback. See the invariant note on that helper.
-            downloadUrl: `${baseUrl.origin}${createSerializedFileDownloadUrl({
-              file: { id: file.id, modelVersionId, type: file.type, metadata },
-              hostVersionId: version.id,
+            );
+            const { hashes, url, visibility, metadata, modelVersionId, overrideName, ...rest } =
+              file;
+            return {
+              ...rest,
+              metadata: reduceToBasicFileMetadata(metadata),
+              hashes: hashesAsObject(hashes),
+              name,
               primary: primaryFile.id === file.id,
-            })}`,
-          }))
+              // Pin the URL to THIS file — see the matching note in
+              // src/pages/api/v1/models/[id].ts. Without `fileId` the download
+              // route re-resolves the file from the caller's filePreferences, so
+              // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
+              // served can disagree on a multi-file version.
+              //
+              // `castedFiles` is NOT all this version's own files: the `vaeId`
+              // splice above pushes files that live on the LINKED VAE version.
+              // createSerializedFileDownloadUrl pins ONLY a file this version
+              // owns; a spliced one keeps its original discriminator URL, which
+              // the download route resolves through the linked-component
+              // fallback. See the invariant note on that helper.
+              downloadUrl: `${baseUrl.origin}${createSerializedFileDownloadUrl({
+                file: { id: file.id, modelVersionId, type: file.type, metadata },
+                hostVersionId: version.id,
+                primary: primaryFile.id === file.id,
+              })}`,
+            };
+          })
       : [],
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
