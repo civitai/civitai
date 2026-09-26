@@ -62,9 +62,8 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // submit), `author-fee-accrual.service.ts` (the ledger) and
 // `author-fee-settlement.service.ts` (the daily mint).
 //
-// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE.
-// `observeBlockAuthorFee` is the
-// only one that reads the flag itself; the charge path enters at
+// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE. `observeBlockAuthorFee` is
+// the only one that reads the flag itself; the charge path enters at
 // `computeBlockAuthorFee`, whose gate is `quoteBlockAuthorFeeUncounted`'s flag read
 // in `author-fee-charge.service.ts`. So "flag-gated in this file" is not the same
 // set as "reachable in production", and a change to `computeBlockAuthorFee` is a

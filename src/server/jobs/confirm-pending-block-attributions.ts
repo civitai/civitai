@@ -37,7 +37,7 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * /apps/revenue's subtitle describes as "Confirmed earnings accrue here". Dropping or
  * repurposing it would silently zero all of those.
  *
- * held rows are the actionable ops signal:
+ * `held` rows are the actionable ops signal:
  * a human reviews them and either confirms (re-run picks them up once
  * unparked back to pending, or a manual UPDATE confirms them) or voids.
  *

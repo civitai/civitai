@@ -248,8 +248,9 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     ]) {
       expect(walked.has(probe)).toBe(true);
     }
-    // ...and a count for the three classes with enough files to floor, so dropping one of
-    // those extensions from `CODE_FILES` fails even if its named probe is later deleted.
+    // ...and a count for the three non-`.tsx?` classes with enough files to floor, so
+    // dropping one of those extensions from `CODE_FILES` fails even if its named probe is
+    // later deleted. (`.ts`/`.tsx` are floored jointly by the `files.length` assertion.)
     const byExt = (re: RegExp) => files.filter((f) => re.test(f)).length;
     expect(byExt(/\.svelte$/)).toBeGreaterThan(400);
     expect(byExt(/\.mjs$/)).toBeGreaterThan(40);
