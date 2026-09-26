@@ -58,18 +58,38 @@
 -- real cadences (`impressions_daily_by_owner_mv` daily, `transactions_final_mv` every 15 s).
 -- `src/server/jobs/clickhouse-refresh-monitor.ts` already monitors them.
 --
--- So the job route was chosen without the alternative ever being priced. Two things follow, and
--- the second is the one that matters:
---   - the MV route would inherit that monitor and its alerting for free, whereas this job ships
---     with NO staleness monitoring at all (a deliberate scope decision — panel-only, no
---     Prometheus gauges) against a failure mode this file elsewhere describes as reading like
---     "a catastrophic traffic collapse" rather than a missing backfill;
+-- So the job route was chosen without the alternative ever being priced. What follows:
 --   - the `civitai_pg.User` arm reads a bridge engine, so it may not transfer to an MV at all.
 --     That arm is the reason this is an open question and not a straightforward switch.
 --
--- I have not established which is better. Do not read this paragraph as a decision either way,
--- and do not delete it in favour of a rationale composed later — the honest state is that the
--- comparison was never run.
+-- 🔴 RETRACTED, and it was MY OWN sentence one commit earlier: "the MV route would inherit that
+-- monitor and its alerting for free, whereas this job ships with NO staleness monitoring at
+-- all". The second half is FALSE, and it was the load-bearing half — it was the strongest
+-- argument for switching. I repeated it from the audit that raised it without checking it.
+--
+-- Every `createJob` job already emits `job_duration_seconds` and `job_errors_total` labelled by
+-- job name, and `seedJobMetrics` (packages/civitai-telemetry/src/client.ts) deliberately seeds
+-- both at ZERO at module load for exactly this purpose — its own comment says that without
+-- seeding, "a cron that is dead, a cron that has not run since this pod started, and a cron
+-- that was deleted from the codebase are all the SAME observation". Verified live 2026-09-25:
+-- `civitai_app_job_duration_seconds_count{cluster="dp-1"}` is present in production for
+-- `user-activity-rollup`, `clickhouse-refresh-monitor` and `bot-account-detection`, 161 series
+-- each. This job will emit it automatically, with no code here.
+--
+-- So the two routes are much closer on observability than that sentence claimed, and the
+-- monitoring argument for switching is withdrawn. The comparison genuinely was never run and
+-- the question stays open — on the remaining merits, not on that one. Do not delete this
+-- paragraph in favour of a rationale composed later.
+--
+-- ── If staleness monitoring IS wanted later, the cheap form already exists ─
+-- Do NOT add a read-side guard or a bespoke gauge. There is a proven pattern in talos-infra —
+-- `bot-account-detection-alerts-configmap.yaml` and `new-order-abuse-detection-alerts-configmap.yaml`
+-- both alert on `civitai_app_job_duration_seconds_count{job="<name>"}` over a lookback, which is
+-- precisely "did this cron run". One configmap rule, zero application code.
+-- ⚠️ Read those files' own warning first: alert on the DURATION COUNT, not on
+-- `civitai_app_job_errors_total` — they record that the error counter is in NO alert rule at all.
+-- Not added here: no such incident has occurred, this job does not yet run in production, and a
+-- guard for an incident that has never happened is the thing that taxes every later change.
 
 -- ── Why HLL STATE columns and not counts — decided up front ───────────────
 -- This is the decision that cannot be retrofitted, so it is worth stating why.
