@@ -641,6 +641,51 @@ GROUP BY day;
 --   ... WHERE <timecol> >= toStartOfHour(now() - INTERVAL 8 DAY)   -- aligned, one day wider
 -- Re-covering good buckets is a no-op, so widening is always safe.
 --
+-- ── FULL-HISTORY DAILY BACKFILL — RUN 2026-09-26 ──────────────────────────
+-- Executed against production. 302 s total for all seven arms over 42 month-chunks, plus 9 s for
+-- the five-month signups gap described below. Per-arm: views 78.9 s · signups 79.9 s (the Postgres
+-- bridge) · pageViews 48.3 s · generators 47.3 s · buyers 21.8 s · reactions 15.1 s ·
+-- userActivities 10.8 s. The largest single chunk (views, 2026-08, 262 M rows scanned) was 2.7 s.
+--
+-- COVERAGE: 1,397 distinct days, 2022-11-12 .. 2026-09-26.
+--
+-- 🔴 DERIVE THE BACKFILL WINDOW FROM EACH SOURCE'S OWN MINIMUM, NEVER FROM A CONSTANT. The first
+-- run used "42 months back from today", which starts 2023-04-01. Six of the seven arms are fully
+-- covered by that (their data starts 2023-04-27 or later) — but `civitai_pg.User` goes back to
+-- 2022-11-12, so the signups arm SILENTLY MISSED 1,047,513 accounts. Nothing errored, no day was
+-- absent from the middle of the range, and every per-arm reconciliation over a recent window came
+-- back green: the gap sits entirely BELOW the window, where a coverage check that only looks for
+-- holes cannot see it.
+--
+-- What caught it was cross-checking an ALL-TIME total against an independent count — snapshot
+-- 12,192,485 signups against 13,239,217 rows in `civitai_pg.User`. Do that for every arm after any
+-- backfill; a per-window reconciliation cannot.
+--
+-- Per-arm minima, measured 2026-09-26 (re-derive rather than trusting these):
+--   views 2023-04-27 · pageViews 2024-09-26 · reactions 2023-04-27 · userActivities 2023-04-27
+--   orchestration.jobs (WITH the guards) 2023-10-05 · buzzTransactions purchases 2023-10-16
+--   civitai_pg.User 2022-11-12   <- the earliest, and the one the constant missed
+--
+-- RECONCILIATION after the gap fill, 90-day day-aligned window, snapshot vs raw `uniqExact`:
+--   viewers      1,512,549 vs 1,508,167   +0.29%
+--   generators     213,437 vs   213,217   +0.10%
+--   buyers          22,742 vs    22,702   +0.18%
+--   signups        729,126 vs   729,126   EXACT
+-- All-time: snapshot signups 13,239,998 vs raw 13,240,008 — a gap of TEN, which is accounts created
+-- in the seconds between the two queries (signups arrive continuously and both sides bound on
+-- `now()`). Treat a single-digit signups gap as clock skew; treat a four-digit one as a real hole.
+--
+-- ALL-TIME populations, the question this table exists to make answerable at all:
+--   viewers 9,646,453 · generators 3,754,527 · buyers 126,574 · signups 13,239,998
+--
+-- ⚠️ 18 days inside the span carry NO row: 2022-11-14..12-04, scattered. They are legitimately
+-- EMPTY, not missing — the raw sources hold ZERO rows on each (checked for both signups and
+-- views). That is the discriminating check for any hole: a missing day WITH raw data is a gap, a
+-- missing day with none is the platform's own early history. Do not "fix" them.
+--
+-- The HOURLY backfill has NOT been run — the table holds only the validation slice. See the
+-- hourly note in the Backfill section, and keep that window inside ~80 days.
+
 -- ACTUALS — applied 2026-09-25, 7-day validation slice (the full-history backfill had NOT run
 -- at this point; re-record these after it does):
 --   tables created     default.user_population_hourly, default.user_population_daily
