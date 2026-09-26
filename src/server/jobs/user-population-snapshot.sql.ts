@@ -8,15 +8,29 @@
  * src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql.
  */
 
-// How far back each run re-covers. A bucket is fully written by any run landing between one
-// and LOOKBACK_HOURS after that hour closed, so at an HOURLY cadence three hours of overlap
-// tolerates exactly TWO consecutive missed runs; the third loses the oldest bucket, silently
-// and permanently, recoverable only by a manual backfill of the range.
+// How far back each run re-covers.
+//
+// THE RULE, so it survives a change to either number: a run at time T covers (T − LOOKBACK, T].
+// Consecutive successes therefore UNION into contiguous coverage, and no gap opens while
+//
+//     (missed + 1) × period  ≤  LOOKBACK_HOURS
+//
+// At the current hourly period and 3 h lookback that is missed ≤ 2. The THIRD consecutive miss
+// opens a gap, losing the oldest bucket silently and permanently — recoverable only by a manual
+// backfill of the range, into a daily table that has no TTL.
+//
+// ⚠️ TWO IS A BOUNDARY, NOT A CUSHION. At exactly two misses the surviving runs' windows abut at
+// a single instant, so ordinary scheduler jitter — or the ~3 s of `now()` drift across the seven
+// serially-executed arms, each evaluating its own `now()` — can still drop rows there. Treat two
+// as the point where loss BEGINS, not as slack to spend.
 //
 // 🔴 Do NOT copy the margin from user-activity-rollup.ts. Its comment reads "four consecutive
-// missed runs still leave no gap (4 × 30 min < 3 h)" and that is true THERE because it runs
-// every 30 minutes. Same 3 h lookback, half the period, double the margin. This job's margin is
-// two, and an earlier draft of this file restated the precedent's number without its cadence.
+// missed runs still leave no gap (4 × 30 min < 3 h)" and that is true THERE because it runs every
+// 30 minutes — the same rule above, at half the period, giving double the margin. Two earlier
+// drafts of this comment got this wrong in different ways: the first restated the precedent's
+// number without its cadence, and the second stated the right number from a derivation that does
+// not produce it (it described a single run's window, which alone tolerates only ONE miss). The
+// union across runs is the part that must not be dropped again.
 export const LOOKBACK_HOURS = 3;
 
 // How far back the daily roll-up re-derives on each run. Cheap — it reads the hourly table

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Arm } from '~/server/jobs/user-population-snapshot.sql';
@@ -13,12 +16,32 @@ import {
 } from '~/server/jobs/user-population-snapshot.sql';
 
 /**
- * The hourly table's TTL, transcribed from the migration's DDL
- * (src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql). It lives in SQL,
- * not in TypeScript, so nothing can import it — which is exactly why the daily roll's lookback
- * could drift against it unnoticed. Stated here so the relationship is at least asserted.
+ * The hourly table's TTL, READ OUT OF THE MIGRATION rather than restated here.
+ *
+ * 🔴 An earlier version of this was a literal `90` with a comment claiming it made "shrinking the
+ * TTL toward the lookback a failure rather than a surprise". It did not: an audit changed the DDL
+ * to `INTERVAL 10 DAY` and the suite stayed fully GREEN, because nothing connected the constant
+ * to the file it claimed to track. A guard whose description claims coverage it does not provide
+ * is worse than none — it stops the next person looking.
+ *
+ * Parsing the DDL text is what makes the coupling real. Note it matches the SOURCE spelling
+ * `INTERVAL 90 DAY`; ClickHouse normalises that to `toIntervalDay(90)` once applied, so a check
+ * written against a LIVE `create_table_query` needs the other pattern (see the migration's own
+ * warning about exactly that trap).
  */
-const HOURLY_TTL_DAYS = 90;
+const MIGRATION_PATH = join(
+  __dirname,
+  '../../clickhouse/migrations/2026-09-25-user-population-snapshot.sql'
+);
+
+function hourlyTtlDaysFromMigration(): number {
+  const ddl = readFileSync(MIGRATION_PATH, 'utf8');
+  const match = ddl.match(/TTL bucket \+ INTERVAL (\d+) DAY/);
+  if (!match) throw new Error(`no hourly TTL found in ${MIGRATION_PATH}`);
+  return Number(match[1]);
+}
+
+const HOURLY_TTL_DAYS = hourlyTtlDaysFromMigration();
 
 /**
  * These tests exist for ONE failure mode that no type and no ClickHouse error can catch: the
@@ -277,8 +300,15 @@ describe('user-population snapshot — generated SQL shape', () => {
     expect(sql).toContain('FROM default.user_population_hourly');
     expect(sql).toContain(`WHERE bucket >= toStartOfDay(now() - INTERVAL ${DAILY_ROLL_DAYS} DAY)`);
     // The roll must stay well inside the hourly TTL: a day whose hourly rows have expired can
-    // never be rolled up, only re-derived from raw. 90 is the TTL; assert real margin, not just
-    // inequality, so shrinking the TTL toward the lookback is a failure rather than a surprise.
+    // never be rolled up, only re-derived from raw. HOURLY_TTL_DAYS is parsed from the migration,
+    // so shrinking the TTL there fails HERE — verified by mutation: 90 → 10 DAY in the DDL turns
+    // this suite red, where the literal it replaced stayed green.
+    expect(HOURLY_TTL_DAYS).toBe(90);
+    // ⚠️ Honest about what this last line is: DOCUMENTATION, not an independent guard. Both of
+    // its operands are pinned by exact assertions above, so it can never be the FIRST to fail —
+    // any change to either constant trips that constant's own pin. It states the relationship
+    // for a reader and would catch a case where both pins were updated together but incoherently.
+    // Do not cite it as coverage of the coupling; the parsed TTL above is what provides that.
     expect(DAILY_ROLL_DAYS).toBeLessThan(HOURLY_TTL_DAYS / 2);
   });
 

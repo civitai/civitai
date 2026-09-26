@@ -265,6 +265,14 @@ ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{repli
 ORDER BY day
 SETTINGS index_granularity = 8192;
 
+-- 🔴 IF YOU ADD A STATE COLUMN TO EITHER TABLE, ADD IT TO `STATE_COLUMNS` IN
+-- src/server/jobs/user-population-snapshot.sql.ts IN THE SAME CHANGE.
+-- Every INSERT here and in the job now names its columns explicitly, which closes the
+-- permutation hazard but INVERTS this one: a positional insert used to fail loudly on a column
+-- count mismatch, whereas a named insert simply OMITS the new column, which then reads as an
+-- empty state forever. Nothing checks the DDL against `STATE_COLUMNS` — verified by mutation,
+-- renaming a column here leaves the TypeScript suite fully green.
+
 
 -- ── Reading these tables ──────────────────────────────────────────────────
 -- Rows are PARTIAL STATES until a background merge, so a read MUST aggregate. Selecting a
@@ -297,9 +305,21 @@ SETTINGS index_granularity = 8192;
 --   - The RECONCILIATION in the ACTUALS below was measured HOUR-ALIGNED on both sides. This
 --     query is DAY-aligned and the live panel it replaces is aligned to neither — it filters
 --     `time > now() - INTERVAL $window DAY` from an arbitrary instant. So the sub-1% agreement
---     recorded below is not the agreement this panel will show. The boundary effect is the same
---     order as the sketch error itself: measured 2026-09-25, an unaligned window read 0.2–0.5%
---     low across all four populations, with signups off by exactly 19 accounts.
+--     recorded below is not the agreement this panel will show.
+--
+--     🔴 THE SIZE OF THAT DISAGREEMENT IS NOT MEASURED. An earlier draft of this note borrowed
+--     the "0.2–0.5% low, signups off by exactly 19" figures from the ACTUALS below — but those
+--     measure a DIFFERENT mechanism: a backfill that opened mid-hour and left its first bucket
+--     genuinely short of rows. That was a DEFECT, and it was FIXED. Reusing its numbers here
+--     presents a repaired one-off as an inherent property of day-alignment, which it is not.
+--
+--     🔴 And it would disarm this file's own best control. The ACTUALS section explains that
+--     `signups_state` is `uniqExact` and therefore CANNOT approximate, so a signups disagreement
+--     is proof the PIPELINE LOST ROWS rather than proof the sketch is estimating. A note telling
+--     an operator to EXPECT signups off by ~19 trains exactly the response that rule exists to
+--     prevent — it makes the alarm read as normal. If signups disagrees, investigate; it is the
+--     one column that cannot be explained away by approximation.
+--     If the day-alignment effect matters to you, measure it on its own.
 --   - The newest `day` row is a PARTIAL day, rewritten by every run as more hours land. Any
 --     chart ending at `today()` therefore has a final point that is a fraction of a day and
 --     dips — the same "reads as a catastrophic collapse" shape this file warns about elsewhere,
@@ -360,6 +380,8 @@ SETTINGS index_granularity = 8192;
 -- the time column and the owned column.
 
 INSERT INTO default.user_population_daily
+    (day, views_state, pageviews_state, reactions_state, useractivities_state,
+            generators_state, buyers_state, signups_state)
 SELECT
     toDate(time)                          AS day,
     uniqCombinedState(userId)             AS views_state,
@@ -378,6 +400,14 @@ WHERE userId > 0
   -- table that has NO TTL. This is the same hazard the `<= now()` bound in the job exists for,
   -- and the same one `daily_generation_user_counts` already has (its range reaches 2036-02-07).
   -- Carry both lines into EVERY arm you derive from this one.
+  --
+  -- The FLOOR is a separate claim from the ceiling and needs its own evidence, because copying it
+  -- into an arm whose data starts EARLIER would silently drop real rows into a table with no TTL.
+  -- Measured 2026-09-25 — minimum `time` where `userId > 0`, and what this floor would discard:
+  --   views 2023-04-27 · pageViews 2024-09-26 · reactions 2023-04-27 · userActivities 2023-04-27
+  --   rows dropped by the floor, all four sources: 0
+  -- So it is safe for these four and is a sentinel guard, not a date filter. Re-measure before
+  -- carrying it to any OTHER source.
   AND time >= toDateTime('2022-01-01 00:00:00') AND time <= now()
 GROUP BY day;
 
@@ -395,6 +425,8 @@ GROUP BY day;
 -- `createdAt` is its sort key, so the range still prunes.
 
 INSERT INTO default.user_population_daily
+    (day, views_state, pageviews_state, reactions_state, useractivities_state,
+            generators_state, buyers_state, signups_state)
 SELECT
     toDate(createdAt)                     AS day,
     uniqCombinedStateIf(userId, 0)        AS views_state,
@@ -416,9 +448,12 @@ GROUP BY day;
 
 -- Buyers — guards byte-identical to panels 15/16/21. Counts `toAccountId`, and the time column
 -- is `date`. `fromAccountId = 0` plus the description prefix is what distinguishes a real
--- purchase from every other transaction type; keep both.
+-- purchase from every other transaction type; keep both. Spelled UNSPACED, matching the
+-- panel byte-for-byte — see the same guard in user-population-snapshot.sql.ts.
 
 INSERT INTO default.user_population_daily
+    (day, views_state, pageviews_state, reactions_state, useractivities_state,
+            generators_state, buyers_state, signups_state)
 SELECT
     toDate(date)                          AS day,
     uniqCombinedStateIf(toAccountId, 0)   AS views_state,
@@ -429,8 +464,8 @@ SELECT
     uniqCombinedState(toAccountId)        AS buyers_state,
     uniqExactStateIf(toAccountId, 0)      AS signups_state
 FROM default.buzzTransactions
-WHERE type = 'purchase'
-  AND fromAccountId = 0
+WHERE type='purchase'
+  AND fromAccountId=0
   AND description LIKE 'Purchase of %'
   AND date >= toDateTime('2024-09-01 00:00:00')
   AND date <  toDateTime('2024-10-01 00:00:00')
@@ -440,6 +475,8 @@ GROUP BY day;
 -- Signups — the one arm that leaves ClickHouse (preflight 3). Chunk by month and run off-peak.
 
 INSERT INTO default.user_population_daily
+    (day, views_state, pageviews_state, reactions_state, useractivities_state,
+            generators_state, buyers_state, signups_state)
 SELECT
     toDate(createdAt)                     AS day,
     uniqCombinedStateIf(id, 0)            AS views_state,
