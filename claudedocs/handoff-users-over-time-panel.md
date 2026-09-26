@@ -22,38 +22,28 @@ the history is long (months), not window-limited.
   query no longer hits raw tables).
 
 ## State now
-- Branch: civitai `main` @ b8fb27a71e (behind origin/main by 28 — fetch before any work);
-  datapacket-talos `trunk` @ d88232eee (behind 136; two dirty skill files PRE-EXIST this
-  session — not ours, do not commit them).
-- What's DONE this session (recon only, ZERO commits, read-only):
-  - Read index entries `civitai/faro.md` + `datapacket-talos/faro.md` (stamp
-    synced=1790379245 ≈ 2026-09-25 23:14 UTC; coverage=ALL).
-  - Dashboard analysis: `datapacket-talos/clusters/production/apps/prometheus-stack/grafana-dashboards/civitai-business-pulse.json`
-    — row "Active population funnel", panel 21 "Funnel: viewers → generators → buyers"
-    runs LIVE `uniqExact(userId)` over raw tables per load, with `$window` filter;
-    panels 15/16/17 (generator:buyer ratio, unmonetized generator share, daily
-    generation volume) are the same live-scan pattern. Generator definition there =
-    `userId > 0 AND match(jobType, '^[A-Za-z0-9_-]{2,40}$') AND cost BETWEEN 0 AND 1000000`.
-  - `civitai-dp-prod-frontend-rum.json` has a Sessions stat:
-    `count(count by (session_id) (count_over_time({source="faro-rum"} | logfmt kind, session_id | kind=event ...)))`
-    — same per-load heavy pattern, and Loki-side (72h retention).
-  - `civitai-cohort-health.json` has 3 tier-count user panels — NOT yet inspected in
-    detail (listed as next step 2).
-- 2026-09-25 (second session): 5 questions closed, design + job written and verified,
-  **PR #5159 open** (`zach/users-over-time-snapshot`), **DDL APPLIED**, 7-day
-  validation slice backfilled and reconciled.
-- What's IN FLIGHT: nothing running.
-- Deploy/verify status:
-  - ✅ **DDL applied to production ClickHouse** — `default.user_population_hourly`
-    (TTL 90d) and `default.user_population_daily` both exist, seven state columns
-    each, verified against `system.columns` and `create_table_query`.
-  - ✅ **7-day slice backfilled and reconciled** — signups and buyers EXACT, viewers
-    +0.05%, generators −0.21%. Idempotency confirmed on real data.
-  - ❌ **FULL-HISTORY backfill has NOT run.** The daily table holds 8 days, not years.
-    So a "users over time" panel shipped today would show 8 days and read as a
-    catastrophic collapse before that. This is the next gate.
-  - ❌ Job is NOT deployed (it ships with PR #5159) and NO dashboard has changed.
-  - ⏳ PR #5159 has had no audit round yet (`/audit-pr 5159`).
+- **civitai#5159 MERGED** 2026-09-26T17:15:49Z, squash `539b1428f0`. Verified by CONTENT
+  not ancestry (a squash never makes the head an ancestor): all three files on
+  `origin/main`, job registered in the run-jobs route. Branch auto-deleted.
+- **Released and deployed.** `origin/release` = `eb57472dbe`; `civitai-dp-prod-jobs` serves
+  `ghcr.io/civitai/civitai-prod:20260926172247-eb57472`, 3/3 pods Ready on it.
+- **The job is REGISTERED and ARMED, not yet observed running.**
+  - App serves it: `/api/internal/get-jobs` went 183 → 184 names;
+    `{"name":"user-population-snapshot","cron":"15 * * * *","options":{"lockExpiration":1200}}`
+  - Hangfire registry went 183 → 184 at 17:50Z (the refresh that ran DURING the pod roll
+    missed it; the next one caught it).
+  - Served cron `[15 * * * *]` == registered cron `[15 * * * *]`.
+  - Invocation is `CreateJob`, NOT `DisabledJob`. `NextExecution 2026-09-26T18:15:00Z`,
+    `LastExecution` absent (never run).
+- **DDL applied + full history backfilled** (both done 2026-09-26, before the merge):
+  `default.user_population_daily` 1,397 distinct days 2022-11-12..2026-09-26;
+  `default.user_population_hourly` holds only an 8-day validation slice.
+- **talos-infra#1642 is OPEN and DELIBERATELY A DRAFT.** Dashboard: pulse panel 21
+  re-pointed at the snapshot, new panel 22 "Users over time (daily)". Head `970e667e7`
+  after a round-0 rework. `tekton / gitops-ci` passed in-cluster (`gitops-ci-1642-htmh7`).
+- **Audit coverage:** civitai#5159 ran round 0 + rounds 1-5 (ladder stopped on round 5:
+  behavioural payload zero, one prose finding, auditor recommended stop). talos#1642 has
+  had round 0 only — **the nine correctness axes have NOT run on it.**
 
 ## Decisions taken (2026-09-25) — all five questions are CLOSED
 Four were answered by the user; the fifth was settled from the repo and needed no ask.
@@ -127,62 +117,40 @@ DAU is the union of all four (the 2026-09-04 migration measured the three non-pa
 sources adding +7.5% users over 30d).
 
 ## Next steps (ranked)
-1. ~~Get the 5 clarifying questions answered~~ — DONE, see Decisions above.
-2. ~~Inspect cohort-health + business-history for an existing rollup to extend~~ — DONE.
-   Findings in State now / Decisions. forcing: none
-3. ~~Design the snapshot table, HLL decided up front~~ — DONE, the migration file is
-   written on branch `zach/users-over-time-snapshot`. **Remaining: run the three
-   PREFLIGHTS at the top of that file before applying any DDL.** The load-bearing one
-   is #1 — whether `orchestration.jobs` is `ORDER BY createdAt` first. The per-run
-   cost model assumes every arm is a primary-key range scan; that was verified for the
-   four `default.*` activity sources on 2026-09-04 but `orchestration.jobs` is in
-   another database and was NOT part of that check, and this repo does not carry its
-   DDL. If it sorts otherwise, the generators arm is a full scan every hour and needs
-   rethinking. forcing: none
-4. ~~Implement the hourly job~~ — DONE and verified, on the same branch:
-   - `src/server/jobs/user-population-snapshot.sql.ts` — pure SQL builders, no imports
-     (same split as `src/server/metrics/appListing.metrics.sql.ts`, so the tests need no
-     ClickHouse mock).
-   - `src/server/jobs/user-population-snapshot.ts` — the job, `15 * * * *`,
-     `LOOKBACK_HOURS = 3`, seven arms serially then the daily roll.
-   - Registered in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
-   - `src/server/jobs/__tests__/user-population-snapshot.sql.test.ts` — 28 tests.
-   **Verified, with the instrument checked first in each case:**
-   - Every arm's SELECT run against LIVE ClickHouse (read-only, `INSERT INTO` stripped).
-     All seven parse and return the designed 4 buckets from a 3h window. Per-run cost
-     ≈3.4s total — 0.2s per arm except signups at 2.2s (the Postgres bridge).
-     Negative control: an arm with a nonexistent column returned `Code: 47`, so the
-     green is about the SQL and not a probe wired to nothing.
-   - Idempotency confirmed empirically, not assumed: merging a state with itself
-     returns 100, not 200. MergeState round-trip returns 100 for both combinators.
-   - Typecheck: 52 errors on the branch, **52 on an `origin/main` baseline worktree,
-     identical error sets** — zero introduced. (Those 52 are pre-existing.)
-   - Mutation sweep: 7 mutants, each killed by its SPECIFIC intended test, suite green
-     again on restore. Covers the cost bound, the future bound, the signups combinator,
-     a dropped ledger column, the buyers id column, MergeState→Merge, and the hour cast.
-   **Still NOT done for step 4:** the DDL is not applied and the backfill has not run,
-   so the tables do not exist and the job would fail if it ran. Apply the migration
-   manually first — that is deliberate, per repo policy.
-
-   Original notes for reference:
-   `src/server/jobs/user-activity-rollup.ts` (closest precedent — CH rollup cron,
-   idempotent-overlap design) and `src/server/jobs/update-metrics.ts` /
-   `base.metrics.ts`. Register in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
-   One-time backfill of history before the panel ships (empty table reads as
-   "0.0% active" — see user-activity-rollup.sql warning). forcing: none
-5. Panel work in datapacket-talos
-   `clusters/production/apps/prometheus-stack/grafana-dashboards/`: add "Users over
-   time" timeseries; re-point pulse panel 21 at the snapshot table; register the
-   dashboard in that dir's `kustomization.yaml` (gate 14 = dashboard metric-seam —
-   it only checks registered dashboards). Generate dashboard JSON with a script,
-   never by hand (regexp escaping — see `claudedocs/faro-rum-logql-query-patterns.md`
-   §JSON gotchas). forcing: none
-6. Optional: emit Prometheus gauges from the same job (civitai_app_* prefix, PROM
-   helpers in `src/server/prom/client.ts`) so DAU drop / signup-floor becomes
-   alertable (manage-alerts skill, two alert tracks). forcing: none
+1. **Confirm the 18:15Z run fired AND wrote** (both signals above), then confirm the
+   snapshot's today-figure converges toward the live count. Repo: none — observation only.
+   forcing: gate — talos#1642 must not leave draft until this holds.
+2. **Un-draft and merge talos-infra#1642** once (1) holds. `gh pr ready 1642 --repo
+   civitai/talos-infra` then merge. Touches
+   `clusters/production/apps/prometheus-stack/grafana-dashboards/civitai-business-pulse.json`.
+   IN FLIGHT: civitai/talos-infra#1642. forcing: gate — the closing condition needs a merged panel.
+3. **Run the nine correctness axes on talos#1642** — only round 0 has run; round 0 explicitly
+   cannot license skipping a round. `/audit-pr 1642`. forcing: gate — an unaudited production
+   dashboard change.
+4. **Backfill the HOURLY table to ~80 days** (it holds an 8-day slice). Statements are in
+   `<civitai>/src/server/clickhouse/migrations/2026-09-25-user-population-snapshot.sql`
+   §Backfill. 🔴 Scope INSIDE the 90-day TTL — a bucket at/past the horizon is silently
+   dropped on insert. forcing: none
+5. **Decide the refreshable-MV question**, recorded as OPEN in the migration. Seven refreshable
+   MVs are live; the inherited "why not an MV" argument is about INCREMENTAL MVs and does not
+   transfer. forcing: none
+6. **Rotate/redesign the job-scheduler webhook token.** It is stored in PLAINTEXT in the
+   Hangfire registry arguments for all 184 jobs, so anyone with read access to
+   `civitai_job_scheduler` has it. Pre-existing, not introduced here. forcing: security
 
 ## Defects (batched)
-- (none yet — no audit ran; recon-only session)
+- **Round 0 (talos#1642), all fixed in `970e667e7`:** two of panel 22's four series duplicated
+  panels already on the same dashboard (buyers was byte-identical, diff 0 on all 7 days);
+  panel 22 was the only long-format ClickHouse timeseries in 147 dashboards (unverifiable
+  render, now wide format, one scan not seven); four series spanned three orders of magnitude
+  on one linear axis; a pre-existing `isMember` caveat was silently deleted; the PR body's
+  "Both panel descriptions now say so" was false; "zero gaps" was false (18 missing days).
+- **Rounds 1-5 (civitai#5159), all fixed before merge:** positional `INSERT … SELECT` with six
+  type-identical columns; a backfill arm bounding `createdDate` while bucketing on `time`
+  (unbounded, into a no-TTL table); one failing arm truncating the rest and skipping the daily
+  roll; a TTL guard that was vacuous (proved by mutating the DDL and watching the suite stay
+  green); a recycled measurement that disarmed the uniqExact control; ten mutants surviving a
+  green suite because guards covered 3 of 7 arms.
 
 ## Gotchas / decisions / dead-ends
 - 🔴 **`civitai-business-history-dashboard.json` is NOT history, despite the name.** All 12
@@ -230,12 +198,95 @@ sources adding +7.5% users over 30d).
   not accounts — do not present it as "users"; the snapshot job counts account ids.
 - civitai repo is 28 behind origin/main; datapacket-talos trunk 136 behind — sync first.
 
+- **SETTLED, carried forward from the old Next-steps preflight:** `orchestration.jobs` DOES
+  sort by `createdAt` first, so every arm is a primary-key range scan and the hourly cost model
+  holds (~3.4s per run). The 2026-09-04 check had covered only the four `default.*` activity
+  sources. Two consequences it turned up: that table has **no partition key** (chunk a backfill
+  by `createdAt` RANGE, not partition) and its `createdAt` is **`DateTime64(3)`**, the only
+  non-`DateTime` time column in the set. All recorded in the migration's preflight block.
+- 🔴 **Registered ≠ running, and the registry lags a pod roll.** The scheduler's refresh runs
+  every ~10 min; the one that ran DURING the roll read `get-jobs` from a pre-roll pod, so the
+  job was absent at 17:49 (183 registered vs 184 served) and present at 17:50. A positive
+  control on a known job confirmed the absence was real rather than a bad query shape. Do not
+  start debugging a missing registration until a full refresh cycle has passed since the roll.
+- 🔴 **NEVER add a Kubernetes CronJob for a civitai job.** The scheduler registers every name
+  `get-jobs` serves (184 now). A CronJob is a second, duplicate trigger — `rewards-daily-reset`,
+  `announcement-media-check` and `reap-dev-tunnels` each ran TWICE per tick until theirs were
+  removed, and Redis locks do NOT reliably dedupe two triggers of the same job. For
+  Buzz-mutating jobs that means double-delivery. (`dp-jobs` skill.)
+- 🔴 **`preview / component-tests` on #5159 was red and NOT reproducible.** An earlier audit
+  called it a shared pre-existing red; that was WRONG — PR #5134 was `success` on the same
+  check. Read precisely, the bot said `component:fail`, which the `pr-previews` skill
+  distinguishes from the common "exceeded its runner budget — no verdict" (rc 124) case. The
+  PipelineRun was pruned, so it was re-fired by TOGGLING THE `preview` LABEL — which re-runs
+  WITHOUT moving the head sha, keeping every audit sha valid. The task then Succeeded at the
+  identical sha. Blocking checks (Typecheck, Unit tests, ESLint+Prettier, event-engine-common
+  pin, preview build) were green throughout.
+- **Merging civitai `main` does NOT deploy.** dp-prod serves an image built from `release`;
+  `main` was 8 commits ahead at merge time. A release cut is what deploys.
+- 🔴 **A raw row count is not a coverage measure for these tables.** Re-measuring hours apart
+  gave 1,183 → 748 rows over a WIDER span: the span grew because a repair re-ran one day wider,
+  the count FELL because AggregatingMergeTree collapses a bucket's seven per-arm rows into one
+  as merges run. Compare DISTINCT BUCKETS or merged values, never `count()`.
+- 🔴 **A bucket outside the 90-day TTL is SILENTLY DROPPED on insert** — accepted, no error,
+  row never appears. Found because a preflight probe used a year-2000 sentinel and returned a
+  confident `0` for every column, which read as "omitted columns are empty" and was actually
+  "there is no row at all". Two mechanisms, one observable. Always assert row visibility and a
+  positive control BEFORE reading the thing you came to measure.
+- **The gate verdict is BASE-DEPENDENT.** `gitops-delta-gate.sh origin/trunk HEAD` blocked on
+  an unrelated `app-capture/SKILL.md` size complaint because this clone's `origin/trunk` had
+  moved past the branch point. Use the MERGE-BASE; it then passes with only the dashboard in
+  the delta.
+- **The gate does not validate ClickHouse SQL.** Negative-controlled: malformed JSON in the
+  dashboard IS blocked, but a bogus aggregate function name PASSES. It checks
+  gauge-aggregation and LogQL invariants. What validates the SQL is running it.
+
 ## How to verify
-1. Snapshot job: manual trigger via the run-jobs webhook; re-run the same hour and
-   confirm row count does NOT double (idempotency), then
-   `SELECT count() FROM metrics.users_hourly` after backfill >= 30d of rows.
-2. Panel: open the pulse dashboard; the funnel/Users-over-time panels render from
-   `metrics.users_hourly`; confirm via Grafana query inspector that no target hits
-   `default.views` / `orchestration.jobs` raw scans any more.
-3. Timing: old panel 21 query vs new — expect ms-level on the snapshot table vs
-   seconds-to-minutes on raw `uniqExact` over `$window`.
+1. **Job is running** (the current gate):
+   ```bash
+   CNPG=$(KUBECONFIG=$KC_DPPROD kubectl get pods -n cnpg-database -l cnpg.io/cluster=cnpg-cluster-nvme0 -o name | grep '^pod/cnpg-cluster' | head -1); CNPG=${CNPG#pod/}
+   KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database "$CNPG" -c postgres -- psql -tA -d civitai_job_scheduler \
+     -c "select field||'='||value from hangfire.hash where key='recurring-job:user-population-snapshot' and field in ('Cron','LastExecution','NextExecution');"
+   ```
+   Then the write, which is the signal that matters:
+   `SELECT table, max(modification_time) FROM system.parts WHERE database='default' AND active AND table LIKE 'user_population%' GROUP BY table`
+   — must advance past `2026-09-26 05:19:16`. Two consecutive hourly advances, not one:
+   a single write could be another backfill.
+2. **Reconciliation** (re-run after any backfill): snapshot vs raw over a day-aligned window.
+   Last run 2026-09-26: viewers +0.29%, generators +0.10%, buyers +0.18%, **signups EXACT**.
+   🔴 `signups_state` is `uniqExact` and CANNOT approximate — a signups disagreement is proof
+   the pipeline lost rows, never sketch error. Investigate it; do not expect it.
+3. **All-time cross-check** — the one that caught a silent 1,047,513-account hole a per-window
+   reconciliation could not see: compare `uniqExactMerge(signups_state)` over the whole table
+   against `SELECT uniqExact(id) FROM civitai_pg.User`. A single-digit gap is arrivals between
+   the two queries; a four-digit one is a real hole.
+4. **Panels** (after #1642 merges): open the pulse dashboard; panel 21 and panel 22 render from
+   `default.user_population_daily`. Panels 16 and 17 still hit raw tables BY DESIGN and always
+   will — 16 is a set difference, 17 needs a row count and a sum; sketches express neither.
+## Open investigations — live diagnosis state
+### Has the hourly job actually RUN and WRITTEN? (armed, unobserved as of 17:56Z)
+- as-of: 2026-09-26
+- **Symptom + exact repro:** not a bug — an unfinished verification. The job is registered
+  but has never executed. `registered != running` is the failure this must exclude; the
+  `reap-dev-tunnels` reaper was dead code in prod for months while registered.
+- **Observed (with values):**
+  - Hangfire `LastExecution` for `recurring-job:user-population-snapshot`: **absent**
+    (polled every 60s from 17:51:16 to 17:56:21Z, `<never>` every time).
+  - `system.parts` last write, unchanged across the same window:
+    `user_population_daily 2026-09-26 05:19:16` · `user_population_hourly 2026-09-26 04:28:31`
+    — both my backfill, ~12h stale.
+  - Consequence if it never fires, measured 17:0xZ: snapshot reads **5,982** generators for
+    today against **12,410** live — 52% understated, and it returns rows rather than erroring.
+- **Ruled out:** "the scheduler never picked it up" — `via: measurement`. Registry count
+  went 183 → 184 and the record exists with the right cron and a `CreateJob` invocation.
+- **Ruled out:** "a Kubernetes CronJob is needed" — `via: doc`. The `dp-jobs` skill states
+  the scheduler auto-registers every name `get-jobs` serves; adding a CronJob creates a
+  DUPLICATE TRIGGER (three jobs previously double-ran that way). Do not add one.
+- **Leading hypothesis:** it will fire normally at 18:15:00Z. Nothing observed contradicts it;
+  it simply has not happened yet.
+- **Next probe:** a background watcher is running (session task `b36n9cjs5`). If that session
+  is gone, re-run it verbatim:
+  `bash /tmp/claude-1000/.../scratchpad/watch_first_run.sh` — or directly:
+  `CNPG=$(KUBECONFIG=$KC_DPPROD kubectl get pods -n cnpg-database -l cnpg.io/cluster=cnpg-cluster-nvme0 -o name | grep '^pod/cnpg-cluster' | head -1); CNPG=${CNPG#pod/}; KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database "$CNPG" -c postgres -- psql -tA -d civitai_job_scheduler -c "select field||'='||value from hangfire.hash where key='recurring-job:user-population-snapshot' and field in ('LastExecution','NextExecution');"`
+  🔴 Require BOTH signals: `LastExecution` advancing AND `system.parts` gaining a write past
+  `2026-09-26 05:19:16`. A run that fires and writes nothing shows the first without the second.
