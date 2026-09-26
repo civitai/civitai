@@ -12,7 +12,7 @@
 # that arrives without `--frame`. A capture.sh that stops wiring the evidence
 # steps therefore FAILS here rather than producing a smaller, quieter run.
 #
-# It serves the REAL captures under tests/fixtures/app-capture/evidence/, so the
+# It serves the REAL captures under .claude/skills/app-capture/tests/fixtures/evidence/, so the
 # artifact the integration gate reads is computed from real app DOM.
 #
 # Knobs, for the negative controls:

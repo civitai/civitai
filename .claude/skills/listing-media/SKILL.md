@@ -24,7 +24,7 @@ knows the shadow-revision and re-keyed-id traps. Two attach paths would drift.
 
 1. **Bounds live in `store-bounds.json`, never here.** Aspect/size/px limits move.
 2. **A hue table here is a snapshot.** Read the live values from
-   `claudedocs/brand-assets-rev5-2026-08-13/scripts/emit-svg.py`.
+   `brand-assets-rev5-2026-08-13/scripts/emit-svg.py` (private infra repo).
 3. **"Live" claims decay.** Every asset below was submitted, and a submission is
    not a listing — see *Nothing ships on push*.
 4. **The cover grammar CHANGED on 2026-08-17** from untitled analogy photographs
@@ -186,9 +186,14 @@ three rounds on the hardest app and one re-roll for content.
 
 🔴 **The identities, palettes and motifs are SPECIFIED, not invented per session.**
 Before authoring anything for an existing app, read the spec — every other doc
-below descends from it:
+below descends from it.
 
-- `claudedocs/first-party-app-micro-brands-2026-08-04.md` — **the spec.** Per-app
+🔴 **Every doc named in this section lives in the PRIVATE infra repo, not here.**
+They are named by filename so someone with access can find them; there is
+deliberately no path, because this repo is public. If you cannot reach them, ask
+an infra owner rather than re-deriving the brand system from scratch.
+
+- **`first-party-app-micro-brands-2026-08-04.md` — the spec.** Per-app
   identity, palette and motif. Source of truth; start here.
 
 The arc, in order. Each supersedes the previous on the axis it names, and none of
@@ -197,15 +202,15 @@ measurements wrong:
 
 | doc | what it settles |
 |---|---|
-| `claudedocs/brand-asset-quality-review-2026-08-07.md` | 20 generated marks judged against the spec — why generation alone was abandoned |
-| `claudedocs/brand-assets-svg-2026-08-09/README.md` | the icons drawn rather than generated |
-| `claudedocs/brand-assets-final-covers-2026-08-11/RESULTS.md` | the luminance-transfer route: NanoBanana's light, the authored SVG's colour |
-| `claudedocs/brand-assets-rev5-2026-08-13/RESULTS.md` | the 7-app system, the hue wheel, and this pipeline's origin |
-| `claudedocs/brand-assets-offsite-2026-08-16/RESULTS.md` | the graphite grammar — and the sampling trap paid for twice, in opposite directions |
-| `claudedocs/brand-banners-2026-08-17/RESULTS.md` | the switch to titled banners, and every defect that shipped |
+| `brand-asset-quality-review-2026-08-07.md` | 20 generated marks judged against the spec — why generation alone was abandoned |
+| `brand-assets-svg-2026-08-09/README.md` | the icons drawn rather than generated |
+| `brand-assets-final-covers-2026-08-11/RESULTS.md` | the luminance-transfer route: NanoBanana's light, the authored SVG's colour |
+| `brand-assets-rev5-2026-08-13/RESULTS.md` | the 7-app system, the hue wheel, and this pipeline's origin |
+| `brand-assets-offsite-2026-08-16/RESULTS.md` | the graphite grammar — and the sampling trap paid for twice, in opposite directions |
+| `brand-banners-2026-08-17/RESULTS.md` | the switch to titled banners, and every defect that shipped |
 
 - `.claude/skills/listing-media/reference/prompt-library.md` — the literal prompt strings
-- `claudedocs/app-blocks-first-party-media/CHECKLIST.md` — the 2026-07-26 manual-upload
+- `app-blocks-first-party-media/CHECKLIST.md` — the 2026-07-26 manual-upload
   staging run. 🔴 **Its premise is now false**: it says there is "no authoring-side
   media path" and that media is web-upload-only. `civitai app listing set-icon` /
   `set-cover` have existed since `civitai/cli#186`, and offsite apps are reachable

@@ -33,7 +33,7 @@
 # 🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #   hidden boot 4/4  -> claudedocs/app-capture-hidden-tab-boot-2026-08-24.md
 #   screenshot hang  -> claudedocs/app-capture-occlusion-refutation-2026-08-24.md
-# (paths are <datapacket-talos>-relative)
+# (paths are repo-relative)
 #   --keep-tab        leave the tab open when the run ends, so the app can be
 #                     inspected by hand afterwards. Implied by --tab.
 #   --no-render       measure and check the crops but skip the imagemagick

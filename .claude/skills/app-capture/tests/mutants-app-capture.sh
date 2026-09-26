@@ -9,7 +9,7 @@
 # mutation is a claim about nothing.
 #
 # 🔴 SIX THINGS EVERY MUTANT IS CHECKED FOR BEFORE ITS VERDICT IS READ. Numbers
-# 1-4 are the guards tests/mutants-skill-size.sh carries, each of which has
+# 1-4 are the guards the infra repo's mutants-skill-size.sh carries, each of which has
 # silently manufactured a fake kill somewhere in this repo. Number 0 is about
 # this battery's own instrument and it comes first for a reason:
 #   0. 🔴 THE INSTRUMENT IS ALIVE — re-proven against the PRISTINE file at EVERY
@@ -62,7 +62,7 @@
 #
 # The mutants never touch the working tree: the whole scripts/ directory is
 # copied to a temp dir per mutant and the suite is pointed at the copy with
-# APP_CAPTURE_SCRIPTS. (tests/README.md, "The mutation-testing trap".)
+# APP_CAPTURE_SCRIPTS. (the infra repo's tests/README.md, "The mutation-testing trap".)
 #
 # Run:  ./tests/mutants-app-capture.sh
 #       exit 0 = every mutant killed, by its own gate
@@ -1447,7 +1447,7 @@ apply_mutant M152 plan.py G19 "the membership test is INVERTED — declared cont
   's/^        if sel not in allowed:$/        if sel in allowed:/' \
   '        if sel not in allowed:'
 
-# ── M160.. : the FRAME-RELATIVE declared rect (talos-infra #1297) ────────────
+# ── M160.. : the FRAME-RELATIVE declared rect (infra ticket #1297) ────────────
 # 🔴 EVERY MUTANT HERE IS A SILENT ONE. The form's whole purpose is that ONE
 # declared rect is correct in both banner layouts; break any part of it and the
 # measurement still returns a plausible box, still passes check-states (a
@@ -1495,7 +1495,7 @@ apply_mutant M167 frame.py F13 "declared_box stops refusing a frame-relative rec
 
 # 🔴 M168: the ADVICE, not the arithmetic. The full_frame message is what sends
 # the next author to a crop form, and it sent two of them into a second refusal
-# for a month (talos-infra #1297). A message can lose the form that actually
+# for a month (infra ticket #1297). A message can lose the form that actually
 # works while every arithmetic gate stays green.
 # 🔴 THE SUBSTITUTION KEEPS THE `%r`. Dropping it was tried first: the args tuple
 # then has one element too many, `%` raises, and EVERY full_frame gate goes red

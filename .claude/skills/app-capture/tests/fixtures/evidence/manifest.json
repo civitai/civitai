@@ -72,7 +72,7 @@
       "🔴 THE CORPUS CONTAINS NO EMPTY SCREEN — every real capture has at least one",
       "card — so the empty-state check's silence on it is not evidence that it works.",
       "Each probe below therefore EXCISES a real element from a real capture, with",
-      "tests/fixtures/app-capture/domsurgery.py: an independent tag-depth scanner that",
+      ".claude/skills/app-capture/tests/fixtures/domsurgery.py: an independent tag-depth scanner that",
       "shares no code with evidence.py's parser, asserts the opening tag occurs exactly",
       "once, and asserts the extracted span is tag-balanced. Nothing here is invented",
       "markup — `cut` only removes what the app really rendered, and `duplicate` only",

@@ -187,3 +187,9 @@ geometry-report.json
 
 # vitest browser-mode failure artifacts
 .vitest-attachments
+
+# Python bytecode. The app-capture skill's test suite and mutation battery run
+# python3 in-tree, so without this a single suite run leaves untracked __pycache__
+# next to the fixtures -- which a `git add <dir>` then sweeps into a commit.
+__pycache__/
+*.pyc

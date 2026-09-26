@@ -57,7 +57,7 @@
 #     🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #       hidden boot 4/4  -> claudedocs/app-capture-hidden-tab-boot-2026-08-24.md
 #       screenshot hang  -> claudedocs/app-capture-occlusion-refutation-2026-08-24.md
-#     (paths are <datapacket-talos>-relative)
+#     (paths are repo-relative)
 #     🔴 ACTIVATION IS NOT ACTUATION, and the two are now enforced SEPARATELY:
 #     activation only puts a window in front; what makes a spend possible is an
 #     OS-level ACTUATION (`xdotool key`) landing on a focused control. So
@@ -862,7 +862,7 @@ def plan_ready(p, recipe):
     in a hidden tab deadlocks on BLOCK_INIT (5/5, 2026-08-17)". It does boot
     hidden: 4/4, one with no `activate` at all. The gate is still right, for the
     reason above; only its old mechanism story was wrong.
-    `<datapacket-talos>/claudedocs/app-capture-hidden-tab-boot-2026-08-24.md`
+    the private infra repo's hidden-tab-boot write-up (2026-08-24)
     """
     r = recipe["ready"]
     loading = '[data-testid="%s"]' % r.get("loadingTestid", DEFAULT_LOADING_TESTID)
@@ -907,7 +907,7 @@ def build_foreground(recipe, observed):
     It is kept because `ACTIVATE_REASONS`, gate G11 and mutants M59-M64 describe
     the shipped design and removing it is optional cleanup, NOT a fix — do not
     reason about it as load-bearing. The 4/4 hidden boot is measured in
-    `<datapacket-talos>/claudedocs/app-capture-hidden-tab-boot-2026-08-24.md`;
+    the private infra repo's hidden-tab-boot write-up (2026-08-24);
     that doc is also explicit that it tested BOOT only, never the screenshot path.
 
     This plan carries NO frame-scoped step (the app frame need not exist yet) and

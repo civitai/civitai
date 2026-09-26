@@ -24,19 +24,19 @@
 #                  so leaving it in pins the box to full height
 # This shipped broken twice on 2026-08-13, each time producing candidates that
 # were ~60% dead space. Both failure shapes are reproduced from the REAL
-# fixtures in tests/fixtures/app-capture/ as negative controls, by zeroing one
+# fixtures in .claude/skills/app-capture/tests/fixtures/ as negative controls, by zeroing one
 # band at a time.
 #
 # 🔴 The band values are NOT universal truths. They are viewport-specific and
 # recipe-overridable (`crop` in a recipe, or the --chrome-top/--footer/--right
 # flags). The measured values for the 1709x1314 POC captures are pinned in
-# tests/fixtures/app-capture/manifest.json, not asserted as constants here.
+# .claude/skills/app-capture/tests/fixtures/manifest.json, not asserted as constants here.
 #
 # 🔴 AND A FIXED `chromeTop` IS NOT MERELY IMPRECISE — IT IS UNSATISFIABLE ON
 # THIS PAGE. `civitai.com/apps/run/<slug>` carries a CONDITIONAL, full-width
 # rewards banner ("BONUS REWARDS ACTIVE", ~32-36 px) ABOVE the app iframe, and it
 # appears asynchronously after a Buzz-multiplier query resolves. Measured on the
-# real captures in tests/fixtures/app-capture/ (2026-08-22):
+# real captures in .claude/skills/app-capture/tests/fixtures/ (2026-08-22):
 #   banner absent : full-width furniture ends ~163, app content starts 194
 #                   -> every chromeTop in 163..196 measures the app column
 #   banner present: the same two edges move +36
@@ -86,7 +86,7 @@ DEF_TOLERANCE = 8
 # detector found the furniture, not the content.
 #
 # 🔴 OR, NOT AND — and the discriminating case is the RIGHT-EDGE furniture, not
-# the footer. Measured on the fixtures in tests/fixtures/app-capture/:
+# the footer. Measured on the fixtures in .claude/skills/app-capture/tests/fixtures/:
 #     right-margin band dropped -> 78.7% wide x 100.0% tall   <- AND misses this
 #     footer band dropped       -> 100.0% wide x  98.2% tall   (AND still fires)
 #     all bands dropped         -> 100.0% wide x  99.4% tall   (AND still fires)
@@ -105,7 +105,7 @@ MIN_DECLARED_PX = 128
 # IFRAME'S TOP EDGE. It exists because the two forms above cannot both be had:
 # detection is unusable on a scrolling, content-dense app (it fills the band and
 # `full_frame` refuses, correctly — app-requests 46.9% x 98.3%,
-# playable-collections 63.9% x 100.0%, talos-infra #1297), while a plain declared
+# playable-collections 63.9% x 100.0%, infra ticket #1297), while a plain declared
 # rect is ABSOLUTE and is therefore wrong by the conditional rewards banner's
 # ~36 px in the other layout — the very defect `fromAppFrame` exists to remove.
 #
@@ -114,7 +114,7 @@ MIN_DECLARED_PX = 128
 # established is the TOP-EDGE SHIFT: the app's top edge moves 194 -> 230 when the
 # banner appears (2026-08-22). The companion claim — that x, w and h are
 # unchanged — is asserted against the banner state cut by
-# tests/fixtures/app-capture/bannershift.py, and that fixture builds the second
+# .claude/skills/app-capture/tests/fixtures/bannershift.py, and that fixture builds the second
 # layout by inserting a strip and translating every row below it, so x/w/h
 # identity there is TRUE BY CONSTRUCTION, not evidence. Gate F13's pixel
 # comparison therefore grades the resolution ARITHMETIC (hard: sign flips,

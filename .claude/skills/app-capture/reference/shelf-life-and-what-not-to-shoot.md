@@ -70,4 +70,4 @@ An app blocked by an open defect (generation broken, a fail-closed control) cann
 populated frame, so a re-shoot is blocked with it. **Park the gallery unchanged and record
 the blocking issue numbers** — do not part-curate in the meantime. An unchanged coherent
 gallery beats a half-curated one, and the whole set has to be replaced in one pass anyway.
-Worked instance: `claudedocs/handoff-app-listing-polish-and-coverage.md`.
+Worked instance: `handoff-app-listing-polish-and-coverage.md` (private infra repo).

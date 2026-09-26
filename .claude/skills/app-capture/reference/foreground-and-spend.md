@@ -8,7 +8,7 @@ Two changes that arrived together on 2026-08-17, from the first live
 🔴 **THIS SECTION'S HEADLINE IS FALSE. Re-measured 2026-08-24: App Blocks DO boot
 hidden — 4/4, one of them with no `activate` at all** (the app frame renders at
 `visibilityState: "hidden"`). Record:
-`<datapacket-talos>/claudedocs/app-capture-hidden-tab-boot-2026-08-24.md`.
+the private infra repo's hidden-tab-boot write-up (2026-08-24).
 The 5/5 below is left in place because it is a real observation that is still
 unexplained — but it is **not** evidence that foregrounding is required, and
 nothing may be built on it. The `## 🔴 SUPERSEDED 2026-08-24` block further down
@@ -176,7 +176,7 @@ flag as a cure; check the RUNNING build first.
 
 Read this before the section below, which is kept for its measurements but whose
 **mechanism claim is retracted**. Re-measured 2026-08-24
-(`<datapacket-talos>/claudedocs/app-capture-occlusion-refutation-2026-08-24.md`):
+(the private infra repo's occlusion write-up (2026-08-24)):
 
 - The hang reproduces with the window on a **non-visible workspace and nothing drawn on
   top** — 3/3 `op_timeout:screenshot` at ~18.1 s — in the state the table below calls

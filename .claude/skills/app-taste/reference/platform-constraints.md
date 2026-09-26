@@ -254,7 +254,7 @@ image and return its id, because attachment happens later and separately in
 `setIcon`/`setCover`. So a re-send can at worst orphan an image row nothing
 references; it cannot produce a second attached asset. **`setIcon`, `setCover`
 and `submitListingRevision` are deliberately NOT retryable** and must stay that
-way. `tests/run-tests-app-capture.sh` gate **O1** asserts that ledger WHOLE, so
+way. `.claude/skills/app-capture/tests/run-tests-app-capture.sh` gate **O1** asserts that ledger WHOLE, so
 it fails when the set grows as well as when it shrinks.
 
 ✅ **`attach.sh` (the ONSITE path) is now guarded too (2026-09-04) — by a

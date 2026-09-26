@@ -74,7 +74,7 @@ They are mutually exclusive **by refusal**, not by convention, and the two seam
 directions each have their own sentence (`crop_rect_invalid`). `frame.py`'s own
 `full_frame` message names all of this, because the version that named only the
 absolute form spent a month sending people into a second refusal
-(talos-infra #1297).
+(infra ticket #1297).
 
 🔴 **THE `absolute` FORM NOW HAS NO SHIPPED RECIPE, and how that happened is the
 lesson.** `sensei.json` was the one, on the strength of its own note: *"`y: 97` is

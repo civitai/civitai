@@ -31,7 +31,7 @@ set -uo pipefail
 # .claude/skills/app-capture. It now sits INSIDE the skill it tests, so the anchor
 # is the skill dir, not the repo root — a skill that carries its own tests can be
 # moved between repos without every path in here going stale, which is exactly
-# what the talos-infra -> civitai migration proved (the old form named nine
+# what the migration into this repo proved (the old form named nine
 # `tests/...` paths that only resolved in one repo).
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 SKILL_DIR="$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -808,7 +808,7 @@ expect_refuse "F4 NEG: right-edge furniture left in -> full-HEIGHT box (78.7% x 
 # genuinely fills the band (NOT fixable by bands — declare `crop.rect`). Until
 # 2026-08-25 the message asserted only the first, so three recipes' authors were
 # sent to tune chromeTop/footer on frames that can never be trimmed below the
-# threshold (talos-infra #1297: app-requests 46.9% x 98.3%, playable-collections
+# threshold (infra ticket #1297: app-requests 46.9% x 98.3%, playable-collections
 # 63.9% x 100.0%). Pinned because a one-cause message on a two-cause measurement
 # reads as complete and is what stops anyone looking — and because the widening
 # is prose, which is exactly what a later size-prune deletes first.
@@ -828,7 +828,7 @@ grep -qF 'identical-box check inert' "$f4b" || ok4b=0    # ...named, not merely 
 # of the two layouts by construction. The form that combines with `fromAppFrame`
 # is the frame-relative one, `"yFrom": "appFrame"` — and until it existed this
 # message's advice terminated in a refusal for exactly the two apps whose numbers
-# motivated it (talos-infra #1297). A remedy stated without the precondition that
+# motivated it (infra ticket #1297). A remedy stated without the precondition that
 # makes it applicable is the same defect class this whole gate is about.
 grep -qF 'MUTUALLY EXCLUSIVE' "$f4b" || ok4b=0
 grep -qF 'yFrom' "$f4b" || ok4b=0                        # the form that DOES combine
@@ -1304,7 +1304,7 @@ fi
 # ---------------------------------------------------------------------------
 # F13 🔴 THE FRAME-RELATIVE DECLARED RECT, GRADED ON PIXELS.
 #
-# The third crop form (talos-infra #1297): a DECLARED rect whose `y` is measured
+# The third crop form (infra ticket #1297): a DECLARED rect whose `y` is measured
 # down from the app iframe's top edge. It exists because the two older forms
 # cannot both be had on a scrolling, content-dense app — detection refuses with
 # `full_frame` (app-requests 46.9% x 98.3%, playable-collections 63.9% x 100.0%)
@@ -2377,7 +2377,7 @@ fi
 # D2 — every repo path the skill CORPUS names must exist.
 #
 # 🔴 THIS USED TO BE TWO GATES AND THE SPLIT WAS AN ARTEFACT OF THE OTHER REPO.
-# In talos-infra, D2 shelled out to that repo's `scripts/validate-skill-paths.sh`,
+# In the private infra repo, D2 shelled out to that repo's `scripts/validate-skill-paths.sh`,
 # which deliberately excludes `tests/` from its roots (many skills there use
 # `tests/` to mean an UPSTREAM repo's test dir) — so a second gate, D2b, existed
 # purely to cover the `tests/...` paths the first one structurally could not see.
@@ -2612,7 +2612,7 @@ echo
 echo "--- E: evidence.py — the machine-analysable capture --------------------"
 # ---------------------------------------------------------------------------
 # 🔴 THE CORPUS IS REAL CAPTURED DOM, NOT SOMETHING THIS SUITE EMITTED. The
-# fixtures under tests/fixtures/app-capture/evidence/ came off a live, logged-in
+# fixtures under .claude/skills/app-capture/tests/fixtures/evidence/ came off a live, logged-in
 # App Block run through the browser bridge on 2026-08-17. A fixture synthesised
 # from the analyser would make every case valid by construction — this skill
 # already lost a round to exactly that (the `observed` fixtures behind P2/P3),
@@ -3287,7 +3287,7 @@ PY
     fi
   done
 else
-  fail "E12: tests/fixtures/app-capture/fake-bridge.sh is missing or not executable"
+  fail "E12: .claude/skills/app-capture/tests/fixtures/fake-bridge.sh is missing or not executable"
 fi
 
 # E13 🔴 THE PROBE OUTLIVES THE CAPTURE, AND THE ARTIFACT MUST SAY SO. This gate
@@ -4377,7 +4377,7 @@ expect_ok "G4e POS control for G4d: an ordinary CSS selector in the same field p
   python3 "$PLAN" "${WORK}/rec-readysel.json" --observed "${WORK}/obs-ok.json" --state discover
 
 # G5 — the empty state as a REPORTABLE DEFECT, from real DOM cut with an
-# independent instrument (tests/fixtures/app-capture/domsurgery.py).
+# independent instrument (.claude/skills/app-capture/tests/fixtures/domsurgery.py).
 if python3 - "$EVID" "$EVFIX" "$FIX" >"${WORK}/g5.txt" 2>&1 <<'PY'
 import json, os, sys
 EVID, FIX, FIXROOT = sys.argv[1:4]
@@ -4678,7 +4678,7 @@ json.dump(r,open(sys.argv[2],"w"))' "$RECIPES/custom-generators.json" "${WORK}/r
     sed 's/^/          /' "${WORK}/g10.log" | tail -8
   fi
 else
-  fail "G8/G9/G10: tests/fixtures/app-capture/fake-bridge.sh is missing or not executable"
+  fail "G8/G9/G10: .claude/skills/app-capture/tests/fixtures/fake-bridge.sh is missing or not executable"
 fi
 
 # G11 🔴 WHERE EVERY FOREGROUND RE-ASSERT SITS, AND WHY EACH ONE IS THERE.
@@ -5588,7 +5588,7 @@ json.dump(r,open(sys.argv[2],"w"))' "${WORK}/rec-2state.json" "${WORK}/rec-optio
     sed 's/^/          /' "${WORK}/g17a.log" | tail -6
   fi
 else
-  fail "G15/G16: tests/fixtures/app-capture/fake-bridge.sh is missing or not executable"
+  fail "G15/G16: .claude/skills/app-capture/tests/fixtures/fake-bridge.sh is missing or not executable"
 fi
 
 # ---------------------------------------------------------------------------
@@ -5678,7 +5678,7 @@ else:
 # recipe, not a spot-check, because the three forms are mutually exclusive in
 # ways that only refuse at capture time. `detect` = bands only; `absolute` = a
 # declared rect and NO fromAppFrame; `appFrame` = a declared rect whose y is
-# anchored to the iframe top AND fromAppFrame (talos-infra #1297).
+# anchored to the iframe top AND fromAppFrame (infra ticket #1297).
 #
 # 🔴 NO SHIPPED RECIPE USES THE `absolute` FORM ANY MORE, and the two halves of
 # that are NOT the same loss — stated separately because one is worse:

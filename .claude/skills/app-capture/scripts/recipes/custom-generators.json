@@ -13,7 +13,7 @@
     "footer": 110,
     "right": 70,
     "fromAppFrame": true,
-    "_comment": "measured on 1709x1314 captures, 2026-08-13 \u2014 and now FLOORS rather than the answer: `fromAppFrame` measures the app iframe's own rect per capture and takes the MAX of each band with these. Same page shell as model-benchmarking, so the same conditional rewards banner sits above the iframe and moves the top boundary by ~36px whenever a Buzz bonus is running; the pinned boxes in tests/fixtures/app-capture/manifest.json were shot with it ABSENT, which is why 182 has always looked correct here. See frame.py's app_frame_bands.",
+    "_comment": "measured on 1709x1314 captures, 2026-08-13 \u2014 and now FLOORS rather than the answer: `fromAppFrame` measures the app iframe's own rect per capture and takes the MAX of each band with these. Same page shell as model-benchmarking, so the same conditional rewards banner sits above the iframe and moves the top boundary by ~36px whenever a Buzz bonus is running; the pinned boxes in .claude/skills/app-capture/tests/fixtures/manifest.json were shot with it ABSENT, which is why 182 has always looked correct here. See frame.py's app_frame_bands.",
     "rect": {
       "x": 344,
       "y": 0,
@@ -34,7 +34,7 @@
   },
   "ready": {
     "testid": "discover-list",
-    "_comment": "\ud83d\udd34 The anchor is a testid the BOOTED app renders and the loading shell does not. `discover-list` is present in every real capture of this app (both DOM fixtures under tests/fixtures/app-capture/evidence/) and is not part of the intro panel, so it survives the explainer being dismissed. The deadlocked frame renders exactly one testid \u2014 `app-loading` \u2014 which is the loadingTestid default."
+    "_comment": "\ud83d\udd34 The anchor is a testid the BOOTED app renders and the loading shell does not. `discover-list` is present in every real capture of this app (both DOM fixtures under .claude/skills/app-capture/tests/fixtures/evidence/) and is not part of the intro panel, so it survives the explainer being dismissed. The deadlocked frame renders exactly one testid \u2014 `app-loading` \u2014 which is the loadingTestid default."
   },
   "states": [
     {

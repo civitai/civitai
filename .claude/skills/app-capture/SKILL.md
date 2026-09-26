@@ -53,8 +53,8 @@ workspace, **unmeasured in both directions**. `activate` also makes the tab its 
 CDP. Removing the steps is optional cleanup, not a fix.
 
 Measurements, corrections, and what was NOT established:
-`<datapacket-talos>/claudedocs/app-capture-occlusion-refutation-2026-08-24.md` (the hang, the raise) ·
-`<datapacket-talos>/claudedocs/app-capture-hidden-tab-boot-2026-08-24.md` (hidden boot 4/4)
+the private infra repo's occlusion write-up (2026-08-24) (the hang, the raise) ·
+the private infra repo's hidden-tab-boot write-up (2026-08-24) (hidden boot 4/4)
 
 🔴 **Foregrounding is NOT the spend path — two separate guards, neither able to cover the
 other.** `activate` is confined to four declared positions (`ACTIVATE_REASONS`); `plan.py`

@@ -1,7 +1,7 @@
 # Per-app content survey — 2026-08-16, RE-MEASURED 2026-08-29
 
 🔴 **The filename keeps its 2026-08-16 date on purpose** — four files reference this path
-(`SKILL.md`, `shelf-life-and-what-not-to-shoot.md`, two `claudedocs/` records), and renaming
+(`SKILL.md`, `shelf-life-and-what-not-to-shoot.md`, two records in the private infra repo), and renaming
 it would break them and rewrite historical records that were true when written. **The table
 below is the 2026-08-29 measurement; the filename is the survey's origin, not its currency.**
 
