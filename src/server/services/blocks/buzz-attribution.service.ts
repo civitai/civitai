@@ -11,7 +11,6 @@ import {
   type BlockAttributionScope,
 } from '~/server/schema/blocks/attribution.schema';
 import {
-  newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
@@ -1351,110 +1350,6 @@ export async function voidAttributionsForPayment({
   }
 
   return result.count;
-}
-
-export type MintPayoutResult =
-  | { minted: true; payoutId: string; totalCents: number; rowCount: number }
-  | { minted: false; alreadyPaid: true }
-  | { minted: false; carriedForwardCents: number; rowCount: number };
-
-/**
- * Idempotently MINT a payout ledger entry for one publisher for one
- * period, and flip the contributing confirmed rows to paid_out — all in
- * a single transaction.
- *
- * IMPORTANT: this function moves NO money. It only writes the
- * block_attribution_payout ledger row and updates row state. Actual
- * disbursement (creator-program cash bank / Tipalti) is a separate,
- * leadership-gated step that reads these ledger rows. The bulk-payout
- * cron deliberately does NOT call this yet — see
- * bulk-payout-block-attributions.ts. Do not add withdrawCash / Tipalti
- * calls here.
- *
- * Idempotency: the (app_owner_user_id, period_key) UNIQUE on
- * block_attribution_payout means a racing or retried mint hits P2002 and
- * no-ops without re-flipping any rows.
- *
- * Carry-forward debt: clawback rows (entry_type='clawback',
- * status='confirmed') carry a NEGATIVE app_owner_share_cents, so the
- * aggregate net naturally subtracts them. If the net is <= 0 we mint
- * nothing and flip nothing — the (negative) debt stays as confirmed rows
- * and carries forward into the next period's aggregate.
- */
-export async function mintPayoutForOwner({
-  appOwnerUserId,
-  periodKey,
-}: {
-  appOwnerUserId: number;
-  periodKey: string;
-}): Promise<MintPayoutResult> {
-  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<MintPayoutResult> => {
-    // 1. Aggregate this owner's payable rows. status='confirmed'
-    // naturally includes negative entry_type='clawback' rows, so the net
-    // already accounts for carry-forward debt.
-    const agg = await tx.blockBuzzAttribution.aggregate({
-      where: { appOwnerUserId, status: 'confirmed' },
-      _sum: { appOwnerShareCents: true },
-      _count: true,
-    });
-    const netCents = agg._sum.appOwnerShareCents ?? 0;
-    const rowCount = agg._count ?? 0;
-
-    // 2. Non-positive net → don't mint, don't flip. Debt carries forward.
-    if (netCents <= 0) {
-      return { minted: false, carriedForwardCents: netCents, rowCount };
-    }
-
-    // 3. Mint the ledger row. The (owner, period) UNIQUE guards against
-    // a double-pay; P2002 → idempotent no-op (do NOT flip rows again).
-    const payoutId = newBlockAttributionPayoutId();
-    try {
-      await tx.blockAttributionPayout.create({
-        data: {
-          id: payoutId,
-          appOwnerUserId,
-          periodKey,
-          totalCents: netCents,
-          rowCount,
-        },
-      });
-    } catch (err) {
-      const code = (err as { code?: unknown })?.code;
-      if (code === 'P2002') {
-        return { minted: false, alreadyPaid: true };
-      }
-      throw err;
-    }
-
-    // 4. Flip the contributing confirmed rows → paid_out, stamping the
-    // minted payout id. This also flips the negative clawback rows; their
-    // debt is now realized in this period's total and won't re-net next
-    // period.
-    const flipped = await tx.blockBuzzAttribution.updateMany({
-      where: { appOwnerUserId, status: 'confirmed' },
-      data: {
-        status: 'paid_out',
-        paidOutAt: new Date(),
-        payoutId,
-      },
-    });
-
-    logToAxiom(
-      {
-        name: ATTRIBUTION_LOG_NAME,
-        type: 'info',
-        message: `minted payout ${payoutId} for owner ${appOwnerUserId} (${periodKey})`,
-        payoutId,
-        appOwnerUserId,
-        periodKey,
-        totalCents: netCents,
-        rowCount: flipped.count,
-      },
-      'webhooks'
-    ).catch(() => null);
-
-    return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
-  });
 }
 
 /**

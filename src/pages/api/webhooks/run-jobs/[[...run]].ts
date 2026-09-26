@@ -31,7 +31,6 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
-import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
@@ -212,7 +211,6 @@ export const jobs: Job[] = [
   botAccountDetection,
   reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
-  bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,
   cosmeticPerceptualHashSweepJob,

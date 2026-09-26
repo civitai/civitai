@@ -93,9 +93,9 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *
  *    ⚠️ WHAT A FORGED ROW WOULD REACH — RESTATED, because the old rail is gone
  *    and this paragraph used to name it. The platform-funded percentage bounty
- *    (`gross × spendSharePct`) was removed; NOTHING reads a rate card's
- *    `spendSharePct` any longer, so the old "before #2605 turns on a non-zero
- *    `spendSharePct`" gate could never be triggered and was NOT closable. The
+ *    (`gross × <card spend rate>`) was removed, and a rate card no longer carries
+ *    a spend rate at all, so the old "before #2605 turns on a non-zero spend
+ *    rate" gate could never be triggered and was NOT closable. The
  *    hazard did not go away — it moved, onto two surfaces that are CLOSER than
  *    the dormant ledger it replaced:
  *
@@ -685,9 +685,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // a foreign `blockSpendAttribution` row (status='tracked',
         // appOwnerUserId=<victim>, real grossValueCents).
         //
-        // ⚠️ WHAT THAT ROW REACHES — the platform-funded `gross × spendSharePct`
-        // bounty this comment used to name is REMOVED; nothing reads a rate
-        // card's `spendSharePct` any more. Today a forged row lands in a surface
+        // ⚠️ WHAT THAT ROW REACHES — the platform-funded `gross × <card spend
+        // rate>` bounty this comment used to name is REMOVED, and a rate card no
+        // longer carries a spend rate. Today a forged row lands in a surface
         // that is LIVE rather than dormant: `app-analytics.service.ts` aggregates
         // `block_spend_attribution` for the app-owner dashboard. And this same
         // call drives `observeBlockAuthorFee` (#4922 slice 1) — observe-only,

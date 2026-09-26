@@ -91,10 +91,6 @@ export function newBlockBuzzAttributionId(): string {
   return `bba_${newUlid()}`;
 }
 
-export function newBlockAttributionPayoutId(): string {
-  return `bba_payout_${newUlid()}`;
-}
-
 export function newBlockSpendAttributionId(): string {
   return `bsa_${newUlid()}`;
 }

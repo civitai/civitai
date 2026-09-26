@@ -92,14 +92,20 @@ import {
  *     preserved for audit fidelity. Same locked decision as `claimListing`.
  *   - 🔴 `BlockBuzzAttribution.appOwnerUserId` — NOT rewritten. Product decision: Buzz
  *     accrued before the transfer stays with the OLD owner; the transfer is a clean
- *     forward cut. This is also what keeps the money invariant safe: those rows are
- *     grouped by `appOwnerUserId` in `bulk-payout-block-attributions.ts` and
- *     `mintPayoutForOwner` carries a `(app_owner_user_id, period_key)` UNIQUE.
- *     Rewriting the column mid-period would MERGE the two owners' pending rows into
- *     one payout group and could collide on that unique. Leaving them alone means the
- *     old owner is still paid for what they accrued and the new owner starts at zero.
- *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe pins this
- *     (including the positive control that proves those mocks CAN record a call).
+ *     forward cut, so the old owner keeps what they accrued and the new owner starts
+ *     at zero. ⚠️ An earlier revision also justified this by the payout rail: those rows
+ *     were grouped by `appOwnerUserId` in a weekly stub cron, and the payout mint it was
+ *     to call carried a `(app_owner_user_id, period_key)` UNIQUE that a mid-period
+ *     rewrite could collide on. BOTH ARE GONE — the cron and the mint were deleted, and
+ *     nothing disburses a purchase-rail share today. (The identifiers are deliberately
+ *     not spelled here: `payout-copy-truthfulness.test.ts` asserts they appear nowhere
+ *     outside itself.) The product decision is the whole of the reason now; there is no
+ *     live payout-grouping hazard to invoke, and inventing a fresh justification would
+ *     be worse than saying it has none.
+ *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe pins the
+ *     behaviour regardless (including the positive control that proves those mocks CAN
+ *     record a call), which is what keeps the decision checkable now that its original
+ *     justification has lapsed.
  *
  * ## Forgejo
  *

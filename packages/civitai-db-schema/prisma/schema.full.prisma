@@ -3548,18 +3548,21 @@ model BlockBuzzAttribution {
   @@map("block_buzz_attribution")
 }
 
-/// Idempotency ledger for publisher revenue-share payouts. One row per
-/// (app_owner_user_id, period_key) — a publisher is paid at most once per
-/// period. mintPayoutForOwner inserts here inside the same transaction
-/// that flips the contributing block_buzz_attribution rows to paid_out;
-/// the UNIQUE on (app_owner_user_id, period_key) is the no-double-pay
-/// guard (a racing/retried mint hits P2002 and no-ops).
+/// 🔴 UNREFERENCED BY APPLICATION CODE, AND EMPTY. This was the idempotency
+/// ledger for publisher revenue-share payouts — one row per
+/// (app_owner_user_id, period_key), written by a `mintPayoutForOwner` service
+/// function that never had a production caller. That function and the write-free
+/// `bulk-payout-block-attributions` cron that was one day going to call it have
+/// both been removed, so NOTHING in this repository now reads or writes this
+/// table. It held 0 rows when that removal landed.
 ///
-/// This row records that the ledger was minted — it does NOT mean money
-/// moved. Actual disbursement (Tipalti / creator-program cash bank) is a
-/// separate, leadership-gated step that reads these rows.
+/// The table and this model are retained only because dropping them is a
+/// hand-applied DB migration rather than a code change. Do not add a writer:
+/// there is no payout rail, and the purchase rev-share it was built for still
+/// has no disbursement path anywhere in the tree.
 ///
-/// Application-generated id (`bba_payout_<ulid>`).
+/// Application-generated id (`bba_payout_<ulid>`) — the helper that minted those
+/// ids is gone too.
 model BlockAttributionPayout {
   id             String   @id
   appOwnerUserId Int      @map("app_owner_user_id")
@@ -3592,7 +3595,7 @@ model BlockAttributionPayout {
 /// paid on top of the spend — never a slice of the viewer's Buzz — and it was
 /// superseded by the additive, author-set, viewer-paid per-generation author
 /// fee (`src/server/services/blocks/author-fee.ts`). Its compute and backpay
-/// rails were deleted; nothing reads a rate card's `spendSharePct` any more.
+/// rails were deleted, and a rate card no longer carries a spend rate at all.
 ///
 /// WHAT THE ROWS CARRY NOW: `app_owner_share_cents = 0`, `spend_share_pct = 0`,
 /// `rate_card_version = 'unrated'`. `status` is NOT uniformly 'tracked' — do not

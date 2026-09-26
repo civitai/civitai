@@ -46,15 +46,14 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 //
 //   2. UNITS — PERCENT-OF-USD-CENTS vs BUZZ INTEGERS. Every card field is a
 //      percentage applied to CENTS (`publisherSharePctByScope` is a % of
-//      `gross_cents - provider_fee_cents`; `spendSharePct` is a % of the
-//      spend's USD value), and a flat BUZZ leg has no expression in that unit at
-//      all. Worse, the card's per-row CENT FLOORING is precisely the defect that
-//      made the bounty pay $0.00: at 10 Buzz per cent (`buzzSpendToUsdCents`)
-//      and `spendSharePct: 5`, a per-row `floor(cents × pct / 100)` yields
-//      **0 cents for every generation under 200 ⚡** — i.e. for most of them.
-//      That bounty rail has since been removed. Computing in Buzz and
-//      flooring ONCE, at the end, is what the basis-point arithmetic below
-//      exists for.
+//      `gross_cents - provider_fee_cents`), and a flat BUZZ leg has no
+//      expression in that unit at all. Worse, the card's per-row CENT FLOORING
+//      is precisely the defect that made the retired spend bounty pay $0.00: at
+//      10 Buzz per cent (`buzzSpendToUsdCents`) and the bounty's 5% card rate, a
+//      per-row `floor(cents × pct / 100)` yielded **0 cents for every generation
+//      under 200 ⚡** — i.e. for most of them. That rail is gone, card field and
+//      all. Computing in Buzz and flooring ONCE, at the end, is what the
+//      basis-point arithmetic below exists for.
 //
 // ── SLICE 1 IS DARK. IT COMPUTES AND OBSERVES; IT MOVES NO MONEY. ───────────
 // Settlement onto the licensing-fee rail is slice 2; the author-facing config

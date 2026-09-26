@@ -619,44 +619,40 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
 }
 
 /**
- * Dedicated GLOBAL flag for the PER-GENERATION AUTHOR FEE (slice 1).
+ * Dedicated GLOBAL flag for the PER-GENERATION AUTHOR FEE.
  *
  * The fee is an additive, author-set, viewer-paid charge on each generation an
- * app runs — `max(flatBuzz, pctOfBase × base_generation_buzz)`. Slice 1 computes
- * it and reports it to Prometheus + Axiom so the settlement slice can be sized
- * from real traffic; it moves no money and writes no row. This flag is what
- * keeps even that computation off the production path until someone asks for it.
+ * app runs — `max(flatBuzz, pctOfBase × base_generation_buzz)`. This flag is the
+ * single switch over the whole rail: quoting, charging, accruing and daily
+ * settlement all read it.
  *
  * GLOBAL (no user context), like `app-blocks-pipeline-enabled` /
- * `app-blocks-backpay-enabled`: the only caller is the fire-and-forget
- * spend-attribution writer, which is machine-side and has no session to segment
- * on. The viewer identity is on the row, not in the gate.
+ * `app-blocks-backpay-enabled`. ⚠️ An earlier revision justified that with "the
+ * only caller is the fire-and-forget spend-attribution writer", which is no longer
+ * true — `quoteBlockAuthorFee`, `observeBlockAuthorFee`, `chargeBlockAuthorFee`
+ * and the `settle-block-author-fees` job all read it. The reason it stays global is
+ * unchanged: every one of those call sites is machine-side or fee-pricing, the
+ * viewer identity is on the row rather than in the gate, and the fee is uniform
+ * platform config rather than a per-cohort rollout.
  *
- * OPERATOR NOTE: `app-blocks-author-fee-enabled` EXISTS, as a PLAIN GLOBAL
- * BOOLEAN — base `enabled: false`, NO segment, no variants, no rollouts. Keep it
- * that shape. A global eval returns the flag's BASE value, so a segment can
- * neither match nor restrict: base `false` + a rollout stays dark for everyone
- * (safe but confusing), and base `true` + a rollout is ON for everyone while
- * looking restricted (not safe). See GLOBAL-EVAL SEMANTICS at the top of this
- * file.
+ * OPERATOR NOTE: `app-blocks-author-fee-enabled` is a PLAIN GLOBAL BOOLEAN — NO
+ * segment, no variants, no rollouts. Keep it that shape. A global eval returns the
+ * flag's BASE value, so a segment can neither match nor restrict: base `false` + a
+ * rollout stays dark for everyone (safe but confusing), and base `true` + a rollout
+ * is ON for everyone while looking restricted (not safe). See GLOBAL-EVAL SEMANTICS
+ * at the top of this file.
  *
  * Fail-safe, code half: an unreachable Flipt — and an absent key — evaluates
- * `false` unconditionally, so the computation cannot run by accident.
+ * `false` unconditionally, so no fee can be quoted or charged by accident.
  *
- * ⚠️ FLAG STATE, AND IT IS WEAKER THAN AN EARLIER REVISION OF THIS COMMENT SAID.
- * That revision claimed the flag does NOT exist as this merges and read the
- * resulting dark posture as something that "cannot regress open". The key was
- * created at base `false` after this branch's last commit, deliberately: an
- * ABSENT key makes the evaluation throw, bypass its cache and log a
- * `console.error` on every App Blocks generation submit, forever. Verified live
- * in the `civitai-app` environment — `BOOLEAN_FLAG_TYPE`, `enabled: false`,
- * empty `rules`/`rollouts`, global evaluation
- * `enabled:false, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`.
- *
- * So: still dark at merge, for a weaker reason. An absent flag had to be CREATED
- * before the fee could be enabled at all; a present base-`false` flag is one
- * toggle away, with no deploy and no review. The dark posture is flag state, not
- * structure.
+ * 🔴 FLAG STATE: THIS IS ON. Earlier revisions of this comment said the key did not
+ * exist, then that it existed at base `false` and the rail was "still dark". Both
+ * are historical. Measured 2026-09-26 in the `civitai-app` environment:
+ * `BOOLEAN_FLAG_TYPE`, `enabled: true`, empty `rules`/`rollouts`, global evaluation
+ * `enabled:true, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`. The fee has been
+ * charging since 2026-09-25. Do NOT read this flag's existence as a dark posture —
+ * and read the value from Flipt rather than from any comment, including this one:
+ * it is one toggle away in either direction, with no deploy and no review.
  */
 export const APP_BLOCKS_AUTHOR_FEE_FLAG = 'app-blocks-author-fee-enabled';
 
