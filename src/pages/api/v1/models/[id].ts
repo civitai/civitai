@@ -118,43 +118,49 @@ async function buildPublicModelResponse(
           files: includeDownloadUrl
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
-                .map(({ hashes, metadata, modelVersionId, ...file }) => ({
-                  ...file,
-                  metadata: removeEmpty(metadata),
-                  name: safeDecodeURIComponent(
+                .map((file) => {
+                  // Pass the whole `file`, not `rest`: the variant suffix that tells
+                  // two Model files apart reads `metadata`.
+                  const name = safeDecodeURIComponent(
                     getDownloadFilename({
                       model,
                       modelVersion: version,
                       file,
                       versionFiles: castedFiles,
                     })
-                  ),
-                  hashes: hashesAsObject(hashes),
-                  // Pin the URL to THIS file. Passing `type`/`meta`/`primary`
-                  // instead makes the download route re-resolve the file on its
-                  // own (caller's filePreferences + its own scoring) — and for
-                  // the elected primary it emits a bare, entirely unqualified
-                  // URL — so on a multi-file version the URL could serve a file
-                  // other than the one whose `hashes`/`sizeKB`/`name` are
-                  // serialized right here. `fileId` suppresses every soft
-                  // discriminator in createModelFileDownloadUrl, and the
-                  // download route skips its metadata-misalignment check
-                  // because the file is already exact.
-                  //
-                  // `version.files` is NOT all this version's own files:
-                  // getModelsWithVersions splices in the linked VAE version's
-                  // files (`files.push(...vaeFile)`), which keep their own
-                  // `modelVersionId`. createSerializedFileDownloadUrl pins ONLY
-                  // a file this version owns — see the invariant note there.
-                  downloadUrl: `${baseUrl}${createSerializedFileDownloadUrl({
-                    file: { id: file.id, modelVersionId, type: file.type, metadata },
-                    hostVersionId: version.id,
-                    primary: primaryFile.id === file.id,
-                  })}`,
-                  primary: primaryFile.id === file.id ? true : undefined,
-                  url: undefined,
-                  visibility: undefined,
-                }))
+                  );
+                  const { hashes, metadata, modelVersionId, ...rest } = file;
+                  return {
+                    ...rest,
+                    metadata: removeEmpty(metadata),
+                    name,
+                    hashes: hashesAsObject(hashes),
+                    // Pin the URL to THIS file. Passing `type`/`meta`/`primary`
+                    // instead makes the download route re-resolve the file on its
+                    // own (caller's filePreferences + its own scoring) — and for
+                    // the elected primary it emits a bare, entirely unqualified
+                    // URL — so on a multi-file version the URL could serve a file
+                    // other than the one whose `hashes`/`sizeKB`/`name` are
+                    // serialized right here. `fileId` suppresses every soft
+                    // discriminator in createModelFileDownloadUrl, and the
+                    // download route skips its metadata-misalignment check
+                    // because the file is already exact.
+                    //
+                    // `version.files` is NOT all this version's own files:
+                    // getModelsWithVersions splices in the linked VAE version's
+                    // files, which keep their own
+                    // `modelVersionId`. createSerializedFileDownloadUrl pins ONLY
+                    // a file this version owns — see the invariant note there.
+                    downloadUrl: `${baseUrl}${createSerializedFileDownloadUrl({
+                      file: { id: file.id, modelVersionId, type: file.type, metadata },
+                      hostVersionId: version.id,
+                      primary: primaryFile.id === file.id,
+                    })}`,
+                    primary: primaryFile.id === file.id ? true : undefined,
+                    url: undefined,
+                    visibility: undefined,
+                  };
+                })
             : [],
           images: includeImages
             ? images.map(({ url, id, ...image }) => ({
