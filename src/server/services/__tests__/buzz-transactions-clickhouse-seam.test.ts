@@ -38,8 +38,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * for real, which is the point.
  */
 
-// A top-level `import type * as`, not an inline `typeof import(...)` — the latter
+// Top-level `import type * as`, not an inline `typeof import(...)` — the latter
 // trips `consistent-type-imports`, which is an eslint ERROR in this repo.
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as UserService from '~/server/services/user.service';
 
 const { mockQuery, mockGetUsers } = vi.hoisted(() => ({
@@ -47,7 +48,13 @@ const { mockQuery, mockGetUsers } = vi.hoisted(() => ({
   mockGetUsers: vi.fn(),
 }));
 
-vi.mock('~/server/clickhouse/client', () => ({
+// Spread the real module and override only the client, matching the sibling suite in
+// this directory. That module re-exports the whole package surface plus the app
+// Tracker, so a hand-listed mock couples this file to all of it and dies at
+// COLLECTION — naming an unrelated file as the cause — the first time buzz.service's
+// graph needs a second export from it.
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: { $query: (sql: string) => mockQuery(sql) },
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({

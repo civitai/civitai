@@ -34,7 +34,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 import {
-  clickhouseTransactionTypeExclusion,
+  clickhouseTransactionTypeExclusionPredicate,
   clickhouseTransactionTypePredicate,
   fromClickhouseTransactionType,
   toClickhouseTransactionType,
@@ -153,7 +153,7 @@ describe('clickhouseTransactionTypePredicate', () => {
   });
 });
 
-describe('clickhouseTransactionTypeExclusion', () => {
+describe('clickhouseTransactionTypeExclusionPredicate', () => {
   /**
    * 🔴 BOTH BUILDERS RETURN A WHOLE PREDICATE, NOT A VALUE LIST. Pinned because
    * getting that wrong produced `type NOT IN (type NOT IN ('bank',…))` — a SQL
@@ -163,13 +163,13 @@ describe('clickhouseTransactionTypeExclusion', () => {
    */
   it('emits a complete NOT IN predicate carrying both spellings per member', () => {
     expect(
-      clickhouseTransactionTypeExclusion([TransactionType.Bank, TransactionType.Extract])
+      clickhouseTransactionTypeExclusionPredicate([TransactionType.Bank, TransactionType.Extract])
     ).toBe("type NOT IN ('bank','23','extract','24')");
   });
 
   // `NOT IN ()` is a syntax error, so an empty list must excuse itself rather
   // than emit one and take the whole query down.
   it('excludes nothing, rather than breaking the query, for an empty list', () => {
-    expect(clickhouseTransactionTypeExclusion([])).toBe('1 = 1');
+    expect(clickhouseTransactionTypeExclusionPredicate([])).toBe('1 = 1');
   });
 });

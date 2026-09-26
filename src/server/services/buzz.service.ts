@@ -381,7 +381,7 @@ export function clickhouseTransactionTypePredicate(type: TransactionType) {
  * `0..26` bug would have regenerated the next time a member above 26 was added
  * to an exclusion list.
  */
-export function clickhouseTransactionTypeExclusion(types: TransactionType[]) {
+export function clickhouseTransactionTypeExclusionPredicate(types: TransactionType[]) {
   // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
   // passes a non-empty constant, but this is exported, and a caller that filtered
   // its list down to nothing would take out the whole query rather than excluding
@@ -1813,7 +1813,7 @@ function buildTransactionsReportQuery({
   end: Date;
 }) {
   const bucket = REPORT_BUCKET_SQL[window];
-  const excluded = clickhouseTransactionTypeExclusion(CHART_EXCLUDED_TYPES);
+  const excluded = clickhouseTransactionTypeExclusionPredicate(CHART_EXCLUDED_TYPES);
   const range = `date >= '${toClickhouseDate(start)}' AND date < '${toClickhouseDate(end)}'`;
 
   return `

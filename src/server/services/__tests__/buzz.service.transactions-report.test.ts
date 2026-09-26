@@ -87,7 +87,7 @@ describe('getTransactionsReport', () => {
     // stops at 26 and falls back to `toString(Type)`, so a member above it is stored as its digits —
     // all three here are below it, so the numeric arms match nothing and the chart is unchanged. The
     // arms are emitted unconditionally because the builder does not branch, which is what keeps one
-    // rule in one place; see `clickhouseTransactionTypeExclusion`.
+    // rule in one place; see `clickhouseTransactionTypeExclusionPredicate`.
     expect(branches(sqlOf()).spent).toContain(
       "AND type NOT IN ('bank','23','withdrawal','17','extract','24')"
     );
