@@ -118,12 +118,14 @@ describe('settleBlockAuthorFees', () => {
     const tx = mockCreateMany.mock.calls[0][0][0];
     expect(tx.amount).toBe(17);
     expect(tx.toAccountId).toBe(OWNER_ID);
-    // 🔴 THE MINT CARRIES THE RAIL'S OWN TYPE, not the shared `Fee` (25) the
-    // placement-escrow legs also write. Both hops must agree or a query keyed on
-    // the type sees the debit and not the credit, which reads as the platform
-    // keeping a cut it is only a conduit for (D1).
+    // 🔴 Both hops must carry the same type, or a query keyed on it sees the debit
+    // and not the credit — which reads as the platform keeping a cut it is only a
+    // conduit for (D1).
     expect(tx.type).toBe(TransactionType.AppAuthorFee);
-    expect(tx.type).not.toBe(TransactionType.Fee);
+    // The wire value, and this file's own control: see the charge suite's note.
+    // Without it a settlement-only run stays green while the member is renumbered
+    // or deleted.
+    expect(tx.type).toBe(28);
     expect(result.rowsSettled).toBe(2);
     expect(result.buzzMinted).toBe(17);
   });

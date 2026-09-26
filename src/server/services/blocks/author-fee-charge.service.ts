@@ -90,8 +90,7 @@ export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 //
 // ── THE MONEY SHAPE ─────────────────────────────────────────────────────────
 // Viewer → account 0 at submit (`TransactionType.AppAuthorFee`), account 0 →
-// author on the daily settlement run under the same type. Rows written before
-// that member existed carry `Fee` (25) and are deliberately not back-filled.
+// author on the daily settlement run under the same type.
 // The platform is a CONDUIT, not a party (D1): the author is credited exactly
 // what the viewer was debited, and account 0 is a way-station rather than a
 // share. A reversal is account 0 → viewer (`TransactionType.Refund`) and only

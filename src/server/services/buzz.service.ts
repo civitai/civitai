@@ -323,9 +323,45 @@ export async function getUserBuzzTransactions({
 // The buzz service caps at 200 transactions per call and takes a single account
 // type, so a multi-account view or an export would need hundreds of sequential
 // round-trips. ClickHouse answers the same question in one query.
-function toClickhouseTransactionType(type: TransactionType) {
+export function toClickhouseTransactionType(type: TransactionType) {
   const name = TransactionType[type];
   return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+/**
+ * The inverse, and it MUST also accept a bare number.
+ *
+ * 🔴 The ingest MV's int→string map enumerates only `0..26` and falls back to
+ * `toString(Type)`, so every member above 26 arrives as its DIGITS — today
+ * `LicenseFee` (27) and `AppAuthorFee` (28). Capitalising `'28'` is a no-op and
+ * `TransactionType['28']` then hits the enum's REVERSE mapping, yielding the
+ * NAME as a string where a number is declared; that value renders as the raw
+ * `28` in the user's transaction list and in the CSV export instead of its
+ * label. `src/server/schema/buzz.schema.ts` already carries this rule for the
+ * buzz-service API read path — this is the ClickHouse half of the same rule,
+ * which had been open-coded at both call sites without it.
+ */
+/**
+ * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
+ * predicate is a SILENT ZERO for a member past the map: the transaction list
+ * renders empty and the CSV export answers 200 with a header-only body. This is
+ * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
+ * derived instead of hand-written. The numeric arm is inert for the members the
+ * map does enumerate, so it widens nothing else.
+ */
+export function clickhouseTransactionTypePredicate(type: TransactionType) {
+  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
+}
+
+export function fromClickhouseTransactionType(raw: string): TransactionType {
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    // A reverse-mapped name proves it is a real member; anything else keeps the
+    // long-standing Tip fallback rather than rendering blank.
+    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+  }
+  const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
+  return TransactionType[name] ?? TransactionType.Tip;
 }
 
 // Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
@@ -382,7 +418,7 @@ function buildBranchQuery({
     `date >= '${toClickhouseDate(start)}'`,
     `date <= '${toClickhouseDate(end)}'`,
     cursor ? `(date, toString(transactionId)) < ${toClickhouseCursor(cursor)}` : null,
-    type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
+    type !== undefined ? clickhouseTransactionTypePredicate(type) : null,
   ].filter(isDefined);
 
   return `
@@ -512,10 +548,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
 
   return rows.map((row) => {
     const details = parseDetails(row.details);
-    const type =
-      TransactionType[
-        (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-      ] ?? TransactionType.Tip;
+    const type = fromClickhouseTransactionType(row.type);
 
     return {
       date: new Date(`${row.date.replace(' ', 'T')}Z`),
@@ -699,10 +732,7 @@ async function formatExportBatch(
     rows.map((row) => {
       const isDebit = row.fromAccountId === accountId;
       const details = parseDetails(row.details);
-      const type =
-        TransactionType[
-          (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-        ] ?? TransactionType.Tip;
+      const type = fromClickhouseTransactionType(row.type);
       const { url } = parseBuzzTransactionDetails(details, type);
       const entityUrl = !url ? '' : url.startsWith('http') ? url : `${baseUrl}${url}`;
 
