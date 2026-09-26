@@ -1,0 +1,84 @@
+{
+  "slug": "custom-generators",
+  "frameHost": "custom-generators.civit.ai",
+  "url": "https://civitai.com/apps/run/custom-generators",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate \u2014 it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "clickable": [
+    "#panel-discover > div > div > div > div:nth-child(1) > button:nth-child(2)",
+    "#panel-discover > div > div:nth-child(2) > div > div > div:nth-child(2) > button:nth-child(4)",
+    "#tab-mine"
+  ],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "_comment": "measured on 1709x1314 captures, 2026-08-13 \u2014 and now FLOORS rather than the answer: `fromAppFrame` measures the app iframe's own rect per capture and takes the MAX of each band with these. Same page shell as model-benchmarking, so the same conditional rewards banner sits above the iframe and moves the top boundary by ~36px whenever a Buzz bonus is running; the pinned boxes in .claude/skills/app-capture/tests/fixtures/manifest.json were shot with it ABSENT, which is why 182 has always looked correct here. See frame.py's app_frame_bands.",
+    "rect": {
+      "x": 344,
+      "y": 0,
+      "w": 1003,
+      "h": 1050,
+      "yFrom": "appFrame"
+    },
+    "_measuredGeometry": {
+      "viewport": [
+        1709,
+        1255
+      ],
+      "appFrameTop": 104,
+      "appFrameBottomGap": 64,
+      "_why": "the LIVE reading this rect was chosen against, machine-readable so gate P18 can check the rect fits it and cross-check it against the prose in `_measured`. The live lower bound is 1255-64=1191; the rect ends at 104+0+1050=1154, 37px inside it."
+    },
+    "_measured": "2026-09-04, banner ABSENT, viewport 1709x1255, app-frame top=104, bottom gap=64 (read off the run's own probe answer APPFRAME_RECT:104,64,-1,1709,1255,0, taken by capture.sh immediately after the capture so the pair is matched). \ud83d\udd34 WHY DECLARED AT ALL: the app is a FIXED-WIDTH 971px column, and detection refuses it with `full_frame` at 53.4% x 100.0% \u2014 full on the HEIGHT axis, which a declared rect is allowed to be (that check is an AND across axes while the detection gate is an OR). x=344 w=1003 puts ~16px of breathing room each side of the column at 360..1331 and excludes the iframe's own 16px scrollbar at 1692..1708 \u2014 a column-activity scan returns those as TWO runs, and taking the first and last active column instead of the runs pulls the scrollbar in and carries dead margin. y=0 starts at the iframe's top edge: this app's header carries no operator-specific chrome (unlike sensei's buzz chip) and it names the app, so it is kept. h=1050 ends at abs 1154 and was chosen to land in the GAP below the Storybook Illustration card so no row is half-cut. Verified by eye. \ud83d\udd34 WHY NOT THE HORIZONTAL ANCHOR, MEASURED AT TWO WIDTHS RATHER THAN ARGUED: this app is a max-width container capped near 1825, and that cap is ABOVE the window widths actually in use. At a 3431px window the frame is 1825 wide with 803px of page each side, so the anchored form applies; at 1709 the frame IS the viewport (left inset 0, right gap -1) and the anchor degenerates to the absolute form while making `frame_of_record` refuse on almost every re-tile. The column itself is 971px at BOTH widths. So the anchor is not wrong here, it is useless here, and this rect uses the same yFrom-only form as every other declared recipe."
+  },
+  "ready": {
+    "testid": "discover-list",
+    "_comment": "\ud83d\udd34 The anchor is a testid the BOOTED app renders and the loading shell does not. `discover-list` is present in every real capture of this app (both DOM fixtures under .claude/skills/app-capture/tests/fixtures/evidence/) and is not part of the intro panel, so it survives the explainer being dismissed. The deadlocked frame renders exactly one testid \u2014 `app-loading` \u2014 which is the loadingTestid default."
+  },
+  "states": [
+    {
+      "name": "explainer",
+      "actions": [],
+      "caption": "What Custom Generators does, on first open."
+    },
+    {
+      "name": "discover",
+      "actions": [
+        {
+          "click": "#panel-discover > div > div > div > div:nth-child(1) > button:nth-child(2)",
+          "_comment": "\ud83d\udd34 'Got it' \u2014 DISMISS the explainer. The Discover TAB is already active on load, so clicking #tab-discover changes nothing and this state comes back identical to `explainer`. That is exactly what the identical-box gate caught on the first live run of this recipe."
+        },
+        {
+          "waitForGone": "What's a custom generator?"
+        }
+      ],
+      "caption": "Browse generators other people have published."
+    },
+    {
+      "name": "generator",
+      "actions": [
+        {
+          "click": "#panel-discover > div > div > div > div:nth-child(1) > button:nth-child(2)"
+        },
+        {
+          "waitForGone": "What's a custom generator?"
+        },
+        {
+          "click": "#panel-discover > div > div:nth-child(2) > div > div > div:nth-child(2) > button:nth-child(4)",
+          "_comment": "the legoify card's Open button, AFTER the explainer is dismissed. Live-measured 2026-08-13. \ud83d\udd34 Both indices are state-dependent: dismissing the explainer shifts the card list from div:nth-child(3) to div:nth-child(2), and button:nth-child(4) counts ALL siblings in the action row (the upvote and 'Make a copy' controls are spans), not just buttons. A looser `button` query inside #panel-discover hits the wrong card."
+        }
+      ],
+      "caption": "Open a generator and fill in its inputs."
+    },
+    {
+      "name": "mine",
+      "actions": [
+        {
+          "click": "#tab-mine"
+        }
+      ],
+      "caption": "Your own generators, ready to run or edit."
+    }
+  ]
+}

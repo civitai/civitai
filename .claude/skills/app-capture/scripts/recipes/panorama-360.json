@@ -1,0 +1,52 @@
+{
+  "slug": "panorama-360",
+  "frameHost": "panorama-360.civit.ai",
+  "url": "https://civitai.com/apps/run/panorama-360",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "clickable": [
+    "[data-testid=\"pn-preset-alpine\"]"
+  ],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "_comment": "the three numbers are FLOORS; `fromAppFrame` derives the real top boundary from the app iframe's own rect at capture time and takes the max. Same host page as the other centred-column apps, so the same conditional rewards banner can move that boundary ~36px. See frame.py's app_frame_bands."
+  },
+  "_selectorKindError": "🔴 EVERY SELECTOR IN THIS RECIPE WAS BUILT ON `#pano-controls`, WHICH MATCHES NOTHING AND NEVER DID. `pano-controls` is a custom-element TAG NAME, not an id: the live frame contains exactly ONE element carrying an `id` attribute, `div#root`. This is not sensei's mistake (an anchor taken from a populated screen); it is a selector-KIND error, and it was labelled `live-verified 2026-08-13` while matching zero elements. Re-measured live 2026-08-18 on a genuinely foregrounded window: `document.querySelector('#pano-controls')` -> null in a fully booted frame (hasAppLoading:false, 610 chars of body text, 16 testids, 13 buttons). The old comment also claimed 'this app's controls carry no data-testid' — false: there are 16.",
+  "ready": {
+    "testid": "pn-prompt",
+    "_comment": "the Scene textarea, inside the always-mounted <pano-controls> panel. 🔴 SCOPE OF THE CLAIM: measured present at TWO points — fresh boot, and after a preset click — which were structurally identical. Both are PRE-GENERATION. The genuinely populated state (a rendered panorama) sits behind the spend path and was NOT measured, so 'survives populated' is a structural INFERENCE (you cannot generate a second panorama without the prompt box), not a measurement. 🔴 NEVER use `#root`: it lives in the static HTML shell (`curl` returns an 814-byte body that is just `<div id=\"root\"></div>`, 0 testids), so it is present BEFORE the app boots and even in a deadlocked frame — the gate would pass early and hand a spinner to the actions. That is the inverse of sensei's bug and worse. Every `pn-*` testid is JS-rendered post-boot, which is what makes a testid a genuine boot signal here."
+  },
+  "states": [
+    {
+      "name": "controls",
+      "actions": [],
+      "caption": "Pick a preset and a model, then render a 360 panorama."
+    },
+    {
+      "name": "preset",
+      "actions": [
+        {
+          "click": "[data-testid=\"pn-preset-alpine\"]",
+          "_comment": "a preset chip — verified clickable and verified to take effect (it sets pn-prompt.value). An ORDINARY control: a synthetic in-frame click works here. That is the control half of the measurement of which controls a synthetic click actuates."
+        }
+      ],
+      "caption": "Presets set the prompt and the render settings in one click.",
+      "_notADistinctShot": "🔴 This state is a distinct DOM but NOT a distinct SCREENSHOT: the preset click changes only a textarea's `value`, so the rendered layout is byte-identical to `controls`. frame.py's identical-boxes-across-states detector will fire on a framed two-state run — correctly. Drop it from a --render run, or replace it with a state that actually changes the layout."
+    },
+    {
+      "name": "rendering",
+      "_comment": "🔴 SPEND STATE. Unreachable without --trusted, and --trusted takes the operator's screen. Not part of a routine capture run.",
+      "actions": [
+        {
+          "trustedKey": "[data-testid=\"pn-generate\"]",
+          "keyName": "Return",
+          "verifyLabel": "Rendering",
+          "_comment": "🔴 verifyLabel, never a Buzz-balance delta: this app bills per GPU second ON COMPLETION, so the balance does not move at submission. 🔴 `verifyLabel: \"Rendering\"` is UNVERIFIED — the literal string is absent at boot (expected) and could not be confirmed post-submit without spending. Every neighbouring string in this recipe turned out stale, so treat it as suspect and measure it the next time someone legitimately drives the spend path; a <pano-status> element exists and presumably carries the progress text. The former comment here claimed Generate was 'the ONLY DIRECT-CHILD button of #pano-controls' and that a loose query opens the CHECKPOINT PICKER — both were premised on the dead id, and the word 'Checkpoint' is absent from the DOM entirely (the app has a Model section with pn-model-change)."
+        }
+      ],
+      "caption": "Rendering a panorama."
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "slug": "model-benchmarking",
+  "frameHost": "model-benchmarking.civit.ai",
+  "url": "https://civitai.com/apps/run/model-benchmarking",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "clickable": [
+    "[data-testid='howto-dismiss']",
+    "[data-testid='view-switch-matchups']",
+    "[data-testid='view-switch-prompts']",
+    "[data-testid='view-switch-grid']"
+  ],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "rect": {
+      "x": 4,
+      "y": 0,
+      "w": 1701,
+      "h": 855,
+      "yFrom": "appFrame"
+    },
+    "_measuredGeometry": {
+      "viewport": [
+        1709,
+        1255
+      ],
+      "appFrameTop": 141,
+      "appFrameBottomGap": 64,
+      "_why": "the LIVE reading this rect was chosen against, machine-readable so gate P18 can check the rect fits it. The live lower bound is 1255-64=1191; this rect ends at 141+855=996, 195px inside it."
+    },
+    "_wasDetected": "🔴 CONVERTED FROM DETECTION TO AN ANCHORED RECT 2026-08-29, and the cause is a change in the APP, not in this pipeline. The old comment justified detection with 'this app is a centred column on a dark page (same shape as custom-generators), so content-detection is the right instrument here -- unlike sensei, which is full-bleed and needs rect'. That premise DIED: ZacxDev/civitai-app-model-benchmarking#16 (shipped 0.3.3) removed contentStyle.maxWidth, which was the whole point of task 419's criterion 3 ('content spans >= 95% of its frame'). Measured across that change at a 1709px viewport: the content column was 1100px = 64.9% of the frame at base 6a3c2eb, and is 1710.5px = 100% live. So the app IS full-bleed now and detection legitimately reports ~98% width -- frame.py's full_frame gate was RIGHT to refuse, and no band setting can fix it (its own message calls this cause (b)). 🔴 THE GENERAL LESSON: an app-side layout fix can silently break the recipe that photographs it, and nothing in either repo links the two. A capture recipe encodes a claim about the app's SHAPE; when a PR changes that shape, the recipe is downstream of it.",
+    "_measured": "2026-08-29, banner PRESENT, viewport 1709x1255, app-frame top=141, bottom gap=64 (both read off the run's own probe answer APPFRAME_RECT:141,64,-1,1709,1255, so the live lower bound is 1255-64=1191). Content ink measured on real captures of TWO states, inside the exclusion bands: x=27..1682 in both (the app is full-width now). 🔴 THE RECT IS DELIBERATELY WIDER THAN THE INK: x=4 w=1701 gives ~23px of margin on each side. A first pass set the rect TO the ink (x=27 w=1655) -- it passed every gate and looked CLIPPED by eye, because the 'Submit combination'/'Submit prompt' buttons and the body text then sit flush on the canvas edge. Gates check validity, not framing; this is exactly the check the inert identical-box rule hands to a human, grid y=170..983 (h=813), matchups y=170..608 (h=438). 🔴 The first measurement attempt returned an IDENTICAL box for both states, which is the measuring-furniture tell: it had trimmed to the floating SUPPORT WIDGET, measured at 48x41 at x1643 y1149. That widget is what `right: 70` exists to exclude on a DETECTED crop -- but it sits 153px BELOW this crop's lower edge (996), so this rect can extend to x=1682 without it. That is why w=1655 is wider than the right-band would allow: the band is a bottom-of-page concern and this crop does not reach it. Going only to 1639 would have CLIPPED the grid's 'Show top N (your view)' panel, which ends at 1682. y=0 IS the iframe top edge: the app draws ~29px of its own padding above the title at 170, so nothing is clipped, and unlike sensei there is no operator buzz chip to exclude -- #16 removed it, verified live across all three views at three viewports with a body-wide /[0-9,]+\\s*Buzz/i sweep and a positive control on the regex. h=855 ends at abs 996, a 13px gutter below the GRID's content bottom (983), so no row is cut mid-image. 🔴 ONE RECT SERVES ALL THREE STATES and crop is recipe-level (no per-state override exists -- checked across all seven shipped recipes), so it is sized for the TALLEST state. The cost is real and is the trade this form takes: matchups and prompts end their content at 608 and therefore carry ~390px of empty app background, where per-state detection gave each a tight box. Aspect 1655/855 = 1.936 against the canvas's 1.542, so expect a letterbox band top and bottom (~79px each, ~20% of the canvas) -- comparable to playable-collections' 1.892. Filling the canvas instead would need h=1073, which resolves to abs 1214 and OVERRUNS the 1191 bound. 🔴 The identical-box check is INERT for a declared rect -- verify by eye after any re-shoot."
+  },
+  "_viewportOfRecord": "🔴 RE-RUNNING THIS RECIPE DOES NOT REQUIRE THE OPERATOR'S WINDOW TO BE THE ONE crop._measuredGeometry NAMES — EMULATE THE VIEWPORT INSTEAD. Measured 2026-09-08, end to end, exit 0 with all three states rendered. This is the third recorded attempt to re-shoot this app and the first that produced candidates; 2026-09-03 refused at exit 14 and the store entry stayed stale for five days, so the procedure is written here rather than left to be re-derived. 🔴 THE TRAP IS THAT TWO GATES READ DIFFERENT UNITS AND SATISFYING ONE BREAKS THE OTHER. `viewport_of_record` compares crop._measuredGeometry.viewport (1709x1255) against the CAPTURE's pixel dimensions; `app_frame_scale` compares the PROBE's reading, which is CSS px x devicePixelRatio, against that same capture. The operator's display here has DPR 1.140625, and `Emulation.setDeviceMetricsOverride` does NOT make window.devicePixelRatio return the overridden deviceScaleFactor — measured: emulating 1709x1255 at --dsf 1 satisfied viewport_of_record and then died on app_frame_scale reporting a 1950x1431 page against a 1709x1255 capture (1709 x 1.140625 = 1950). ✅ THE SPELLING THAT WORKS: emulate in CSS px and let the scale factor carry the DPR, so both readings land on 1709x1255 — `browser --instance work --tab <id> emulate --width 1498 --height 1100 --dsf 1.140625` (1498 x 1.140625 = 1708.7 -> 1709; 1100 x 1.140625 = 1254.7 -> 1255; the gates' tolerance is 2px). Then `capture.sh <recipe> --instance work --tab <id> --no-foreground`. 🔴 `--no-foreground` IS LOAD-BEARING HERE, NOT DIAGNOSTICS: an ACTIVE tab is captured by captureVisibleTab, which photographs real window pixels and IGNORES the emulation, so foregrounding silently re-introduces the mismatch. A tab opened by `browser open` is created inactive, which is what routes the capture onto CDP — and CDP honours the override. Confirm with `\"via\": \"cdp\"` in the screenshot op's answer. ⚠️ DERIVE --dsf FROM THE LIVE DISPLAY, DO NOT COPY 1.140625 — it is this operator's monitor today, not a constant; read devicePixelRatio and divide the recorded viewport by it. 🔴 THIS DOES NOT RE-PIN OR RE-MEASURE ANYTHING: crop.rect and crop._measuredGeometry are UNTOUCHED and still describe the same 1709x1255 viewport they always did. That is the point — the standing advice was to resize the operator's window back, and on a tiled i3 desktop the recorded 1255 needs a 1421px-tall window against a 1413px workspace, so it was not reachable without changing the operator's bar or floating the window. Emulation reaches it without touching their screen at all. ⚠️ It also does NOT rescue the horizontal anchor: the live probe still answers leftInset=0 rightGap=-1 (APPFRAME_RECT:104,64,-1,1706,1247,0 at the operator's real window), so this app IS still full-bleed and `xFrom`/`wFrom` remain ruled out for it — do not spend a session on that conversion. ✅ Evidence the y-anchor is earning its keep: appFrameTop has moved 141 -> 104 since the rect was measured, and `yFrom: appFrame` absorbed it with no edit.",
+  "_selectors": "Live-discovered 2026-08-15 (opencode browser-agent, two passes). 🔴 THE TAB SELECTORS ARE NAMED, NOT POSITIONAL — this changed on 2026-08-30 and the note that stood here until then said the opposite, correctly for its date. Each tab now carries its own data-testid named for its VIEW — view-switch-matchups / view-switch-prompts / view-switch-grid — landed by ZacxDev/civitai-app-model-benchmarking#21 (internal tracker #449, spec docs/matchups.md §6.4). The old form indexed the strip's role=tab children by DOM POSITION (a positional pseudo-class, 1|2|3 — deliberately not spelled here: internal tracker #449 criterion 2 is the mechanical check that the literal appears ZERO times in this file, and a quotation in a comment would defeat it), and its own note warned it 'will move if a tab is added or reordered': matchups card D reorders these tabs (grid becomes default) and card B adds a fourth (watched), and either one would have silently re-pointed all three selectors at the wrong panel while the capture still exited 0. A name survives both. 🔴 VERSION FLOOR: 0.4.4 — AND IT MOVED WITH THE MATCHUPS RENAME (internal tracker #527, spec docs/matchups.md §11.4). The NAMED tab testids exist from app version 0.3.5 onward, but they were spelled view-switch-combos until 527 renamed the whole combo/combos/combination vocabulary to matchup/matchups; the floor for view-switch-matchups is therefore the first released version carrying that rename, NOT 0.3.5. ✅ THE NUMBER WAS MEASURED 2026-09-08 AT TWO POINTS, NOT READ OFF A CHANGELOG. The line that stood here until then deliberately left it blank — 0.4.4 was still unapproved — and said to re-measure rather than trust a number nobody had checked; this is that measurement. `git grep -o view-switch-matchups -- src` returns 3 occurrences at ZacxDev/civitai-app-model-benchmarking@f757dfd, where package.json AND block.manifest.json both read 0.4.4 (the squash of #38), and ZERO at f757dfd^, where both read 0.4.3 — the previous RELEASED version, which went live the same day, so no release sits between the two and 0.4.4 is genuinely the first. (`grep -o … | wc -l`, never `grep -c`: -c counts LINES, and this file is one line per field.) Positive control on the RUNNING app, same day: the served 0.4.4 bundle's DOM answers view-switch-matchups among its testids, read live rather than inferred from the source. https://civitai.com/apps/run/model-benchmarking serves the APPROVED version, not main — measured 0.4.4 (deployState live, client-reported source f757dfd) on 2026-09-08, and 0.3.4 (built from 2b35c5b) on 2026-08-30, which is why every reading here carries its date instead of standing as a claim about now. Running this recipe against a live app at or below 0.4.3 fails every state at its click with element_not_found. That is the right failure: loud, and naming the selector. 🔴 THE ATTRIBUTE SITS ON A SPAN INSIDE THE role=tab BUTTON, not on the button, and that is forced by the SDK: SegmentedControl renders each tab button itself from a fixed attribute set and SegmentedControlItem is { value, label, disabled }, so an app author's only attribute hook is inside label (checked in @civitai/blocks-react 0.43.0 and 0.44.2 — dist/ui/SegmentedControl.js is byte-identical between them). Harmless here, because the bridge clicks an element's CENTRE and the span's centre is inside its parent button. Do not 'fix' this by re-scoping the selectors to the button via :has(). 🔴 KEPT FROM THE OLD NOTE, STILL LOAD-BEARING: every state waits on panel-BODY text rather than on the tab label, so a mis-click lands on the wrong panel and the wait FAILS instead of silently capturing the wrong view. That is the only thing standing between a drifted selector and a successful capture of the wrong screen, and it is worth keeping now that the selectors are named — a name can still be renamed. Do not switch these waits to the tab labels ('Combinations (1)' etc.) — those are in the switch itself and match whichever panel is showing.",
+  "_contentCaveat": "Re-measured 2026-08-22: the grid is CROWDSOURCED and is now POPULATED — 2 matchups, 4 prompts, and all 16 grid cells filled with real generated output. The listing screenshots on the store were re-shot from this state, so this is the strongest of the seven apps to shoot, not the weakest. 🔴 The note that stood here until 2026-08-22 described a far thinner grid and ended by saying a well-framed capture of a nearly-empty app is still a nearly-empty app — true when it was written, and by now a standing veto on ever shooting this app. Read as a MEASUREMENT with a date on it, not as a verdict; re-count before quoting either version. (The objects counted here were called COMBINATIONS when this was measured; internal tracker #527 renamed the vocabulary to MATCHUPS on every visible surface. Same objects, same count, same date — only the noun moved, and `data.kind` is still the string `combination` on the wire.) What has NOT changed: filling an empty cell SPENDS BUZZ, so it is deliberately not scripted here — the grid state photographs whatever the crowd has already generated.",
+  "ready": {
+    "testid": "view-switch",
+    "_comment": "🔴 THIS IS THE APP THE DEADLOCK WAS MEASURED ON (2026-08-17, hidden tab 5/5). `view-switch` is the tab strip the booted app renders — present in the real mb-combos capture — and it exists in all three views, so one anchor serves every state. Without this gate the first action (click howto-dismiss) fired into a booting app and the following waitForGone timed out, which read as a broken dismiss button.",
+    "timeoutMs": 45000
+  },
+  "_howToDismissal": "🔴 THE FIRST ACTION OF EVERY STATE IS PROFILE-DEPENDENT, WHICH IS WHY IT IS `clickIfPresent` AND NOT `click`. Dismissing the how-to PERSISTS across reloads (see `_noExplainerState`), so `[data-testid='howto-dismiss']` exists on a profile that has never run this app and is ABSENT on every profile that has — measured absent on the live app 2026-08-22. Both are correct, and neither may be the only supported one: deleting the click breaks a fresh profile, while leaving it a plain `click` makes the bridge's `element_not_found` an action FAILURE on a used one. The `waitForGone` that follows is NOT dead and must stay: a wait-until-absent is satisfied instantly when the panel is already gone, and on a fresh profile it is the only thing stopping the next click from racing the dismissal.",
+  "states": [
+    {
+      "name": "matchups",
+      "actions": [
+        {
+          "clickIfPresent": "[data-testid='howto-dismiss']"
+        },
+        {
+          "waitForGone": "How this works"
+        },
+        {
+          "click": "[data-testid='view-switch-matchups']"
+        },
+        {
+          "waitForText": "Submit and vote on checkpoint"
+        }
+      ],
+      "caption": "Submit and vote on checkpoint + LoRA matchups — the top-voted become the grid's rows."
+    },
+    {
+      "name": "prompts",
+      "actions": [
+        {
+          "clickIfPresent": "[data-testid='howto-dismiss']"
+        },
+        {
+          "waitForGone": "How this works"
+        },
+        {
+          "click": "[data-testid='view-switch-prompts']"
+        },
+        {
+          "waitForText": "Submit and vote on prompts"
+        }
+      ],
+      "caption": "Submit and vote on prompts, with per-ecosystem overrides — the top-voted become the grid's columns."
+    },
+    {
+      "name": "grid",
+      "actions": [
+        {
+          "clickIfPresent": "[data-testid='howto-dismiss']"
+        },
+        {
+          "waitForGone": "How this works"
+        },
+        {
+          "click": "[data-testid='view-switch-grid']"
+        },
+        {
+          "waitForText": "Top Grid"
+        }
+      ],
+      "caption": "The Top Grid: every top-voted matchup run against every top-voted prompt, on identical inputs — or build and publish your own."
+    }
+  ],
+  "_noExplainerState": "🔴 There is deliberately NO `explainer` state, and it is not an oversight. Dismissing the how-to PERSISTS (it does not come back on reload), so the first state that dismisses [data-testid='howto-dismiss'] destroys it for every later state in the same run — the explainer state was tried last and captured nothing, because by then it was gone. Capturing it needs a profile that has never dismissed it, which this scripted path cannot arrange. custom-generators' recipe gets away with an `explainer` state only because it is listed FIRST. Do not 'fix' this by reordering: the three view states each dismiss it as their first action, so whichever runs first still kills it."
+}

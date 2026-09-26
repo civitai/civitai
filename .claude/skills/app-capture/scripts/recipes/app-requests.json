@@ -1,0 +1,56 @@
+{
+  "slug": "app-requests",
+  "frameHost": "app-requests.civit.ai",
+  "url": "https://civitai.com/apps/run/app-requests",
+  "_rewrittenFor": "🔴 REWRITTEN 2026-09-02 FOR the app-taste pass (ZacxDev/civitai-app-requests#11, #12, #13) and CONFIRMED against live 0.3.1. `ready`, `clickable` and `states` were first derived from the redesigned source while the version sat in review, then all three were exercised live: every state passed the app-ready gate on `board-ready`, which is the change that mattered — 0.2.x anchored on `submit-btn`, now inside a modal and absent at rest, so the unchanged recipe would have timed out claiming the app never booted. The crop was measured afterwards, against 0.3.1 — see `crop._measured`.",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. It is refusal-checked in BOTH directions: a selector a state activates but does not list is `click_unledgered`, and a selector listed but never activated is `clickable_unused`. So it must equal the used set exactly — do not park a 'safe for later' selector here.",
+  "_neverList": "🔴 THIS APP IS THE REASON THE LEDGER EXISTS, AND 0.3.0 WIDENED THE MUTATION SURFACE. It renders `submit-btn`, `vote-btn`, `edit-btn`, `withdraw-btn` and now also `report-btn` (files a real report with Civitai moderators) and `suppress-btn` (the owner-only moderation ledger write). Every one is an ordinary authenticated mutation on the OPERATOR'S account. 🔴 Do NOT justify that with 'the spend path rejects untrusted events' — that mechanism is RETRACTED (measured 2026-08-30; the mechanism is recorded in the private infra repo, not here). The correct reason is simpler and stronger: these are not spend-path controls at all, they are plain authenticated writes, and NOTHING refuses them for you. A synthetic in-frame click on `vote-btn` casts a real vote on every run and every state reload; `withdraw-btn` deletes a real request. 🔴 NEW IN 0.3.0 — `row-menu-btn` is EXCLUDED even though opening a menu mutates nothing: the menu it opens CONTAINS report/withdraw/suppress, so listing it puts three real mutations one mis-authored action away, and a `row-menu-open` state is not worth that. `open-composer-btn` is excluded on the same reasoning — it reveals `submit-btn`.",
+  "_typeIsNotLedgered": "🔴 `type` selectors do NOT belong here — measured 2026-09-02, listing `search-input` alongside a `type` action refused the whole recipe with `clickable_unused` on all three states. The ledger covers `click`, `clickIfPresent` and `key` only. That is defensible (typing into a filter activates nothing) but it is a REAL GAP worth knowing: `type` IS in VIEW_CHANGING, and a `type` into the wrong field followed by a ledgered `key: Enter` would submit a form with the ledger showing only the keypress.",
+  "clickable": [
+    "[data-testid=sort-control] button:nth-of-type(1)",
+    "[data-testid=sort-control] button:nth-of-type(2)"
+  ],
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "rect": { "x": 329, "y": 27, "w": 1052, "h": 682, "yFrom": "appFrame" },
+    "_measuredGeometry": { "viewport": [1709, 1255], "appFrameTop": 141, "appFrameBottomGap": 64,
+                           "_why": "the LIVE reading this rect was chosen against, machine-readable so gate P18 can check the rect fits it. The live lower bound is 1255-64=1191; this rect's absolute bottom is 141+27+682=850, and its right edge is 329+1052=1381 against the band limit 1709-70=1639." },
+    "_measured": "🔴 RE-MEASURED 2026-09-02 AGAINST LIVE 0.3.1 — the previous rect (x=446 y=507 w=804 h=524) was for 0.2.x and every number in it died with the redesign; `y=507` was the height of a header + suggest-form that no longer exists. Between the two the rect was deliberately ABSENT rather than guessed, and detection did exactly what was predicted: exit 6, `identical_boxes`, top.png and newest.png both reporting 816x868+448+182 — because Top and Newest show the SAME cards in a different order, so their content extents genuinely match. That is a real refutation of detection for this app, not an inherited note. Chosen against banner-PRESENT geometry — viewport 1709x1255, app-frame top=141, bottom gap=64 — read off the run's own probe (APPFRAME_RECT:141,64,-1,1709,1255) and identical on all three states: abs y=168 is the hero band's top edge, so y=27 relative to the iframe; h=682 ends at abs 850, in the gutter AFTER the second card with the third card's top edge just visible, which reads as 'there is more' rather than as a truncation. 1052x682 is aspect 1.543 against the 1200x778 canvas's 1.542. x=329 is deliberately WIDER than the app column (which is 448..1264): the page background either side is the same flat ink, so the extra width reads as intentional padding and is what buys the exact canvas aspect. 🔴 VERIFIED BY EYE, which is not optional here — a declared rect makes the identical-box check INERT and narrows `full_frame` to an AND on both axes, so nothing downstream will catch a bad one. Re-verify by eye after any re-shoot. 🔴 CONTENT-SPECIFIC: h assumes two cards of roughly this text length; a board whose top two requests are one-liners will frame short.",
+    "_bandFloors": "the three band numbers stay as FLOORS. They no longer bracket a detection, but `fromAppFrame` still runs the top-frame probe, and the probe's viewport reading is the only cross-check on a devicePixelRatio this code cannot see."
+  },
+  "ready": {
+    "testid": "board-ready",
+    "loadingTestid": "app-loading",
+    "timeoutMs": 45000,
+    "_comment": "🔴 THE ANCHOR MOVED IN 0.3.0 AND THE OLD ONE IS NOW A TRAP. `submit-btn` was the 0.2.x anchor because the suggest form was always mounted; in 0.3.0 the composer is a MODAL, so `submit-btn` is ABSENT AT REST and an unchanged recipe would time out at 45s claiming the app never booted (exit 11) when it had booted fine. `board-ready` is the board toolbar, reported present at zero requests, at many requests, signed-in and signed-out — i.e. at both points of the data condition and both points of the auth condition, which is what makes it an anchor rather than a coincidence. 🔴 NOT YET CONFIRMED LIVE: this is read off the 0.3.0 source while it sits in review. `sort-control` is the alternate if `board-ready` disappoints. NEVER `empty-state`/`no-matches` (they exist only in states the board is usually not in), NEVER `hero`/`hero-image` (the hero is static chrome — it renders before the board resolves, so it would gate on nothing), and NEVER `#root` (the static shell is present before boot and in a deadlocked frame)."
+  },
+  "states": [
+    {
+      "name": "top",
+      "caption": "The requests people want most, ranked by votes.",
+      "_comment": "0.3.0 opens on Top BY DEFAULT (that was the point of the IA change), so unlike 0.2.x this state could click nothing. It still clicks explicitly: a state that relies on the default captures whatever sort the app happens to be in, and if that ever drifts back to Newest this state and the next collide on the identical-box gate — a failure that reads as a cropper bug rather than a sort bug.",
+      "actions": [
+        { "click": "[data-testid=sort-control] button:nth-of-type(1)" }
+      ]
+    },
+    {
+      "name": "newest",
+      "caption": "Switch to newest to see what has just been suggested.",
+      "_comment": "no waitForText is possible: the click changes only `aria-selected`/`data-active` on the two role=tab buttons, and both labels are present before and after — a waitForText on 'Newest' would pass instantly and prove nothing. `click` is in VIEW_CHANGING, so the planner already emits `wake --wait 4000` behind it, which is ample for a client-side re-sort.",
+      "actions": [
+        { "click": "[data-testid=sort-control] button:nth-of-type(2)" }
+      ]
+    },
+    {
+      "name": "search",
+      "caption": "Filter the board to find a request before you post a duplicate.",
+      "_comment": "🔴 TYPES A QUERY, NEVER SUBMITS ONE. `type` is a VIEW_CHANGING verb so the planner emits its own `wake` behind it; there is deliberately NO `key: Enter` action, because Enter submits the form its input sits in and the schema notes that explicitly. The query is a common word chosen to match SOMETHING on any plausible board — 🔴 if it matches nothing the app renders `no-matches`, which is an EMPTY STATE and exactly what the skill says never to photograph, so this state's value depends on live content and it is the first one to re-check after any re-shoot. No clearing action is needed: capture.sh reloads the app before every state.",
+      "actions": [
+        { "type": "app", "selector": "[data-testid=search-input]" }
+      ]
+    }
+  ]
+}

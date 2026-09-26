@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "REAL captures from a working custom-generators run, 2026-08-13, viewport 1709x1314.",
+    "They are here rather than synthesised on purpose: a clean synthetic page would not",
+    "carry the FOOTER (full-width) or the RIGHT-EDGE furniture (full-height), and those",
+    "two are exactly what made the cropper silently no-op twice. The negative controls in",
+    ".claude/skills/app-capture/tests/run-tests-app-capture.sh reproduce both failures out of THESE files by zeroing",
+    "one exclusion band at a time.",
+    "",
+    "`box` is the expected content box under `bands`. These are PINNED VALUES, derived",
+    "from the fixtures and checked in — not recomputed by the suite from the code under",
+    "test, which would make the assertion circular."
+  ],
+  "bands": { "chromeTop": 182, "footer": 110, "right": 70, "stride": 4, "tolerance": 8 },
+  "frame": { "w": 1709, "h": 1314 },
+  "bg": "#1a1b1e",
+  "captures": [
+    { "file": "1-explainer.png", "state": "explainer", "box": { "x": 364, "y": 194, "w": 972, "h": 708 } },
+    { "file": "2-discover.png",  "state": "discover",  "box": { "x": 364, "y": 194, "w": 972, "h": 344 } },
+    { "file": "3-generator.png", "state": "generator", "box": { "x": 364, "y": 202, "w": 972, "h": 576 } },
+    { "file": "4-mine.png",      "state": "mine",      "box": { "x": 364, "y": 194, "w": 972, "h": 388 } },
+    { "file": "5-mb-combinations.png", "state": "combinations", "app": "model-benchmarking",
+      "box": { "x": 252, "y": 194, "w": 1200, "h": 312 },
+      "_comment": [
+        "A REAL model-benchmarking capture, 2026-08-15. 🔴 IT IS A HISTORICAL, PRE-POPULATED STATE AND",
+        "IT IS NOT THE SOURCE OF THE LIVE STORE SCREENSHOTS. Those were re-shot on 2026-08-22 from a much",
+        "fuller app (2 combinations, 4 prompts, 16/16 grid cells) and are live; this file predates that.",
+        "Do NOT read it as evidence about the app's CONTENT, and do not 'correct' the recipe's",
+        "_contentCaveat back to match it — the caveat is the current measurement, this fixture is not.",
+        "🔴 WHY IT IS RETAINED ANYWAY: for its LAYOUT, which is the thing F11 needs and the thing that",
+        "broke. At chromeTop=182 it measures cleanly, to a different app column (x=252 w=1200) than",
+        "custom-generators' (x=364 w=972) but with the SAME top edge, 194, on the same viewport — so 182",
+        "was measured right and the app is not the variable. What changed underneath it is the conditional",
+        "rewards banner above the iframe, which moves that edge to 230. The banner state is cut FROM this",
+        "file by bannershift.py and swept in gate F11. A thin grid makes a poor screenshot and a perfectly",
+        "good layout fixture."
+      ] }
+  ],
+  "broken_band_controls": {
+    "_comment": "what the SAME fixtures produce when a band is wrong — the two shapes that shipped broken. Both are asserted as negative controls.",
+    "all_bands_zero":   { "file": "1-explainer.png", "box": { "x": 0, "y": 8, "w": 1709, "h": 1306 }, "detected_by": "full_frame" },
+    "footer_zero":      { "file": "1-explainer.png", "box": { "x": 0, "y": 194, "w": 1639, "h": 1112 }, "detected_by": "full_frame (WIDTH pinned; height only 98.2%, so an AND rule would let this through)" },
+    "right_zero":       { "file": "*", "box": { "x": 364, "y": 182, "w": 1345, "h": 1022 }, "detected_by": "full_frame (HEIGHT pinned) AND identical_boxes — all four states report the identical box" }
+  }
+}
