@@ -1145,14 +1145,14 @@ export class DataGraph<
    * // Before: 12 branches → 12 type union members
    * .discriminator('workflow', {
    *   txt2img: ecosystemGraph,
-   *   'txt2img:draft': ecosystemGraph,
+   *   'txt2img:face-fix': ecosystemGraph,
    *   // ... 10 more pointing to ecosystemGraph
    *   'vid2vid:interpolate': videoInterpolationGraph,
    * })
    *
    * // After: 5 groups → 5 type union members
    * .groupedDiscriminator('workflow', [
-   *   { values: ['txt2img', 'txt2img:draft', ...] as const, graph: ecosystemGraph },
+   *   { values: ['txt2img', 'txt2img:face-fix', ...] as const, graph: ecosystemGraph },
    *   { values: ['vid2vid:interpolate'] as const, graph: videoInterpolationGraph },
    *   // ...
    * ])
@@ -1636,7 +1636,7 @@ export class DataGraph<
    *
    * When context is provided, it controls which branches are visited:
    * - **Pinned**: If the context contains a value for the current discriminator,
-   *   only that branch is visited (e.g., `{ workflow: 'image:draft' }`)
+   *   only that branch is visited (e.g., `{ workflow: 'txt2img' }`)
    * - **Resolved**: If context exists but doesn't pin the current discriminator,
    *   the discriminator's node factory is evaluated with the accumulated context
    *   to resolve a default value, and only that branch is visited
@@ -1649,11 +1649,10 @@ export class DataGraph<
    * // Discovery: find all workflows that have an 'images' node
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images')
    *
-   * // Context-aware: check if image:draft has an 'images' node
-   * // Resolves ecosystem to default (SD1), evaluates when → false
+   * // Context-aware: check if txt2img has an 'images' node
+   * // Resolves ecosystem to its default (SD1) and evaluates `when`
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images',
-   *   { workflow: 'image:draft' })
-   * // → [] (images has when:false in SD family for draft)
+   *   { workflow: 'txt2img' })
    * ```
    */
   findKeyInBranches(

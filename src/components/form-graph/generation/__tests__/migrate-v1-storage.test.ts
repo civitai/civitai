@@ -43,7 +43,6 @@ describe('buildV1MigrationIntent', () => {
       quantity: 3,
       outputFormat: 'png',
       priority: 'high',
-      'quantity@txt2img:draft': 8,
       'ecosystem@image': 'SDXL',
       'ecosystem@video': 'WanVideo25T2V',
       'model@SDXL': { id: 128713, model: { type: 'Checkpoint' } },

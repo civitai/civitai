@@ -955,17 +955,9 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
 /**
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
  * than an external provider. Single source of truth for the self-hosted
- * generation toggle. Derived from the orchestrator ecosystem handlers
- * (`src/server/services/orchestrator/ecosystems/`) — grouped by the
- * `@civitai/client` input type each ecosystem produces:
- *
- *  - TextToImageInput    → SD1/2/XL, Pony, Illustrious, NoobAI, Flux1, FluxKrea,
- *                          Chroma, HiDream, PonyV7
- *  - ComfyImageGenInput  → Anima, Ernie, Lens, HiDream-O1
- *  - SdCppImageGenInput  → ZImageTurbo, ZImageBase, Qwen
- *  - Flux2KleinImageGen  → Flux2Klein_9B(_base), Flux2Klein_4B(_base)
- *  - ComfyLtx*VideoGen   → LTXV2, LTXV23, LTXV25
- *  - AceStepAudioInput   → Ace
+ * generation toggle; derived from the handlers in
+ * `src/server/services/orchestrator/ecosystems/`, which are authoritative for which
+ * input type each ecosystem produces.
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
  * `Qwen2` (≠ Qwen, FAL), `Qwen3` (≠ Qwen, Alibaba DashScope), and all `Wan*`
@@ -973,9 +965,7 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  * ecosystem's routing changes.
  */
 export const SELF_HOSTED_ECOSYSTEM_KEYS = [
-  // TextToImageInput
   'SD1',
-  'SD2',
   'SDXL',
   'Pony',
   'Illustrious',
@@ -991,7 +981,6 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Lens',
   'HiDream-O1',
   'Ming',
-  // SdCppImageGenInput
   'ZImageTurbo',
   'ZImageBase',
   'Qwen',

@@ -224,9 +224,8 @@ expose explicit slots, and a resource object carries **only `air` (+ `strength`)
 
 | Input type | Slots that take an AIR |
 | --- | --- |
-| `TextToImageInput` (SD family) | `model` (checkpoint), `additionalNetworks: { [air]: { strength } }`, `controlNets` |
-| `Sd1ImageGenInput` (sdcpp) | `model`, `vaeModel`, `loras: { [air]: strength }`, `embeddings: string[]` |
-| `ComfyKrea2BaseImageGenInput` | `model`, `loras: { [air]: strength }`, `diffusionModel: string \| null` |
+| `ComfySd1/SdxlCreateImageGenInput` (comfy) and `Sd1/SdxlCreateImageGenInput` (sdcpp) | `model`, `vaeModel`, `loras: { [air]: strength }`, `embeddings: string[]`. Only the comfy pair carries `controlNets`, so a ControlNet request forces comfy |
+| `ComfyKrea2Raw/TurboCreateImageGenInput` | `model`, `loras: { [air]: strength }`, `diffusionModel: string \| null` |
 | `ImageGenInputLora` / `VideoGenInputLora` | `{ air, strength }` |
 
 **Which slot a resource lands in is chosen by *our* code, not by the AIR's type segment:**
@@ -236,7 +235,8 @@ expose explicit slots, and a resource object carries **only `air` (+ `strength`)
   the resources node selects `LORA`/`LoCon`/`DoRA`/`TextualInversion`, etc.
 - The **handler** then drops each node's AIR into the matching named slot — e.g.
   [`stable-diffusion.handler.ts`](../../src/server/services/orchestrator/ecosystems/stable-diffusion.handler.ts)
-  puts `data.model` into `model` and everything else (resources + vae) into `additionalNetworks`.
+  puts `data.model` into `model`, LoRAs into `loras`, the VAE into `vaeModel` and
+  textual inversions into `embeddings`.
 
 ### 3. The one place the AIR `type` segment *is* read on our side
 
@@ -259,8 +259,9 @@ is the smaller half:**
 1. **Data-graph / handler layer (primary).** Even a perfect AIR type segment won't help unless
    (a) the data-graph routes the *component file* to a slot based on the **file's** role rather
    than the parent `model.type`, and (b) the ecosystem input **exposes a slot** for that role.
-   Most current inputs don't — `TextToImageInput` has no text-encoder/clip slot at all; a text
-   encoder would have to go into `additionalNetworks` and rely on the orchestrator resolving it.
+   Most current inputs don't — the SD family's `Comfy/Sd1|Sdxl CreateImageGenInput` exposes
+   `model`, `loras`, `vaeModel` and `embeddings` and no text-encoder/clip slot at all, so a
+   text encoder has nowhere to land.
 2. **AIR-string layer (secondary).** Needed for the comfy path (`applyResources`) and for any
    server-side resolution that reads the segment, plus public API / URN display correctness.
 
@@ -269,7 +270,7 @@ data-graph + ecosystem handlers about per-file "Additional Component" roles and 
 ecosystem inputs named slots to route them into.
 
 > **Still open (server-side, not visible in the client):** when the orchestrator resolves an AIR
-> placed in `additionalNetworks` / `loras`, does it trust the AIR `type` segment or re-resolve the
+> placed in `loras`, does it trust the AIR `type` segment or re-resolve the
 > resource via the Civitai API and read its real type? The full package scan (v0.2.0-beta.76) found
 > **no** type enum/validation anywhere in `@civitai/client` and **no** resource field other than
 > `air` (+ `strength`) — strong evidence the orchestrator resolves the AIR opaquely server-side and
@@ -341,9 +342,9 @@ Routing a component file correctly requires changes the AIR segment alone can't 
 
 - **Data-graph** must bucket the file by its **own role** (`ModelFile.type`), not the parent
   `model.type`, so a Text Encoder on a Checkpoint doesn't get treated as a checkpoint resource.
-- **Ecosystem inputs/handlers** must expose a **slot** for that role. `TextToImageInput` has no
-  text-encoder/clip slot today; some ecosystem `ImageGenInput`s do (`vaeModel`, `diffusionModel`,
-  `embeddings`) but coverage is uneven.
+- **Ecosystem inputs/handlers** must expose a **slot** for that role. No image input has a
+  text-encoder/clip slot today; the SD family's `Create*ImageGenInput`s carry
+  `vaeModel`/`embeddings` and Krea2 carries `diffusionModel`, but coverage is uneven.
 - **The comfy loader** must learn the new types or the resource is silently dropped.
 
 ---

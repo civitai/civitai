@@ -42,12 +42,11 @@ export function deriveSelectorsFromModel(
   // replaces it with the locked default before its effect could see it, so no
   // switch happens there. Version SIBLINGS (LTXV23 on LTXV2, wan on wan) are
   // valid entries in the locked picker's own version list, so they re-pick the
-  // version branch — the lock does not apply. modelLocked comes from ecosystem
-  // defaults, plus the one workflow-driven lock (flux draft).
+  // version branch — the lock does not apply. modelLocked comes from ecosystem defaults.
   if (
     current.ecosystem &&
     familyOf(modelEco) !== familyOf(current.ecosystem) &&
-    isModelLocked(current.ecosystem, current.workflow)
+    isModelLocked(current.ecosystem)
   )
     return undefined;
 
@@ -73,9 +72,7 @@ function familyOf(ecosystem: string): string {
   return ecosystem;
 }
 
-function isModelLocked(ecosystem: string, workflow: string | undefined): boolean {
-  if ((ecosystem === 'Flux1' || ecosystem === 'FluxKrea') && workflow === 'txt2img:draft')
-    return true;
+function isModelLocked(ecosystem: string): boolean {
   const eco = ecosystemByKey.get(ecosystem);
   if (!eco) return false;
   return getEcosystemDefaults(eco.id)?.modelLocked ?? false;
@@ -164,40 +161,9 @@ export const modelSelectorRules = {
   ): SelectorCorrection | undefined => {
     const model = looseModel(value);
     const current = { ecosystem: next.ecosystem, workflow: next.workflow };
-    const base = deriveCorrectionsFromModel(model, current);
-    const flux = fluxDraftWorkflowFor(model, {
-      ecosystem: base?.ecosystem ?? current.ecosystem,
-      workflow: base?.workflow ?? current.workflow,
-    });
-    if (!base && !flux) return undefined;
-    return { ...base, ...flux };
+    return deriveCorrectionsFromModel(model, current);
   },
 };
-
-// flux.graph.ts's fluxVersionIds — inlined; importing the graph here would cycle
-const FLUX_DRAFT_ID = 699279;
-const FLUX_MODE_IDS = new Set([699279, 691639, 922358, 2068000, 1088507]);
-
-/**
- * v1's INTERACTIVE flux draft coupling: picking the Draft build drags the
- * workflow to txt2img:draft, and picking any other flux build while in draft
- * drags it back. STORE LANE ONLY — at the parse boundary the workflow wins
- * (probed 2026-09-01) and the model correct in flux.graph.ts enforces that,
- * so this must never run in reconcileSelectors. Without it the correct
- * reverts an interactive Draft pick before the user ever sees it.
- */
-function fluxDraftWorkflowFor(
-  model: { id?: number } | undefined,
-  current: { ecosystem: string | undefined; workflow: string | undefined }
-): SelectorCorrection | undefined {
-  if (current.ecosystem !== 'Flux1' && current.ecosystem !== 'FluxKrea') return undefined;
-  const id = model?.id;
-  if (id == null || !FLUX_MODE_IDS.has(id)) return undefined;
-  if (id === FLUX_DRAFT_ID && current.workflow !== 'txt2img:draft')
-    return { workflow: 'txt2img:draft' };
-  if (id !== FLUX_DRAFT_ID && current.workflow === 'txt2img:draft') return { workflow: 'txt2img' };
-  return undefined;
-}
 
 export interface ReconcileResult {
   raw: Record<string, unknown>;

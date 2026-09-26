@@ -55,10 +55,7 @@ describe('deriveSelectorsFromModel', () => {
     expect(fromImage?.workflow).toBeDefined();
   });
 
-  it('a locked slot beats a cross-family model (flux draft, wan, ltx)', () => {
-    expect(
-      deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'Flux1', workflow: 'txt2img:draft' })
-    ).toBeUndefined();
+  it('a locked slot beats a cross-family model (wan, ltx)', () => {
     expect(
       deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'LTXV2', workflow: 'txt2vid' })
     ).toBeUndefined();

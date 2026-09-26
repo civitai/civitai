@@ -44,7 +44,6 @@ The input types that route to our GPUs (provided by `@dev`, from `@civitai/clien
 | Input type                | Routed to   |
 | ------------------------- | ----------- |
 | `AceStepAudioInput`       | self-hosted |
-| `TextToImageInput`        | self-hosted |
 | `Flux2KleinImageGenInput` | self-hosted |
 | `ComfyImageGenInput`      | self-hosted |
 | `SdCppImageGenInput`      | self-hosted |
@@ -52,7 +51,7 @@ The input types that route to our GPUs (provided by `@dev`, from `@civitai/clien
 | `ComfyLtx2VideoGenInput`  | self-hosted |
 | `ComfyLtx23VideoGenInput` | self-hosted |
 
-**Key insight from the codebase:** the self-hosted/external split is **not** at the orchestrator step `$type` level (`textToImage` / `comfy` / `imageGen` / `videoGen` / `aceStepAudio`). A single `imageGen` step can be self-hosted _or_ external depending on the **engine / specific input type** the handler builds. So the 8 input types above are the source of truth, and they resolve to a specific set of ecosystems via the handlers in `src/server/services/orchestrator/ecosystems/`.
+**Key insight from the codebase:** the self-hosted/external split is **not** at the orchestrator step `$type` level (`textToImage` / `comfy` / `imageGen` / `videoGen` / `aceStepAudio`). A single `imageGen` step can be self-hosted _or_ external depending on the **engine / specific input type** the handler builds. So the input type, not the step `$type`, is what decides — and the set of self-hosted input types is larger than the list above, because the SD, Flux, Chroma, HiDream and PonyV7 families each emit their own `Comfy*CreateImageGenInput` (from `@civitai/orchestration-client`) rather than a shared one.
 
 ### Derived self-hosted ecosystem set
 
@@ -60,7 +59,11 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 
 | Input type                | Ecosystems (ECO keys)                                                                                                      | Handler                                                                                                            |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `TextToImageInput`        | `SD1`, `SD2`, `SDXL`, `Pony`, `Illustrious`, `NoobAI`, `Flux1`, `FluxKrea`, `Chroma`, `HiDream`, `PonyV7`                  | `stable-diffusion.handler.ts`, `flux.handler.ts`, `chroma.handler.ts`, `hi-dream.handler.ts`, `pony-v7.handler.ts` |
+| `ComfySd1CreateImageGenInput` / `ComfySdxlCreateImageGenInput` (comfy), `Sd1CreateImageGenInput` / `SdxlCreateImageGenInput` (sdcpp) | `SD1`, `SDXL`, `Pony`, `Illustrious`, `NoobAI`. A ControlNet request forces the comfy pair; the sdcpp inputs have no `controlNets` field | `stable-diffusion.handler.ts` |
+| `ComfyFlux1CreateImageGenInput`, `Flux1ProImageGenInput`, `Flux1ProUltraImageGenInput` | `Flux1`, `FluxKrea` | `flux.handler.ts` |
+| `ComfyChromaCreateImageGenInput` | `Chroma` | `chroma.handler.ts` |
+| `ComfyHiDreamI1CreateImageGenInput` | `HiDream` | `hi-dream.handler.ts` |
+| `ComfyPonyV7CreateImageGenInput` | `PonyV7` | `pony-v7.handler.ts` |
 | `ComfyImageGenInput`      | `Anima`, `Ernie`, `Lens`, `HiDream-O1`, `ZImageTurbo`, `ZImageBase`, `Qwen` + SD-family img2img/face-fix/hires-fix (already covered by the SD ecosystems above) | `anima/ernie/lens/hi-dream-o1/z-image/qwen.handler.ts`, `comfy-input.ts` |
 | `SdCppImageGenInput`      | _(none — ZImage and Qwen moved to comfy; see the `ComfyImageGenInput` row)_                                               | —                                                                                                                  |
 | `Flux2KleinImageGenInput` | `Flux2Klein_9B`, `Flux2Klein_9B_base`, `Flux2Klein_4B`, `Flux2Klein_4B_base`                                               | `flux2-klein.handler.ts`                                                                                           |

@@ -27,7 +27,7 @@ import {
 import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * Stable Diffusion family (SD1 / SD2 / SDXL / Pony / Illustrious / NoobAI),
+ * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI),
  * ported from `stable-diffusion-graph.ts`.
  */
 
@@ -98,7 +98,7 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
     'effectiveEcosystem',
     ({ model, _ext }) =>
       narrowEcosystem(
-        ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'],
+        ['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'],
         effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow)
       ),
     { emit: 'ecosystem' }
