@@ -1051,11 +1051,7 @@ export const getModelsRaw = async ({
 
   const modelQuery =
     splittable && cursorStrict && cursorEquality
-      ? // Split-cursor path: UNION ALL of (equality tie-handler branch) +
-        // (strict tuple-compare branch). The strict branch carries 99%+ of the
-        // rows and benefits from an index seek. The equality branch is a
-        // bounded "ties at the cursor boundary" lookup that almost always
-        // returns 0 rows ("never executed" in most plans).
+      ? // Split-cursor path (see getCursorClauses).
         //
         // Branch order matters: for DESC head fields, equality rows
         // (head = cursor values) sort BEFORE strict rows (head < cursor values).
@@ -1136,8 +1132,10 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
-    nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
-    models.pop(); //Remove excess model
+    // The popped lookahead row is the cursor on purpose: the predicate is inclusive on the
+    // last sort field, so handing out the last RETURNED row instead would emit it twice.
+    nextCursor = models[models.length - 1]?.cursorId || undefined;
+    models.pop();
   }
 
   return {
