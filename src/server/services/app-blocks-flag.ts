@@ -642,6 +642,12 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
  * Fail-safe, code half: an unreachable Flipt — and an absent key — evaluates
  * `false` unconditionally, so no fee can be quoted or charged by accident.
  *
+ * 🔴 BUT DO NOT DISABLE THE FEE BY DELETING THE KEY. An ABSENT key makes the
+ * evaluation THROW: it bypasses the eval cache and logs a `console.error` on every
+ * App Blocks generation submit, indefinitely. That is why the key was created
+ * deliberately rather than left absent while the rail was dark. To turn the fee
+ * off, set it `false`.
+ *
  * 🔴 THE RAIL IS LIVE, AND ITS STATE IS NOT IN THIS COMMENT. Earlier revisions said
  * the key did not exist, then that it was base `false` and the rail was dark; the
  * fee has been charging since 2026-09-25. Read the current value from Flipt

@@ -28,10 +28,14 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * trips a velocity/volume hold, in which case the rows are parked in
  * status='held' for manual review instead.
  *
- * confirmed is the terminal payable state, and nothing consumes it: the
- * write-free stub cron that used to aggregate these rows and the mint it was
- * to call were both removed, so no purchase-rail share is disbursed anywhere.
- * held rows are the actionable ops signal:
+ * confirmed is the TERMINAL state — nothing DISBURSES it. The write-free stub cron
+ * that used to aggregate these rows and the mint it was to call were both removed,
+ * so no purchase-rail share is paid out anywhere, and nothing writes `paid_out` any
+ * more either. 🔴 It is still READ, and by user-facing surfaces: this write is what
+ * `app-collaborator-earnings.service.ts` and `getRevenueForOwner` aggregate, and
+ * what the two earnings panels render as "Confirmed earnings accrue here". Dropping
+ * or repurposing it would silently zero those. held rows are the actionable ops
+ * signal:
  * a human reviews them and either confirms (re-run picks them up once
  * unparked back to pending, or a manual UPDATE confirms them) or voids.
  *

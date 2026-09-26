@@ -104,10 +104,11 @@ function read(relPath: string) {
  * `.ts`/`.tsx` only by default, which is what the COPY ledger below wants.
  *
  * 🔴 The mint ledger passes `CODE_FILES` instead, and the difference is the point: a
- * caller could live in a `.mjs` script or an `apps/*` Svelte file, and a guard whose
- * headline says "anywhere a caller could live" while walking `.tsx?` alone would stay
- * green through exactly that. It is not a rounding error: the roots hold hundreds of
- * such files — the `apps/*` Svelte sources, JS under `packages`, and `scripts/*.mjs`.
+ * caller could live in a `.mjs` script or a Svelte component, and a guard whose headline
+ * says "anywhere a caller could live" while walking `.tsx?` alone would stay green
+ * through exactly that. It is not a rounding error: the roots hold hundreds of such
+ * files — Svelte sources under both `packages/civitai-ui` and `apps/*`, JS under
+ * `apps/*`, and `scripts/*.mjs`.
  */
 function walk(dir: string, out: string[] = [], match = /\.tsx?$/): string[] {
   for (const entry of readdirSync(dir)) {
@@ -226,20 +227,33 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // for the table it left behind, the GA handoff tracker, and the applied migrations,
     // which are a historical record and must not be rewritten.
     const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d), [], CODE_FILES));
-    // Walk positive controls, one per root: a misrooted or empty walk finds no mentions
-    // either, and would read as "the rail does not exist" no matter what the tree holds.
-    // The total alone cannot see a dropped root — `src` by itself clears any threshold.
+    // 🔴 WALK POSITIVE CONTROLS — EXACT PATHS, ONE PER ROOT AND ONE PER EXTENSION CLASS.
+    // A misrooted or empty walk finds no mentions either, and would read as "the rail
+    // does not exist" no matter what the tree holds. ⚠️ An earlier revision matched each
+    // probe with `f === probe || f.startsWith(<root> + '/')`, which degenerates to "this
+    // root is non-empty": measured, reverting `CODE_FILES` to `/\.tsx?$/` — i.e. undoing
+    // the whole widening this ledger depends on — left every probe GREEN. One of those
+    // probes did not even exist on disk and had only ever passed via the fallback. So the
+    // membership test is exact, and the extension classes are probed by name, or the reach
+    // this test claims is unenforced.
+    const walked = new Set(files.map(rel));
     expect(files.length).toBeGreaterThan(3000);
     for (const probe of [
       REVENUE_PANEL,
       'packages/civitai-db/src/kysely.ts',
-      'apps/moderator/svelte.config.js.d.ts',
+      'packages/civitai-ui/src/lib/components/selection/selection-checkbox.svelte',
+      'apps/training-studio/svelte.config.js',
       'scripts/typecheck.mjs',
+      'scripts/graceful-fs-patch.cjs',
     ]) {
-      expect(
-        files.map(rel).some((f) => f === probe || f.startsWith(probe.split('/')[0] + '/'))
-      ).toBe(true);
+      expect(walked.has(probe)).toBe(true);
     }
+    // ...and a count per non-`.tsx?` class, so dropping one extension from CODE_FILES
+    // fails even if that class's named probe is later deleted from the tree.
+    const byExt = (re: RegExp) => files.filter((f) => re.test(f)).length;
+    expect(byExt(/\.svelte$/)).toBeGreaterThan(400);
+    expect(byExt(/\.mjs$/)).toBeGreaterThan(40);
+    expect(byExt(/\.js$/)).toBeGreaterThan(100);
 
     const countOf = (needle: string) => {
       const re = new RegExp(String.raw`\b${needle}\b`, 'g');

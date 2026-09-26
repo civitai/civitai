@@ -60,8 +60,15 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // 2026-09-25. Nothing in THIS file writes a row or touches a Buzz account, but the
 // hops that do have shipped: `author-fee-charge.service.ts` (the viewer debit at
 // submit), `author-fee-accrual.service.ts` (the ledger) and
-// `author-fee-settlement.service.ts` (the daily mint). `observeBlockAuthorFee` is
-// this module's only production entry point, not the rail's.
+// `author-fee-settlement.service.ts` (the daily mint).
+//
+// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE — the shape that made
+// the "ONLY entry point" claim survive a rewrite. `observeBlockAuthorFee` is the
+// only one that reads the flag itself; the charge path enters at
+// `computeBlockAuthorFee`, whose gate is `quoteBlockAuthorFeeUncounted`'s flag read
+// in `author-fee-charge.service.ts`. So "flag-gated in this file" is not the same
+// set as "reachable in production", and a change to `computeBlockAuthorFee` is a
+// change to the live money path.
 //
 // 🔴 A RECIPIENT IS NOW DERIVED FROM `appId`, SO THE MISATTRIBUTION GATE IN
 // `src/pages/api/v1/blocks/dev-token.ts` IS LIVE RATHER THAN PENDING. The charge
@@ -548,7 +555,9 @@ export type BlockAuthorFeeObservation =
   | { readonly observed: true; readonly computation: BlockAuthorFeeComputation };
 
 /**
- * This module's ONE production entry point, and the flag gate.
+ * The TELEMETRY entry point, and the only one in this file that reads the flag.
+ * `computeBlockAuthorFee` is the other production entry point here and is gated a
+ * level up, in `author-fee-charge.service.ts` — see the banner at the top.
  *
  * 🔴 FAIL-CLOSED AND FIRST. The flag is read before anything else happens —
  * before the base is inspected and before any parameter is resolved. With

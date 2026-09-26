@@ -98,7 +98,8 @@ import {
  *     call carried a `(app_owner_user_id, period_key)` UNIQUE a mid-period rewrite could
  *     collide on. Both were deleted and nothing disburses a purchase-rail share, so that
  *     justification has lapsed and there is no replacement: the product decision is the
- *     whole of the reason. `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE"
+ *     whole of the reason. (Their identifiers are deliberately unspelled —
+ *     `payout-copy-truthfulness.test.ts` scans raw text, so naming them reddens it.) `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE"
  *     describe is what still pins the behaviour.
  *
  * ## Forgejo

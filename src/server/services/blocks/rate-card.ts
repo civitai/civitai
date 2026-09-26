@@ -196,9 +196,12 @@ export const RATE_CARD_V3: RateCard = {
  * card field itself has now been removed from `RateCard` and from every card.
  *
  * 🔴 DO NOT RE-ADD A SPEND RATE TO A NEW CARD FOR SHAPE STABILITY. Deleting it did
- * not violate card immutability: `recordSpendAttribution` hardcodes
- * `UNRATED_RATE_CARD_VERSION`, so no spend row ever stamped 'v4' or 'v5' and none
- * paid out under a card's spend rate.
+ * not violate card immutability. Current source only shows that
+ * `recordSpendAttribution` hardcodes `UNRATED_RATE_CARD_VERSION` TODAY, which cannot
+ * witness the past, so the historical half was measured rather than inferred: a
+ * production `GROUP BY rate_card_version` over the whole spend table returned a
+ * single 'unrated' group, self-discriminating, so no row ever stamped 'v4' or 'v5'.
+ * The figures are in the removing PR's description, not here.
  *
  * V4 itself is immutable and STAYS: it carries V3's purchase percentages
  * (15/15/25/0/0) and purchase rows DO stamp a real version via
