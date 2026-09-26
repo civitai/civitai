@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * every future continuation silently unshifted.
  */
 
-vi.mock('@civitai/client', () => ({ handleError: vi.fn() }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
@@ -141,7 +140,10 @@ describe('createTrainingWorkflow domain gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setEnv({ WEBHOOK_URL: 'https://webhook.test', WEBHOOK_TOKEN: 't' });
-    vi.mocked(submitWorkflow).mockResolvedValue({ id: 'wf-1', transactions: { list: [] } } as never);
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      id: 'wf-1',
+      transactions: { list: [] },
+    } as never);
     dbMock.dbWrite.modelFile.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
   });

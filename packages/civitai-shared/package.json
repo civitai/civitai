@@ -17,6 +17,7 @@
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
+    "./training-audio": "./src/training-audio.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
     "./job-queue": "./src/job-queue.ts"
   },

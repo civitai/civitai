@@ -29,6 +29,9 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
+  trainingDetailsBaseModelsMing,
+  trainingDetailsBaseModelsQwen21,
+  trainingDetailsBaseModelsYue2,
   trainingDetailsBaseModelsAnima,
   trainingDetailsBaseModelsBoogu,
   trainingDetailsBaseModelsKrea2,
@@ -508,6 +511,21 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelMing =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMing as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelQwen21 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsQwen21 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelYue2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsYue2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAnima =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
@@ -733,6 +751,28 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-08-27')}
                     />
                   )}
+                  {features.mingTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Ming Image"
+                      value={baseModelMing}
+                      baseType="ming"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.qwen21Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Qwen Image 2.1"
+                      value={baseModelQwen21}
+                      baseType="qwen21"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   {features.ideogram4Training && (
                     <ModelSelector
                       selectedRun={selectedRun}
@@ -748,6 +788,17 @@ export const ModelSelect = ({
               )}
               {mediaType === 'audio' && (
                 <>
+                  {features.yue2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="cyan"
+                      name="YuE2"
+                      value={baseModelYue2}
+                      baseType="yue2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="violet"
@@ -896,6 +947,9 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx25' ||
                   selectedRun.baseType === 'minimaxh3' ||
                   selectedRun.baseType === 'hidream-o1' ||
+                  selectedRun.baseType === 'ming' ||
+                  selectedRun.baseType === 'qwen21' ||
+                  selectedRun.baseType === 'yue2' ||
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'krea2' ||

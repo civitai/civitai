@@ -133,6 +133,7 @@ describe.each([
       },
     });
     expect(music.input).toEqual({
+      loras: {},
       style: { $ref: '$0', path: 'output.parsed.caption' },
       lyrics: { $ref: '$0', path: 'output.parsed.lyrics' },
       seed: 42,
@@ -170,6 +171,7 @@ describe.each([
       {
         $type: 'yuE2',
         input: {
+          loras: {},
           style: base.musicDescription,
           lyrics: base.lyrics,
           seed: 42,

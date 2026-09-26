@@ -16,6 +16,7 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
     const music: YuE2StepTemplate = {
       $type: 'yuE2',
       input: {
+        loras: {},
         ...shared,
         // The orchestrator resolves template references before validating YuE2Input;
         // the generated client only describes the resolved string fields.
@@ -32,6 +33,7 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
     {
       $type: 'yuE2',
       input: {
+        loras: {},
         ...shared,
         style: data.musicDescription,
         lyrics: data.lyrics,

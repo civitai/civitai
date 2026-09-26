@@ -1,3 +1,4 @@
+import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
 // pass the trace mode from env and the per-user signal callbacks; the web-component backend passes
@@ -144,7 +145,10 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
           ...(traceMode !== 'none' ? { trace: traceMode } : {}),
           trainingData,
-          samples: { prompts: run.prompts },
+          samples: {
+            prompts:
+              run.ecosystem === 'yue2' ? run.prompts.map(formatYue2SamplePrompt) : run.prompts,
+          },
         },
       };
 
