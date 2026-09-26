@@ -85,41 +85,63 @@
 -- filled from raw tables for the platform's whole history, while the hourly table only ever
 -- holds 90 days. That is where the long history in "users over time" actually comes from.
 
--- ── Preflight — settle these THREE before applying ────────────────────────
--- None is a guess to be discovered at 3am; each has a one-command answer, and each changes
--- the file below if it comes back the other way.
+-- ── Preflight — MEASURED 2026-09-25, all read-only ────────────────────────
+-- Re-derive rather than trusting these; they are a snapshot, and the point of recording them
+-- is that a re-application can be CHECKED against them.
 --
--- (1) Is `orchestration.jobs` ORDER BY `createdAt` first? The whole per-run cost model assumes
---     every arm is a primary-key range scan, which is what
---     2026-09-04-user-activity-rollup.sql verified for the four `default.*` activity sources
---     ("All four are ORDER BY time first (checked in `system.tables`, 2026-09-04)").
---     `orchestration.jobs` is in a different database and was NOT part of that check, and this
---     repo does not carry its DDL. If it does not sort by `createdAt` first, the generators arm
---     is a table-wide scan every hour and needs its own approach.
---       SELECT database, table, sorting_key FROM system.tables
---       WHERE (database, table) IN (('orchestration','jobs'), ('default','buzzTransactions'),
---                                   ('default','views'), ('default','pageViews'),
---                                   ('default','reactions'), ('default','userActivities'));
---     (`default.buzzTransactions` is already known good — ORDER BY (date, fromAccountId,
---     toAccountId), and `date` is a DateTime, not a Date, so hourly bucketing of buyers is
---     possible at all. Both read out of containers/clickhouse/docker-init/init.sh.)
+--   SELECT database || '.' || table AS t, sorting_key, partition_key, total_rows
+--   FROM system.tables
+--   WHERE (database='default' AND table IN ('views','pageViews','reactions','userActivities','buzzTransactions'))
+--      OR (database='orchestration' AND table='jobs') ORDER BY t;
 --
--- (2) Does an INSERT naming a COLUMN SUBSET fill the omitted AggregateFunction columns with
---     EMPTY states? The arms below do not rely on it — each writes all seven columns, using
---     `-StateIf(..., 0)` to build an explicitly empty state for the six it does not own — so
---     this is an optimisation, not a blocker. Verify before simplifying them:
+--   table                      sorting_key                                  partition_key           rows
+--   default.views              time, entityType, entityId, userId           toYYYYMM(createdDate)   7.95B
+--   default.pageViews          time, pageId, userId                         toYYYYMM(time)          4.75B
+--   default.reactions          time, reaction, entityId, userId             toYYYYMM(createdDate)   865M
+--   default.userActivities     time, type, userId                           toYear(createdDate)     45.8M
+--   default.buzzTransactions   date, fromAccountId, toAccountId, ...        toYYYYMM(date)          1.61B
+--   orchestration.jobs         createdAt                                    (NONE)                  2.63B
+--   civitai_pg.User            —                                            —                       13.2M
+--
+-- (1) ✅ PASSES. `orchestration.jobs` sorts by `createdAt` FIRST, so the generators arm is a
+--     primary-key range scan like the other five and the per-run cost model holds. This was the
+--     one that could have sunk the hourly design: 2026-09-04-user-activity-rollup.sql verified
+--     "ORDER BY time first" for the four `default.*` activity sources only, and this table is in
+--     another database that check never covered.
+--
+--     🔴 But it has NO PARTITION KEY, so the backfill cannot be chunked by partition the way the
+--     `default.*` arms can. Chunk it by explicit `createdAt` RANGE instead — which is what the
+--     generators arm below does, and which still prunes, because `createdAt` is the sort key.
+--     Do not "fix" that arm to use a `toYYYYMM(...)` predicate to match its neighbours.
+--
+--     🔴 And `createdAt` is `DateTime64(3)`, not `DateTime` — the only column here that is.
+--     `toStartOfHour` of a DateTime64 does not reliably give a DateTime across versions, so the
+--     generators arm wraps it in `toDateTime(...)` to match the `bucket` column exactly. An
+--     implicit cast here is the kind of thing that works until it silently does not.
+--     Other measured types on that table: `userId` Int32, `cost` Float64,
+--     `jobType` LowCardinality(String).
+--
+-- (2) NOT RUN — it writes, and the tables do not exist yet. It is an optimisation, not a
+--     blocker: every arm below writes all seven columns explicitly, using `-StateIf(..., 0)`
+--     for the six it does not own, so nothing depends on the answer. Run it after the CREATEs
+--     only if you want to simplify the arms to a column subset:
 --       INSERT INTO default.user_population_hourly (bucket, views_state)
 --         SELECT toDateTime('2000-01-01 00:00:00'), uniqCombinedState(toInt32(1));
 --       SELECT uniqCombinedMerge(generators_state) FROM default.user_population_hourly
 --         WHERE bucket = toDateTime('2000-01-01 00:00:00');   -- expect 0, not an error
 --       ALTER TABLE default.user_population_hourly DELETE WHERE bucket = toDateTime('2000-01-01 00:00:00');
 --
--- (3) How heavy is the `civitai_pg.User` arm? It is the only arm that leaves ClickHouse — it
---     reads the production Postgres through the bridge. Per-hour it is a narrow `createdAt`
---     range and fine; the FULL-HISTORY daily backfill is a scan of the whole User table and is
---     the one step in this file that puts load on the main civitai database. Chunk it by month
---     (the backfill below already does) and run it off-peak.
---       SELECT count() FROM civitai_pg.User;
+-- (3) ✅ REACHABLE, and the size is now known: `civitai_pg.User` holds 13,239,217 rows. Per-hour
+--     that arm is a narrow `createdAt` range and cheap. The FULL-HISTORY daily backfill is a
+--     13.2M-row scan through the Postgres bridge and is the one step in this file that puts load
+--     on the main civitai database — chunk it by month (the backfill below does) and run it
+--     off-peak.
+--
+-- Also confirmed: there is NO `metrics` database (the databases are INFORMATION_SCHEMA, buzz,
+-- civitai_pg, clickpipes, cost, cpu, default, information_schema, internal, kafka, monitoring,
+-- orchestration, plausible, release, storage, system), which is why these tables live in
+-- `default` alongside both precedents. And no `user_population%` table exists yet, so the
+-- CREATEs below are genuinely creating, not silently adopting something.
 
 -- ── Table 1: hourly, 90-day TTL ───────────────────────────────────────────
 
@@ -229,13 +251,16 @@ SETTINGS index_granularity = 8192;
 -- of buckets, which the flat per-user rollup in the 2026-09-04 file did not have to carry.
 --
 -- ⚠️ The partition expressions DIFFER per table, and copying the wrong one prunes NOTHING and
--- silently gives you a full scan per "partition" — the 2026-09-04 file flags the same trap:
+-- silently gives you a full scan per "partition" — the 2026-09-04 file flags the same trap.
+-- Measured 2026-09-25 (the full table is in the preflight block above):
 --   default.views, default.reactions   PARTITION BY toYYYYMM(createdDate)
---   default.pageViews                  PARTITION BY toYYYYMM(time)
---   default.userActivities             PARTITION BY toYear(createdDate)
--- Confirm against system.tables.partition_key before running, do not trust this list:
+--   default.pageViews                  PARTITION BY toYYYYMM(time)      -- `time`, not createdDate
+--   default.userActivities             PARTITION BY toYear(createdDate) -- a YEAR, so chunks are big
+--   default.buzzTransactions           PARTITION BY toYYYYMM(date)
+--   orchestration.jobs                 NO PARTITION KEY — chunk by createdAt range instead
+-- Re-confirm rather than trusting the list; it is a snapshot:
 --   SELECT table, partition_key FROM system.tables WHERE database = 'default'
---     AND table IN ('views','pageViews','reactions','userActivities');
+--     AND table IN ('views','pageViews','reactions','userActivities','buzzTransactions');
 --
 -- Example — the `views` arm of the DAILY backfill, one month. Repeat for every value of
 --   SELECT DISTINCT toYYYYMM(createdDate) AS p FROM default.views ORDER BY p;
@@ -264,7 +289,11 @@ GROUP BY day;
 --
 -- Generators — the three guards are byte-identical to pulse panels 15/16/17/21. Do not
 -- "clean up" the regex or the cost bound; any drift makes the new panel disagree with the old
--- numbers for a reason nobody will find. Time column is `createdAt`, not `time`.
+-- numbers for a reason nobody will find. Time column is `createdAt`, not `time`, and it is a
+-- `DateTime64(3)` — see preflight 1. `toDate()` of a DateTime64 is unambiguous so the daily arm
+-- needs no cast; the HOURLY arm does (`toDateTime(toStartOfHour(createdAt))`).
+-- The range predicate replaces a partition filter here: this table has no partition key, but
+-- `createdAt` is its sort key, so the range still prunes.
 
 INSERT INTO default.user_population_daily
 SELECT
@@ -328,6 +357,44 @@ GROUP BY day;
 -- Run it AFTER the daily backfill: if it has to be abandoned part-way the daily table still
 -- carries the history, and the panels still work.
 
+
+-- ── Pre-apply validation — MEASURED 2026-09-25, read-only ─────────────────
+-- Run against live ClickHouse BEFORE any DDL existed, by stripping each arm's `INSERT INTO`
+-- and wrapping the remaining SELECT in a counter. That exercises every column name, guard,
+-- bucket expression and state combinator without writing anything.
+--
+-- The instrument was validated first: an arm with `userId` replaced by a nonexistent column
+-- returned `Code: 47 … Missing columns`, so a green result below is a claim about the SQL and
+-- not about a probe wired to nothing.
+--
+--   arm                     buckets     users    time
+--   views_state                   4    35,590     0.2s
+--   pageviews_state               4    38,917     0.2s
+--   reactions_state               4     4,650     0.2s
+--   useractivities_state          4     3,957     0.2s
+--   generators_state              4     4,437     0.2s
+--   buyers_state                  4        77     0.2s
+--   signups_state                 4       787     2.2s   <- the Postgres bridge, as expected
+--
+-- Four buckets from a three-hour window is the designed shape (three whole hours plus the
+-- partial current one). ~3.4 s for a whole run, against an hourly period.
+--
+-- Two properties the whole design rests on, both confirmed rather than assumed:
+--
+--   -- merge-then-re-emit round-trips, which is what the daily roll does (expect 100 twice)
+--   SELECT uniqCombinedMerge(rolled) FROM (
+--     SELECT uniqCombinedMergeState(st) AS rolled FROM (
+--       SELECT uniqCombinedState(toInt32(number)) AS st FROM numbers(100) GROUP BY number % 7));
+--   -- (and the same with uniqExact, for signups_state)
+--
+--   -- 🔴 IDEMPOTENCY: merging a state with ITSELF does not double (expect 100, NOT 200)
+--   SELECT uniqCombinedMerge(st) FROM (
+--     SELECT uniqCombinedState(toInt32(number)) AS st FROM numbers(100)
+--     UNION ALL SELECT uniqCombinedState(toInt32(number)) AS st FROM numbers(100));
+--
+-- Both returned exactly 100. That second one is the property that makes re-runs, catch-ups and
+-- overlapping backfills safe, so it is worth re-running after any ClickHouse upgrade rather
+-- than taking it on trust.
 
 -- ── Verification ──────────────────────────────────────────────────────────
 -- 🔴 Reconciliation is the check that matters, and it is the one that can actually fail. Run

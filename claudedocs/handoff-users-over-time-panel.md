@@ -106,7 +106,32 @@ sources adding +7.5% users over 30d).
    another database and was NOT part of that check, and this repo does not carry its
    DDL. If it sorts otherwise, the generators arm is a full scan every hour and needs
    rethinking. forcing: none
-4. Implement the hourly job in civitai following existing patterns:
+4. ~~Implement the hourly job~~ — DONE and verified, on the same branch:
+   - `src/server/jobs/user-population-snapshot.sql.ts` — pure SQL builders, no imports
+     (same split as `src/server/metrics/appListing.metrics.sql.ts`, so the tests need no
+     ClickHouse mock).
+   - `src/server/jobs/user-population-snapshot.ts` — the job, `15 * * * *`,
+     `LOOKBACK_HOURS = 3`, seven arms serially then the daily roll.
+   - Registered in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
+   - `src/server/jobs/__tests__/user-population-snapshot.sql.test.ts` — 28 tests.
+   **Verified, with the instrument checked first in each case:**
+   - Every arm's SELECT run against LIVE ClickHouse (read-only, `INSERT INTO` stripped).
+     All seven parse and return the designed 4 buckets from a 3h window. Per-run cost
+     ≈3.4s total — 0.2s per arm except signups at 2.2s (the Postgres bridge).
+     Negative control: an arm with a nonexistent column returned `Code: 47`, so the
+     green is about the SQL and not a probe wired to nothing.
+   - Idempotency confirmed empirically, not assumed: merging a state with itself
+     returns 100, not 200. MergeState round-trip returns 100 for both combinators.
+   - Typecheck: 52 errors on the branch, **52 on an `origin/main` baseline worktree,
+     identical error sets** — zero introduced. (Those 52 are pre-existing.)
+   - Mutation sweep: 7 mutants, each killed by its SPECIFIC intended test, suite green
+     again on restore. Covers the cost bound, the future bound, the signups combinator,
+     a dropped ledger column, the buyers id column, MergeState→Merge, and the hour cast.
+   **Still NOT done for step 4:** the DDL is not applied and the backfill has not run,
+   so the tables do not exist and the job would fail if it ran. Apply the migration
+   manually first — that is deliberate, per repo policy.
+
+   Original notes for reference:
    `src/server/jobs/user-activity-rollup.ts` (closest precedent — CH rollup cron,
    idempotent-overlap design) and `src/server/jobs/update-metrics.ts` /
    `base.metrics.ts`. Register in `src/pages/api/webhooks/run-jobs/[[...run]].ts`.
