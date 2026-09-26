@@ -105,7 +105,8 @@ export class ModelSearchMeiliTimeoutError extends Error {
  * catalog uses `lastVersionAt`. The real-value fields (`sortMetrics.downloadCount`,
  * `lastVersionAtUnix`) exist in the index but are not sortable until an index reset ships; repoint
  * here and in `model.parser.ts` together when it does. MostLiked is thumbs-up, as in the catalog.
- * `ImageCount`/`RecentlyAdded` have no attribute and fall through to relevance.
+ * `ImageCount`/`RecentlyAdded` have no attribute and fall through to relevance. `period` never
+ * reaches Meili: the top-N is picked on all-time values and the DB applies the period afterwards.
  */
 export function meiliSortForModelSort(sort: ModelSort | undefined): string[] | undefined {
   let attribute: string | undefined;
