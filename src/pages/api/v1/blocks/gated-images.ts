@@ -210,8 +210,6 @@ export const baseHandler = withAxiom(async function handler(
   } catch (error) {
     // `handleEndpointError`, so failures answer `{ message }` and this route
     // stays off the known-leak list in `rest-error-envelope-ledger.test.ts`.
-    // Every refusal inside the shared body is a TRPCError and maps to its
-    // matching status here — the anon refusal to 401, the kill-switch to 403.
     return handleEndpointError(res, error);
   }
 });

@@ -353,15 +353,22 @@ describe('GET /api/v1/blocks/gated-images — the gates ahead of the clamp', () 
   });
 
   it('propagates the App-Blocks kill-switch refusal and never reads the DB', async () => {
+    // This case mocks the gate, so the fixture is only as good as whoever typed it:
+    // `assertAppBlocksEnabledForTokenUser` throws `UNAUTHORIZED`, never `FORBIDDEN`.
     mockAssertEnabled.mockRejectedValue(
-      new TRPCError({ code: 'FORBIDDEN', message: 'App Blocks is not enabled for this account' })
+      new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' })
     );
 
     const { req, res } = createMocks({ query: { ids: '1' } });
     await (baseHandler as any)(req, res);
 
     expect(mockHandleEndpointError).toHaveBeenCalledTimes(1);
-    expect((mockHandleEndpointError.mock.calls[0][1] as TRPCError).code).toBe('FORBIDDEN');
+    const err = mockHandleEndpointError.mock.calls[0][1] as TRPCError;
+    expect(err.code).toBe('UNAUTHORIZED');
+    // INVARIANT GUARD, not regression coverage: the anon case shares this CODE, and
+    // `beforeEach` resets the claims so it cannot fire here. This pins that it stays
+    // that way.
+    expect(err.message).toBe('Apps are not enabled');
     expect(queryRaw).not.toHaveBeenCalled();
   });
 
