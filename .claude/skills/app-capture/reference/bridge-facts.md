@@ -35,7 +35,7 @@ Driven through the browser bridge at `<devrc>/scripts/browser-bridge/browser` (i
    2026-08-30): user activation is not what stops a spend. The mechanism is deliberately
    not described here — this repo is public; see `SKILL.md` → "The spend path". The
    `trusted:false`/`trusted:true` distinction above is still **true of the events**; it simply
-   is not what stops a spend. Full retraction and its controls: `SKILL.md` → "The spend path".
+   is not what stops a spend. Full retraction: `SKILL.md` → "The spend path".
    The guard's own justification is unaffected — it rests on the event distinction, not on the
    server's behaviour.
 2. **The frame id changes every load** (819, 821, 828, 830, 832 in one session). A `nav`

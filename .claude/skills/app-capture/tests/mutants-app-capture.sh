@@ -1391,8 +1391,7 @@ apply_mutant M141 frame.py F10f "frame-rect-js stops checking frameHost — a ba
 
 # ── the DOM-scoping guard (G18) ─────────────────────────────────────────────
 # 🔴 THE HAZARD THESE LOCK IS NOT "the selector finds nothing". A --frame op is
-# dispatched synthetically (trusted:false — the reason the spend path rejects
-# it); a TOP-FRAME click/type/key goes through CDP Input and is trusted:true. So
+# dispatched synthetically (trusted:false — which some controls ignore); a TOP-FRAME click/type/key goes through CDP Input and is trusted:true. So
 # every mutant below re-opens a second route to a trusted event that spells no
 # `xdotool` and that guard_no_actuation therefore cannot see. Each is a
 # NARROWING or a DROP, not a deletion of the whole function, because a deleted

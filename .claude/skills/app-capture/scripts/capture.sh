@@ -33,7 +33,6 @@
 # 🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #   hidden boot 4/4  -> the private infra repo's app-capture-hidden-tab-boot-2026-08-24.md
 #   screenshot hang  -> the private infra repo's app-capture-occlusion-refutation-2026-08-24.md
-# (the claudedocs/... records below live in the PRIVATE infra repo, not here)
 #   --keep-tab        leave the tab open when the run ends, so the app can be
 #                     inspected by hand afterwards. Implied by --tab.
 #   --no-render       measure and check the crops but skip the imagemagick

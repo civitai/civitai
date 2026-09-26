@@ -57,7 +57,6 @@
 #     🔴 TWO CLAIMS, TWO DOCS — cite the right one or the number is not there:
 #       hidden boot 4/4  -> the private infra repo's app-capture-hidden-tab-boot-2026-08-24.md
 #       screenshot hang  -> the private infra repo's app-capture-occlusion-refutation-2026-08-24.md
-#     (the claudedocs/... records below live in the PRIVATE infra repo, not here)
 #     🔴 ACTIVATION IS NOT ACTUATION, and the two are now enforced SEPARATELY:
 #     activation only puts a window in front; what makes a spend possible is an
 #     OS-level ACTUATION (`xdotool key`) landing on a focused control. So
@@ -69,11 +68,16 @@
 #     nonexistent slug. Capturing it would produce four perfectly framed pictures
 #     of an error page, so the 404/logged-out check runs BEFORE anything else.
 #
-# 🔴 THE SPEND PATH REJECTS SYNTHETIC EVENTS. Measured on panorama-360: a
-# synthetic in-frame click works on an ordinary control and does NOTHING AT ALL
-# on the Generate button. Only a trusted OS keypress on the focused control
-# fires it. That is what `trustedKey` emits, and it is unreachable without the
-# explicit --trusted flag.
+# 🔴 A SYNTHETIC IN-FRAME CLICK CAN SPEND. DO NOT TREAT THE PLATFORM AS THE GUARD.
+# Measured on panorama-360: a synthetic in-frame click worked on an ordinary
+# control and did NOTHING on the Generate button. That observation used to be
+# written up here as "the spend path rejects synthetic events" -- a platform
+# guarantee. IT IS NOT ONE, and the counter-example is in this skill's own
+# recipes: on sensei a synthetic in-frame click on the send button SUBMITTED FOR
+# REAL and spent Buzz (see sensei.json `_notShootable`, measured 2026-08-30).
+# What actually keeps a capture from spending is THIS FILE's refusals and the
+# per-recipe never-list -- not anything upstream. `trustedKey` remains the way to
+# drive a real activation deliberately, behind the explicit --trusted flag.
 #
 # 🔴 DO NOT VERIFY A SPEND WITH A BUZZ-BALANCE DELTA. Some apps bill per GPU
 # second ON COMPLETION, so the balance does not move at submission. A misread of
@@ -285,9 +289,10 @@ def validate_click_ledger(r):
     """🔴 "capture never mutates" WAS ONLY TRUE OF THE SPEND PATH AND THE
     INJECTED JS. A recipe's own `click` had no restriction at all.
 
-    The skill's safety argument is that a synthetic in-frame click does nothing
-    on a money button, because the spend path rejects untrusted events. That is
-    measured, and it is NARROW: it is a fact about the SPEND path. An ordinary
+    The skill's safety argument rests on THIS FILE's refusals and the
+    per-recipe never-list, NOT on any upstream rejection of synthetic events:
+    a synthetic in-frame click has been measured to submit and spend (sensei).
+    Whatever a given button does is a fact about that button. An ordinary
     authenticated mutation — post, vote, edit, withdraw — has no such rejection,
     and this skill's own docs say synthetic clicks "drive the vast majority of
     apps". Measured 2026-08-23 on app-requests, which now renders `submit-btn`,
@@ -591,9 +596,9 @@ def guard_dom_scoping(steps):
     🔴 WHY THIS IS A SAFETY GUARD AND NOT A CORRECTNESS ONE. The doc's reason for
     guard 1 is "top-frame selectors find nothing here", i.e. a wrong answer. The
     worse half is that they find something: the bridge dispatches a `--frame`
-    op as a SYNTHETIC in-frame event (`trusted:false`, which the spend path
-    rejects — that is the measured fact this skill's whole no-spend argument
-    rests on), but a TOP-FRAME `click`/`key`/`type` goes through CDP
+    op as a SYNTHETIC in-frame event (`trusted:false` — which some controls
+    ignore and others, measured, act on), but a TOP-FRAME `click`/`key`/`type`
+    goes through CDP
     `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` / `Input.insertText`
     and is `trusted:true` — indistinguishable from a human's
     (`<devrc>/scripts/browser-bridge/extension/service_worker.js`, the `click`,
@@ -611,8 +616,9 @@ def guard_dom_scoping(steps):
                 "step %d is a %r op with no --frame. App Blocks render in a "
                 "cross-origin iframe, so this addresses the HOST page: it reads "
                 "the wrong document, and for click/type/key the bridge takes its "
-                "CDP Input path there, which delivers a TRUSTED event the spend "
-                "path does NOT reject. Emit it through `emit_dom`, which cannot "
+                "CDP Input path there, which delivers a TRUSTED event — the "
+                "strongest kind, and the one most likely to actuate. Emit it "
+                "through `emit_dom`, which cannot "
                 "forget the flag." % (i, st["op"]))
 
 
@@ -1229,8 +1235,8 @@ def emit_trusted(p, a, recipe, trusted, warnings):
     # screen are the xdotool pair below. Do not read this step as guaranteeing
     # Brave is focused when the keypress lands.
     p.emit_tab("activate", [],
-               "bring Brave forward for the trusted keypress — required because the "
-               "money path rejects synthetic events. NOTE: this is the ONE activate "
+               "bring Brave forward for the trusted keypress — required because a "
+               "synthetic event is not reliable here. NOTE: this is the ONE activate "
                "that sends no focus flag (see the comment above — what a spend path "
                "should ask for is unsettled), so the i3 raise is withheld only "
                "because capture.sh runs ops on a pipe; focus rests on the ungated "

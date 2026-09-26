@@ -578,8 +578,9 @@ attach. The gate says so in its verdict, because it cannot check it.
 ## 🔴 The spend path (`--trusted`) — the mechanics
 
 Measured on panorama-360: a synthetic in-frame click works on an ordinary control
-and does **nothing at all** on the Generate button. The money path rejects
-untrusted events. So `trustedKey` emits: focus in-frame → **verify**
+and does **nothing at all** on the Generate button. A synthetic click was observed not to actuate that
+particular button — which is an observation about the button, not a platform
+guarantee; elsewhere a synthetic click has spent. So `trustedKey` emits: focus in-frame → **verify**
 `document.activeElement` → record the focused X window → `browser activate` →
 **re-focus** (activation can move focus) → trusted keypress → **restore the
 operator's window immediately**. Never a coordinate click: the maths spans an

@@ -29,7 +29,7 @@
       "actions": [
         {
           "click": "[data-testid=\"pn-preset-alpine\"]",
-          "_comment": "a preset chip — verified clickable and verified to take effect (it sets pn-prompt.value). An ORDINARY control: a synthetic in-frame click works here. That is the control half of the measurement that showed the SPEND path rejecting synthetic events."
+          "_comment": "a preset chip — verified clickable and verified to take effect (it sets pn-prompt.value). An ORDINARY control: a synthetic in-frame click works here. That is the control half of the measurement of which controls a synthetic click actuates."
         }
       ],
       "caption": "Presets set the prompt and the render settings in one click.",

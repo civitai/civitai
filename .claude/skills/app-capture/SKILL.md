@@ -223,7 +223,9 @@ session on trusted-click theories"*), where the real blocker was a throttled bac
 
 🔴 **So the CAUSE of the dead in-frame click is NOT established** — only that it is not an
 untrusted-event rejection. **Keep using `trustedKey`**: the operational rule is unchanged and
-rests on the reproducible observation, not on the retracted mechanism.
+rests on the reproducible observation, not on the retracted mechanism. 🔴 **And do
+not reason about this path's authorization from these files at all** — they are
+public and deliberately incomplete on it; read the server, or ask an infra owner.
 
 🔴 **TWO REFUSERS, NOT ONE** — "capture.sh emits no bridge op of its own" is retracted. It
 emits lifecycle/observe ops plus **one** DOM op (the top-frame rect probe), refused by

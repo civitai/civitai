@@ -2418,7 +2418,8 @@ PATS = [
     r"(?<![`\w./-])(\.claude/skills/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)",  # unbackticked
 ]
 docs = [SKILL] + sorted(glob.glob(os.path.join(os.path.dirname(SKILL), "reference", "*.md")))
-raw = "\n".join(open(d).read() for d in docs)
+bodies = [open(d).read() for d in docs]
+raw = "\n".join(bodies)
 
 # 🔴 THE BARE PATTERN IS FENCE-BLIND AND THAT IS A FALSE-POSITIVE SOURCE, measured
 # in round 2: a legitimate ```bash example writing to a path that does not exist yet
@@ -2427,11 +2428,30 @@ raw = "\n".join(open(d).read() for d in docs)
 # bodies carry no backticks. Stripping fenced blocks before applying the bare pattern
 # restores that immunity without giving up the shape. Backticked and link-destination
 # refs are still read from the WHOLE text: those spellings are claims wherever they sit.
-defenced = re.sub(r"^```.*?^```", "", raw, flags=re.S | re.M)
-refs = sorted(set(
-    [r for p in PATS[:2] for r in re.findall(p, raw)] +
-    re.findall(PATS[2], defenced)
-))
+# 🔴 PER DOCUMENT, NOT ON THE CONCATENATION, and not backtick-only. Two ways the
+# first version could go quietly blind rather than loudly red: (a) an UNBALANCED
+# fence in one document pairs with an opener in the NEXT one and strips across the
+# boundary, deleting real prose from the scan; (b) CommonMark also allows `~~~`
+# fences and allows them indented up to 3 spaces -- this corpus already carries 4
+# indented fence markers -- so the false positive the fence-skip exists to prevent
+# was still reachable one indent level away. Stripping per document bounds (a) to
+# the one file that is malformed; the widened opener closes (b).
+FENCE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,}).*?^[ ]{0,3}\1", re.S | re.M)
+defenced = "\n".join(FENCE.sub("", b) for b in bodies)
+# 🔴 ONE EXTRACTION FUNCTION, USED BY THE SCAN *AND* BY THE WIRING CONTROLS BELOW.
+# An earlier control recomputed the patterns inline, so it proved each REGEX was
+# well-formed while the real pipeline could have any of them disconnected -- the
+# exact flaw it was written to close, one level up. Routing both through `extract`
+# is what makes a mutation of the wiring observable.
+def extract(_bodies):
+    _raw = "\n".join(_bodies)
+    _de = "\n".join(FENCE.sub("", b) for b in _bodies)
+    return sorted(set(
+        [r for p in PATS[:2] for r in re.findall(p, _raw)] +
+        re.findall(PATS[2], _de)
+    ))
+
+refs = extract(bodies)
 dead = [r for r in refs if not os.path.exists(os.path.join(ROOT, r))]
 
 # Positive control, PER PATTERN: each must be able to SEE a dead path in its own
@@ -2446,17 +2466,45 @@ for i, (p, sample) in enumerate((
 )):
     if not re.findall(p, sample):
         dead.append("POSITIVE CONTROL FAILED: pattern %d cannot match its own shape" % i)
-# and the de-fencing must not eat ordinary prose
-if not re.findall(PATS[2], re.sub(r"^```.*?^```", "", "see %s here" % probe, flags=re.S | re.M)):
+# 🔴 THE DE-FENCING CONTROLS MUST EXERCISE A REAL FENCE. An earlier version applied
+# the substitution to a sample containing NO fence, so it was a no-op that could
+# never fail. Both directions are asserted here.
+_fenced = "prose %s here\n```bash\ntouch %s\n```\n" % (probe, probe + ".fenced")
+_out = FENCE.sub("", _fenced)
+if probe + ".fenced" in _out:
+    dead.append("POSITIVE CONTROL FAILED: de-fencing did not strip a fenced block")
+if probe not in _out:
     dead.append("POSITIVE CONTROL FAILED: de-fencing removed unfenced prose")
+for _mark in ("~~~", "   ```"):
+    _alt = "%sbash\ntouch %s\n%s\n" % (_mark, probe + ".alt", _mark.strip() if _mark.strip() else _mark)
+    if (probe + ".alt") in FENCE.sub("", _alt):
+        dead.append("POSITIVE CONTROL FAILED: de-fencing missed a %r fence" % _mark.strip())
 # Floor: the corpus is known to name well over this many. A collapse to near-zero
 # means the docs were reworded out of the gate's reach, not that they got cleaner.
 if len(refs) < 10:
     dead.append("POSITIVE CONTROL FAILED: only %d skill refs extracted" % len(refs))
-# The tests dir must be among them, or the migration silently dropped its own
-# self-reference — the exact rot that made D2b necessary in the first place.
-if not any(r.startswith(PREFIX + "tests/") for r in refs):
-    dead.append("POSITIVE CONTROL FAILED: the corpus names no tests/ path")
+# 🔴 A PATTERN CAN BE WELL-FORMED AND NOT WIRED TO THE SCAN. Round 3 measured that
+# PATS[1] and PATS[2] each match ZERO refs in the live corpus, so either could be
+# disconnected entirely and every other check here would still pass -- the floor is
+# satisfied by PATS[0] alone. These drive the REAL `extract` with a planted ref in
+# each shape and require it to come back, which a disconnected pattern cannot do.
+# 🔴 EACH SHAPE NEEDS A PROBE ONLY ITS OWN PATTERN CAN MATCH, or the control passes
+# on a neighbour's behalf. Measured: with one shared probe, unhooking the
+# link-destination pattern still passed, because the BARE pattern also matches the
+# path inside `](...)`. So: the two non-bare probes sit OUTSIDE `.claude/skills/`,
+# which PATS[2] requires, and the bare probe carries no backticks and no `](`.
+_agent = ".claude/agents/definitely-not-here-%s.md"
+_shapes = [
+    ("backticked",       "wired-check `%s`"    % (_agent % "tick"), _agent % "tick"),
+    ("link-destination", "wired-check [d](%s)" % (_agent % "link"), _agent % "link"),
+    ("bare",             "wired-check %s"      % (PREFIX + "probe-bare.md"), PREFIX + "probe-bare.md"),
+]
+for _name, _line, _want in _shapes:
+    if _want not in extract(bodies + [_line]):
+        dead.append("POSITIVE CONTROL FAILED: the %s shape is not wired into the scan" % _name)
+# and the de-fencing must still be applied by `extract` itself
+if (probe + ".fenced") in extract(bodies + ["```bash\ntouch %s.fenced\n```" % probe]):
+    dead.append("POSITIVE CONTROL FAILED: extract() is not de-fencing the bare shape")
 print("SKILL_REFS=%d" % len(refs))
 print("\n".join("DEAD: " + d for d in dead))
 sys.exit(1 if dead else 0)
@@ -3919,7 +3967,7 @@ fi
 # arbitrary op name: until 2026-08-23 nothing refused a `click` emitted through
 # it, and `DOM_OPS` was declared and never read. That matters beyond reading the
 # wrong document — the bridge dispatches a --frame op SYNTHETICALLY
-# (`trusted:false`, which is precisely why the spend path rejects it) but takes
+# (`trusted:false`, which some controls ignore) but takes
 # the CDP Input path on the TOP frame, where the event is `trusted:true`. So an
 # unscoped click is a second way to deliver a trusted event, and it spells no
 # `xdotool`: guard_no_actuation would pass it.
