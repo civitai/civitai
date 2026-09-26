@@ -369,9 +369,12 @@ export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
   // revision of this comment pointed at `block_author_fee_charged_buzz_total`,
   // which does not exist: it was proposed in this same change and then deleted
   // for duplicating an authoritative record. The authorities for money are the
-  // Buzz ledger (`TransactionType.AppAuthorFee`, keyed by `blockAuthorFeeChargeKey`)
-  // and the `block_author_fee_accrual` table. This series differs from both by every
-  // skip arm and by the reserve clamp, so quoting it as revenue overstates it.
+  // Buzz ledger (`TransactionType.AppAuthorFee`, keyed by `blockAuthorFeeChargeKey`
+  // — plus `Fee` + `description LIKE 'App author fee%'` for rows written before
+  // that member existed, which are NOT back-filled, so a type-only ledger query
+  // under-counts the rail's history) and the `block_author_fee_accrual` table. This
+  // series differs from both by every skip arm and by the reserve clamp, so quoting
+  // it as revenue overstates it.
   help: 'Buzz the App Blocks per-generation author fee computes to on the sizing path (NOT what was debited), by coarse generation type',
   labelNames: ['coarse_type'] as const,
 });

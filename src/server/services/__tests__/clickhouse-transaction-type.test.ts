@@ -18,12 +18,23 @@ import { describe, expect, it } from 'vitest';
  * instead of a label. `buzz.schema.ts` already carried this rule for the
  * buzz-service API read path; neither ClickHouse site had it.
  *
- * 🔴 NOT A PURE REGRESSION SUITE. The numeric arm is red at the base commit for
- * `'27'` AND `'28'`; the name arm and the round-trip are invariant guards over
- * behaviour the base already had, and are labelled below.
+ * 🔴 NOT A PURE REGRESSION SUITE, AND THE BASE RED IS DEGENERATE. These symbols
+ * do not exist at the base commit, so running this file there produces
+ * `is not a function`, not a failed assertion — which is evidence about the
+ * import, not about behaviour. What demonstrates the defect in-tree is dropping
+ * the numeric arm from the helper and watching the numeric case redden on its own
+ * assertion. The name arm and the round-trips are invariant guards over behaviour
+ * the base already had, and are labelled as such.
+ *
+ * 🔴 AND A GREEN RUN HERE IS NOT A CLAIM THAT PRODUCTION USES ANY OF THIS. Every
+ * test below calls the helpers directly; a round-2 audit reverted both production
+ * call sites to the expression they replaced and this whole file stayed green. The
+ * wiring is pinned in `buzz-transactions-clickhouse-seam.test.ts` instead, which
+ * drives the real exported reader. Do not read coverage here as coverage there.
  */
 
 import {
+  clickhouseTransactionTypeExclusion,
   clickhouseTransactionTypePredicate,
   fromClickhouseTransactionType,
   toClickhouseTransactionType,
@@ -48,24 +59,19 @@ describe('fromClickhouseTransactionType', () => {
   });
 
   /**
-   * 🔴 THE REGRESSION ARM. Red at the base commit, which returned the string
-   * `'LicenseFee'` / `'AppAuthorFee'` from the enum's reverse mapping instead of
-   * a number — so the assertions below pin the TYPE as well as the value, because
-   * `27 == '27'` is not what went wrong: a string that happens to look right
-   * still renders as a bare number downstream.
+   * 🔴 THE ARM THAT CARRIES THE DEFECT. The open-coded expression this replaced
+   * returned the string `'LicenseFee'` / `'AppAuthorFee'` out of the enum's
+   * reverse mapping where a number was declared. `toBe` is `Object.is`, so it
+   * separates the two on its own — which is why there is one assertion here and
+   * not four: `typeof`, a `not.toBe` against the name, and a re-derivation
+   * through the enum were all subsumed by this line and could never report.
    */
   it('resolves a member stored as its NUMBER — the 0..26 ingest gap', () => {
     for (const [raw, member] of [
       ['27', TransactionType.LicenseFee],
       ['28', TransactionType.AppAuthorFee],
-    ] as const) {
-      const resolved = fromClickhouseTransactionType(raw);
-      expect(resolved).toBe(member);
-      expect(typeof resolved).toBe('number');
-      // What the base produced, and what a badge or a CSV cell renders from it.
-      expect(resolved).not.toBe(TransactionType[member]);
-      expect(TransactionType[resolved]).toBe(TransactionType[member]);
-    }
+    ] as const)
+      expect(fromClickhouseTransactionType(raw)).toBe(member);
   });
 
   it('round-trips every member through the name form', () => {
@@ -116,12 +122,35 @@ describe('clickhouseTransactionTypePredicate', () => {
   });
 
   /**
-   * The other half of the same claim, and the one that stops the fix being a
-   * blanket widening: for a member the map DOES enumerate, the numeric arm can
-   * never match a row, so nothing new is admitted.
+   * The numeric arm is carried for EVERY member, not only the past-26 ones — the
+   * builder does not branch, which is what keeps it one rule. That it admits
+   * nothing extra for an enumerated member is a premise about what the ingest MV
+   * writes, and this test does not establish it; `Number(type)` being a real
+   * member integer is what bounds the widening.
    */
-  it('stays exact for a member the ingest map enumerates', () => {
+  it('carries the numeric arm for an enumerated member too', () => {
     expect(clickhouseTransactionTypePredicate(TransactionType.Fee)).toBe("type IN ('fee','25')");
     expect(clickhouseTransactionTypePredicate(TransactionType.Tip)).toBe("type IN ('tip','0')");
+  });
+});
+
+describe('clickhouseTransactionTypeExclusion', () => {
+  /**
+   * 🔴 BOTH BUILDERS RETURN A WHOLE PREDICATE, NOT A VALUE LIST. Pinned because
+   * getting that wrong produced `type NOT IN (type NOT IN ('bank',…))` — a SQL
+   * syntax error on the gained/spent chart — while every other test in this file
+   * stayed green, since none of them looked at the returned string's shape. The
+   * assertion is the full normalised output for exactly that reason.
+   */
+  it('emits a complete NOT IN predicate carrying both spellings per member', () => {
+    expect(
+      clickhouseTransactionTypeExclusion([TransactionType.Bank, TransactionType.Extract])
+    ).toBe("type NOT IN ('bank','23','extract','24')");
+  });
+
+  // `NOT IN ()` is a syntax error, so an empty list must excuse itself rather
+  // than emit one and take the whole query down.
+  it('excludes nothing, rather than breaking the query, for an empty list', () => {
+    expect(clickhouseTransactionTypeExclusion([])).toBe('1 = 1');
   });
 });

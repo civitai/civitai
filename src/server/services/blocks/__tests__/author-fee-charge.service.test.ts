@@ -283,11 +283,16 @@ describe('chargeBlockAuthorFee — the debit', () => {
     // had gone missing (`deliver-creator-compensation.ts`, the "Creator tip
     // compensation" reword).
     expect(tx.type).toBe(TransactionType.AppAuthorFee);
-    // The WIRE VALUE, spelled out. Not redundant with the line above: this is the
-    // only assertion that survives the member being renumbered, collapsed back
-    // onto 25, or deleted while both call sites still reference it — all three of
-    // which leave `toBe(TransactionType.AppAuthorFee)` satisfiable, the last one
-    // vacuously, with `undefined` going to the ledger as the type.
+    // The WIRE VALUE, spelled out, and not redundant with the line above: this is
+    // the only assertion here that survives the member being renumbered, collapsed
+    // back onto 25, or deleted while both call sites still reference it — all three
+    // leave `toBe(TransactionType.AppAuthorFee)` satisfiable, the last vacuously,
+    // with `undefined` going to the ledger as the type.
+    //
+    // ⚠️ It does NOT subsume every mutation the `not.toBe(Fee)` line it replaced
+    // would have caught: renumbering `Fee` itself ONTO 28 passes both lines here,
+    // and dies only in `clickhouse-transaction-type.test.ts`. That suite is load
+    // bearing for this one — do not delete it on the strength of these two lines.
     expect(tx.type).toBe(28);
 
     // D1 — the author is owed exactly what the viewer was debited.
@@ -422,6 +427,7 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(refund.fromAccountId).toBe(0);
     expect(refund.toAccountId).toBe(VIEWER_ID);
     expect(refund.amount).toBe(EXPECTED_FEE);
+    expect(refund.type).toBe(TransactionType.Refund);
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
 
     const line = mockLog.mock.calls

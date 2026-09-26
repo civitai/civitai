@@ -341,18 +341,6 @@ export function toClickhouseTransactionType(type: TransactionType) {
  * buzz-service API read path — this is the ClickHouse half of the same rule,
  * which had been open-coded at both call sites without it.
  */
-/**
- * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
- * predicate is a SILENT ZERO for a member past the map: the transaction list
- * renders empty and the CSV export answers 200 with a header-only body. This is
- * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
- * derived instead of hand-written. The numeric arm is inert for the members the
- * map does enumerate, so it widens nothing else.
- */
-export function clickhouseTransactionTypePredicate(type: TransactionType) {
-  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
-}
-
 export function fromClickhouseTransactionType(raw: string): TransactionType {
   if (/^\d+$/.test(raw)) {
     const numeric = Number(raw);
@@ -361,7 +349,46 @@ export function fromClickhouseTransactionType(raw: string): TransactionType {
     return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
   }
   const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
-  return TransactionType[name] ?? TransactionType.Tip;
+  // 🔴 `hasOwn`, not a truthiness or `??` test. `TransactionType['__proto__']`
+  // resolves up the prototype chain to a non-nullish OBJECT, so `??` does not
+  // fire and this returned `Object.prototype` typed as a `TransactionType`. The
+  // ClickHouse column cannot produce that, but this function is exported, and
+  // the next caller with a less trustworthy source would inherit it.
+  const resolved = Object.hasOwn(TransactionType, name) ? TransactionType[name] : undefined;
+  return typeof resolved === 'number' ? resolved : TransactionType.Tip;
+}
+
+/**
+ * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
+ * predicate is a SILENT ZERO for a member past the map: the transaction list
+ * renders empty and the CSV export answers 200 with a header-only body. This is
+ * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
+ * derived instead of hand-written.
+ *
+ * The numeric arm admitting nothing extra is a premise about what the MV writes,
+ * NOT something any test here establishes: `Number(type)` is always a real member
+ * integer (both entry points gate `type` through `z.enum(TransactionType)`), so
+ * it can only ever match rows of that same type.
+ */
+export function clickhouseTransactionTypePredicate(type: TransactionType) {
+  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
+}
+
+/**
+ * The exclusion form of the same rule. Inert today — every excluded member is
+ * ≤ 26, so the numeric arm can match nothing — but this was the last type
+ * predicate in this file not going through a shared builder, which is how the
+ * `0..26` bug would have regenerated the next time a member above 26 was added
+ * to an exclusion list.
+ */
+export function clickhouseTransactionTypeExclusion(types: TransactionType[]) {
+  // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
+  // passes a non-empty constant, but this is exported, and a caller that filtered
+  // its list down to nothing would take out the whole query rather than excluding
+  // nothing.
+  if (!types.length) return '1 = 1';
+  const spellings = types.flatMap((type) => [toClickhouseTransactionType(type), String(type)]);
+  return `type NOT IN (${spellings.map((s) => `'${s}'`).join(',')})`;
 }
 
 // Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
@@ -1746,7 +1773,7 @@ const CHART_EXCLUDED_TYPES = [
   TransactionType.Bank,
   TransactionType.Withdrawal,
   TransactionType.Extract,
-].map(toClickhouseTransactionType);
+];
 
 const REPORT_BUCKET_SQL: Record<TransactionsReportWindow, string> = {
   hour: 'toStartOfHour(date)',
@@ -1786,7 +1813,7 @@ function buildTransactionsReportQuery({
   end: Date;
 }) {
   const bucket = REPORT_BUCKET_SQL[window];
-  const excluded = CHART_EXCLUDED_TYPES.map((type) => `'${type}'`).join(',');
+  const excluded = clickhouseTransactionTypeExclusion(CHART_EXCLUDED_TYPES);
   const range = `date >= '${toClickhouseDate(start)}' AND date < '${toClickhouseDate(end)}'`;
 
   return `
@@ -1795,12 +1822,12 @@ function buildTransactionsReportQuery({
       SELECT ${bucket} AS bucket, amount AS gained, 0 AS spent
       FROM buzzTransactions
       WHERE toAccountId = ${userId} AND toAccountType = '${accountType}' AND ${range}
-        AND type NOT IN (${excluded})
+        AND ${excluded}
       UNION ALL
       SELECT ${bucket} AS bucket, 0 AS gained, amount AS spent
       FROM buzzTransactions
       WHERE fromAccountId = ${userId} AND fromAccountType = '${accountType}' AND ${range}
-        AND type NOT IN (${excluded})
+        AND ${excluded}
     )
     GROUP BY bucket
   `;
