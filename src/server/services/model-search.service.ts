@@ -3,6 +3,7 @@ import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {
   isTransientMeiliError,
@@ -59,11 +60,9 @@ export type RunModelSearchInput = Partial<Omit<GetAllModelsOutput, 'browsingLeve
   /** supportsGeneration filter (forwarded from `data.supportsGeneration`). */
   supportsGeneration?: boolean;
   /**
-   * Keep Meilisearch's relevance order for a text search (default `true`).
-   *
-   * Pass `false` when the caller has an EXPLICIT, user-chosen `sort` that must
-   * win over relevance — otherwise the restore below silently discards it. See
-   * the comment at the `orderedItems` assignment.
+   * Reimpose Meili's returned order on a text search (default `true`). Pass `false` only when the
+   * sort is applied in the DB rather than sent to Meili via `resolveModelSearchIds({ sort })` —
+   * otherwise the DB `orderBy` is silently overwritten. See the `orderedItems` comment.
    */
   preserveRelevanceOrder?: boolean;
 };
@@ -100,6 +99,39 @@ export class ModelSearchMeiliTimeoutError extends Error {
 }
 
 /**
+ * Mirrors the catalog query's orderBy, not the website's (MostLiked is thumbs-up there, favourites
+ * on the site). `Newest`/`Oldest` sort on `createdAt`: the catalog's `lastVersionAt` is not a
+ * sortable attribute. `ImageCount`/`RecentlyAdded` have none and fall through to relevance.
+ */
+export function meiliSortForModelSort(sort: ModelSort | undefined): string[] | undefined {
+  let attribute: string | undefined;
+  switch (sort) {
+    case ModelSort.HighestRated:
+    case ModelSort.MostLiked:
+      attribute = 'metrics.thumbsUpCount:desc';
+      break;
+    case ModelSort.MostDownloaded:
+      attribute = 'metrics.downloadCount:desc';
+      break;
+    case ModelSort.MostDiscussed:
+      attribute = 'metrics.commentCount:desc';
+      break;
+    case ModelSort.MostCollected:
+      attribute = 'metrics.collectedCount:desc';
+      break;
+    case ModelSort.Newest:
+      attribute = 'createdAt:desc';
+      break;
+    case ModelSort.Oldest:
+      attribute = 'createdAt:asc';
+      break;
+    default:
+      return undefined;
+  }
+  return [attribute, 'id:desc'];
+}
+
+/**
  * Resolve the Meilisearch id list + next-cursor for a text query. Throws
  * `ModelSearchMeiliTimeoutError` on a backend brownout so the caller can map
  * it to a 503 with the right cache headers (it cannot be a TRPCError because
@@ -120,10 +152,13 @@ export async function resolveModelSearchIds(opts: {
    * accepts arbitrary strings (also keeps them out of the filter expression).
    */
   types?: string[];
+  /** Never a default: a sort here replaces relevance ranking for every text query. */
+  sort?: ModelSort;
 }): Promise<{ searchIds: number[]; nextCursor?: string }> {
-  const { query, cursor, limit, browsingLevel, types } = opts;
+  const { query, cursor, limit, browsingLevel, types, sort } = opts;
   const browsingLevelValues = Flags.instanceToArray(browsingLevel);
   const typeValues = types?.filter((t) => modelTypeValues.has(t));
+  const meiliSort = meiliSortForModelSort(sort);
   const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
 
   let meiliResult: SearchResponse<{ id: number }> | undefined;
@@ -139,6 +174,7 @@ export async function resolveModelSearchIds(opts: {
               ...(typeValues?.length ? [`type IN [${typeValues.join(',')}]`] : []),
             ],
             attributesToRetrieve: ['id'],
+            ...(meiliSort ? { sort: meiliSort } : {}),
           })
         )
       : undefined;
@@ -223,22 +259,11 @@ export async function runModelSearch(
     user,
   });
 
-  // Meilisearch returns ids in relevance order, but getModelsWithVersions
-  // re-sorts by lastVersionAt/modelId. For text search, restore relevance.
-  //
-  // 🔴 UNLESS THE CALLER EXPLICITLY ASKED FOR AN ORDER. This restore is
-  // unconditional-on-`query` by default, which silently DISCARDS `sort`
-  // whenever a text query is present: `getModelsRaw` builds its `orderBy`
-  // purely from `sort` (`model.service`, the `ModelSort` ladder), the rows come
-  // back correctly ordered, and this line then reimposes relevance over the top.
-  // The caller cannot tell — nothing errors, and the result is a plausible list
-  // in the wrong order. That is how "the most popular ANIME models" returns
-  // relevance-ranked results while "the most popular models" ranks correctly.
-  //
-  // Opt-out rather than a behaviour change: `preserveRelevanceOrder` defaults to
-  // the historical behaviour, so every existing caller — the public endpoint and
-  // `blocks/models` included — is untouched. Only a caller that has a real
-  // user-chosen sort AND wants it to win passes `false`.
+  // getModelsWithVersions re-sorts by lastVersionAt/modelId; for a text query, reimpose Meili's
+  // returned order. That order carries `sort` only if the caller sent it to Meili
+  // (`resolveModelSearchIds({ sort })`, as the public endpoint does). A caller that sorts in the DB
+  // instead must pass `preserveRelevanceOrder: false`, or this line silently overwrites its
+  // `orderBy` with relevance — nothing errors, the list is just in the wrong order.
   // 🔴 ZERO HITS MEANS ZERO RESULTS, AND IT MUST NOT DEPEND ON THE FLAG ABOVE.
   // `getModelsRaw` adds its id predicate under `if (!!ids?.length)`, so an EMPTY
   // `searchIds` adds NO filter at all and the query degrades to an unfiltered
@@ -315,7 +340,12 @@ export async function runModelSearch(
                 .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrlOrigin}${createModelFileDownloadUrl({
