@@ -206,11 +206,13 @@
 --     never became visible. The first two runs of this preflight used a year-2000 sentinel and
 --     returned a confident `0` for every column — which read like "omitted columns are empty"
 --     and was actually "there is no row at all". Two different mechanisms, one observable.
---     🔴 THE OPERATIONAL CONSEQUENCE: the HOURLY backfill below is scoped to "the last 90 days",
---     i.e. exactly the TTL boundary. Anything you backfill into the HOURLY table older than the
---     TTL vanishes with no error and no row count to check against. Backfill history into the
---     DAILY table, which has no TTL; keep the hourly backfill comfortably inside 90 days; and
---     when a bucket you wrote is missing, suspect the TTL before suspecting the query.
+--     🔴 THE OPERATIONAL CONSEQUENCE, and it is why the hourly backfill below is scoped to ~80
+--     days rather than 90: anything you backfill into the HOURLY table at or past its TTL
+--     horizon vanishes with no error and no row count to check against. Put history in the DAILY
+--     table, which has no TTL; keep the hourly window comfortably inside 90 days; and when a
+--     bucket you wrote is missing, suspect the TTL before suspecting the query.
+--     (Two earlier drafts of this file said "the last 90 days" here AND in the backfill section
+--     itself — the TTL horizon, i.e. the hazard. Both now say ~80.)
 --
 --     The probe, for re-running (use a bucket INSIDE the TTL, and keep the positive control):
 --       INSERT INTO default.user_population_hourly (bucket, views_state)
@@ -381,8 +383,10 @@ SETTINGS index_granularity = 8192;
 -- believe"). A "users over time" panel reading zero looks like a catastrophic traffic
 -- collapse, not like a missing backfill. Finish the backfill before re-pointing any panel.
 --
--- Fill the DAILY table from raw tables for the whole history, and the HOURLY table for the
--- last 90 days only. The daily table is the long history; the hourly table is the zoom.
+-- Fill the DAILY table from raw tables for the whole history, and the HOURLY table for a window
+-- COMFORTABLY INSIDE its 90-day TTL — ~80 days, not 90. The daily table is the long history; the
+-- hourly table is the zoom. See the hourly-backfill note at the end of this section for why the
+-- TTL horizon itself is the wrong number: a bucket at or past it is silently dropped on insert.
 --
 -- Every statement below is idempotent (uniq-state union), so a partial or repeated run is
 -- safe and a failed arm can simply be re-run.
@@ -525,8 +529,14 @@ GROUP BY day;
 -- `toDate(...)`, writing to default.user_population_hourly.
 --
 -- 🔴 SCOPE IT COMFORTABLY INSIDE THE TTL — NOT "the last 90 days", which is the TTL horizon
--- itself. An earlier draft said 90 and that is the hazard preflight (2) above documents: a bucket
--- at or past `now() - 90 DAY` is silently DROPPED on insert, with no error and no row to count.
+-- itself. The hazard is the one preflight (2) above documents: a bucket at or past
+-- `now() - 90 DAY` is silently DROPPED on insert, with no error and no row to count.
+--
+-- ⚠️ This paragraph used to say "an earlier draft said 90", which was false about its own file:
+-- the section's OPENING instruction still said 90, live, 140-odd lines above — so the file
+-- contradicted itself and the sentence blamed a draft rather than the live text. Both now agree.
+-- There is no executable hourly-backfill statement here, only prose, so the window comes from
+-- these sentences alone: if you change one of them, change the other.
 -- Use ~80 days or less. The loss at exactly 90 is only a bucket or two of about-to-expire hourly
 -- detail, so this is coherence rather than damage — but a reader following the old wording gets a
 -- window whose first buckets vanish and no signal saying why.
