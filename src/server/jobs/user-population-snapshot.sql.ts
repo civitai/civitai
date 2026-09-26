@@ -30,13 +30,14 @@
 // wrong, and halving the period maps k → 2k+1, not 2k. Its number is not an output of this rule
 // and must not be carried across as one.
 //
-// THREE earlier drafts of this comment were wrong, in three different ways, and the pattern is
-// the point: the first restated the precedent's "four" without its cadence; the second stated the
+// This comment has been wrong TWICE in committed history, in two different ways, and the pattern
+// is the point: one draft restated the precedent's "four" without its cadence; the next stated the
 // right number from a derivation that does not produce it (it described a SINGLE run's window,
-// which alone tolerates only one miss — the union across consecutive runs is the mechanism); the
-// third kept that fixed rule but appended "at half the period, giving double the margin", which
-// contradicts the rule printed twelve lines above it. If you are about to reword this, you are
-// the fourth — derive the number from the rule and check it against both cadences before you do.
+// which alone tolerates only one miss — the union across consecutive runs is the mechanism), and
+// then appended "at half the period, giving double the margin", contradicting the rule printed a
+// dozen lines above it. Do not trust a count of drafts here either — an audit found an earlier
+// wording of THIS sentence claiming three, which the commit history does not support. Derive the
+// number from the rule and check it against BOTH cadences before rewording anything.
 export const LOOKBACK_HOURS = 3;
 
 // How far back the daily roll-up re-derives on each run. Cheap — it reads the hourly table
@@ -94,9 +95,27 @@ export type Arm = {
 export const ARMS: Arm[] = [
   // The four activity sources, kept separate so "viewers" (views alone, panel 21 stage 1) and
   // "active" (the union of all four) are both readable off the same rows.
-  { column: 'views_state', table: 'default.views', idColumn: 'userId', timeColumn: 'time', guards: 'userId > 0' },
-  { column: 'pageviews_state', table: 'default.pageViews', idColumn: 'userId', timeColumn: 'time', guards: 'userId > 0' },
-  { column: 'reactions_state', table: 'default.reactions', idColumn: 'userId', timeColumn: 'time', guards: 'userId > 0' },
+  {
+    column: 'views_state',
+    table: 'default.views',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  {
+    column: 'pageviews_state',
+    table: 'default.pageViews',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
+  {
+    column: 'reactions_state',
+    table: 'default.reactions',
+    idColumn: 'userId',
+    timeColumn: 'time',
+    guards: 'userId > 0',
+  },
   {
     column: 'useractivities_state',
     table: 'default.userActivities',
@@ -161,7 +180,9 @@ export function hourlyInsertSql({ column, table, idColumn, timeColumn, guards }:
       ${bucket} AS bucket,
       ${stateColumns(column, idColumn)}
     FROM ${table}
-    WHERE ${guards ? `${guards}\n      AND ` : ''}${timeColumn} > now() - INTERVAL ${LOOKBACK_HOURS} HOUR
+    WHERE ${
+      guards ? `${guards}\n      AND ` : ''
+    }${timeColumn} > now() - INTERVAL ${LOOKBACK_HOURS} HOUR
       AND ${timeColumn} <= now()
     GROUP BY bucket
   `;

@@ -296,7 +296,7 @@ SETTINGS index_granularity = 8192;
 -- empty state forever. Nothing checks the DDL against `STATE_COLUMNS` — verified by mutation,
 -- renaming a column here leaves the TypeScript suite fully green.
 --
--- ✅ MEASURED 2026-09-25, so this is no longer an assertion: preflight (2) below has now been
+-- ✅ MEASURED 2026-09-25, so this is no longer an assertion: preflight (2) ABOVE has now been
 -- RUN against the live tables. A column-subset INSERT is ACCEPTED with no error, and the omitted
 -- columns read as a readable EMPTY state (0), not an error — with a positive control confirming
 -- the column that WAS written reads 1, so the probe was measuring something. The failure is
@@ -522,7 +522,15 @@ WHERE createdAt >= toDateTime('2024-09-01 00:00:00')
 GROUP BY day;
 
 -- The HOURLY backfill is the same seven arms with `toStartOfHour(<time col>)` instead of
--- `toDate(...)`, writing to default.user_population_hourly, restricted to the last 90 days.
+-- `toDate(...)`, writing to default.user_population_hourly.
+--
+-- 🔴 SCOPE IT COMFORTABLY INSIDE THE TTL — NOT "the last 90 days", which is the TTL horizon
+-- itself. An earlier draft said 90 and that is the hazard preflight (2) above documents: a bucket
+-- at or past `now() - 90 DAY` is silently DROPPED on insert, with no error and no row to count.
+-- Use ~80 days or less. The loss at exactly 90 is only a bucket or two of about-to-expire hourly
+-- detail, so this is coherence rather than damage — but a reader following the old wording gets a
+-- window whose first buckets vanish and no signal saying why.
+-- Long history belongs in the DAILY table, which has no TTL.
 -- Run it AFTER the daily backfill: if it has to be abandoned part-way the daily table still
 -- carries the history, and the panels still work.
 
@@ -630,18 +638,25 @@ GROUP BY day;
 --                      hourly TTL present, normalised by ClickHouse to `toIntervalDay(90)`
 --                      (⚠️ a regex looking for `INTERVAL 90 DAY` finds nothing and reads as a
 --                      MISSING TTL — read `create_table_query`, not a pattern match)
---   hourly rows        1,183  spanning 2026-09-19 03:00 .. 2026-09-26 03:00
+--   hourly rows        1,183  spanning 2026-09-19 03:00 .. 2026-09-26 03:00  (at first measure)
+--   ⚠️ RE-MEASURED hours later: 748 rows spanning 2026-09-18 03:00 .. 2026-09-26 03:00 — MORE
+--   coverage, FEWER rows. Both figures are correct. The span widened because the repair re-ran the
+--   arms one day wider; the count FELL because AggregatingMergeTree collapses a bucket's seven
+--   per-arm rows into one as background merges run. So a raw row count is not a coverage measure
+--   and drifts downward on its own. Compare DISTINCT BUCKETS, or merged values — never `count()`.
 --   daily rows         8      spanning 2026-09-19 .. 2026-09-26
 --   backfill cost      7 arms over 7 days: 0.3–1.9 s each, ~5 s total; daily roll 0.8 s
 --   per-run cost       ~3.4 s for all 7 arms over the job's 3 h window
 --
 --   reconciliation, hour-aligned on both sides (7 d):
---     viewers          437,264 vs 437,033 raw    +0.05%
+--     viewers          437,264 vs 437,033 raw    +0.05%   (hour-ALIGNED, post-repair)
 --     generators        39,676 vs  39,761 raw    -0.21%
 --     buyers             3,408 vs   3,408 raw    EXACT   (cardinality below the sketch's
 --                                                         exact-representation threshold)
 --     signups           57,249 vs  57,249 raw    EXACT   (uniqExact — must always be exact;
 --                                                         if it is not, suspect the pipeline)
 --
---   idempotency on real data: re-running the views arm left the merged 7-day figure at
---   436,383 unchanged (not doubled).
+--   idempotency on real data: re-running the views arm left the merged 7-day figure
+--   unchanged at 436,383 (not doubled). ⚠️ That figure is NOT the 437,264 above and does not
+--   contradict it: this one is the UNALIGNED `bucket > now() - INTERVAL 7 DAY` read taken
+--   BEFORE the partial-first-bucket repair. Two different windows, two different instants.

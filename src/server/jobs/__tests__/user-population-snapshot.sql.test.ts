@@ -34,6 +34,24 @@ const MIGRATION_PATH = join(
   '../../clickhouse/migrations/2026-09-25-user-population-snapshot.sql'
 );
 
+/**
+ * 🔴 CALL THIS INSIDE A TEST, NEVER AT MODULE SCOPE — the reason is specific to this repo's CI.
+ *
+ * It throws on a bad parse, and three ordinary future edits trigger that: reformatting the TTL
+ * across two lines, writing it in ClickHouse's own normalised spelling `toIntervalDay(90)` (which
+ * the migration itself tells the reader ClickHouse uses), or adding a second
+ * `TTL bucket + INTERVAL n DAY` table to the migration.
+ *
+ * At module scope any of those kills COLLECTION of this whole file: all 39 tests contribute
+ * nothing, so every dashboard-parity pin here silently stops reporting. On a PULL REQUEST that is
+ * invisible — `.github/workflows/lint.yml` sets `continue-on-error` for `pull_request` on the unit
+ * job, and its own comment states the consequence: the run conclusion is `success` while the step
+ * underneath is `failure`. The shard tripwire cannot see it either, because it floors at thousands
+ * of executed tests and losing 39 is far below that. Only a push to `main` renders red.
+ *
+ * Called inside the one test that consumes it, a parse failure reds exactly that test and leaves
+ * the other 38 reporting real verdicts.
+ */
 function hourlyTtlDaysFromMigration(): number {
   const raw = readFileSync(MIGRATION_PATH, 'utf8');
   // 🔴 STRIP `--` COMMENT LINES BEFORE PARSING. A parser fed the raw file is re-vacuumable by
@@ -45,20 +63,16 @@ function hourlyTtlDaysFromMigration(): number {
   // src/server/clickhouse/__tests__/tracker-enum-drift.test.ts.
   const ddl = raw
     .split('\n')
-    .filter((line) => !line.trimStart().startsWith('--'))
+    .filter((line: string) => !line.trimStart().startsWith('--'))
     .join('\n');
   const matches = [...ddl.matchAll(/TTL bucket \+ INTERVAL (\d+) DAY/g)];
   // Exactly one, not "the first": two TTL clauses would mean the migration declares a second
   // one and this would silently track whichever came first.
   if (matches.length !== 1) {
-    throw new Error(
-      `expected exactly 1 hourly TTL in ${MIGRATION_PATH}, found ${matches.length}`
-    );
+    throw new Error(`expected exactly 1 hourly TTL in ${MIGRATION_PATH}, found ${matches.length}`);
   }
   return Number(matches[0][1]);
 }
-
-const HOURLY_TTL_DAYS = hourlyTtlDaysFromMigration();
 
 /**
  * These tests exist for ONE failure mode that no type and no ClickHouse error can catch: the
@@ -142,7 +156,10 @@ describe('user-population snapshot — guards match the dashboard panels', () =>
  * A per-arm ledger kills all of them, and it fails when an arm is ADDED, REMOVED or RETARGETED.
  * Keep it transcribed from the dashboard and the measured column types, never from ARMS itself.
  */
-const EXPECTED_ARMS: Record<string, { table: string; idColumn: string; timeColumn: string; guards: string }> = {
+const EXPECTED_ARMS: Record<
+  string,
+  { table: string; idColumn: string; timeColumn: string; guards: string }
+> = {
   views_state: {
     table: 'default.views',
     idColumn: 'userId',
@@ -320,13 +337,14 @@ describe('user-population snapshot — generated SQL shape', () => {
     // never be rolled up, only re-derived from raw. HOURLY_TTL_DAYS is parsed from the migration,
     // so shrinking the TTL there fails HERE — verified by mutation: 90 → 10 DAY in the DDL turns
     // this suite red, where the literal it replaced stayed green.
-    expect(HOURLY_TTL_DAYS).toBe(90);
+    const hourlyTtlDays = hourlyTtlDaysFromMigration();
+    expect(hourlyTtlDays).toBe(90);
     // ⚠️ Honest about what this last line is: DOCUMENTATION, not an independent guard. Both of
     // its operands are pinned by exact assertions above, so it can never be the FIRST to fail —
     // any change to either constant trips that constant's own pin. It states the relationship
     // for a reader and would catch a case where both pins were updated together but incoherently.
     // Do not cite it as coverage of the coupling; the parsed TTL above is what provides that.
-    expect(DAILY_ROLL_DAYS).toBeLessThan(HOURLY_TTL_DAYS / 2);
+    expect(DAILY_ROLL_DAYS).toBeLessThan(hourlyTtlDays / 2);
   });
 
   it('every INSERT names its columns explicitly — position is not the contract', () => {
@@ -335,7 +353,9 @@ describe('user-population snapshot — generated SQL shape', () => {
     // aliases are inert for INSERT ... SELECT; only an explicit column list binds by name.
     const list = `(bucket, ${STATE_COLUMNS.join(', ')})`;
     for (const arm of ARMS) {
-      expect(norm(hourlyInsertSql(arm))).toContain(norm(`INSERT INTO default.user_population_hourly ${list}`));
+      expect(norm(hourlyInsertSql(arm))).toContain(
+        norm(`INSERT INTO default.user_population_hourly ${list}`)
+      );
     }
     expect(norm(dailyRollSql())).toContain(
       norm(`INSERT INTO ${DAILY_TABLE} (day, ${STATE_COLUMNS.join(', ')})`)
