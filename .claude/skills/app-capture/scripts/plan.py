@@ -80,10 +80,15 @@
 # click on a spending control with NO --trusted, because `validate_click_ledger`
 # requires the selector to be DECLARED, not to be safe; its own refusal text says
 # "a click cannot be checked for whether it MUTATES". The `_neverList` key some
-# recipes carry is prose read by no code, and it is absent from both spend apps.
-# So the ledger buys REVIEWABILITY, not prevention: the only mechanical bans are
-# on the OS-actuation path (--trusted / `trustedKey`) and on injected-JS
-# actuation. What keeps a capture from spending is a human reading the declared
+# recipes carry is prose read by NO CODE -- that is the load-bearing half, and it
+# holds whichever recipes carry one (3 of 7; gen-matrix's names `gm-generate` as a
+# spend control, so "absent from the spend apps" would be wrong -- presence is not
+# the point, enforcement is). So the ledger buys REVIEWABILITY, not prevention.
+# The mechanical bans are three: the OS-actuation path (--trusted / `trustedKey`),
+# injected-JS actuation (`guard_no_actuation`), and unscoped DOM ops
+# (`guard_dom_scoping`, which exists because a TOP-FRAME op goes through CDP and
+# arrives `trusted:true` -- a second way to deliver a trusted event that spells no
+# `xdotool`). None of the three stops a DECLARED in-frame click. What keeps a capture from spending is a human reading the declared
 # `clickable` list and the per-recipe notes before the run.
 #
 # 🔴 DO NOT VERIFY A SPEND WITH A BUZZ-BALANCE DELTA. Some apps bill per GPU

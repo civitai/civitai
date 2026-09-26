@@ -2530,74 +2530,31 @@ else
   sed 's/^/          /' "${WORK}/d2.txt" | head -8
 fi
 
-# D2c 🔴 THE CLASS GATE. Four rounds of hand-sweeping did not clear one false claim,
-# because each sweep matched the SPELLING it was written against: "the spend path
-# rejects untrusted events" was fixed while "money path rejects", "refuses synthetic
-# input", "does NOT reject" and "rejecting synthetic events" survived, and twice a
-# later round found the same sentence in a file the previous sweep never opened.
-# The claim matters because it is a SAFETY argument: a recipe author who believes
-# something upstream refuses synthetic input will wire a synthetic click at a
-# spending control. It is false — measured on sensei, exactly such a click
-# submitted and spent Buzz.
+# 🔴 D2c WAS HERE AND IS DELETED ON PURPOSE. DO NOT RE-ADD IT. It tried to pin, as
+# a regex over prose, the CLASS "no file may assert that something upstream rejects
+# synthetic/untrusted input" -- the claim four hand sweeps failed to clear and that
+# once cost a real Buzz spend. It was the right requirement and the wrong
+# instrument, and a round-5 audit measured all three ways it failed:
 #
-# So this pins the CLASS, not a phrase: no file in this skill may ASSERT that
-# something upstream rejects synthetic or untrusted input. Saying so inside a
-# RETRACTION is fine and necessary — a retraction has to quote what it retracts —
-# so a match sharing a window with a retraction marker is allowed.
-if python3 - "$SKILL_DIR" >"${WORK}/d2c.txt" 2>&1 <<'PYD2C'
-import os, re, sys
-ROOT = sys.argv[1]
-ASSERT = re.compile(
-    r"(spend|money)[\s-]*path\s+(rejects|refuses|does\s+NOT\s+reject)"
-    r"|rejecting\s+synthetic"
-    r"|refuses\s+synthetic\s+input"
-    r"|no\s+such\s+rejection",
-    re.I)
-RETRACT = re.compile(
-    r"RETRACT|refuted|counter-example|used to (say|read)|do NOT justify"
-    r"|measured false|is FALSE|was wrong|does NOT generalise|no longer",
-    re.I)
-WINDOW = 400
-bad, scanned, found = [], 0, 0
-for dirpath, _dirs, files in os.walk(ROOT):
-    if os.path.basename(dirpath) == "__pycache__":
-        continue
-    for fn in sorted(files):
-        if not fn.endswith((".md", ".py", ".sh", ".json")):
-            continue
-        p = os.path.join(dirpath, fn)
-        try:
-            text = open(p, encoding="utf-8").read()
-        except Exception:
-            continue
-        scanned += 1
-        for m in ASSERT.finditer(text):
-            found += 1
-            ctx = text[max(0, m.start() - WINDOW): m.end() + WINDOW]
-            if not RETRACT.search(ctx):
-                ln = text[:m.start()].count("\n") + 1
-                bad.append("%s:%d: %s" % (os.path.relpath(p, ROOT), ln, m.group(0)))
-# Positive controls: the detector must catch an assertion, must not fire on
-# unrelated prose, must exempt a retraction, and must have actually read files.
-if not ASSERT.search("the spend path rejects untrusted events"):
-    bad.append("POSITIVE CONTROL FAILED: the detector cannot see an assertion")
-if ASSERT.search("wholly unrelated prose about cropping and framing"):
-    bad.append("POSITIVE CONTROL FAILED: the detector fires on unrelated prose")
-_r = "that claim is RETRACTED: 'the spend path rejects untrusted events' is false"
-if not (ASSERT.search(_r) and RETRACT.search(_r)):
-    bad.append("POSITIVE CONTROL FAILED: a retraction is not exempted")
-if scanned < 20:
-    bad.append("POSITIVE CONTROL FAILED: only %d file(s) scanned" % scanned)
-print("D2C_SCANNED=%d D2C_MATCHES=%d" % (scanned, found))
-print("\n".join("ASSERTED: " + b for b in bad))
-sys.exit(1 if bad else 0)
-PYD2C
-then
-  pass "D2c: no file in this skill ASSERTS that something upstream rejects synthetic/untrusted input — the CLASS, not a phrase ($(grep -o 'D2C_SCANNED=[0-9]*' "${WORK}/d2c.txt")). Occurrences inside a retraction are permitted, because a retraction must quote what it retracts"
-else
-  fail "D2c: a file asserts the retracted 'upstream rejects synthetic events' claim outside a retraction"
-  sed 's/^/          /' "${WORK}/d2c.txt" | head -10
-fi
+#   1. IT BLOCKED THE TRUE SENTENCE. "does NOT reject" and "no such rejection" are
+#      DENIALS; both were in the ASSERT pattern. The next author to state the
+#      correction plainly would have been failed by the gate that exists to protect
+#      the correction, and the cheapest way out is to blunt the warning. That is the
+#      escape-hatch failure: a guard that punishes the right answer trains people to
+#      write a worse one.
+#   2. IT WAS A PHRASE LIST WEARING A CLASS'S NAME. 8 of 10 natural spellings passed
+#      ("the platform rejects synthetic events", "rejected by the money button",
+#      "discards synthetic clicks"), and it could not see a claim wrapped across two
+#      `# `-prefixed comment lines -- which is the shape of the very file the
+#      original defect lived in.
+#   3. ITS RETRACTION WINDOW WAS WIDER THAN ITS DETECTOR. `no longer`, `is FALSE`
+#      and `was wrong` are common enough that a planted assertion stayed green at
+#      33% of paragraph positions in the skill's own spend document.
+#
+# A guard that reads as coverage while providing little is worse than none, because
+# it stops the next person looking. A semantic class in English prose is not
+# reliably pinnable by regex; if this recurs, the instrument to reach for is a
+# review checklist or a human reading the spend docs, not a fourth regex.
 
 # A FAKE civitai CLI. It writes a sentinel; the sentinel's ABSENCE is what proves
 # the dry run mutated nothing, and its PRESENCE under --confirm is what proves
