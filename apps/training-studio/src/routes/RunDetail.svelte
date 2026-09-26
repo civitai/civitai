@@ -47,6 +47,7 @@
     type TrainingDetail,
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
+  import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
   import { extOfAir, extOfMime } from '$lib/media';
   import { RETENTION_DAYS } from '$lib/orchestrator-core';
@@ -1141,7 +1142,7 @@
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
         <span class="font-mono text-xs font-normal text-dark-2">
-          {d.dataset.length} image{d.dataset.length === 1 ? '' : 's'}
+          {mediaCount(d.dataset.length, d.media)}
         </span>
         <span class="ml-auto flex items-center gap-1.5">
           <button

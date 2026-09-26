@@ -17,7 +17,12 @@ import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
-import { describeSubmitError, isFlux2, type OrchestratorClient } from './orchestrator-core';
+import {
+  blobIdFromAir,
+  describeSubmitError,
+  isFlux2,
+  type OrchestratorClient,
+} from './orchestrator-core';
 import {
   CIVITAI_TAG,
   epochModelKey,
@@ -26,6 +31,7 @@ import {
   type EpochModelOutput,
   type TrainingStudioMeta,
 } from '$lib/data/trainingRows';
+import { TARGET_STEPS } from '$lib/data/trainingModels';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -91,13 +97,26 @@ function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
   return picked.length ? picked : CURRENCIES;
 }
 
+/** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
+export function trainingBlobKey(air: string): string {
+  return blobIdFromAir(air.trim()).toLowerCase();
+}
+
 /** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
  *  blobs for every engine; the SDK types imageResourceTraining's `trainingData` as a string, so that path
  *  is cast). The Flux.2 (imageResourceTraining) engine takes no hyperparameters — only the base model +
  *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
  *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
-  const trainingData = { type: 'blobs', items: run.items };
+  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice.
+  const seen = new Set<string>();
+  const items = run.items.filter((item) => {
+    const key = trainingBlobKey(item.air);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const trainingData = { type: 'blobs', items };
   const optimizerType = run.optimizer.toLowerCase();
 
   const step = isFlux2(run.engine)
@@ -110,7 +129,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           model: run.customModel ?? run.model,
           loraName: run.trigger || run.meta.name || 'lora',
           trainingData,
-          trainingDataImagesCount: run.items.length,
+          trainingDataImagesCount: items.length,
           samplePrompts: run.prompts,
           negativePrompt: '',
         },
@@ -230,6 +249,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     if (!isFiniteNumber(run[key]) || run[key] <= 0)
       fail(`${field}.${key}`, 'must be a positive number.');
   }
+  if (run.steps > TARGET_STEPS.max)
+    fail(`${field}.steps`, `must be at most ${TARGET_STEPS.max.toLocaleString()}.`);
   if (!isFiniteNumber(run.textEncoderLr) || run.textEncoderLr < 0)
     fail(`${field}.textEncoderLr`, 'must be a non-negative number.');
   if (!isNonEmptyString(run.lrScheduler))

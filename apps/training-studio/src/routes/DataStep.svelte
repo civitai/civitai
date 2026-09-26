@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import JSZip from 'jszip';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import * as Alert from '@civitai/ui/components/ui/alert/index.js';
   import {
     IconSparkles,
     IconArchive,
@@ -32,10 +33,11 @@
     ToggleGroup,
     ToggleGroupItem,
   } from '@civitai/ui/components/ui/toggle-group/index.js';
-  import { loraTypeById, type LabelType, type Media } from '$lib/data/trainingModels';
+  import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
+  import { trainingBlobKey } from '$lib/train-core';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -89,7 +91,25 @@
     onBack: () => void;
   } = $props();
 
-  // Seed a reused dataset once on mount (dedup in addFromBlobs makes a Back/Continue remount a no-op).
+  // Uploads are content-addressed; the orchestrator rejects a dataset naming one blob twice (at Start,
+  // by a hash the user can't map to a file), so every ingress dedupes on the key.
+  const keyOfImg = (img: Img) => (img.blobId ? trainingBlobKey(img.blobId) : undefined);
+  const ownerOf = (key: string, selfId: number) =>
+    images.find((i) => i.id !== selfId && keyOfImg(i) === key);
+  let dupOwnerIds = $state<number[]>([]);
+  const dupNotice = $derived.by(() => {
+    const owners = dupOwnerIds
+      .map((id) => images.find((i) => i.id === id))
+      .filter((i): i is Img => !!i);
+    const names = [...new Set(owners.map((i) => i.name))];
+    const shown = names.slice(0, 3).join(', ');
+    return {
+      count: owners.length,
+      names: names.length > 3 ? `${shown} and ${names.length - 3} more` : shown,
+    };
+  });
+
+  // Silent: a Back/Continue remount re-seeds the same blobs, which the user didn't add twice.
   onMount(() => {
     if (reuseItems.length)
       addFromBlobs(
@@ -98,7 +118,8 @@
           name: r.name,
           caption: r.caption,
           previewWorkflowId: r.workflowId,
-        }))
+        })),
+        { silent: true }
       );
   });
 
@@ -243,6 +264,21 @@
     patch(id, { status: 'uploading', progress: 0, message: undefined });
     try {
       const blob = await uploadFile(file, (fraction) => patch(id, { progress: fraction }), controller.signal);
+      const owner = ownerOf(trainingBlobKey(blob.id), id);
+      if (owner) {
+        // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
+        const dropped = images.find((i) => i.id === id);
+        if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
+          patch(owner.id, {
+            tags: dropped.tags,
+            caption: dropped.caption,
+            sourceLabel: dropped.sourceLabel,
+            labelTried: dropped.labelTried,
+          });
+        dupOwnerIds = [...dupOwnerIds, owner.id];
+        remove(id);
+        return;
+      }
       patch(id, { status: 'uploaded', progress: 1, blobId: blob.id, blobUrl: blob.url ?? undefined });
     } catch (err) {
       if (isAbort(err)) return;
@@ -274,17 +310,33 @@
       url?: string;
       caption?: string;
       previewWorkflowId?: string;
-    }[]
+    }[],
+    { silent = false }: { silent?: boolean } = {}
   ) {
-    // Skip blobs already in the dataset — the picker can't see what's here, so re-picking one (or
-    // reopening and picking it again) would otherwise add a duplicate tile with the same `air`.
-    const have = new Set(images.map((i) => i.blobId).filter(Boolean));
-    const fresh = items.filter((item) => !have.has(item.blobId));
+    // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
+    const have = new Map<string, number>();
+    for (const i of images) {
+      const key = keyOfImg(i);
+      if (key && !have.has(key)) have.set(key, i.id);
+    }
+    const skipped: number[] = [];
+    const fresh: ((typeof items)[number] & { id: number })[] = [];
+    for (const item of items) {
+      const key = trainingBlobKey(item.blobId);
+      const owner = have.get(key);
+      if (owner !== undefined) {
+        skipped.push(owner);
+        continue;
+      }
+      const id = ++seq;
+      have.set(key, id);
+      fresh.push({ ...item, id });
+    }
+    if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
     if (fresh.length === 0) return;
     const toHydrate: { id: number; air: string; workflowId: string }[] = [];
-    const added: Img[] = fresh.map((item) => {
+    const added: Img[] = fresh.map(({ id, ...item }) => {
       const label = item.caption?.trim() ?? '';
-      const id = ++seq;
       if (!item.url && item.previewWorkflowId)
         toHydrate.push({ id, air: item.blobId, workflowId: item.previewWorkflowId });
       // A video dataset can legitimately hold stills, and a reused blob's air keeps its file
@@ -498,8 +550,29 @@
 
   const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
   const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
+  // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
+  // dataset area (dropping used to work only before the first upload). `dragDepth` is the standard
+  // enter/leave counter — leave fires for every child crossed, so a plain boolean flickers.
+  let dragDepth = 0;
+  // File drags only: the populated area contains draggable content (preview <img>s, selectable
+  // caption text) whose in-page drags would otherwise summon the drop overlay.
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+  function onDragEnter(e: DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    dragging = true;
+  }
+  function onDragOver(e: DragEvent) {
+    if (hasFiles(e)) e.preventDefault();
+  }
+  function onDragLeave() {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dragging = false;
+  }
   function onDrop(e: DragEvent) {
     e.preventDefault();
+    dragDepth = 0;
     dragging = false;
     const files = [...(e.dataTransfer?.files ?? [])];
     // A dropped .zip takes the import path — the media-MIME filter in addFiles silently ate it
@@ -641,7 +714,7 @@
           <IconBoltFilled size={15} stroke={2} class="mb-0.5 inline" />{estTotal.toLocaleString()}
         </div>
         <div class="mt-0.5 font-mono text-xs text-dark-2">
-          {uploadedCount} image{uploadedCount === 1 ? '' : 's'} · {mixedStepBudgets
+          {mediaCount(uploadedCount, media)} · {mixedStepBudgets
             ? 'up to '
             : ''}~{estSteps.toLocaleString()} steps · adjust at Review
         </div>
@@ -663,6 +736,24 @@
       <IconRepeat size={15} stroke={2} class="mr-1.5 inline" />Reuse a dataset
     </Button>
   </div>
+
+  {#if dupNotice.count > 0}
+    <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
+      <span>
+        Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
+        <strong class="text-dark-0">{dupNotice.names}</strong>.
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Dismiss duplicate notice"
+        onclick={() => (dupOwnerIds = [])}
+        class="-my-0.5 shrink-0 text-dark-2"
+      >
+        <IconX size={14} stroke={2} />
+      </Button>
+    </Alert.Root>
+  {/if}
 
   <input
     bind:this={fileInput}
@@ -802,11 +893,9 @@
     <button
       type="button"
       onclick={() => fileInput.click()}
-      ondragover={(e) => {
-        e.preventDefault();
-        dragging = true;
-      }}
-      ondragleave={() => (dragging = false)}
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
       ondrop={onDrop}
       class="rounded-xl border-2 border-dashed p-9 text-center transition
         {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
@@ -833,7 +922,28 @@
       <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
     </button>
   {:else}
-    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+    <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
+      class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
+    >
+      {#if dragging}
+        <!-- pointer-events-none: the overlay must not intercept the drag, or its appearance would
+             fire dragleave on the container and dismiss itself. -->
+        <div
+          class="pointer-events-none absolute -inset-1.5 z-10 grid place-items-center rounded-xl border-2 border-dashed border-primary bg-primary/[0.06]"
+        >
+          <span
+            class="rounded-md border border-dark-4 bg-dark-7/95 px-3.5 py-2 text-sm font-semibold text-dark-0"
+          >
+            Drop to add files
+          </span>
+        </div>
+      {/if}
       <div class="min-w-0">
         <div
           class="mb-4 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm
@@ -1104,7 +1214,7 @@
     <Dialog.Header>
       <Dialog.Title>Switch to {pendingLabelMode === 'tag' ? 'tags' : 'captions'}?</Dialog.Title>
       <Dialog.Description>
-        {switchDiscardCount} image{switchDiscardCount === 1 ? '' : 's'} in this dataset already {switchDiscardCount ===
+        {mediaCount(switchDiscardCount, media)} in this dataset already {switchDiscardCount ===
         1
           ? 'has'
           : 'have'}
