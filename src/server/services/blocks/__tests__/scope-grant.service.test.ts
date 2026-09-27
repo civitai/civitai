@@ -1823,9 +1823,15 @@ describe('scope-grant.service', () => {
      * stripper is defence against a future prose mention of the call shape, not a working part
      * today.
      *
+     * Also surviving, and a third reason again: a helper mutation that is EQUIVALENT on the current
+     * source. De-duplicating `callTails`' return (`[...new Set(tails)]`) survives, because the three
+     * module tails are provably distinct — each runs to EOF from a different offset — and every
+     * probe yields exactly one. It is not a hole; it is a mutation that cannot change an answer.
+     *
      * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
-     * reverted to draft 1 or draft 3, a matcher matching everything or nothing, and dropping the
-     * walk's is-this-a-call guard all go red — on this arm, on the scan, or on both.
+     * reverted to draft 1 or draft 3, a matcher matching everything or nothing, dropping the walk's
+     * is-this-a-call guard, and any substitution or relabel inside the probe set all go red — on
+     * this arm, on the scan, or on both.
      */
     it('POSITIVE CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
       const WIDE = ' '.repeat(5000);
@@ -1854,20 +1860,54 @@ describe('scope-grant.service', () => {
         ['SAFE', '.catch(nullHandler)'],
         ['SAFE', '.catch(voidHandler)'],
       ];
-      // Non-vacuous, and BOTH directions represented — an all-SAFE set passes with the matcher
-      // deleted, an all-HAZARD set passes with it always-false, and an empty set asserts nothing.
+      // 🔴 A LEDGER, NOT COUNTS — AND TWO SUCCESSIVE FLOOR DRAFTS EACH CLOSED AN INSTANCE WHILE
+      // LEAVING THE CLASS OPEN. A count cannot distinguish WHICH shapes from HOW MANY, so no floor
+      // value fixes this:
+      //   draft 1, `HAZARD >= 8` against a derived 10 — round-13 review swapped the two `WIDE`
+      //     hazards for SAFE cases (all floors still satisfied: 18 / 8 / 10) and, with the
+      //     4096-character window reinstated, the defect this arm exists to catch was invisible.
+      //   draft 2, floors AT the derived counts (18 / 10 / 8) — round-14 review swapped the same two
+      //     for SAME-KIND hazards the matcher trivially rejects (`.catch()`, `.catch(  )`). Every
+      //     count stays exactly satisfied, the wide-whitespace coverage is gone, and the window
+      //     SURVIVED again at BOTH historical widths. Raising 8→10 had only closed the
+      //     HAZARD→SAFE route, which is the one that moves a number.
       //
-      // 🔴 EVERY FLOOR SITS **AT** ITS DERIVED COUNT, AND TWO SLACK ON THE HAZARD SIDE RE-HID THE
-      // WINDOW DEFECT. The first draft asserted `HAZARD >= 8` against a derived 10, and round-13
-      // review walked straight through it: swapping the two `WIDE` hazards for two SAFE cases keeps
-      // all three floors satisfied (18 total, 8 hazard, 10 safe), and that swap COMBINED with the
-      // 4096-character window reinstated SURVIVED — the exact defect this arm exists to catch,
-      // invisible again. The total floor alone does not save it, because adding SAFE cases pays back
-      // what removing HAZARD ones cost. Same rule the site floor twenty lines up already states in
-      // words: a floor BELOW the real count lets coverage shrink silently.
-      expect(cases.length).toBeGreaterThanOrEqual(18);
-      expect(cases.filter(([k]) => k === 'HAZARD').length).toBeGreaterThanOrEqual(10);
-      expect(cases.filter(([k]) => k === 'SAFE').length).toBeGreaterThanOrEqual(8);
+      // Set equality against a named ledger is the instrument that cannot be walked: it fails on a
+      // substitution, on a relabel, on shrinkage AND on growth — a shape added without a ledger
+      // entry is a finding, which no floor can express. It is also what the sibling guard in
+      // `no-unguarded-block-rest-token.test.ts` already uses for `ANY_TOKEN_ROUTES`, in both
+      // directions, for exactly this reason.
+      //
+      // Adding a shape here is deliberate: put it in `cases` AND in `LEDGER`, and the loop below
+      // then asserts it classifies correctly. `<WIDE>` stands in for the 5,000-space run so the
+      // ledger stays readable.
+      const LEDGER = [
+        'HAZARD ""',
+        'HAZARD ".catch()"',
+        'HAZARD ".catch( )"',
+        'HAZARD ".catch(undefined)"',
+        'HAZARD ".catch( undefined )"',
+        'HAZARD ".catch(null)"',
+        'HAZARD ".catch(void 0)"',
+        'HAZARD ".catch( // why\\n)"',
+        'HAZARD ".catch(<WIDE>)"',
+        'HAZARD ".catch(<WIDE>undefined)"',
+        'SAFE ".catch(() => {})"',
+        'SAFE ".catch( () => {} )"',
+        'SAFE ".catch(String)"',
+        'SAFE ".catch((e) => void e)"',
+        'SAFE ".catch( // why\\n () => {})"',
+        'SAFE ".catch(<WIDE>() => {})"',
+        'SAFE ".catch(nullHandler)"',
+        'SAFE ".catch(voidHandler)"',
+      ];
+      expect(
+        cases.map(([k, t]) => `${k} ${JSON.stringify(t.replace(WIDE, '<WIDE>'))}`).sort(),
+        'the probe set no longer matches its ledger. A shape REMOVED or RELABELLED means this arm ' +
+          'silently stopped covering a hazard some earlier draft of the matcher actually passed — ' +
+          'that is how two floor drafts each re-hid the scan-window defect. A shape ADDED means the ' +
+          'ledger is stale: add it, and the loop below will grade it.'
+      ).toEqual([...LEDGER].sort());
 
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
