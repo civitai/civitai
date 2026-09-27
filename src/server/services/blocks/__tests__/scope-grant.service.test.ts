@@ -1528,6 +1528,52 @@ describe('scope-grant.service', () => {
   });
 
   /**
+   * 🔴 THE P2022 TOLERANCE MUST SEE `meta.code`, NOT ONLY A BARE `code`.
+   *
+   * Every degrade-and-refuse path in this module runs through `isMissingColumnError`, and it used
+   * to match `code === 'P2022'` alone. Prisma reports the column error under `meta.code` on some
+   * engine versions — `app-listing-source-repo.service.ts` says so in its own docblock and pins
+   * both shapes in its tests, on the same TYPED client this module uses — so on such a version the
+   * narrow retry never fired, the read 500ed instead of degrading to "nothing revoked", and the
+   * whole pre-migration refusal branch was unreachable. Round-10 review; the predicate is
+   * pre-existing but this branch took its consumers from 2 to 4.
+   *
+   * The negative arms are the point as much as the positive ones: this predicate is the ONLY thing
+   * standing between "a column is missing" and "a connection died", and widening it is exactly
+   * where that distinction gets lost.
+   */
+  describe('isMissingColumnError', () => {
+    it('matches every shape Prisma reports a missing column as', async () => {
+      const { isMissingColumnError } = await import('../scope-grant.service');
+      expect(isMissingColumnError({ code: 'P2022' })).toBe(true);
+      expect(isMissingColumnError({ code: '42703' })).toBe(true);
+      expect(
+        isMissingColumnError({ code: 'P2000', meta: { code: '42703' } }),
+        'the engine-version shape: the column code arrives under meta, so every tolerance in this ' +
+          'module silently stopped working and a degraded read became a 500'
+      ).toBe(true);
+      expect(isMissingColumnError({ code: 'P2000', meta: { code: 'P2022' } })).toBe(true);
+    });
+
+    it('🔴 REFUSES every error that is not a missing column', async () => {
+      const { isMissingColumnError } = await import('../scope-grant.service');
+      // A real outage must PROPAGATE — degrading here is the fail-open this module exists to stop.
+      expect(isMissingColumnError({ code: 'P1001' })).toBe(false);
+      expect(isMissingColumnError({ code: 'P2002' })).toBe(false);
+      // A missing TABLE is deliberately NOT a missing column: `app-access.service.ts` makes the
+      // same distinction in the other direction, and conflating them hides a half-applied schema.
+      expect(isMissingColumnError({ code: 'P2021' })).toBe(false);
+      expect(isMissingColumnError({ code: '42P01' })).toBe(false);
+      expect(isMissingColumnError({ code: 'P2000', meta: { code: '42P01' } })).toBe(false);
+      // And the shapes that used to throw before the `typeof` guard existed.
+      expect(isMissingColumnError(null)).toBe(false);
+      expect(isMissingColumnError(undefined)).toBe(false);
+      expect(isMissingColumnError('P2022')).toBe(false);
+      expect(isMissingColumnError({ code: 'P2000', meta: 'P2022' })).toBe(false);
+    });
+  });
+
+  /**
    * 🔴 EVERY `logToAxiom` IN THIS MODULE MUST SWALLOW ITS OWN REJECTION — a STRUCTURAL assertion,
    * because the property is asserted in a COMMENT and was pinned by nothing.
    *
@@ -1557,8 +1603,9 @@ describe('scope-grant.service', () => {
    * SPELLED guard, and it errs in BOTH directions by one shape each:
    *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
    *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
-   *     name, spaced or not — it took three drafts to get there, see its own comment. A variable
-   *     that merely HOLDS `undefined` is beyond a source scan and is not claimed.
+   *     name, spaced or not, and skips a trailing line comment — it took FOUR drafts, each closing
+   *     a hazard the previous one passed; see its own comment. A variable that merely HOLDS
+   *     `undefined`, and `.catch(...args)`, are beyond a source scan and are not claimed.
    *   - FALSE FAIL: `.then(undefined, fn)` is SAFE and is rejected — accepted, because a visible
    *     cheap false failure is the right direction for a promise-rejection guard. ⚠️ An earlier
    *     draft also listed `await logToAxiom(...)` inside a `try/catch` here, presenting it as a
@@ -1618,7 +1665,13 @@ describe('scope-grant.service', () => {
           end,
           'unbalanced parens after a logToAxiom call — the scan cannot judge it'
         ).toBeGreaterThan(0);
-        sites.push(src.slice(end, end + 40));
+        // 🔴 THE WINDOW IS WIDE, AND 40 CHARACTERS LET A HAZARD THROUGH. A negative lookahead
+        // whose target lies PAST the window simply fails to match — and a failed inner pattern
+        // makes the NEGATIVE lookahead succeed — so any whitespace run of ~33+ characters turned
+        // `.catch(<spaces>undefined)` into a pass. Measured by round-10 review. Widening cannot
+        // cost anything, because the `^` anchor means more text only gives the lookahead more to
+        // see; SAFE shapes classify identically at every window size.
+        sites.push(src.slice(end, end + 4096));
       }
       // 🔴 POSITIVE CONTROL, AND ITS FLOOR IS THE DERIVED COUNT — **THREE**, not two.
       // `logMissingBudgetColumn`, `logMissingRevokedScopesColumn` and the pre-migration
@@ -1646,18 +1699,38 @@ describe('scope-grant.service', () => {
           //   draft 1 `\.catch\s*\(` — passed all four.
           //   draft 2 `\(\s*[^)\s]` — closed only `.catch()`; `undefined` starts with a non-`)`
           //     character and sailed through.
-          //   draft 3 `\(\s*(?!\)|undefined\b|null\b)` — ⚠️ passed SEVEN shapes, and the cause was
-          //     BACKTRACKING, not the alternation: with `\s*` OUTSIDE the lookahead and optional,
+          //   draft 3 `\(\s*(?!\)|undefined\b|null\b)` — ⚠️ passed every SPACED variant plus
+          //     `void 0`, and the cause was BACKTRACKING, not the alternation. (An earlier note
+          //     said "SEVEN shapes"; that figure is population-dependent and no population was
+          //     named — measured over a 13-shape hazard set it is nine. Name the set or drop the
+          //     count; this comment now does the latter.) With `\s*` OUTSIDE the lookahead and optional,
           //     a failed lookahead on `)` is retried with `\s*` matching zero characters, and
           //     `" )"` starts with none of the three names. So every spaced variant —
           //     `.catch( )`, `.catch( undefined )`, `.catch( null )`, `.catch(\n)` — passed, as did
           //     `void 0`, which was named nowhere.
           // 🔴 THE FIX IS THAT THE LOOKAHEAD OWNS THE WHITESPACE, so there is nothing to backtrack
-          // into. Measured, not reasoned, all three times — and validated in BOTH directions below:
-          // eight hazard shapes red, three handler shapes (arrow, named, spaced arrow) green, and
-          // `.then(undefined, fn)` red by design. A variable that merely HOLDS `undefined` is beyond
-          // any source scan and is not claimed.
-        ).toMatch(/^\s*\.catch\s*\((?!\s*(?:\)|undefined\b|null\b|void\b))/);
+          // into. Measured, not reasoned, at every draft — and validated in BOTH directions,
+          // through the REAL `stripComments`/`endOfCall` pipeline rather than the regex alone,
+          // over the enumerated hazard set { bare, spaced-bare, newline-bare, `undefined`,
+          // ` undefined `, `null`, ` null `, `void 0`, ` void 0 `, tab, NBSP, em-space,
+          // `void handler`, `null?.x`, trailing-comment-bare, wide-whitespace-`undefined` } and the
+          // handler set { arrow, spaced arrow, `( ) =>`, named, `async`, `function`, `e => void e`,
+          // trailing-comment-then-arrow } — plus `.then(undefined, fn)`, red by design.
+          //
+          // NOT CLAIMED, and each is a shape nobody writes by hand: a variable that merely HOLDS
+          // `undefined`; `.catch(...args)`, which is genuinely ambiguous; and two contrived FALSE
+          // FAILS in the accepted visible direction — `.catch(void$fn)` (a legal identifier, since
+          // `$` is not a `\w`, so `void\b` matches) and `.catch(undefined ?? noop)` (which does
+          // evaluate to a real handler).
+          // 🔴 THE LOOKAHEAD SKIPS LINE COMMENTS TOO, AND WITHOUT THAT `\.catch( // why\n)` PASSED.
+          // `stripComments`' second replace is anchored `^[ \t]*//`, so a `//` that is NOT at line
+          // start survives stripping; the matcher then saw `/` as the first token, which is in
+          // neither the forbidden set nor `\s`, so the lookahead succeeded on a bare `.catch()`.
+          // Round-10 review, measured through the real `stripComments` rather than against the
+          // regex alone — which is why it was invisible to the previous round's pure-function
+          // check. `(?:\s|//[^\n]*)*` consumes both, and a trailing comment FOLLOWED by a real
+          // handler still passes.
+        ).toMatch(/^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/);
       }
     });
   });

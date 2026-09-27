@@ -82,9 +82,34 @@ export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
  *
  * Narrow by CODE, not by message text. The message is a human string that upstream
  * is free to reword; the code is the contract.
+ *
+ * 🔴 `meta.code` IS CHECKED, AND IT WAS NOT — WHICH MADE EVERY TOLERANCE IN THIS MODULE
+ * CONDITIONAL ON THE PRISMA ENGINE VERSION. `app-listing-source-repo.service.ts` carries a
+ * same-named predicate that also matches `42703` and either code under `meta`, and its docblock
+ * says why in words: 42703 "reaches us on a `$queryRaw` path **and is also what Prisma reports
+ * in `meta.code` for some engine versions**" — on the TYPED client, which is all this module
+ * uses. Its tests pin both shapes. This copy matched a bare `code === 'P2022'` only, so on such
+ * an engine version: `readGrantRow`'s narrow retry never fires and the read 500s instead of
+ * degrading to "nothing revoked", `revokeScopes` throws a raw 500 instead of
+ * `PRECONDITION_FAILED` + `CONSENT_REVOKE_UNAVAILABLE_MESSAGE`, and `unrevokeData`'s whole
+ * pre-migration branch is unreachable. Found by round-10 review, after this branch took the
+ * predicate's consumers from 2 to 4 — I did not write it, but I multiplied what depends on it.
+ *
+ * ⚠️ TWO COPIES OF ONE RULE, DELIBERATELY NOT CONSOLIDATED HERE. The sibling is in another
+ * service with its own docblock and tests; unifying them is the right end state and is a
+ * separate change. Closing condition: one exported predicate, both modules importing it, the
+ * sibling's tests still green. Until then, a change to either MUST be mirrored — the narrow copy
+ * is what produced the gap above, and a divergence regenerates it.
  */
 export function isMissingColumnError(err: unknown): boolean {
-  return (err as { code?: unknown } | null)?.code === 'P2022';
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; meta?: unknown };
+  if (e.code === 'P2022' || e.code === '42703') return true;
+  if (e.meta && typeof e.meta === 'object') {
+    const metaCode = (e.meta as { code?: unknown }).code;
+    if (metaCode === '42703' || metaCode === 'P2022') return true;
+  }
+  return false;
 }
 
 /**
@@ -726,11 +751,17 @@ export async function recordScopeGrant(opts: {
     //       the database is not established anywhere in this repo, and at the mock boundary a P2022
     //       rejection is the entire observable, so an arm asserting it would be measuring the
     //       fixture. ⚠️ An earlier draft explained it as "Postgres raises 42703 at PARSE time" —
-    //       withdrawn twice over: nothing in-tree measures when 42703 is raised, and 42703 is the
-    //       RAW-SQL code (`app-access.service.ts` matches `P2022 || 42703` precisely because they
-    //       are different surfaces) while `isMissingColumnError` here matches `P2022` only. The
-    //       typed client is what `revokeScopes` uses, so P2022 is the right code and 42703 never
-    //       arises — citing it explained a real refusal with a mechanism from the wrong surface.
+    //       withdrawn twice over: nothing in-tree measures when 42703 is raised, and it explained a
+    //       real refusal with a mechanism from the wrong surface.
+    //       🔴 THE WITHDRAWAL'S OWN FIRST DRAFT THEN MIS-ATTRIBUTED IT, by adopting a reviewer's
+    //       file reference without re-deriving it. `app-access.service.ts` does NOT match
+    //       `P2022 || 42703` — it matches `P2021 || 42P01` and deliberately REFUSES a column
+    //       error, so that a half-applied schema surfaces instead of becoming a permanent silent
+    //       zero. The predicate that pairs them is `app-listing-source-repo.service.ts`, and it
+    //       also refutes "42703 never arises on the typed client": 42703 is what Prisma reports
+    //       under `meta.code` on some engine versions. `isMissingColumnError` above now matches
+    //       that shape; it did not, which is the gap that comment would have stopped anyone
+    //       finding.
     // Hence "no viewer action can empty the residual" is true, and unreachable is the right word —
     // for reason (c). ⚠️ The residual becomes escapable the instant the migration lands, which is
     // harmless because this branch is unreachable by then. Stated because (b) would mislead
@@ -786,9 +817,15 @@ export async function recordScopeGrant(opts: {
             //
             // The OPERATOR's actionable
             // cause (missing column, apply the migration) is already on that board once per
-            // process via `logMissingRevokedScopesColumn`; this event exists to make the
-            // viewer-facing CONSEQUENCE countable, and `info` does that without competing with
-            // real incidents.
+            // process via `logMissingRevokedScopesColumn`.
+            //
+            // ⚠️ AND THIS LINE IS NOT WHAT MAKES THE REFUSAL COUNTABLE — an earlier draft claimed
+            // it was. `PRECONDITION_FAILED` is not in `[trpc].ts`'s onError early-return list, so
+            // the refusal already reaches `buildCentralErrorLog` and is logged at `type: 'info'`
+            // with `path`, `trpcType`, `user` and `input`; `wasServerFaultLogged` cannot dedupe a
+            // hand-written call, so a refusal emits TWO `info` lines. What this one adds that the
+            // chokepoint's does not carry is the MIGRATION NAME and `residualCount` — narrower,
+            // and true.
             //
             // 🔴 `info` IS PRESCRIBED, NOT CHOSEN — AND ROUND 7 PICKED `warning` HAVING READ ONLY
             // HALF THE DOCBLOCK IT QUOTED. Twenty lines below the "never at error severity"
@@ -802,7 +839,16 @@ export async function recordScopeGrant(opts: {
             // uses in `src/server`) but it was a judgement dressed as compliance, and it rested on
             // a second unmeasured claim — that `warning` does not reach the error board — which
             // nothing in this repo measures for any type other than `error`. Following the
-            // prescription removes the claim instead of adding one. Round-9 review.
+            // prescription removes the claim instead of adding one.
+            //
+            // ⚠️ STRICTLY, THAT DOCBLOCK GOVERNS THE CHOKEPOINT'S OUTPUT, NOT A HAND-WRITTEN CALL —
+            // so the direct precedent is what settles it: `endpoint-helpers.ts`'s
+            // `logRestGenericizedClientFault` hand-writes `{ ...buildCentralErrorLog(e),
+            // type: 'info', level: 'info' }` outside the chokepoint for exactly this class. And
+            // whether `info` is HARDER TO FIND than `warning` is UNMEASURED HERE: both are
+            // extracted from the same `type` field, so `| type="info"` and `| type="warning"` are
+            // equally queryable, but whether the pipeline drops or samples a level is configured
+            // in talos-infra, not this repo. Not asserted either way.
             type: 'info',
             message:
               `Refused a prompted RE-CONSENT: this database has no ` +
