@@ -514,6 +514,86 @@ describe('scope-grant.service', () => {
      *
      * MUTATION THAT MUST KILL IT: make `unrevokeData()` return `{}` unconditionally.
      */
+    /**
+     * 🔴 A PROMPTED RE-CONSENT **MIGRATES** A WHOLE-GRANT REVOKE, IT DOES NOT LIFT IT.
+     *
+     * `revoked_at` means "everything on this row is withheld pending fresh consent". A viewer
+     * re-consenting to ONE scope has said nothing about the others, so simply nulling the flag
+     * restored every scope in `granted_scopes` — including `ai:write:budgeted` with its old
+     * ceiling — from a dialog that named one. That is exactly the argument the per-scope clear
+     * makes for touching only `revoked_scopes ∖ scopes`; `revoked_at` is its whole-grant version
+     * and was left wholesale when the install-path hole was closed.
+     *
+     * So everything that WAS granted and is NOT being re-consented to becomes an explicit
+     * per-scope suppression, and only then does the flag clear.
+     *
+     * MUTATIONS THAT MUST KILL IT: return `{ revokedAt: null }` unconditionally from
+     * `unrevokeData`; or drop `revocationData`'s `if (existingRevokedAt) return {}` yield, which
+     * lets the plain subtraction overwrite the migration and silently restores everything.
+     */
+    it('🔴 MIGRATES a whole-grant revoke into per-scope suppressions', async () => {
+      // The oneoff's row: suspended, array intact, nothing per-scope suppressed yet.
+      // 🔴 A NON-EMPTY PRIOR SUPPRESSION LIST IS LOAD-BEARING IN THIS FIXTURE. With
+      // `revokedScopes: []` the neighbouring `revocationData` returns `{}` whatever it is handed
+      // (nothing to subtract), so deleting its `if (existingRevokedAt) return {}` yield was
+      // invisible — measured as a SURVIVING mutant. A prior entry that the plain subtraction
+      // WOULD remove is what makes the clobber observable: without the yield, `revocationData`
+      // spreads last and overwrites the migration with `prior ∖ incoming`.
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: ['ai:write:budgeted', 'posts:write:self', 'user:read:self'],
+        revokedScopes: ['collections:read:private'],
+        revokedAt: new Date('2026-09-16T00:00:00Z'),
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '2.0.0',
+        // The viewer re-consented to one currently-granted scope AND the one they had previously
+        // suppressed — so the plain subtraction has something to remove, and the migration has
+        // something to add.
+        scopes: ['user:read:self', 'collections:read:private'],
+        clearRevocations: true,
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      // The flag lifts…
+      expect(data.revokedAt).toBeNull();
+      // …and everything NOT re-consented to is now explicitly suppressed.
+      expect(
+        new Set(data.revokedScopes),
+        'a dialog naming one scope restored the others — including ai:write:budgeted with its ' +
+          'old ceiling. That is the whole-grant version of the defect the per-scope clear ' +
+          'already guards against.'
+      ).toEqual(new Set(['ai:write:budgeted', 'posts:write:self']));
+      // …and `collections:read:private`, which the dialog DID name, is genuinely lifted.
+      expect(new Set(data.revokedScopes).has('collections:read:private')).toBe(false);
+      expect(data.revokedScopesAt).toBeInstanceOf(Date);
+    });
+
+    /** CONTROL: with no whole-grant revoke, the flag is simply cleared and nothing is migrated. */
+    it('CONTROL: an ordinary re-consent migrates nothing', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: ['posts:write:self'],
+        revokedScopes: [],
+        revokedAt: null,
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '2.0.0',
+        scopes: ['ai:write:budgeted'],
+        clearRevocations: true,
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(data.revokedAt).toBeNull();
+      expect(data).not.toHaveProperty('revokedScopes');
+    });
+
     it('a PROMPTED re-consent clears revokedAt', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
         id: 'augr_1',
@@ -718,8 +798,22 @@ describe('scope-grant.service', () => {
           'would be shown permissions the mint withholds'
       ).toBe(true);
       expect(res.grantedScopes).toEqual([]);
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
       // …and `revoked_at` is (re)stamped rather than cleared, so the suspension survives.
-      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data.revokedAt).toBeInstanceOf(Date);
+      expect(data.revokedAt).toBeInstanceOf(Date);
+      // 🔴 THE STORED ARRAY IS NARROWED, NOT WIPED — the REPORT uses the effective set, the WRITE
+      // uses the raw one. Collapsing both onto the projection flattened `granted_scopes` to `[]`
+      // on exactly this row, destroying the audit array the `2026-09-16` oneoff deliberately
+      // preserves ("keeping the audit trail"). Nothing is gained by discarding it: `revoked_at`
+      // stays set, so every reader still sees the grant as conveying nothing.
+      //
+      // MUTATION THAT MUST KILL IT: write `nextGranted` (the effective set) instead of
+      // `nextGrantedStored`.
+      expect(
+        data.grantedScopes,
+        'the stored granted_scopes array was wiped on an already-revoked row, destroying the ' +
+          'audit trail the re-consent oneoff preserves on purpose'
+      ).toEqual(['ai:write:budgeted']);
     });
 
     /**

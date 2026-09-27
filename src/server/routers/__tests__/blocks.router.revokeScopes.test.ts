@@ -350,7 +350,9 @@ describe('finding 5 — revoke is NOT gated on the app being approved', () => {
     // cannot see is a gate it cannot accidentally grow, and the teardown stopped branching on
     // `manifest.auth` (a publisher push replaces it without re-approval, which is the same
     // reason this procedure applies no manifest ceiling).
-    expect(appBlockFindUnique.mock.calls[0][0].select).toEqual({ id: true });
+    // `appId` joined the select so the teardown gate can reuse it instead of re-reading the row
+    // (three reads of one row before). `status` is still absent, which is the claim this pins.
+    expect(appBlockFindUnique.mock.calls[0][0].select).toEqual({ id: true, appId: true });
   });
 
   // The app must still EXIST — the grant row's FK requires it, so a bad id is a 404 rather
@@ -475,13 +477,21 @@ describe('the OAuth mirror', () => {
   /** A live mirror row for this (user, client) — what the teardown is now gated on. */
   function mirrorExists(clientId = 'oauth_client_1') {
     appBlockFindUnique.mockResolvedValue({ id: APP, appId: clientId });
-    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue({ id: 1 });
+    // 🔴 `dbWrite` FOR BOTH GATE READS. The gate moved off the replica because the mirror is
+    // WRITTEN on the primary at mint time, so a revoke moments later landed inside replication
+    // lag, read `null`, skipped the teardown, and left the OauthConsent bitmask plus the hub's
+    // Access/Refresh keys alive — the hole this gate exists to close.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: APP, appId: clientId });
+    dbMock.dbWrite.oauthConsent.findFirst.mockResolvedValue({ id: 1 });
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(null);
   }
 
   beforeEach(() => {
     // DEFAULT: no mirror. The teardown must be gated on one EXISTING, so "no mirror" is the
     // world every test that is not about it runs in.
-    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: APP, appId: 'jwt_client' });
+    dbMock.dbWrite.oauthConsent.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(null);
   });
 
   /**
@@ -513,13 +523,79 @@ describe('the OAuth mirror', () => {
    */
   it('does NOT touch the mirror when there is none', async () => {
     appBlockFindUnique.mockResolvedValue({ id: APP, appId: 'jwt_client' });
-    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue(null);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: APP, appId: 'jwt_client' });
+    dbMock.dbWrite.oauthConsent.findFirst.mockResolvedValue(null);
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(
       dbMock.dbWrite.oauthConsent.deleteMany,
       'the teardown ran with no mirror row, which costs two primary writes plus an UNTIMED ' +
         'outbound orchestrator call on every revoke of every app'
     ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE GATE READS THE **PRIMARY**, AND THE REPLICA VERSION REINTRODUCED THE HOLE IT CLOSES.
+   *
+   * The mirror is written on the primary by `syncOauthConsentFromGrant` at mint time, so a viewer
+   * who opens an `auth:"oauth"` app and withdraws a permission moments later lands inside
+   * replication lag: a replica gate reads `null`, the teardown is skipped, and the `OauthConsent`
+   * bitmask plus the hub's Access/Refresh keys SURVIVE the revoke. `grantScopes` makes this exact
+   * argument 230 lines above for the structurally identical decision.
+   *
+   * The fixture is the lag itself: the primary HAS the row, the replica does not.
+   *
+   * MUTATION THAT MUST KILL IT: read `dbRead` for either gate query.
+   */
+  it('reads the PRIMARY, so a just-written mirror is not missed to replica lag', async () => {
+    appBlockFindUnique.mockResolvedValue({ id: APP, appId: 'oauth_client_1' });
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: APP, appId: 'oauth_client_1' });
+    // PRIMARY sees the mirror…
+    dbMock.dbWrite.oauthConsent.findFirst.mockResolvedValue({ id: 1 });
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(null);
+    // …the REPLICA has not caught up.
+    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue(null);
+
+    await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(
+      dbMock.dbWrite.oauthConsent.deleteMany,
+      'the teardown was skipped because the gate asked the replica about a row the primary had ' +
+        'just written — the OauthConsent bitmask and the hub keys survive the revoke'
+    ).toHaveBeenCalledTimes(1);
+
+    // 🔴 AND THE DECIDING READS ARE PINNED TO THE PRIMARY EXPLICITLY, not only via the outcome —
+    // a mutant that flips the *appBlock* lookup left the behavioural assertion green, because the
+    // replica fixture still answered with an appId. These are the reads the decision rests on.
+    expect(
+      dbMock.dbWrite.oauthConsent.findFirst,
+      'the mirror-existence read must use the primary — that row is written there at mint time'
+    ).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.apiKey.findFirst).toHaveBeenCalledTimes(1);
+    expect(
+      dbMock.dbRead.oauthConsent.findFirst,
+      'the gate asked the replica about a row the primary had just written'
+    ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 GATED ON **EITHER** ARTEFACT — the callee deletes the api keys FIRST, deliberately, because
+   * a key with no consent row resolves a null `buzzLimit` (i.e. NO CAP) in `bearer-token.ts`. So a
+   * teardown that dies between its two writes leaves "keys present, consent gone" = full scope,
+   * uncapped — and a gate looking only at the consent row would read `null` on every retry and
+   * never clean them. Checking both makes the teardown idempotent against its own partial failure.
+   *
+   * MUTATION THAT MUST KILL IT: `if (!mirror) return;`.
+   */
+  it('tears down stray api keys even when the consent row is already gone', async () => {
+    appBlockFindUnique.mockResolvedValue({ id: APP, appId: 'oauth_client_1' });
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue({ id: APP, appId: 'oauth_client_1' });
+    dbMock.dbWrite.oauthConsent.findFirst.mockResolvedValue(null); // consent already deleted
+    dbMock.dbWrite.apiKey.findFirst.mockResolvedValue({ id: 9 }); // …but a key survived
+    await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(
+      dbMock.dbWrite.apiKey.deleteMany,
+      'a half-finished teardown left Access/Refresh keys with no consent row — which resolves a ' +
+        'null buzzLimit, i.e. FULL SCOPE AND NO CAP — and the retry skipped them'
+    ).toHaveBeenCalledTimes(1);
   });
 
   /**

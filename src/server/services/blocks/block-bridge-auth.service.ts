@@ -4,12 +4,15 @@ import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
-import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordBlockConsentMarkerUnavailable,
+  recordBlockRevocationRefusal,
+  recordConsentStrip,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   applyRevocations,
   ConsentRevocation,
-  recordConsentStrip,
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
@@ -44,7 +47,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable
  *      token also has no `blockInstanceId` to key a revocation lookup on.
- *   2. REVOCATION — two pipelined Redis GETs, so it is still the cheap check and it runs
+ *   2. REVOCATION — pipelined Redis GETs, so it is still the cheap check and it runs
  *      before the DB read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
  *      🔴 A PUBLISHER BAN IS NOW ALSO CONTAINED HERE, and this line has been
@@ -57,6 +60,9 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *      banned user OWNS, so those tokens are refused on their next bridge call
  *      rather than running to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
+ *   4. PER-SCOPE CONSENT — the viewer may have withdrawn a scope this token still carries. Its
+ *      Redis read is STARTED before step 2 is awaited, so it costs no extra round trip in the
+ *      ordering sense; it is listed last because that is where its verdict is CONSUMED.
  *
  * Each step fails closed. ⚠️ THE INSTANCE-revocation step still fails OPEN by construction, but
  * the PER-SCOPE consent step added below fails CLOSED — as a retryable 503, so a cache incident
@@ -67,18 +73,17 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * service's own note). That is a property of the primitive, deliberately inherited here
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
- * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add TWO Redis GETs — three for a `page_ephemeral-*` id, the only
- * shape carrying a subject-scoped ban marker — plus ONE indexed `appBlock.findUnique` (the
- * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
+ * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling ones.
+ * Steps 2 and 4 issue Redis GETs; step 3 issues ONE indexed `appBlock.findUnique` (the
+ * `(appId, blockId)` unique, on the replica — never the primary).
  *
- * ⚠️ THIS COUNT HAS NOW BEEN WRONG THREE TIMES — "ONE Redis GET" before the ban keyspace
- * was split out, "TWO" after the subject keyspace was added, and the sibling copy in
- * `block-revocation.service.ts` was corrected while this one was missed. A number in prose
- * about a function two other files also describe is a claim with three places to rot. It is
- * kept only because the per-request cost of THIS step is the argument for the step order
- * below; if it goes wrong a fourth time, delete the count rather than correct it — the
- * ordering argument survives without it. The history, which is the part worth keeping:
+ * ⚠️ THE GET COUNT IS DELIBERATELY GONE, ON THIS FILE'S OWN INSTRUCTION. It said: "if it goes
+ * wrong a fourth time, delete the count rather than correct it — the ordering argument survives
+ * without it." It went wrong a fourth time: the per-scope consent read (step 4) was added while
+ * the sentence still said "TWO Redis GETs", and by then the middleware was citing THIS file as the
+ * authority on the repeat offence, so the stale number had a second reader. Count the GETs at the
+ * call sites if you need the number; the ordering argument below needs only "Redis is cheaper than
+ * the DB read". The history, which is the part worth keeping:
  * introduced the split claimed the count was unchanged because it used `mGet`. That was
  * wrong: this repo's client WRAPS `mGet` into `Promise.all(keys.map(get))` to avoid
  * CROSSSLOT on the cluster, so the array path never reaches the native `MGET`. The two
@@ -115,7 +120,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *     which only exists once the token has been verified — there is no earlier key to
  *     throttle on, so step 1 is a hard floor beneath it.
  *   - Moving it INTO this helper, between steps 1 and 2, would apply a 120-req/10s
- *     ceiling to ALL FIFTEEN bridge procedures rather than the seven that opted in —
+ *     ceiling to EVERY bridge procedure rather than the seven that opted in —
  *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
  *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
  *     refusing legitimately. That is an availability change, not a cleanup.
@@ -189,8 +194,16 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   //
   // ⚠️ KNOWN AND ACCEPTED: that message is INDISTINGUISHABLE from a never-granted scope. The
   // REST seam can say `consent_revoked` because it knows the route's required scope; this one
-  // does not, and the alternative — threading a reason through ~17 per-proc refusals — is the
-  // per-gate list the strip exists to avoid. The security property (the scope stops working) is
+  // does not.
+  //
+  // ⚠️ AND THE COST ARGUMENT THIS COMMENT FIRST GAVE WAS FALSIFIED BY ITS OWN COMMIT. It said
+  // threading a reason through the per-proc refusals is "the per-gate list the strip exists to
+  // avoid" — but most of those refusals are the IDENTICAL `ai:write:budgeted` throw, and the same
+  // commit mechanically rewrote every one of them to use `CONSENT_SPEND_SCOPE`. Consolidating that
+  // repeated throw into one `assertBridgeScope(claims, scope)` helper would let a reason ride on
+  // the claims object with no per-proc enumeration at all. So the deferral stands on effort and
+  // blast radius inside a fix delta, NOT on impossibility — "this cannot be done cheaply" is
+  // exactly the kind of recorded claim that stops the next person looking. The security property (the scope stops working) is
   // delivered; the message quality on this seam is not, and that is a stated limitation rather
   // than an oversight.
   if (consentLookup !== null) {
@@ -209,6 +222,13 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
     // instead of giving up. `SERVICE_UNAVAILABLE` rather than `FORBIDDEN` is the whole point —
     // and it is the one tRPC 5xx whose message survives `client-safe-error.ts`.
     if (verdict.kind === 'unavailable') {
+      // 🔴 EMITTED, BECAUSE THIS REFUSAL WAS OTHERWISE INVISIBLE. The throw happens before
+      // `recordConsentStrip` ever runs and there is no bridge request counter at all
+      // (`civitai_app_block_requests_total` is REST-only), so during a cache incident every
+      // bridge call 503'd while the consent series read a flat ZERO on `surface=bridge` — and
+      // that series' help text tells the operator to expect the opposite. Same defect as the
+      // REST strip branch emitting nothing, one round later and one surface over.
+      recordBlockConsentMarkerUnavailable('bridge');
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'permission state is temporarily unavailable — retry shortly',

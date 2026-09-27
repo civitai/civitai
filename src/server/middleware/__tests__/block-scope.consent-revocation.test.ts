@@ -44,8 +44,7 @@ type ConsentVerdict =
   | { kind: 'revoked'; scopes: Set<string> }
   | { kind: 'unavailable' };
 
-const { isFliptMock, isRevokedMock, lookupMock, recordMock } = vi.hoisted(() => ({
-  recordMock: vi.fn<(surface: string, scope: string) => void>(),
+const { isFliptMock, isRevokedMock, lookupMock } = vi.hoisted(() => ({
   isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
   isRevokedMock: vi.fn(async () => false),
   // 🔴 THE SIGNATURE IS DECLARED AS A GENERIC, not inferred from a zero-arg arrow. Without it
@@ -81,23 +80,6 @@ vi.mock('~/server/services/block-revocation.service', () => ({
  * `importOriginal` and overriding the one class is the shape the sibling approved-gate suite
  * uses, for the same reason.
  */
-/**
- * The metric emitter, so this suite can pin that the REST seam actually reports. Review measured
- * BOTH deleting `recordConsentStrip('rest', …)` and relabelling its surface to `'bridge'` as
- * SURVIVING mutants: the bridge side was pinned, this side was not, and
- * `block-scope.metrics.test.ts` only calls the emitter directly. That matters more than a normal
- * metrics gap because of the code's own argument on the sibling branch —
- * `recordScopeInvocation` registers its `finish` handler AFTER the early return, so a consent
- * 403 writes no audit row, and this counter is the only thing separating "revocation fired" from
- * "revocation is broken and silently serving".
- *
- * Only the leaf emitter is replaced; `recordConsentStrip` stays REAL, so its per-scope fan-out is
- * exercised rather than stubbed.
- */
-vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  recordBlockConsentRevocationRefusal: recordMock,
-}));
 vi.mock('~/server/services/blocks/consent-revocation.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   ConsentRevocation: { lookup: lookupMock },
@@ -105,6 +87,7 @@ vi.mock('~/server/services/blocks/consent-revocation.service', async (importOrig
 
 import { readFileSync } from 'fs';
 import path from 'path';
+import client from 'prom-client';
 import { dbMock } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { withBlockScope } from '../block-scope.middleware';
@@ -194,6 +177,17 @@ function makeReq(token: string): NextApiRequest {
 }
 
 /** Drives the real middleware. `requiredScope: null` exercises any-token mode. */
+/** Label sets currently recorded on a counter in the real default registry. */
+async function labelsFor(name: string): Promise<Array<Record<string, string>>> {
+  const metrics = await client.register.getMetricsAsJSON();
+  const m = metrics.find((x) => x.name === name) as
+    | { values?: Array<{ labels: Record<string, string> }> }
+    | undefined;
+  return (m?.values ?? []).map((v) => v.labels);
+}
+const consentLabels = () => labelsFor('civitai_app_block_consent_revocation_refusals_total');
+const unavailableLabels = () => labelsFor('civitai_app_block_consent_marker_unavailable_total');
+
 async function drive(token: string, requiredScope: string | null = SCOPE) {
   const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
     res.status(200).json({ via: 'handler' });
@@ -219,7 +213,7 @@ beforeEach(() => {
   isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
   isRevokedMock.mockImplementation(async () => false);
   lookupMock.mockImplementation(async () => ({ kind: 'none' }));
-  recordMock.mockReset();
+  client.register.resetMetrics();
   // Reset between tests so the SEAM block's per-test Redis behaviour cannot leak into the
   // boundary-mocked blocks (where a rejected `get` would be an unhandled rejection in a
   // test that never touches Redis).
@@ -249,7 +243,12 @@ describe('a token carrying a now-revoked scope is refused', () => {
     ).not.toHaveBeenCalled();
     // 🔴 AND IT REPORTS, WITH THE **REST** SURFACE. Both deleting this emit and relabelling it
     // `'bridge'` were surviving mutants before this assertion existed.
-    expect(recordMock).toHaveBeenCalledWith('rest', SCOPE);
+    //
+    // Read off the REAL prom-client registry rather than a mocked emitter: `recordConsentStrip`
+    // and the leaf `inc` live in the same module, so `vi.mock` on the leaf cannot intercept the
+    // intra-module call — mocking the fan-out instead would stub out the intersection rule that
+    // is the thing worth exercising. The registry sees the whole chain, clamp included.
+    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: SCOPE }]);
   });
 
   /**
@@ -262,7 +261,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
     const { res } = await drive(await mint(), SCOPE);
     expect(res.statusCode).toBe(200);
-    expect(recordMock).toHaveBeenCalledWith('rest', OTHER_SCOPE);
+    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: OTHER_SCOPE }]);
   });
 
   /**
@@ -320,7 +319,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
   it('reports nothing when no scope is revoked', async () => {
     lookupMock.mockResolvedValue({ kind: 'none' });
     await drive(await mint(), SCOPE);
-    expect(recordMock).not.toHaveBeenCalled();
+    expect(await consentLabels()).toEqual([]);
   });
 
   /**
@@ -437,6 +436,43 @@ describe('a token carrying a now-revoked scope is refused', () => {
         'sub-check — which is how collections:read:private is gated — would therefore still ' +
         'grant it for the rest of the token’s life.'
     ).toEqual([SCOPE]);
+  });
+
+  /**
+   * 🔴 AN UNREADABLE MARKER IS A **RETRYABLE 503**, NOT `consent_revoked` — and this seam was left
+   * without the branch the bridge got, which is the shape this change kept repeating.
+   *
+   * Synthesising "every revokable scope is revoked" is the right fail-closed answer; reporting it
+   * as `consent_revoked` is not, because that code's documented contract is "the user took this
+   * away, stop asking". `workflows/poll.ts` declares `requiredScope: 'ai:write:budgeted'`, so a
+   * Redis blip made an already-PAID generation answer "the viewer revoked this".
+   *
+   * MUTATIONS THAT MUST KILL IT: delete the `verdict.kind === 'unavailable'` branch (the request
+   * then 403s `consent_revoked`); or answer `FORBIDDEN` instead of 503, which is the difference
+   * between "retry" and "give up" and is also the difference between a message that survives
+   * `client-safe-error.ts` and one that does not.
+   */
+  it('a marker that cannot be read is a 503, not consent_revoked', async () => {
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    const { handler, res } = await drive(await mint(), SCOPE);
+    expect(
+      res.statusCode,
+      'an unreadable marker was reported as a consent decision — the code means "stop asking", ' +
+        'so a cache blip tells the SDK a paid generation was revoked'
+    ).toBe(503);
+    expect(res.body).toMatchObject({ code: 'permission_state_unavailable' });
+    expect((res.body as { error: string }).error).toMatch(/temporarily unavailable|retry/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /** It is NOT reported as a consent withdrawal on the per-scope counter either — that series is
+   *  product signal, and an infra refusal in it is what made the help text wrong. */
+  it('the 503 is counted as marker-unavailable, not as a scope withdrawal', async () => {
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    await drive(await mint(), SCOPE);
+    // The per-scope series is PRODUCT signal; an infra refusal must not land in it.
+    expect(await consentLabels()).toEqual([]);
+    expect(await unavailableLabels()).toEqual([{ surface: 'rest' }]);
   });
 
   /**
@@ -583,16 +619,19 @@ describe('SEAM: fail-closed through the real primitive', () => {
    * MUTATION THAT MUST KILL IT: change `lookup`'s `catch` to `return { kind: 'none' }` in
    * `blocks/consent-revocation.service.ts`.
    */
-  it('a Redis THROW refuses the request', async () => {
+  it('a Redis THROW refuses the request, as a retryable 503', async () => {
     await useRealPrimitive();
     redisMock.redis.get.mockRejectedValue(new Error('connection reset'));
     const { handler, res } = await drive(await mint());
     expect(
       res.statusCode,
-      'a Redis error let the request through. The consent marker must fail CLOSED: the ' +
-        'viewer asked for this permission to stop being granted and was told it was done.'
-    ).toBe(403);
-    expect(res.body).toMatchObject({ code: 'consent_revoked' });
+      'a Redis error let the request through. The consent marker must fail CLOSED: the viewer ' +
+        'asked for this permission to stop being granted and was told it was done.'
+    ).toBe(503);
+    // ⚠️ AND NOT `consent_revoked`, which was the first version's answer here. That code means
+    // "the user took this away, stop asking" — a lie about a cache fault, and on
+    // `workflows/poll.ts` a lie about an already-paid generation.
+    expect(res.body).toMatchObject({ code: 'permission_state_unavailable' });
     expect(handler).not.toHaveBeenCalled();
   });
 

@@ -37,21 +37,19 @@ import type * as ConsentRevocationModule from '~/server/services/blocks/consent-
  * arm below returned the full scope set.
  */
 
-const { mockVerifyBlockToken, mockIsRevoked, lookupMock, mockApprovalVerdict, recordMock } =
-  vi.hoisted(() => ({
-    mockVerifyBlockToken: vi.fn(),
-    mockIsRevoked: vi.fn(async () => false),
-    lookupMock: vi.fn<
-      (opts: {
-        userId: number;
-        appBlockId: string;
-      }) => Promise<
-        { kind: 'none' } | { kind: 'revoked'; scopes: Set<string> } | { kind: 'unavailable' }
-      >
-    >(async () => ({ kind: 'none' })),
-    mockApprovalVerdict: vi.fn(async () => 'ok'),
-    recordMock: vi.fn(),
-  }));
+const { mockVerifyBlockToken, mockIsRevoked, lookupMock, mockApprovalVerdict } = vi.hoisted(() => ({
+  mockVerifyBlockToken: vi.fn(),
+  mockIsRevoked: vi.fn(async () => false),
+  lookupMock: vi.fn<
+    (opts: {
+      userId: number;
+      appBlockId: string;
+    }) => Promise<
+      { kind: 'none' } | { kind: 'revoked'; scopes: Set<string> } | { kind: 'unavailable' }
+    >
+  >(async () => ({ kind: 'none' })),
+  mockApprovalVerdict: vi.fn(async () => 'ok'),
+}));
 
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -73,12 +71,27 @@ vi.mock('~/server/services/blocks/consent-revocation.service', async (importOrig
   ...((await importOriginal()) as Record<string, unknown>),
   ConsentRevocation: { lookup: lookupMock },
 }));
-vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
-  ...((await importOriginal()) as Record<string, unknown>),
-  recordBlockConsentRevocationRefusal: recordMock,
-}));
 
+import client from 'prom-client';
 import { authorizeBlockBridgeToken } from '../block-bridge-auth.service';
+
+/**
+ * Label sets on the real default registry.
+ *
+ * 🔴 NOT A MOCKED EMITTER. `recordConsentStrip` and the leaf `inc` live in the SAME module, so
+ * `vi.mock` on the leaf cannot intercept the intra-module call — and mocking the fan-out instead
+ * would stub out the intersection rule (emit per scope removed from THIS token, not per marker
+ * entry) that these arms exist to pin. The registry sees the whole chain, clamp included.
+ */
+async function labelsFor(name: string): Promise<Array<Record<string, string>>> {
+  const metrics = await client.register.getMetricsAsJSON();
+  const m = metrics.find((x) => x.name === name) as
+    | { values?: Array<{ labels: Record<string, string> }> }
+    | undefined;
+  return (m?.values ?? []).map((v) => v.labels);
+}
+const consentLabels = () => labelsFor('civitai_app_block_consent_revocation_refusals_total');
+const unavailableLabels = () => labelsFor('civitai_app_block_consent_marker_unavailable_total');
 
 const USER_ID = 4242;
 const APP_BLOCK_ID = 'apb_bridge';
@@ -111,6 +124,7 @@ beforeEach(() => {
   mockApprovalVerdict.mockImplementation(async () => 'ok');
   lookupMock.mockImplementation(async () => ({ kind: 'none' }));
   mockVerifyBlockToken.mockResolvedValue(claims());
+  client.register.resetMetrics();
 });
 
 describe('authorizeBlockBridgeToken strips revoked scopes', () => {
@@ -180,6 +194,19 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
    * And it says so in words the client can act on — a 503 is the one tRPC 5xx whose message
    * survives `client-safe-error.ts`, which is why the code and not just the status matters.
    */
+  /**
+   * 🔴 THE 503 IS COUNTED, AND IT WAS OTHERWISE INVISIBLE. The throw happens before
+   * `recordConsentStrip` runs and there is no bridge request counter at all, so during a cache
+   * incident every bridge call 503'd while the per-scope series read a flat ZERO on
+   * `surface=bridge` — the opposite of what that series' help text tells the operator to expect.
+   */
+  it('the unavailable refusal is counted, and not as a scope withdrawal', async () => {
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    await authorizeBlockBridgeToken('tok').catch(() => undefined);
+    expect(await unavailableLabels()).toEqual([{ surface: 'bridge' }]);
+    expect(await consentLabels()).toEqual([]);
+  });
+
   it('the unavailable refusal carries a transient, retryable message', async () => {
     lookupMock.mockResolvedValue({ kind: 'unavailable' });
     const err = await authorizeBlockBridgeToken('tok').then(
@@ -214,22 +241,21 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
     });
     await authorizeBlockBridgeToken('tok');
     expect(
-      recordMock.mock.calls.map((c) => c[1]),
+      await consentLabels(),
       'the emitter reported a scope this token never carried — it is iterating the marker set ' +
         'rather than intersecting it with the token'
-    ).toEqual([POSTS]);
-    expect(recordMock.mock.calls.every((c) => c[0] === 'bridge')).toBe(true);
+    ).toEqual([{ surface: 'bridge', scope: POSTS }]);
   });
 
   it('emits one per removed scope when several are removed, and none when nothing is', async () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([POSTS, BUZZ]) });
     await authorizeBlockBridgeToken('tok');
-    expect(recordMock.mock.calls.map((c) => c[1]).sort()).toEqual([BUZZ, POSTS].sort());
+    expect((await consentLabels()).map((l) => l.scope).sort()).toEqual([BUZZ, POSTS].sort());
 
-    recordMock.mockClear();
+    client.register.resetMetrics();
     lookupMock.mockResolvedValue({ kind: 'none' });
     await authorizeBlockBridgeToken('tok');
-    expect(recordMock).not.toHaveBeenCalled();
+    expect(await consentLabels()).toEqual([]);
   });
 });
 

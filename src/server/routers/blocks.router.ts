@@ -3304,9 +3304,15 @@ export const blocksRouter = router({
       // ⚠️ IT NO LONGER SELECTS `manifest`, AND THE COMMENT THAT SAID IT DID WAS STALE THE MOMENT
       // THE TEARDOWN STOPPED BRANCHING ON `manifest.auth`. Selecting a JSONB column nothing reads
       // is the kind of leftover that later reads as a dependency.
+      // `appId` is selected HERE and reused by the teardown gate below — the OAuth client id for
+      // this app. Three reads of this one row is what the previous shape cost (this one, the
+      // gate's, and the callee's own); selecting it once removes one of them. Replica is correct
+      // for THIS read: an `app_blocks` row is not newly written by anything on this path — unlike
+      // the `OauthConsent` row, which the mint writes on the primary and which the gate therefore
+      // must read there.
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
-        select: { id: true },
+        select: { id: true, appId: true },
       });
       if (!block) throw throwNotFoundError('App block not found');
 
@@ -3344,7 +3350,7 @@ export const blocksRouter = router({
         });
       }
 
-      // POSTGRES FIRST, then the durable OAuth teardown, then Redis. The row is the
+      // POSTGRES FIRST, then the in-flight marker, then the OAuth teardown. The row is the
       // authority — it governs every FUTURE mint, permanently — while the marker only closes
       // the window on tokens already in flight and expires by itself within one token
       // lifetime. So a failure after the row is written leaves the revoke DURABLE but not
@@ -3357,6 +3363,10 @@ export const blocksRouter = router({
       });
 
       // ── THE IN-FLIGHT MARKER, THEN THE OAUTH MIRROR.
+      //
+      // ⚠️ THE COMMENT ABOVE `revokeScopesForUser` STILL SAID "POSTGRES FIRST, then the durable
+      // OAuth teardown, then Redis" — the round-2 order, which this block then changed. Corrected
+      // there; the real order is Postgres → Redis publish → teardown in a `finally`.
       //
       // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
       // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
@@ -3395,20 +3405,45 @@ export const blocksRouter = router({
         // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
         // regardless. One cheap existence read gates all of it on the only condition that
         // matters.
-        const { revokeOauthConsentForBlock } = await import(
-          '~/server/services/blocks/oauth-consent-sync.service'
-        );
         await (async () => {
-          const block = await dbRead.appBlock.findUnique({
-            where: { id: input.appBlockId },
-            select: { appId: true },
-          });
-          if (!block) return;
-          const mirror = await dbRead.oauthConsent.findFirst({
-            where: { userId: ctx.user!.id, clientId: block.appId },
-            select: { id: true },
-          });
-          if (!mirror) return;
+          // 🔴 THE `await import` IS INSIDE THE IIFE, so a chunk-load failure is caught by the
+          // `.catch` below. Outside it, an import rejection turned a SUCCESSFUL revoke into a
+          // generic 500 and — when the publish had failed — discarded the carefully-worded 503.
+          const { revokeOauthConsentForBlock } = await import(
+            '~/server/services/blocks/oauth-consent-sync.service'
+          );
+          // 🔴 `dbWrite` FOR THE GATE READS — AND THE REPLICA VERSION REINTRODUCED THE HOLE THIS
+          // GATE EXISTS TO CLOSE. The mirror is written on the PRIMARY by
+          // `syncOauthConsentFromGrant` at mint time, so a viewer who opens an `auth:"oauth"` app
+          // and withdraws a permission moments later lands inside replication lag: the gate reads
+          // `null`, the teardown is skipped, and the `OauthConsent` bitmask plus the hub's
+          // `Access`/`Refresh` keys SURVIVE the revoke. `grantScopes` makes this exact argument
+          // 230 lines above for the structurally identical decision ("Off the replica this
+          // decision lags the grant it is asking about").
+          //
+          // The app's `appId` comes from the read at the top of the procedure — no second lookup.
+          // 🔴 GATED ON **EITHER** ARTEFACT, NOT ONLY THE CONSENT ROW — because the callee deletes
+          // the api keys FIRST, deliberately (a key with no consent row resolves a null
+          // `buzzLimit`, i.e. NO CAP, in `bearer-token.ts`). So a teardown that dies between its
+          // two writes leaves "keys present, consent gone" = full scope, uncapped — and a gate
+          // that looked only at the consent row would then read `null` on every retry and never
+          // clean them. Checking both makes the teardown idempotent against its own partial
+          // failure.
+          const [mirror, key] = await Promise.all([
+            dbWrite.oauthConsent.findFirst({
+              where: { userId: ctx.user!.id, clientId: block.appId },
+              select: { id: true },
+            }),
+            dbWrite.apiKey.findFirst({
+              where: {
+                userId: ctx.user!.id,
+                clientId: block.appId,
+                type: { in: ['Access', 'Refresh'] },
+              },
+              select: { id: true },
+            }),
+          ]);
+          if (!mirror && !key) return;
           await revokeOauthConsentForBlock({
             userId: ctx.user!.id,
             appBlockId: input.appBlockId,

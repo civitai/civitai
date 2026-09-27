@@ -9,9 +9,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   consentGatedScopes,
   getConsentBuzzBudget,
-  isMissingColumnError,
   liveGrantedScopes,
-  logMissingRevokedScopesColumn,
+  readGrantRow,
 } from './scope-grant.service';
 
 export interface OauthConsentMirror {
@@ -57,44 +56,6 @@ function blockScopesToOauthScope(scopes: Iterable<string>): number {
 
 function sameLimit(a: BuzzLimit | null, b: BuzzLimit | null): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-}
-
-/**
- * The grant row this mirror needs, P2022-tolerant.
- *
- * 🔴 WITHOUT THIS THE MIRROR HARD-FAILED ON THE PRE-MIGRATION DATABASE — which is production
- * as this ships. Widening the select to `revoked_scopes` (correct, and the point of the fix)
- * made this the ONE reader of these columns with no fallback, inside a `Promise.all` whose
- * rejection propagates out of `syncOauthConsentFromGrant`. Its callers do not catch:
- * `block-tokens/index.ts` awaits it on the OAuth mint AND on the page-load mint, and
- * `blocks.grantScopes` awaits it after a successful consent write. So between deploy and a
- * human applying the migration, every mint for an `auth: "oauth"` app 500'd instead of
- * degrading — and the migration header in the same commit asserted "the revoke MUTATION is
- * therefore unavailable until this lands; nothing else is", which that made false.
- *
- * `liveGrantedScopes` was given an OPTIONAL `revokedScopes` precisely so a narrow-select row
- * works here: absent column ⇒ no revocation can ever have been recorded ⇒ `undefined` means
- * "none", which is the only state such a database can be in. Only P2022 is caught; anything
- * else still propagates, because for those the suppression list is UNKNOWN rather than absent.
- */
-async function readGrantForMirror(
-  userId: number,
-  appBlockId: string
-): Promise<{ grantedScopes: string[]; revokedAt: Date | null; revokedScopes?: string[] } | null> {
-  const where = { userId_appBlockId: { userId, appBlockId } };
-  try {
-    return (await dbWrite.appUserScopeGrant.findUnique({
-      where,
-      select: { grantedScopes: true, revokedAt: true, revokedScopes: true },
-    })) as { grantedScopes: string[]; revokedAt: Date | null; revokedScopes: string[] } | null;
-  } catch (err) {
-    if (!isMissingColumnError(err)) throw err;
-    logMissingRevokedScopesColumn('syncOauthConsentFromGrant', err);
-    return (await dbWrite.appUserScopeGrant.findUnique({
-      where,
-      select: { grantedScopes: true, revokedAt: true },
-    })) as { grantedScopes: string[]; revokedAt: Date | null } | null;
-  }
 }
 
 /**
@@ -147,7 +108,13 @@ export async function syncOauthConsentFromGrant(opts: {
     // resolves every OAuth bearer's spend ceiling from that `buzzLimit`, so the viewer's
     // revoke had removed their own cap and left it removed DURABLY — which is exactly what
     // `revokeOauthConsentForBlock` exists to prevent.
-    readGrantForMirror(userId, appBlockId),
+    // 🔴 THE SHARED READER, NOT A CLONE OF IT. `readGrantForMirror` — added by the previous
+    // commit to fix a production 500 — was byte-level identical to `readGrantRow`: same table,
+    // same `where`, same wide select, same `isMissingColumnError` test, same log, same narrow
+    // fallback. That function was ALREADY parameterised by `client` and `site` for precisely this
+    // reason and was private only by omission. `dbWrite` because this runs immediately after the
+    // grant write it mirrors.
+    readGrantRow(dbWrite, userId, appBlockId, 'syncOauthConsentFromGrant'),
   ]);
   // 🔴 #5127: this read `grant?.revokedAt`, which is `undefined` — falsy — for a
   // viewer who has NEVER granted anything, so the guard did not fire and an

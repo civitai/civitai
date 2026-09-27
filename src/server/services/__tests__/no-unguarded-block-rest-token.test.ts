@@ -1638,8 +1638,12 @@ describe('the approval predicate is not open-coded a second time', () => {
    * check. Nothing asserted that property, which means a gated scope added to the storage family
    * would be silently unenforced on those two paths. This is that assertion.
    *
-   * It fails in BOTH directions: a NEW seam (a fifth `verifyBlockToken` caller, or one of the two
-   * starting to authorize a gated scope) and a seam that STOPS applying revocations.
+   * 🔴 IT FAILS IN BOTH DIRECTIONS **BECAUSE IT DERIVES THE CALLER SET**, and the first version did
+   * not. That version asserted a growth property it could not observe: every `walk()` in this file
+   * targets `src/pages/api`, while all four real `verifyBlockToken` call sites live under
+   * `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
+   * false. Same description-wider-than-body defect this commit fixed twice elsewhere, reproduced
+   * inside its own new guard. The callers are now enumerated from `src/server` + `src/pages`.
    */
   const CONSENT_STRIP_SEAMS: Record<string, string> = {
     'src/server/middleware/block-scope.middleware.ts':
@@ -1660,6 +1664,49 @@ describe('the approval predicate is not open-coded a second time', () => {
     ],
     'src/server/services/apps/app-storage.service.ts': ['apps:storage:read', 'apps:storage:write'],
   };
+
+  /**
+   * Every production file that CALLS `verifyBlockToken`, derived by walking the two roots the
+   * callers actually live in. `block-scope.middleware.ts` is excluded as the DEFINER — it exports
+   * the function, and its own call is the REST seam, which is ledgered by name.
+   */
+  function verifyTokenCallers(): string[] {
+    /** Every `.ts`/`.tsx` under a repo-relative dir, excluding tests. Uses this file's own
+     *  `toPosix` so the keys compare on win32 as well. */
+    function tsFiles(relDir: string, out: string[] = []): string[] {
+      for (const entry of fs.readdirSync(path.join(REPO_ROOT, relDir), { withFileTypes: true })) {
+        const rel = toPosix(path.join(relDir, entry.name));
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+          tsFiles(rel, out);
+          continue;
+        }
+        if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(rel);
+      }
+      return out;
+    }
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    return [...tsFiles('src/server'), ...tsFiles('src/pages')]
+      .filter((rel) => rel !== DEFINER)
+      .filter((rel) => /verifyBlockToken\s*\(/.test(stripNonCode(read(rel))))
+      .sort();
+  }
+
+  it('POSITIVE CONTROL: the verifyBlockToken caller set is derived and complete', () => {
+    const callers = verifyTokenCallers();
+    // A broken walk makes every equality below vacuous.
+    expect(callers.length).toBeGreaterThan(2);
+    // And it really is the union of the two ledgers — this is the GROWTH check the first version
+    // claimed and could not perform.
+    // The REST seam IS `block-scope.middleware.ts`, which is also the DEFINER and therefore
+    // excluded from the derivation — so compare against the ledgers minus that one key.
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    expect(callers).toEqual(
+      [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)]
+        .filter((k) => k !== DEFINER)
+        .sort()
+    );
+  });
 
   it('every verifyBlockToken seam either applies revocations or authorizes only exempt scopes', async () => {
     const { isConsentExemptScope } = await import('~/server/services/blocks/scope-grant.service');
@@ -1707,29 +1754,41 @@ describe('the approval predicate is not open-coded a second time', () => {
   });
 
   /**
-   * 🔴 THE ANY-TOKEN ROUTES READ NO SCOPES, which is what makes the middleware's marker skip for
-   * them sound. If one ever starts reading `claims.scopes`, that skip becomes a silent hole —
-   * exactly the shape of the original defect, where enforcement was keyed on a route property.
+   * 🔴 THE ANY-TOKEN ROUTES READ NO SCOPES — DERIVED, NOT LISTED.
+   *
+   * The middleware skips the consent-marker read entirely when a route declares no
+   * `requiredScope`, on the ground that such a route exercises no scope and a marker can therefore
+   * neither refuse nor usefully strip. That holds only while those routes really do ignore
+   * `claims.scopes`; if one starts reading them, a viewer's revoke is silently unenforced there.
+   *
+   * ⚠️ THE FIRST VERSION HARDCODED FIVE PATHS AND THE POPULATION IS SEVEN — `generation-resources.ts`
+   * and `me.ts` were both missing. A hand-list is exactly what this file's own preamble forbids
+   * ("A RELATIONSHIP, NOT A COUNT … the KEY SET must equal the DERIVED set, in both directions"),
+   * and it is the shape that let the skip's soundness guard cover 5 of 7 while claiming the
+   * population. So the set is derived from the same `blockScopedRoutes()` walk every other ledger
+   * here uses, and a seventh or eighth route is covered the day it is added.
    */
-  const ANY_TOKEN_ROUTES = [
-    'src/pages/api/v1/blocks/models.ts',
-    'src/pages/api/v1/blocks/images.ts',
-    'src/pages/api/v1/blocks/gated-images.ts',
-    'src/pages/api/v1/blocks/tools.ts',
-    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
-  ];
+  function anyTokenRoutes(): string[] {
+    return blockScopedRoutes().filter((rel) => !/requiredScope\s*:/.test(stripNonCode(read(rel))));
+  }
 
-  it('the any-token routes declare no requiredScope and read no scopes', () => {
-    for (const rel of ANY_TOKEN_ROUTES) {
+  it('POSITIVE CONTROL: the any-token population is derived and non-empty', () => {
+    // Without this, every assertion below passes vacuously on an empty derivation — which is how
+    // a hand-list of five stood in for a population of seven.
+    const routes = anyTokenRoutes();
+    expect(routes.length).toBeGreaterThan(3);
+    // …and it is a strict subset of the wrapped routes, i.e. the filter really filtered.
+    expect(routes.length).toBeLessThan(blockScopedRoutes().length);
+  });
+
+  it('every any-token route reads no scopes, so the marker skip is sound', () => {
+    for (const rel of anyTokenRoutes()) {
       const code = stripNonCode(read(rel));
       expect(
         code,
-        `${rel} now declares a requiredScope — it is no longer an any-token route`
-      ).not.toMatch(/requiredScope\s*:/);
-      expect(
-        code,
-        `${rel} reads claims.scopes. The consent-marker skip for any-token routes assumes it ` +
-          `cannot act on a scope, so a viewer's revoke would be silently unenforced here.`
+        `${rel} declares no requiredScope, so the consent-marker read is SKIPPED for it — but it ` +
+          `reads claims.scopes, which means a viewer's revoke is silently unenforced there. ` +
+          `Either give the route a requiredScope, or stop reading scopes in it.`
       ).not.toMatch(/\bscopes\b/);
     }
   });

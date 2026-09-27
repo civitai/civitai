@@ -49,8 +49,16 @@ import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
  * on it" and enumerated them, while `blocks.router.ts` alone still held ELEVEN identical
  * `claims.scopes.includes(...)` spend gates spelled as the literal. An enumeration covering 4
  * of 19 sites is worse than none — it stops the next person looking. Those eleven are swept;
- * `git grep "'ai:write:budgeted'"` is the authority on what remains, and a non-zero answer is
- * expected (tag strings, manifest keys and scope-LIST members are not this predicate).
+ * `git grep "'ai:write:budgeted'"` is the authority on what remains.
+ *
+ * ⚠️ AND THE SURVIVORS ARE NOT WHAT THIS DOCBLOCK FIRST CLAIMED. It said they were "tag strings,
+ * manifest keys and scope-LIST members"; in `blocks.router.ts` the four live ones are
+ * `recordScopeInvocation({ scope: 'ai:write:budgeted' })` — TELEMETRY LABELS naming this same
+ * vocabulary item, which go silently wrong (mis-attributed activity rows) on exactly the rename
+ * this constant exists for. Whether a value written to an audit store should be coupled to the
+ * runtime constant is a judgement, not an obvious yes, so they are deliberately left — but
+ * describing them as a different KIND of thing is checkably wrong, and a wrong characterisation
+ * is what stops the next reader looking.
  */
 export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
 
@@ -172,7 +180,11 @@ export function logMissingRevokedScopesColumn(site: string, err: unknown): void 
  * revocations because a *budget* column was absent. `resolveConsentSpendPosture` reads
  * the budget, and takes its own P2022 branch for it.
  */
-async function readGrantRow(
+// Exported ONLY so `oauth-consent-sync.service.ts` can reuse it rather than clone it. It was
+// private, and the clone that appeared two modules away was byte-level identical — same table,
+// same where, same wide select, same P2022 test, same log, same narrow fallback — because this
+// function was already parameterised by `client` and `site` for exactly that purpose.
+export async function readGrantRow(
   client: typeof dbRead | typeof dbWrite,
   userId: number,
   appBlockId: string,
@@ -217,8 +229,27 @@ async function readGrantRow(
  * revocation can ever have been recorded. `undefined` here means "none", which is the only
  * state such a database can be in — not a guess.
  */
+
+export function liveGrantedScopes(row: {
+  grantedScopes: string[] | null | undefined;
+  revokedScopes?: string[] | null;
+  revokedAt?: Date | null;
+}): string[] {
+  if (row.revokedAt) return [];
+  const revoked = new Set(row.revokedScopes ?? []);
+  return (row.grantedScopes ?? []).filter((s) => !revoked.has(s));
+}
+
 /**
  * The USABLE per-day consent budget on a grant row, or `null` when there is none.
+ *
+ * 🔴 DELIBERATELY BELOW `liveGrantedScopes`, NOT ABOVE IT. Inserting this between that
+ * function's docblock and the function ORPHANED 22 lines of contract — including the
+ * optional-`revokedScopes` pre-migration rule the OAuth mirror's P2022 fallback depends on —
+ * onto this declaration instead, leaving `liveGrantedScopes` hovering undocumented. This file
+ * already records the identical hazard on `WRITE_RETURN_SELECT` ("A docblock separated from its
+ * function by another declaration documents that declaration instead") and it was walked into
+ * anyway, three hundred lines later.
  *
  * 🔴 SHARED FOR THE SAME REASON `liveGrantedScopes` IS — and review found this rule had
  * ALREADY drifted between its two homes. `user-app-surface.service.ts` carried the comment
@@ -241,16 +272,6 @@ export function usableConsentBudget(row: {
   const budget = row.buzzBudgetPerDay;
   if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) return null;
   return Math.floor(budget);
-}
-
-export function liveGrantedScopes(row: {
-  grantedScopes: string[] | null | undefined;
-  revokedScopes?: string[] | null;
-  revokedAt?: Date | null;
-}): string[] {
-  if (row.revokedAt) return [];
-  const revoked = new Set(row.revokedScopes ?? []);
-  return (row.grantedScopes ?? []).filter((s) => !revoked.has(s));
 }
 
 /**
@@ -474,6 +495,12 @@ export async function resolveConsentSpendPosture(opts: {
     opts.appBlockId,
     'resolveConsentSpendPosture'
   );
+  // 🔴 HAND-SPELLED ON PURPOSE — THE ONE PLACE THAT DOES NOT USE `liveGrantedScopes`, and the
+  // reason is the return type. The projection COLLAPSES a whole-grant revoke and a per-scope
+  // revoke of the spend scope into "conveys nothing"; this function has to tell them apart,
+  // because `grant_revoked` and `spend_scope_revoked` produce different copy for the viewer.
+  // Do not "consolidate" it — that loses the distinction. If the rule ever gains a third term,
+  // this is the site that will silently miss it.
   if (row?.revokedAt) return { kind: 'revoked', reason: 'grant_revoked' };
   if ((row?.revokedScopes ?? []).includes(CONSENT_SPEND_SCOPE)) {
     return { kind: 'revoked', reason: 'spend_scope_revoked' };
@@ -631,8 +658,36 @@ export async function recordScopeGrant(opts: {
    * user-facing revoke; it is not a licence for an UNPROMPTED path to do it now. A prompted
    * re-consent still clears it, which is the flow that oneoff actually wants.
    */
-  function unrevokeData(): Record<string, unknown> {
-    return opts.clearRevocations ? { revokedAt: null } : {};
+  function unrevokeData(priorGranted: string[] | undefined, priorRevoked: string[] | undefined) {
+    if (!opts.clearRevocations) return {};
+    // 🔴 A WHOLE-GRANT REVOKE IS **MIGRATED**, NOT LIFTED — and clearing it wholesale was the
+    // same defect this flag exists to prevent, one level up.
+    //
+    // `revoked_at` means "everything on this row is withheld pending fresh consent". A viewer
+    // re-consenting to ONE scope has said nothing about the others, so simply nulling the flag
+    // restored every scope in `granted_scopes` — including `ai:write:budgeted` with its old
+    // ceiling — from a dialog that named one. That is exactly the argument `revocationData`
+    // below makes for clearing only `revoked_scopes ∖ scopes`; `revoked_at` is the whole-grant
+    // version of it and was left wholesale.
+    //
+    // So: everything that WAS granted and is NOT being re-consented to becomes an explicit
+    // per-scope suppression, and only then does the flag clear. Semantics preserved exactly —
+    // "all withheld" becomes "all still withheld except the one you just allowed" — and the
+    // result is expressible in the per-scope model the rest of this feature uses.
+    const wasWholeGrantRevoked = Boolean(existingRevokedAt);
+    if (!wasWholeGrantRevoked) return { revokedAt: null };
+    // 🔴 `incoming` IS SUBTRACTED FROM **BOTH** SOURCES. Carrying `priorRevoked` forward verbatim
+    // kept suppressing a scope the dialog DID name — so re-consenting to something the viewer had
+    // previously revoked silently failed, which is the mirror image of the defect this function
+    // was written to close. Caught by the migration test, not by reasoning.
+    const carried = [...(priorGranted ?? []), ...(priorRevoked ?? [])].filter(
+      (x) => !incomingSet.has(x)
+    );
+    const migrated = Array.from(new Set(carried));
+    return {
+      revokedAt: null,
+      ...(migrated.length > 0 ? { revokedScopes: migrated, revokedScopesAt: new Date() } : {}),
+    };
   }
 
   /**
@@ -649,6 +704,14 @@ export async function recordScopeGrant(opts: {
    */
   function revocationData(priorRevoked: string[] | undefined): Record<string, unknown> {
     if (!opts.clearRevocations) return {};
+    // 🔴 YIELD TO `unrevokeData` WHEN IT IS MIGRATING A WHOLE-GRANT REVOKE. Both functions can
+    // write `revoked_scopes`, and the spread order puts this one LAST — so without this the
+    // migration (prior ∪ everything-not-re-consented) would be overwritten by the plain
+    // subtraction (prior ∖ incoming), silently restoring every scope the whole-grant revoke had
+    // withheld. That is the defect `unrevokeData` was just written to close, reintroduced by the
+    // neighbour. The migration already subtracts `incoming`, so it is a strict superset of what
+    // this function would have written.
+    if (existingRevokedAt) return {};
     const prior = priorRevoked ?? [];
     const next = prior.filter((s) => !incomingSet.has(s));
     if (next.length === prior.length) return {};
@@ -664,10 +727,14 @@ export async function recordScopeGrant(opts: {
    * without the column, a prompted re-consent degrades to "nothing revoked" rather than
    * 500ing (see `readGrantRow` for why absent ⇒ none is the true answer, not a guess).
    */
+  /** Set by `readExisting` when a clear is possible — `unrevokeData` branches on it. */
+  let existingRevokedAt: Date | null = null;
+
   async function readExisting(): Promise<{
     id: string;
     grantedScopes: string[];
     revokedScopes?: string[];
+    revokedAt?: Date | null;
   } | null> {
     const where = { userId_appBlockId: { userId, appBlockId } };
     if (!opts.clearRevocations) {
@@ -677,10 +744,20 @@ export async function recordScopeGrant(opts: {
       })) as { id: string; grantedScopes: string[] } | null;
     }
     try {
-      return (await dbWrite.appUserScopeGrant.findUnique({
+      const row = (await dbWrite.appUserScopeGrant.findUnique({
         where,
-        select: { id: true, grantedScopes: true, revokedScopes: true },
-      })) as { id: string; grantedScopes: string[]; revokedScopes: string[] } | null;
+        // `revokedAt` is selected ONLY on the clear-capable path — `unrevokeData` has to know
+        // whether it is lifting a whole-grant revoke (and therefore must migrate the rest to
+        // per-scope suppressions) or merely writing a redundant `null`.
+        select: { id: true, grantedScopes: true, revokedScopes: true, revokedAt: true },
+      })) as {
+        id: string;
+        grantedScopes: string[];
+        revokedScopes: string[];
+        revokedAt: Date | null;
+      } | null;
+      existingRevokedAt = row?.revokedAt ?? null;
+      return row;
     } catch (err) {
       if (!isMissingColumnError(err)) throw err;
       logMissingRevokedScopesColumn('recordScopeGrant', err);
@@ -700,7 +777,7 @@ export async function recordScopeGrant(opts: {
       data: {
         grantedScopes: merged,
         version,
-        ...unrevokeData(),
+        ...unrevokeData(existing.grantedScopes, existing.revokedScopes),
         ...budgetData,
         ...revocationData(existing.revokedScopes),
       },
@@ -737,7 +814,7 @@ export async function recordScopeGrant(opts: {
       data: {
         grantedScopes: merged,
         version,
-        ...unrevokeData(),
+        ...unrevokeData(row.grantedScopes, row.revokedScopes),
         ...budgetData,
         ...revocationData(row.revokedScopes),
       },
@@ -865,13 +942,24 @@ export async function revokeScopes(
     throw rethrowMissingRevokedScopesColumn(err, 'revokeScopes:read');
   }
 
-  // 🔴 THE **EFFECTIVE** PRIOR GRANT, VIA THE SHARED PROJECTION — not the raw array. A row
-  // whose `revoked_at` is already set conveys nothing, so its effective granted set is empty
-  // and any revoke against it is `fullyRevoked`. Reading the raw column here is what made the
-  // reported `fullyRevoked`/`grantedScopes` disagree with every reader of the same row.
-  const priorGranted = existing ? liveGrantedScopes(existing) : [];
+  // 🔴 TWO PRIOR SETS, BECAUSE THE WRITE AND THE REPORT WANT DIFFERENT ONES — and collapsing
+  // them onto the projection destroyed an audit trail.
+  //
+  //   `priorGrantedRaw`      — the column as stored. The WRITE narrows this, so a row that was
+  //                            already whole-grant revoked keeps its `granted_scopes` array
+  //                            instead of being flattened to `[]`. The `2026-09-16` oneoff
+  //                            deliberately preserves that array ("keeping the audit trail"),
+  //                            and nothing is gained by discarding it: `revoked_at` stays set,
+  //                            so `liveGrantedScopes` still reports the grant as conveying
+  //                            nothing to every reader.
+  //   `priorGrantedEffective`— what the grant actually CONVEYS. The REPORT uses this, so
+  //                            `fullyRevoked` and the returned `grantedScopes` agree with every
+  //                            other reader of the row rather than contradicting the mint.
+  const priorGrantedRaw = existing?.grantedScopes ?? [];
+  const priorGrantedEffective = existing ? liveGrantedScopes(existing) : [];
   const priorRevoked = existing?.revokedScopes ?? [];
-  const nextGranted = priorGranted.filter((s) => !incomingSet.has(s));
+  const nextGrantedStored = priorGrantedRaw.filter((s) => !incomingSet.has(s));
+  const nextGranted = priorGrantedEffective.filter((s) => !incomingSet.has(s));
   const nextRevoked = Array.from(new Set([...priorRevoked, ...incoming]));
   const newlyRevoked = incoming.filter((s) => !priorRevoked.includes(s));
   const fullyRevoked = nextGranted.length === 0;
@@ -885,7 +973,8 @@ export async function revokeScopes(
   const now = new Date();
 
   const data = {
-    grantedScopes: nextGranted,
+    // The STORED array — see the two prior sets above.
+    grantedScopes: nextGrantedStored,
     revokedScopes: nextRevoked,
     revokedScopesAt: now,
     // 🔴 SET, NEVER CLEARED — AND THE FIRST VERSION WROTE `: null` ON EVERY PARTIAL REVOKE,

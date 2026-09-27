@@ -3,22 +3,19 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  recordBlockConsentMarkerUnavailable,
   recordBlockRestApprovalVerdict,
+  recordConsentStrip,
   recordBlockRevocationRefusal,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
-// The one scope that can spend the viewer's Buzz — needed to drop `buzzBudget` alongside it when
-// the strip removes it. A bare string constant; the module is already in this graph via
-// `consent-revocation.service`.
-import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   applyRevocations,
   ConsentRevocation,
-  recordConsentStrip,
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
@@ -1394,7 +1391,37 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // manifests, 12 of 15 carry a gated scope, so the real coupling is WIDER than that figure
     // suggests. See `shouldConsultMarker`'s own docblock for the honest population.
     if (consentLookup !== null) {
-      const revoked = revokedScopesForToken(await consentLookup, claims.scopes);
+      const verdict = await consentLookup;
+
+      // 🔴 AN UNREADABLE MARKER IS A **RETRYABLE** REFUSAL, NOT `consent_revoked` — AND THIS SEAM
+      // WAS LEFT WITHOUT THIS BRANCH WHILE THE BRIDGE GOT ONE.
+      //
+      // Synthesising "every revokable scope is revoked" is the right FAIL-CLOSED answer, but
+      // reporting it as `consent_revoked` tells the app something false and actively harmful: the
+      // code's documented contract, twenty lines down, is that `consent_revoked` means the user
+      // took this away and the app "should stop asking". `workflows/poll.ts` declares
+      // `requiredScope: 'ai:write:budgeted'`, so a Redis blip made an already-PAID generation
+      // answer "the viewer revoked this" — the exact harm
+      // `block-catalog-rate-limit.ts` says never to inflict, and the harm the bridge's own
+      // 503 was added to remove. Fixing one seam and not the other is the shape this change
+      // keeps repeating.
+      //
+      // ⚠️ THE 503 BUYS AN HONEST MESSAGE, NOT AUTOMATIC RECOVERY. `client-safe-error.ts` passes
+      // a 503's message through (every other 5xx is replaced), and `utils/trpc.ts` retries
+      // QUERIES only — and the block host currently turns any poll throw into a terminal `failed`
+      // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
+      // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
+      // done here. Do not read this branch as delivering retry.
+      if (verdict.kind === 'unavailable') {
+        recordBlockConsentMarkerUnavailable('rest');
+        res.status(503).json({
+          error: 'permission state is temporarily unavailable — retry shortly',
+          code: 'permission_state_unavailable',
+        });
+        return;
+      }
+
+      const revoked = revokedScopesForToken(verdict, claims.scopes);
       if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
         // The SHARED emitter, so this seam and the bridge cannot report different things under
         // one counter name. One increment per scope this token lost — here that is the route's
@@ -1418,18 +1445,10 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // refuses no route — while its help text claimed a flat zero meant no viewer had revoked a
       // scope an in-flight token still carried.
       recordConsentStrip('rest', claims.scopes, revoked);
-      const narrowed = applyRevocations(claims, revoked);
-      // 🔴 THE PER-CALL BUZZ CEILING GOES WITH THE SPEND SCOPE. `applyRevocations` narrows
-      // `scopes` only, so a token whose `ai:write:budgeted` was just stripped still advertised
-      // `buzzBudget` to the block (`blocks.getMyViewer`, `/api/v1/blocks/me`). Not a spend hole
-      // — every spend site gates on the scope first — but it published a ceiling for a
-      // permission that will now 403, and `enforceContextBinding`'s `ai:write:budgeted` case
-      // treats a positive `buzzBudget` AS the binding, which is the shape that turns this into a
-      // real hole on the next edit.
-      claims =
-        narrowed !== claims && revoked.has(CONSENT_SPEND_SCOPE) && narrowed.buzzBudget !== undefined
-          ? { ...narrowed, buzzBudget: undefined }
-          : narrowed;
+      // The `buzzBudget` clear that used to sit here MOVED INTO `applyRevocations`, because this
+      // seam had it and the bridge did not — so `blocks.getMyViewer`, the surface the comment here
+      // cited as harmed, kept publishing a ceiling for a stripped scope. One place, both seams.
+      claims = applyRevocations(claims, revoked);
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles

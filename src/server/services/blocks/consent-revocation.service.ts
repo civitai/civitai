@@ -1,7 +1,9 @@
-import { recordBlockConsentRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-lifetimes';
-import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
+import {
+  CONSENT_SPEND_SCOPE,
+  isConsentExemptScope,
+} from '~/server/services/blocks/scope-grant.service';
 
 /**
  * PER-SCOPE CONSENT REVOCATION, ENFORCED ON TOKENS ALREADY IN FLIGHT.
@@ -241,9 +243,15 @@ export type ConsentRevocationVerdict =
  *   - NO CONSENT-GATED SCOPE IN THE TOKEN: `partitionByConsent` signs a
  *     `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it consults the grant,
  *     and `blocks.revokeScopes` refuses to record a suppression for one — so a marker can
- *     never name a scope such a token carries. Measured: 20 of the 29 scope-bound REST
- *     routes declare an exempt scope, and an app whose whole manifest is exempt
+ *     never name a scope such a token carries. An app whose whole manifest is exempt
  *     (`apps:storage:*`, shared storage, `collections:read:self`) never reads the marker.
+ *
+ *     ⚠️ NO ROUTE FIGURE HERE. "20 of the 29 scope-bound REST routes" was retracted in this
+ *     file's header and again in the middleware, and survived in THIS docblock — the one both
+ *     retractions tell the reader to consult. It is a true statement about ROUTES and a wrong
+ *     attribution for this predicate, which never reads a route: the mint signs the app's whole
+ *     effective set, so an app declaring any gated scope is looked up on its exempt-scope routes
+ *     too. The population is per-APP; sizing it means grepping the manifests, not the routes.
  *
  * Both are also what keeps those populations out of the fail-closed availability coupling,
  * which is a welcome consequence and not the reason either exists.
@@ -304,37 +312,21 @@ export function revokedScopesForToken(
  * Returns the SAME object when nothing was revoked, so the common path allocates nothing
  * and a caller can use identity to tell whether anything changed.
  */
-export function applyRevocations<T extends { scopes: string[] }>(
+export function applyRevocations<T extends { scopes: string[]; buzzBudget?: number }>(
   claims: T,
   revoked: Set<string>
 ): T {
   if (revoked.size === 0) return claims;
   const kept = claims.scopes.filter((s) => !revoked.has(s));
   if (kept.length === claims.scopes.length) return claims;
-  return { ...claims, scopes: kept };
-}
-
-/**
- * Emits one counter per scope this request actually LOST, on either seam.
- *
- * 🔴 SHARED BECAUSE THE TWO SEAMS HAD ALREADY DIVERGED. REST emitted exactly one increment —
- * for `opts.requiredScope`, and only on the refusal branch — while the bridge emitted one per
- * stripped scope. `sum by(scope)` therefore mixed "requests refused" with "scopes stripped",
- * one bridge request could contribute six, and the case the whole fix was built for (a
- * `collections:read:private` STRIP with no refusal) emitted nothing at all on the surface where
- * it happens. The counter's own help text claimed "a flat zero means no viewer has revoked a
- * scope an in-flight token still carried", which that made false.
- *
- * One rule now: one increment per scope removed from THIS token, wherever it was removed. The
- * refusal keeps its own distinguishable 403 `code`; it does not need a second counter shape.
- */
-export function recordConsentStrip(
-  surface: 'rest' | 'bridge',
-  tokenScopes: readonly string[],
-  revoked: Set<string>
-): void {
-  if (revoked.size === 0) return;
-  for (const scope of tokenScopes) {
-    if (revoked.has(scope)) recordBlockConsentRevocationRefusal(surface, scope);
-  }
+  // 🔴 THE PER-CALL BUZZ CEILING GOES WITH THE SPEND SCOPE, AND IT LIVES HERE SO NEITHER SEAM
+  // CAN FORGET IT. The REST middleware did this itself and the bridge did not — so
+  // `blocks.getMyViewer`, the surface the REST comment CITED as harmed, kept publishing a ceiling
+  // for a scope it would now 403. The same "only one of the two seams got it" shape as the defect
+  // that comment was describing. Not a spend hole (every spend gate checks the scope first), but
+  // `enforceContextBinding` treats a positive `buzzBudget` AS the `ai:write:budgeted` binding,
+  // which is what turns it into one on the next edit.
+  return revoked.has(CONSENT_SPEND_SCOPE) && claims.buzzBudget !== undefined
+    ? { ...claims, scopes: kept, buzzBudget: undefined }
+    : { ...claims, scopes: kept };
 }
