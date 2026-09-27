@@ -306,11 +306,12 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
   it('hydrates the other past-26 member the same way', async () => {
     mockQuery.mockResolvedValueOnce([
       // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'28'` case above, and its
-      // account types DELIBERATELY DIFFER from it. Every plain CONSTANT dies somewhere
-      // in the file, though never in the case whose own expected value it copies. What
-      // this PAIR uniquely kills is a function of the DIRECTION, which one credit and
-      // one debit cannot tell from the truth — those mutants die here and nowhere
-      // else.
+      // account types DELIBERATELY DIFFER from it. A constant substituted for any
+      // DIRECTION-DEPENDENT column (the amount, either side) dies somewhere in the
+      // file, though never in the case whose own expected value it copies; the date
+      // and raw id columns are asserted nowhere and constants there survive. What this
+      // PAIR buys is the direction-function class: `? -row.amount : 3` and
+      // `from <= accountId` die at this test and nowhere else.
       row({ type: '27', amount: 5, fromAccountType: 'yellow', toAccountType: 'green' }),
     ]);
 
