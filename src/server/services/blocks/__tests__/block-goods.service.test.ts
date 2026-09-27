@@ -871,6 +871,26 @@ describe('purchaseBlockGood — the money path', () => {
     expect(dbMock.dbWrite.blockGoodPurchase.deleteMany).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses a MIXED response too — one duplicate leg is enough', async () => {
+    // ANY duplicate leg refuses, not only an all-duplicate response: a mixed
+    // one is a charge whose legs are partly references to an earlier request's
+    // transactions, so neither "nothing moved" nor "the full price moved" is
+    // true of it. The fixture's total still equals the price, so — as above —
+    // no other check can be what catches this.
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-b', accountType: 'blue', amount: 400, duplicate: true },
+        { transactionId: 'buy-y', accountType: 'yellow', amount: 600, duplicate: false },
+      ],
+      totalAmount: PRICE,
+      transactionCount: 2,
+    } as never);
+    const result = await purchaseBlockGood(purchaseInput());
+    expect(result).toMatchObject({ ok: false, reason: 'ledger_conflict', charge: 'unknown' });
+    expect(dbMock.dbWrite.blockGoodEntitlement.upsert).not.toHaveBeenCalled();
+    expect(mockCreateSingle).not.toHaveBeenCalled();
+  });
+
   it('completes normally when the same response marks its legs NOT duplicate', async () => {
     // Negative control for the branch above: the refusal must be driven by the
     // flag, not by the fixture shape it happens to arrive in.
