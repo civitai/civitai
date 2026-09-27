@@ -2,16 +2,21 @@ import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+// The ONE recogniser for "is this a per-app ledger selector". This file's inner test used a
+// pattern requiring `]` straight after the value, so it SKIPPED the legal `i`-flag form —
+// meaning the strip-survival and stamped-together checks silently did not cover such a rule.
+import { isLedgerSelector } from '../../../../test/ledger-block-ids';
 
 /**
- * 🔴 THE FULL-BLEED LEDGER MUST SURVIVE THE PRODUCTION COMPILER'S ATTRIBUTE STRIP.
+ * 🔴 A PER-APP WIDTH RULE MUST SURVIVE THE PRODUCTION COMPILER'S ATTRIBUTE STRIP.
  *
  * This is a SEAM guard. Two files were each correct on their own and broken
- * together, and every existing test was scoped to one side of the seam:
+ * together, and every existing test was scoped to one side of the seam (the tense below
+ * is past because both halves have since been fixed; the mechanism has not changed):
  *
  *   · `next.config.mjs` strips `data-testid` from the DOM in production builds
  *     (`compiler.reactRemoveProperties`, gated on `NODE_ENV === 'production'`).
- *   · `src/styles/globals.css` keyed the opt-out ledger on
+ *   · `src/styles/globals.css` keyed its then-live opt-out ledger on
  *     `[data-testid='app-page-frame'][data-block-id='…']`.
  *
  * So on the live site the compound selector matched ZERO elements, and
@@ -41,7 +46,10 @@ import { describe, expect, it } from 'vitest';
  *     production-gated — asserted on the `compiler:` property's OWN conditional,
  *     not on "the words appear earlier in the file" (the reason the other tiers
  *     cannot see this defect)
- *   · at least one ledger rule is parseable out of `globals.css`
+ *   · the ledger-rule EXTRACTOR can see a rule at all — a synthetic positive control,
+ *     which REPLACED an "at least one ledger rule is parseable out of `globals.css`" floor.
+ *     That floor was removed deliberately when the ledger became empty; this bullet used to
+ *     still assert it, which made the authoritative-looking summary the half that was wrong
  *   · NO attribute any ledger selector depends on is removed by that strip list
  *   · every ledger selector's attributes are stamped TOGETHER ON ONE ELEMENT by
  *     `PageBlockHost.tsx` — surviving the strip is worthless if nothing renders
@@ -54,10 +62,37 @@ import { describe, expect, it } from 'vitest';
  *   mechanism (a stripped attribute, or a misspelled/renamed one that nothing
  *   stamps). A guard on only one of the two would be narrower than this sentence.
  *
- * FAILS CLOSED. An unparseable config, an empty strip list, or zero parsed ledger
- * rules is a FAILURE, not a quiet pass: a reassuring zero here is indistinguishable
- * from a guard wired to nothing. If `reactRemoveProperties` is ever removed
- * deliberately, delete or re-point this file in the same commit rather than
+ * 🔴 THE SHIPPED LEDGER IS NOW EMPTY, AND THIS FILE WAS RE-POINTED RATHER THAN
+ * RETIRED. The 1600px cap those two rules excused apps from is gone — the default is
+ * `none` (see the `--app-page-max-width` declaration in `src/styles/globals.css`) — so
+ * there are no exemptions and no rules. The reason this guard survives that is that its
+ * SUBJECT was never only the shipped rules:
+ *
+ *   · the ledger's own "HOW TO ADD ONE" TEMPLATE, in a comment in `globals.css`, and
+ *   · the publisher-facing RECIPE in `docs/features/app-blocks.md`
+ *
+ * both still exist, both still teach a selector, and both are what the NEXT rule gets
+ * copied from. The defect this file was created for entered through exactly that door:
+ * a recipe teaching the `data-testid` spelling, which production strips. With no shipped
+ * rules, those two surfaces are the ENTIRETY of the mechanism a future maintainer meets,
+ * so the guard on them matters more than it did, not less. Retiring this file would have
+ * meant the next rule is written against two unchecked examples.
+ *
+ * 🔴 WHAT CHANGED IN THE ASSERTIONS, AND HOW THE ZERO STAYS HONEST. The two
+ * shipped-rule tests used to require at least one parsed rule, because zero would have
+ * made them vacuous. Zero is now the EXPECTED state, so that floor had to go — and the
+ * property it bought (a reassuring zero is indistinguishable from a probe wired to
+ * nothing) is bought instead by a POSITIVE CONTROL on the extractor itself, run inside
+ * each of those tests: `ledgerSelectors` is fed a synthetic rule and must return it.
+ * The pair is then reportable — "1 on the control, 0 under test" — where a bare zero
+ * was not. `strippedAttrsIn` and `stampedTogether` keep their own negative controls
+ * below. 🔴 MEMBERSHIP IS NOT ASSERTED HERE and must not be: the enumeration that fails
+ * on growth AND shrink lives in `__tests__/pageBlockHostMaxWidth.test.ts`, and stating
+ * it in two files is how two copies drift.
+ *
+ * FAILS CLOSED. An unparseable config, an empty strip list, or an extractor that cannot
+ * match a synthetic rule is a FAILURE, not a quiet pass. If `reactRemoveProperties` is
+ * ever removed deliberately, delete or re-point this file in the same commit rather than
  * letting it fail — but do that knowingly.
  */
 
@@ -172,7 +207,7 @@ function stripPatterns(): string[] {
   expect(
     hits.length,
     `next.config.mjs declares \`reactRemoveProperties\` ${hits.length} times, not once. This ` +
-      'guard exists to compare that strip list against the full-bleed opt-out ledger in ' +
+      'guard exists to compare that strip list against the per-app width-rule selectors in ' +
       'globals.css; with zero it can prove nothing, and with several it would be grading an ' +
       'arbitrary one. If `reactRemoveProperties` was removed on purpose, delete or re-point ' +
       'this file in the same commit.'
@@ -285,11 +320,16 @@ type LedgerSelector = { text: string; attrs: string[] };
  * out of this guard's scope.
  */
 function ledgerSelectors(css: string): LedgerSelector[] {
-  const RUN = /(?:\[\s*[A-Za-z_][\w-]*(?:\s*[~|^$*]?=\s*(?:'[^']*'|"[^"]*"|[^\]\s]+))?\s*\]\s*)+/g;
+  // The `(?:\s+[iIsS])?` is the ASCII case-sensitivity flag CSS allows after an attribute
+  // value. Without it this run regex stopped matching at `[data-block-id='x' i]` and the
+  // whole rule fell out of this guard's scope — measured, and it is the same omission that
+  // made that spelling a surviving mutant against the membership enumeration.
+  const RUN =
+    /(?:\[\s*[A-Za-z_][\w-]*(?:\s*[~|^$*]?=\s*(?:'[^']*'|"[^"]*"|[^\]\s]+)(?:\s+[iIsS])?)?\s*\]\s*)+/g;
   const out: LedgerSelector[] = [];
   for (const m of css.matchAll(RUN)) {
     const text = m[0].trim();
-    if (!/\[\s*data-block-id\s*[~|^$*]?=/.test(text)) continue;
+    if (!isLedgerSelector(text)) continue;
     out.push({
       text,
       attrs: [...text.matchAll(/\[\s*([A-Za-z_][\w-]*)/g)].map((a) => a[1]),
@@ -355,7 +395,51 @@ function stampedTogether(selector: LedgerSelector, elements: string[][]): boolea
   return elements.some((el) => selector.attrs.every((a) => el.includes(a)));
 }
 
-describe('the full-bleed opt-out ledger survives the production attribute strip', () => {
+/**
+ * 🔴 POSITIVE CONTROL ON `ledgerSelectors` — CAN IT SEE A RULE AT ALL?
+ *
+ * Called by every test below that reports a count over a REAL file, because those
+ * counts are now legitimately ZERO (the shipped ledger is empty) and a zero from a
+ * broken regex looks identical. Feeding it a rule it MUST match is what makes the pair
+ * reportable: 1 on the control, N under test. Replaces the `>= 1` floors those tests
+ * used to carry, which the empty ledger made unsatisfiable.
+ *
+ * Deliberately a synthetic input rather than a real file, so it cannot go green for the
+ * same reason the thing it is controlling went green.
+ */
+function ledgerSelectorsPositiveControl(): void {
+  // 🔴 THROUGH `stripComments`, NOT AROUND IT. The population under test is
+  // `ledgerSelectors(stripComments(read(GLOBALS_CSS)))`, so a control that called
+  // `ledgerSelectors` alone would leave the stripper uncontrolled — and with the shipped set
+  // legitimately `[]`, a `stripComments` that over-ate would be invisible. A control that
+  // skips a step IN the pipeline it is controlling is a second sample of the other steps, not
+  // a control of the pipeline.
+  const sample = ledgerSelectors(
+    stripComments(`[data-app-page-frame][data-block-id='control-app'] { }`)
+  );
+  expect(
+    sample.map((x) => x.text),
+    'POSITIVE CONTROL FAILED: `ledgerSelectors` did not match a synthetic, correctly-shaped ' +
+      'ledger rule, so it can see nothing and every count this file reports over a real file is ' +
+      'meaningless — including the zeros. Fix the extraction before reading any verdict.'
+  ).toEqual([`[data-app-page-frame][data-block-id='control-app']`]);
+  expect(
+    sample[0].attrs,
+    'POSITIVE CONTROL FAILED: `ledgerSelectors` matched the synthetic rule but did not report ' +
+      'the attribute names it chains, which is the input to every check below.'
+  ).toEqual(['data-app-page-frame', 'data-block-id']);
+
+  // …and the stripper must really REMOVE a commented rule, or the template in globals.css
+  // would be counted as a shipped one and every "shipped rules" verdict below would be about
+  // the documentation instead.
+  expect(
+    ledgerSelectors(stripComments(`/* [data-app-page-frame][data-block-id='in-a-comment'] { } */`)),
+    'POSITIVE CONTROL FAILED the other way: `stripComments` did not remove a rule inside a ' +
+      'block comment, so the "HOW TO ADD ONE" template would be graded as a shipped rule.'
+  ).toEqual([]);
+}
+
+describe('the per-app width-rule mechanism survives the production attribute strip', () => {
   it('the strip list is parseable, non-empty, and gated on a production build', () => {
     const patterns = stripPatterns();
     expect(patterns.length).toBeGreaterThan(0);
@@ -484,17 +568,11 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
   it('🔴 no shipped ledger rule depends on an attribute production strips', () => {
     const patterns = stripPatterns();
+    // The pair, in this order: prove the extractor CAN see a rule, then report what it
+    // sees in the shipped file. Today that is legitimately 0 — the ledger is empty — and
+    // without the control a 0 from a broken regex would read the same.
+    ledgerSelectorsPositiveControl();
     const shipped = ledgerSelectors(stripComments(read(GLOBALS_CSS)));
-
-    // Minimum parsed-rule count. Zero would make every assertion below vacuous,
-    // and a broken regex reads exactly like "nothing to check".
-    expect(
-      shipped.length,
-      'zero `[data-block-id=…]` ledger rules were parsed out of src/styles/globals.css. Either ' +
-        'the full-bleed ledger was emptied (then this guard and the membership expectation in ' +
-        '__tests__/pageBlockHostMaxWidth.test.ts should be retired together, deliberately), or ' +
-        'this parse no longer reaches the rules. Failing rather than passing on zero is the point.'
-    ).toBeGreaterThanOrEqual(1);
 
     const violations = shipped
       .map((s) => ({ selector: s.text, stripped: strippedAttrsIn(s, patterns) }))
@@ -502,10 +580,10 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
     expect(
       violations,
-      'a full-bleed ledger rule in src/styles/globals.css is keyed on an attribute that ' +
+      'a per-app width rule in src/styles/globals.css is keyed on an attribute that ' +
         '`next.config.mjs` REMOVES from the production DOM ' +
         `(${patterns.join(', ')}). The rule ships in the stylesheet and matches nothing on the ` +
-        'live site, so the app it excuses from the ultrawide cap is letterboxed in production ' +
+        'live site, so the app it names renders with the DEFAULT width in production ' +
         'while every test tier passes — they all run with NODE_ENV != production, where the ' +
         'attribute still exists. Key the rule on a marker the compiler keeps, such as ' +
         '`data-app-page-frame`, which PageBlockHost stamps beside `data-block-id`.'
@@ -536,26 +614,28 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
         'cannot satisfy this: the scope here is comments only.)'
     ).toBeGreaterThanOrEqual(1);
 
-    // 🔴 CONTROL ON THE SCOPING ITSELF, DERIVED RATHER THAN LITERAL. If
-    // `commentsOnly()` ever degrades toward the identity function, every message
-    // below silently goes back to blaming the template for shipped-rule
-    // violations — the exact defect this scoping fixed. Comparing against the
-    // rules the shipped-rule guards actually read keeps this true whatever the
-    // ledger's membership becomes.
-    const shippedTexts = ledgerSelectors(stripComments(raw)).map((s) => s.text);
+    // 🔴 CONTROL ON THE SCOPING ITSELF. If `commentsOnly()` ever degrades toward the
+    // identity function, every message below silently goes back to blaming the template
+    // for shipped-rule violations — the exact defect this scoping fixed.
+    //
+    // ⚠️ THIS CONTROL WAS REBUILT, BECAUSE THE OLD ONE DEPENDED ON THE LEDGER HAVING
+    // MEMBERS. It used to parse the shipped rules and assert the two scopes were
+    // DISJOINT, which is inert once there are no shipped rules to be found in the wrong
+    // scope — and it carried its own `> 0` floor that the empty ledger made
+    // unsatisfiable. The property under test was never about membership though: it is
+    // that `commentsOnly` returns the comment and NOT the code. So it is now exercised
+    // against a synthetic input carrying one of each, which holds whatever the ledger's
+    // membership becomes and cannot be satisfied by the identity function.
+    const probe =
+      `/* [data-app-page-frame][data-block-id='in-a-comment'] {} */\n` +
+      `[data-app-page-frame][data-block-id='shipped'] {}`;
     expect(
-      shippedTexts.length,
-      'no shipped ledger rule was parsed out of src/styles/globals.css, so the disjointness ' +
-        'control below could not fail even if `commentsOnly()` were the identity function.'
-    ).toBeGreaterThan(0);
-    expect(
-      documented.map((s) => s.text).filter((t) => shippedTexts.includes(t)),
-      'a SHIPPED ledger rule appeared in the comment-only scope, so `commentsOnly()` is no ' +
-        'longer isolating the "HOW TO ADD ONE" template and the messages below would ' +
-        'misattribute a shipped-rule violation to it. (If a template was deliberately written ' +
-        "with a live app's slug, give the example a placeholder slug instead — a template that " +
-        'is byte-identical to a shipped rule is a copyable example of a real entry.)'
-    ).toEqual([]);
+      ledgerSelectors(commentsOnly(probe)).map((s) => s.text),
+      '`commentsOnly()` no longer isolates comment text: fed one commented rule and one shipped ' +
+        'rule it returned something other than just the commented one. If it has degraded toward ' +
+        'the identity function, every message below would misattribute a shipped-rule violation ' +
+        'to the "HOW TO ADD ONE" template, which is the defect this scoping fixed.'
+    ).toEqual([`[data-app-page-frame][data-block-id='in-a-comment']`]);
 
     const bad = documented
       .map((s) => ({ selector: s.text, stripped: strippedAttrsIn(s, patterns) }))
@@ -563,7 +643,7 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
     expect(
       bad,
-      'the full-bleed ledger documentation in src/styles/globals.css shows a selector keyed on ' +
+      'the ledger documentation in src/styles/globals.css shows a selector keyed on ' +
         'an attribute production strips. Even if no shipped rule uses that shape today, the ' +
         'example is what the next entry is copied from, so it reproduces the defect one commit ' +
         'later. Update the "HOW TO ADD ONE" template as well as the rules.'
@@ -589,12 +669,16 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
   /**
    * 🔴 AND THE PUBLISHER-FACING COPY, WHICH IS THE ONE APP AUTHORS ACTUALLY READ.
    *
-   * `docs/features/app-blocks.md` carries the same "asking for full bleed"
-   * recipe. It shipped the production-inert `data-testid` spelling and nothing
-   * guarded it — a maintainer following it writes a rule that matches nothing on
-   * the live site, which is precisely the defect this file was created for,
-   * re-entering through the door marked documentation. This assertion is what
-   * lets that doc claim it is checked.
+   * `docs/features/app-blocks.md` carries the same per-app width recipe. It shipped the
+   * production-inert `data-testid` spelling and nothing guarded it — a maintainer
+   * following it writes a rule that matches nothing on the live site, which is precisely
+   * the defect this file was created for, re-entering through the door marked
+   * documentation. This assertion is what lets that doc claim it is checked.
+   *
+   * 🔴 AND WITH THE SHIPPED LEDGER EMPTY THIS IS NOW THE FILE'S SHARPEST ASSERTION, not a
+   * secondary one. There are no live rules left to check, so this recipe and the template
+   * in `globals.css` are the only two places the selector's shape exists — i.e. the only
+   * two places it can rot, and the only two a future rule will be copied from.
    *
    * 🔴 BOTH MECHANISMS, NOT JUST THE STRIP. A documented selector can match zero
    * elements two ways, and this file's own header names both: an attribute the
@@ -613,9 +697,10 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
     const documented = ledgerSelectors(read(PUBLISHER_DOC));
     expect(
       documented.length,
-      'no `[data-block-id=…]` selector was found in docs/features/app-blocks.md. The full-bleed ' +
-        'opt-out recipe is the only documented way out of the ultrawide cap; if it was removed, ' +
-        'retire this assertion deliberately rather than letting it pass on an empty parse.'
+      'no `[data-block-id=…]` selector was found in docs/features/app-blocks.md. That recipe is ' +
+        "the only documented way for the platform to set ONE app's width, and with the shipped " +
+        'ledger empty it is one of only two places the shape is written down at all; if it was ' +
+        'removed, retire this assertion deliberately rather than letting it pass on an empty parse.'
     ).toBeGreaterThanOrEqual(1);
 
     const bad = documented
@@ -624,7 +709,7 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
     expect(
       bad,
-      'the full-bleed recipe in docs/features/app-blocks.md shows a selector keyed on an ' +
+      'the per-app width recipe in docs/features/app-blocks.md shows a selector keyed on an ' +
         `attribute that next.config.mjs REMOVES from the production DOM (${patterns.join(
           ', '
         )}). ` +
@@ -642,7 +727,7 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
     expect(
       documented.filter((s) => !stampedTogether(s, elements)).map((s) => s.text),
-      'the full-bleed recipe in docs/features/app-blocks.md chains attributes that NO SINGLE ' +
+      'the per-app width recipe in docs/features/app-blocks.md chains attributes that NO SINGLE ' +
         'element in PageBlockHost.tsx stamps together, so a rule copied from it matches nothing — ' +
         'surviving the production strip is worthless if nothing renders the attributes. A typo in ' +
         'the documented attribute name reaches this assertion and not the strip one (nothing ' +
@@ -664,11 +749,9 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
    * the parsed frame element.
    */
   it('🔴 each ledger selector’s attributes are stamped TOGETHER on ONE PageBlockHost element', () => {
+    // Same pair as the strip test: control first, then the (currently empty) shipped set.
+    ledgerSelectorsPositiveControl();
     const shipped = ledgerSelectors(stripComments(read(GLOBALS_CSS)));
-    expect(
-      shipped.length,
-      'zero ledger rules parsed — see the strip test above'
-    ).toBeGreaterThanOrEqual(1);
 
     const elements = stampedAttributeSets();
     expect(
@@ -682,7 +765,7 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
 
     expect(
       unmatched,
-      'a full-bleed ledger rule in src/styles/globals.css chains attributes that NO SINGLE ' +
+      'a per-app width rule in src/styles/globals.css chains attributes that NO SINGLE ' +
         'element in PageBlockHost.tsx stamps together, so the rule matches nothing — the same ' +
         'silent outcome as keying it on a stripped attribute, arrived at from the other side. ' +
         'Both halves existing somewhere in the file is NOT enough: splitting them across the ' +

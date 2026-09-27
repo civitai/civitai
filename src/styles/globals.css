@@ -103,276 +103,249 @@
      other route inherits 0 here and pays nothing, which is correct. */
   --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
 
-  /* THE ULTRAWIDE CAP FOR A FULL-PAGE APP BLOCK — `/apps/run/<slug>` and the
-     other `PageBlockHost` surfaces (the dev tunnel, the moderator preview).
+  /* THE FULL-PAGE APP BLOCK'S WIDTH — `/apps/run/<slug>` and the other
+     `PageBlockHost` surfaces (the dev tunnel, the moderator preview).
+
+     🔴 UNCAPPED, AND `none` IS THE DECLARED DEFAULT RATHER THAN AN OMISSION. The
+     platform imposes no width on a full-page App Block. An app that wants a centred
+     column sets that in its own CSS, inside its own iframe document, which it already
+     fully controls — it needs nothing from the host to do it. Direct instruction from
+     the repo owner.
 
      WHAT IT IS. `PageBlockHost` reads this as
-     `max-width: var(--app-page-max-width, …)` with `margin-inline: auto`, so
-     the app renders as a centred column with a neutral gutter either side once
-     the viewport is wider than this. Below it the declaration is INERT — the box
-     is `width: 100%`, which is already narrower than the cap, and
-     `margin-inline: auto` resolves to 0 on a box that fills its parent. That
-     inertness is the point: the great majority of traffic is below this width
-     and must render byte-identically to before.
+     `max-width: var(--app-page-max-width, none)` with `margin-inline: auto`, on the
+     app's own content wrapper. At `none` both declarations are INERT at every
+     viewport: `max-width: none` clamps nothing, and `margin-inline: auto` has no
+     leftover inline space to distribute on a box that already fills its parent, so
+     both margins resolve to 0. The rendered geometry is `width: 100%` at every width
+     — which is what this surface did before any cap existed.
 
-     🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT THE LEDGER SELECTS, AND THAT
+     🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT A LEDGER RULE SELECTS, AND THAT
      IS DELIBERATE — checking the wrong one in DevTools is the likeliest way to
      conclude this mechanism is broken when it is not. The host root
-     (`[data-app-page-frame]`, and `data-testid='app-page-frame'` in a dev build
-     only — see the ledger's strip note below) is FULL-BLEED: it carries the app
-     chrome, which spans the page like every other site-level bar. The cap is read
-     one level down, on the content wrapper, which holds the app and its failure
-     card. The ledger below still keys on the FRAME because a custom property
-     INHERITS — set it there and the content wrapper picks it up — so ledger rules
-     are written against the frame and take effect on the content. Inspect
-     `app-page-content` for the resolved `max-width`.
+     (`[data-app-page-frame]`, and `data-testid='app-page-frame'` in a dev build only
+     — see the ledger's strip note below) is FULL-BLEED: it carries the app chrome,
+     which spans the page like every other site-level bar. The value is read one level
+     down, on the content wrapper, which holds the app and its failure card. A ledger
+     rule keys on the FRAME because a custom property INHERITS — set it there and the
+     content wrapper picks it up. Inspect `app-page-content` for the resolved
+     `max-width`.
 
-     🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT AN APP CAN OPT OUT — see the
-     ledger below. The host reads it through `var()` rather than writing it as
-     an inline value precisely so a stylesheet rule can override it; an inline
-     custom property on either of those elements would beat every such rule and
-     make the opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
-     same number as the `var()` fallback (CSS cannot import a TS constant), and
-     `__tests__/pageBlockHostMaxWidth.test.ts` is what keeps the two in step —
-     the same arrangement `--header-height`/`HEADER_HEIGHT_PX` uses. The
-     justification for the VALUE lives on that constant. */
-  --app-page-max-width: 1600px;
+     🔴 THE MECHANISM IS KEPT, POINTING THE OTHER WAY. It used to exist so an app
+     could escape a 1600px default; it now exists so the PLATFORM can cap ONE app if
+     that is ever needed. Nothing is capped today and the ledger below is deliberately
+     EMPTY, but the rule shape, the attributes it keys on, and the tests that check
+     both are all still here — so a future cap is one reviewed rule rather than a
+     re-derivation. The host still reads the value through `var()` rather than writing
+     it inline for exactly that reason: an inline custom property on either element
+     would beat every stylesheet rule and make such a rule inert. The `var()` fallback
+     is `none` too, so a host rendered in a context that never loaded this stylesheet
+     is uncapped as well — the two spellings of the default agree, and
+     `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` is what keeps
+     them in step (CSS cannot import a TS value, and TS cannot read a stylesheet).
+
+     🔴 WHY THE DEFAULT MOVED, AND WHY THIS IS THE SANCTIONED PATH RATHER THAN A
+     BYPASS OF THE DECISION THAT PUT IT HERE. The 1600px default shipped with a
+     per-app CSS opt-out ledger, and that ledger's own guidance said what to do once
+     apps were being exempted one at a time: *"the honest change is to move or drop
+     the 1600 default — a decision with its own evidence, taken where the arithmetic
+     lives, on `APP_PAGE_MAX_WIDTH_PX` — not to keep appending here."* Two admissions
+     had already been made (`playable-collections`, `sensei`), the second on an owner
+     override alone. ⚠️ BE PRECISE ABOUT WHAT THAT GUIDANCE DOES AND DOES NOT AUTHORISE: its
+     stated trigger was *a run* of override admissions, and only one of the two entries was
+     admitted on that ground, so the antecedent had not strictly been met. The AUTHORITY here
+     is the owner's direct instruction, stated at the top of this block. What the guidance
+     supplies is the SHAPE of the honest change — move or drop the default, at the place the
+     arithmetic lives — rather than a licence, and this change takes that shape.
+     `APP_PAGE_MAX_WIDTH_PX` — the constant the guidance points at, whose only job was
+     to mirror this value as the `var()` fallback — is gone with the number it carried,
+     because a constant named for a cap that no longer exists is a claim no reader can
+     check.
+
+     🔴 THIS DOES NOT REVERSE PR #4812, AND A LATER READER MUST NOT RECONSTRUCT ONE.
+     #4812 built a `page` MANIFEST FIELD as the EXEMPTION mechanism and was closed
+     unmerged in favour of this CSS ledger — a decision about HOW AN APP ASKS TO BE
+     EXEMPTED from a cap. With no cap there are no exemptions, so the question #4812
+     answered no longer arises: it is MOOTED, not overruled. No manifest field is
+     introduced here and none is needed — an app sets its own width in its own
+     document. (The technical argument that comment used to give for #4812's closure —
+     that a manifest field "would be UNTYPED at exactly the point the host consumes
+     it" because the host pins `@civitai/app-sdk@^0.14.0` — was MEASURED FALSE and is
+     recorded here as retracted so it is not rediscovered: the host never reads a
+     manifest through an SDK type at all. `block-manifest-validator.service.ts` imports
+     nothing from `@civitai/app-sdk`, and `src/components/AppBlocks/types.ts`, which
+     declares the host's own `BlockManifest`, has no imports. Never cite the SDK pin as
+     a cost of a manifest field.
+
+     ⚠️ AND THE ONE *MEASURED* COST OF THAT ALTERNATIVE IS PRESERVED HERE RATHER THAN DELETED
+     WITH THE CAP, BECAUSE IT WAS TRUE AND IT IS STILL THE RECORD ANYONE RE-OPENING #4812
+     WOULD NEED. It is a fact about the CLI, not about the cap: the released Go CLI 0.1.101
+     rejects an undeclared key under `page`, so `civitai app validate` exits 1 locally, before
+     any network call. Scoped to the CLI deliberately — `@civitai/app-sdk` vendors a copy of
+     the schema too, but nothing consumes it as a validator and it was measured ALREADY
+     DRIFTED from the canonical (missing five top-level properties at 0.14.0), so it gates
+     nothing and a "three mirrors must move together" cost must not be asserted from it.
+
+     ⚠️ STAMPED, BECAUSE "a dated reading" WITHOUT A DATE IS THE WEAKER HALF OF THE PATTERN THIS
+     FILE OTHERWISE APPLIES — the two app records below cite `sync/deployed-0.2.2` and
+     `trunk 6fd63c0`, and this one cited nothing. The drift half is RE-MEASURED 2026-09-27
+     against the installed `@civitai/app-sdk@0.14.0` in this repo's `node_modules`:
+     canonical `public/schemas/app-block/v1.json` has 23 top-level properties, the vendored
+     copy 17, so **SIX** are missing — `auth`, `bootSkeleton`, `category`, `repository`,
+     `scopeJustifications`, `tagline` — and the vendored copy DOES carry `page`, which is
+     consistent with it gating nothing. 🔴 THE BASE COMMENT SAID "five" AND THAT IS RETRACTED;
+     it is six. The Go CLI 0.1.101 half is NOT verifiable from this repo at all (the CLI lives
+     in `civitai/cli`), so it is carried forward unre-measured and should be treated as a claim
+     about that release only.)
+
+     🔴 WHAT THE 1600 WAS AND WHAT IT COST — KEPT, BECAUSE IT IS THE EVIDENCE THIS
+     CHANGE WAS MADE AGAINST, AND EVERY SENTENCE OF IT IS NOW HISTORY. It was chosen to
+     sit at-or-above every ordinary civitai content measure (Mantine `xl`, 1288 content
+     px, which is also `APPS_TWO_COLUMN_DETAIL_MEASURE`'s floor) and clear of the widest
+     app-imposed well then measured (1100), leaving a two-pane app shell a ~1350px
+     content pane. Its stated cost: it bound on a maximised browser at 1080p (~1905 CSS
+     px) for a ~150px gutter either side.
+
+     🔴 THE COST WAS UNDERSTATED, AND THE CORRECTION IS THE REASON THIS PARAGRAPH IS NOT JUST
+     COPIED FORWARD. The old docblock said the cap bound "on NOTHING in the laptop classes
+     (1280/1366/1440/1536), no tablet and no phone" — a FOUR-POINT SAMPLE generalised into a
+     class claim. The real boundary is the cap itself: a `max-width: 1600px` binds at any
+     viewport wider than 1600, so 1680x1050, a MacBook Pro 16" at its default 1728 CSS px,
+     and 1792 were all capped — by (w − 1600) / 2 a side, i.e. 40px, 64px and **96px**
+     respectively. Those are ordinary laptops. ⚠️ THAT RANGE READ "40–64px" UNTIL A REVIEW DID
+     THE ARITHMETIC: 1792 is 96, and the error understated the change's value — i.e. it
+     re-committed, one point further out, exactly the sin this paragraph exists to retract.
+     Compute it, do not quote it. So this change is worth somewhat MORE than the record it is made against said,
+     and the ~1905 figure was an illustration of a maximised 1080p desktop rather than a
+     threshold — do not re-derive a boundary from it.
+
+     MEASURED against the base revision, which is where the real boundary comes from:
+     1536 → inert (gutter 0); 1600 → still inert, exactly at the value; 1620 → binds, gutter
+     10px a side; 1905 → gutter 152.5px; 2560 → 480px; 3440 → 920px. So nothing at or below
+     1600 moves, and the two arms of
+     `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` meet at 1600/1620
+     rather than leaving 1537–1904 unmeasured, which is what the stale ~1905 reading did.
+
+     🔴 READ THAT TEST FILE, NOT THIS PARAGRAPH, IF THE TWO EVER DISAGREE — and the reason is
+     a mistake this block already made once. An earlier version of these sentences asserted
+     ~1905 as the boundary AND cited that test file as the measurement, while the test file
+     said the opposite: the citation pointed a reader at the file that refutes the claim, and
+     because every other doc here routes to this declaration as "the record", the retraction
+     was the minority opinion in its own repo. The figures above are re-derived from that
+     file's arms; the arms are what run.
+
+     ⚠️ The census of first-party apps that reasoning rested on was a cross-repo reading
+     at unrecorded refs, asserted by nothing, and is deliberately NOT restated here —
+     re-take it, recording refs, if a cap is ever proposed again. */
+  --app-page-max-width: none;
 }
 
-/* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
-   The members ARE the rules below, each carrying its own reasoning; this header
-   deliberately no longer states how many there are, because it used to say "one
-   member today" and that sentence went stale the moment a second app was added.
-   A count here is a claim with nothing checking it, three lines above the list it
-   miscounts. The membership set is ASSERTED in
-   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if
-   it grows OR shrinks, so adding or removing a rule here without updating that
-   expectation is a test failure, not a silent change.
+/* PLATFORM WIDTH-CAP LEDGER — DELIBERATELY EMPTY. EMPTY IS THE EXPECTED STATE.
+   A rule here sets `--app-page-max-width` for ONE app, by block id. There are none,
+   because the default is `none` and the platform does not impose a width; see the
+   declaration above for why.
 
-   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD: AN OPERATOR DECISION, NOT A
-   TECHNICAL FINDING. Full bleed is managed by styling — this ledger — because the
-   repo owner decided it should be. That decision is the whole of the reason, and
-   it is written down here so that no one has to reconstruct one. The alternative
-   was not hypothetical: a `page` manifest field replacing this ledger was built
-   and opened as PR #4812, and it was closed unmerged on exactly that call.
+   🔴 AN ENTRY HERE NOW IMPOSES A WIDTH ON AN APP THAT DID NOT ASK FOR ONE — THE
+   BURDEN IS THE REVERSE OF WHAT IT USED TO BE. This block used to carry a two-ground
+   admission test ("the surface is the canvas" / "an explicit product decision by the
+   repo owner") for EXEMPTING an app from a default cap. That framework is retired
+   with the default it guarded; do not re-derive it from this file's history, because
+   it was written to answer the opposite question. A rule added here constrains a
+   third-party surface the platform has no measurement of, so it needs the app author
+   in the loop and a reason stated on the rule, the way every other ledger in this repo
+   is kept.
 
-   🔴 THE TECHNICAL REASON THIS COMMENT USED TO GIVE WAS MEASURED FALSE. Kept,
-   retracted, so it is not rediscovered and acted on: a manifest field "would be
-   UNTYPED at exactly the point the host consumes it" because this host pins
-   `@civitai/app-sdk@^0.14.0`. The PIN IS REAL; the conclusion does not follow --
-   the host never reads a manifest through an SDK type at all.
-   `block-manifest-validator.service.ts` imports nothing from `@civitai/app-sdk`,
-   and `src/components/AppBlocks/types.ts`, which declares the host's own
-   `BlockManifest`, has no imports at all. Never cite the SDK pin as a cost of a
-   manifest field again.
+   🔴 THE MEMBERSHIP IS ASSERTED, AND IT FAILS ON GROWTH AS WELL AS SHRINK.
+   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` enumerates the
+   ids in this file's selectors and expects the empty set, so adding a rule here
+   without updating that expectation is a test failure rather than a silent change.
+   That is the same guard the old opt-out ledger had, re-pointed rather than dropped:
+   the direction that used to matter was an app being excused without the criteria
+   being read, and the direction that matters now is an app being CAPPED without
+   anyone deciding to.
 
-   The one MEASURED cost of the alternative -- recorded because the alternative
-   was on the table, NOT because it is the reason: the released Go CLI 0.1.101
-   rejects an undeclared key under `page`, so `civitai app validate` exits 1
-   locally, before any network call. Scoped to the CLI deliberately.
-   `@civitai/app-sdk` vendors a copy of the schema too, but nothing consumes it as
-   a validator and it is ALREADY DRIFTED from the canonical (missing five
-   top-level properties at 0.14.0), so it gates nothing and a "three mirrors must
-   move together" cost must not be asserted from it.
-
-   A rule here cannot be forged: the guest is cross-origin and can never reach
-   this cascade.
-
-   🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
-   AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets
+   🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION, AND
+   THAT IS EXACTLY HOW THIS LEDGER ONCE SHIPPED BROKEN. `next.config.mjs` sets
    `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` whenever
-   `NODE_ENV === 'production'`, so every `data-testid` is compiled out of the
-   live DOM. The `playable-collections` rule below used to chain the app-page-frame
-   TESTID with its block id, and therefore matched ZERO elements on civitai.com
-   while matching fine in every test tier, all of which run with
-   `NODE_ENV !== 'production'` — a rule that was present in the deployed
-   stylesheet, verified verbatim, and still did nothing. The frame's
-   production-surviving marker is `data-app-page-frame`, stamped beside
-   `data-block-id` on the same element in `PageBlockHost.tsx`. This is checked
-   mechanically: `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`
-   parses the strip list out of `next.config.mjs` and the selectors out of this
-   file — INCLUDING the ones in these comments, since the template below is what
-   the next entry gets copied from — and fails if any of them depends on an
-   attribute production removes. That is also why the broken selector is described
-   above in words rather than spelled out: a literal example of the wrong shape,
-   even a historical one, is a copyable example.
+   `NODE_ENV === 'production'`, so every `data-testid` is compiled out of the live DOM.
+   The `playable-collections` rule that used to live here chained the app-page-frame
+   TESTID with its block id, and therefore matched ZERO elements on civitai.com while
+   matching fine in every test tier, all of which run with `NODE_ENV !== 'production'`
+   — a rule that was present in the deployed stylesheet, verified verbatim, and still
+   did nothing. The frame's production-surviving marker is `data-app-page-frame`,
+   stamped beside `data-block-id` on the same element in `PageBlockHost.tsx`. This is
+   still checked mechanically, with the ledger empty:
+   `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts` parses
+   the strip list out of `next.config.mjs` and the selectors out of this file —
+   INCLUDING the ones in these comments, since the template below is what a future
+   entry gets copied from — and fails if any of them depends on an attribute production
+   removes. That is also why the broken selector is described above in words rather
+   than spelled out: a literal example of the wrong shape, even a historical one, is a
+   copyable example.
 
-   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
-   same value that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on
-   its root, so:
+   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the same
+   value that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on its root,
+   so:
 
      [data-app-page-frame][data-block-id='my-canvas-app'] {
-       --app-page-max-width: none;
+       --app-page-max-width: 1100px;
      }
 
-   `none` is the full-bleed value; a narrower app can take a px value instead.
-   Add the rule together with a one-line reason, the way every other ledger in
-   this repo is kept — an entry with no stated reason cannot be reviewed later.
+   A px value caps and centres that app; `none` is the default and writing it here
+   would be a no-op. Add the rule together with a one-line reason — an entry with no
+   stated reason cannot be reviewed later.
 
-   WHEN IT IS WARRANTED — TWO GROUNDS, AND AN ENTRY MUST SAY WHICH ONE IT CLAIMS.
-   They are not the same KIND of thing, and conflating them is how the cap dies:
-   ground (1) is an argument that can be checked against the app, ground (2) is an
-   override that cannot.
+   A rule here cannot be forged: the guest is cross-origin and can never reach this
+   cascade.
 
-   (1) THE SURFACE IS THE CANVAS: an infinite grid, a timeline, a map, a
-   side-by-side compare — where a centred column is actively worse. This is where
-   the default's reasoning bites — an app cannot know how wide the viewer's monitor
-   is and almost none of them defend against it themselves — so an entry here has
-   to argue its way past that rather than assert a preference. NOT for "it looks
-   bigger": that exclusion has force HERE, because here there is a claim about the
-   surface to be wrong about, and a reviewer can open the app and disagree.
+   🔴 THE TWO RULES THIS LEDGER USED TO HOLD WERE REMOVED BECAUSE THEY BECAME NO-OPS,
+   NOT BECAUSE THE ANALYSIS BEHIND THEM WAS WRONG. Both set
+   `--app-page-max-width: none` against a 1600 default; with the default already `none`
+   they set the value it already has. The findings survive them, and they are what a
+   future cap would have to be wrong about:
 
-   (2) AN EXPLICIT PRODUCT DECISION BY THE REPO OWNER. This is ground (1)'s
-   opposite in one specific way: nothing is malfunctioning, the cap binds exactly
-   as designed, and the trade is taken anyway. An entry on this ground is
-   admissible ONLY if it records the three things a reviewer would need to
-   re-examine it later, none of which can be recovered from the diff:
+     · `playable-collections` — a collection PLAYER, uncapped by its own design on
+       every open-collection surface. Read at its deployed ref
+       (`sync/deployed-0.2.2`), whose manifest declares that `blockId`: the app's 960px
+       well is `contentStyle` (`App.tsx:972`) applied only to the BROWSE shell
+       (`App.tsx:789`), and opening a collection early-returns at `App.tsx:733` past
+       that wrapper into `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
+       `width: 100%; min-height: 100dvh` with no max-width and serves all THREE view
+       modes (classic `Player`, continuous-horizontal, continuous-vertical) plus the
+       ambient "cast" state. So any platform cap binds on all of them: the slideshow's
+       media is `object-fit: contain`, so a narrower column simply shrinks the player,
+       and the ticker/wall modes are `repeat(cols, minmax(0, 1fr))` grids that spend
+       whatever width they are given. Its browse list is unaffected either way — behind
+       that early return, and already capped by the app at 960.
+     · `sensei` — a two-pane chat shell with nothing of its own bounding its width:
+       root `width: 100%; height: 100dvh` (`src/App.tsx:2724`), main row
+       `display: flex; flex: 1; min-height: 0` (`src/App.tsx:2831`), a 240px sidebar
+       (`src/components/SessionList.tsx:54`) beside an unbounded `flex: 1` pane
+       (`src/App.tsx:2904`), and no `max-width` anywhere on the transcript path (its
+       only two are a `maxWidth: '100%'` in `src/components/ResourceMention.tsx:33` and
+       a 440px error card in `src/components/RootBoundary.tsx:56`). Read at
+       `ZacxDev/civitai-app-sensei` `trunk 6fd63c0` (release 0.1.22) — ⚠️ a BRANCH TIP,
+       not a resolved deployed ref, so re-resolve what is actually live rather than
+       trusting that sha. The owner's ask on this app was "sensei app container should
+       be full-width"; that is now simply the default, for it and for everything else.
+       Notepad is the same shape, was never a member, and needs nothing either.
 
-     · WHO decided — the specific decider, not "we", and not the PR author by
-       default. A role ("the repo owner, directly") satisfies this; a personal name
-       is not required, and this file is world-readable, which is a reason not to
-       ask for one;
-     · WHAT TRADE was accepted — the cost as it was stated at the time, and what
-       the decision was taken AGAINST if there was an alternative on the table;
-     · WHAT IT IS WORTH — the benefit's CLASS, measured: which display widths it
-       reaches, and which it provably does not.
+       ⚠️ ONE PART OF SENSEI'S RECORD IS KEPT BECAUSE IT IS NOT MOOTED, AND IT WOULD OTHERWISE
+       HAVE VANISHED WITH THE ENTRY: the trade the owner accepted was full bleed OVER an
+       alternative that was on the table — pairing the exemption with an internal measure on
+       the transcript itself. That alternative is an APP-SIDE measure, which is exactly what
+       this file now tells every app author to reach for, so a rejected-alternative record
+       still informs the advice. What the owner rejected was making it a condition of the
+       exemption, not the technique.
 
-   🔴 BE HONEST ABOUT WHAT THOSE THREE BULLETS DO: THEY MAKE AN ENTRY RECORDED AND
-   REVIEWABLE, NOT JUSTIFIED. An earlier version of this comment claimed they also
-   refuse "it looks bigger" — that a preference has "no author, no stated cost and
-   no measured reach" so the bullets exclude it. That is RETRACTED: it does not
-   hold, and believing it would let this ground swallow the cap. All three are
-   satisfiable by procedure alone, with nothing said about the app:
-
-     · every request has a requester, so WHO is always available;
-     · WHAT TRADE is the same ~150px-gutter arithmetic for EVERY app — it is a
-       property of the 1600 cap, not of the app asking;
-     · WHAT IT IS WORTH measures the reach of the EXEMPTION, not of the benefit —
-       "which display widths it reaches" has a literally identical answer for any
-       two apps.
-
-   So ground (2) is an OWNER OVERRIDE, and the bullets are the receipt for it. What
-   actually limits it is that it takes an owner decision each time and leaves a
-   record naming who took it — not a test a reviewer can apply on their own. A
-   reviewer who finds all three bullets present has confirmed the entry is
-   reviewable, and nothing more; whether the override should have been made is the
-   owner's call to answer, not the bullets'.
-
-   🔴 WHICH MEANS THE SHAPE TO WATCH FOR IS AN ENTRY COPIED FROM ANOTHER. Ground (2)
-   does NOT waive ground (1) generally, and a run of entries each admitted on
-   "the owner said so" is the cap being repealed one app at a time rather than
-   reconsidered once. If that is what is happening, the honest change is to move or
-   drop the 1600 default — a decision with its own evidence, taken where the
-   arithmetic lives, on `APP_PAGE_MAX_WIDTH_PX` — not to keep appending here.
-
-   The mechanism is MEASURED, not merely written down: the "opt-out" cases in
-   `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
-   rule of exactly this shape at a 2560px viewport and assert the host goes back
-   to full width — so this block cannot rot into a comment describing something
-   that no longer works. */
-
-/* Playable Collections (`playable-collections`) — a collection PLAYER, and every
-   one of its open-collection surfaces is uncapped by the app itself.
-
-   Read at the app's deployed ref (`sync/deployed-0.2.2`), whose manifest declares
-   this same `blockId`. The app does carry a 960px well, but it is `contentStyle`
-   (`App.tsx:972`) applied only to the BROWSE shell (`App.tsx:789`): opening a
-   collection early-returns at `App.tsx:733` past that wrapper into
-   `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
-   `width: 100%; min-height: 100dvh` with no max-width — and that root serves all
-   THREE view modes (classic `Player`, continuous-horizontal, continuous-vertical)
-   plus the ambient "cast" state. So the cap would bind on all of them: the
-   slideshow's media is `object-fit: contain`, so a centred column simply shrinks
-   the player, and the ticker/wall modes are `repeat(cols, minmax(0, 1fr))` grids
-   that spend whatever width they are given.
-
-   The browse list is unaffected either way — it is behind that early return and
-   the app already caps it at 960, well under the default.
-
-   🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
-   which fails if this set GROWS OR SHRINKS, and it is EXERCISED by the red/green
-   pair in `PageBlockHostMaxWidth.browser.test.tsx` — that suite parses THIS file
-   and injects the rule below verbatim, so deleting or mistyping it fails a test
-   rather than silently letterboxing the app again. */
-[data-app-page-frame][data-block-id='playable-collections'] {
-  --app-page-max-width: none;
-}
-
-/* Sensei (`sensei`) — a two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS
-   CREATED FOR.
-
-   🔴 ADMITTED ON GROUND (2) ABOVE — AN EXPLICIT PRODUCT DECISION, NOT A BUG FIX,
-   AND SAYING SO IS THE POINT OF THIS ENTRY. Nothing here is malfunctioning for this
-   app: the cap binds exactly as designed and the opt-out mechanism works. A later
-   reader must not go looking for the defect that motivated it, because there isn't
-   one. The three things ground (2) requires, on the record:
-
-     · WHO — the repo owner, directly. The ask was "sensei app container should be
-       full-width".
-     · WHAT TRADE — full bleed was chosen over an alternative that was on the table:
-       pairing the exemption with an internal measure on the transcript itself. The
-       ~150px-either-side cost at 1080p, quantified below, was stated in front of him
-       before he chose; "truly full-bleed" is what he chose knowing it.
-     · WHAT IT IS WORTH — the measured display-width class; see "WHAT THE EXEMPTION
-       IS WORTH, STATED NARROWLY" below.
-
-   That is the WHOLE record. Nothing else about the owner's reasoning is known, and
-   this entry deliberately does not extrapolate one. Ground (2) says plainly what
-   that makes this entry: RECORDED AND REVIEWABLE, not justified by an argument about
-   sensei. 🔴 SO THIS IS NOT A TEMPLATE. A third entry is not admitted by producing
-   the same three bullets — see the retraction under ground (2) for why the bullets
-   cannot do that work — it is admitted by the owner deciding again.
-
-   THE RATIONALE OF RECORD, AND IT HAS NOW BEEN RE-TAKEN. The census on
-   `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` reads: "TWO do not cap at all —
-   Notepad and Sensei, both `100dvh` two-pane app shells (a fixed 280 / 240px
-   sidebar beside an unbounded `flex: 1` pane). Those are the shipped apps that
-   genuinely stretched to the monitor." That census recorded no ref and nothing
-   asserted it, so it was re-read for this entry rather than quoted on trust — and
-   it HOLDS, at `ZacxDev/civitai-app-sensei` `trunk 6fd63c0` (release 0.1.22):
-
-     · root shell `width: 100%; height: 100dvh`, flex column — `src/App.tsx:2724`
-     · main row `display: flex; flex: 1; min-height: 0` — `src/App.tsx:2831`
-     · sidebar `width: 240` (plus `min-width: 200`) —
-       `src/components/SessionList.tsx:54`
-     · chat pane `flex: 1; flex-direction: column; min-width: 0` —
-       `src/App.tsx:2904`
-     · and NO `max-width` anywhere on the transcript path. The app's only two are
-       `maxWidth: '100%'` (`src/components/ResourceMention.tsx:33`) and a 440px error
-       card (`src/components/RootBoundary.tsx:56`); `src/index.css` declares none,
-       and `MessageBubble.tsx` sets neither a width nor an `align-self`.
-
-   So this cap really is the only thing bounding the app's width, and 1600 − 240 =
-   1360 is where the "~1350px content pane" figure below comes from.
-
-   ⚠️ `trunk 6fd63c0` IS A BRANCH TIP, NOT A RESOLVED DEPLOYED REF — unlike
-   `playable-collections` above, which cites `sync/deployed-0.2.2`. No deployed ref
-   was resolved for sensei, so these citations pin what trunk held when this entry
-   was written; a later reader re-checking them must re-resolve what is actually
-   live rather than assume this sha is it.
-
-   WHAT THE EXEMPTION IS WORTH, STATED NARROWLY. At the 1600 cap sensei gets roughly
-   a 1350px content pane (the constant's own figure); full bleed gives it the
-   viewport. The benefit is confined to WIDE DESKTOP DISPLAYS — the cap binds on a
-   maximised browser at 1080p (~1905 CSS px) for a ~150px gutter either side, and on
-   NOTHING in the laptop classes (1280/1366/1440/1536), no tablet, and no phone in
-   either orientation. ⚠️ THAT IS A CLAIM ABOUT WIDTHS, NOT ABOUT TRAFFIC — the
-   display-width CLASSES the exemption reaches are computed from the cap and are
-   checkable here; how many viewers sit in each is a population this repo measures
-   nowhere. So do NOT read "and that is where the traffic is" into it: the sibling
-   sentence on `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` does say it, and it is
-   unsourced there too.
-
-   🔴 NOTEPAD IS THE SIBLING CASE AND IS DELIBERATELY NOT A MEMBER. The census line
-   names both apps; only one is being excused, and the asymmetry is intended rather
-   than an oversight. If Notepad should follow, that is its own entry with its own
-   reasoning and its own row in the membership expectation.
-
-   🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
-   which fails if this set GROWS OR SHRINKS. */
-[data-app-page-frame][data-block-id='sensei'] {
-  --app-page-max-width: none;
-}
+     ⚠️ ONE MORE PRESERVED CORRECTION, ABOUT THE OLD CAP'S RELATIONSHIP TO THIS REPO'S OWN
+     MEASURES: `APPS_TWO_COLUMN_DETAIL_MEASURE` is a BAND, `{min: 1288, max: 1600}`, so on a
+     wide screen the store-preview page an app is launched from reached exactly 1600 — the
+     same width as the cap. The old reasoning's "at-or-above every ordinary content measure"
+     therefore held at PARITY, not with headroom, and that note is kept here rather than
+     dropped with the cap because it is the bound a future cap proposal would collide with
+     first. (That band is unchanged by this PR; read it from
+     `src/components/Apps/appsPageWidths.ts`, not from this sentence.) */
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and

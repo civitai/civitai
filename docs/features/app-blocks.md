@@ -500,68 +500,70 @@ manifest validation are all still enforced on the webhook.
 
 ### How wide your app renders (`/apps/run/<slug>`)
 
-The page host gives your app a **centred column with a maximum width**, not the
-whole monitor. The value is `--app-page-max-width` (currently `1600px`), declared
-on `:root` in `src/styles/globals.css` and read by `PageBlockHost` as
-`max-width: var(--app-page-max-width, …); margin-inline: auto`.
+**The page host imposes no width on your app.** It hands you the full viewport and
+your app decides what to do with it. `--app-page-max-width` is declared `none` on
+`:root` in `src/styles/globals.css` and read by `PageBlockHost` as
+`max-width: var(--app-page-max-width, none); margin-inline: auto`, so both
+declarations are inert at every viewport and your column is `width: 100%` from a
+phone to an ultrawide.
 
 Practically:
 
-- **Below 1600px of viewport the cap does nothing.** Your iframe is exactly as
-  wide as it has always been — laptops, tablets and phones are unaffected.
-- **Above it your app is centred**, with civitai's page background either side.
-  On a 2560px display your app gets 1600px and a ~480px gutter per side.
-- Your app is still handed a **normal viewport** inside the iframe: your own
-  media queries, `100dvh`, `position: fixed` and so on all resolve against the
-  iframe, so nothing about writing the app changes. The only thing that changed
-  is how wide that iframe gets on a large display.
+- **If you want a centred column, set one in your own CSS.** You are inside your own
+  iframe document and control it completely — a `max-width` plus `margin-inline: auto`
+  on your own root is all it takes, and you can pick the number that suits your
+  layout instead of inheriting one. Nothing on the civitai side is needed, and there
+  is no platform API to ask for.
+- **If you want the whole width, do nothing.** That is the default now.
+- Your app is handed a **normal viewport** inside the iframe: your own media queries,
+  `100dvh`, `position: fixed` and so on all resolve against the iframe.
 
-Why: an App Block is a cross-origin guest and cannot see the monitor it is on,
-and nothing in `@civitai/blocks-react` gives you a container to lay out in (its
-only max-widths are modal-scoped). Left uncapped, an app on a 2560px display
-renders as a single ~2500px column. Most shipped apps already impose a well of
-their own between 640px and 1100px, so for those this changes only which
-background paints the far gutter.
+⚠️ **This changed, and if you read an older copy of this page you were told
+otherwise.** The host used to cap a full-page app at `1600px` and centre it past
+that, with a per-app CSS opt-out on the civitai side. The owner dropped the default
+instead: the platform does not decide how wide a third-party app should be, because it
+cannot see the app's layout, and the app is the only party that can. Concretely, the
+old cap bound at any viewport wider than 1600 CSS px — ~10px of gutter a side at 1620,
+~150px at a maximised 1080p desktop (1905), ~480px at 2560. So a phone, a tablet and a
+1280/1366/1440/1536 laptop are completely unaffected and render exactly as before; a
+1680, 1728 (MacBook Pro 16" at default scaling) or 1792 display was capped by (w − 1600) / 2
+a side — 40px, 64px and 96px respectively — and now is not; and a wide desktop gets back the several hundred pixels it used to
+be denied.
 
-#### Asking for full bleed
+#### If an app needs to be capped by the platform
 
-Some apps genuinely want the whole width — an infinite grid, a canvas, a
-timeline, a map, a fullscreen player. There is **no manifest field** for this
-(the manifest schema is mirrored across three repos and has to move in lockstep,
-and the host runs an older `@civitai/app-sdk` than guests do, so a new field
-would be untyped where the host reads it). Instead it is one CSS rule on the
-civitai side, keyed on the `data-block-id` the host stamps:
+The mechanism survives, pointing the other way: a CSS rule on the civitai side can set
+a width for **one** app, keyed on the `data-block-id` the host stamps.
 
 ```css
 [data-app-page-frame][data-block-id='your-app-slug'] {
-  --app-page-max-width: none;
+  --app-page-max-width: 1100px;
 }
 ```
 
+You should not need this — the same `max-width` inside your own document does the same
+job, under your control, shipped on your release schedule rather than ours. It exists
+so the platform has a reviewed, one-app lever if it ever has to use one.
+
 🔴 **Never key this rule on `data-testid` — that attribute does not exist in
 production.** `next.config.mjs` sets `compiler.reactRemoveProperties` under
-`NODE_ENV === 'production'`, so every testid is compiled out of the live DOM. A
-rule keyed on one works in every preview and local build and matches **zero
-elements on civitai.com** — the app stays letterboxed and nothing looks broken.
-That is not hypothetical: this ledger shipped that spelling and
-`playable-collections` rendered capped in production while every test tier passed.
-`data-app-page-frame` is the presence marker the host stamps for exactly this
-purpose, on the same element as `data-block-id`; both halves of the selector must
-be on that one element.
+`NODE_ENV === 'production'`, so every testid is compiled out of the live DOM. A rule
+keyed on one works in every preview and local build and matches **zero elements on
+civitai.com** — nothing looks broken and the rule simply does nothing. That is not
+hypothetical: the old opt-out ledger shipped that spelling and `playable-collections`
+rendered capped in production while every test tier passed. `data-app-page-frame` is
+the presence marker the host stamps for exactly this purpose, on the same element as
+`data-block-id`; both halves of the selector must be on that one element.
 
-Those rules live in the **full-bleed opt-out ledger** in
-`src/styles/globals.css`, next to the `--app-page-max-width` declaration; the
-comment there carries the template and the review criteria. Open a PR adding
-your app's line with a one-line reason, or ask a maintainer to. A narrower value
-(`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
-frame than the default.
+Such rules live in the **platform width-cap ledger** in `src/styles/globals.css`, next
+to the `--app-page-max-width` declaration; the comment there carries the template and
+the reasoning.
 
-**Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
-authority for both the membership and each entry's reason, and whose comment states
-the grounds on which an entry is admitted. Neither the list nor a count is
-mirrored here, because a copy on this page is a second claim that rots on the next
-entry without anything noticing. The ledger's membership is asserted in a test, so a
-rule cannot be added or removed without that being a deliberate, reviewed change.
+**Currently capped: nothing.** The ledger is empty, and that is the expected state —
+read it in `src/styles/globals.css` rather than trusting this sentence, which is a
+second claim that would rot the moment an entry landed. Its membership is asserted in
+a test that fails on growth as well as shrink, so a rule cannot be added or removed
+without that being a deliberate, reviewed change.
 
 **What actually guards the snippet above.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
@@ -571,7 +573,8 @@ shown here depends on an attribute production removes — and parses
 stamped **together on one element**, the other way a compound selector silently
 matches nothing. Both are real checks and both catch the specific ways this
 recipe has gone wrong (the `data-testid` spelling; a half of the selector moved
-onto another box).
+onto another box). They still run with the ledger empty, because this snippet and the
+template in `globals.css` are what the next rule would be copied from.
 
 🔴 **What that does NOT mean is that the mistake is impossible.** The guard runs
 in the node `unit` project, which on a pull request is **report-only** — the job
@@ -585,8 +588,11 @@ Two things it does **not** promise. It compares the doc against the compiler
 config and against the host's JSX; it does not render anything, so it cannot tell
 you the rule still has the visual effect described. And the rule's measured
 behaviour — `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`
-injects a rule of this shape at a 2560px viewport and asserts the host goes back
-to full width — runs in the browser `component` project, which reports as the
+asserts the app is full width with no rule present — at 1620px, the tightest point that
+suite measures the old 1600px cap binding at (it bound from 1601 up), and at 1905/2560/3440 — and asserts the geometry is
+unchanged at 390 through 1600, where it never bound; then injects a rule of this shape
+and asserts the app becomes a capped centred column. It runs in the browser
+`component` project, which reports as the
 `preview / component-tests` status. Useful evidence, not a gate — and, as above,
 neither tier is one: both can go red without stopping a merge. What this tier
 alone can do is see a rendered width at all. And the guard covers the CSS
