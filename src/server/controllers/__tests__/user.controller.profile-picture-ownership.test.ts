@@ -60,21 +60,23 @@ const OTHER_USERS_IMAGE_ID = 7777;
 const CREATED_PICTURE_ID = 99;
 const AVATAR_KEY = '5c4d0f2e-7a91-4b6d-8e33-2f1c9ab07d54';
 
+function boundNumbers(call: unknown[]) {
+  return call
+    .slice(1)
+    .flatMap((v) =>
+      Array.isArray((v as { values?: unknown[] })?.values)
+        ? (v as { values: unknown[] }).values
+        : [v]
+    )
+    .filter((v) => typeof v === 'number');
+}
+
 function queuedImageIds() {
   return dbMock.dbWrite.$executeRaw.mock.calls
     .filter((call: unknown[]) =>
       (call[0] as TemplateStringsArray).join('?').includes('INSERT INTO "JobQueue"')
     )
-    .flatMap((call: unknown[]) =>
-      call
-        .slice(1)
-        .flatMap((v) =>
-          Array.isArray((v as { values?: unknown[] })?.values)
-            ? (v as { values: unknown[] }).values
-            : [v]
-        )
-    )
-    .filter((v) => typeof v === 'number');
+    .flatMap(boundNumbers);
 }
 
 const saveProfilePicture = (pictureId?: number) =>
@@ -97,7 +99,7 @@ const currentPictureOwnedBy = (userId: number | null) =>
     })
   );
 
-function expectNothingDeleted() {
+function expectImageUntouched(imageId: number) {
   expect(mockDeleteImageById).not.toHaveBeenCalled();
   expect(mockDeleteImages).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.image.delete).not.toHaveBeenCalled();
@@ -106,6 +108,11 @@ function expectNothingDeleted() {
   expect(dbMock.dbWrite.jobQueue.createMany).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.jobQueue.upsert).not.toHaveBeenCalled();
   expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+  const rawCallsNamingImage = [
+    ...dbMock.dbWrite.$executeRaw.mock.calls,
+    ...dbMock.dbWrite.$queryRaw.mock.calls,
+  ].filter((call: unknown[]) => boundNumbers(call).includes(imageId));
+  expect(rawCallsNamingImage).toEqual([]);
 }
 
 beforeEach(() => {
@@ -124,6 +131,7 @@ describe('profile picture updates are scoped to the caller', () => {
     expect(Object.keys(relation)).toEqual(['create']);
     expect(relation.create.id).toBeUndefined();
     expect(relation.create).toMatchObject({ url: AVATAR_KEY, userId: CALLER_ID });
+    expectImageUntouched(OTHER_USERS_IMAGE_ID);
   });
 
   it('scans the row it created, by id, not a url from the request', async () => {
@@ -132,6 +140,7 @@ describe('profile picture updates are scoped to the caller', () => {
     expect(mockIngestImageById).toHaveBeenCalledTimes(1);
     expect(mockIngestImageById).toHaveBeenCalledWith({ id: CREATED_PICTURE_ID });
     expect(mockIngestImage).not.toHaveBeenCalled();
+    expectImageUntouched(OTHER_USERS_IMAGE_ID);
   });
 
   it("does not queue the current picture for deletion when it is another user's image", async () => {
@@ -140,7 +149,7 @@ describe('profile picture updates are scoped to the caller', () => {
     await saveProfilePicture();
 
     expect(queuedImageIds()).toEqual([]);
-    expectNothingDeleted();
+    expectImageUntouched(CURRENT_PICTURE_ID);
   });
 
   it("queues the caller's own replaced picture", async () => {
