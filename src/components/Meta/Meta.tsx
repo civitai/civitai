@@ -8,6 +8,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { create } from 'zustand';
 import { env } from '~/env/client';
+import { serializeJsonLd } from '@civitai/shared/json-ld';
 
 // Meta stacking context - only the topmost (latest mounted) Meta renders its tags.
 // When a dialog mounts its own Meta, it automatically suppresses the page's Meta.
@@ -140,14 +141,14 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
       {schema && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
+          dangerouslySetInnerHTML={{ __html: serializeJsonLd(schema) }}
           key="product-schema"
         />
       )}
       {breadcrumb && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }}
+          dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumb) }}
           key="breadcrumb-schema"
         />
       )}
