@@ -7,6 +7,7 @@ import {
   BLOCK_GOOD_DEFAULT_KIND,
   BLOCK_GOOD_KINDS,
   BLOCK_GOOD_MAX_PER_MANIFEST,
+  BLOCK_GOOD_ID_MAX_LENGTH,
   BLOCK_GOOD_MAX_PRICE_BUZZ,
   BLOCK_GOOD_MIN_PRICE_BUZZ,
   BLOCK_GOOD_PAYLOAD_MAX_BYTES,
@@ -16,6 +17,10 @@ import {
   isBlockGoodKind,
   parseManifestGoods,
 } from '../block-goods.constants';
+import {
+  computeCreatorShopSplit,
+  CREATOR_SHOP_CREATOR_SHARE,
+} from '~/server/schema/creator-shop.schema';
 
 /**
  * The DIGITAL GOODS contract: the split arithmetic, the manifest catalog rules,
@@ -222,6 +227,19 @@ describe('parseManifestGoods — the review-gated catalog rules', () => {
     expect(parseManifestGoods(manifestWith([{ ...VALID_GOOD, id: 'a:b' }])).errors).toHaveLength(1);
   });
 
+  it('accepts an id at EXACTLY the max length and rejects one over it', () => {
+    // 🔴 `BLOCK_GOOD_ID_MAX_LENGTH` was ORNAMENTAL: the bound lived only in the
+    // regex's `{0,63}` and the constant was read only by an error-message
+    // template. So `{0,200}` passed every test while the published schema — which
+    // the Go CLI and the SDK byte-mirror — still said 64, and a 200-character id
+    // would have flowed into a redis key and a ledger external id.
+    const atCap = 'a'.repeat(BLOCK_GOOD_ID_MAX_LENGTH);
+    expect(parseManifestGoods(manifestWith([{ ...VALID_GOOD, id: atCap }])).errors).toEqual([]);
+    expect(
+      parseManifestGoods(manifestWith([{ ...VALID_GOOD, id: `${atCap}a` }])).errors
+    ).toHaveLength(1);
+  });
+
   it('REJECTS an empty or over-long title', () => {
     expect(parseManifestGoods(manifestWith([{ ...VALID_GOOD, title: '   ' }])).errors).toHaveLength(
       1
@@ -256,6 +274,22 @@ describe('parseManifestGoods — the review-gated catalog rules', () => {
     expect(
       parseManifestGoods(manifestWith([{ ...VALID_GOOD, payload: oversized }])).errors
     ).toHaveLength(1);
+  });
+
+  it('ACCEPTS a payload at EXACTLY the byte cap', () => {
+    // Boundary control. A `>` -> `>=` mutant survives an over-cap-only test, and
+    // its consequence is not local: `findManifestGood` is all-or-nothing, so a
+    // payload landing exactly on the cap would make the app's ENTIRE catalog
+    // unsellable, not just that entry. `{"blob":""}` is 11 bytes of envelope, so
+    // the count is asserted rather than assumed — a wrong envelope size would
+    // make this a near-cap test instead of an at-cap one.
+    const exact = { blob: 'x'.repeat(BLOCK_GOOD_PAYLOAD_MAX_BYTES - 11) };
+    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(
+      BLOCK_GOOD_PAYLOAD_MAX_BYTES
+    );
+    expect(parseManifestGoods(manifestWith([{ ...VALID_GOOD, payload: exact }])).errors).toEqual(
+      []
+    );
   });
 
   it('REJECTS more entries than the per-manifest cap, and accepts exactly the cap', () => {
@@ -301,6 +335,32 @@ describe('isBlockGoodKind', () => {
   });
 });
 
+describe('the cosmetic-shop agreement guard', () => {
+  it('the goods share EQUALS the creator-shop share today', () => {
+    // 🔴 WHY THIS ASSERTION EXISTS AND WHY IT IS NOT AN ALIAS. The two constants
+    // are deliberately INDEPENDENT knobs: aliasing them would make a creator-shop
+    // repricing silently reprice every app's catalog, in a different product,
+    // with no review. But "the same cut as cosmetic shop item sales" is a claim
+    // the product makes, and with two independent constants and no guard it goes
+    // false silently the first time either side moves.
+    //
+    // 🔴 IF YOU ARE DELIBERATELY DIVERGING THEM, CHANGE THIS TEST IN THE SAME
+    // COMMIT and say which product moved. A failure here is a decision to make,
+    // not a bug to patch — it is the only place the agreement is written down.
+    expect(BLOCK_GOOD_APP_OWNER_SHARE).toBe(CREATOR_SHOP_CREATOR_SHARE);
+  });
+
+  it('both split functions apply the SAME rounding rule to the same price', () => {
+    // The stronger half: equal constants are not enough if one floors the
+    // recipient and the other floors the platform. 999 is the price where those
+    // two rules disagree (699/300 vs 699/299), so it discriminates.
+    const goods = computeBlockGoodSplit(999);
+    const creator = computeCreatorShopSplit(999);
+    expect(goods.appOwnerShare).toBe(creator.creatorPool);
+    expect(goods.platformShare).toBe(creator.platformCut);
+  });
+});
+
 describe('published schema ⇄ constants drift guard', () => {
   // The canonical schema is byte-mirrored into the Go CLI and the app SDK, so a
   // bound written in one place and not the other means local validation
@@ -329,7 +389,9 @@ describe('published schema ⇄ constants drift guard', () => {
 
   it('id / title / description length bounds match the parser', () => {
     const props = goodsProperty().items.properties;
-    expect(props.id.maxLength).toBe(64);
+    // The CONSTANT, not the literal 64 — otherwise the assertion pins the schema
+    // to a number the parser is free to walk away from.
+    expect(props.id.maxLength).toBe(BLOCK_GOOD_ID_MAX_LENGTH);
     expect(props.title.maxLength).toBe(80);
     expect(props.description.maxLength).toBe(500);
   });

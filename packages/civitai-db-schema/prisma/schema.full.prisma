@@ -3932,8 +3932,12 @@ model BlockGoodPurchase {
   /// split.
   payouts             Json     @default("[]")
 
-  /// 'paid' | 'refunded'.
-  status              String   @default("paid")
+  /// 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+  /// buyer is charged — the UNIQUE `buzzTransactionId` is what serialises
+  /// concurrent attempts, so exactly one can reach the charge. A surviving
+  /// `pending` row is the reconciliation record for a charge whose outcome is
+  /// unknown.
+  status              String   @default("pending")
   refundReason        String?  @map("refund_reason")
   refundedAt          DateTime? @map("refunded_at") @db.Timestamptz(6)
 
@@ -3996,8 +4000,10 @@ model BlockGoodEntitlement {
   revokedAt           DateTime? @map("revoked_at") @db.Timestamptz(6)
   revokeReason        String?  @map("revoke_reason")
 
+  /// No separate index for the entitlements read: the unique key's leading
+  /// (userId, appBlockId) prefix already serves it, measured identical on a
+  /// 2M-row fixture. See the migration for the numbers.
   @@unique([userId, appBlockId, goodId], map: "block_good_entitlement_owner_good_uniq")
-  @@index([appBlockId, userId], map: "bge_app_viewer_idx")
   @@map("block_good_entitlement")
 }
 

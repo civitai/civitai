@@ -34,20 +34,20 @@ const {
   mockRateLimit: vi.fn(async () => ({ allowed: true })),
   mockReserve: vi.fn(async () => ({ total: 1000, key: 'goodscap:42:2026-09-27' })),
   mockRefund: vi.fn(async () => undefined),
-  mockClaim: vi.fn(
-    async (
-      _userId: number,
-      _appBlockId: string,
-      _key: string,
-      _fingerprint: string
-    ): Promise<{ state: string; key?: string; status?: number; body?: unknown }> => ({
-      state: 'acquired',
-      key: 'idem:42',
-    })
-  ),
-  mockFinalize: vi.fn(
-    async (_key: string, _status: number, _body: unknown, _fingerprint: string) => undefined
-  ),
+  // `vi.fn<T>()` rather than named-but-unused parameters: the ARGUMENT TYPES are
+  // what make `mock.calls[i][n]` indexable, and naming them only to ignore them
+  // trips the unused-vars rule.
+  mockClaim: vi.fn<
+    (
+      userId: number,
+      appBlockId: string,
+      key: string,
+      fingerprint: string
+    ) => Promise<{ state: string; key?: string; status?: number; body?: unknown }>
+  >(async () => ({ state: 'acquired', key: 'idem:42' })),
+  mockFinalize: vi.fn<
+    (key: string, status: number, body: unknown, fingerprint: string) => Promise<void>
+  >(async () => undefined),
   mockRelease: vi.fn(async () => undefined),
 }));
 
@@ -199,6 +199,26 @@ describe('auth + method', () => {
 });
 
 describe('FIN-1 — no client value reaches a money decision', () => {
+  it('spends BLUE before YELLOW — granted Buzz ahead of purchased Buzz', async () => {
+    // 🔴 The colour ORDER decides which of the viewer's two balances is spent and
+    // what the owner is paid back in. Unasserted, `['yellow','blue']` inverts it
+    // with every other test green.
+    const res = makeRes();
+    await baseHandler(makeReq({ goodId: GOOD_ID }), res);
+    expect(mockPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ payWith: ['blue', 'yellow'] })
+    );
+  });
+
+  it('rate-limits on the token\u2019s own instance id, not a shared constant', async () => {
+    // A constant key would make the 6-per-60s bucket GLOBAL across every viewer
+    // and every app, so the first six purchases anywhere in the minute would 429
+    // everyone else.
+    const res = makeRes();
+    await baseHandler(makeReq({ goodId: GOOD_ID }), res);
+    expect(mockRateLimit).toHaveBeenCalledWith('bki_1');
+  });
+
   it('binds the BUYER to the token subject, ignoring a body userId', async () => {
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID, userId: 999, buyerUserId: 999 }), res);
@@ -242,7 +262,7 @@ describe('FIN-1 — no client value reaches a money decision', () => {
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 409,
-      code: 'price_changed',
+      reason: 'price_changed',
       error: 'The price changed to 1300 Buzz. Check the new price and try again.',
     } as never);
     const res = makeRes();
@@ -331,7 +351,7 @@ describe('caps and their refunds', () => {
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 409,
-      code: 'already_owned',
+      reason: 'already_owned',
       error: 'You already own this item',
     } as never);
     const res = makeRes();
@@ -347,7 +367,7 @@ describe('caps and their refunds', () => {
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 409,
-      code: 'duplicate',
+      reason: 'duplicate',
       error: 'This purchase has already been completed',
     } as never);
     const res = makeRes();
@@ -355,11 +375,30 @@ describe('caps and their refunds', () => {
     expect(mockRefund).toHaveBeenCalledWith('goodscap:42:2026-09-27', PRICE);
   });
 
+  it('🔴 does NOT refund the reservation on a 503 charge_unknown, and does NOT cache it', async () => {
+    // The unknown-outcome path. Keeping the reservation is the safe direction
+    // (money may have moved), and caching the verdict under the idempotency key
+    // would replay a non-answer instead of letting a retry discover the surviving
+    // `pending` claim.
+    mockPurchase.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      reason: 'charge_unknown',
+      error: 'Could not confirm this purchase. Please check your balance before retrying.',
+    } as never);
+    const res = makeRes();
+    await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: 'abc-123' }), res);
+    expect(res.statusCode).toBe(503);
+    expect(mockRefund).not.toHaveBeenCalled();
+    expect(mockFinalize).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith('idem:42');
+  });
+
   it('does NOT refund on a 5xx — a post-money failure must leave the cap stricter', async () => {
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 500,
-      code: 'charge_failed',
+      reason: 'charge_failed',
       error: 'Could not complete this purchase',
     } as never);
     const res = makeRes();
@@ -391,7 +430,13 @@ describe('idempotency', () => {
     await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: KEY }), res);
     expect(res.statusCode).toBe(200);
     expect(mockFinalize).toHaveBeenCalledTimes(1);
-    expect(mockFinalize.mock.calls[0][1]).toBe(200);
+    // 🔴 ALL FOUR arguments. Checking only the status left a mutant passing `''`
+    // for the fingerprint alive: the stored record then never matches on the next
+    // call, so the legitimate lost-response retry gets 422 "already used for a
+    // different purchase" — the exact failure the mismatch handling exists to
+    // prevent, inverted. A mutant passing `undefined` for the body replays an
+    // empty 200 to a client that then believes it bought nothing.
+    expect(mockFinalize).toHaveBeenCalledWith('idem:42', 200, res.body, mockClaim.mock.calls[0][3]);
     expect(mockRelease).not.toHaveBeenCalled();
   });
 
@@ -505,15 +550,21 @@ describe('audit detail', () => {
     });
   });
 
-  it('stashes NOTHING when the purchase is refused', async () => {
+  it('stashes NOTHING when the purchase is refused, and REFUNDS the reservation', async () => {
+    // 🔴 The refund assertion lives here because every OTHER test of that branch
+    // drives a 409. With only 409 fixtures, `if (result.status === 409)` survives
+    // — and 400 `insufficient_funds` is the most frequent refusal on the surface,
+    // so the viewer's daily counter would drift fastest exactly where nothing
+    // moved.
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 400,
-      code: 'insufficient_funds',
+      reason: 'insufficient_funds',
       error: 'You do not have enough Buzz to buy this item',
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);
     expect(readBlockActionDetail(res)).toBeUndefined();
+    expect(mockRefund).toHaveBeenCalledWith('goodscap:42:2026-09-27', PRICE);
   });
 });

@@ -4,7 +4,7 @@ import '~/__tests__/setup';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import type * as BlockGoodsService from '~/server/services/blocks/block-goods.service';
-import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit';
+import type * as GoodsRateLimit from '~/server/utils/block-goods-rate-limit';
 
 /**
  * `GET /api/v1/blocks/entitlements` — the viewer's owned goods, for the CALLING
@@ -16,7 +16,12 @@ import type * as CatalogRateLimit from '~/server/utils/block-catalog-rate-limit'
 
 const { mockList, mockRateLimit } = vi.hoisted(() => ({
   mockList: vi.fn(async () => [] as unknown[]),
-  mockRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockRateLimit: vi.fn<
+    (
+      blockInstanceId: string,
+      userId: number
+    ) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>
+  >(async () => ({ allowed: true })),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
@@ -26,9 +31,9 @@ vi.mock('~/server/services/blocks/block-goods.service', async (importOriginal) =
   listBlockGoodEntitlements: mockList,
 }));
 
-vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
-  ...(await importOriginal<typeof CatalogRateLimit>()),
-  checkBlockCatalogRateLimit: mockRateLimit,
+vi.mock('~/server/utils/block-goods-rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof GoodsRateLimit>()),
+  checkBlockGoodReadRateLimit: mockRateLimit,
 }));
 
 import { baseHandler } from '~/pages/api/v1/blocks/entitlements';
@@ -163,7 +168,18 @@ describe('GET /api/v1/blocks/entitlements', () => {
     expect(mockList).not.toHaveBeenCalled();
   });
 
-  it('429s with Retry-After when the shared catalog bucket refuses', async () => {
+  it('rate-limits on (instance, VIEWER) — NOT on the instance alone', async () => {
+    // 🔴 The second key segment is the whole point. The shared catalog bucket keys
+    // on `blockInstanceId` alone, and for a PAGE app that is the synthetic
+    // `page_<appBlockId>` shared by every concurrent viewer platform-wide — so a
+    // mount read would be refused because of strangers' traffic, and a refused
+    // entitlements read renders as "you own nothing".
+    const res = makeRes();
+    await baseHandler(makeReq(), res);
+    expect(mockRateLimit).toHaveBeenCalledWith('bki_1', VIEWER);
+  });
+
+  it('429s with Retry-After when its own bucket refuses', async () => {
     mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 4 } as never);
     const res = makeRes();
     await baseHandler(makeReq(), res);

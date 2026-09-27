@@ -294,10 +294,13 @@ export function describeBlockAction(
     case 'goods.purchase': {
       // Named for the same reason `post.create` is: this is the viewer's money
       // leaving their balance, and "Performed an app action" is not an audit row.
+      // No `failed` suffix, unlike `workflow.submit`/`post.create`: the purchase
+      // route stashes a detail ONLY on success (asserted by its own test), so a
+      // `goods.purchase` row with `outcome: 'failed'` cannot exist. Rendering one
+      // would read as failure-audit coverage and provide none.
       const amt = typeof detail.amount === 'number' ? ` for ${formatBuzz(detail.amount)}` : '';
       const what = detail.goodId ? `"${detail.goodId}"` : 'an item';
-      const failed = detail.outcome === 'failed' ? ' — failed' : '';
-      return `Bought ${what} from this app${amt}${failed}`;
+      return `Bought ${what} from this app${amt}`;
     }
     default:
       // Unknown / forward-compat action code — safe generic line.

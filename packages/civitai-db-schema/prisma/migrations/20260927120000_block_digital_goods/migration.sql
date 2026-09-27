@@ -110,7 +110,12 @@ CREATE TABLE "block_good_purchase" (
   -- runs — a purchase still carrying `[]` is exactly the set to re-run.
   "payouts"               JSONB       NOT NULL DEFAULT '[]'::jsonb,
 
-  "status"                TEXT        NOT NULL DEFAULT 'paid',
+  -- 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+  -- buyer is charged: the UNIQUE `buzz_transaction_id` below is what serialises
+  -- concurrent attempts, so exactly one can reach the charge. A `pending` row
+  -- that survives is the RECONCILIATION RECORD for a charge whose outcome is
+  -- unknown (a gateway timeout), and is deliberately not cleaned up blindly.
+  "status"                TEXT        NOT NULL DEFAULT 'pending',
   "refund_reason"         TEXT,
   "refunded_at"           TIMESTAMPTZ,
 
@@ -122,15 +127,29 @@ CREATE TABLE "block_good_purchase" (
 CREATE UNIQUE INDEX "block_good_purchase_buzz_transaction_id_key"
   ON "block_good_purchase" ("buzz_transaction_id");
 
--- The viewer's own purchase history.
+-- 🔴 THE THREE INDEXES BELOW HAVE NO QUERY READING THEM YET, AND THAT IS NOT
+-- WHY THEY ARE HERE. Measured on a 2M-row fixture: `idx_scan = 0` for all three
+-- after driving every query this rail contains, at a cost of ~196 MB. What earns
+-- them is the REFERENCED-SIDE work: each incidentally covers one of this table's
+-- FK columns, so a `User` or `app_blocks` delete/PK-update probes an index
+-- instead of sequentially scanning the whole table. Without them that RI check
+-- measured 118 ms / 538 MB at 2M rows. They also serve the viewer-history and
+-- owner-earnings reads a later surface will need — but that is the bonus, not
+-- the justification, so do not drop one on the grounds that nothing queries it.
+--
+-- ⚠️ `app_id` is the one FK column left UNCOVERED, consistent with the four
+-- sibling attribution tables, which all carry an unindexed `app_id` FK.
+-- `OauthClient` deletes are rare; a fourth index here is not obviously right.
+
+-- The viewer's own purchase history; covers the `user_id` FK.
 CREATE INDEX "bgp_buyer_idx"
   ON "block_good_purchase" ("user_id", "created_at" DESC);
 
--- The app's sales, for the owner dashboard.
+-- The app's sales; covers the `app_block_id` FK.
 CREATE INDEX "bgp_app_block_idx"
   ON "block_good_purchase" ("app_block_id", "created_at" DESC);
 
--- Per-owner earnings across every app they own.
+-- Per-owner earnings; covers the `app_owner_user_id` FK.
 CREATE INDEX "bgp_owner_idx"
   ON "block_good_purchase" ("app_owner_user_id", "created_at" DESC);
 
@@ -157,7 +176,7 @@ ALTER TABLE "block_good_purchase"
 
 ALTER TABLE "block_good_purchase"
   ADD CONSTRAINT "block_good_purchase_status_check"
-  CHECK ("status" IN ('paid', 'refunded'));
+  CHECK ("status" IN ('pending', 'paid', 'refunded'));
 
 -- A refunded row must carry when and why, and a paid row must carry neither —
 -- so "was this reversed" is answerable from the row alone.
@@ -235,9 +254,15 @@ CREATE UNIQUE INDEX "block_good_entitlement_owner_good_uniq"
 CREATE UNIQUE INDEX "block_good_entitlement_purchase_id_key"
   ON "block_good_entitlement" ("purchase_id");
 
--- The entitlements read: one app, one viewer.
-CREATE INDEX "bge_app_viewer_idx"
-  ON "block_good_entitlement" ("app_block_id", "user_id");
+-- 🔴 NO SEPARATE INDEX FOR THE ENTITLEMENTS READ, DELIBERATELY. The obvious one
+-- — `(app_block_id, user_id)` — is MEASURED REDUNDANT: the only query against
+-- this table filters `user_id = $1 AND app_block_id = $2`, and
+-- `block_good_entitlement_owner_good_uniq`'s leading `(user_id, app_block_id)`
+-- already serves it. On a 2M-row fixture both plans were an index scan at
+-- 4 shared hits / 3 reads and 0.066–0.068 ms — identical — while the extra index
+-- cost ~90 MB and one more B-tree insert per purchase. It would only earn its
+-- place for an `app_block_id`-ALONE query (every holder of one app's goods), and
+-- no such query exists. Add it when one does, not before.
 
 ALTER TABLE "block_good_entitlement"
   ADD CONSTRAINT "block_good_entitlement_kind_check"

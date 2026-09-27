@@ -64,6 +64,16 @@ export async function checkBlockGoodRateLimit(
 // ceiling by shipping N apps. Set above the tip ceiling because a good is
 // review-gated — a moderator saw its price — where a tip recipient is not.
 export const BLOCK_GOOD_CAP_PER_DAY = 150_000;
+// 🔴 THERE IS NO PER-APP GOODS CEILING, AND THAT IS A KNOWN GAP, NOT AN OVERSIGHT.
+// `app-spend-cap.service.ts` exists because a per-USER cap cannot see
+// CONCENTRATION: a Sybil ring of N accounts each gets its own daily ceiling and
+// all of it can be funnelled through ONE app — which is exactly the shape of a
+// route where 70% of the Buzz lands in that app owner's own balance. Goods are
+// not wired into it here because `reserveAppSpend` also consumes the app's
+// GENERATION velocity slots, so calling it from a purchase would throttle
+// generation as a side effect of a sale. The honest reuse is its daily leg plus
+// `resolveAppCapLimits(appBlockId).dailyBuzz`, and it needs its own decision
+// about what the goods ceiling should be.
 // 25h: covers a UTC-day window plus skew. The key is re-derived per day, so a
 // stale counter never bleeds into the next window.
 const BLOCK_GOOD_CAP_TTL_SECONDS = 25 * 60 * 60;
@@ -109,9 +119,16 @@ export async function refundBlockGoodSpend(
   key: ReturnType<typeof goodsCapRedisKey>,
   amount: number
 ): Promise<void> {
-  await sysRedis.decrBy(key, Math.ceil(amount)).catch(() => {
+  // 🔴 try/catch, NOT `.catch()`. A promise handler catches a REJECTION; it does
+  // not catch a SYNCHRONOUS throw from the call itself, which is what a
+  // not-ready client does. Measured: with `.catch()` this rejected instead of
+  // resolving, and the escape landed in the endpoint's over-cap arm — turning a
+  // clean 400 into a 500 on the one path whose whole job is refusing cleanly.
+  try {
+    await sysRedis.decrBy(key, Math.ceil(amount));
+  } catch {
     /* best-effort — a lost refund over-counts (stricter cap) */
-  });
+  }
 }
 
 // ── Purchase idempotency ─────────────────────────────────────────────────────
@@ -151,9 +168,27 @@ export function computeGoodPurchaseFingerprint(input: {
   appBlockId: string;
   goodId: string;
   priceBuzz: number;
+  /**
+   * The price the CALLER asserted, when it sent one.
+   *
+   * 🔴 Part of the fingerprint, and omitting it was a real gap: `priceBuzz` is
+   * the CATALOG price, and two requests can agree on it while disagreeing about
+   * what the client believes. A retry reusing the key with a different
+   * `expectedPriceBuzz` would then replay the first attempt's 200 instead of
+   * earning the price-guard refusal it asked for — which is exactly the case
+   * this fingerprint's own contract claims to cover.
+   */
+  expectedPriceBuzz?: number;
 }): string {
   return createHash('sha256')
-    .update(JSON.stringify([input.appBlockId, input.goodId, input.priceBuzz]))
+    .update(
+      JSON.stringify([
+        input.appBlockId,
+        input.goodId,
+        input.priceBuzz,
+        input.expectedPriceBuzz ?? null,
+      ])
+    )
     .digest('hex')
     .slice(0, 32);
 }
@@ -196,7 +231,19 @@ export async function claimGoodIdempotency(
     // Never re-run a money path on a value we cannot read.
     return { state: 'in_progress' };
   }
-  if (parsed?.fp !== fingerprint) return { state: 'mismatch' };
+  // 🔴 BOTH unreadable shapes get the SAME treatment, and they did not. A value
+  // that is valid JSON but not an object (`null`, `123`, `"x"`) has no readable
+  // `fp`, so it used to fall through to the mismatch branch and 422 with "this
+  // key was already used for a DIFFERENT purchase" — a false statement about the
+  // caller, and terminal-looking, for the whole TTL. It is the same fact as an
+  // unparseable string: we cannot read the record.
+  // `Array.isArray` is part of the test, not decoration: `typeof [] === 'object'`
+  // and an array is not null, so a stored `[]` would otherwise walk straight past
+  // this guard into the mismatch branch — the exact case being closed.
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { state: 'in_progress' };
+  }
+  if (parsed.fp !== fingerprint) return { state: 'mismatch' };
   if (typeof parsed.status === 'number')
     return { state: 'replay', status: parsed.status, body: parsed.body };
   return { state: 'in_progress' };
@@ -231,28 +278,74 @@ export async function finalizeGoodIdempotency(
 export async function releaseGoodIdempotency(
   key: ReturnType<typeof goodsIdemRedisKey>
 ): Promise<void> {
-  await sysRedis.del(key).catch(() => {
+  // 🔴 try/catch for the same reason as `refundBlockGoodSpend`, and here the
+  // consequence is worse: this is called from the endpoint's
+  // `catch (e) { release; throw e }` recovery, so a synchronous throw would
+  // REPLACE the original error and leave the sentinel to 409 every retry for its
+  // full TTL — precisely the wedge that recovery path exists to prevent.
+  try {
+    await sysRedis.del(key);
+  } catch {
     /* best-effort — a stuck sentinel just 409s a retry until its short TTL */
-  });
+  }
 }
 
-/** The viewer's current daily goods allowance, from the enforcing counter. */
-export type BlockGoodAllowance = { cap: number; spent: number; remaining: number };
+// ── The entitlements READ limiter ─────────────────────────────────────────────
+
+// Generous: this is a bounded index read a block makes on mount and may refresh.
+// The ceiling exists to bound a loop, not to shape traffic.
+export const BLOCK_GOOD_READ_RATE_LIMIT_MAX = 120;
+export const BLOCK_GOOD_READ_RATE_LIMIT_WINDOW_SECONDS = 10;
 
 /**
- * Reads the viewer's daily goods allowance from the SAME counter the
- * reserve/refund path mutates. `spent` is reservation-based, so it can briefly
- * OVER-count between a reserve and its refund — the safe direction
- * (under-reports `remaining`). Throws on a redis error, like the reserve path.
+ * Per-(instance, VIEWER) limiter for `GET /api/v1/blocks/entitlements`.
+ *
+ * 🔴 ITS OWN BUCKET, KEYED ON THE VIEWER TOO, AND THAT SECOND KEY SEGMENT IS THE
+ * WHOLE REASON THIS EXISTS. The obvious choice was the shared
+ * `checkBlockCatalogRateLimit` bucket every sibling block read uses — but that
+ * one keys on `blockInstanceId` ALONE, and for a PAGE app the instance id is the
+ * synthetic `page_<appBlockId>`: one string shared by every concurrent viewer of
+ * that app, platform-wide. An entitlements read is made on mount, so on a busy
+ * page app a viewer would be refused because of strangers' traffic — and a
+ * refused entitlements read renders as "you own nothing", which is the worst
+ * possible failure for a surface whose entire job is telling a viewer what they
+ * bought. The `:poll:` bucket in `block-catalog-rate-limit.ts` departed from its
+ * siblings' key for exactly this reason.
+ *
+ * Taking its own bucket also leaves the catalog ceiling alone: that number is
+ * derived from how many times one page load charges it, and adding a sixth
+ * charge would have cut every app's concurrent-page-load headroom by ~17%.
+ *
+ * FAIL-OPEN, unlike the purchase limiter: this moves no money, and failing a
+ * read closed would tell a viewer they own nothing because Redis blinked.
  */
-export async function readBlockGoodAllowance(userId: number): Promise<BlockGoodAllowance> {
-  const key = goodsCapRedisKey(userId);
-  const raw = await sysRedis.get(key);
-  const parsed = raw == null ? 0 : Number.parseInt(raw, 10);
-  const spent = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-  return {
-    cap: BLOCK_GOOD_CAP_PER_DAY,
-    spent,
-    remaining: Math.max(0, BLOCK_GOOD_CAP_PER_DAY - spent),
-  };
+export async function checkBlockGoodReadRateLimit(
+  blockInstanceId: string,
+  userId: number
+): Promise<BlockGoodRateLimitResult> {
+  const key =
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods-read:${blockInstanceId}:${userId}` as const;
+  try {
+    const count = await redis.incrBy(key as never, 1);
+    if (count === 1) {
+      await redis.expire(key as never, BLOCK_GOOD_READ_RATE_LIMIT_WINDOW_SECONDS);
+    } else {
+      const ttl = await redis.ttl(key as never);
+      if (ttl < 0) await redis.expire(key as never, BLOCK_GOOD_READ_RATE_LIMIT_WINDOW_SECONDS);
+    }
+
+    // A non-numeric reply would make `undefined <= max` false and refuse a read
+    // for no reason; on a FAIL-OPEN bucket the safe reading of "I cannot tell" is
+    // allow. (The purchase limiter's posture is the opposite, deliberately.)
+    if (typeof count !== 'number' || !Number.isFinite(count)) return { allowed: true };
+    if (count <= BLOCK_GOOD_READ_RATE_LIMIT_MAX) return { allowed: true };
+
+    let retryAfter = await redis.ttl(key as never);
+    if (!Number.isFinite(retryAfter) || retryAfter < 1) {
+      retryAfter = BLOCK_GOOD_READ_RATE_LIMIT_WINDOW_SECONDS;
+    }
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  } catch {
+    return { allowed: true };
+  }
 }

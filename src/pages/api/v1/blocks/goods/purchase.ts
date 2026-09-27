@@ -183,19 +183,28 @@ export const baseHandler = withAxiom(async function handler(
     });
 
     if (!result.ok) {
-      // 🔴 REFUND ONLY ON A KNOWN-PRE-MONEY REFUSAL. Everything the service
-      // returns as a 4xx is decided before or instead of the charge — the
-      // catalog lookup, the price guard, ownership, the cap, and a ledger
-      // conflict, which is the case the brief calls out: the ledger refused to
-      // move Buzz a second time, so keeping the reservation would charge the
-      // viewer's daily allowance twice for one transfer. A 5xx may be
-      // post-money, so it keeps the reservation (stricter, never looser).
+      // 🔴 REFUND ONLY ON A KNOWN-PRE-MONEY REFUSAL, and the service's 4xx set is
+      // exactly that: the price guards, ownership, already-owned, a claim another
+      // attempt owns, an insufficient-funds refusal the ledger reported, and a
+      // partial debit it has already reversed. Every case where the charge
+      // outcome is UNKNOWN is a 5xx by construction (`charge_unknown`), so it
+      // KEEPS the reservation — stricter, never looser, which is the only safe
+      // direction when we cannot say whether money moved.
       if (result.status >= 400 && result.status < 500) {
         await refundBlockGoodSpend(capKey, priceBuzz);
       }
       return {
         status: result.status,
-        body: { ok: false, error: result.error, code: result.code },
+        // `reason`, not `code`: `code` is the key the repo's REST error envelope
+        // owns and its values there are tRPC error-code strings, so putting a
+        // second vocabulary on it is how a client branching on `code` across two
+        // block routes starts getting two meanings.
+        body: { ok: false, error: result.error, reason: result.reason },
+        // 🔴 A 503 means the charge outcome is UNKNOWN, so it must not be cached
+        // under the idempotency key: a retry has to be able to re-attempt and
+        // find the surviving `pending` claim, which is the honest answer, rather
+        // than replay a verdict that was never reached.
+        transient: result.status === 503,
       };
     }
 
@@ -223,7 +232,12 @@ export const baseHandler = withAxiom(async function handler(
   };
 
   if (idempotencyKey) {
-    const fingerprint = computeGoodPurchaseFingerprint({ appBlockId, goodId, priceBuzz });
+    const fingerprint = computeGoodPurchaseFingerprint({
+      appBlockId,
+      goodId,
+      priceBuzz,
+      expectedPriceBuzz,
+    });
     let claim: Awaited<ReturnType<typeof claimGoodIdempotency>>;
     try {
       claim = await claimGoodIdempotency(buyerUserId, appBlockId, idempotencyKey, fingerprint);

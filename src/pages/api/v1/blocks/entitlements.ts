@@ -7,7 +7,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { listBlockGoodEntitlements } from '~/server/services/blocks/block-goods.service';
-import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import { checkBlockGoodReadRateLimit } from '~/server/utils/block-goods-rate-limit';
 
 /**
  * GET /api/v1/blocks/entitlements — scope `goods:read:self`.
@@ -29,10 +29,13 @@ import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-li
  * refunded. Self-bound: anonymous tokens are rejected (there is nobody to own
  * anything).
  *
- * RATE LIMITED per blockInstanceId on the shared catalog bucket, consistent
- * with the sibling block REST reads (`models.ts` / `images.ts` /
- * `tip-allowance.ts`) — this is designed to be read on mount, and a 429 here is
- * benign.
+ * 🔴 RATE LIMITED ON ITS OWN BUCKET, KEYED PER (instance, VIEWER) — deliberately
+ * NOT the shared catalog bucket the sibling block reads use. That bucket keys on
+ * `blockInstanceId` alone, and for a PAGE app that is the synthetic
+ * `page_<appBlockId>` shared by every concurrent viewer platform-wide. Since this
+ * is read on mount, a viewer would be refused because of strangers' traffic —
+ * and a refused entitlements read renders as "you own nothing", which is the
+ * worst failure this surface has. See `checkBlockGoodReadRateLimit`.
  *
  * CORS: withBlockScope + allowOpaqueOrigin (an unverified block direct-fetches
  * this from `Origin: null`; the Bearer block-JWT is the sole authz gate).
@@ -67,7 +70,7 @@ export const baseHandler = withAxiom(async function handler(
     return;
   }
 
-  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  const rateLimit = await checkBlockGoodReadRateLimit(claims.blockInstanceId, subjectUserId);
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });

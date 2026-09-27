@@ -1053,7 +1053,11 @@ export type BlockGoodPurchase = {
    */
   payouts: Generated<unknown>;
   /**
-   * 'paid' | 'refunded'.
+   * 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+   * buyer is charged — the UNIQUE `buzzTransactionId` is what serialises
+   * concurrent attempts, so exactly one can reach the charge. A surviving
+   * `pending` row is the reconciliation record for a charge whose outcome is
+   * unknown.
    */
   status: Generated<string>;
   refund_reason: string | null;

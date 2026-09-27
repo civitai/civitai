@@ -76,9 +76,18 @@ export const BLOCK_GOOD_MAX_PRICE_BUZZ = 50_000;
 /** Most goods one manifest may declare. */
 export const BLOCK_GOOD_MAX_PER_MANIFEST = 32;
 
-/** `id` charset — lowercase, URL- and log-safe, and colon-free so it can be composed into keys. */
-export const BLOCK_GOOD_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/**
+ * `id` charset — lowercase, URL- and log-safe, and colon-free so it can be
+ * composed into a redis key and a ledger external id.
+ *
+ * 🔴 THE LENGTH IS NOT IN THE REGEX. It was (`{0,63}`), which made
+ * `BLOCK_GOOD_ID_MAX_LENGTH` ornamental — read only by an error message — so
+ * widening the regex passed every test while the published schema, byte-mirrored
+ * into the Go CLI and the SDK, still said 64. The bound is checked against the
+ * constant instead, so the schema drift guard and the parser cannot disagree.
+ */
 export const BLOCK_GOOD_ID_MAX_LENGTH = 64;
+export const BLOCK_GOOD_ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const BLOCK_GOOD_TITLE_MAX_LENGTH = 80;
 export const BLOCK_GOOD_DESCRIPTION_MAX_LENGTH = 500;
 
@@ -159,7 +168,11 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
 
     const { id, title, description, priceBuzz, kind, payload } = entry;
 
-    if (typeof id !== 'string' || !BLOCK_GOOD_ID_RE.test(id)) {
+    if (
+      typeof id !== 'string' ||
+      id.length > BLOCK_GOOD_ID_MAX_LENGTH ||
+      !BLOCK_GOOD_ID_RE.test(id)
+    ) {
       errors.push(
         `${at}.id must be lowercase alphanumeric with - or _, starting with a letter or digit, at most ${BLOCK_GOOD_ID_MAX_LENGTH} characters`
       );
