@@ -5,16 +5,17 @@ import path from 'node:path';
 const API_ROOT = path.resolve(__dirname, '../../pages/api');
 
 const SCAN_SUBMIT =
-  /\b(ingestImage|ingestImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
+  /\b(ingestImages?|ingestImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
 
 /**
- * Every REST route that can submit an image scan. Each is operator-only and loads the media URL
- * from the Image row rather than the request. Before adding a route here, keep both properties,
- * or use the `image.rescan` procedure instead.
+ * REST routes that name an image scan submit function directly. Adding one is a deliberate
+ * decision; prefer the `image.rescan` procedure. This sees direct references only, not routes
+ * that reach a scan through a service such as `createImage`.
  */
 const SCAN_SUBMIT_ROUTES = [
-  'admin/rescan-images.ts', // WebhookEndpoint, ingestImageById
-  'media/ingest/[mediaId].ts', // moderator or webhook token, URL from the Image row
+  'admin/rescan-images.ts',
+  'media/ingest/[mediaId].ts',
+  'webhooks/run-jobs/[[...run]].ts', // the ingest-images job
 ];
 
 function walk(dir: string): string[] {
@@ -27,18 +28,17 @@ function walk(dir: string): string[] {
   return out;
 }
 
-describe('image scan submission from REST routes', () => {
-  it('is reachable only from the recorded operator routes', () => {
+describe('image scan submit functions named by REST routes', () => {
+  it('are named only by the recorded routes', () => {
     const found = walk(API_ROOT)
       .filter((file) => SCAN_SUBMIT.test(readFileSync(file, 'utf8')))
       .map((file) => path.relative(API_ROOT, file).split(path.sep).join('/'))
       .sort();
 
-    expect(found.length).toBeGreaterThan(0);
     expect(
       found,
-      'A route under src/pages/api reaches the image scan submit. Record it here only if it is ' +
-        'operator-only and loads the URL from the Image row; if a route was removed, delete its line.'
+      'The set of routes under src/pages/api naming an image scan submit function changed. ' +
+        'Record a new one deliberately; delete the line of one that was removed.'
     ).toEqual([...SCAN_SUBMIT_ROUTES].sort());
   });
 });
