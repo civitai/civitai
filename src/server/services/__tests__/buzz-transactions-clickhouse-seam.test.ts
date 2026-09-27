@@ -73,6 +73,13 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 loggingMock.logToAxiom.mockResolvedValue(null);
 
 const ACCOUNT_ID = 4242;
+/**
+ * 🔴 A SECOND account id, used by the self-transfer tests. Their property -
+ * `from === to === accountId` is a debit - does not depend on WHICH account, so
+ * running them at the module constant was incidental and made a predicate that
+ * hardcodes `ACCOUNT_ID` indistinguishable from one reading the argument.
+ */
+const OTHER_ACCOUNT_ID = 909;
 
 /** A row as ClickHouse hands it over: every column a string or a number. */
 function row(over: Record<string, unknown> = {}) {
@@ -83,8 +90,11 @@ function row(over: Record<string, unknown> = {}) {
     amount: 11,
     fromAccountId: 77,
     toAccountId: ACCOUNT_ID,
-    fromAccountType: 'user',
-    toAccountType: 'user',
+    // A real `BuzzAccountType`, and one the own-side filter admits — tests that do
+    // not care about this column still must not pin it to a value production cannot
+    // emit (it was `'user'`, which is not a member at all).
+    fromAccountType: 'blue',
+    toAccountType: 'blue',
     description: null,
     details: null,
     externalTransactionId: null,
@@ -97,9 +107,8 @@ const WINDOW = {
   start: new Date('2026-09-20T00:00:00Z'),
   end: new Date('2026-09-26T23:59:59Z'),
   // Required by the schema and by `buildBranchQuery`, which maps over it. All three
-  // spend types, which is also the schema's own default — so every account type the
-  // fixtures carry is one this query could really return, and the own-side column is
-  // never asserted to a value production cannot emit.
+  // spend types, which is also the schema's own default — so no account type this
+  // file ASSERTS is one the own-side filter could never admit.
   //
   // 🔴 A mutant reporting the REQUESTED filter instead of the row's own side is
   // killed by the fixtures, not by this list: no single value satisfies the
@@ -151,10 +160,12 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     const sql = sentSql();
     expect(sql.length).toBeGreaterThan(0);
-    // Word-anchored: the `to`-direction query carries `toAccountType IN ('blue')`,
-    // which a plain `toContain('type IN (')` misses only because it is
-    // case-sensitive. Renaming that column to snake_case would redden a healthy
-    // query.
+    // Word-anchored on `type`, because the `to`-direction query legitimately carries
+    // `toAccountType IN ('blue','green','yellow')` — which a plain
+    // `toContain('type IN (')` misses only because `Type` is capitalised there.
+    // ⚠️ `\b` does NOT save a snake_case rename: `_` is a word character, so
+    // `to_account_type IN (` would not match this pattern either. It guards against a
+    // camelCase near-miss, nothing wider.
     for (const q of sql) expect(q).not.toMatch(/\btype IN \(/);
   });
 
@@ -181,7 +192,7 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
       row({
         type: '28',
         amount: 3,
-        fromAccountId: 555,
+        fromAccountId: 5555,
         fromAccountType: 'green',
         toAccountType: 'blue',
       }),
@@ -225,8 +236,9 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
         amount: 3,
         fromAccountId: ACCOUNT_ID,
         toAccountId: 77,
-        // The DEBIT direction's pair. Distinctness that matters is between the two
-        // CREDIT cases above, not between a credit and this — see their notes.
+        // The DEBIT direction's pair. The distinctness that matters is between the
+        // two CREDIT cases — one above this test, one below — not between a credit
+        // and this one. See their notes.
         fromAccountType: 'blue',
         toAccountType: 'yellow',
       }),
@@ -260,15 +272,19 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
       row({
         type: '28',
         amount: 9,
-        fromAccountId: ACCOUNT_ID,
-        toAccountId: ACCOUNT_ID,
+        // 🔴 `OTHER_ACCOUNT_ID`, not the module constant. The property under test is
+        // `from === to === accountId`, which holds for ANY account — so running it at
+        // `ACCOUNT_ID` let a predicate hardcoding that literal pass, and the test
+        // could not tell "self-transfer is a debit" from "account 4242 is a debit".
+        fromAccountId: OTHER_ACCOUNT_ID,
+        toAccountId: OTHER_ACCOUNT_ID,
         fromAccountType: 'green',
         toAccountType: 'yellow',
       }),
     ]);
 
     const result = await getUserBuzzTransactionsMulti({
-      accountId: ACCOUNT_ID,
+      accountId: OTHER_ACCOUNT_ID,
       ...WINDOW,
     } as Parameters<typeof getUserBuzzTransactionsMulti>[0]);
 
@@ -284,9 +300,9 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
   it('hydrates the other past-26 member the same way', async () => {
     mockQuery.mockResolvedValueOnce([
       // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'28'` case above, and its
-      // account types DELIBERATELY DIFFER from it. This pair is the only reason a
-      // mutant cannot serve both credits from one value, i.e. the only reason the
-      // account-type columns are known to read the row at all.
+      // account types DELIBERATELY DIFFER from it. A plain CONSTANT is already killed
+      // by that case alone; what this pair uniquely kills is a function of the
+      // DIRECTION, which one credit and one debit cannot distinguish from the truth.
       row({ type: '27', amount: 5, fromAccountType: 'yellow', toAccountType: 'green' }),
     ]);
 
@@ -369,6 +385,11 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     expect(lines[1].split(',')[1]).toBe('AppAuthorFee');
     // A credit, so the RECIPIENT side — and distinct from the other credit's.
     expect(lines[1].split(',')[3]).toBe('blue');
+    // 🔴 The AMOUNT, on the one export row whose counterparty is `77`. Without it the
+    // export sign predicate was exercised at only two id values and a literal-id key
+    // reproduced both — the list path's twin gap, closed one commit earlier and left
+    // open here.
+    expect(lines[1].split(',')[2]).toBe('3');
   });
 
   /**
@@ -383,14 +404,19 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
       row({
         type: '28',
         amount: 9,
-        fromAccountId: ACCOUNT_ID,
-        toAccountId: ACCOUNT_ID,
+        // `OTHER_ACCOUNT_ID` for the same reason as the list suite's twin.
+        fromAccountId: OTHER_ACCOUNT_ID,
+        toAccountId: OTHER_ACCOUNT_ID,
         fromAccountType: 'green',
         toAccountType: 'yellow',
       }),
     ]);
 
-    const fields = (await csv()).trim().split('\r\n').filter(Boolean)[1].split(',');
+    const fields = (await csv({ accountId: OTHER_ACCOUNT_ID }))
+      .trim()
+      .split('\r\n')
+      .filter(Boolean)[1]
+      .split(',');
     expect(fields[2]).toBe('-9');
     expect(fields[3]).toBe('green');
   });
@@ -427,7 +453,7 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
    * branches — `row.fromAccountId === 77 ? toAccountType : fromAccountType` — is
    * EQUIVALENT on every fixture and survives. It is only distinguishable on a row
    * whose counterparty is neither of those ids, which is why the credit case below
-   * uses a third one.
+   * uses a third one, ABOVE `ACCOUNT_ID` so a relational operator dies too.
    */
   it('negates the amount and reports the PAYER side account type', async () => {
     mockQuery.mockResolvedValueOnce([
@@ -457,7 +483,7 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
         // what makes a predicate keyed on a literal id distinguishable from one keyed
         // on `accountId` — see the note above; with `77` here the two agree on every
         // row and the mutant is equivalent.
-        fromAccountId: 555,
+        fromAccountId: 5555,
         toAccountId: ACCOUNT_ID,
         fromAccountType: 'yellow',
         toAccountType: 'green',
