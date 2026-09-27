@@ -84,6 +84,7 @@ import {
   quoteBlockAuthorFee,
   reverseBlockAuthorFee,
 } from '../author-fee-charge.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -275,6 +276,25 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(tx.toAccountType).toBe('yellow');
     expect(tx.externalTransactionId).toBe(blockAuthorFeeChargeKey(WORKFLOW_ID));
 
+    // 🔴 THE LEDGER TYPE IS THE RAIL'S ONLY NON-STRING IDENTITY. This leg shared
+    // `Fee` (25) with the placement-escrow legs, so a rail-level query had to
+    // disambiguate on `description LIKE 'App author fee%'` — and a neighbouring
+    // rail has already had a creator read its description copy as proof his tips
+    // had gone missing (`deliver-creator-compensation.ts`, the "Creator tip
+    // compensation" reword).
+    expect(tx.type).toBe(TransactionType.AppAuthorFee);
+    // The WIRE VALUE, spelled out, and not redundant with the line above: this is
+    // the only assertion here that survives the member being renumbered, collapsed
+    // back onto 25, or deleted while both call sites still reference it — all three
+    // leave `toBe(TransactionType.AppAuthorFee)` satisfiable, the last vacuously,
+    // with `undefined` going to the ledger as the type.
+    //
+    // ⚠️ It does NOT subsume every mutation the `not.toBe(Fee)` line it replaced
+    // would have caught: renumbering `Fee` itself ONTO 28 passes both lines here,
+    // and dies only in `clickhouse-transaction-type.test.ts`. That suite is load
+    // bearing for this one — do not delete it on the strength of these two lines.
+    expect(tx.type).toBe(28);
+
     // D1 — the author is owed exactly what the viewer was debited.
     const row = mockDbWrite.blockAuthorFeeAccrual.create.mock.calls[0][0].data;
     expect(row.feeBuzz).toBe(EXPECTED_FEE);
@@ -370,6 +390,12 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(refund.fromAccountId).toBe(0);
     expect(refund.toAccountId).toBe(VIEWER_ID);
     expect(refund.amount).toBe(EXPECTED_FEE);
+    // 🔴 A REVERSAL IS `Refund`, NOT THE RAIL'S OWN TYPE. Now that the fee has a
+    // dedicated type, the obvious "make the whole rail use it" edit would file a
+    // `0 → viewer` credit as an author payout, so a sum keyed on `AppAuthorFee`
+    // would report money that moved the other way. Left unpinned this mutation
+    // survived the whole suite.
+    expect(refund.type).toBe(TransactionType.Refund);
     // 🔴 THE REVERSAL KEY, NOT A FRESH ONE — a terminal reversal of the same
     // workflow later must CONFLICT here rather than refund a second time.
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
@@ -401,6 +427,7 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(refund.fromAccountId).toBe(0);
     expect(refund.toAccountId).toBe(VIEWER_ID);
     expect(refund.amount).toBe(EXPECTED_FEE);
+    expect(refund.type).toBe(TransactionType.Refund);
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
 
     const line = mockLog.mock.calls
@@ -477,6 +504,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     // D6 carried through the reversal too — a blue fee refunds as blue, or a
     // failed generation would mint withdrawable Buzz out of free Buzz.
     expect(refund.toAccountType).toBe('blue');
+    expect(refund.type).toBe(TransactionType.Refund);
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
   });
 
