@@ -962,9 +962,12 @@ describe('purchaseBlockGood — the money path', () => {
     // path: if the service omits the field the branch is permanently dead and
     // the code still reads as handling the hazard. Nothing counted that.
     //
-    // The three counts are pairwise distinct (1 / 2 / 3) so a mutant that
-    // hardcoded any one of them, or that reused `duplicateLegs` or `totalLegs`
-    // for the new field, is visible.
+    // The three counts here are pairwise distinct (1 / 2 / 3), which is what
+    // makes a mutant REUSING `duplicateLegs` or `totalLegs` for the new field
+    // visible. That is all it does: distinctness within one fixture cannot see
+    // a mutant that hardcodes the *expected* value, because the assertion names
+    // that literal. The sibling test below is what kills that one — it expects
+    // 1 where this expects 2, so no single constant satisfies both.
     mockCreateMulti.mockResolvedValueOnce({
       transactionIds: [
         { transactionId: 'buy-b', accountType: 'blue', amount: 400, duplicate: true },
@@ -994,9 +997,16 @@ describe('purchaseBlockGood — the money path', () => {
     // would make the duplicate branch above dead. (A permanent zero is not the
     // converse proof: a clean charge writes no log at all. Stated on the
     // service too.)
+    //
+    // The expected count here is 1, deliberately NOT the 2 the sibling test
+    // above expects: a mutant replacing the computation with a literal has to
+    // satisfy both, and no constant does. The `duplicate: false` leg is what
+    // buys the difference, and it pins the other half of the predicate at the
+    // same time — the field is counted when it is not a boolean, so an
+    // explicit `false` is a REPORTED flag and must not be counted.
     mockCreateMulti.mockResolvedValueOnce({
       transactionIds: [
-        { transactionId: 'buy-y', accountType: 'yellow', amount: 400 },
+        { transactionId: 'buy-y', accountType: 'yellow', amount: 400, duplicate: false },
         { transactionId: 'buy-y2', accountType: 'yellow', amount: 200 },
       ],
       totalAmount: 600,
@@ -1008,7 +1018,7 @@ describe('purchaseBlockGood — the money path', () => {
       expect.objectContaining({
         message: 'purchase charge did not fully land',
         chargedTotal: 600,
-        legsWithoutDuplicateFlag: 2,
+        legsWithoutDuplicateFlag: 1,
       }),
       'civitai-prod'
     );
@@ -1671,8 +1681,12 @@ describe('owesOwnerPayout — the owner-payout RE-RUN SET', () => {
    * has ever behaved either way. What it pins is the predicate a re-runner will
    * call, in the one place it is written.
    *
-   * The share (700) is distinct from every payout total used here (0, 280, 700)
-   * and from the price, so no case can pass by coincidence.
+   * The payout totals used here are 0, 280, 700 and 900 — below the share,
+   * equal to it, and above it — so the comparison is pinned on BOTH sides of
+   * its boundary rather than only from below. The two that are not the share
+   * are also distinct from the price (1000), so no case can pass by
+   * coincidence; 700 coincides with the share deliberately, as the equality
+   * boundary.
    */
   const SHARE = 700;
   const partial = [{ userId: OWNER, amount: 280, color: 'blue' }];
@@ -1695,6 +1709,29 @@ describe('owesOwnerPayout — the owner-payout RE-RUN SET', () => {
     expect(owesOwnerPayout({ status: 'paid', payouts: complete, appOwnerShareBuzz: SHARE })).toBe(
       false
     );
+  });
+
+  it('🔴 does NOT select a paid row that was OVERPAID — the re-pay LOOP a `!==` spelling opens', () => {
+    // 🔴 The other side of the boundary, and the reason `<` is not
+    // interchangeable with "not yet settled". The case above pins the boundary
+    // POINT (sum == share, which a `<=` mutant would wrongly select); nothing
+    // pinned the region ABOVE it, so `paidSoFar !== share` passed the whole
+    // suite. Under that spelling an overpaid row stays selected no matter what
+    // a re-runner does to it: paying again only moves the sum FURTHER from the
+    // share, so it is selected again — an unbounded re-pay loop, money out.
+    // `<` terminates by construction: at or past the share it never selects
+    // again, whatever it overshot by.
+    //
+    // How a row gets here is not asserted, because nothing writes one today —
+    // the legs are built to sum to exactly the share. That is what makes this
+    // a bound on the PREDICATE rather than a claim about the data.
+    expect(
+      owesOwnerPayout({
+        status: 'paid',
+        payouts: [{ userId: OWNER, amount: 900, color: 'blue' }],
+        appOwnerShareBuzz: SHARE,
+      })
+    ).toBe(false);
   });
 
   it('🔴 does NOT select a REFUNDED row that had already been PARTIALLY paid', () => {
