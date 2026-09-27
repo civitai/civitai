@@ -688,10 +688,19 @@ export async function purchaseBlockGood(
     ).catch(() => undefined);
 
     if (knownPreMoney) {
-      // Nothing entered the ledger under this key on this attempt, so the claim
-      // is DELETED rather than tombstoned: the key is still virgin and a
-      // genuine retry (once the viewer has topped up) should reuse it, keeping
-      // the ledger dedupe covering the retry too.
+      // The claim is DELETED rather than tombstoned, because THIS attempt put
+      // nothing in the ledger — a tombstone asserts a reversal that did not
+      // happen, and a surviving `pending` row would make every later attempt
+      // report `pending_reconciliation` forever.
+      //
+      // ⚠️ That is not the same as saying the KEY is reusable. On 400 and 404 it
+      // is, and a retry after a top-up should reuse it so the ledger dedupe
+      // still covers the retry. On 409 it is not — the ledger already holds
+      // this id — and a retry will derive the same key and 409 again, which is
+      // why `ledger_conflict` is marked NOT retryable and points at support.
+      // Reaching 409 here means the ledger has a key we hold no row for, since
+      // a row would have failed the claim insert first; that is an
+      // inconsistency for a human, not something the viewer can act on.
       await releaseUnsettledClaim(purchaseId);
       return { ok: false, ...refusal, charge: 'none', retryable: false };
     }
