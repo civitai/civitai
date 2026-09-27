@@ -1,15 +1,20 @@
 import type { S3Client } from '@aws-sdk/client-s3';
 import {
-  AbortMultipartUploadCommand,
   DeleteObjectCommand,
   ListMultipartUploadsCommand,
   ListObjectVersionsCommand,
 } from '@aws-sdk/client-s3';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getDownloadUrlByFileId, StorageResolverError } from '~/utils/delivery-worker';
 import {
+  getDownloadUrlByFileId,
+  isDefiniteNotFound,
+  StorageResolverError,
+} from '~/utils/delivery-worker';
+import {
+  abortMultipartUpload,
   getB2S3Client,
   getS3Client,
   headObject,
@@ -30,8 +35,9 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *
  * Refuses any file that is not the Training Data of a trained version whose model is already
  * deleted, whose object is outside the owner's training upload path, that another row still
- * references, that was already purged (a quarantine copy may exist), or whose version is in an
- * unsent CSAM report.
+ * references, that was already purged (a quarantine copy may exist), or whose version is in a CSAM
+ * report whose evidence is not archived yet. A destructive run also requires the object to be
+ * found both at its key and through the storage resolver first.
  */
 
 const schema = z.object({
@@ -77,12 +83,15 @@ async function resolverPresence(fileId: number): Promise<Presence> {
   try {
     ({ url } = await getDownloadUrlByFileId(fileId));
   } catch (e) {
-    if (e instanceof StorageResolverError && (e.statusCode === 404 || e.statusCode === 410))
-      return 'absent';
-    return 'unknown';
+    return e instanceof StorageResolverError && isDefiniteNotFound(e) ? 'absent' : 'unknown';
   }
   try {
-    const res = await fetch(url, { method: 'HEAD' });
+    // A one-byte GET rather than HEAD: the resolved url is signed for GET.
+    const res = await fetch(url, {
+      headers: { Range: 'bytes=0-0' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    await res.body?.cancel();
     if (res.ok) return 'present';
     if (res.status === 404) return 'absent';
     return 'unknown';
@@ -91,7 +100,7 @@ async function resolverPresence(fileId: number): Promise<Presence> {
   }
 }
 
-async function versionsInUnsentCsamReports(modelVersionIds: number[]) {
+async function versionsHeldByCsamReports(modelVersionIds: number[]) {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT DISTINCT e.value::int AS id
     FROM "CsamReport" r
@@ -99,7 +108,7 @@ async function versionsInUnsentCsamReports(modelVersionIds: number[]) {
       CASE WHEN jsonb_typeof(r.details->'modelVersionIds') = 'array'
         THEN r.details->'modelVersionIds' ELSE '[]'::jsonb END
     ) AS e(value)
-    WHERE r."reportSentAt" IS NULL
+    WHERE r."archivedAt" IS NULL
       AND e.value = ANY(${modelVersionIds.map(String)}::text[])
   `;
   return new Set(rows.map((r) => Number(r.id)));
@@ -124,7 +133,7 @@ export default WebhookEndpoint(async (req, res) => {
       },
     },
   });
-  const csamHeld = await versionsInUnsentCsamReports(modelVersionIds);
+  const csamHeld = await versionsHeldByCsamReports(modelVersionIds);
 
   const results = [];
   for (const file of files) {
@@ -148,7 +157,7 @@ export default WebhookEndpoint(async (req, res) => {
       continue;
     }
     if (csamHeld.has(file.modelVersionId)) {
-      result.skipped = 'held-by-unsent-csam-report';
+      result.skipped = 'held-by-unarchived-csam-report';
       continue;
     }
     const target = resolveModelFileDeleteTarget(file.url);
@@ -180,6 +189,12 @@ export default WebhookEndpoint(async (req, res) => {
         result.error = 'a stored version or upload has no id; nothing deleted';
         continue;
       }
+      // Without a positive before-state an all-absent after-state proves nothing: a url that
+      // resolves to the wrong key would pass every check and orphan the real bytes.
+      if (!before.some((v) => !v.isDeleteMarker) || result.resolverBefore !== 'present') {
+        result.error = 'object not confirmed at its key and through the resolver; nothing deleted';
+        continue;
+      }
       if (dryRun) continue;
 
       for (const v of before)
@@ -190,10 +205,8 @@ export default WebhookEndpoint(async (req, res) => {
             VersionId: v.versionId,
           })
         );
-      for (const UploadId of uploadsBefore)
-        await s3.send(
-          new AbortMultipartUploadCommand({ Bucket: target.bucket, Key: target.key, UploadId })
-        );
+      for (const uploadId of uploadsBefore)
+        await abortMultipartUpload(target.bucket, target.key, uploadId!, s3);
 
       const after = await listStoredVersions(s3, target.bucket, target.key);
       const uploadsAfter = await listUnfinishedUploads(s3, target.bucket, target.key);
@@ -213,10 +226,17 @@ export default WebhookEndpoint(async (req, res) => {
         continue;
       }
 
-      result.resolverDeregistered =
-        (await deregisterFileLocationsByFile([file.id]))?.deleted ?? null;
+      const deregistered = await deregisterFileLocationsByFile([file.id]);
+      result.resolverDeregistered = deregistered?.deleted ?? null;
+      // The file was served through the resolver before, so it is registered: removing nothing
+      // means the call failed, which the helper reports as zero rather than throwing.
+      if (!deregistered || deregistered.deleted < 1) {
+        result.error = 'resolver registration not removed; row kept';
+        continue;
+      }
       await dbWrite.modelFile.delete({ where: { id: file.id } });
       result.rowDeleted = true;
+      await deleteFilesForModelVersionCache(file.modelVersionId);
     } catch (e) {
       result.error = (e as Error).message;
     }

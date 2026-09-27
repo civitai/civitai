@@ -8,6 +8,7 @@ import {
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModelFileService from '~/server/services/model-file.service';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as DeliveryWorker from '~/utils/delivery-worker';
 import type * as S3Utils from '~/utils/s3-utils';
@@ -82,6 +83,7 @@ function versionedBucket(initial: Entry[], uploads: { key: string; uploadId: str
       }
       if (cmd instanceof DeleteObjectCommand) {
         const { Key, VersionId } = cmd.input;
+        mocks.deleted = true;
         deletes.push(VersionId);
         if (VersionId) store = store.filter((e) => !(e.key === Key && e.versionId === VersionId));
         else store.push({ key: Key!, versionId: `marker-${++seq}`, isDeleteMarker: true });
@@ -102,12 +104,25 @@ type FileRow = {
   modelVersion: { uploadType: string; model: { userId: number; deletedAt: Date | null } };
 };
 
+type Resolver =
+  | 'follow'
+  | 'unregistered'
+  | 'elsewhere'
+  | 'forbidden'
+  | 'error'
+  | 'down'
+  | 'unreachable';
+
 const mocks = vi.hoisted(() => ({
   bucket: null as null | ReturnType<typeof versionedBucket>,
   safe: vi.fn(),
   deregister: vi.fn(),
-  // 'follow' = the resolver points at the fake bucket; others model a registration elsewhere.
-  resolver: 'follow' as 'follow' | 'unregistered' | 'elsewhere' | 'forbidden' | 'down',
+  cacheBust: vi.fn(),
+  // Set by the first object delete, so the resolver can answer differently before and after.
+  deleted: false,
+  // 'follow' = the resolver serves the fake bucket; the others model what it may answer instead.
+  resolverBefore: 'follow' as Resolver,
+  resolverAfter: 'follow' as Resolver,
   rows: [] as unknown[],
   csamHeld: [] as number[],
 }));
@@ -121,6 +136,10 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   getB2S3Client: () => mocks.bucket!.s3,
   urlsSafeToDelete: mocks.safe,
 }));
+vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelFileService>()),
+  deleteFilesForModelVersionCache: mocks.cacheBust,
+}));
 vi.mock('~/utils/storage-resolver', async (importOriginal) => ({
   ...(await importOriginal<typeof StorageResolver>()),
   deregisterFileLocationsByFile: mocks.deregister,
@@ -130,9 +149,11 @@ vi.mock('~/utils/delivery-worker', async (importOriginal) => {
   return {
     ...actual,
     getDownloadUrlByFileId: async () => {
-      if (mocks.resolver === 'unregistered') throw new actual.StorageResolverError(404, 'nope');
-      if (mocks.resolver === 'down') throw new Error('resolver unreachable');
-      return { url: `https://cdn.test/${mocks.resolver}`, urlExpiryDate: new Date() };
+      const mode = mocks.deleted ? mocks.resolverAfter : mocks.resolverBefore;
+      if (mode === 'unregistered') throw new actual.StorageResolverError(404, 'nope');
+      if (mode === 'error') throw new actual.StorageResolverError(503, 'unavailable');
+      if (mode === 'down') throw new Error('resolver unreachable');
+      return { url: `https://cdn.test/${mode}`, urlExpiryDate: new Date() };
     },
   };
 });
@@ -167,9 +188,39 @@ async function call(query: Record<string, string>, method = 'POST') {
 const live = (q: Record<string, string> = {}) =>
   call({ modelVersionIds: '10', dryRun: 'false', ...q });
 
+/**
+ * A storage double that shows one live version until it is asked to delete, then answers each
+ * after-check as given. Used to trip exactly one after-check at a time.
+ */
+function afterState(after: { versions?: boolean; head?: 'present' | 'absent' | 'forbidden' }) {
+  mocks.bucket!.s3.send.mockImplementation(async (cmd: unknown) => {
+    if (cmd instanceof DeleteObjectCommand) {
+      mocks.deleted = true;
+      return {};
+    }
+    if (cmd instanceof ListObjectVersionsCommand)
+      return {
+        IsTruncated: false,
+        Versions: !mocks.deleted || after.versions ? [{ Key: KEY, VersionId: 'v1' }] : [],
+        DeleteMarkers: [],
+      };
+    if (cmd instanceof ListMultipartUploadsCommand) return { Uploads: [] };
+    if (cmd instanceof HeadObjectCommand) {
+      const head = mocks.deleted ? after.head ?? 'absent' : 'present';
+      if (head === 'present') return { ContentLength: 1 };
+      if (head === 'forbidden')
+        throw Object.assign(new Error('Forbidden'), { $metadata: { httpStatusCode: 403 } });
+      throw Object.assign(new Error('NotFound'), { name: 'NotFound' });
+    }
+    return {};
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.resolver = 'follow';
+  mocks.deleted = false;
+  mocks.resolverBefore = 'follow';
+  mocks.resolverAfter = 'follow';
   mocks.csamHeld = [];
   mocks.safe.mockImplementation(async (urls: string[]) => ({ safe: urls, skipped: 0 }));
   mocks.deregister.mockResolvedValue({ deleted: 1 });
@@ -193,9 +244,11 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
+      if (url.endsWith('/unreachable')) throw new TypeError('fetch failed');
       if (url.endsWith('/elsewhere')) return new Response(null, { status: 200 });
       if (url.endsWith('/forbidden')) return new Response(null, { status: 403 });
-      return new Response(null, { status: mocks.bucket!.current(KEY) ? 200 : 404 });
+      const present = mocks.deleted ? mocks.bucket!.current(KEY) : true;
+      return new Response(null, { status: present ? 200 : 404 });
     })
   );
 });
@@ -217,18 +270,33 @@ describe('purge-training-data-files', () => {
     expect(mocks.deregister).toHaveBeenCalledWith([7]);
     expect(dbMock.dbWrite.modelFile.delete).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.modelFile.delete).toHaveBeenCalledWith({ where: { id: 7 } });
+    expect(mocks.cacheBust).toHaveBeenCalledWith(10);
   });
 
-  it('removes bytes an earlier delete only hid behind a marker', async () => {
+  it('deregisters before deleting the row, so a failed deregister leaves the row to retry', async () => {
+    await live();
+    expect(mocks.deregister.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.modelFile.delete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('asks the resolved url for one byte by GET, which its signature allows', async () => {
+    await live();
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(init.headers).toEqual({ Range: 'bytes=0-0' });
+  });
+
+  it('removes older versions and hide markers along with the current one', async () => {
     mocks.bucket = versionedBucket([
       { key: KEY, versionId: 'v1', isDeleteMarker: false, size: 100 },
       { key: KEY, versionId: 'm1', isDeleteMarker: true },
+      { key: KEY, versionId: 'v2', isDeleteMarker: false, size: 100 },
     ]);
 
     const { body } = await live();
 
-    expect(body.results[0].headBefore).toBe('absent');
-    expect(mocks.bucket!.deletes).toEqual(['v1', 'm1']);
+    expect(mocks.bucket!.deletes).toEqual(['v1', 'v2', 'm1']);
     expect(mocks.bucket!.store()).toEqual([]);
     expect(body.results[0].rowDeleted).toBe(true);
   });
@@ -336,21 +404,55 @@ describe('purge-training-data-files', () => {
     expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
   });
 
+  describe('deletes nothing unless the object is first found at its key and through the resolver', () => {
+    const NOT_CONFIRMED =
+      'object not confirmed at its key and through the resolver; nothing deleted';
+
+    it('when nothing is stored at the key', async () => {
+      mocks.bucket = versionedBucket([]);
+
+      const { body } = await live();
+
+      expect(body.results[0].error).toBe(NOT_CONFIRMED);
+      expect(mocks.deregister).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
+    });
+
+    it('when only a hide marker is stored at the key', async () => {
+      mocks.bucket = versionedBucket([{ key: KEY, versionId: 'm1', isDeleteMarker: true }]);
+
+      const { body } = await live();
+
+      expect(body.results[0].error).toBe(NOT_CONFIRMED);
+      expect(mocks.bucket!.deletes).toEqual([]);
+    });
+
+    it.each(['unregistered', 'forbidden', 'error', 'down', 'unreachable'] as Resolver[])(
+      'when the resolver answers %s beforehand',
+      async (mode) => {
+        mocks.resolverBefore = mode;
+
+        const { body } = await live();
+
+        expect(body.results[0].error).toBe(NOT_CONFIRMED);
+        expect(mocks.bucket!.deletes).toEqual([]);
+        expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
+      }
+    );
+
+    it('and says so in the dry run', async () => {
+      mocks.resolverBefore = 'forbidden';
+
+      const { body } = await call({ modelVersionIds: '10' }, 'GET');
+
+      expect(body.results[0]).toMatchObject({ resolverBefore: 'unknown', error: NOT_CONFIRMED });
+    });
+  });
+
   describe('keeps the row unless every check says the bytes are gone', () => {
     it('when the version listing still shows a version', async () => {
-      mocks.bucket!.s3.send.mockImplementation(async (cmd: unknown) => {
-        if (cmd instanceof ListObjectVersionsCommand)
-          return {
-            IsTruncated: false,
-            Versions: [{ Key: KEY, VersionId: 'v1' }],
-            DeleteMarkers: [],
-          };
-        if (cmd instanceof ListMultipartUploadsCommand) return { Uploads: [] };
-        if (cmd instanceof HeadObjectCommand)
-          throw Object.assign(new Error('NotFound'), { name: 'NotFound' });
-        return {};
-      });
-      mocks.resolver = 'unregistered';
+      afterState({ versions: true });
+      mocks.resolverAfter = 'unregistered';
 
       const { body } = await live();
 
@@ -360,14 +462,8 @@ describe('purge-training-data-files', () => {
     });
 
     it('when HEAD still serves the object', async () => {
-      mocks.bucket!.s3.send.mockImplementation(async (cmd: unknown) => {
-        if (cmd instanceof ListObjectVersionsCommand)
-          return { IsTruncated: false, Versions: [], DeleteMarkers: [] };
-        if (cmd instanceof ListMultipartUploadsCommand) return { Uploads: [] };
-        if (cmd instanceof HeadObjectCommand) return { ContentLength: 1 };
-        return {};
-      });
-      mocks.resolver = 'unregistered';
+      afterState({ head: 'present' });
+      mocks.resolverAfter = 'unregistered';
 
       const { body } = await live();
 
@@ -376,15 +472,8 @@ describe('purge-training-data-files', () => {
     });
 
     it('when HEAD cannot be answered', async () => {
-      mocks.bucket!.s3.send.mockImplementation(async (cmd: unknown) => {
-        if (cmd instanceof ListObjectVersionsCommand)
-          return { IsTruncated: false, Versions: [], DeleteMarkers: [] };
-        if (cmd instanceof ListMultipartUploadsCommand) return { Uploads: [] };
-        if (cmd instanceof HeadObjectCommand)
-          throw Object.assign(new Error('Forbidden'), { $metadata: { httpStatusCode: 403 } });
-        return {};
-      });
-      mocks.resolver = 'unregistered';
+      afterState({ head: 'forbidden' });
+      mocks.resolverAfter = 'unregistered';
 
       const { body } = await live();
 
@@ -409,7 +498,7 @@ describe('purge-training-data-files', () => {
     });
 
     it('when the resolver still serves a copy registered elsewhere', async () => {
-      mocks.resolver = 'elsewhere';
+      mocks.resolverAfter = 'elsewhere';
 
       const { body } = await live();
 
@@ -418,21 +507,25 @@ describe('purge-training-data-files', () => {
       expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
     });
 
-    it('when the resolved copy answers neither present nor not-found', async () => {
-      mocks.resolver = 'forbidden';
+    it.each(['forbidden', 'error', 'down', 'unreachable'] as Resolver[])(
+      'when the resolver answers %s afterwards',
+      async (mode) => {
+        mocks.resolverAfter = mode;
+
+        const { body } = await live();
+
+        expect(body.results[0].resolverAfter).toBe('unknown');
+        expect(mocks.deregister).not.toHaveBeenCalled();
+        expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([null, { deleted: 0 }])('when deregistering returns %o', async (outcome) => {
+      mocks.deregister.mockResolvedValue(outcome);
 
       const { body } = await live();
 
-      expect(body.results[0].resolverAfter).toBe('unknown');
-      expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
-    });
-
-    it('when the resolver cannot be asked', async () => {
-      mocks.resolver = 'down';
-
-      const { body } = await live();
-
-      expect(body.results[0].resolverAfter).toBe('unknown');
+      expect(body.results[0].error).toBe('resolver registration not removed; row kept');
       expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
     });
   });
@@ -456,6 +549,12 @@ describe('purge-training-data-files', () => {
       [
         'outside-owner-upload-path',
         {
+          url: `https://s3.us-west-004.backblazeb2.com/${BUCKET}/training-images/${OWNER}0/10TrainingData.zip`,
+        },
+      ],
+      [
+        'outside-owner-upload-path',
+        {
           url: `https://s3.us-west-004.backblazeb2.com/${BUCKET}/model/${OWNER}/weights.safetensors`,
         },
       ],
@@ -473,12 +572,30 @@ describe('purge-training-data-files', () => {
       }
     );
 
-    it('held-by-unsent-csam-report', async () => {
+    // A TEXT PIN: the mocked $queryRaw cannot evaluate SQL, so this pins the hold's condition
+    // and parameter only. That it matches real CsamReport rows was checked against the database
+    // by hand, not here.
+    it('holds versions named by any report whose evidence is not archived', async () => {
+      await live();
+
+      expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown as [
+        TemplateStringsArray,
+        ...unknown[]
+      ];
+      const sql = strings.join('?').replace(/\s+/g, ' ');
+      expect(sql).toContain(`WHERE r."archivedAt" IS NULL AND`);
+      expect(sql).not.toContain('reportSentAt');
+      expect(sql).toContain(`r.details->'modelVersionIds'`);
+      expect(values).toEqual([['10']]);
+    });
+
+    it('held-by-unarchived-csam-report', async () => {
       mocks.csamHeld = [10];
 
       const { body } = await live();
 
-      expect(body.results[0].skipped).toBe('held-by-unsent-csam-report');
+      expect(body.results[0].skipped).toBe('held-by-unarchived-csam-report');
       expect(mocks.bucket!.s3.send).not.toHaveBeenCalled();
     });
 
