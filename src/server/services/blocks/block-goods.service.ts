@@ -745,6 +745,23 @@ export async function purchaseBlockGood(
     return chargeUnknownRefusal();
   }
 
+  // 🔴 THE DUPLICATE GUARD BELOW CANNOT REPORT ITS OWN LIVENESS. It tests
+  // `=== true`, so a leg carrying NO `duplicate` field takes the same path as
+  // one carrying `false`: if the service omits the field the branch is dead,
+  // the hazard it was written for is still live, and the code reads as
+  // handling it. This counts the legs whose `duplicate` is not a boolean at
+  // all and puts the number on both charge-failure logs below.
+  //
+  // ⚠️ WHAT IT DOES NOT ANSWER, stated because the field's name suggests it
+  // does: only the two logs below carry it, and a clean charge writes neither,
+  // so this samples failing responses only. A NON-ZERO is proof the field is
+  // absent on the wire; a permanent zero is not proof it arrives, because it
+  // is also what "no charge ever reached a log" looks like. Settling it needs
+  // a counter on every response, which is not in this change.
+  const legsWithoutDuplicateFlag = transaction.transactionIds.filter(
+    (leg) => typeof leg.duplicate !== 'boolean'
+  ).length;
+
   // 🔴 A 409 THROW IS ONLY ONE OF THE TWO WAYS AN OCCUPIED PREFIX CAN COME
   // BACK, AND WHICH ONE THIS SERVICE DOES IS UNVERIFIED FROM HERE. The
   // multi-account response marks each leg `duplicate` — the very field
@@ -773,6 +790,7 @@ export async function purchaseBlockGood(
         purchaseId,
         transactionId,
         duplicateLegs: transaction.transactionIds.filter((leg) => leg.duplicate === true).length,
+        legsWithoutDuplicateFlag,
         totalLegs: transaction.transactionIds.length,
       },
       'civitai-prod'
@@ -805,6 +823,9 @@ export async function purchaseBlockGood(
         priceBuzz,
         chargedTotal: transaction.totalAmount,
         transactionCount: transaction.transactionCount,
+        // Carried here too, and this is the copy that samples the NON-duplicate
+        // population: reaching this branch means no leg reported `true`.
+        legsWithoutDuplicateFlag,
       },
       'civitai-prod'
     ).catch(() => undefined);
@@ -1080,17 +1101,33 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
  * Never throws: the viewer has their entitlement, and a failed credit is an
  * obligation to re-run, not a reason to fail a completed purchase.
  *
- * 🔴 THE RE-RUN SET IS `sum(payouts[].amount) < app_owner_share_buzz`, NOT
- * `payouts = []`. The empty case is only the total failure; a payout whose blue
- * leg landed and whose domain leg did not persists `[{blue}]`, which is
- * non-empty and still owes the owner the remainder. Selecting on emptiness
- * misses exactly the rows where money is owed, and it is the partial ones that
- * are invisible — an owner underpaid by a leg has nothing on the row saying so.
- * The marker needs no new column: the row already carries the full obligation
- * as `app_owner_share_buzz`, and the legs are built to sum to exactly that, so
- * the two agreeing IS "complete" and a shortfall IS the amount still owed. (No
- * selector reads this yet; there is no re-runner. The invariant is stated so
- * the one that is written reads the right thing.)
+ * 🔴 THE RE-RUN SET IS `status = 'paid' AND sum(payouts[].amount) <
+ * app_owner_share_buzz`. BOTH halves are load-bearing and neither is
+ * decoration — see `owesOwnerPayout`, which is the single spelling of it.
+ *
+ * The shortfall half is why it is not `payouts = []`: the empty case is only
+ * the total failure; a payout whose blue leg landed and whose domain leg did
+ * not persists `[{blue}]`, which is non-empty and still owes the owner the
+ * remainder. Selecting on emptiness misses exactly the rows where money is
+ * owed, and it is the partial ones that are invisible — an owner underpaid by a
+ * leg has nothing on the row saying so. It needs no new column: the row already
+ * carries the full obligation as `app_owner_share_buzz`, and the legs are built
+ * to sum to exactly that, so the two agreeing IS "complete" and a shortfall IS
+ * the amount still owed.
+ *
+ * The status half is why the shortfall test cannot stand alone. `app_owner_
+ * share_buzz` is at least 1 for every priced good (`BLOCK_GOOD_MIN_PRICE_BUZZ`
+ * is 2), so `0 < share` holds unconditionally and a bare shortfall test selects
+ * every row that never paid anything — including rows that must NEVER be paid:
+ * a `pending` row, whose debit is not confirmed; a `refunded` tombstone from
+ * `voidReversedClaim`, whose debit was REVERSED; and a purchase refunded after
+ * a partial payout, which `refundBlockGoodPurchase` leaves with its `payouts`
+ * array intact, so its shortfall reads true forever. Paying any of those credits
+ * the owner for Buzz the buyer does not owe.
+ *
+ * (No selector reads this yet; there is no re-runner. The predicate is written
+ * as code rather than prose so the one that is written cannot re-derive it
+ * wrong — this sentence has been widened by accident once already.)
  */
 async function payBlockGoodOwner(args: {
   purchaseId: string;
@@ -1221,8 +1258,9 @@ async function payBlockGoodOwner(args: {
     // owner keeps after the buyer is made whole. Skipped when nothing landed,
     // so `payouts: []` keeps meaning "nothing was paid" rather than becoming a
     // second spelling of it. What this write produces is a PARTIAL payout, and
-    // it is still in the re-run set — `sum(payouts[].amount)` falls short of
-    // `app_owner_share_buzz`; see the header.
+    // it is still in the re-run set — the row is `paid` and
+    // `sum(payouts[].amount)` falls short of `app_owner_share_buzz`. Both
+    // conditions, not the shortfall alone: see `owesOwnerPayout` and the header.
     //
     // Best effort by construction — if the write is what failed above it will
     // very likely fail again — so its own failure is logged rather than thrown:
@@ -1438,6 +1476,30 @@ export function readRecordedPayouts(raw: unknown): BlockGoodPayout[] {
     });
   }
   return out;
+}
+
+/**
+ * Does this purchase still owe its app owner money? The ONE spelling of the
+ * owner-payout re-run set, so a re-runner cannot re-derive it — the prose
+ * version of this has already been widened by accident once.
+ *
+ * `status = 'paid' AND sum(payouts[].amount) < app_owner_share_buzz`. The
+ * argument for each half is on `payBlockGoodOwner`'s header; the short version
+ * is that the shortfall test is TRUE for every unpaid row, `pending` rows and
+ * `refunded` tombstones included, so without the status test it selects rows
+ * whose debit was never confirmed or was reversed.
+ *
+ * ⚠️ Nothing calls this in production: there is no re-runner. It exists to be
+ * the thing the re-runner calls, and to be testable in the meantime.
+ */
+export function owesOwnerPayout(row: {
+  status: string;
+  payouts: unknown;
+  appOwnerShareBuzz: number;
+}): boolean {
+  if (row.status !== PURCHASE_STATUS_PAID) return false;
+  const paidSoFar = readRecordedPayouts(row.payouts).reduce((sum, leg) => sum + leg.amount, 0);
+  return paidSoFar < row.appOwnerShareBuzz;
 }
 
 /**

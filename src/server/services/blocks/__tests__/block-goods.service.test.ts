@@ -88,12 +88,19 @@ import {
   blockGoodPayoutTransactionId,
   blockGoodPurchaseKey,
   listBlockGoodEntitlements,
+  owesOwnerPayout,
   purchaseBlockGood,
   readRecordedPayouts,
   refundBlockGoodPurchase,
   resolveBlockGoodForPurchase,
   type ResolvedBlockGood,
 } from '~/server/services/blocks/block-goods.service';
+
+// 🔴 THE CANONICAL `loggingMock`, NOT A PER-FILE MOCK of the logging client:
+// that module is a guarded shared specifier and a per-file mock of it freezes
+// this file's shape into every later file in the same worker under
+// `isolate: false`. Registered globally in `src/__tests__/setup.ts`.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const BUYER = 42;
 const OWNER = 77;
@@ -907,6 +914,106 @@ describe('purchaseBlockGood — the money path', () => {
     expect(mockCreateSingle).toHaveBeenCalledTimes(1);
   });
 
+  it('🔴 does NOT reverse a SHORT duplicate response — the ORDER of the two checks (INVARIANT GUARD)', async () => {
+    // 🔴 THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE: the duplicate
+    // check already precedes the partial-debit check, so this is green on the
+    // code it was written against. What it pins is the ORDER, and nothing else
+    // in this file can see it — both duplicate fixtures above set
+    // `totalAmount` to the price deliberately, so they take the same path
+    // whichever order the two checks are in. A mutant that swapped them
+    // survived the whole suite.
+    //
+    // The fixture is the case only the order decides: duplicate AND short.
+    // With the checks swapped the partial-debit branch wins, and its reversal
+    // is PREFIX-WIDE — `rollbackCharge` would take back the EARLIER request's
+    // settled legs, `voidReversedClaim` would tombstone this row, and the
+    // viewer would be told `charge: 'reversed'` about money that did not come
+    // back to them. 400 is distinct from the price (1000) and from both shares
+    // (700/300), so no assertion here can pass by coincidence.
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-b', accountType: 'blue', amount: 400, duplicate: true },
+      ],
+      totalAmount: 400,
+      transactionCount: 1,
+    } as never);
+
+    const result = await purchaseBlockGood(purchaseInput());
+    // 🔴 THE LOAD-BEARING ASSERTION. Everything else here is corroboration:
+    // this one is what the swap breaks, and it is about another request's money.
+    expect(mockRefundMulti).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      reason: 'ledger_conflict',
+      charge: 'unknown',
+      retryable: false,
+    });
+    // No tombstone either — `voidReversedClaim` asserts a reversal that the
+    // assertion above says did not happen.
+    expect(dbMock.dbWrite.blockGoodPurchase.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blockGoodEntitlement.upsert).not.toHaveBeenCalled();
+    expect(mockCreateSingle).not.toHaveBeenCalled();
+  });
+
+  it('🔴 COUNTS the legs that reported no `duplicate` flag at all, on the duplicate log', async () => {
+    // 🔴 THE DUPLICATE GUARD'S LIVENESS IS OTHERWISE UNOBSERVABLE. Both tests
+    // in the branch are `=== true`, so "not reported" and `false` are the same
+    // path: if the service omits the field the branch is permanently dead and
+    // the code still reads as handling the hazard. Nothing counted that.
+    //
+    // The three counts are pairwise distinct (1 / 2 / 3) so a mutant that
+    // hardcoded any one of them, or that reused `duplicateLegs` or `totalLegs`
+    // for the new field, is visible.
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-b', accountType: 'blue', amount: 400, duplicate: true },
+        { transactionId: 'buy-y', accountType: 'yellow', amount: 300 },
+        { transactionId: 'buy-y2', accountType: 'yellow', amount: 300 },
+      ],
+      totalAmount: PRICE,
+      transactionCount: 3,
+    } as never);
+
+    await purchaseBlockGood(purchaseInput());
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'purchase charge reported DUPLICATE legs — the ledger key was already occupied',
+        duplicateLegs: 1,
+        legsWithoutDuplicateFlag: 2,
+        totalLegs: 3,
+      }),
+      'civitai-prod'
+    );
+  });
+
+  it('🔴 carries that count on the NON-duplicate population too — the log a dead branch still reaches', async () => {
+    // The copy that can actually answer the open question. Reaching the
+    // partial-debit log means NO leg reported `true`, so a non-zero here is a
+    // response the service sent without the field — which is the shape that
+    // would make the duplicate branch above dead. (A permanent zero is not the
+    // converse proof: a clean charge writes no log at all. Stated on the
+    // service too.)
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-y', accountType: 'yellow', amount: 400 },
+        { transactionId: 'buy-y2', accountType: 'yellow', amount: 200 },
+      ],
+      totalAmount: 600,
+      transactionCount: 2,
+    } as never);
+
+    await purchaseBlockGood(purchaseInput());
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'purchase charge did not fully land',
+        chargedTotal: 600,
+        legsWithoutDuplicateFlag: 2,
+      }),
+      'civitai-prod'
+    );
+  });
+
   it('🔴 lets a RETRY SUCCEED after an attempt whose charge was reversed', async () => {
     // 🔴 THE BRICK. The first attempt charges, fails to grant, reverses, and —
     // before this fix — DELETED its claim row. A reversed external id stays
@@ -1547,5 +1654,88 @@ describe('readRecordedPayouts — narrowing the JSON column', () => {
     for (const value of [null, undefined, {}, 'x', 7]) {
       expect(readRecordedPayouts(value)).toEqual([]);
     }
+  });
+});
+
+describe('owesOwnerPayout — the owner-payout RE-RUN SET', () => {
+  /**
+   * 🔴 WHY THIS IS CODE AND NOT A COMMENT. The re-run set lived as prose on
+   * `payBlockGoodOwner` and was restated in a second comment, and the restating
+   * widened it: a bare `sum(payouts[].amount) < app_owner_share_buzz` with no
+   * status test. `BLOCK_GOOD_MIN_PRICE_BUZZ` is 2, so the owner's share is at
+   * least 1 on every priced good and `0 < share` holds unconditionally — the
+   * bare test selects every row that never paid, including three classes that
+   * must never be paid. Each is a case below.
+   *
+   * INVARIANT GUARD, not regression coverage: no re-runner exists, so nothing
+   * has ever behaved either way. What it pins is the predicate a re-runner will
+   * call, in the one place it is written.
+   *
+   * The share (700) is distinct from every payout total used here (0, 280, 700)
+   * and from the price, so no case can pass by coincidence.
+   */
+  const SHARE = 700;
+  const partial = [{ userId: OWNER, amount: 280, color: 'blue' }];
+  const complete = [
+    { userId: OWNER, amount: 280, color: 'blue' },
+    { userId: OWNER, amount: 420, color: 'yellow' },
+  ];
+
+  it('SELECTS a paid row whose payouts fall short, and one that paid nothing', () => {
+    // The set's whole purpose: a partial payout is invisible on the row
+    // otherwise, and an owner underpaid by a leg has nothing saying so.
+    expect(owesOwnerPayout({ status: 'paid', payouts: partial, appOwnerShareBuzz: SHARE })).toBe(
+      true
+    );
+    expect(owesOwnerPayout({ status: 'paid', payouts: [], appOwnerShareBuzz: SHARE })).toBe(true);
+  });
+
+  it('does NOT select a paid row whose payouts sum to the full share', () => {
+    // Boundary control. A `<=` mutant would re-pay every completed purchase.
+    expect(owesOwnerPayout({ status: 'paid', payouts: complete, appOwnerShareBuzz: SHARE })).toBe(
+      false
+    );
+  });
+
+  it('🔴 does NOT select a REFUNDED row that had already been PARTIALLY paid', () => {
+    // 🔴 The class the widened spelling admitted, and the reason the status
+    // test is not decoration. `refundBlockGoodPurchase` claws the payout back
+    // and marks the row refunded but LEAVES `payouts` intact — it is the record
+    // of what a clawback reversed. So `280 < 700` reads true on this row
+    // forever, and a shortfall-only selector would pay the owner again for a
+    // purchase the buyer was refunded.
+    expect(
+      owesOwnerPayout({ status: 'refunded', payouts: partial, appOwnerShareBuzz: SHARE })
+    ).toBe(false);
+  });
+
+  it('🔴 does NOT select a `refunded` TOMBSTONE, whose debit was reversed', () => {
+    // `voidReversedClaim` writes this shape: refunded, nothing ever paid out.
+    // The buyer's Buzz went back, so the owner is owed nothing at all.
+    expect(owesOwnerPayout({ status: 'refunded', payouts: [], appOwnerShareBuzz: SHARE })).toBe(
+      false
+    );
+  });
+
+  it('🔴 does NOT select a `pending` row, whose debit is not confirmed', () => {
+    // A row is INSERTED `pending` before the buyer is charged, and survives an
+    // UNKNOWN charge outcome. Paying its owner credits money that may never
+    // have moved.
+    expect(owesOwnerPayout({ status: 'pending', payouts: [], appOwnerShareBuzz: SHARE })).toBe(
+      false
+    );
+  });
+
+  it('reads the payouts column through the same narrowing a refund uses', () => {
+    // A malformed leg is DROPPED, not summed — so a row whose only record is
+    // untrustworthy is still owed. Pinned because a re-runner that summed the
+    // raw JSON would disagree with the refund path about what was paid.
+    expect(
+      owesOwnerPayout({
+        status: 'paid',
+        payouts: [{ userId: OWNER, amount: '700', color: 'blue' }],
+        appOwnerShareBuzz: SHARE,
+      })
+    ).toBe(true);
   });
 });
