@@ -1115,9 +1115,9 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
  * to sum to exactly that, so the two agreeing IS "complete" and a shortfall IS
  * the amount still owed.
  *
- * The status half is why the shortfall test cannot stand alone. `app_owner_
- * share_buzz` is at least 1 for every priced good (`BLOCK_GOOD_MIN_PRICE_BUZZ`
- * is 2), so `0 < share` holds unconditionally and a bare shortfall test selects
+ * The status half is why the shortfall test cannot stand alone. The owner's
+ * share is at least 1 for every priced good (`BLOCK_GOOD_MIN_PRICE_BUZZ` is 2),
+ * so `0 < share` holds unconditionally and a bare shortfall test selects
  * every row that never paid anything — including rows that must NEVER be paid:
  * a `pending` row, whose debit is not confirmed; a `refunded` tombstone from
  * `voidReversedClaim`, whose debit was REVERSED; and a purchase refunded after
