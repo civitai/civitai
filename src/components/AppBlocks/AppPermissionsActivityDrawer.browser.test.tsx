@@ -1,5 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+// The seam test below renders TWO trees in one test and has to tear the first one down —
+// `component-setup`'s `afterEach` has not run yet, and two trees would make every
+// `querySelector` read the first.
+import { cleanup } from 'vitest-browser-react';
 import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
 // Type-only namespace import, NOT `typeof import('...')` — the latter is rejected by
 // @typescript-eslint/consistent-type-imports. Used by the `importOriginal` spread below.
@@ -112,8 +116,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         listMyAppActivity: { useInfiniteQuery: buzzSpy },
         listMyScopeInvocations: { useInfiniteQuery: scopeSpy },
       },
-      // W13 — AppActivityPanel resolves rich-detail subject-ref ids via these
-      // batch lookups. Stub them (no rich rows in these fixtures → inert).
+      // W13 — AppActivityPanel resolves rich-detail subject-ref ids via these batch lookups.
+      // Stubbed rather than omitted: the fixtures DO carry rich rows (`detail.action`), they
+      // just carry no `toUserId`/`entityType`, so the resolvers are handed empty id lists.
       modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
       useQueries: () => [],
     },
@@ -126,6 +131,26 @@ import { AppPermissionsActivityDrawer } from '~/components/AppBlocks/AppPermissi
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
+
+/**
+ * ONE row, read by BOTH mounts in the one-DOM seam test below. A row retyped per mount is how
+ * two renderings come to disagree while each test stays green — the thing that test exists to
+ * rule out, so its fixture cannot be duplicated either.
+ */
+const SEAM_ACTIVITY_ROW = {
+  id: 'seam-1',
+  // A fixed PAST instant, not a near-now one. `DaysFromNow` renders relatively and the seam test
+  // compares the two mounts' cell text, so a date inside the live-update window could render
+  // differently across the two renders. Months-ago is stable for the length of a run.
+  createdAt: new Date('2026-07-14T10:00:00Z'),
+  appBlockId: 'ab-1',
+  appName: 'My App',
+  appSlug: 'my-app',
+  scope: 'ai:write:budgeted',
+  endpoint: 'workflow:submit',
+  statusCode: 200,
+  detail: { action: 'workflow.submit', outcome: 'ok', workflowId: 'wf-seam' },
+};
 
 beforeEach(() => {
   m.user = { id: 1, username: 'viewer', isModerator: false };
@@ -443,6 +468,111 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
     await expect.element(name.first()).toBeInTheDocument();
     expect(name.first().element().tagName).toBe('A');
     expect(name.first().element().getAttribute('href')).toBe('/apps/store-preview/my-app');
+  });
+
+  /**
+   * 🔴 ONE DOM, RESTRUCTURED BY CSS — the contract the narrow (card) rendering rests on.
+   *
+   * The drawer gives `AppActivityPanel` ~408px against a table whose max-content sum is
+   * ~735px, so below ~560px of CONTAINER it renders each row as a card. That swap is done
+   * entirely in `AppActivityPanel.module.scss`; there is no second JSX branch, and this test is
+   * what pins that. A two-variant render would duplicate every `data-testid` (breaking the
+   * `getByTestId` specs above) and give the drawer and the page two cell sets that can drift —
+   * the hazard this file's `App`-column seam test already records in its own terms.
+   *
+   * ⚠️ THE PIXELS ARE NOT HERE. This tier injects `globals.css`'s `:root` block only, so no
+   * `@container` rule in the module is even present — the measured swap lives in
+   * `src/components/Apps/AppsWideLayout.geometry.test.tsx` ("the drawer's activity feed
+   * renders the STACKED variant, and the wide page does not"). What this arm owns is the
+   * property that makes that swap POSSIBLE: both mounts produce the same cells, in the same
+   * order, from one fixture.
+   */
+  test('🔴 the drawer and the whole-account feed render ONE activity DOM from one fixture', async () => {
+    m.flags = { appListings: true };
+    m.scopes = [SEAM_ACTIVITY_ROW];
+
+    const readCells = () => {
+      const panels = document.querySelectorAll('[data-testid="app-activity-panel"]');
+      // A two-variant render shows up here first: two panels, or two tables inside one.
+      expect(panels).toHaveLength(1);
+      expect(panels[0].querySelectorAll('table')).toHaveLength(1);
+      return Array.from(panels[0].querySelectorAll('tbody tr')).map((tr) =>
+        Array.from(tr.querySelectorAll('td')).map((td): [string, string, string] => [
+          // A cell with no attribute reads as a sentinel rather than as `undefined`, so the
+          // ledger below names the missing hook instead of printing a blank.
+          td.dataset.activityCell ?? '(no data-activity-cell)',
+          (td.textContent ?? '').trim(),
+          // 🔴 `role` IS IN THE LEDGER, NOT ONLY IN THE STANDALONE READ BELOW. That read runs
+          // against the PAGE mount only (the drawer tree is torn down first), so a change that
+          // emitted the roles on one mount and not the other — `role={linkable ? 'cell' :
+          // undefined}` is the plausible shape, since `linkable` is exactly what differs — would
+          // turn nothing red in the one test whose purpose is that the two mounts agree.
+          td.getAttribute('role') ?? '(no role)',
+        ])
+      );
+    };
+
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={vi.fn()} />
+    );
+    await expect.element(page.getByTestId('app-activity-panel')).toBeInTheDocument();
+    const inDrawer = readCells();
+    await cleanup();
+
+    renderWithProviders(<AppActivityPanel />);
+    await expect.element(page.getByTestId('app-activity-panel')).toBeInTheDocument();
+    const onPage = readCells();
+
+    // Every cell is addressable by NAME, which is what the module CSS reorders by — an
+    // `nth-child` rule would silently re-point if a column were ever inserted, and the
+    // attribute is what makes the reorder legible at the call site.
+    expect(inDrawer.map((row) => row.map(([name]) => name))).toEqual([
+      ['when', 'app', 'action', 'detail', 'status'],
+    ]);
+    // `when` is excluded from the text ledger on purpose: `DaysFromNow` renders RELATIVE to
+    // now, so pinning its string would rot as the fixture date ages.
+    const withoutWhen = (rows: [string, string, string][][]) =>
+      rows.map((row) => row.filter(([name]) => name !== 'when'));
+    expect(withoutWhen(inDrawer)).toEqual([
+      [
+        ['app', 'My Appmy-app', 'cell'],
+        ['action', 'Generated an image', 'cell'],
+        // The visually-hidden prefix is part of the cell's TEXT, which is the point — an
+        // `aria-label` on Mantine's Badge would land on a `role="generic"` div and name nothing.
+        ['detail', 'workflow wf-seam', 'cell'],
+        ['status', 'HTTP status 200', 'cell'],
+      ],
+    ]);
+    // …and the `when` cell is still the `<time>` element, which is the half a text ledger
+    // cannot assert.
+    expect(
+      document.querySelector('[data-activity-cell="when"] time')?.getAttribute('datetime')
+    ).toBeTruthy();
+
+    // 🔴 THE TABLE ROLES ARE EXPLICIT, AND THAT IS WHAT SURVIVES THE CARD VARIANT. `display:
+    // block` on a `<table>`/`<tr>`/`<td>` drops its implicit role in every engine, so below the
+    // breakpoint the audit feed would reach assistive tech as a flat run of strings. A DOM
+    // assertion rather than a computed-style one, because this tier loads no cascade.
+    const panelEl = document.querySelector('[data-testid="app-activity-panel"]')!;
+    expect(panelEl.querySelector('table')?.getAttribute('role')).toBe('table');
+    // `tbody` too: the module sets `display: block` on it, which strips its implicit `rowgroup`
+    // and with it the rows' group boundary. It is the one header-side role that is load-bearing,
+    // and it was unasserted while a comment said this ledger covered the roles.
+    expect(panelEl.querySelector('tbody')?.getAttribute('role')).toBe('rowgroup');
+    expect(
+      Array.from(panelEl.querySelectorAll('tbody tr')).map((tr) => tr.getAttribute('role'))
+    ).toEqual(['row']);
+    expect(
+      Array.from(panelEl.querySelectorAll('tbody td')).map((td) => td.getAttribute('role'))
+    ).toEqual(['cell', 'cell', 'cell', 'cell', 'cell']);
+    // …and the one cell value that is meaningless without the header the card variant hides is
+    // named by visually-hidden TEXT, which is real content an accessibility tree can use.
+    const srOnly = panelEl.querySelector('[data-activity-cell="status"] .sr-only');
+    expect(srOnly?.textContent).toBe('HTTP status ');
+    // The `App` cell is the one documented difference between the two mounts (plain text in
+    // the drawer, a link on the page) and its TEXT is identical, so comparing the two ledgers
+    // is a claim about structure rather than about that decision.
+    expect(onPage).toEqual(inDrawer);
   });
 
   test('a closed drawer does not mount the body (no queries fire)', async () => {

@@ -120,6 +120,29 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * clearer mechanism: one place decides whether the chrome is in the tree.
  */
 const navState = vi.hoisted(() => ({ sections: [] as unknown[] }));
+
+/**
+ * Fixture values the `vi.mock` factory below AND the assertions both read, so the two
+ * cannot drift. A scope id retyped on each side is the shape that keeps passing after the
+ * fixture changes — the same consolidation pin `AppPermissionsActivityDrawer.browser.test.tsx`
+ * makes for its empty-label sentence.
+ */
+const fixture = vi.hoisted(() => ({
+  /**
+   * DELIBERATELY LONGER THAN ANY REAL BLOCK SCOPE, and asserted to be below against
+   * `BLOCK_SCOPE_TO_OAUTH_BIT` — the registry that DEFINES the population — rather than
+   * against a remembered list.
+   *
+   * 🔴 IT ALSO OVERSHOOTS THE CONTAINER, WHICH A MERELY-LONGER ID DOES NOT. A 47-char
+   * fixture was measured rendering on ONE line inside the 408px drawer,
+   * so the arm below could not see the badge's `white-space: nowrap` / `overflow: hidden` at
+   * all — it would have passed with the ellipsis intact. This id needs two lines at 408, so
+   * the wrap is the thing under test rather than an incidental fit.
+   */
+  longScope: 'apps:diagnostics:telemetry:aggregate:write:self:secondary:partition',
+  /** The longest REAL scope that also carries a description, for the own-line arm. */
+  describedScope: 'apps:storage:shared:write',
+}));
 vi.mock('~/components/Apps/useAppsNavSections', () => ({
   useAppsNavSections: () => navState.sections,
 }));
@@ -226,6 +249,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       ],
     },
     'blocks.listMyAppActivity': { pages: [{ items: [], nextCursor: null }] },
+    // `AppPermissionsActivityDrawer`'s scope section. One over-long id (the clipping arm)
+    // plus one real described id (the own-line arm).
+    'blocks.listMyScopeGrants': [
+      {
+        appBlockId: 'ab_9',
+        slug: 'lighthouse',
+        name: 'Lighthouse',
+        origin: 'install',
+        // ORDER IS LOAD-BEARING: the grouping arm reads the gap from the described scope's
+        // description DOWN to the NEXT scope's id, so the described one has to come first.
+        scopes: [fixture.describedScope, fixture.longScope],
+      },
+    ],
     // `OffsiteReportsQueue`: a LONG app name AND a LONG `details`, so the two candidate
     // primary columns can be told apart by what each cell does with the room.
     'appListings.listListingReports': {
@@ -287,6 +323,13 @@ const { InstalledAppCard } = await import('~/pages/apps/activity');
 const { ActivePreviewsPanel } = await import('~/components/Apps/ActivePreviewsPanel');
 const { OffsiteReportsQueue } = await import('~/components/Apps/OffsiteReviewQueue');
 const { AppActivityPanel } = await import('~/components/Apps/AppActivityPanel');
+const { AppPermissionsActivityDrawer } = await import(
+  '~/components/AppBlocks/AppPermissionsActivityDrawer'
+);
+const { BLOCK_SCOPE_TO_OAUTH_BIT } = await import('~/shared/constants/block-scope.constants');
+const { SCOPE_DESCRIPTIONS } = await import(
+  '~/server/services/blocks/scope-descriptions.constants'
+);
 
 /** The container's own content width at each fixture viewport, as literals. */
 const NARROW = { width: 1440, height: 900, content: 1408 } as const;
@@ -1073,6 +1116,481 @@ describe('/apps/activity activity — the table that a ledger cannot help', () =
       [1, 1],
       [1, 1],
     ]);
+  });
+});
+
+// ── the SIXTH width: the permissions drawer's ~408px container ──────────────
+
+/**
+ * 🔴 THE MOUNT EVERY WIDTH ABOVE IS BLIND TO.
+ *
+ * `AppActivityPanel` and `BlockScopeList` have a second home: the run-frame
+ * "Permissions & activity" drawer, a Mantine `size="md"` `Drawer` — 27.5rem of content box
+ * minus its body padding, i.e. ~408px — which can sit inside a 2560 viewport. The four
+ * widths this file was written against are 768 / 1200 / 1440 / 2560, so the panel's
+ * `no-surplus` exemption (≈735px of max-content against 736px of container at 768) is a
+ * measurement that PINS viewport ≥768 and cannot describe this box at all: 735 in 408 is
+ * ~80% over.
+ *
+ * 🔴 EVERY ARM HERE IS READ AT A 2560 VIEWPORT, WHICH IS THE POINT. A viewport media query is
+ * the wrong instrument by construction — the container is 408 while the window is 2560 — so a
+ * fix driven by `@media` would pass a narrow-viewport test and leave the real drawer broken.
+ * Reading these at the widest fixture is what makes them a claim about the CONTAINER.
+ *
+ * 🔴 AND EVERY ARM THAT PINS THE PRE-CHANGE BEHAVIOUR LEADS WITH A LOCATOR THAT EXISTS THERE.
+ * An earlier revision resolved `[data-testid="app-activity-panel"]` /
+ * `[data-testid="block-scope-list"]`, testids this change introduces — so four arms went red at
+ * `origin/main` inside the `need()` helper, on a missing test hook, which is evidence about
+ * nothing. Mantine's own `.mantine-Drawer-*` / `.mantine-Badge-root` static classes and plain
+ * `table`/`tbody` are present either way, so each of those arms' FIRST failing read at base is a
+ * geometry one: `'table'` vs `'block'`, `TR right=2568.48` against a 2544 edge, the id fitting one
+ * line at 16px, the description sitting 18px ABOVE its id, and the phone page still a table.
+ *
+ * ⚠️ TWO THINGS THIS DOES NOT CLAIM, because an earlier revision claimed both and was wrong.
+ * (a) `data-activity-cell` and the status pill's `sr-only` span are introduced by this change, so
+ * an arm that LEADS with `stackedCell()` or with that span is red at base on a missing hook — put
+ * a base-stable read first, as the phone arm now does. (b) The sr-only arm is not in the base-red
+ * set at all, and does not need to be: it pins a property of the NEW rendering, not of the old
+ * one. Read the base-red count off a fresh run rather than from a number in this comment — arms
+ * have been added to this block twice since the first one was taken.
+ */
+describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewport', () => {
+  const drawer = () => (
+    <AppPermissionsActivityDrawer appBlockId="ab_9" appName="Lighthouse" opened onClose={vi.fn()} />
+  );
+
+  /** The drawer renders through a Portal, so it is NOT wrapped in the apps page layout. */
+  async function renderDrawer(viewport: { width: number; height: number }) {
+    const { observed } = await renderAtViewport(drawer(), viewport);
+    expect(observed).toEqual({ width: viewport.width, height: viewport.height });
+  }
+
+  function need<T extends Element>(selector: string): T {
+    const el = document.querySelector<T>(selector);
+    if (!el) throw new Error(`nothing rendered for ${selector}`);
+    return el;
+  }
+
+  /** Mantine's own drawer body — the box the viewer actually has, fixed by `size="md"`. */
+  const drawerBody = () => need<HTMLElement>('.mantine-Drawer-body');
+  const activityTable = () => need<HTMLElement>('.mantine-Drawer-body table');
+  const stackedRow = () => need<HTMLElement>('.mantine-Drawer-body tbody tr');
+  const stackedCell = (name: string) =>
+    need<HTMLElement>(`.mantine-Drawer-body tbody td[data-activity-cell="${name}"]`);
+
+  /** `--drawer-size-md` = 27.5rem, and the body's 16px inline padding either side. */
+  const DRAWER_BORDER_BOX = 440;
+  const DRAWER_CONTENT_BOX = 408;
+
+  /** The drawer body's CONTENT box — `getBoundingClientRect()` gives the border box. */
+  function drawerContent(): { width: number; right: number } {
+    const body = drawerBody();
+    const style = getComputedStyle(body);
+    const box = body.getBoundingClientRect();
+    const padLeft = parseFloat(style.paddingLeft);
+    const padRight = parseFloat(style.paddingRight);
+    const borderRight = parseFloat(style.borderRightWidth);
+    const borderLeft = parseFloat(style.borderLeftWidth);
+    return {
+      width: box.width - padLeft - padRight - borderLeft - borderRight,
+      right: box.right - padRight - borderRight,
+    };
+  }
+
+  /**
+   * 🔴 THE PRECONDITION THE TWO DRAWER LITERALS SILENTLY REST ON. Mantine's drawer content is
+   * `overflow-y: auto`, so a fixture tall enough to scroll takes ~15px of classic scrollbar off
+   * the body's inner width and turns three arms red with a message about the drawer's SIZE. This
+   * makes the scrollbar name itself instead.
+   */
+  function assertDrawerDoesNotScroll() {
+    const content = need<HTMLElement>('.mantine-Drawer-content');
+    expect(
+      content.scrollHeight,
+      `the drawer content scrolls (${content.scrollHeight} into ${content.clientHeight}) — a ` +
+        'scrollbar narrows the body and every width below is measured against the wrong box'
+    ).toBeLessThanOrEqual(content.clientHeight);
+  }
+
+  test('the fixture is over-long by the REGISTRY, not by memory', () => {
+    // 🔴 A POSITIVE CONTROL ON THE CLIPPING ARM, NOT COVERAGE OF EITHER COMPONENT — it renders
+    // nothing. `apps:storage:shared:write`, the longest id the app actually ships, fits the
+    // drawer unaided. With the wrap read in place a too-short fixture now makes that arm RED at
+    // the one-line height rather than falsely green, so what this buys is a legible failure:
+    // "the fixture stopped overshooting" instead of "the scope id fits on one line". `BLOCK_SCOPE_TO_OAUTH_BIT` is the registry every scope is
+    // declared in, so this is the authoritative population rather than a sample.
+    const realIds = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT);
+    expect(
+      realIds.length,
+      'the scope registry is empty — this control checks nothing'
+    ).toBeGreaterThan(5);
+    const longestReal = Math.max(...realIds.map((s) => s.length));
+    expect(
+      fixture.longScope.length,
+      `the fixture id is ${fixture.longScope.length} chars against a longest real id of ` +
+        `${longestReal} — it has to EXCEED the real population or it fits unaided`
+    ).toBeGreaterThan(longestReal);
+    // …and the own-line arm's scope must actually HAVE a description, or that arm measures
+    // the "(no description)" italic instead of the thing it is named for.
+    expect(SCOPE_DESCRIPTIONS[fixture.describedScope]).toBeTruthy();
+  });
+
+  test('🔴 the drawer really is ~408px of container inside a 2560 window', async () => {
+    // The PRECONDITION for reading anything below as a container claim. Without it, "the panel
+    // is stacked at 2560" would also be satisfied by a drawer that rendered full-bleed. An
+    // INVARIANT guard, not a regression pin: nothing in this change can move Mantine's drawer
+    // size, and it is here so the other arms' container is a measured number rather than a
+    // remembered one.
+    await renderDrawer(WIDE);
+    assertDrawerDoesNotScroll();
+    expect(px(drawerBody().getBoundingClientRect().width)).toBe(DRAWER_BORDER_BOX);
+    // The border box is the drawer's declared size; the 32px difference is the body's own
+    // padding, which is why the container query sees 408 and not 440.
+    const content = drawerContent();
+    expect(px(content.width)).toBe(DRAWER_CONTENT_BOX);
+    // The two reads above are the whole container claim: 408 of container inside a window this
+    // arm has already asserted is 2560. ⚠️ A third assertion on their DIFFERENCE was written and
+    // deleted — both operands are pinned two lines up, so `2560 - 408 > 2000` cannot fail unless
+    // one of them already has. Moving a tautology's operands does not stop it being one.
+    await cleanup();
+  });
+
+  test("🔴 the drawer's activity feed renders the STACKED variant, and the wide page does not", async () => {
+    // 🔴 ONE DOM, TWO LAYOUTS — so the contrast is read off `display`, not off two different
+    // element trees. A second JSX branch is how the two renderings come to disagree, which is
+    // the hazard `AppPermissionsActivityDrawer`'s own docblock names about its `App` column.
+    await renderDrawer(WIDE);
+    expect(getComputedStyle(activityTable()).display, 'the drawer table is still a table').toBe(
+      'block'
+    );
+    expect(getComputedStyle(need<HTMLElement>('.mantine-Drawer-body thead')).display).toBe('none');
+    expect(getComputedStyle(stackedRow()).display).toBe('grid');
+
+    // 🔴 THE CARD'S READING ORDER, which is the user-visible product of the change and which no
+    // `display` read can see. The DOM order is the table's (When · App · Action · Detail ·
+    // Status); `grid-template-areas` re-lays it as time+status, then the action sentence, then
+    // the app, then the technical ref. Deleting the areas block auto-places the cells in DOM
+    // order into two tracks, which satisfies every other assertion in this file.
+    const rect = (name: string) => stackedCell(name).getBoundingClientRect();
+    const [when, status, action, app, detail] = ['when', 'status', 'action', 'app', 'detail'].map(
+      rect
+    );
+    expect(px(Math.abs(when.top - status.top)), 'time and status are not on one line').toBeLessThan(
+      2
+    );
+    expect(status.left, 'status is not to the RIGHT of the time').toBeGreaterThan(when.right);
+    // …at the card's trailing edge, which comes from the TRACK rather than from a
+    // `justify-self` (that declaration was written, measured inert and deleted — see the CSS).
+    expect(
+      px(drawerContent().right - status.right),
+      "the status pill is not at the card's trailing edge"
+    ).toBeLessThan(2);
+    expect(action.top, 'the action sentence is not below the header line').toBeGreaterThanOrEqual(
+      when.bottom - 0.5
+    );
+    expect(app.top, 'the app name is not below the action').toBeGreaterThanOrEqual(
+      action.bottom - 0.5
+    );
+    expect(detail.top, 'the technical ref is not the footer').toBeGreaterThanOrEqual(
+      app.bottom - 0.5
+    );
+    await cleanup();
+
+    // The SAME panel, the SAME viewport, no drawer: unchanged.
+    const { observed } = await renderAtViewport(
+      <AppsPageLayout title="Fixture">
+        <AppActivityPanel />
+      </AppsPageLayout>,
+      WIDE
+    );
+    expect(observed).toEqual({ width: WIDE.width, height: WIDE.height });
+    expect(getComputedStyle(need<HTMLElement>('table')).display).toBe('table');
+    expect(getComputedStyle(need<HTMLElement>('table thead')).display).toBe('table-header-group');
+    await cleanup();
+  });
+
+  test('🔴 …and nothing in the stacked feed paints outside the 408px container', async () => {
+    // The defect itself, stated as a relationship rather than as a pixel count: ~735px of
+    // max-content in 408px of box. `<td>` is `overflow: visible`, so an over-wide cell is
+    // DRAWN over its neighbour rather than clipped — there is no scrollbar to notice it by.
+    await renderDrawer(WIDE);
+    assertDrawerDoesNotScroll();
+    const content = drawerContent();
+    // Re-read the container here rather than trusting the arm above: an overflow claim measured
+    // against a box that itself shrank would be satisfied by the wrong thing.
+    expect(px(content.width)).toBe(DRAWER_CONTENT_BOX);
+    const offenders: string[] = [];
+    const boxes = Array.from(drawerBody().querySelectorAll<HTMLElement>('tbody tr, tbody td'));
+    // Exactly one row of five cells plus the row itself; a lost column trips this rather than
+    // quietly shrinking what is measured.
+    expect(boxes.length, 'the stacked feed did not render one row of five cells').toBe(6);
+    for (const el of boxes) {
+      const box = el.getBoundingClientRect();
+      if (px(box.right - content.right) > 0.5) {
+        offenders.push(`${el.tagName}[${el.dataset.activityCell ?? '-'}] right=${px(box.right)}`);
+      }
+      // A second reading of the same property, kept because it is two lines — but NOT a second
+      // independent detector: the killing mutants all fire the right-edge branch above, and
+      // Chromium does not report overflow through `scrollWidth` on an `overflow: visible` box.
+      if (el.scrollWidth > el.clientWidth + 0.5) {
+        offenders.push(
+          `${el.tagName}[${el.dataset.activityCell ?? '-'}] paints ${el.scrollWidth}px into ` +
+            `${el.clientWidth}px`
+        );
+      }
+    }
+    // ⚠️ AND WHAT THIS LOOP CANNOT SEE, so its name is not read wider than it is: the `app`
+    // cell's name carries Tailwind `truncate`, so a long app name ELLIPSISES inside the cell
+    // rather than painting past it. That is a truncation of a self-describing string in a column
+    // that is a label in this mount (every row is the same app), not an overflow — and a glyph
+    // read cannot tell the two apart on a `nowrap` + `overflow: hidden` box.
+    expect(offenders, `container content right edge ${px(content.right)}`).toEqual([]);
+    const table = activityTable();
+    expect(table.scrollWidth).toBeLessThanOrEqual(table.clientWidth + 0.5);
+
+    // 🔴 THE UNBROKEN-TOKEN CELLS, POKED IN DIRECTLY — and the direct poke is the point rather
+    // than a shortcut. They render an app-chosen storage key (`z.string().max(200)`, no
+    // whitespace requirement) or a workflow id, i.e. an unbounded string with no break
+    // opportunity, and `overflow-wrap: anywhere` is the only thing keeping it inside the card.
+    // The shared trpc fixture at the top of this file cannot carry such a token: it would widen a
+    // column at 768 and move the ≥768 single-line baseline the `no-surplus` exemption rests on,
+    // which four other arms measure. Writing the string into the rendered cell measures the
+    // shipped rule on the shipped element without touching that baseline.
+    //
+    // 🔴 READ ON THE GLYPHS, NOT ON THE CELL. The `<td>` is a grid item in a `minmax(0, 1fr)`
+    // track, so its own box is inside the container whether or not its text is — measured, a
+    // cell-box read passed with `overflow-wrap` deleted. A `Range` over the text contents is the
+    // ink, which is what a reader sees painted over the drawer's edge.
+    //
+    // BOTH cells that can carry one: `detail` renders the key or a workflow id, and `action`'s
+    // sentence INTERPOLATES the same key for the three `storage.*` cases (`describeBlockAction`),
+    // which is why the CSS hardens the pair rather than `detail` alone.
+    for (const name of ['detail', 'action'] as const) {
+      const cell = stackedCell(name);
+      // 🔴 THE POKE REPLACES THE CELL'S SUBTREE, SO PIN WHAT IT IS REPLACING. If either cell ever
+      // wraps its text in a `<Code>` or a `lineClamp` element — the likeliest way clipping returns
+      // — writing `textContent` would DELETE that element and the arm would still pass.
+      expect(cell.childElementCount, `the ${name} cell is no longer a single text element`).toBe(1);
+      const text = cell.firstElementChild;
+      if (!(text instanceof HTMLElement)) throw new Error(`the ${name} cell rendered no element`);
+      // 🔴 THE LEAF CHECK IS THE ONE THAT MATCHES THE HAZARD, and the count above does not: every
+      // spelling of "the token gained a wrapper" keeps the CELL at one element child
+      // (`<Text><Code>{key}</Code></Text>`, or a straight `Text` -> `Code` swap), so only reading
+      // the POKED element's own children can see the element this write would delete. Both are
+      // kept — the count catches a SECOND element, which this does not.
+      expect(
+        text.children.length,
+        `the ${name} cell's text element now has children, which the poke would delete`
+      ).toBe(0);
+      text.textContent = `key-${'w'.repeat(70)}`;
+      await nextLayout();
+      // 🔴 THE EDGE IS RE-DERIVED AFTER THE POKE. It roughly doubles the row's height, and if that
+      // ever makes the drawer scroll, the real content edge moves ~15px LEFT while a cached one
+      // stays further right — the read would get quietly MORE permissive in exactly the case
+      // `assertDrawerDoesNotScroll` exists to rule out.
+      assertDrawerDoesNotScroll();
+      const edge = px(drawerContent().right);
+      const inkRange = document.createRange();
+      inkRange.selectNodeContents(text);
+      expect(
+        px(inkRange.getBoundingClientRect().right),
+        `a 74-character unbroken key in the ${name} cell paints to ` +
+          `${px(inkRange.getBoundingClientRect().right)} past a ${edge} container edge — it must ` +
+          'break mid-token'
+      ).toBeLessThanOrEqual(edge + 0.5);
+    }
+    await cleanup();
+  });
+
+  /**
+   * The LEAF element whose entire text is `scope` — i.e. Mantine's Badge label, which is where
+   * `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` lives.
+   *
+   * Located by TEXT so the arm can be watched fail on the pre-change component; `scopeBadge`
+   * then climbs to the Badge ROOT by its Mantine static class rather than by `parentElement`,
+   * because a future Badge that wraps its text in an inner span would make `parentElement` the
+   * label itself — a box that trivially contains its own child, i.e. the `h="auto"` assertion
+   * would pass with the clipping root unmeasured.
+   */
+  function scopeLabel(scope: string): HTMLElement {
+    const hits = Array.from(document.querySelectorAll<HTMLElement>('*')).filter(
+      (el) => el.children.length === 0 && el.textContent === scope
+    );
+    if (hits.length !== 1) {
+      throw new Error(`expected exactly one leaf carrying "${scope}", found ${hits.length}`);
+    }
+    return hits[0];
+  }
+
+  function scopeBadge(scope: string): HTMLElement {
+    const root = scopeLabel(scope).closest<HTMLElement>('.mantine-Badge-root');
+    if (!root) throw new Error(`the leaf carrying "${scope}" is not inside a Mantine Badge`);
+    return root;
+  }
+
+  /**
+   * Measured heights of a Mantine `Badge size="sm"` with the fix in place. The LABEL's one-line
+   * box is `--badge-lh` = `--badge-height-sm` − 2px = 16; the ROOT is the 18px `--badge-height-sm`
+   * (2px of transparent border under `border-box` on top of the 16px line).
+   */
+  const BADGE_LABEL_ONE_LINE = 16;
+  const BADGE_ROOT_ONE_LINE = 18;
+
+  test('🔴 the over-long scope id renders in FULL and is not clipped', async () => {
+    await renderDrawer(WIDE);
+    // This arm reads the container's content edge too, so it needs the same precondition — a
+    // scrollbar here would fail it with a message about the scope id.
+    assertDrawerDoesNotScroll();
+    const label = scopeLabel(fixture.longScope);
+    // `textContent` is the whole id whether or not it is ellipsised — CSS truncation is a
+    // RENDERING — so it is a sanity read on what is being measured, not the test.
+    expect(label.textContent).toBe(fixture.longScope);
+    // 🔴 TRUNCATION HAS TWO SHAPES AND EACH NEEDS ITS OWN READ — plus the direct one, which is
+    // only available on the label. Mantine's label carries `overflow: hidden`, so
+    // `scrollWidth > clientWidth` on THAT box is the canonical Chromium ellipsis detector; the
+    // cells in the overflow arm are `overflow: visible`, where Chromium reports nothing through
+    // it, which is why that arm cannot use this read and this one can.
+    expect(
+      label.scrollWidth,
+      `the scope id paints ${label.scrollWidth}px into ${label.clientWidth}px of label — ` +
+        "Mantine's Badge is ellipsising it"
+    ).toBeLessThanOrEqual(label.clientWidth + 0.5);
+    //
+    // (a) the label paints PAST the drawer. No mutant in the sweep reaches this today, because
+    // Mantine's own `overflow: hidden` clips instead — it fired at 2578.59 against a 2544.5 edge
+    // on a revision that also set `overflow: visible`, which is the shape a future "fix" for an
+    // ellipsis report would reintroduce.
+    expect(
+      px(label.getBoundingClientRect().right),
+      `the scope id paints past the drawer's ${px(drawerContent().right)} content edge`
+    ).toBeLessThanOrEqual(px(drawerContent().right) + 0.5);
+    // (b) the HEIGHT observable — the control on (a) and on the direct read above rather than a
+    // third detector: this id needs more than one line at 408px, so a fixture that stopped
+    // overshooting fails HERE with a legible message instead of making the other two vacuous. Measured, removing either `whitespace-normal` or `break-all` from the
+    // Badge's `classNames` fails here at the 16px one-line height. It is also the control that
+    // stops (a) being vacuous — with a 47-char fixture the whole arm passed with the ellipsis
+    // still in the component, because that id fit unaided.
+    expect(
+      px(label.getBoundingClientRect().height),
+      "the scope id fits on one line, which at this length means Mantine's Badge ellipsised it"
+    ).toBeGreaterThan(BADGE_LABEL_ONE_LINE * 1.5);
+    // …and the BADGE grew with it. Mantine pins the root to one line and clips, so without
+    // `h="auto"` the wrapped second line is cut off — a read no width assertion and no
+    // `scrollWidth` can see. Measured: the label runs to 196.19 inside a badge ending at 189.19.
+    const badge = scopeBadge(fixture.longScope);
+    expect(
+      px(badge.getBoundingClientRect().bottom),
+      `the label runs to ${px(label.getBoundingClientRect().bottom)} while its badge ends at ` +
+        `${px(badge.getBoundingClientRect().bottom)}`
+    ).toBeGreaterThanOrEqual(px(label.getBoundingClientRect().bottom) - 0.5);
+    await cleanup();
+  });
+
+  test("🔴 the status pill's screen-reader prefix is HIDDEN, not painted", async () => {
+    // 🔴 THE ONLY TIER THAT CAN SEE THIS. `ScopeStatusBadge` names its bare integer with a
+    // `<span className="sr-only">HTTP status </span>`, and both DOM-level assertions on it (the
+    // cross-mount cell ledger and the span's own text) are satisfied by a span that PAINTS — the
+    // `component` tier loads no Tailwind, so `sr-only` is inert there by construction. If the
+    // utility ever stops being emitted (a dynamically-composed class, a content-glob change, a
+    // move to an unscanned file) every activity row would read "HTTP status 200" in both mounts.
+    // ⚠️ NOT "and nothing else would go red" — an earlier revision said that and it is false. A
+    // visible prefix widens the Status column at ≥768 and takes the row 36.19 -> 48.09, so four of
+    // the `no-surplus` arms die too. What THIS arm buys is the only failure that NAMES the cause:
+    // those four read as a ledger regression, and none of them reads the 408px drawer at all.
+    await renderDrawer(WIDE);
+    const sr = need<HTMLElement>('.mantine-Drawer-body [data-activity-cell="status"] .sr-only');
+    expect(sr.textContent).toBe('HTTP status ');
+    const srStyle = getComputedStyle(sr);
+    expect(srStyle.position, 'the sr-only prefix is in flow').toBe('absolute');
+    // `overflow` as well as the box: an `sr-only` that kept `position`/`width` but lost its clip
+    // would paint the prefix over the integer while every box read below still passed. That needs
+    // a hand-written override rather than a purge, so it is defence rather than the named hazard.
+    expect(srStyle.overflow, 'the sr-only prefix is not clipped').toBe('hidden');
+    expect(
+      px(sr.getBoundingClientRect().width),
+      `the screen-reader prefix paints ${px(sr.getBoundingClientRect().width)}px wide`
+    ).toBeLessThan(2);
+    await cleanup();
+  });
+
+  /**
+   * 🔴 THE PAGE MOUNT ALSO STACKS, AND EVERY ARM ABOVE READS THE DRAWER. The query container is
+   * the panel, so the card variant fires at any container under 560px — and `/apps/activity` is
+   * phone-reachable, where the apps container leaves ~358px. That rendering was unmeasured while
+   * this block's own arm name ("…and the wide page does not") read as though stacked were
+   * drawer-only. Same `PHONE` fixture the card-grid arm at the foot of this file uses.
+   */
+  test('🔴 …and the WHOLE-ACCOUNT feed stacks on a phone, inside its container', async () => {
+    const PHONE = { width: 390, height: 844 } as const;
+    const { observed } = await renderAtViewport(
+      <AppsPageLayout title="Fixture">
+        <AppActivityPanel />
+      </AppsPageLayout>,
+      PHONE
+    );
+    expect(observed).toEqual({ width: PHONE.width, height: PHONE.height });
+    // 🔴 THE DISPLAY READS COME FIRST, AND THAT ORDER IS THE POINT — see this block's docblock.
+    // `table` / `tbody tr` resolve on the pre-change component, so at base this arm fails on
+    // `expected 'table' to be 'block'`. The panel's testid does NOT exist at base, so leading with
+    // it would make the arm red on a missing hook — the exact failure the docblock forbids, on the
+    // arm it warns the next author about.
+    expect(getComputedStyle(need<HTMLElement>('table')).display).toBe('block');
+    expect(getComputedStyle(need<HTMLElement>('tbody tr')).display).toBe('grid');
+    const panelEl = need<HTMLElement>('[data-testid="app-activity-panel"]');
+    const width = px(panelEl.getBoundingClientRect().width);
+    // The positive control: this container really is under the 560px threshold, so the arm can
+    // see the variant rather than asserting it at a width where it would apply anyway.
+    expect(width, 'the phone container is not below the stacking threshold').toBeLessThan(560);
+    const right = panelEl.getBoundingClientRect().right;
+    const offenders = Array.from(panelEl.querySelectorAll<HTMLElement>('tbody tr, tbody td'))
+      .filter((el) => px(el.getBoundingClientRect().right - right) > 0.5)
+      .map((el) => `${el.tagName}[${el.dataset.activityCell ?? '-'}]`);
+    expect(offenders, `phone container ${width}px, right edge ${px(right)}`).toEqual([]);
+    await cleanup();
+  });
+
+  test('🔴 the description sits on its own line, and nearer its OWN id than the next one', async () => {
+    await renderDrawer(WIDE);
+    // Located by text, not by the list's testid, so this arm is red at base on GEOMETRY — at
+    // `origin/main` the description shares a `wrap="nowrap"` row with the badge, so its top is
+    // ABOVE the badge's bottom rather than below it.
+    const describedBadge = scopeBadge(fixture.describedScope);
+    const description = scopeLabel(SCOPE_DESCRIPTIONS[fixture.describedScope]);
+    const badgeBottom = describedBadge.getBoundingClientRect().bottom;
+    const intra = px(description.getBoundingClientRect().top - badgeBottom);
+    expect(
+      intra,
+      'the description is beside its id, not under it — the two fight over one axis and the ' +
+        'id loses'
+    ).toBeGreaterThanOrEqual(0);
+    // Guard the guard: a zero-height description would satisfy the above trivially.
+    expect(px(description.getBoundingClientRect().height)).toBeGreaterThan(8);
+
+    // 🔴 AND THE GROUPING IS UNAMBIGUOUS: the gap from a description UP to its own id must be
+    // smaller than the gap DOWN to the next scope's id. Two `Stack`s at 4/2 made that a 2px
+    // differential on a list whose entire purpose is which description belongs to which id.
+    const nextBadge = scopeBadge(fixture.longScope);
+    const inter = px(
+      nextBadge.getBoundingClientRect().top - description.getBoundingClientRect().bottom
+    );
+    // DOUBLE, not merely greater: the shape this rejects is the original 4/2 pair, where `inter`
+    // WAS larger than `intra` and the cue was still a 2px differential on a block that grows to
+    // ~36px as soon as an id wraps. A ratio is the weakest honest reading of "clearly nearer".
+    expect(
+      inter,
+      `a description sits ${intra}px from its own id and ${inter}px from the next one — a ` +
+        'differential under 2x is not a grouping cue, and the reader pairs it with either'
+    ).toBeGreaterThan(intra * 2);
+
+    // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE, and labelled as one: a single-line badge
+    // is 18px at base AND with `h="auto"` (the root is sized by its 16px label plus 2px of
+    // border either way), so no mutation of this change can move it. What it pins is narrow and
+    // worth having anyway — a one-line badge is the same HEIGHT as before, so the badge half of
+    // the fix costs the other three call sites nothing per row. ⚠️ It says nothing about those
+    // sites overall: the restructure and the outer gap DO change them, by about a line per
+    // scope, and nothing measures their geometry.
+    expect(px(describedBadge.getBoundingClientRect().height)).toBe(BADGE_ROOT_ONE_LINE);
+    await cleanup();
   });
 });
 
