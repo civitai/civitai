@@ -247,13 +247,16 @@ describe('listMyScopeGrants', () => {
   });
 
   /**
-   * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so nobody counts it as the
-   * latter. Nothing in this repo writes a non-null `revoked_at`, so this state is not
-   * currently reachable in production. It pins the intent that a revoked grant conveys
-   * nothing: it must not mint a row whose only reason to exist is a consent that was
-   * withdrawn, which would offer a budget control for an app that cannot spend.
+   * ⚠️ THIS WAS LABELLED AN INVARIANT GUARD AND IS NOW LIVE COVERAGE. The label was
+   * correct when written — *"nothing in this repo writes a non-null `revoked_at`, so this
+   * state is not currently reachable in production"* — and is retracted: `revokeScopes`
+   * (`scope-grant.service.ts`) writes one whenever a viewer's revoke empties their granted
+   * set, reachable by any authenticated viewer through `blocks.revokeScopes`. What it pins
+   * is unchanged: a fully-revoked grant conveys nothing, so it must not mint a row whose
+   * only reason to exist is a consent that was withdrawn, which would offer a budget
+   * control for an app that cannot spend.
    */
-  it('does NOT surface a grant-only app whose grant is revoked (invariant guard)', async () => {
+  it('does NOT surface a grant-only app whose grant is revoked', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([

@@ -3,6 +3,7 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  recordBlockConsentRevocationRefusal,
   recordBlockRestApprovalVerdict,
   recordBlockRevocationRefusal,
   statusToRequestResult,
@@ -11,6 +12,7 @@ import {
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { ConsentRevocation } from '~/server/services/blocks/consent-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
@@ -1276,8 +1278,68 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // surface a reader would assume covers it. Without this counter, "revocation fired"
       // and "revocation is broken and silently serving" are the same observation.
       recordBlockRevocationRefusal('rest', claims.blockInstanceId);
-      res.status(403).json({ error: 'block instance revoked' });
+      // `code` is the MACHINE-READABLE half, added alongside the human `error` string
+      // rather than replacing it — every shipped app reads `error`, so changing it would
+      // be a breaking change for zero gain. `code` lets an app distinguish "this install
+      // went away / the publisher was banned" from the consent refusal below and from an
+      // ordinary `insufficient_scope`, which are three different things for it to do.
+      res.status(403).json({ error: 'block instance revoked', code: 'instance_revoked' });
       return;
+    }
+
+    // ── PER-SCOPE CONSENT REVOCATION. The viewer withdrew THIS route's permission for
+    // THIS app, and the token in the caller's hand was minted before they did.
+    //
+    // 🔴 WHY A SECOND MECHANISM AT ALL. The grant table is read at MINT; this path then
+    // trusts `claims.scopes` verbatim (only `resolveHubTokenClaims` re-derives from the
+    // grant). So a Postgres revoke is invisible to an already-signed token for up to its
+    // remaining life — 900s default, 300s settings-scoped, 4h dev. `BlockRevocation`
+    // above cannot cover it: it is keyed per-`blockInstanceId` and knows nothing about
+    // `app_user_scope_grants`.
+    //
+    // 🔴 WHY IT FAILS **CLOSED** WHILE THE CHECK ABOVE FAILS **OPEN**. `isRevoked`
+    // swallows a Redis error so that a cache incident can never block an uninstall or a
+    // ban — operations with no user waiting on the refusal, whose exposure is already
+    // bounded by the token lifetime. This marker exists only because a USER asked for one
+    // permission to stop being granted, and was told it was done; "the cache was down so
+    // we kept granting it" is that promise not being kept rather than a degradation of
+    // it. The asymmetry is deliberate, is documented at the primitive too
+    // (`blocks/consent-revocation.service.ts`, `block-revocation.service.ts`), and is
+    // also why the two reads cannot be folded into one `mGet` — one call has one `catch`.
+    //
+    // 🔴 THE PRICE: a Redis outage refuses every authed, scope-bound block REST request.
+    // Real availability coupling, accepted for the guarantee above and narrowed by the
+    // two skips below.
+    //
+    // TWO SKIPS, EACH FOR ITS OWN REASON — not one condition wearing two hats:
+    //   - NO `requiredScope` (the any-token catalog routes): no scope is being exercised,
+    //     so there is nothing a per-scope revoke could refuse. Refusing on a token's
+    //     unrelated revoked scope would break the public catalog for a reason the viewer
+    //     never asked for.
+    //   - ANON subject: consent is per (user, app) and an anon token has no user, so no
+    //     marker can exist for it. Both skips also keep those populations out of the
+    //     availability coupling above, which is worth having but is not why they are here.
+    if (opts.requiredScope !== undefined) {
+      const consentUserId = parseSubjectUserId(claims.sub);
+      if (
+        consentUserId !== null &&
+        (await ConsentRevocation.isScopeRevoked({
+          userId: consentUserId,
+          appBlockId: claims.appBlockId,
+          scope: opts.requiredScope,
+        }))
+      ) {
+        recordBlockConsentRevocationRefusal('rest', opts.requiredScope);
+        // A DISTINCT `code` from the missing-scope 403 further down, which is the whole
+        // point of adding codes: "you never had this" and "the user took this away" call
+        // for different app behaviour — the second one should stop asking and let the host
+        // re-prompt, the first is a manifest/approval problem.
+        res.status(403).json({
+          error: `consent revoked for scope: ${opts.requiredScope}`,
+          code: 'consent_revoked',
+        });
+        return;
+      }
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
@@ -1386,7 +1448,16 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // scope. See WithBlockScopeOpts.requiredScope.
     if (opts.requiredScope !== undefined) {
       if (!claims.scopes.includes(opts.requiredScope)) {
-        res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
+        // `insufficient_scope` — the token never carried it. DISTINCT from the
+        // `consent_revoked` refusal above, which is a token that DOES carry it and a
+        // viewer who has since said no. An app that cannot tell those apart either keeps
+        // retrying a permission the user withdrew, or reports a consent problem for what
+        // is really a manifest/approval gap. The name mirrors RFC 6750's OAuth 2.0 Bearer
+        // Token error code, which is the vocabulary an app author already knows.
+        res.status(403).json({
+          error: `missing required scope: ${opts.requiredScope}`,
+          code: 'insufficient_scope',
+        });
         return;
       }
 

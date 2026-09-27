@@ -219,7 +219,15 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
     await wrapped(makeReq(token) as never, res as never);
 
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: `missing required scope: ${USER_READ}` });
+    // `code` is new and additive. Kept as a whole-object `toEqual`: the 403 body is an
+    // app-facing contract, so adding a field should require editing a test rather than
+    // sliding past a `toMatchObject`. `insufficient_scope` (RFC 6750's spelling) means the
+    // token never carried the scope — distinct from `consent_revoked`, which means the viewer
+    // withdrew it.
+    expect(res.body).toEqual({
+      error: `missing required scope: ${USER_READ}`,
+      code: 'insufficient_scope',
+    });
     expect(handler).not.toHaveBeenCalled();
   });
 

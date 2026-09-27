@@ -981,10 +981,18 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * revoke the scope grant. `BlockRegistry.deleteSubscription` deletes the
  * `block_user_subscriptions` row and nothing else; `uninstallFromModel` additionally
  * revokes the block INSTANCE token, which invalidates already-minted tokens but leaves the
- * consent row intact. The grant lives in `app_user_scope_grants`, whose only writes in the
- * entire repo are the two in `~/server/services/blocks/scope-grant.service.ts`, both
- * setting `revokedAt: null`. Nothing writes a non-null `revoked_at`; nothing deletes a row.
- * So the scopes survive the uninstall and the next mint carries them with no fresh prompt.
+ * consent row intact. The grant lives in `app_user_scope_grants`.
+ *
+ * ⚠️ THE NEXT SENTENCE USED TO READ *"whose only writes in the entire repo are the two in
+ * `~/server/services/blocks/scope-grant.service.ts`, both setting `revokedAt: null`.
+ * Nothing writes a non-null `revoked_at`; nothing deletes a row."* That is RETRACTED:
+ * `revokeScopes` in the same module is a THIRD writer, it sets a non-null `revoked_at` when
+ * a viewer's revoke empties their granted set, and `blocks.revokeScopes` exposes it. The
+ * conclusion this paragraph exists for is UNCHANGED and is now the narrower, true one:
+ * removing an install still does not touch the grant, so the scopes survive the uninstall
+ * and the next mint carries them with no fresh prompt. What has changed is that there IS
+ * now a remedy — the per-scope revoke control — and it is a different action from removing
+ * an install, which is exactly why the retracted copy was wrong to conflate them.
  *
  * 🔴 PINNED AS THE WHOLE NORMALISED STRING, AND MATCHED **EXACTLY**. The artifact under
  * test is PROSE, so a guard on keywords is walkable by rewording — a future edit could

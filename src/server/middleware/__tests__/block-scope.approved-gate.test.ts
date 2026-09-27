@@ -280,7 +280,12 @@ describe('resolveRestApprovalVerdict — the predicate on its own', () => {
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
     oauthMock.mockResolvedValue({ userId: 9999 });
     expect(
-      await resolveRestApprovalVerdict({ ...claims, sub: 'user:7', dev: true, reviewRunForReal: true })
+      await resolveRestApprovalVerdict({
+        ...claims,
+        sub: 'user:7',
+        dev: true,
+        reviewRunForReal: true,
+      })
     ).toBe('dev_exempt');
     expect(findUniqueMock).not.toHaveBeenCalled();
   });
@@ -582,7 +587,14 @@ describe('withBlockScope — the gate on the real request path', () => {
 
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'missing required scope: models:read:self' });
+    // `code` is new and additive; kept as a whole-object `toEqual` for the reason given at the
+    // revocation assertion below. `insufficient_scope` mirrors RFC 6750 and is distinct from
+    // `consent_revoked` — the token never carried this scope, as opposed to the viewer having
+    // withdrawn it.
+    expect(res.body).toEqual({
+      error: 'missing required scope: models:read:self',
+      code: 'insufficient_scope',
+    });
   });
 
   /**
@@ -670,7 +682,13 @@ describe('withBlockScope — the gate on the real request path', () => {
     const { handler, res } = await drive(await mint());
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'block instance revoked' });
+    // 🔴 `code` IS NEW AND ADDITIVE, and this assertion stays a WHOLE-OBJECT `toEqual` rather
+    // than relaxing to `toMatchObject`. The body is an app-facing contract: a `toMatchObject`
+    // here would accept a future field nobody reviewed, and the point of the strict form is
+    // that adding one requires editing a test. `instance_revoked` is deliberately distinct
+    // from the `consent_revoked` a per-scope consent withdrawal returns — see
+    // `block-scope.consent-revocation.test.ts`.
+    expect(res.body).toEqual({ error: 'block instance revoked', code: 'instance_revoked' });
     expect(findUniqueMock).not.toHaveBeenCalled();
   });
 
@@ -716,7 +734,9 @@ describe('withBlockScope — the gate on the real request path', () => {
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
     oauthMock.mockResolvedValue({ userId: OWNER_ID });
     tunnelMock.mockResolvedValue(null);
-    const { handler, res } = await drive(await mint({ dev: true, reviewRunForReal: true, userId: 7 }));
+    const { handler, res } = await drive(
+      await mint({ dev: true, reviewRunForReal: true, userId: 7 })
+    );
     expect(handler).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(200);
     // Answered from the signed claim, before the row is even read.

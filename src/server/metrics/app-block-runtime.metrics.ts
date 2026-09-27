@@ -660,6 +660,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
+  consentRevocationRefusalsTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1045,6 +1046,29 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface', 'namespace']
   );
 
+  // ── PER-SCOPE CONSENT-REVOCATION REFUSALS ────────────────────────────────────
+  // 🔴 A SEPARATE SERIES FROM THE ONE ABOVE, BECAUSE IT FAILS IN THE OPPOSITE DIRECTION
+  // AND THAT CHANGES WHAT A NUMBER MEANS. `BlockRevocation.isRevoked` fails OPEN, so its
+  // counter can never see a refusal a Redis incident suppressed; `ConsentRevocation`
+  // (`blocks/consent-revocation.service.ts`) fails CLOSED, so THIS counter spikes during
+  // a Redis incident with refusals that are infra rather than consent. Folding them onto
+  // one series would make both readings ambiguous.
+  //
+  // 🔴 NO `app_block_id` AND NO `user_id`, for the standard reason on this file: the
+  // marker is keyed on exactly that pair, so either label would be an unbounded vector
+  // retained in the Node heap forever across ~130 pods. `scope` IS a label — it is a
+  // member of the code-owned block-scope vocabulary (~20 strings, and only the
+  // consent-GATED subset can ever appear here), server-chosen from `opts.requiredScope`
+  // rather than from request input, so a hostile block cannot inflate it. It is the label
+  // worth having: "which permission are people actually withdrawing" is the product
+  // question this whole feature exists to answer.
+  const consentRevocationRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_consent_revocation_refusals_total',
+    'Block-token requests refused because the viewer had REVOKED the route\'s required scope for that app (per-(user, app) Redis marker, blocks/consent-revocation.service.ts), by guard surface and scope. surface: rest = withBlockScope (403 with body code "consent_revoked"). 🔴 This guard FAILS CLOSED — a Redis error or an unparseable marker refuses — so a spike correlated with a cache incident is infra, NOT users withdrawing consent; read it against Redis health before treating it as product signal. The inverse of civitai_app_block_revocation_refusals_total, which fails OPEN and therefore undercounts during the same incident. A flat zero means no viewer has revoked a scope an in-flight token still carried, which on a pre-GA moderator-gated feature is the expected steady state',
+    ['surface', 'scope']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1275,6 +1299,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
+    consentRevocationRefusalsTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1520,6 +1545,28 @@ export function recordBlockRevocationRefusal(
       surface,
       namespace: revocationNamespaceLabel(blockInstanceId),
     });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * Fail-soft emit of ONE per-scope consent-revocation refusal.
+ *
+ * Distinct from {@link recordBlockRevocationRefusal} because the two guards fail in
+ * OPPOSITE directions — see the counter's own comment. `scope` is the route's
+ * server-declared `requiredScope`, never request input.
+ *
+ * 🔴 TOTAL, like every emitter here: the 403 has already been decided, and a metrics
+ * error must not convert it into an uncaught 500.
+ */
+export function recordBlockConsentRevocationRefusal(
+  surface: AppBlockRevocationSurface,
+  scope: string
+): void {
+  try {
+    const { consentRevocationRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    consentRevocationRefusalsTotal.inc({ surface, scope });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

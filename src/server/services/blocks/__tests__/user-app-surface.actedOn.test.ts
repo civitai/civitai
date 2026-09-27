@@ -460,12 +460,14 @@ describe('listMyScopeGrants — precedence', () => {
 
   /**
    * A REVOKED grant does not claim `'consent'`, and the app is not thereby hidden either: the
-   * activity leg picks it up and reports the honest `'activity'`. ⚠️ The revoked state is an
-   * INVARIANT guard — nothing in this repo writes a non-null `revoked_at` — labelled rather than
-   * counted as regression coverage. What it pins is that the two guards COMPOSE: the grant leg's
-   * `!g.revokedAt` must not leave the app invisible now that a third leg exists.
+   * activity leg picks it up and reports the honest `'activity'`. ⚠️ THE "INVARIANT GUARD"
+   * LABEL IS RETRACTED. It read *"nothing in this repo writes a non-null `revoked_at`"*, true
+   * when written and false since `revokeScopes` (`scope-grant.service.ts`) shipped — a viewer
+   * revoking their last granted scope produces exactly this row, so this is live coverage.
+   * What it pins is unchanged: the two guards COMPOSE — the grant leg's `!g.revokedAt` must
+   * not leave the app invisible now that a third leg exists.
    */
-  it('a revoked grant plus invocations yields an ACTIVITY row, not a consent row (invariant guard)', async () => {
+  it('a revoked grant plus invocations yields an ACTIVITY row, not a consent row', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
       {

@@ -2446,6 +2446,8 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  revokedScopes: string[];
+  revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
 }
 
