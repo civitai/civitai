@@ -1565,7 +1565,14 @@ describe('scope-grant.service', () => {
       expect(isMissingColumnError({ code: 'P2021' })).toBe(false);
       expect(isMissingColumnError({ code: '42P01' })).toBe(false);
       expect(isMissingColumnError({ code: 'P2000', meta: { code: '42P01' } })).toBe(false);
-      // And the shapes that used to throw before the `typeof` guard existed.
+      // 🔴 INVARIANT GUARDS, NOT REGRESSION COVERAGE — AND THIS COMMENT CLAIMED THE OPPOSITE.
+      // It said "the shapes that used to throw before the `typeof` guard existed". Measured against
+      // the pre-widening body (`(err as {code?: unknown} | null)?.code === 'P2022'`): `null`,
+      // `undefined`, `'P2022'`, `42703` and `{ meta: 'P2022' }` all returned `false` and NONE threw,
+      // because optional chaining already handled them. So the two `typeof` guards are equivalent
+      // mutants — removing either changes no observable answer, and round-11 review scored both
+      // SURVIVED. These four arms pin an invariant the bug never violated; they are worth keeping
+      // and must not be counted as coverage of a defect.
       expect(isMissingColumnError(null)).toBe(false);
       expect(isMissingColumnError(undefined)).toBe(false);
       expect(isMissingColumnError('P2022')).toBe(false);
@@ -1655,6 +1662,12 @@ describe('scope-grant.service', () => {
       // An `indexOf` walk cannot regress that way: the cursor is advanced explicitly.
       const sites: string[] = [];
       const NAME = 'logToAxiom';
+      /**
+       * Hoisted so the assertion can MATCH the whole tail (see the no-window note below) while
+       * REPORTING only a short prefix — otherwise a failure prints the rest of the module and the
+       * offending call is unfindable in the output.
+       */
+      const HANDLED = /^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/;
       for (let from = src.indexOf(NAME); from !== -1; from = src.indexOf(NAME, from + 1)) {
         const open = src.indexOf('(', from + NAME.length);
         // Only a CALL counts. Anything between the name and the next `(` that is not whitespace
@@ -1665,13 +1678,20 @@ describe('scope-grant.service', () => {
           end,
           'unbalanced parens after a logToAxiom call — the scan cannot judge it'
         ).toBeGreaterThan(0);
-        // 🔴 THE WINDOW IS WIDE, AND 40 CHARACTERS LET A HAZARD THROUGH. A negative lookahead
-        // whose target lies PAST the window simply fails to match — and a failed inner pattern
-        // makes the NEGATIVE lookahead succeed — so any whitespace run of ~33+ characters turned
-        // `.catch(<spaces>undefined)` into a pass. Measured by round-10 review. Widening cannot
-        // cost anything, because the `^` anchor means more text only gives the lookahead more to
-        // see; SAFE shapes classify identically at every window size.
-        sites.push(src.slice(end, end + 4096));
+        // 🔴 NO WINDOW AT ALL — AND A WINDOW OF **ANY** SIZE IS THE BUG, NOT A SIZE TO TUNE.
+        // A negative lookahead whose target lies PAST the slice simply fails to match, and a
+        // failed inner pattern makes the NEGATIVE lookahead SUCCEED. So a truncated tail turns a
+        // hazard into a pass at whatever width you pick: 40 let `.catch(<34 spaces>undefined)`
+        // through (round 10), and widening to 4096 moved the threshold instead of removing the
+        // mechanism — round 11 measured `.catch(<5000 spaces>undefined)` passing the 4096 version.
+        // The claim "widening cannot cost anything" was true of SAFE shapes and wrong about the
+        // class.
+        //
+        // Slicing to the end costs nothing measurable, because the `^` anchor bounds the work:
+        // 1,000 `RE.test` calls over the whole ~87 KB module run in ~0.06 ms, and the
+        // comment-consuming alternation's adversarial input (20,000 alternating `" /"` pairs) is
+        // FASTER than plain spaces — no catastrophic backtracking.
+        sites.push(src.slice(end));
       }
       // 🔴 POSITIVE CONTROL, AND ITS FLOOR IS THE DERIVED COUNT — **THREE**, not two.
       // `logMissingBudgetColumn`, `logMissingRevokedScopesColumn` and the pre-migration
@@ -1688,7 +1708,7 @@ describe('scope-grant.service', () => {
       ).toBeGreaterThanOrEqual(3);
       for (const after of sites) {
         expect(
-          after,
+          `${HANDLED.test(after)} :: ${after.slice(0, 60).replace(/\n/g, '\\n')}`,
           'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
             'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
             'it contradicts the neighbouring comment promising logging can never break the path.'
@@ -1711,11 +1731,16 @@ describe('scope-grant.service', () => {
           // 🔴 THE FIX IS THAT THE LOOKAHEAD OWNS THE WHITESPACE, so there is nothing to backtrack
           // into. Measured, not reasoned, at every draft — and validated in BOTH directions,
           // through the REAL `stripComments`/`endOfCall` pipeline rather than the regex alone,
-          // over the enumerated hazard set { bare, spaced-bare, newline-bare, `undefined`,
-          // ` undefined `, `null`, ` null `, `void 0`, ` void 0 `, tab, NBSP, em-space,
-          // `void handler`, `null?.x`, trailing-comment-bare, wide-whitespace-`undefined` } and the
-          // handler set { arrow, spaced arrow, `( ) =>`, named, `async`, `function`, `e => void e`,
-          // trailing-comment-then-arrow } — plus `.then(undefined, fn)`, red by design.
+          // over an enumerated set of **21 hazard** shapes { bare, spaced-bare, newline-bare, tab,
+          // NBSP, em-space, `undefined`, ` undefined `, `null`, ` null `, `void 0`, ` void 0 `,
+          // `void handler`, `null?.x`, block-comment-bare, trailing-line-comment-bare,
+          // own-line-comment-bare, and wide-whitespace variants of bare / `undefined` / `null` /
+          // `void 0` } and **14 handler** shapes { arrow, spaced arrow, `( ) =>`, named, `async`,
+          // `function`, `e => void e`, multi-line arrow, trailing-comment-then-arrow,
+          // wide-whitespace-then-arrow, `nullHandler`, `voidHandler`, `undefined2`,
+          // `null_handler` } — plus `.then(undefined, fn)`, red by design. ⚠️ Counts are stated WITH
+          // their population on purpose: an earlier note said "SEVEN shapes" with no population
+          // named, and the same round's commit message and code comment disagreed about the totals.
           //
           // NOT CLAIMED, and each is a shape nobody writes by hand: a variable that merely HOLDS
           // `undefined`; `.catch(...args)`, which is genuinely ambiguous; and two contrived FALSE
@@ -1730,7 +1755,7 @@ describe('scope-grant.service', () => {
           // regex alone — which is why it was invisible to the previous round's pure-function
           // check. `(?:\s|//[^\n]*)*` consumes both, and a trailing comment FOLLOWED by a real
           // handler still passes.
-        ).toMatch(/^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/);
+        ).toMatch(/^true ::/);
       }
     });
   });

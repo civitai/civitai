@@ -93,7 +93,9 @@ export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
  * degrading to "nothing revoked", `revokeScopes` throws a raw 500 instead of
  * `PRECONDITION_FAILED` + `CONSENT_REVOKE_UNAVAILABLE_MESSAGE`, and `unrevokeData`'s whole
  * pre-migration branch is unreachable. Found by round-10 review, after this branch took the
- * predicate's consumers from 2 to 4 — I did not write it, but I multiplied what depends on it.
+ * predicate's consumers from **2 to 6 repo-wide (1 to 4 in this module)** — I did not write it, but
+ * I multiplied what depends on it. ⚠️ An earlier draft said "2 to 4", which pairs the repo-wide
+ * BEFORE with the in-module AFTER; either population is defensible, one of each is not.
  *
  * ⚠️ TWO COPIES OF ONE RULE, DELIBERATELY NOT CONSOLIDATED HERE. The sibling is in another
  * service with its own docblock and tests; unifying them is the right end state and is a
