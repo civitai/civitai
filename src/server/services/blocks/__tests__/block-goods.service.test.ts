@@ -4,7 +4,7 @@ import { BuzzApiError } from '@civitai/buzz';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BuzzService from '~/server/services/buzz.service';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { buzzAccountTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import { BLOCK_GOOD_MAX_PRICE_BUZZ } from '~/shared/constants/block-goods.constants';
 
 /**
@@ -382,23 +382,35 @@ describe('blockGoodPurchaseKey — the ledger anchor', () => {
     expect(prefixPairs(keys)).toEqual([]);
   });
 
-  it('🔴 keeps the OWNER payout ids OUTSIDE the buyer key’s prefix', () => {
+  it('🔴 keeps the OWNER payout ids OUTSIDE the buyer key’s prefix, for EVERY colour', () => {
     // The mirror of the case above, one function over. The payout leg used to
     // be built as `${purchaseKey}:sell:…`, which put the buyer's whole prefix
     // inside every credit: a refund's prefix reversal of the BUYER would then
     // also reverse the owner's legs, inflating `buyerRefundedBuzz` and failing
     // every by-id clawback afterwards as already-reversed.
+    //
+    // 🔴 THE COLOURS ARE THE WHOLE `BuzzAccountType` ENUM, NOT THE TWO THIS RAIL
+    // PAYS IN. `blockGoodPurchaseKey`'s clause (b) claims every id ends in a
+    // literal token so no id can run out against another mid-segment — and a
+    // guard over blue/yellow alone is NARROWER than the claim it backs, because
+    // `creatorProgramBank` IS a string prefix of `creatorProgramBankGreen`. The
+    // enum is iterated rather than listed so a colour added later is covered
+    // without anyone remembering to come back here.
+    expect(buzzAccountTypes.length).toBeGreaterThan(2);
     const keyArgs = [
       { appBlockId: 'apb_A', goodId: 'sword', buyerUserId: 5 },
       { appBlockId: 'apb_A', goodId: 'sword', buyerUserId: 51, supersedesPurchaseId: 'bgp_ONE' },
     ];
     const ids = keyArgs.flatMap((args) => [
       blockGoodPurchaseKey(args),
-      blockGoodPayoutTransactionId({ ...args, recipientUserId: OWNER, color: 'blue' }),
-      blockGoodPayoutTransactionId({ ...args, recipientUserId: OWNER, color: 'yellow' }),
       // A second recipient is not paid today, but the id shape already admits
-      // one and the separation has to hold when it is.
-      blockGoodPayoutTransactionId({ ...args, recipientUserId: 7, color: 'yellow' }),
+      // one and the separation has to hold when it is. Recipients 7 and 77 are
+      // prefix-related as digit strings, like the buyer ids above.
+      ...[OWNER, 7].flatMap((recipientUserId) =>
+        buzzAccountTypes.map((color) =>
+          blockGoodPayoutTransactionId({ ...args, recipientUserId, color })
+        )
+      ),
     ]);
     expect(prefixPairs(ids)).toEqual([]);
   });
@@ -788,6 +800,92 @@ describe('purchaseBlockGood — the money path', () => {
     expect(result).toMatchObject({ charge: 'none' });
   });
 
+  it('🔴 does NOT cache a refusal a top-up could reverse — only the 409 is unretryable', async () => {
+    // 🔴 THE DEFECT. One `return` covered 400, 404 and 409 with
+    // `retryable: false`, contradicting `retryable`'s own definition ("an
+    // identical retry could reach a DIFFERENT verdict, so this outcome must not
+    // be cached") for two of the three. The endpoint sets
+    // `transient: retryable === true`, so a 400 was cached for the full
+    // idempotency TTL and REPLAYED at the viewer — the key blocking the retry
+    // it exists to enable, right after the top-up that would have worked. Only
+    // 409 genuinely cannot change: the ledger holds that id forever.
+    //
+    // All three arms in one test on purpose: the 409 is the control that proves
+    // the value is DERIVED and not hardcoded true.
+    mockCreateMulti.mockRejectedValueOnce(buzzApiError(400, 'Insufficient funds'));
+    expect(await purchaseBlockGood(purchaseInput())).toMatchObject({
+      reason: 'insufficient_funds',
+      charge: 'none',
+      retryable: true,
+    });
+
+    mockCreateMulti.mockRejectedValueOnce(buzzApiError(404, 'Not Found'));
+    expect(await purchaseBlockGood(purchaseInput())).toMatchObject({
+      reason: 'charge_failed',
+      charge: 'none',
+      retryable: true,
+    });
+
+    mockCreateMulti.mockRejectedValueOnce(buzzApiError(409, 'Conflict'));
+    expect(await purchaseBlockGood(purchaseInput())).toMatchObject({
+      reason: 'ledger_conflict',
+      charge: 'none',
+      retryable: false,
+    });
+  });
+
+  it('🔴 refuses a charge whose legs the ledger marked DUPLICATE, granting nothing', async () => {
+    // 🔴 THE DEFECT. `ledger_conflict` was reachable only through a 409 THROW,
+    // on the unverified assumption that an occupied prefix is how the
+    // multi-account endpoint reports one. Its response carries a per-leg
+    // `duplicate` flag, so it may instead answer 200 with legs that reference
+    // an EARLIER request's transactions — and this fixture is deliberately
+    // shaped so every other check passes: `totalAmount` equals the price and
+    // `transactionCount` is 1, so the partial-debit refusal below cannot be
+    // what catches it. Without this branch the entitlement is granted and the
+    // owner is paid 70% of Buzz that did not move on this attempt.
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-y', accountType: 'yellow', amount: PRICE, duplicate: true },
+      ],
+      totalAmount: PRICE,
+      transactionCount: 1,
+    } as never);
+
+    const result = await purchaseBlockGood(purchaseInput());
+    expect(result).toMatchObject({
+      ok: false,
+      status: 409,
+      reason: 'ledger_conflict',
+      // UNKNOWN, not `none`: a mixed response is money this attempt DID move,
+      // so the caller keeps the viewer's cap reservation.
+      charge: 'unknown',
+      retryable: false,
+    });
+    expect(dbMock.dbWrite.blockGoodEntitlement.upsert).not.toHaveBeenCalled();
+    expect(mockCreateSingle).not.toHaveBeenCalled();
+    // Nothing is reversed — a prefix-wide reversal would take back the earlier
+    // request's legs too — and the `pending` row survives as the only record.
+    expect(mockRefundMulti).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blockGoodPurchase.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blockGoodPurchase.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('completes normally when the same response marks its legs NOT duplicate', async () => {
+    // Negative control for the branch above: the refusal must be driven by the
+    // flag, not by the fixture shape it happens to arrive in.
+    mockCreateMulti.mockResolvedValueOnce({
+      transactionIds: [
+        { transactionId: 'buy-y', accountType: 'yellow', amount: PRICE, duplicate: false },
+      ],
+      totalAmount: PRICE,
+      transactionCount: 1,
+    } as never);
+    const result = await purchaseBlockGood(purchaseInput());
+    expect(result.ok).toBe(true);
+    expect(mockCreateSingle).toHaveBeenCalledTimes(1);
+  });
+
   it('🔴 lets a RETRY SUCCEED after an attempt whose charge was reversed', async () => {
     // 🔴 THE BRICK. The first attempt charges, fails to grant, reverses, and —
     // before this fix — DELETED its claim row. A reversed external id stays
@@ -938,6 +1036,74 @@ describe('purchaseBlockGood — the money path', () => {
     expect(dbMock.dbWrite.blockGoodPurchase.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.blockGoodPurchase.updateMany).toHaveBeenCalledTimes(1);
     expect(mockCreateSingle).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A FAILED reversal, at each of the two sites that attempt one.
+   *
+   * 🔴 THE DEFECT, AND IT WAS A REGRESSION. `rollbackCharge` returned
+   * `Promise<void>` and only LOGGED its failure, so a refused reversal resolved
+   * indistinguishably from a successful one and both callers went on to
+   * tombstone the row and report `charge: 'reversed'`. Each of the three things
+   * that follows is wrong in that state, and the first is strictly worse than
+   * refusing outright:
+   *   - the endpoint refunds the daily-cap reservation for Buzz that never
+   *     came back (`charge: 'reversed'`);
+   *   - the tombstone asserts a refund that did not happen, so
+   *     `refundBlockGoodPurchase` answers `already_refunded` and the failure
+   *     closes its own remediation path;
+   *   - the retired key lets the next attempt open a FRESH generation and
+   *     debit the buyer a second time, stranding the first debit.
+   * It is the same thing `refundBlockGoodPurchase` already aborts on when the
+   * BUYER refund fails, and says so in its own header.
+   */
+  describe('when the reversal itself is refused', () => {
+    it('🔴 after a PARTIAL debit: no tombstone, no reversed claim, UNKNOWN outcome', async () => {
+      mockCreateMulti.mockResolvedValueOnce({
+        transactionIds: [{ transactionId: 'buy-y', accountType: 'yellow', amount: 600 }],
+        totalAmount: 600,
+        transactionCount: 1,
+      } as never);
+      mockRefundMulti.mockRejectedValueOnce(new Error('ledger unavailable'));
+
+      const result = await purchaseBlockGood(purchaseInput());
+
+      // The reversal was attempted — without this the assertions below would
+      // also hold for an implementation that never tried.
+      expect(mockRefundMulti).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        ok: false,
+        status: 503,
+        reason: 'charge_unknown',
+        // NOT `reversed`: nothing established that the debit came back, so the
+        // caller must keep the viewer's cap reservation.
+        charge: 'unknown',
+      });
+      // 🔴 NO TOMBSTONE. `updateMany` is the only writer of the `refunded`
+      // marker `newestSupersededPurchaseId` reads, so not writing it is
+      // precisely what stops a retry opening a fresh generation on top of a
+      // debit nobody has confirmed is gone. The row stays `pending`, which is
+      // what the claim insert refuses as `pending_reconciliation`.
+      expect(dbMock.dbWrite.blockGoodPurchase.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.blockGoodPurchase.deleteMany).not.toHaveBeenCalled();
+      expect(mockCreateSingle).not.toHaveBeenCalled();
+    });
+
+    it('🔴 after a failed SETTLE: the same, at the second call site', async () => {
+      // Both sites are covered because the swallow was in the shared helper:
+      // fixing one caller and not the other leaves the identical defect behind
+      // a different failure.
+      dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('db down'));
+      mockRefundMulti.mockRejectedValueOnce(new Error('ledger unavailable'));
+
+      const result = await purchaseBlockGood(purchaseInput());
+
+      expect(mockRefundMulti).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ ok: false, status: 503, reason: 'charge_unknown' });
+      expect(result).toMatchObject({ charge: 'unknown' });
+      expect(dbMock.dbWrite.blockGoodPurchase.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.blockGoodPurchase.deleteMany).not.toHaveBeenCalled();
+    });
   });
 
   it('RE-GRANTS a revoked entitlement — clearing revokedAt, revokeReason and grantedAt', async () => {
@@ -1107,6 +1273,47 @@ describe('purchaseBlockGood — the money path', () => {
     expect(payoutWrite?.payouts).toEqual([
       { userId: OWNER, amount: 280, color: 'blue', transactionId: 'pay-blue' },
     ]);
+  });
+
+  it('leaves a PARTIAL payout distinguishable from a complete one (INVARIANT GUARD)', async () => {
+    // INVARIANT GUARD, not regression coverage: nothing today reads this, and
+    // the arithmetic below already held at the audited head. It is pinned
+    // because the PR asserts a re-run selector as the design and the obvious
+    // spelling of it — `payouts = []` — misses exactly the rows where money is
+    // owed. A partial payout is non-empty, so the marker has to be the
+    // SHORTFALL against the row's own `app_owner_share_buzz`, which needs no
+    // new column. What this guards is that relationship: a mutant recording
+    // the full share optimistically, or writing legs that do not sum to it,
+    // makes complete and partial indistinguishable again.
+    const recordedSum = async (blipYellow: number) => {
+      vi.clearAllMocks();
+      for (const mock of [mockCreateMulti, mockCreateSingle, mockRefundMulti]) mock.mockReset();
+      stubCleanDb();
+      stubMixedColorCharge();
+      stubLedgerPayouts({ blipsPerColor: { yellow: blipYellow } });
+      await purchaseBlockGood(purchaseInput());
+      const share = dbMock.dbWrite.blockGoodPurchase.create.mock.calls[0][0].data
+        .appOwnerShareBuzz as number;
+      const payouts = (dbMock.dbWrite.blockGoodPurchase.update.mock.calls
+        .map((c) => (c[0] as { data: Record<string, unknown> }).data)
+        .find((d) => 'payouts' in d)?.payouts ?? []) as { amount: number }[];
+      return { share, sum: payouts.reduce((t, p) => t + p.amount, 0) };
+    };
+
+    // `withRetries(fn, 3)` makes four attempts, so four blips exhaust it and
+    // only the blue leg lands.
+    const partial = await recordedSum(4);
+    const complete = await recordedSum(0);
+
+    // The two sums are 280 and 700 — distinct from each other, from the price
+    // (1000) and from the platform share (300), so neither can match by
+    // coincidence.
+    expect(partial.sum).toBe(280);
+    expect(complete.sum).toBe(700);
+    expect(partial.share).toBe(complete.share);
+    // The property itself, stated against the column rather than the literals:
+    expect(complete.sum).toBe(complete.share);
+    expect(partial.sum).toBeLessThan(partial.share);
   });
 
   it('records a leg the ledger reports as ALREADY PAID, without inventing an id for it', async () => {

@@ -269,23 +269,34 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  * at. Every id is a `:`-separated token list:
  *
  *     buy   block-good : <appBlockId> : <goodId> : <buyerUserId> [: after : <supersedesPurchaseId>] : buy
- *     sell  block-good : <appBlockId> : <goodId> : <buyerUserId> [: after : <supersedesPurchaseId>] : sell : <ownerId> : <color>
+ *     sell  block-good : <appBlockId> : <goodId> : <buyerUserId> [: after : <supersedesPurchaseId>] : sell : <ownerId> : <color> : leg
  *
- * (a) NO VARIABLE SEGMENT CAN CONTAIN `:` — `appBlockId` is `apb_<ULID>`,
- *     `supersedesPurchaseId` is `bgp_<ULID>`, `buyerUserId` is a number, and
- *     `goodId` is `BLOCK_GOOD_ID_RE`, which is colon-free for exactly this
- *     reason (see `block-goods.constants.ts`). So one id is a string prefix of
- *     another only if its TOKEN LIST is a prefix of the other's.
- * (b) NO TOKEN LIST HERE IS A PREFIX OF ANOTHER. Two lists that share the first
- *     four tokens diverge at the fifth, which is one of three literals — `buy`,
- *     `sell` or `after` — and no two of those are equal. Every list ends in a
- *     LITERAL token (`buy`, or a colour), so a shorter list can never run out
- *     against a longer one mid-segment.
+ * (a) NO SEGMENT CAN CONTAIN `:`. Every variable one is colon-free by its own
+ *     type: `appBlockId` is `apb_<ULID>`, `supersedesPurchaseId` is
+ *     `bgp_<ULID>`, `buyerUserId` and `recipientUserId` are numbers, `color` is
+ *     a `BuzzAccountType` (a fixed identifier-shaped enum), and `goodId` is
+ *     `BLOCK_GOOD_ID_RE`, colon-free for exactly this reason (see
+ *     `block-goods.constants.ts`).
+ * (b) EVERY ID ENDS IN A FIXED TERMINAL LITERAL — `buy` for the debit, `leg`
+ *     for a credit. That is what closes the gap (a) leaves open: with all
+ *     segments colon-free, two ids that differ can only be string prefixes if
+ *     they first diverge ON THE SHORTER ID'S LAST SEGMENT, because a divergence
+ *     anywhere earlier puts a `:` in the shorter against a segment character in
+ *     the longer. A constant last segment cannot be a strict prefix of the
+ *     other id's segment at that position, so no such divergence exists.
+ *
+ * 🔴 THE TERMINATOR IS NOT DECORATION. Without it the credit's last segment is
+ * the COLOUR, and `BuzzAccountType` is not prefix-free: `creatorProgramBank` is
+ * a string prefix of `creatorProgramBankGreen`. Neither reaches this rail today
+ * — `payWith` is `['blue','yellow']` — but the argument is offered so a later
+ * edit can be checked against it, and an argument that is only true for the
+ * colours currently passed is one a later edit reads as permission.
  *
  * Both halves are load-bearing: (a) alone leaves `…:5` inside `…:51`, and (b)
  * alone leaves the base key inside the `after:` key. The guard in
  * `block-goods.service.test.ts` asserts the property over a key set that
- * deliberately contains prefix-related buyer ids and both generation shapes.
+ * deliberately contains prefix-related buyer ids, both generation shapes, and
+ * EVERY member of `BuzzAccountType` — not just the two this rail pays in.
  * 🔴 A DISTINCTNESS ASSERTION IS NOT THIS PROPERTY — distinct ids collide under
  * a prefix match all day, and the guard that missed the original defect was
  * exactly that, over two same-length buyer ids that could not prefix each other.
@@ -315,7 +326,9 @@ export function blockGoodPurchaseKey(args: BlockGoodLedgerKeyArgs): string {
 
 /**
  * The ledger id ONE leg of the owner's credit is paid under: unique per
- * generation, recipient and colour.
+ * generation, recipient and colour, and TERMINATED by a literal — see clause
+ * (b) of the prefix-freedom argument on `blockGoodPurchaseKey` for why the
+ * colour must not be the last segment.
  *
  * 🔴 IT IS A SIBLING OF THE BUY KEY, NOT AN EXTENSION OF IT, and that is the
  * point. It used to be built as `${purchaseKey}:sell:…`, which made the buy key
@@ -332,7 +345,7 @@ export function blockGoodPurchaseKey(args: BlockGoodLedgerKeyArgs): string {
 export function blockGoodPayoutTransactionId(
   args: BlockGoodLedgerKeyArgs & { recipientUserId: number; color: BuzzAccountType }
 ): string {
-  return `${blockGoodLedgerStem(args)}:sell:${args.recipientUserId}:${args.color}`;
+  return `${blockGoodLedgerStem(args)}:sell:${args.recipientUserId}:${args.color}:leg`;
 }
 
 /**
@@ -693,16 +706,19 @@ export async function purchaseBlockGood(
       // happen, and a surviving `pending` row would make every later attempt
       // report `pending_reconciliation` forever.
       //
-      // ⚠️ That is not the same as saying the KEY is reusable. On 400 and 404 it
-      // is, and a retry after a top-up should reuse it so the ledger dedupe
-      // still covers the retry. On 409 it is not — the ledger already holds
-      // this id — and a retry will derive the same key and 409 again, which is
-      // why `ledger_conflict` is marked NOT retryable and points at support.
-      // Reaching 409 here means the ledger has a key we hold no row for, since
-      // a row would have failed the claim insert first; that is an
-      // inconsistency for a human, not something the viewer can act on.
+      // ⚠️ That is not the same as saying the KEY is reusable, and `retryable`
+      // splits on exactly that rather than on `knownPreMoney`. On 400 and 404
+      // the key is free and an identical retry CAN reach a different verdict —
+      // a top-up, or a ledger that resolves the request this time — so caching
+      // the refusal for the idempotency TTL would make the key the thing that
+      // blocks the retry it exists to enable. On 409 the ledger already holds
+      // this id: every retry derives the same key and 409s again, so it is the
+      // one verdict here that cannot change, and it points at support. Reaching
+      // 409 means the ledger has a key we hold no row for, since a row would
+      // have failed the claim insert first; that is an inconsistency for a
+      // human, not something the viewer can act on.
       await releaseUnsettledClaim(purchaseId);
-      return { ok: false, ...refusal, charge: 'none', retryable: false };
+      return { ok: false, ...refusal, charge: 'none', retryable: buzzStatus !== 409 };
     }
 
     // 🔴 UNKNOWN OUTCOME. The `pending` row SURVIVES: it is the only record that
@@ -714,14 +730,50 @@ export async function purchaseBlockGood(
     // human who has not been told to look. Closing that needs a sweeper (or at
     // minimum an alert on the row age), and neither is in this change — stated
     // here rather than left implied by the word "reconciliation".
+    return chargeUnknownRefusal();
+  }
+
+  // 🔴 A 409 THROW IS ONLY ONE OF THE TWO WAYS AN OCCUPIED PREFIX CAN COME
+  // BACK, AND WHICH ONE THIS SERVICE DOES IS UNVERIFIED FROM HERE. The
+  // multi-account response marks each leg `duplicate` — the very field
+  // `payBlockGoodOwner` records the SINGLE-transaction response as lacking — so
+  // an occupied prefix may arrive as a 200 whose legs reference transactions an
+  // earlier request created. Nothing new moved, but `transactionCount` and
+  // `totalAmount` then look exactly like a clean charge, so without this branch
+  // the entitlement is granted and the owner paid for Buzz that did not move.
+  // Both shapes are handled rather than one being guessed at; the question of
+  // which the remote does is open with the Buzz service owner.
+  //
+  // The outcome is reported as UNKNOWN, not `none`: a mixed response — some
+  // legs new, some duplicate — is money this attempt did move, and the safe
+  // direction is to keep the viewer's cap reservation and the `pending` row
+  // rather than assert a clean no-op. Nothing is reversed, because what a
+  // prefix-wide reversal would take back includes the earlier request's legs.
+  if (transaction.transactionIds.some((leg) => leg.duplicate === true)) {
+    void logToAxiom(
+      {
+        name: BLOCK_GOODS_LOG_NAME,
+        type: 'error',
+        message: 'purchase charge reported DUPLICATE legs — the ledger key was already occupied',
+        appBlockId,
+        goodId,
+        buyerUserId,
+        purchaseId,
+        transactionId,
+        duplicateLegs: transaction.transactionIds.filter((leg) => leg.duplicate === true).length,
+        totalLegs: transaction.transactionIds.length,
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
     return {
       ok: false,
-      status: 503,
-      reason: 'charge_unknown',
-      error: 'Could not confirm this purchase. Please check your balance before retrying.',
+      status: 409,
+      reason: 'ledger_conflict',
+      error: 'This item could not be purchased right now. Support can help.',
       charge: 'unknown',
-      // No verdict was ever reached, so a retry is not a replay of anything.
-      retryable: true,
+      // Same argument as the 409 throw: the id is occupied forever, so no
+      // retry can reach a different verdict.
+      retryable: false,
     };
   }
 
@@ -745,8 +797,10 @@ export async function purchaseBlockGood(
       'civitai-prod'
     ).catch(() => undefined);
     // Safe to reverse the whole prefix: this attempt is the exclusive holder of
-    // the key, so no other attempt's money can be under it.
-    await rollbackCharge(transactionId, good.title);
+    // the key, so no other attempt's money can be under it. A reversal whose
+    // own outcome is not established leaves the row `pending` and reports
+    // UNKNOWN — see `rollbackCharge`.
+    if (!(await rollbackCharge(transactionId, good.title))) return chargeUnknownRefusal();
     await voidReversedClaim(purchaseId, 'charge did not fully land — reversed');
     return {
       ok: false,
@@ -754,8 +808,9 @@ export async function purchaseBlockGood(
       reason: 'charge_failed',
       error: 'Could not complete this purchase',
       charge: 'reversed',
-      // The buyer's Buzz is back and the key is retired, so the next attempt
-      // derives a fresh generation and can land in full.
+      // Reached only on a CONFIRMED reversal, so the buyer's Buzz is back and
+      // the key is retired: the next attempt derives a fresh generation and can
+      // land in full.
       retryable: true,
     };
   }
@@ -801,12 +856,8 @@ export async function purchaseBlockGood(
       return serializeEntitlement(row);
     });
   } catch (error) {
-    // The charge landed and the grant did not. Reverse the charge — unambiguous,
-    // because this attempt holds the key exclusively — and RETIRE the key, so
-    // the retry is keyed to a new generation instead of colliding with the
-    // reversal.
-    await rollbackCharge(transactionId, good.title);
-    await voidReversedClaim(purchaseId, 'entitlement grant failed — charge reversed');
+    // Logged BEFORE the reversal is attempted, so the settle failure is
+    // recorded whichever way that attempt goes.
     void logToAxiom(
       {
         name: BLOCK_GOODS_LOG_NAME,
@@ -820,14 +871,21 @@ export async function purchaseBlockGood(
       },
       'civitai-prod'
     ).catch(() => undefined);
+    // The charge landed and the grant did not. Reverse the charge — unambiguous,
+    // because this attempt holds the key exclusively — and RETIRE the key, so
+    // the retry is keyed to a new generation instead of colliding with the
+    // reversal. A reversal whose own outcome is not established does neither:
+    // see `rollbackCharge`.
+    if (!(await rollbackCharge(transactionId, good.title))) return chargeUnknownRefusal();
+    await voidReversedClaim(purchaseId, 'entitlement grant failed — charge reversed');
     return {
       ok: false,
       status: 500,
       reason: 'charge_failed',
       error: 'Could not complete this purchase',
-      // The debit was reversed, so the buyer's Buzz is back — a KNOWN outcome
-      // behind a 500, which is exactly the case reading the status class gets
-      // wrong.
+      // Reached only on a CONFIRMED reversal, so the buyer's Buzz is back — a
+      // KNOWN outcome behind a 500, which is exactly the case reading the
+      // status class gets wrong.
       charge: 'reversed',
       retryable: true,
     };
@@ -850,17 +908,30 @@ export async function purchaseBlockGood(
 }
 
 /**
- * Reverse this attempt's charge. Safe as a PREFIX-wide reversal only because the
- * caller holds the `buzz_transaction_id` claim exclusively — see the ordering
- * argument on `purchaseBlockGood`. Never throws: a failed reversal is logged and
- * left for reconciliation, because the alternative is failing a response after
- * the money has already moved.
+ * Reverse this attempt's charge, and REPORT whether it worked. Safe as a
+ * PREFIX-wide reversal only because the caller holds the `buzz_transaction_id`
+ * claim exclusively — see the ordering argument on `purchaseBlockGood`.
+ *
+ * 🔴 IT RETURNS A VERDICT RATHER THAN THROWING, AND THE CALLER MUST BRANCH ON
+ * IT. Throwing is wrong — the alternative is failing a response after the money
+ * has already moved — but so is resolving identically either way, which is what
+ * it used to do. A failed reversal then read as a successful one, and each of
+ * the three things the caller does next is wrong in that state: the tombstone
+ * asserts a refund that did not happen (so `refundBlockGoodPurchase` answers
+ * `already_refunded` and the remediation path is closed by the record of the
+ * failure), `charge: 'reversed'` hands the viewer's daily-cap reservation back
+ * for Buzz that never returned, and the retired key lets the next attempt open
+ * a FRESH generation and debit the buyer a second time. That is the same defect
+ * `refundBlockGoodPurchase` aborts on when the buyer refund fails.
  */
-async function rollbackCharge(transactionId: string, title: string): Promise<void> {
-  await refundMultiAccountTransaction({
-    externalTransactionIdPrefix: transactionId,
-    description: `Failed app item purchase - ${title}`.slice(0, 100),
-  }).catch((error) => {
+async function rollbackCharge(transactionId: string, title: string): Promise<boolean> {
+  try {
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: transactionId,
+      description: `Failed app item purchase - ${title}`.slice(0, 100),
+    });
+    return true;
+  } catch (error) {
     void logToAxiom(
       {
         name: BLOCK_GOODS_LOG_NAME,
@@ -871,7 +942,32 @@ async function rollbackCharge(transactionId: string, title: string): Promise<voi
       },
       'civitai-prod'
     ).catch(() => undefined);
-  });
+    return false;
+  }
+}
+
+/**
+ * The refusal for an attempt whose effect on the LEDGER is not established.
+ *
+ * Every caller of this is a place where a debit may exist and nothing has
+ * confirmed it is gone, so all three consequences follow from that one fact:
+ * the `pending` row survives as the only record of the debit, the caller keeps
+ * the viewer's daily-cap reservation (`charge: 'unknown'`), and no tombstone is
+ * written — a tombstone would tell the next attempt to open a fresh generation
+ * on top of a debit nobody has confirmed is gone. The retry it does admit is
+ * refused at the claim insert as `pending_reconciliation`, which is a state a
+ * human can act on.
+ */
+function chargeUnknownRefusal(): PurchaseBlockGoodRefusal {
+  return {
+    ok: false,
+    status: 503,
+    reason: 'charge_unknown',
+    error: 'Could not confirm this purchase. Please check your balance before retrying.',
+    charge: 'unknown',
+    // No verdict was ever reached, so a retry is not a replay of anything.
+    retryable: true,
+  };
 }
 
 /**
@@ -970,8 +1066,19 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
  * split.
  *
  * Never throws: the viewer has their entitlement, and a failed credit is an
- * obligation to re-run, not a reason to fail a completed purchase. A purchase
- * whose `payouts` is empty is exactly the set to re-run.
+ * obligation to re-run, not a reason to fail a completed purchase.
+ *
+ * 🔴 THE RE-RUN SET IS `sum(payouts[].amount) < app_owner_share_buzz`, NOT
+ * `payouts = []`. The empty case is only the total failure; a payout whose blue
+ * leg landed and whose domain leg did not persists `[{blue}]`, which is
+ * non-empty and still owes the owner the remainder. Selecting on emptiness
+ * misses exactly the rows where money is owed, and it is the partial ones that
+ * are invisible — an owner underpaid by a leg has nothing on the row saying so.
+ * The marker needs no new column: the row already carries the full obligation
+ * as `app_owner_share_buzz`, and the legs are built to sum to exactly that, so
+ * the two agreeing IS "complete" and a shortfall IS the amount still owed. (No
+ * selector reads this yet; there is no re-runner. The invariant is stated so
+ * the one that is written reads the right thing.)
  */
 async function payBlockGoodOwner(args: {
   purchaseId: string;
@@ -1100,8 +1207,10 @@ async function payBlockGoodOwner(args: {
     // Persist whatever DID land even though the payout as a whole failed: a
     // recorded leg is what a refund reverses, and an unrecorded one is Buzz the
     // owner keeps after the buyer is made whole. Skipped when nothing landed,
-    // so `payouts: []` still means "nothing was paid" and still selects the
-    // rows a re-runner should pick up.
+    // so `payouts: []` keeps meaning "nothing was paid" rather than becoming a
+    // second spelling of it. What this write produces is a PARTIAL payout, and
+    // it is still in the re-run set — `sum(payouts[].amount)` falls short of
+    // `app_owner_share_buzz`; see the header.
     //
     // Best effort by construction — if the write is what failed above it will
     // very likely fail again — so its own failure is logged rather than thrown:
