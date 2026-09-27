@@ -45,7 +45,12 @@ export type BlockActionCode =
   | 'shared.unvote'
   | 'shared.withdraw'
   | 'shared.report'
-  | 'post.create';
+  | 'post.create'
+  // A DIGITAL GOODS purchase (`/api/v1/blocks/goods/purchase`). Distinct from
+  // `tip`: both spend the viewer's Buzz, but the counterparty is the app owner
+  // rather than another user, and the row names a `goodId` rather than a
+  // `toUserId`.
+  | 'goods.purchase';
 
 export type BlockActionDetail = {
   /** Stable action code (see BlockActionCode). Free-form on the wire for fwd-compat. */
@@ -131,6 +136,13 @@ export type BlockActionDetail = {
    * this table needs. (The post itself is on `entityType`/`entityId`.)
    */
   modelVersionId?: number;
+  /**
+   * The manifest `goods[].id` a `goods.purchase` bought. The app's own
+   * identifier, bounded by `BLOCK_GOOD_ID_RE` at manifest validation, and the
+   * only thing on the row that says WHICH item was bought — `scope` is
+   * `goods:purchase:self` for every purchase and `endpoint` is the route name.
+   */
+  goodId?: string;
 };
 
 /**
@@ -147,6 +159,7 @@ export const READ_SCOPE_LABELS: Record<string, string> = {
   'apps:storage:read': 'Read your app storage',
   'apps:storage:shared:read': 'Read shared app storage',
   'block:settings:read': 'Read your block settings',
+  'goods:read:self': 'Read what you own from this app',
 };
 
 /** Runtime guard for a `detail` value read back off the DB (typed `unknown`). */
@@ -277,6 +290,14 @@ export function describeBlockAction(
       // a model gallery" — they have different consequences.
       const gallery = detail.modelVersionId != null ? ', attached to a model gallery' : '';
       return `Published ${what} to your profile${gallery}${failed}`;
+    }
+    case 'goods.purchase': {
+      // Named for the same reason `post.create` is: this is the viewer's money
+      // leaving their balance, and "Performed an app action" is not an audit row.
+      const amt = typeof detail.amount === 'number' ? ` for ${formatBuzz(detail.amount)}` : '';
+      const what = detail.goodId ? `"${detail.goodId}"` : 'an item';
+      const failed = detail.outcome === 'failed' ? ' — failed' : '';
+      return `Bought ${what} from this app${amt}${failed}`;
     }
     default:
       // Unknown / forward-compat action code — safe generic line.

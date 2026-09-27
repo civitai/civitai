@@ -123,6 +123,22 @@ const GATE_LEDGER: Record<string, string> = {
     '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
     'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
     'as an explicit split on top of this row, not as a widened owner lookup.',
+  'src/server/services/blocks/block-goods.service.ts':
+    'resolveBlockGoodForPurchase reads the app OWNER — `app?.userId` off the AppBlock ' +
+    'row — to decide who a digital-goods sale PAYS and who is barred from buying their ' +
+    'own catalog. Both uses are OWNER-ONLY and deliberately NOT widened to ACCEPTED ' +
+    'collaborators, for the same reason author-fee accrual is not: the owner is ' +
+    'snapshotted onto `block_good_purchase.app_owner_user_id` at write time so an ' +
+    'ex-owner keeps what they earned before transferring the app away, and a widened ' +
+    'lookup would make a single sale owe several people with no split anyone has ' +
+    'specified. Resolving the payee later instead would retroactively re-route earnings ' +
+    'on every ownership transfer. The self-purchase refusal is owner-only for a ' +
+    'different reason: it exists because an owner buying their own good would pay ' +
+    'themselves 70% through the bank and burn 30%, which is only true of the person the ' +
+    'payout goes to — a collaborator buying the app’s goods is an ordinary sale. NO mod ' +
+    'bypass, and none is meaningful: neither use is a gate a caller passes through. If ' +
+    'collaborator revenue-sharing is ever specified it belongs as an explicit split on ' +
+    'top of the recorded payout, not as a widened owner lookup.',
   'src/server/services/blocks/block-approval.service.ts':
     'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
     '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +

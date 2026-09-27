@@ -142,6 +142,36 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // gallery target, because the content differs every time and a blanket grant
   // cannot inform. See `createPostFromAppGate.ts`.
   'posts:write:self': TokenScope.MediaWrite,
+  // goods:read:self — read the entitlements the VIEWER holds FROM THE CALLING
+  // APP. Scoped to `claims.appBlockId` server-side, so an app can only ever see
+  // what it sold: the reply is its own sales ledger filtered to one viewer, not
+  // a view of the viewer's purchases elsewhere. CONSENT-EXEMPT for that reason
+  // (the server-side app scoping is the gate, like the collections read
+  // scopes), and :self ⇒ a non-anon subject.
+  //
+  // SKIP_OAUTH_CHECK: an app good is a platform-mediated entitlement that
+  // touches none of the viewer's civitai resources through the OAuth surface,
+  // so there is no bit to require. Same posture as `apps:storage:*` /
+  // `collections:*`.
+  'goods:read:self': SKIP_OAUTH_CHECK,
+  // goods:purchase:self — SPEND the viewer's Buzz on a manifest-declared good.
+  //
+  //   - SENSITIVE ⇒ the manifest must justify it or submit is rejected.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES. Money out of
+  //     the viewer's balance always needs an explicit grant.
+  //   - :self ⇒ non-anon subject; there is nobody to bill otherwise.
+  //   - SKIP_OAUTH_CHECK for the same reason as the read half. Note this
+  //     DIFFERS from `social:tip:self`, which maps to `TokenScope.SocialTip`:
+  //     that bit is specifically "tip other users" and reusing it would let
+  //     every app already approved to tip start selling goods. There is no
+  //     app-goods bit, and minting one is a change to a bitmask persisted on
+  //     every API key — out of proportion to a capability whose real gates are
+  //     the approved-scope snapshot, the consent grant and the per-op check.
+  //
+  // PAGE-SAFE by BOUNDING, not by prohibition (so it stays off
+  // PAGE_FORBIDDEN_SCOPES, like tipping): the price is review-gated and
+  // hard-capped per purchase, and a per-user daily ceiling bounds the day.
+  'goods:purchase:self': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -421,6 +451,10 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   // visible to other viewers OF THAT APP, this one is visible to the whole site
   // and carries the viewer's byline.
   'posts:write:self',
+  // Spends the viewer's Buzz on an app's own catalog. The read half
+  // (`goods:read:self`) is not sensitive — it returns only what the calling app
+  // already sold to this viewer.
+  'goods:purchase:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

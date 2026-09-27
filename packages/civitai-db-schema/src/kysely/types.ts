@@ -975,6 +975,91 @@ export type BlockedImage = {
   reason: Generated<BlockImageReason>;
   createdAt: Generated<Timestamp>;
 };
+export type BlockGoodEntitlement = {
+  id: string;
+  user_id: number;
+  app_block_id: string;
+  good_id: string;
+  /**
+   * 'good' | 'app_unlock' — see BLOCK_GOOD_KINDS.
+   */
+  kind: Generated<string>;
+  /**
+   * The opaque app payload, snapshotted from the manifest at purchase.
+   */
+  payload: Generated<unknown>;
+  /**
+   * The purchase that granted it. One-to-one: a purchase grants exactly one
+   * entitlement, and an entitlement always has a purchase behind it.
+   */
+  purchase_id: string;
+  granted_at: Generated<Timestamp>;
+  /**
+   * Set when the purchase is refunded or the good is taken down. A revoked
+   * entitlement is kept, never deleted — the row is the audit trail for a
+   * reversal.
+   */
+  revoked_at: Timestamp | null;
+  revoke_reason: string | null;
+};
+export type BlockGoodPurchase = {
+  id: string;
+  /**
+   * The buyer. Always the verified block-token subject, never a body field.
+   */
+  user_id: number;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * NOT an FK and NULLABLE, for the same reason the attribution tables give:
+   * synthetic instance ids (`bus_pub_*`, `page_*`, `ephemeral-*`) resolve to no
+   * row. NULL means the instance could not be resolved — the purchase still
+   * happened and is still attributed to the app; only the install context is
+   * unknown. A purchase must never fail because attribution could not.
+   */
+  block_instance_id: string | null;
+  /**
+   * The manifest `goods[].id` bought, and the manifest `version` it was bought
+   * under. Together they explain a disputed price without needing the manifest
+   * that was live at the time (a later approved version may have repriced it).
+   */
+  good_id: string;
+  manifest_version: string;
+  /**
+   * What the viewer was charged, in whole Buzz. Always > 0 (CHECK).
+   */
+  price_buzz: number;
+  /**
+   * How much of `price_buzz` came out of the BLUE (granted) account. Drives
+   * the proportional colour split of the payout, so a viewer paying blue does
+   * not turn non-withdrawable Buzz into withdrawable earnings.
+   */
+  blue_paid_buzz: Generated<number>;
+  app_owner_user_id: number;
+  app_owner_share_buzz: number;
+  platform_share_buzz: number;
+  /**
+   * The deterministic `externalTransactionIdPrefix` the buyer's debit was
+   * made under. UNIQUE — this is the LEDGER-backed half of idempotency: a
+   * retry after the Redis sentinel expired collides here instead of charging
+   * twice.
+   */
+  buzz_transaction_id: string;
+  /**
+   * What was actually paid, per recipient and colour, with each payout's own
+   * ledger transaction id: `[{ userId, amount, color, transactionId? }]`.
+   * Empty until the payout leg runs. A refund reads THIS, never a re-derived
+   * split.
+   */
+  payouts: Generated<unknown>;
+  /**
+   * 'paid' | 'refunded'.
+   */
+  status: Generated<string>;
+  refund_reason: string | null;
+  refunded_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+};
 export type Blocklist = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -4608,6 +4693,8 @@ export type DB = {
   block_attribution_payout: BlockAttributionPayout;
   block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
+  block_good_entitlement: BlockGoodEntitlement;
+  block_good_purchase: BlockGoodPurchase;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;
   block_subscription_attribution: BlockSubscriptionAttribution;

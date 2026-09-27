@@ -602,6 +602,9 @@ model User {
   blockAuthorFeeAccrualsAsViewer   BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualViewer")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
+  blockGoodPurchasesAsBuyer        BlockGoodPurchase[]      @relation("BlockGoodPurchaseBuyer")
+  blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
+  blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -2525,6 +2528,7 @@ model OauthClient {
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
   authorFeeAccruals BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualApp")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
+  goodPurchases BlockGoodPurchase[] @relation("BlockGoodPurchaseApp")
   connectListings          AppListing[]
 
   @@index([userId])
@@ -2683,6 +2687,8 @@ model AppBlock {
   spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
   authorFeeAccruals  BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualAppBlock")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
+  goodPurchases      BlockGoodPurchase[] @relation("BlockGoodPurchaseAppBlock")
+  goodEntitlements   BlockGoodEntitlement[] @relation("BlockGoodEntitlementAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
@@ -3843,6 +3849,156 @@ model BlockAuthorFeeAccrual {
   @@index([status, accruedAt], map: "block_author_fee_accrual_settlement_idx")
   @@index([appOwnerUserId, accruedAt], map: "block_author_fee_accrual_owner_idx")
   @@map("block_author_fee_accrual")
+}
+
+/// App Blocks DIGITAL GOODS — the purchase ledger.
+///
+/// One row = one viewer buying one manifest-declared good from one app for
+/// Buzz. The row is the FINANCIAL RECORD: who paid, how much, under which
+/// manifest version, how it split, and what was actually paid out. The
+/// entitlement it grants is a separate row (`BlockGoodEntitlement`) so a
+/// refund can revoke the entitlement while the money history stays intact.
+///
+/// 🔴 THE PAYOUT IS IMMEDIATE, NOT A DAILY BATCH — the cosmetic shop's shape,
+/// not the author fee's. The buyer is debited to the bank (`TransactionType
+/// .Purchase`) and the app owner is credited from the bank
+/// (`TransactionType.Sell`) inside the same request. There is no settlement
+/// job and no accrual state to reconcile.
+///
+/// 🔴 `payouts` RECORDS WHAT WAS ACTUALLY PAID, per recipient and colour, with
+/// the ledger transaction id. A refund reverses THOSE transactions; it never
+/// re-derives a split. Re-deriving would pay back a number the recipient may
+/// never have received (a colour proration that floored differently, a share
+/// constant that has since moved).
+///
+/// 🔴 `app_owner_user_id` is resolved at WRITE time. An app that changes hands
+/// must not retroactively move earnings already paid to the previous owner.
+///
+/// CONSERVATION: `platform_share_buzz + app_owner_share_buzz = price_buzz` is a
+/// CHECK, so a split arithmetic bug fails at INSERT rather than quietly
+/// minting or destroying Buzz. Mirrors `block_buzz_attribution`'s three-way
+/// invariant; there is no provider fee here because no card is involved.
+///
+/// FK posture is RESTRICT throughout — these rows are financial history and
+/// must not disappear with the app, the client or the user.
+///
+/// Application-generated id (`bgp_<ulid>`).
+model BlockGoodPurchase {
+  id                  String   @id
+
+  /// The buyer. Always the verified block-token subject, never a body field.
+  userId              Int      @map("user_id")
+  user                User     @relation("BlockGoodPurchaseBuyer", fields: [userId], references: [id], onDelete: Restrict)
+
+  appId               String   @map("app_id")
+  app                 OauthClient @relation("BlockGoodPurchaseApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId          String   @map("app_block_id")
+  appBlock            AppBlock @relation("BlockGoodPurchaseAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  /// NOT an FK and NULLABLE, for the same reason the attribution tables give:
+  /// synthetic instance ids (`bus_pub_*`, `page_*`, `ephemeral-*`) resolve to no
+  /// row. NULL means the instance could not be resolved — the purchase still
+  /// happened and is still attributed to the app; only the install context is
+  /// unknown. A purchase must never fail because attribution could not.
+  blockInstanceId     String?  @map("block_instance_id")
+
+  /// The manifest `goods[].id` bought, and the manifest `version` it was bought
+  /// under. Together they explain a disputed price without needing the manifest
+  /// that was live at the time (a later approved version may have repriced it).
+  goodId              String   @map("good_id")
+  manifestVersion     String   @map("manifest_version")
+
+  /// What the viewer was charged, in whole Buzz. Always > 0 (CHECK).
+  priceBuzz           Int      @map("price_buzz")
+  /// How much of `price_buzz` came out of the BLUE (granted) account. Drives
+  /// the proportional colour split of the payout, so a viewer paying blue does
+  /// not turn non-withdrawable Buzz into withdrawable earnings.
+  bluePaidBuzz        Int      @default(0) @map("blue_paid_buzz")
+
+  appOwnerUserId      Int      @map("app_owner_user_id")
+  appOwner            User     @relation("BlockGoodPurchaseAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  appOwnerShareBuzz   Int      @map("app_owner_share_buzz")
+  platformShareBuzz   Int      @map("platform_share_buzz")
+
+  /// The deterministic `externalTransactionIdPrefix` the buyer's debit was
+  /// made under. UNIQUE — this is the LEDGER-backed half of idempotency: a
+  /// retry after the Redis sentinel expired collides here instead of charging
+  /// twice.
+  buzzTransactionId   String   @unique @map("buzz_transaction_id")
+
+  /// What was actually paid, per recipient and colour, with each payout's own
+  /// ledger transaction id: `[{ userId, amount, color, transactionId? }]`.
+  /// Empty until the payout leg runs. A refund reads THIS, never a re-derived
+  /// split.
+  payouts             Json     @default("[]")
+
+  /// 'paid' | 'refunded'.
+  status              String   @default("paid")
+  refundReason        String?  @map("refund_reason")
+  refundedAt          DateTime? @map("refunded_at") @db.Timestamptz(6)
+
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entitlement         BlockGoodEntitlement?
+
+  @@index([userId, createdAt(sort: Desc)], map: "bgp_buyer_idx")
+  @@index([appBlockId, createdAt(sort: Desc)], map: "bgp_app_block_idx")
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bgp_owner_idx")
+  @@map("block_good_purchase")
+}
+
+/// App Blocks DIGITAL GOODS — what a viewer OWNS.
+///
+/// The platform owns this ledger; the good's MEANING is the app's business.
+/// `payload` is copied VERBATIM from the approved manifest at purchase time and
+/// is never interpreted here — the app reads its entitlements and keeps the
+/// semantics in its own storage.
+///
+/// 🔴 `payload` IS MANIFEST-SOURCED, NOT CLIENT-SUPPLIED. It rides the
+/// submit → review → approve pipeline like the price does, so what an
+/// entitlement carries is something a moderator saw.
+///
+/// 🔴 `(user_id, app_block_id, good_id)` IS UNIQUE. Buying the same good twice
+/// is refused before any money moves; the constraint is what makes that true
+/// under concurrency rather than by check-then-act. Goods are therefore
+/// single-ownership by construction — a consumable (buy N uses) is a different
+/// product and would need its own table, not a relaxed constraint here.
+///
+/// 🔴 `kind` IS WHAT LETS THE PAID-APP UNLOCK LAND WITHOUT A MIGRATION. An
+/// `app_unlock` entitlement is recorded exactly like any other and the platform
+/// does NOT act on it yet: the access gate is a later change that reads this
+/// column. Nothing in this repo branches on it today.
+///
+/// Application-generated id (`bge_<ulid>`).
+model BlockGoodEntitlement {
+  id                  String   @id
+
+  userId              Int      @map("user_id")
+  user                User     @relation("BlockGoodEntitlementOwner", fields: [userId], references: [id], onDelete: Restrict)
+  appBlockId          String   @map("app_block_id")
+  appBlock            AppBlock @relation("BlockGoodEntitlementAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  goodId              String   @map("good_id")
+  /// 'good' | 'app_unlock' — see BLOCK_GOOD_KINDS.
+  kind                String   @default("good")
+  /// The opaque app payload, snapshotted from the manifest at purchase.
+  payload             Json     @default("{}")
+
+  /// The purchase that granted it. One-to-one: a purchase grants exactly one
+  /// entitlement, and an entitlement always has a purchase behind it.
+  purchaseId          String   @unique @map("purchase_id")
+  purchase            BlockGoodPurchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+
+  grantedAt           DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+  /// Set when the purchase is refunded or the good is taken down. A revoked
+  /// entitlement is kept, never deleted — the row is the audit trail for a
+  /// reversal.
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason        String?  @map("revoke_reason")
+
+  @@unique([userId, appBlockId, goodId], map: "block_good_entitlement_owner_good_uniq")
+  @@index([appBlockId, userId], map: "bge_app_viewer_idx")
+  @@map("block_good_entitlement")
 }
 
 /// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.

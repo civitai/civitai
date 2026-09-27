@@ -233,7 +233,17 @@ export type AppBlockEndpoint =
   // it exists for. The p95 of the merged series is dominated by whichever
   // outnumbers the other, and the declarations GET outnumbers the calls.
   | 'tools'
-  | 'tools_call';
+  | 'tools_call'
+  // The DIGITAL GOODS surface. Two labels for two workloads that share nothing
+  // but a noun: `goods_purchase` is the only SPEND route outside the workflow
+  // family — it takes a per-instance limiter, a daily-cap reservation, a Buzz
+  // debit, a DB transaction and a payout leg, and its error rate is how "the
+  // buy button is failing" becomes visible. `entitlements` is a bounded index
+  // read of one viewer's rows for one app, which structurally cannot be slow.
+  // Merging them would put the checkout path's p95 behind the volume of a
+  // read every app makes on mount.
+  | 'goods_purchase'
+  | 'entitlements';
 // NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
 //
 // 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists

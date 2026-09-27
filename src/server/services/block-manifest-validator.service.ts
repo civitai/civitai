@@ -12,6 +12,7 @@ import {
   unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
+import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
@@ -126,6 +127,15 @@ interface RawManifest {
    * exposed.
    */
   publicSettingsKeys?: unknown;
+  /**
+   * Optional DIGITAL GOODS catalog — entitlements the platform sells to a
+   * viewer for Buzz on this app's behalf. Review-gated by construction: it
+   * rides the existing submit → review → approve pipeline, so the catalog a
+   * moderator approved is the only one that can be sold, and a price change
+   * needs a new version. Validated by `parseManifestGoods`, which the purchase
+   * endpoint also calls — a good that cannot be validated can never be bought.
+   */
+  goods?: unknown;
   /**
    * Slot targets the app installs into (model-page slots). Each entry's
    * `slotId` MUST be a known registered slot id — previously UN-validated
@@ -692,6 +702,20 @@ export class BlockManifestValidator {
             break;
           }
         }
+      }
+    }
+
+    // DIGITAL GOODS catalog. `parseManifestGoods` is the single rule: this gate
+    // and the purchase endpoint both call it, so a catalog entry that cannot be
+    // validated here is also unbuyable there rather than sellable on terms no
+    // moderator approved.
+    for (const goodsError of parseManifestGoods(m).errors) errors.push(goodsError);
+    // Declaring a catalog without the scope to sell it is a dead manifest, and
+    // silently accepting it means the author finds out from a 403 in production.
+    if (Array.isArray(m.goods) && m.goods.length > 0) {
+      const declared = Array.isArray(m.scopes) ? m.scopes : [];
+      if (!declared.includes('goods:purchase:self')) {
+        errors.push('goods requires the goods:purchase:self scope');
       }
     }
 

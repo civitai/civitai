@@ -1847,6 +1847,26 @@ export const REDIS_SYS_KEYS = {
      */
     GEN_IDEM: 'system:blocks:gen-idem',
     /**
+     * Cumulative DIGITAL-GOODS spend cap counter for the block goods purchase
+     * endpoint (`POST /api/v1/blocks/goods/purchase`), keyed
+     * `system:blocks:goods-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP
+     * (daily generation spend) and TIP_CAP (daily Buzz tipped out): this bounds
+     * a user's daily Buzz spent BUYING app goods. Per-USER aggregate (no
+     * appBlockId) so N installed apps share ONE daily ceiling and a publisher
+     * cannot multiply it by shipping more apps. INCRBY'd by the price
+     * pre-transaction (reserve-and-refund), TTL set on first write.
+     */
+    GOODS_CAP: 'system:blocks:goods-cap',
+    /**
+     * Idempotency record for the block goods purchase endpoint, keyed
+     * `system:blocks:goods-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`.
+     * Same `SET NX` claim → replay / 409 / 422-on-fingerprint-mismatch state
+     * machine as TIP_IDEM, and fail-CLOSED on a redis error at claim time for
+     * the same reason (a money endpoint must not dedupe blind). DISTINCT from
+     * TIP_IDEM so a key value reused across the two surfaces cannot collide.
+     */
+    GOODS_IDEM: 'system:blocks:goods-idem',
+    /**
      * Per-APP aggregate generation-SPEND + velocity cap counters (G8 — generic
      * per-app safety). DISTINCT from BUZZ_CAP (which bounds a single USER's daily
      * Buzz spend): this bounds the daily block-initiated generation SPEND (in Buzz)

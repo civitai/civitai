@@ -120,6 +120,16 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // ownership, the host confirm, the dedicated Flipt flag) still applies to
   // every dev-token call.
   'posts:write:self',
+  // goods:read:self — INCLUDED in BOTH dev allowlists (this bearer path and the
+  // tunnel path below). A pure self-bound read of what the DEV owns from THIS
+  // app; a pre-approval app has no rows, so it simply answers empty rather than
+  // 403-ing a UI the developer is trying to build.
+  //
+  // 🔴 `goods:purchase:self` is DELIBERATELY EXCLUDED FROM ALL FOUR allowlists,
+  // like `social:tip:self` — no real money OUT in dev. It would also be inert:
+  // the purchase path refuses a buyer who owns the app, and a pre-approval app
+  // has no AppBlock row to resolve a catalog from at all.
+  'goods:read:self',
 ]);
 
 /**
@@ -155,6 +165,10 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // WITHHELD from BOTH mod-review allowlists below — a mod previewing another
   // author's unapproved app must never publish under the MOD'S name.
   'posts:write:self',
+  // goods:read:self — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST
+  // rationale): self-bound, read-only, and empty for a pre-approval app.
+  // `goods:purchase:self` stays excluded everywhere.
+  'goods:read:self',
 ]);
 
 /**
@@ -176,6 +190,8 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
  *   - `collections:write:self`    a write surface
  *   - `social:tip:self`           real money OUT
+ *   - `goods:purchase:self`       real money OUT (an app's own paid catalog)
+ *   - `goods:read:self`           not needed to RENDER; answers empty pre-approval
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
  *   - `posts:write:self`          PUBLIC content published under the MOD'S name
  *
@@ -213,6 +229,15 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * declares — the clamp keeps only scopes IN this set, so a malicious manifest
  * declaring extra scopes gets NONE of these):
  *   - `social:tip:self`               real money OUT — NEVER granted (invariant #4)
+ *   - `goods:purchase:self`           real money OUT — same invariant. A mod
+ *                                     evaluating an app must never be charged for
+ *                                     that app's catalog, and the purchase path
+ *                                     has no pre-approval AppBlock row to price
+ *                                     against anyway.
+ *   - `goods:read:self`               nothing to read pre-approval (no entitlement
+ *                                     rows exist for a synthetic appBlockId), so
+ *                                     granting it would widen the token for no
+ *                                     evaluable behaviour.
  *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
  *   - `collections:read:private`      third-party-reachable private data
  *   - `collections:write:self`        write surface not needed to evaluate a page app
@@ -324,7 +349,9 @@ export function clampDevScopes(opts: {
   // every non-skip scope).
   if (oauthAllowed !== null) {
     const ceiling = oauthAllowed;
-    granted = granted.filter((s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid);
+    granted = granted.filter(
+      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
+    );
   }
 
   // Body narrowing — the caller may request a subset of the above.

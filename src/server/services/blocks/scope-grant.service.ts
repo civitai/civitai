@@ -426,6 +426,12 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // them guarantees they reach `claims.scopes` in the minted page token.
   'collections:read:self',
   'collections:write:self',
+  // goods:read:self — the app's OWN sales ledger, filtered to this viewer. The
+  // read is scoped to `claims.appBlockId` in the query, so it can only ever
+  // return what the calling app itself sold; there is no third-party data to
+  // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
+  // out of the viewer's balance always needs an explicit grant.
+  'goods:read:self',
 ]);
 
 export function partitionByConsent(
