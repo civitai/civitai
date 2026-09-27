@@ -278,12 +278,19 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  *     `BLOCK_GOOD_ID_RE`, colon-free for exactly this reason (see
  *     `block-goods.constants.ts`).
  * (b) EVERY ID ENDS IN A FIXED TERMINAL LITERAL — `buy` for the debit, `leg`
- *     for a credit. That is what closes the gap (a) leaves open: with all
- *     segments colon-free, two ids that differ can only be string prefixes if
- *     they first diverge ON THE SHORTER ID'S LAST SEGMENT, because a divergence
- *     anywhere earlier puts a `:` in the shorter against a segment character in
- *     the longer. A constant last segment cannot be a strict prefix of the
- *     other id's segment at that position, so no such divergence exists.
+ *     for a credit — and the only literals any id can carry are `buy`, `leg`,
+ *     `sell` and `after`, of which none is a string prefix of another. Given
+ *     (a), that leaves exactly two ways one id could be a string prefix of a
+ *     different one, and both are closed:
+ *       - the shorter's WHOLE token list is a prefix of the longer's. It would
+ *         have to place its terminator where the longer carries `sell` or
+ *         `after`, which the literals above forbid.
+ *       - they DIVERGE at the shorter's last segment. That segment is a
+ *         constant, so it would have to be a strict prefix of whatever the
+ *         longer holds there — again forbidden. (A divergence anywhere EARLIER
+ *         is harmless on its own: the shorter's next character is `:` and the
+ *         longer's is a segment character, so neither continues into the
+ *         other.)
  *
  * 🔴 THE TERMINATOR IS NOT DECORATION. Without it the credit's last segment is
  * the COLOUR, and `BuzzAccountType` is not prefix-free: `creatorProgramBank` is
@@ -292,10 +299,15 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  * edit can be checked against it, and an argument that is only true for the
  * colours currently passed is one a later edit reads as permission.
  *
- * Both halves are load-bearing: (a) alone leaves `…:5` inside `…:51`, and (b)
- * alone leaves the base key inside the `after:` key. The guard in
- * `block-goods.service.test.ts` asserts the property over a key set that
- * deliberately contains prefix-related buyer ids, both generation shapes, and
+ * Both halves are load-bearing. Without (b) an id can end on a variable
+ * segment, which is what put `…:5` inside `…:51` and would put
+ * `…:creatorProgramBank` inside `…:creatorProgramBankGreen`. Without (a) a
+ * segment could carry a `:` of its own and impersonate a token boundary, so a
+ * whole id could reappear as the opening tokens of a longer one however it
+ * ends.
+ *
+ * The guard in `block-goods.service.test.ts` asserts the property over a key
+ * set that deliberately contains prefix-related buyer ids, both shapes, and
  * EVERY member of `BuzzAccountType` — not just the two this rail pays in.
  * 🔴 A DISTINCTNESS ASSERTION IS NOT THIS PROPERTY — distinct ids collide under
  * a prefix match all day, and the guard that missed the original defect was
