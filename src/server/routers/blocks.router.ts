@@ -3205,11 +3205,21 @@ export const blocksRouter = router({
       // lifted something.
       //
       // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
-      // write did not touch revocations (an ordinary consent with nothing suppressed, or a
-      // database without the column), and calling `publish` with an empty list there would
-      // DELETE a live marker — reopening in Redis the resurrection hole `clearRevocations`
-      // closes in Postgres. `[]` means the last suppression really was lifted, and the
-      // marker should go so the app stops being refused before the TTL elapses.
+      // write did not touch revocations — an ordinary consent with nothing suppressed — and
+      // calling `publish` with an empty list there would DELETE a live marker, reopening in
+      // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
+      // suppression really was lifted, and the marker should go so the app stops being refused
+      // before the TTL elapses.
+      //
+      // ⚠️ THIS USED TO GROUP "a database without the column" WITH THE `null` CASE, AND THAT IS
+      // NO LONGER TRUE — corrected by round-5 review, which found the claim falsified by the
+      // round-4 commit itself. A pre-migration database now returns `[]` when it LIFTS a
+      // whole-grant revoke (nothing is withheld afterwards, which is the honest value) and
+      // throws `PRECONDITION_FAILED` when it cannot, so it never reaches this line refusing.
+      // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
+      // database before storage, so no marker can exist to delete — and in the one shape where
+      // one could (migration applied, revoke taken, migration rolled back) deleting it after a
+      // full re-consent is exactly right.
       //
       // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
       // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one

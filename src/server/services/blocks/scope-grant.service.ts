@@ -140,7 +140,9 @@ export function logMissingRevokedScopesColumn(site: string, err: unknown): void 
         `app_user_scope_grants.revoked_scopes is MISSING from this database — ` +
         `apply migration 20260927120000_app_user_scope_grant_revoked_scopes. Per-scope ` +
         `revocations read as "none recorded" (the only state such a database can be in) ` +
-        `and the revoke MUTATION refuses until it lands.`,
+        `and BOTH write halves refuse until it lands: the revoke mutation always, and a ` +
+        `prompted RE-CONSENT whenever it does not cover every scope the row already granted ` +
+        `(a whole-grant revoke cannot be migrated to per-scope suppressions without the column).`,
       site,
       code: (err as { code?: unknown } | null)?.code,
     },
@@ -693,8 +695,16 @@ export async function recordScopeGrant(opts: {
     // What IS expressible is the case where there is nothing left to suppress: if the viewer
     // re-consented to everything the row had granted, the migration would have produced an
     // empty list anyway, so clearing the flag loses no information. A PARTIAL re-consent
-    // leaves the flag set — the viewer stays withheld rather than over-granted, and the
-    // prompt completes once a human applies the migration.
+    // REFUSES — the viewer stays withheld rather than over-granted, and is TOLD so.
+    //
+    // 🔴 IT REFUSES OUT LOUD, AND RETURNING `{}` HERE WAS A PERMANENT SILENT NO-OP. Round-5
+    // review: `granted_scopes` is union-only and never pruned, so a scope granted under an older
+    // manifest (or one a moderator later dropped from `approvedScopes`) sits in the row while
+    // being absent from every future `incoming` — which is `input.scopes ∩ ceiling`. The residual
+    // is therefore non-empty FOREVER on such a row, `grantScopes` answered `{ ok: true }` on every
+    // press, and unlike the round-4 defect there was no second-click recovery because
+    // `existingRevokedAt` never clears. Measured over three identical presses with a control.
+    // See `CONSENT_RECONSENT_UNAVAILABLE_MESSAGE` for why a throw and not a quieter signal.
     //
     // Round-4 review found this branch still taking the wholesale lift: `existingRevokedAt` was
     // assigned on the wide read only, so the narrow fallback left it `null` and the whole
@@ -703,7 +713,17 @@ export async function recordScopeGrant(opts: {
     // did not cover.
     if (!revokedScopesColumnAvailable) {
       const residual = (priorGranted ?? []).filter((x) => !incomingSet.has(x));
-      if (residual.length > 0) return {};
+      if (residual.length > 0) {
+        // No log line here: `readExisting`'s P2022 catch already fired
+        // `logMissingRevokedScopesColumn` on this same request, and that emitter is
+        // once-per-process guarded — a second call is a silent no-op, so a reader would
+        // wrongly take its presence as "this refusal is logged". The operator-facing text
+        // names both refusals instead; see that function's message.
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: CONSENT_RECONSENT_UNAVAILABLE_MESSAGE,
+        });
+      }
       // Nothing is withheld after this write — the honest value for the caller's marker publish.
       clearedTo = [];
       return { revokedAt: null };
@@ -1132,6 +1152,31 @@ export async function revokeScopes(
  */
 export const CONSENT_REVOKE_UNAVAILABLE_MESSAGE =
   'Withdrawing a permission is not available on this environment yet. Nothing was changed. Try again later.';
+
+/**
+ * The message a VIEWER sees when a prompted RE-CONSENT cannot be expressed on their
+ * environment — the mirror of the constant above, for the other half of the same
+ * hand-applied migration.
+ *
+ * 🔴 THIS EXISTS BECAUSE THE REFUSAL WAS SILENT, AND A SILENT REFUSAL IS THE SYMPTOM CLASS
+ * THIS WHOLE ARC KEEPS PRODUCING. On a database without `revoked_scopes`, a whole-grant
+ * revoke cannot be migrated to per-scope suppressions, so `unrevokeData` refuses to lift
+ * `revoked_at` unless the re-consent covers everything the row granted. Round-5 review found
+ * the population where that refusal is PERMANENT rather than momentary: `granted_scopes` is
+ * union-only and never pruned, so a scope granted under an older manifest — or one a moderator
+ * later dropped from `approvedScopes` — stays in the row while being absent from every future
+ * `incoming` (which is `input.scopes ∩ ceiling`). The residual is then non-empty forever, and
+ * `grantScopes` returned `{ ok: true }` on every press with nothing changed and no second-click
+ * recovery, because `existingRevokedAt` never clears. Measured over three identical presses.
+ *
+ * The fail-closed DIRECTION is right and is not what changed; being invisible was. `revokeScopes`
+ * already refuses this same database with `PRECONDITION_FAILED` and an exported message, so the
+ * two halves of the feature now refuse symmetrically instead of one throwing and one lying.
+ *
+ * Thrown while BUILDING the update payload, before any query runs, so nothing is half-written.
+ */
+export const CONSENT_RECONSENT_UNAVAILABLE_MESSAGE =
+  'Updating this app’s permissions is not available on this environment yet. Nothing was changed. Try again later.';
 
 /**
  * Turns a P2022 on the revocation columns into a refusal the VIEWER and the OPERATOR can

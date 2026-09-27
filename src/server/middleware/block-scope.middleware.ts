@@ -22,6 +22,12 @@ import {
 // Static, not the dynamic `await import(...)` this file uses for `getGrantedScopes` further
 // down: `consent-revocation.service` above already pulls `scope-grant.service` into this
 // module's static graph, so naming one more pure predicate from it adds no edge and no cycle.
+//
+// ⚠️ AND THAT MEANS THE DYNAMIC FORM BELOW IS VESTIGIAL, NOT CYCLE-AVOIDANCE — do not read the
+// contrast as a warning. By the time it runs the module is already loaded; it is the same
+// lazy-load idiom that function uses two lines later for `server-domain`. Said explicitly
+// because leaving the contrast unexplained invites the next reader to "restore consistency" by
+// making this one dynamic too, for a reason that does not exist.
 import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
@@ -1440,9 +1446,24 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // still stripped fail-CLOSED and an in-handler sub-check still cannot pass. The only thing
       // that changes is that the exempt scope the route actually declared is served.
       // Round-4 review; measured both ways on the same probe.
+      // ⚠️ THE `requiredScope` TEST IS `!== undefined`, NOT A `||` FALLBACK — AND THE DIFFERENCE
+      // IS INVISIBLE TODAY BY CONSTRUCTION. It was written as
+      // `(opts.requiredScope === undefined || !isConsentExemptScope(...))`, which is DEAD: the
+      // lookup is only started when `requiredScope !== undefined` (see its gate above), so the
+      // disjunct can never be true — round-5 review confirmed it by mutation, not by reading
+      // (replacing it with the bare exempt test SURVIVED all 264 tests, which is what proves
+      // unreachable rather than merely untested).
+      //
+      // 🔴 IT IS FIXED ANYWAY, BECAUSE THE DEAD BRANCH ENCODED THE WRONG DEFAULT. If the lookup
+      // gate is ever widened to any-token routes, `requiredScope === undefined` would make this
+      // condition TRUE and 503 exactly the six catalog routes the skip above exists to keep out
+      // of this coupling — the fail-closed answer for a population that reads no scopes at all.
+      // `!== undefined` makes a widened gate SERVE them, which is the posture that skip argues
+      // for. Defensive code should fail in the direction its own file already chose.
       if (
         verdict.kind === 'unavailable' &&
-        (opts.requiredScope === undefined || !isConsentExemptScope(opts.requiredScope))
+        opts.requiredScope !== undefined &&
+        !isConsentExemptScope(opts.requiredScope)
       ) {
         recordBlockConsentMarkerUnavailable('rest');
         res.status(503).json({

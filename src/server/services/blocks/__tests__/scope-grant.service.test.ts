@@ -355,7 +355,7 @@ describe('scope-grant.service', () => {
      * `existingRevokedAt = narrow?.revokedAt ?? null` assignment; make the
      * `!revokedScopesColumnAvailable` branch `return { revokedAt: null }` unconditionally.
      */
-    it('🔴 refuses to lift a whole-grant revoke on a PARTIAL re-consent (cannot migrate)', async () => {
+    it('🔴 REFUSES a PARTIAL re-consent out loud, rather than lifting or silently no-op-ing', async () => {
       mockDb.appUserScopeGrant.findUnique
         .mockRejectedValueOnce(missingColumnError())
         .mockResolvedValueOnce({
@@ -363,27 +363,44 @@ describe('scope-grant.service', () => {
           grantedScopes: ['ai:write:budgeted', 'posts:write:self'],
           revokedAt: new Date('2026-09-16T00:00:00Z'),
         });
-      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
-      const { recordScopeGrant } = await import('../scope-grant.service');
-      const res = await recordScopeGrant({
-        userId: 1,
-        appBlockId: 'ab_x',
-        version: '1.0.0',
-        // Names ONE of the two suspended scopes.
-        scopes: ['posts:write:self'],
-        clearRevocations: true,
-      });
-      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
-      expect(
-        data,
+      const { recordScopeGrant, CONSENT_RECONSENT_UNAVAILABLE_MESSAGE } = await import(
+        '../scope-grant.service'
+      );
+      await expect(
+        recordScopeGrant({
+          userId: 1,
+          appBlockId: 'ab_x',
+          version: '1.0.0',
+          // Names ONE of the two suspended scopes.
+          scopes: ['posts:write:self'],
+          clearRevocations: true,
+        }),
         'the flag was lifted from a dialog that named one scope, so ai:write:budgeted came back ' +
-          'at its old ceiling with no consent for it anywhere — and on this database there is no ' +
-          'revoked_scopes column to express the alternative'
-      ).not.toHaveProperty('revokedAt');
-      // Still never NAMES the missing column — that is what stops the 500.
-      expect(data).not.toHaveProperty('revokedScopes');
-      expect(data).not.toHaveProperty('revokedScopesAt');
-      expect(res.revokedScopesAfterClear).toBeNull();
+          'at its old ceiling with no consent for it anywhere — or, after that was closed, the ' +
+          'call reported ok and changed nothing, PERMANENTLY, because granted_scopes is never ' +
+          'pruned so the residual can never empty'
+      ).rejects.toMatchObject({
+        // `PRECONDITION_FAILED`, so `client-safe-error.ts` does not replace the message — the
+        // same reason the revoke half throws this code. Pinned by MESSAGE, so a mutant that
+        // swaps in a different error is killed by the text and not merely by "something threw".
+        code: 'PRECONDITION_FAILED',
+        message: CONSENT_RECONSENT_UNAVAILABLE_MESSAGE,
+      });
+      // And NOTHING was written — the throw happens while building the payload, so there is no
+      // half-applied grant behind the refusal.
+      expect(mockDb.appUserScopeGrant.update).not.toHaveBeenCalled();
+      expect(mockDb.appUserScopeGrant.create).not.toHaveBeenCalled();
+      // 🔴 THE NARROW SELECT MUST ASK FOR `revokedAt`, AND THAT SHAPE WAS UNPINNED. The db mock
+      // is a bare `vi.fn` that IGNORES `select` and returns whatever the fixture supplies, so a
+      // mutant deleting `revokedAt: true` from the select SURVIVED the whole suite — while in
+      // production Prisma honours `select`, `narrow.revokedAt` comes back `undefined`,
+      // `existingRevokedAt` is `null`, and `unrevokeData` takes the WHOLESALE LIFT this arm
+      // exists to prevent. Same idiom as the `getGrantedScopes` retry assertion above.
+      expect(
+        mockDb.appUserScopeGrant.findUnique.mock.calls[1][0].select,
+        'the pre-migration retry stopped asking for revoked_at, so a whole-grant revoke reads as ' +
+          'absent and is lifted wholesale — invisible to this suite because the mock ignores select'
+      ).toEqual({ id: true, grantedScopes: true, revokedAt: true });
     });
 
     /**
@@ -415,6 +432,13 @@ describe('scope-grant.service', () => {
       expect(data).not.toHaveProperty('revokedScopes');
       // `[]`, not `null` — nothing is withheld after this write, so any stale marker must go.
       expect(res.revokedScopesAfterClear).toEqual([]);
+      // The select shape again, on the arm that WRITES: see the sibling above for why the mock
+      // cannot observe it any other way.
+      expect(mockDb.appUserScopeGrant.findUnique.mock.calls[1][0].select).toEqual({
+        id: true,
+        grantedScopes: true,
+        revokedAt: true,
+      });
     });
 
     // A prompted re-consent must keep working on such a database — it simply has nothing to

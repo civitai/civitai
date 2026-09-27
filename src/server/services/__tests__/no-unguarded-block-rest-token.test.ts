@@ -1646,12 +1646,20 @@ describe('the approval predicate is not open-coded a second time', () => {
    * inside its own new guard. The callers are now enumerated from **`src`**, whole.
    *
    * ⚠️ IT WAS `src/server` + `src/pages`, WHICH IS A BOUND NOTHING JUSTIFIED. No caller lives
-   * outside those two today — measured, the only other mentions of the name anywhere in `src` are
-   * comments in `src/env/server-schema.ts` and `src/shared/constants/block-scope.constants.ts` —
-   * but the guard's whole claim is "a FIFTH caller is loud", and a caller added under
-   * `src/shared`, `src/utils` or `src/libs` would have been exactly as invisible as the
-   * `src/server` ones were to the version before it. Walking one root instead of two costs
-   * nothing and removes the residual.
+   * outside those two today, but the guard's whole claim is "a FIFTH caller is loud", and a caller
+   * added under `src/shared`, `src/utils` or `src/libs` would have been exactly as invisible as
+   * the `src/server` ones were to the version before it. Walking one root instead of two costs
+   * nothing — 2,012 files become 4,503, an 8 ms walk and a 29 ms read — and removes the residual.
+   *
+   * ⚠️ AND THE ENUMERATION HERE USED TO BE WRONG, in the commit whose stated purpose included
+   * correcting three un-derived counts. It claimed "the only other mentions of the name anywhere
+   * in `src` are comments in `src/env/server-schema.ts` and
+   * `src/shared/constants/block-scope.constants.ts`". Re-derived by round-5 review: **13**
+   * non-test files under `src` mention the name, **5** match the raw call-shape regex, and **3**
+   * survive `stripNonCode` as real callers. Of the files the widening newly brought into scope,
+   * exactly one matches the raw regex — `block-scope.constants.ts`, twice, both inside a
+   * block comment that `stripNonCode` removes. The argument never depended on the enumeration; the
+   * number is the part that rots, so read the derivation rather than this sentence.
    */
   const CONSENT_STRIP_SEAMS: Record<string, string> = {
     'src/server/middleware/block-scope.middleware.ts':
