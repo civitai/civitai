@@ -5,19 +5,23 @@ import type * as UserService from '~/server/services/user.service';
  * A profile picture update only ever acts on the caller's own images: a picture id the caller
  * does not currently use is never connected, the scan reads the new row, and the replaced
  * picture is queued for deletion only when the caller owns it.
- *
- * To whoever is simplifying `updateUserHandler` back to a `connectOrCreate` on the input id:
- * that id is caller-supplied and may name any image.
  */
 
-const { mockUpdateUserById, mockGetUserById, mockIngestImage, mockIngestImageById } = vi.hoisted(
-  () => ({
-    mockUpdateUserById: vi.fn(),
-    mockGetUserById: vi.fn(),
-    mockIngestImage: vi.fn(),
-    mockIngestImageById: vi.fn(),
-  })
-);
+const {
+  mockUpdateUserById,
+  mockGetUserById,
+  mockIngestImage,
+  mockIngestImageById,
+  mockDeleteImageById,
+  mockDeleteImages,
+} = vi.hoisted(() => ({
+  mockUpdateUserById: vi.fn(),
+  mockGetUserById: vi.fn(),
+  mockIngestImage: vi.fn(),
+  mockIngestImageById: vi.fn(),
+  mockDeleteImageById: vi.fn(),
+  mockDeleteImages: vi.fn(),
+}));
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
@@ -40,8 +44,8 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImage: mockIngestImage,
   ingestImageById: mockIngestImageById,
-  deleteImageById: vi.fn(),
-  deleteImages: vi.fn(),
+  deleteImageById: mockDeleteImageById,
+  deleteImages: mockDeleteImages,
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
@@ -82,11 +86,27 @@ const saveProfilePicture = (pictureId?: number) =>
     },
   } as never);
 
+// Answers only what the handler selects, so the owner is visible only if it asks for it.
 const currentPictureOwnedBy = (userId: number | null) =>
-  mockGetUserById.mockResolvedValue({
-    profilePictureId: userId === null ? null : CURRENT_PICTURE_ID,
-    profilePicture: userId === null ? null : { userId },
-  });
+  mockGetUserById.mockImplementation(
+    async ({ select }: { select: { profilePicture?: { select?: { userId?: boolean } } } }) => ({
+      profilePictureId: userId === null ? null : CURRENT_PICTURE_ID,
+      ...(select.profilePicture?.select?.userId
+        ? { profilePicture: userId === null ? null : { userId } }
+        : {}),
+    })
+  );
+
+function expectNothingDeleted() {
+  expect(mockDeleteImageById).not.toHaveBeenCalled();
+  expect(mockDeleteImages).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.image.delete).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.image.deleteMany).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.jobQueue.create).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.jobQueue.createMany).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.jobQueue.upsert).not.toHaveBeenCalled();
+  expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -120,6 +140,7 @@ describe('profile picture updates are scoped to the caller', () => {
     await saveProfilePicture();
 
     expect(queuedImageIds()).toEqual([]);
+    expectNothingDeleted();
   });
 
   it("queues the caller's own replaced picture", async () => {
