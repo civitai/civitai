@@ -800,14 +800,15 @@ describe('purchaseBlockGood — the money path', () => {
     // unless something was left to find. Neither alone closes the defect.
     dbMock.dbWrite.$transaction.mockRejectedValueOnce(new Error('db down'));
     const first = await purchaseBlockGood(purchaseInput());
-    expect(first).toMatchObject({
-      ok: false,
-      reason: 'charge_failed',
-      charge: 'reversed',
-      retryable: true,
-    });
+    expect(first).toMatchObject({ ok: false, reason: 'charge_failed' });
 
+    // Asserted before reading the call, so a failure says "the tombstone was
+    // never written" rather than dying on `undefined`. The charge/retryable
+    // discriminators are NOT checked here — they belong to the endpoint's
+    // cap-and-cache decision and have their own tests; mixing them in makes
+    // this test fail for the other finding's reason.
     const firstPurchaseId = dbMock.dbWrite.blockGoodPurchase.create.mock.calls[0][0].data.id;
+    expect(dbMock.dbWrite.blockGoodPurchase.updateMany).toHaveBeenCalledTimes(1);
     const tombstone = dbMock.dbWrite.blockGoodPurchase.updateMany.mock.calls[0][0];
     expect(tombstone.where).toEqual({ id: firstPurchaseId, status: 'pending' });
     // Both refund fields or neither — the table's CHECK rejects a half-set pair,
@@ -1027,6 +1028,29 @@ describe('purchaseBlockGood — the money path', () => {
     } as never);
   }
 
+  it('🔴 sends the OWNER credits OUTSIDE the prefix the buyer’s debit is refunded by', async () => {
+    // The OBSERVABLE half of the payout-id separation — measured on what the
+    // service actually put on the wire, not on the helper that builds it, so it
+    // is red at the audited head for the real reason rather than because a new
+    // export is missing. There the legs were `${chargePrefix}:sell:…`, which put
+    // the buyer's whole refund prefix inside every owner credit.
+    stubMixedColorCharge();
+    await purchaseBlockGood(purchaseInput());
+
+    const chargePrefix = (
+      mockCreateMulti.mock.calls[0][0] as {
+        externalTransactionIdPrefix: string;
+      }
+    ).externalTransactionIdPrefix;
+    const legIds = mockCreateSingle.mock.calls.map(
+      (c) => (c[0] as { externalTransactionId: string }).externalTransactionId
+    );
+    // Positive control on the fixture: two legs, or the disjointness below is
+    // being asserted over nothing.
+    expect(legIds).toHaveLength(2);
+    expect(prefixPairs([chargePrefix, ...legIds])).toEqual([]);
+  });
+
   it('🔴 CONVERGES when one payout leg lands and the other blips', async () => {
     // 🔴 THE DEFECT. `withRetries` re-runs the WHOLE payout closure, so the
     // landed blue leg was re-sent on every attempt, collided with its own
@@ -1091,15 +1115,10 @@ describe('purchaseBlockGood — the money path', () => {
     // `refundBlockGoodPurchase` already reports in `failures` for a human —
     // rather than dropped, which would understate what the owner was paid.
     stubMixedColorCharge();
-    const blueLegId = blockGoodPayoutTransactionId({
-      appBlockId: APP_BLOCK_ID,
-      goodId: GOOD_ID,
-      buyerUserId: BUYER,
-      recipientUserId: OWNER,
-      color: 'blue',
-    });
+    // Keyed on the COLOUR, not on the id this scheme happens to produce, so the
+    // test exercises the 409 branch rather than restating the id format.
     mockCreateSingle.mockImplementation(async (input) => {
-      if (input.externalTransactionId === blueLegId) throw buzzApiError(409, 'Conflict');
+      if (input.toAccountType === 'blue') throw buzzApiError(409, 'Conflict');
       return { transactionId: 'pay-yellow', remainingBalance: null };
     });
 
