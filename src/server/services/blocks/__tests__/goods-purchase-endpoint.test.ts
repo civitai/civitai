@@ -264,6 +264,8 @@ describe('FIN-1 — no client value reaches a money decision', () => {
       status: 409,
       reason: 'price_changed',
       error: 'The price changed to 1300 Buzz. Check the new price and try again.',
+      charge: 'none',
+      retryable: false,
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID, expectedPriceBuzz: 999 }), res);
@@ -353,6 +355,8 @@ describe('caps and their refunds', () => {
       status: 409,
       reason: 'already_owned',
       error: 'You already own this item',
+      charge: 'none',
+      retryable: false,
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);
@@ -369,6 +373,8 @@ describe('caps and their refunds', () => {
       status: 409,
       reason: 'duplicate',
       error: 'This purchase has already been completed',
+      charge: 'none',
+      retryable: false,
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);
@@ -385,6 +391,8 @@ describe('caps and their refunds', () => {
       status: 503,
       reason: 'charge_unknown',
       error: 'Could not confirm this purchase. Please check your balance before retrying.',
+      charge: 'unknown',
+      retryable: true,
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: 'abc-123' }), res);
@@ -394,7 +402,42 @@ describe('caps and their refunds', () => {
     expect(mockRelease).toHaveBeenCalledWith('idem:42');
   });
 
-  it('does NOT refund on a 5xx — a post-money failure must leave the cap stricter', async () => {
+  it('🔴 REFUNDS on a 500 whose charge outcome is KNOWN, and does not cache it', async () => {
+    // 🔴 THIS TEST REPLACES ONE THAT ENCODED THE BUG. It used to read "does NOT
+    // refund on a 5xx — a post-money failure must leave the cap stricter",
+    // asserting exactly the behaviour the audit found wrong, from the same
+    // false step the endpoint took: "every UNKNOWN outcome is a 5xx" is true,
+    // its converse is not. `charge_failed` is a 500 both when the claim INSERT
+    // failed before any charge and when the settle failed AFTER the charge was
+    // reversed — the Buzz never left or came straight back in both, so keeping
+    // the reservation charges the viewer's daily allowance for nothing, and
+    // caching the 500 replays it for the key's full TTL instead of letting the
+    // retry through.
+    mockPurchase.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      reason: 'charge_failed',
+      error: 'Could not complete this purchase',
+      charge: 'reversed',
+      retryable: true,
+    } as never);
+    const res = makeRes();
+    await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: 'abc-123' }), res);
+    expect(res.statusCode).toBe(500);
+    expect(mockRefund).toHaveBeenCalledWith('goodscap:42:2026-09-27', PRICE);
+    // Not cached, and the claim is released so the retry is not met with
+    // "already in progress".
+    expect(mockFinalize).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith('idem:42');
+  });
+
+  it('KEEPS the reservation when the service reports no charge outcome at all', async () => {
+    // 🔴 NEGATIVE CONTROL ON THE ALLOWLIST. The refund test is `charge === 'none'
+    // || charge === 'reversed'`, not `charge !== 'unknown'`, so a value the
+    // endpoint does not recognise — a future reason that forgot to set it, a
+    // mis-built fixture — keeps the reservation rather than handing it back on
+    // a charge that may have landed. Without this case an inverted test passes
+    // every other test in this file.
     mockPurchase.mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -561,6 +604,8 @@ describe('audit detail', () => {
       status: 400,
       reason: 'insufficient_funds',
       error: 'You do not have enough Buzz to buy this item',
+      charge: 'none',
+      retryable: false,
     } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);

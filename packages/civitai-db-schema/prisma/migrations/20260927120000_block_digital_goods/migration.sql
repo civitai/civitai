@@ -100,10 +100,19 @@ CREATE TABLE "block_good_purchase" (
   "platform_share_buzz"   INTEGER     NOT NULL,
 
   -- The deterministic `externalTransactionIdPrefix` the buyer's debit was made
-  -- under: `block-good:<app_block_id>:<good_id>:<user_id>`. UNIQUE, and that is
-  -- the LEDGER-backed half of idempotency — the Buzz service refuses a second
-  -- charge on the same prefix, and this index is how that conflict becomes
-  -- OBSERVABLE to us (the multi-account response does not surface it).
+  -- under: `block-good:<app_block_id>:<good_id>:<user_id>[:after:<superseded
+  -- purchase id>]:buy`. UNIQUE, and that is the LEDGER-backed half of
+  -- idempotency — the Buzz service refuses a second charge on the same prefix,
+  -- and this index is how that conflict becomes OBSERVABLE to us (the
+  -- multi-account response does not surface it).
+  --
+  -- 🔴 THE TRAILING `:buy` AND THE `:after:` SEGMENT ARE LOAD-BEARING, NOT
+  -- DECORATION. The prefix is matched as a genuine STRING prefix by the refund
+  -- path, so an unterminated trailing user id put buyer 5's key inside buyers
+  -- 51's and 500's and one rollback reversed their settled purchases; and a
+  -- key with no generation segment can only ever be charged once, because a
+  -- reversed external id stays occupied in the ledger. See
+  -- `src/server/services/blocks/block-goods.service.ts`.
   "buzz_transaction_id"   TEXT        NOT NULL,
 
   -- `[{ userId, amount, color, transactionId? }]`. Empty until the payout leg
@@ -115,6 +124,13 @@ CREATE TABLE "block_good_purchase" (
   -- concurrent attempts, so exactly one can reach the charge. A `pending` row
   -- that survives is the RECONCILIATION RECORD for a charge whose outcome is
   -- unknown (a gateway timeout), and is deliberately not cleaned up blindly.
+  --
+  -- 🔴 `refunded` COVERS TWO SHAPES, and the table cannot tell them apart by
+  -- this column alone: a purchase that was owned and then reversed, and a
+  -- charge that was reversed BEFORE any entitlement was granted. The second is
+  -- kept rather than deleted because its `buzz_transaction_id` is burned in the
+  -- ledger forever and the next attempt has to know to supersede it. Tell them
+  -- apart by whether a `block_good_entitlement` points at the row.
   "status"                TEXT        NOT NULL DEFAULT 'pending',
   "refund_reason"         TEXT,
   "refunded_at"           TIMESTAMPTZ,

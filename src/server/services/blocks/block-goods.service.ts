@@ -95,6 +95,39 @@ export type PurchaseBlockGoodInput = {
   payWith: BuzzAccountType[];
 };
 
+/**
+ * What this attempt KNOWS about the buyer's Buzz when it refuses.
+ *
+ * 🔴 THE CALLER MUST BRANCH ON THIS, NEVER ON THE STATUS CLASS. "Every UNKNOWN
+ * outcome is a 5xx" is true; its converse is not, and the endpoint relied on
+ * the converse: a claim INSERT that failed before any charge, and a settle that
+ * failed after the charge was REVERSED, are both `charge_failed` 500s with a
+ * perfectly KNOWN outcome. Reading 5xx as "may have moved" leaked the viewer's
+ * daily-cap reservation on both, and — worse — classified both as terminal so
+ * the idempotency layer cached the 500 for its full TTL and replayed it instead
+ * of letting the retry through.
+ *
+ * - `none`     nothing was debited on this attempt.
+ * - `reversed` a debit landed and this attempt reversed it.
+ * - `unknown`  we cannot say whether a debit landed. The `pending` row survives.
+ */
+export type PurchaseChargeOutcome = 'none' | 'reversed' | 'unknown';
+
+export type PurchaseBlockGoodRefusal = {
+  ok: false;
+  status: number;
+  error: string;
+  reason: PurchaseRefusalReason;
+  charge: PurchaseChargeOutcome;
+  /**
+   * An identical retry could reach a DIFFERENT verdict, so this outcome must
+   * not be cached under an idempotency key. Independent of `charge`: an unknown
+   * outcome is retryable because no verdict was ever reached, while a reversed
+   * partial debit is retryable because the next attempt can land in full.
+   */
+  retryable: boolean;
+};
+
 export type PurchaseBlockGoodResult =
   | {
       ok: true;
@@ -104,7 +137,7 @@ export type PurchaseBlockGoodResult =
       priceBuzz: number;
       entitlement: SerializedEntitlement;
     }
-  | { ok: false; status: number; error: string; reason: PurchaseRefusalReason };
+  | PurchaseBlockGoodRefusal;
 
 /**
  * Why a purchase was refused.
@@ -125,6 +158,14 @@ export type PurchaseRefusalReason =
   | 'insufficient_funds'
   | 'duplicate'
   | 'pending_reconciliation'
+  /**
+   * The ledger refused the debit because this generation's external id is
+   * already occupied — including by a transaction that was REVERSED, which
+   * stays occupied. Distinct from `insufficient_funds` because the two say
+   * opposite things to the viewer: one is "top up", this one is "nothing you
+   * can do". Collapsing them told a viewer with plenty of Buzz they were broke.
+   */
+  | 'ledger_conflict'
   | 'charge_unknown'
   | 'charge_failed';
 
@@ -191,8 +232,63 @@ export async function resolveBlockGoodForPurchase(args: {
   };
 }
 
+export type BlockGoodLedgerKeyArgs = {
+  appBlockId: string;
+  goodId: string;
+  buyerUserId: number;
+  /** The id of the purchase generation this one replaces, when re-buying. */
+  supersedesPurchaseId?: string | null;
+};
+
+/**
+ * The `:`-separated stem every ledger id for one purchase generation is built
+ * from. Not exported: the two things that may be spent under it are the buyer's
+ * debit (`blockGoodPurchaseKey`) and the owner's credit legs
+ * (`blockGoodPayoutTransactionId`), and both live here so the disjointness
+ * argument below is checkable in one place.
+ */
+function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
+  const base = `block-good:${args.appBlockId}:${args.goodId}:${args.buyerUserId}`;
+  return args.supersedesPurchaseId ? `${base}:after:${args.supersedesPurchaseId}` : base;
+}
+
 /**
  * The deterministic ledger key a purchase is charged under.
+ *
+ * 🔴 EVERY ID BUILT HERE IS PREFIX-FREE AGAINST EVERY OTHER, AND THAT IS A
+ * CORRECTNESS REQUIREMENT, NOT TIDINESS. `externalTransactionIdPrefix` — what
+ * `rollbackCharge` and `refundBlockGoodPurchase` pass to
+ * `refundMultiAccountTransaction` — is a genuine STRING prefix match, the same
+ * hazard `challenge-funding.ts` records for `challenge-entry-fee-5-` vs
+ * challenge 50. An unterminated trailing buyer id made buyer 5's key a prefix
+ * of buyers 51's and 500's, so rolling back one attempt reversed OTHER buyers'
+ * settled purchases: they kept their entitlements, got their Buzz back, the
+ * owner kept the 70%, and nothing raised.
+ *
+ * THE ARGUMENT, so a later edit can be checked against it rather than guessed
+ * at. Every id is a `:`-separated token list:
+ *
+ *     buy   block-good : <appBlockId> : <goodId> : <buyerUserId> [: after : <supersedesPurchaseId>] : buy
+ *     sell  block-good : <appBlockId> : <goodId> : <buyerUserId> [: after : <supersedesPurchaseId>] : sell : <ownerId> : <color>
+ *
+ * (a) NO VARIABLE SEGMENT CAN CONTAIN `:` — `appBlockId` is `apb_<ULID>`,
+ *     `supersedesPurchaseId` is `bgp_<ULID>`, `buyerUserId` is a number, and
+ *     `goodId` is `BLOCK_GOOD_ID_RE`, which is colon-free for exactly this
+ *     reason (see `block-goods.constants.ts`). So one id is a string prefix of
+ *     another only if its TOKEN LIST is a prefix of the other's.
+ * (b) NO TOKEN LIST HERE IS A PREFIX OF ANOTHER. Two lists that share the first
+ *     four tokens diverge at the fifth, which is one of three literals — `buy`,
+ *     `sell` or `after` — and no two of those are equal. Every list ends in a
+ *     LITERAL token (`buy`, or a colour), so a shorter list can never run out
+ *     against a longer one mid-segment.
+ *
+ * Both halves are load-bearing: (a) alone leaves `…:5` inside `…:51`, and (b)
+ * alone leaves the base key inside the `after:` key. The guard in
+ * `block-goods.service.test.ts` asserts the property over a key set that
+ * deliberately contains prefix-related buyer ids and both generation shapes.
+ * 🔴 A DISTINCTNESS ASSERTION IS NOT THIS PROPERTY — distinct ids collide under
+ * a prefix match all day, and the guard that missed the original defect was
+ * exactly that, over two same-length buyer ids that could not prefix each other.
  *
  * 🔴 IT CARRIES NO RANDOMNESS AND NO CLIENT KEY, deliberately. A good is
  * single-ownership, so "this viewer buying this good from this app" names the
@@ -203,25 +299,91 @@ export async function resolveBlockGoodForPurchase(args: {
  * and is deliberately NOT part of this string — folding it in would make two
  * different keys for one logical purchase and undo the guarantee.
  *
- * 🔴 `supersedesPurchaseId` IS WHAT MAKES A REFUNDED GOOD RE-BUYABLE, and
- * leaving it out is a real defect rather than a nicety. Without it the key is a
- * function of (app, good, buyer) alone, so the SECOND purchase of a refunded
- * good collides with the first on both the Buzz ledger and the UNIQUE
- * `buzz_transaction_id` — the viewer is told "this purchase has already been
- * completed" and can never buy it again. Keying the re-purchase to the row it
- * supersedes keeps every attempt within one generation idempotent (two
- * concurrent re-buys read the same revoked entitlement, so they derive the same
- * key and the ledger dedupes them) while giving each generation its own key.
+ * 🔴 `supersedesPurchaseId` IS WHAT MAKES A REVERSED OR REFUNDED GOOD
+ * RE-BUYABLE, and leaving it out is a real defect rather than a nicety. Without
+ * it the key is a function of (app, good, buyer) alone, so the SECOND purchase
+ * of that good reuses the first's external id — and a reversed external id
+ * stays OCCUPIED in the ledger — so the charge 409s forever. Keying each
+ * generation to the row it supersedes keeps every attempt within one generation
+ * idempotent (two concurrent retries read the same superseded row, so they
+ * derive the same key and the claim index dedupes them) while giving each
+ * generation its own key. `newestSupersededPurchaseId` is what supplies it.
  */
-export function blockGoodPurchaseKey(args: {
+export function blockGoodPurchaseKey(args: BlockGoodLedgerKeyArgs): string {
+  return `${blockGoodLedgerStem(args)}:buy`;
+}
+
+/**
+ * The ledger id ONE leg of the owner's credit is paid under: unique per
+ * generation, recipient and colour.
+ *
+ * 🔴 IT IS A SIBLING OF THE BUY KEY, NOT AN EXTENSION OF IT, and that is the
+ * point. It used to be built as `${purchaseKey}:sell:…`, which made the buy key
+ * a literal string prefix of every payout leg — so `refundBlockGoodPurchase`'s
+ * prefix refund of the BUYER would sweep up the owner's credits too, inflating
+ * `buyerRefundedBuzz`, then failing every by-id clawback as already-reversed
+ * and reporting the lot in `failures`.
+ *
+ * ⚠️ WHETHER THE BUZZ SERVICE WOULD ACTUALLY HAVE REVERSED THOSE LEGS IS
+ * UNVERIFIED FROM HERE — it is a remote service and it may filter a prefix
+ * refund by direction or type. The disjointness is correct either way and costs
+ * nothing, so it is not resting on that question being answered.
+ */
+export function blockGoodPayoutTransactionId(
+  args: BlockGoodLedgerKeyArgs & { recipientUserId: number; color: BuzzAccountType }
+): string {
+  return `${blockGoodLedgerStem(args)}:sell:${args.recipientUserId}:${args.color}`;
+}
+
+/**
+ * The purchase generation this attempt must supersede, or null on a first buy.
+ *
+ * 🔴 A REVERSED EXTERNAL ID STAYS OCCUPIED IN THE LEDGER. That is the whole
+ * reason this exists: once a generation's key has carried a charge — settled or
+ * reversed — it can never carry another, so the next attempt must be keyed
+ * somewhere else or it 409s forever. `challenge-funding.ts` records the same
+ * ledger behaviour from the refund side.
+ *
+ * It reads the PURCHASE table rather than the entitlement, because the two
+ * things that burn a key do not both leave an entitlement behind:
+ *   - bought then refunded — an entitlement exists, revoked;
+ *   - charged then REVERSED before the grant (a partial debit, or a settle that
+ *     failed) — no entitlement was ever created.
+ * The second case is why reading `entitlement.purchaseId` was not enough: it
+ * returned null, the retry re-derived the burned key, the ledger 409'd, and the
+ * viewer was told they were out of Buzz. Permanently, for that (buyer, app,
+ * good).
+ *
+ * "Newest reversed generation" is monotone, which is what makes the chain
+ * terminate: each generation's key names the previous one's row id, and a row
+ * only becomes the newest reversed generation after its own key is burned, so
+ * a key is never re-derived once it has been left behind. Two concurrent
+ * retries reading the same newest row derive the SAME key — deliberately: the
+ * UNIQUE claim index is what settles them, exactly as within a generation.
+ *
+ * ⚠️ One extra indexed read on the purchase path, served by `bgp_buyer_idx`
+ * (`user_id, created_at DESC`). It is not merged into the entitlement read
+ * above because they are different tables; the alternative — keeping two
+ * sources for one fact — is what produced the defect.
+ */
+async function newestSupersededPurchaseId(args: {
+  buyerUserId: number;
   appBlockId: string;
   goodId: string;
-  buyerUserId: number;
-  /** The id of the purchase whose entitlement was revoked, when re-buying. */
-  supersedesPurchaseId?: string | null;
-}): string {
-  const base = `block-good:${args.appBlockId}:${args.goodId}:${args.buyerUserId}`;
-  return args.supersedesPurchaseId ? `${base}:after:${args.supersedesPurchaseId}` : base;
+}): Promise<string | null> {
+  const previous = await dbRead.blockGoodPurchase.findFirst({
+    where: {
+      userId: args.buyerUserId,
+      appBlockId: args.appBlockId,
+      goodId: args.goodId,
+      status: PURCHASE_STATUS_REFUNDED,
+    },
+    // `id` is a ULID and therefore time-ordered, so it breaks a `createdAt` tie
+    // in the same direction rather than arbitrarily.
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { id: true },
+  });
+  return previous?.id ?? null;
 }
 
 function serializeEntitlement(row: {
@@ -269,13 +431,22 @@ function serializeEntitlement(row: {
  *   4. flip the row to `paid` and grant the entitlement, in one transaction
  *   5. pay the owner and record what was paid
  *
- * 🔴 A `pending` ROW IS THE RECONCILIATION SURFACE, not litter. It is deleted
- * only when the charge is KNOWN not to have moved money. When the outcome is
- * UNKNOWN — a 5xx, a timeout, a dropped connection — the row survives on
- * purpose: something may have been debited, and deleting the only record of it
- * would make the loss invisible. Those rows need a human or a job; the endpoint
- * surfaces them as `pending_reconciliation` rather than telling the viewer to
- * try again into a wall.
+ * 🔴 A `pending` ROW LEAVES IN ONE OF THREE WAYS, and which one depends on what
+ * reached the LEDGER — not on whether the request succeeded:
+ *   - DELETED (`releaseUnsettledClaim`) when the charge was refused before any
+ *     transaction existed. The key never entered the ledger, so it is still
+ *     free and a retry should reuse it.
+ *   - TOMBSTONED as `refunded` (`voidReversedClaim`) when a debit landed and
+ *     this attempt reversed it. The key is burned on the ledger's side forever,
+ *     so the row has to survive to tell the next attempt to supersede it.
+ *   - KEPT as `pending` when the outcome is UNKNOWN — a 5xx, a timeout, a
+ *     dropped connection. Something may have been debited, and deleting the
+ *     only record of it would make the loss invisible.
+ *
+ * ⚠️ Nothing sweeps or alerts on that third case today; see the `charge_unknown`
+ * return for what is missing. The endpoint surfaces such a row as
+ * `pending_reconciliation` rather than telling the viewer to try again into a
+ * wall, which is honest but is not the same as anyone acting on it.
  */
 export async function purchaseBlockGood(
   input: PurchaseBlockGoodInput
@@ -292,6 +463,8 @@ export async function purchaseBlockGood(
       status: 400,
       reason: 'price_over_cap',
       error: 'This item is not available',
+      charge: 'none',
+      retryable: false,
     };
   }
 
@@ -304,6 +477,8 @@ export async function purchaseBlockGood(
       status: 409,
       reason: 'price_changed',
       error: `The price changed to ${priceBuzz} Buzz. Check the new price and try again.`,
+      charge: 'none',
+      retryable: false,
     };
   }
 
@@ -316,19 +491,18 @@ export async function purchaseBlockGood(
       status: 400,
       reason: 'self_purchase',
       error: 'You cannot buy your own app’s items',
+      charge: 'none',
+      retryable: false,
     };
   }
 
+  // Only `revokedAt` is read: this row answers "does the viewer own it RIGHT
+  // NOW" and nothing else. It used to also supply the key's generation via
+  // `purchaseId`, which could not see a charge that was reversed before any
+  // entitlement existed — `newestSupersededPurchaseId` owns that now.
   const existingEntitlement = await dbRead.blockGoodEntitlement.findUnique({
     where: { userId_appBlockId_goodId: { userId: buyerUserId, appBlockId, goodId } },
-    select: {
-      goodId: true,
-      kind: true,
-      payload: true,
-      grantedAt: true,
-      revokedAt: true,
-      purchaseId: true,
-    },
+    select: { revokedAt: true },
   });
   if (existingEntitlement && !existingEntitlement.revokedAt) {
     return {
@@ -336,18 +510,22 @@ export async function purchaseBlockGood(
       status: 409,
       reason: 'already_owned',
       error: 'You already own this item',
+      charge: 'none',
+      retryable: false,
     };
   }
 
-  // A revoked entitlement means this viewer owned the good before, so the
-  // purchase they are making now must be charged under its OWN key — see
-  // `blockGoodPurchaseKey`.
-  const transactionId = blockGoodPurchaseKey({
+  // This viewer may have been charged for this good before — bought and
+  // refunded, or charged by an attempt that reversed itself. Either way that
+  // generation's external id is burned in the ledger, so this attempt needs its
+  // own. See `newestSupersededPurchaseId`.
+  const ledgerKey: BlockGoodLedgerKeyArgs = {
     appBlockId,
     goodId,
     buyerUserId,
-    supersedesPurchaseId: existingEntitlement?.revokedAt ? existingEntitlement.purchaseId : null,
-  });
+    supersedesPurchaseId: await newestSupersededPurchaseId({ buyerUserId, appBlockId, goodId }),
+  };
+  const transactionId = blockGoodPurchaseKey(ledgerKey);
 
   // The split depends only on the price, so it is known before the charge and is
   // written with the claim — which keeps the conservation CHECK satisfied from
@@ -396,11 +574,15 @@ export async function purchaseBlockGood(
         },
         'civitai-prod'
       ).catch(() => undefined);
+      // The claim never landed, so NOTHING was charged and the key is still
+      // free — an identical retry is the right thing for the caller to allow.
       return {
         ok: false,
         status: 500,
         reason: 'charge_failed',
         error: 'Could not complete this purchase',
+        charge: 'none',
+        retryable: true,
       };
     }
 
@@ -419,6 +601,8 @@ export async function purchaseBlockGood(
         status: 409,
         reason: 'pending_reconciliation',
         error: 'A purchase of this item is still being settled. Support can help.',
+        charge: 'none',
+        retryable: false,
       };
     }
     return {
@@ -426,6 +610,8 @@ export async function purchaseBlockGood(
       status: 409,
       reason: 'duplicate',
       error: 'This purchase has already been completed',
+      charge: 'none',
+      retryable: false,
     };
   }
 
@@ -452,6 +638,30 @@ export async function purchaseBlockGood(
     const buzzStatus = getBuzzApiStatus(error);
     const knownPreMoney = buzzStatus === 400 || buzzStatus === 409 || buzzStatus === 404;
 
+    // 🔴 KNOWING NO MONEY MOVED IS ONE QUESTION; WHAT TO TELL THE VIEWER IS
+    // ANOTHER. All three statuses above share the first answer and had been
+    // given the same second one, which made a LEDGER CONFLICT read as "you do
+    // not have enough Buzz" — to a viewer with plenty, about a key they can
+    // never get past by topping up.
+    //   400 the ledger evaluated the debit and refused it: the funds case.
+    //   409 the external id is already occupied, reversed ones included.
+    //   404 the ledger could not resolve the request at all. Not a funds
+    //       verdict, so it must not borrow one.
+    const refusal: Pick<PurchaseBlockGoodRefusal, 'status' | 'reason' | 'error'> =
+      buzzStatus === 409
+        ? {
+            status: 409,
+            reason: 'ledger_conflict',
+            error: 'This item could not be purchased right now. Support can help.',
+          }
+        : buzzStatus === 404
+        ? { status: 400, reason: 'charge_failed', error: 'Could not complete this purchase' }
+        : {
+            status: 400,
+            reason: 'insufficient_funds',
+            error: 'You do not have enough Buzz to buy this item',
+          };
+
     void logToAxiom(
       {
         name: BLOCK_GOODS_LOG_NAME,
@@ -471,25 +681,31 @@ export async function purchaseBlockGood(
     ).catch(() => undefined);
 
     if (knownPreMoney) {
-      // No money moved, so the claim is released — a genuine retry (once the
-      // viewer has topped up) must be able to buy this good.
+      // Nothing entered the ledger under this key on this attempt, so the claim
+      // is DELETED rather than tombstoned: the key is still virgin and a
+      // genuine retry (once the viewer has topped up) should reuse it, keeping
+      // the ledger dedupe covering the retry too.
       await releaseUnsettledClaim(purchaseId);
-      return {
-        ok: false,
-        status: 400,
-        reason: 'insufficient_funds',
-        error: 'You do not have enough Buzz to buy this item',
-      };
+      return { ok: false, ...refusal, charge: 'none', retryable: false };
     }
 
     // 🔴 UNKNOWN OUTCOME. The `pending` row SURVIVES: it is the only record that
-    // a debit may exist. A 5xx also keeps the caller's daily-cap reservation
-    // (the endpoint only refunds on a 4xx), which is the safe direction.
+    // a debit may exist, and the caller keeps the daily-cap reservation because
+    // we cannot say the Buzz came back.
+    //
+    // ⚠️ NOTHING CONSUMES THAT RECORD. There is no reconciliation job and no
+    // alert on surviving `pending` rows, so today the row is evidence for a
+    // human who has not been told to look. Closing that needs a sweeper (or at
+    // minimum an alert on the row age), and neither is in this change — stated
+    // here rather than left implied by the word "reconciliation".
     return {
       ok: false,
       status: 503,
       reason: 'charge_unknown',
       error: 'Could not confirm this purchase. Please check your balance before retrying.',
+      charge: 'unknown',
+      // No verdict was ever reached, so a retry is not a replay of anything.
+      retryable: true,
     };
   }
 
@@ -515,12 +731,16 @@ export async function purchaseBlockGood(
     // Safe to reverse the whole prefix: this attempt is the exclusive holder of
     // the key, so no other attempt's money can be under it.
     await rollbackCharge(transactionId, good.title);
-    await releaseUnsettledClaim(purchaseId);
+    await voidReversedClaim(purchaseId, 'charge did not fully land — reversed');
     return {
       ok: false,
       status: 400,
       reason: 'charge_failed',
       error: 'Could not complete this purchase',
+      charge: 'reversed',
+      // The buyer's Buzz is back and the key is retired, so the next attempt
+      // derives a fresh generation and can land in full.
+      retryable: true,
     };
   }
 
@@ -566,10 +786,11 @@ export async function purchaseBlockGood(
     });
   } catch (error) {
     // The charge landed and the grant did not. Reverse the charge — unambiguous,
-    // because this attempt holds the key exclusively — and release the claim so
-    // a retry can buy the good.
+    // because this attempt holds the key exclusively — and RETIRE the key, so
+    // the retry is keyed to a new generation instead of colliding with the
+    // reversal.
     await rollbackCharge(transactionId, good.title);
-    await releaseUnsettledClaim(purchaseId);
+    await voidReversedClaim(purchaseId, 'entitlement grant failed — charge reversed');
     void logToAxiom(
       {
         name: BLOCK_GOODS_LOG_NAME,
@@ -588,13 +809,18 @@ export async function purchaseBlockGood(
       status: 500,
       reason: 'charge_failed',
       error: 'Could not complete this purchase',
+      // The debit was reversed, so the buyer's Buzz is back — a KNOWN outcome
+      // behind a 500, which is exactly the case reading the status class gets
+      // wrong.
+      charge: 'reversed',
+      retryable: true,
     };
   }
 
   // ── STEP 5. PAY THE OWNER. ─────────────────────────────────────────────────
   await payBlockGoodOwner({
     purchaseId,
-    transactionId,
+    ledgerKey,
     appOwnerUserId,
     appOwnerShare,
     bluePaidBuzz,
@@ -636,10 +862,15 @@ async function rollbackCharge(transactionId: string, title: string): Promise<voi
  * Delete an UNSETTLED claim row, freeing its deterministic key for a genuine
  * retry.
  *
+ * 🔴 ONLY FOR A KEY THAT NEVER REACHED THE LEDGER. Deleting the row frees the
+ * key on OUR side; it cannot free it on the ledger's, where even a reversed
+ * external id stays occupied forever. So this is correct exactly where the
+ * charge was refused BEFORE any transaction was created (`knownPreMoney`), and
+ * wrong anywhere a debit landed — there the row must be tombstoned by
+ * `voidReversedClaim` instead, or the retry re-derives a burned key.
+ *
  * 🔴 Guarded on `status = 'pending'`, so it can never delete a settled purchase
- * — that row is financial history. Called only where the charge is KNOWN not to
- * stand: a pre-money refusal, a partial debit that was reversed, or a grant that
- * failed and was reversed. It is deliberately NOT called on an UNKNOWN charge
+ * — that row is financial history. Deliberately NOT called on an UNKNOWN charge
  * outcome; see `purchaseBlockGood`.
  */
 async function releaseUnsettledClaim(purchaseId: string): Promise<void> {
@@ -651,6 +882,55 @@ async function releaseUnsettledClaim(purchaseId: string): Promise<void> {
           name: BLOCK_GOODS_LOG_NAME,
           type: 'error',
           message: 'could not release an unsettled purchase claim',
+          purchaseId,
+          error: messageOf(error),
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    });
+}
+
+/**
+ * Retire a claim whose charge LANDED AND WAS REVERSED: the row is kept, marked
+ * `refunded`, and becomes the generation marker the next attempt supersedes.
+ *
+ * 🔴 KEEPING IT IS THE FIX, NOT A DETAIL. Deleting it looked right — no
+ * entitlement was granted, so there is nothing to own — and it bricked the
+ * (buyer, app, good) triple permanently: the retry found no superseded row, re-
+ * derived the same key, the ledger 409'd on the reversed transaction, and the
+ * viewer was told they were out of Buzz. The row is what remembers that the key
+ * is spent.
+ *
+ * `refunded` rather than a fourth status value: the row's own facts are that a
+ * debit of `price_buzz` was taken and returned, which is what `refunded` means
+ * here and what the `status` CHECK already admits. The difference from an
+ * ordinary refund — that the viewer never owned the good — is readable from the
+ * absence of an entitlement pointing at this row, and from `payouts` being `[]`
+ * (no owner credit was ever made, so there was none to claw back).
+ *
+ * Guarded on `status = 'pending'` for the same reason as the delete above, and
+ * never throws: the charge is already reversed, and failing the response after
+ * the money is back helps nobody. A row left `pending` by a failure here is the
+ * unknown-outcome surface, which is the safe direction.
+ */
+async function voidReversedClaim(purchaseId: string, reason: string): Promise<void> {
+  await dbWrite.blockGoodPurchase
+    .updateMany({
+      where: { id: purchaseId, status: PURCHASE_STATUS_PENDING },
+      data: {
+        status: PURCHASE_STATUS_REFUNDED,
+        refundedAt: new Date(),
+        // Both fields or neither — the refund-fields CHECK rejects a half-set
+        // pair, and a row that cannot be written is worse than one that can.
+        refundReason: reason,
+      },
+    })
+    .catch((error) => {
+      void logToAxiom(
+        {
+          name: BLOCK_GOODS_LOG_NAME,
+          type: 'error',
+          message: 'could not void a reversed purchase claim',
           purchaseId,
           error: messageOf(error),
         },
@@ -679,7 +959,8 @@ async function releaseUnsettledClaim(purchaseId: string): Promise<void> {
  */
 async function payBlockGoodOwner(args: {
   purchaseId: string;
-  transactionId: string;
+  /** The generation the buyer was charged under; the credit legs are siblings of it. */
+  ledgerKey: BlockGoodLedgerKeyArgs;
   appOwnerUserId: number;
   appOwnerShare: number;
   bluePaidBuzz: number;
@@ -700,38 +981,75 @@ async function payBlockGoodOwner(args: {
     ] satisfies { amount: number; color: BuzzAccountType }[]
   ).filter((leg) => leg.amount > 0);
 
+  /**
+   * What has landed so far, ACROSS attempts. Hoisted out of the retried
+   * closure on purpose — see below.
+   */
+  const paid: BlockGoodPayout[] = [];
+  const landed = new Set<BuzzAccountType>();
+
+  const recordPayouts = () =>
+    dbWrite.blockGoodPurchase
+      .update({ where: { id: args.purchaseId }, data: { payouts: paid } })
+      .then(() => true)
+      .catch(() => false);
+
   try {
-    // Retried like the cosmetic shop's distribute-funds block: one transient Buzz
-    // blip would otherwise leave `payouts: []` and an unpaid obligation with no
-    // re-runner. Each leg carries its own `externalTransactionId`, so a retry
-    // after a partial success is deduped by the ledger rather than double-paying.
+    // Retried like the cosmetic shop's distribute-funds block: one transient
+    // Buzz blip would otherwise leave `payouts: []` and an unpaid obligation
+    // with no re-runner.
+    //
+    // 🔴 EACH LEG IS SKIPPED ONCE IT HAS LANDED, AND THAT IS WHAT MAKES THE
+    // RETRY CONVERGE. The comment here used to say a re-run was "deduped by the
+    // ledger rather than double-paying", and that was FALSE: the Buzz client
+    // throws on any non-2xx, so a duplicate `externalTransactionId` is a THROW,
+    // not a no-op. On a mixed-colour payout whose blue leg landed and whose
+    // yellow leg blipped, every retry re-sent blue, collided with itself, and
+    // failed the whole closure — three attempts, no progress, `payouts` left
+    // `[]`, and a later refund therefore clawed back NOTHING while refunding
+    // the buyer in full. Dedupe is ours to do, here.
     await withRetries(async () => {
-      const paid: BlockGoodPayout[] = [];
       for (const leg of legs) {
-        const { transactionId } = await createBuzzTransaction({
-          fromAccountId: 0,
-          toAccountId: args.appOwnerUserId,
-          toAccountType: leg.color,
-          amount: leg.amount,
-          type: TransactionType.Sell,
-          description: `A user bought your app item - ${args.title}`.slice(0, 100),
-          // Unique per recipient AND colour, so the two legs of one payout can
-          // never collide on the same external id.
-          externalTransactionId: `${args.transactionId}:sell:${args.appOwnerUserId}:${leg.color}`,
-          details: { purchasedBy: args.buyerUserId, originalAmount: args.priceBuzz },
-        });
-        paid.push({
-          userId: args.appOwnerUserId,
-          amount: leg.amount,
-          color: leg.color,
-          ...(transactionId ? { transactionId } : {}),
-        });
+        if (landed.has(leg.color)) continue;
+        try {
+          const { transactionId } = await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: args.appOwnerUserId,
+            toAccountType: leg.color,
+            amount: leg.amount,
+            type: TransactionType.Sell,
+            description: `A user bought your app item - ${args.title}`.slice(0, 100),
+            // Unique per generation, recipient AND colour, and a SIBLING of the
+            // buyer's key rather than an extension of it — see
+            // `blockGoodPayoutTransactionId`.
+            externalTransactionId: blockGoodPayoutTransactionId({
+              ...args.ledgerKey,
+              recipientUserId: args.appOwnerUserId,
+              color: leg.color,
+            }),
+            details: { purchasedBy: args.buyerUserId, originalAmount: args.priceBuzz },
+          });
+          landed.add(leg.color);
+          paid.push({
+            userId: args.appOwnerUserId,
+            amount: leg.amount,
+            color: leg.color,
+            ...(transactionId ? { transactionId } : {}),
+          });
+        } catch (error) {
+          // 409 = this exact external id is already in the ledger. Only this
+          // request ever writes it, so it is a leg an earlier attempt landed
+          // and whose response we lost. Record it as paid WITHOUT a transaction
+          // id: a refund then reports it in `failures` for a human instead of
+          // silently clawing back nothing, which is the same honesty the
+          // `payouts` contract already promises for an id-less leg.
+          if (getBuzzApiStatus(error) !== 409) throw error;
+          landed.add(leg.color);
+          paid.push({ userId: args.appOwnerUserId, amount: leg.amount, color: leg.color });
+        }
       }
 
-      await dbWrite.blockGoodPurchase.update({
-        where: { id: args.purchaseId },
-        data: { payouts: paid },
-      });
+      if (!(await recordPayouts())) throw new Error('could not record the owner payout');
     }, 3);
   } catch (error) {
     void logToAxiom(
@@ -741,10 +1059,18 @@ async function payBlockGoodOwner(args: {
         message: 'owner payout failed',
         purchaseId: args.purchaseId,
         appOwnerUserId: args.appOwnerUserId,
+        paidLegs: paid.length,
         error: messageOf(error),
       },
       'civitai-prod'
     ).catch(() => undefined);
+
+    // Persist whatever DID land even though the payout as a whole failed: a
+    // recorded leg is what a refund reverses, and an unrecorded one is Buzz the
+    // owner keeps after the buyer is made whole. Skipped when nothing landed,
+    // so `payouts: []` still means "nothing was paid" and still selects the
+    // rows a re-runner should pick up.
+    if (paid.length > 0) await recordPayouts();
   }
 }
 
@@ -805,6 +1131,18 @@ export type RefundBlockGoodResult =
  * A payout recorded WITHOUT a transaction id (the credit leg never reported
  * one) cannot be reversed this way and is reported in `failures` for a human,
  * rather than being replaced by a guess.
+ *
+ * 🔴 THE TWO HALVES MUST NOT OVERLAP. The buyer is repaid by a PREFIX refund
+ * over `buzz_transaction_id` and the owner is clawed back BY TRANSACTION ID, so
+ * the owner's credit ids must fall outside that prefix or the first half would
+ * sweep them up and the second would then fail on every leg as already-reversed
+ * — reporting a clean reversal as a wall of `failures`, with `buyerRefundedBuzz`
+ * inflated by the owner's share. `blockGoodPayoutTransactionId` is what keeps
+ * them disjoint; it is not a naming convention.
+ *
+ * A purchase whose charge was reversed before any grant is already `refunded`
+ * (see `voidReversedClaim`), so it returns `already_refunded` here rather than
+ * being reversed a second time.
  */
 export async function refundBlockGoodPurchase(args: {
   purchaseId: string;

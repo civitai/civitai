@@ -56,11 +56,13 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  *      with a Redis sentinel (fail-CLOSED). Same key + same payload in flight →
  *      409; terminal → replayed verbatim; different payload → 422.
  *   2. The LEDGER. The charge's `externalTransactionIdPrefix` is derived from
- *      (app, good, buyer) alone — no randomness, no client key — so the Buzz
- *      service refuses a second charge forever, and `block_good_purchase`
- *      carries the same string under a UNIQUE index, which is how the conflict
- *      becomes observable. A conflict REFUNDS the daily-cap reservation burned
- *      for Buzz that never moved.
+ *      (app, good, buyer) and the purchase generation — no randomness, no
+ *      client key — so the Buzz service refuses a second charge under that key
+ *      forever, and `block_good_purchase` carries the same string under a
+ *      UNIQUE index, which is how the conflict becomes observable. A conflict
+ *      REFUNDS the daily-cap reservation burned for Buzz that never moved.
+ *      See `blockGoodPurchaseKey` for why those ids must be prefix-free and
+ *      what it cost when they were not.
  *
  * A throw that escapes the attempt RELEASES the claim rather than stranding a
  * 10-minute "already in progress" sentinel over nothing.
@@ -183,14 +185,18 @@ export const baseHandler = withAxiom(async function handler(
     });
 
     if (!result.ok) {
-      // 🔴 REFUND ONLY ON A KNOWN-PRE-MONEY REFUSAL, and the service's 4xx set is
-      // exactly that: the price guards, ownership, already-owned, a claim another
-      // attempt owns, an insufficient-funds refusal the ledger reported, and a
-      // partial debit it has already reversed. Every case where the charge
-      // outcome is UNKNOWN is a 5xx by construction (`charge_unknown`), so it
-      // KEEPS the reservation — stricter, never looser, which is the only safe
-      // direction when we cannot say whether money moved.
-      if (result.status >= 400 && result.status < 500) {
+      // 🔴 REFUND THE RESERVATION ON WHAT THE SERVICE KNOWS, NEVER ON THE STATUS
+      // CLASS. This used to read `status >= 400 && status < 500`, justified by
+      // "every case where the charge outcome is UNKNOWN is a 5xx by
+      // construction". The premise is true and the code needed its CONVERSE,
+      // which is false: `charge_failed` is a 500 both when the claim INSERT
+      // failed before any charge and when the settle failed after the charge was
+      // REVERSED. Both are known — the Buzz never left or came straight back —
+      // and both leaked the viewer's daily allowance by being read as "may have
+      // moved". `charge` answers the question directly, and the test is an
+      // ALLOWLIST so an unrecognised value keeps the reservation, which is the
+      // stricter direction.
+      if (result.charge === 'none' || result.charge === 'reversed') {
         await refundBlockGoodSpend(capKey, priceBuzz);
       }
       return {
@@ -200,11 +206,13 @@ export const baseHandler = withAxiom(async function handler(
         // second vocabulary on it is how a client branching on `code` across two
         // block routes starts getting two meanings.
         body: { ok: false, error: result.error, reason: result.reason },
-        // 🔴 A 503 means the charge outcome is UNKNOWN, so it must not be cached
-        // under the idempotency key: a retry has to be able to re-attempt and
-        // find the surviving `pending` claim, which is the honest answer, rather
-        // than replay a verdict that was never reached.
-        transient: result.status === 503,
+        // 🔴 CACHING IS ALSO NOT A STATUS-CLASS DECISION. An idempotency key
+        // exists so a retry can finish the work; caching a verdict a retry could
+        // improve on turns the key into the thing that blocks it. The two
+        // `charge_failed` 500s above are exactly that shape — a database blip
+        // and a reversed charge, both retryable — and were cached for the full
+        // 10-minute TTL, replaying the 500 instead of re-attempting.
+        transient: result.retryable === true,
       };
     }
 

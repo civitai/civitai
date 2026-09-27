@@ -1058,6 +1058,10 @@ export type BlockGoodPurchase = {
    * concurrent attempts, so exactly one can reach the charge. A surviving
    * `pending` row is the reconciliation record for a charge whose outcome is
    * unknown.
+   *
+   * `refunded` also marks a charge that was reversed before any entitlement
+   * was granted: that row is kept, not deleted, because its `buzzTransactionId`
+   * stays occupied in the Buzz ledger and the next attempt supersedes it.
    */
   status: Generated<string>;
   refund_reason: string | null;

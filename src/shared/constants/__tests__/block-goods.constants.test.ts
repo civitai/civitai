@@ -221,9 +221,11 @@ describe('parseManifestGoods — the review-gated catalog rules', () => {
   });
 
   it('REJECTS an id that would break the redis/ledger key shape', () => {
-    // The purchase key is `block-good:<app>:<good>:<user>` and the idempotency
-    // key is colon-separated too, so a colon in an id would make two distinct
-    // triples collide on one string.
+    // The purchase key is `block-good:<app>:<good>:<user>:buy` and the
+    // idempotency key is colon-separated too, so a colon in an id would make
+    // two distinct triples collide on one string. It is also half of the
+    // prefix-freedom argument in `blockGoodPurchaseKey`: that proof holds only
+    // because no variable segment can contain the separator.
     expect(parseManifestGoods(manifestWith([{ ...VALID_GOOD, id: 'a:b' }])).errors).toHaveLength(1);
   });
 
@@ -358,6 +360,35 @@ describe('the cosmetic-shop agreement guard', () => {
     const creator = computeCreatorShopSplit(999);
     expect(goods.appOwnerShare).toBe(creator.creatorPool);
     expect(goods.platformShare).toBe(creator.platformCut);
+  });
+
+  it('🔴 keeps the cosmetic shop’s FLOAT artefact at 90, where integer arithmetic would differ', () => {
+    // 🔴 THIS PINS A KNOWN 1-BUZZ UNDERPAYMENT AND IS NOT A MISTAKE. `0.7` is
+    // not representable in binary, so `90 * 0.7` is 62.99999999999999 and
+    // flooring it gives the owner 62 where `Math.floor(7 * 90 / 10)` gives 63.
+    // It happens on 1,166 of the 49,998 legal prices; 90 is the SMALLEST.
+    //
+    // 🔴 WHY IT IS NOT FIXED. The instruction for this rail was "the same cut as
+    // cosmetic shop item sales", and `computeCreatorShopSplit` uses the
+    // identical `Math.floor(price * 0.7)`. Switching goods to integer
+    // arithmetic would pay an app owner 63 where a cosmetic creator is paid 62
+    // on the same price — breaking the parity that IS the requirement, for a
+    // rounding artefact worth one Buzz. The drift guard above pins 999, which
+    // is one of the ~97.7% of prices where the two rules agree, so it cannot
+    // see this at all; that is the gap this case fills.
+    //
+    // 🔴 IF YOU CHANGE THE ARITHMETIC, THIS TEST IS THE DECISION, not an
+    // obstacle: update it in the same commit and move the cosmetic shop with
+    // it, or record why the two products are now allowed to disagree.
+    expect(computeBlockGoodSplit(90)).toEqual({ appOwnerShare: 62, platformShare: 28 });
+    // The integer rule genuinely disagrees here — without this the case above
+    // could be satisfied by arithmetic that never had an artefact to keep.
+    expect(Math.floor((7 * 90) / 10)).toBe(63);
+    // …and the cosmetic shop lands on the same 62, which is the parity being
+    // preserved. Asserted against the sibling function, not a literal, so a
+    // repricing on that side fails here instead of drifting silently.
+    expect(computeBlockGoodSplit(90).appOwnerShare).toBe(computeCreatorShopSplit(90).creatorPool);
+    expect(computeBlockGoodSplit(90).platformShare).toBe(computeCreatorShopSplit(90).platformCut);
   });
 });
 
