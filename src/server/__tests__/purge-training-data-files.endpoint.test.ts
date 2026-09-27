@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelFileService from '~/server/services/model-file.service';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as TimeoutHelpers from '~/server/utils/timeout-helpers';
 import type * as DeliveryWorker from '~/utils/delivery-worker';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as StorageResolver from '~/utils/storage-resolver';
@@ -118,9 +119,18 @@ const mocks = vi.hoisted(() => ({
   safe: vi.fn(),
   deregister: vi.fn(),
   cacheBust: vi.fn(),
+  resolveOptions: [] as unknown[],
+  timeout: vi.fn(),
+  realTimeout: null as null | ((...args: never[]) => unknown),
   // Set by the first object delete, so the resolver can answer differently before and after.
   deleted: false,
-  // 'follow' = the resolver serves the fake bucket; the others model what it may answer instead.
+  // 'follow' serves the fake bucket AFTER the first delete, but reports present BEFORE it whatever
+  // the bucket holds, so the listing gate and the resolver gate can each be tested alone.
+  // trackBucketBefore makes it follow the bucket in both phases. The others model what it may
+  // answer instead.
+  trackBucketBefore: false,
+  // A server may answer a Range request with the whole object (200) instead of 206.
+  ignoreRange: false,
   resolverBefore: 'follow' as Resolver,
   resolverAfter: 'follow' as Resolver,
   rows: [] as unknown[],
@@ -140,6 +150,11 @@ vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelFileService>()),
   deleteFilesForModelVersionCache: mocks.cacheBust,
 }));
+vi.mock('~/server/utils/timeout-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof TimeoutHelpers>();
+  mocks.realTimeout = actual.withTimeoutFallback as never;
+  return { ...actual, withTimeoutFallback: mocks.timeout };
+});
 vi.mock('~/utils/storage-resolver', async (importOriginal) => ({
   ...(await importOriginal<typeof StorageResolver>()),
   deregisterFileLocationsByFile: mocks.deregister,
@@ -148,7 +163,8 @@ vi.mock('~/utils/delivery-worker', async (importOriginal) => {
   const actual = await importOriginal<typeof DeliveryWorker>();
   return {
     ...actual,
-    getDownloadUrlByFileId: async () => {
+    getDownloadUrlByFileId: async (_fileId: number, _name?: string, options?: unknown) => {
+      mocks.resolveOptions.push(options);
       const mode = mocks.deleted ? mocks.resolverAfter : mocks.resolverBefore;
       if (mode === 'unregistered') throw new actual.StorageResolverError(404, 'nope');
       if (mode === 'error') throw new actual.StorageResolverError(503, 'unavailable');
@@ -221,6 +237,10 @@ beforeEach(() => {
   mocks.deleted = false;
   mocks.resolverBefore = 'follow';
   mocks.resolverAfter = 'follow';
+  mocks.trackBucketBefore = false;
+  mocks.ignoreRange = false;
+  mocks.resolveOptions = [];
+  mocks.timeout.mockImplementation(mocks.realTimeout as never);
   mocks.csamHeld = [];
   mocks.safe.mockImplementation(async (urls: string[]) => ({ safe: urls, skipped: 0 }));
   mocks.deregister.mockResolvedValue({ deleted: 1 });
@@ -243,12 +263,13 @@ beforeEach(() => {
     mocks.csamHeld.map((id) => ({ id }))) as never);
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
       if (url.endsWith('/unreachable')) throw new TypeError('fetch failed');
       if (url.endsWith('/elsewhere')) return new Response(null, { status: 200 });
       if (url.endsWith('/forbidden')) return new Response(null, { status: 403 });
-      const present = mocks.deleted ? mocks.bucket!.current(KEY) : true;
-      return new Response(null, { status: present ? 200 : 404 });
+      const present = mocks.deleted || mocks.trackBucketBefore ? mocks.bucket!.current(KEY) : true;
+      if (!present) return new Response(null, { status: 404 });
+      return new Response(null, { status: init?.headers?.Range && !mocks.ignoreRange ? 206 : 200 });
     })
   );
 });
@@ -285,6 +306,38 @@ describe('purge-training-data-files', () => {
     const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(init.method ?? 'GET').toBe('GET');
     expect(init.headers).toEqual({ Range: 'bytes=0-0' });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('asks the resolver for an origin url under a timeout', async () => {
+    await live();
+    expect(mocks.resolveOptions.length).toBeGreaterThan(0);
+    expect(mocks.resolveOptions.every((o) => (o as { direct?: boolean })?.direct === true)).toBe(
+      true
+    );
+    expect(mocks.timeout.mock.calls.every((c) => c[1] === 10_000 && c[2] === null)).toBe(true);
+  });
+
+  it('treats a resolver that times out as unknown and deletes nothing', async () => {
+    mocks.timeout.mockImplementation(
+      async (_p: Promise<unknown>, _ms: number, fallback: unknown) => {
+        (_p as Promise<unknown>).catch(() => undefined);
+        return fallback;
+      }
+    );
+
+    const { body } = await live();
+
+    expect(body.results[0].resolverBefore).toBe('unknown');
+    expect(mocks.bucket!.deletes).toEqual([]);
+  });
+
+  it('accepts a server that answers the one-byte request with the whole object', async () => {
+    mocks.ignoreRange = true;
+
+    const { body } = await live();
+
+    expect(body.results[0]).toMatchObject({ resolverBefore: 'present', rowDeleted: true });
   });
 
   it('removes older versions and hide markers along with the current one', async () => {
@@ -418,6 +471,20 @@ describe('purge-training-data-files', () => {
       expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
     });
 
+    it('when an older version sits under a hide marker, which the resolver cannot serve', async () => {
+      mocks.bucket = versionedBucket([
+        { key: KEY, versionId: 'v1', isDeleteMarker: false, size: 100 },
+        { key: KEY, versionId: 'm1', isDeleteMarker: true },
+      ]);
+      mocks.trackBucketBefore = true;
+
+      const { body } = await live();
+
+      expect(body.results[0]).toMatchObject({ headBefore: 'absent', resolverBefore: 'absent' });
+      expect(body.results[0].error).toBe(NOT_CONFIRMED);
+      expect(mocks.bucket!.deletes).toEqual([]);
+    });
+
     it('when only a hide marker is stored at the key', async () => {
       mocks.bucket = versionedBucket([{ key: KEY, versionId: 'm1', isDeleteMarker: true }]);
 
@@ -520,12 +587,16 @@ describe('purge-training-data-files', () => {
       }
     );
 
-    it.each([null, { deleted: 0 }])('when deregistering returns %o', async (outcome) => {
+    it.each([
+      [null, 'resolver registration not removed; row kept'],
+      [{ deleted: 0 }, 'resolver registration not removed; row kept'],
+      [{ deleted: 2 }, 'file was registered in more than one location; row kept'],
+    ])('when deregistering returns %o', async (outcome, error) => {
       mocks.deregister.mockResolvedValue(outcome);
 
       const { body } = await live();
 
-      expect(body.results[0].error).toBe('resolver registration not removed; row kept');
+      expect(body.results[0].error).toBe(error);
       expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
     });
   });
@@ -583,10 +654,17 @@ describe('purge-training-data-files', () => {
         TemplateStringsArray,
         ...unknown[]
       ];
-      const sql = strings.join('?').replace(/\s+/g, ' ');
-      expect(sql).toContain(`WHERE r."archivedAt" IS NULL AND`);
-      expect(sql).not.toContain('reportSentAt');
-      expect(sql).toContain(`r.details->'modelVersionIds'`);
+      const sql = strings.join('?').replace(/\s+/g, ' ').trim();
+      expect(sql).toBe(
+        [
+          `SELECT DISTINCT e.value::int AS id FROM "CsamReport" r`,
+          `CROSS JOIN LATERAL jsonb_array_elements_text(`,
+          `CASE WHEN jsonb_typeof(r.details->'modelVersionIds') = 'array'`,
+          `THEN r.details->'modelVersionIds' ELSE '[]'::jsonb END`,
+          `) AS e(value)`,
+          `WHERE r."archivedAt" IS NULL AND e.value = ANY(?::text[])`,
+        ].join(' ')
+      );
       expect(values).toEqual([['10']]);
     });
 

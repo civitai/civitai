@@ -8,6 +8,7 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   getDownloadUrlByFileId,
   isDefiniteNotFound,
@@ -81,7 +82,14 @@ async function listUnfinishedUploads(s3: S3Client, bucket: string, key: string) 
 async function resolverPresence(fileId: number): Promise<Presence> {
   let url: string;
   try {
-    ({ url } = await getDownloadUrlByFileId(fileId));
+    // `direct` asks for an origin url, so the probe neither reads nor fills an edge cache.
+    const resolved = await withTimeoutFallback(
+      getDownloadUrlByFileId(fileId, undefined, { direct: true }),
+      10_000,
+      null
+    );
+    if (!resolved) return 'unknown';
+    url = resolved.url;
   } catch (e) {
     return e instanceof StorageResolverError && isDefiniteNotFound(e) ? 'absent' : 'unknown';
   }
@@ -228,10 +236,14 @@ export default WebhookEndpoint(async (req, res) => {
 
       const deregistered = await deregisterFileLocationsByFile([file.id]);
       result.resolverDeregistered = deregistered?.deleted ?? null;
-      // The file was served through the resolver before, so it is registered: removing nothing
-      // means the call failed, which the helper reports as zero rather than throwing.
-      if (!deregistered || deregistered.deleted < 1) {
-        result.error = 'resolver registration not removed; row kept';
+      // The file was served through the resolver before, so it is registered once: zero means the
+      // call failed (the helper reports that as zero rather than throwing), and more than one means
+      // a second location this run never checked may still hold the bytes.
+      if (deregistered?.deleted !== 1) {
+        result.error =
+          deregistered && deregistered.deleted > 1
+            ? 'file was registered in more than one location; row kept'
+            : 'resolver registration not removed; row kept';
         continue;
       }
       await dbWrite.modelFile.delete({ where: { id: file.id } });
