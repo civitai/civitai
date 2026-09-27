@@ -53,12 +53,18 @@ import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
  *
  * ⚠️ AND THE SURVIVORS ARE NOT WHAT THIS DOCBLOCK FIRST CLAIMED. It said they were "tag strings,
  * manifest keys and scope-LIST members"; in `blocks.router.ts` the four live ones are
- * `recordScopeInvocation({ scope: 'ai:write:budgeted' })` — TELEMETRY LABELS naming this same
- * vocabulary item, which go silently wrong (mis-attributed activity rows) on exactly the rename
- * this constant exists for. Whether a value written to an audit store should be coupled to the
- * runtime constant is a judgement, not an obvious yes, so they are deliberately left — but
- * describing them as a different KIND of thing is checkably wrong, and a wrong characterisation
- * is what stops the next reader looking.
+ * `scope: 'ai:write:budgeted'` arguments passed to `recordScopeInvocation` — TELEMETRY LABELS
+ * naming this same vocabulary item, which go silently wrong (mis-attributed activity rows) on
+ * exactly the rename this constant exists for. Whether a value written to an audit store should be
+ * coupled to the runtime constant is a judgement, not an obvious yes, so they are deliberately
+ * left — but describing them as a different KIND of thing is checkably wrong, and a wrong
+ * characterisation is what stops the next reader looking.
+ *
+ * ⚠️ THE CALL SHAPE IS SPELLED APART ABOVE ON PURPOSE. `analytics-bucket-labels.drift.test.ts`
+ * greps RAW source for `recordScope` + `Invocation({` — comments included — to build a ledger of
+ * files that CALL it. Writing the literal call shape in a COMMENT here therefore added this file
+ * to that ledger and failed the guard. The guard should strip comments (it is in another slice);
+ * rewording is the in-slice fix.
  */
 export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
 
@@ -676,6 +682,32 @@ export async function recordScopeGrant(opts: {
     // result is expressible in the per-scope model the rest of this feature uses.
     const wasWholeGrantRevoked = Boolean(existingRevokedAt);
     if (!wasWholeGrantRevoked) return { revokedAt: null };
+    // 🔴 ON A PRE-MIGRATION DATABASE THE MIGRATION IS NOT EXPRESSIBLE, SO THE CLEAR IS
+    // CONDITIONAL INSTEAD OF WHOLESALE. `revoked_at` predates this migration; `revoked_scopes`
+    // does not. So when the pre-write read fell back to the narrow select we can still SEE a
+    // whole-grant revoke but cannot write the per-scope suppressions that would replace it —
+    // and the two remaining options are not symmetric. Lifting the flag wholesale is the
+    // fail-OPEN this function exists to close (it restores every scope in `granted_scopes`,
+    // `ai:write:budgeted` at its old ceiling included, from a dialog that named a subset).
+    //
+    // What IS expressible is the case where there is nothing left to suppress: if the viewer
+    // re-consented to everything the row had granted, the migration would have produced an
+    // empty list anyway, so clearing the flag loses no information. A PARTIAL re-consent
+    // leaves the flag set — the viewer stays withheld rather than over-granted, and the
+    // prompt completes once a human applies the migration.
+    //
+    // Round-4 review found this branch still taking the wholesale lift: `existingRevokedAt` was
+    // assigned on the wide read only, so the narrow fallback left it `null` and the whole
+    // migration was skipped — the one population it was written for (the `2026-09-16` oneoff's
+    // hand-written rows, on a database that has not had the column added yet) was the one it
+    // did not cover.
+    if (!revokedScopesColumnAvailable) {
+      const residual = (priorGranted ?? []).filter((x) => !incomingSet.has(x));
+      if (residual.length > 0) return {};
+      // Nothing is withheld after this write — the honest value for the caller's marker publish.
+      clearedTo = [];
+      return { revokedAt: null };
+    }
     // 🔴 `incoming` IS SUBTRACTED FROM **BOTH** SOURCES. Carrying `priorRevoked` forward verbatim
     // kept suppressing a scope the dialog DID name — so re-consenting to something the viewer had
     // previously revoked silently failed, which is the mirror image of the defect this function
@@ -684,9 +716,31 @@ export async function recordScopeGrant(opts: {
       (x) => !incomingSet.has(x)
     );
     const migrated = Array.from(new Set(carried));
+    // 🔴 THE WRITE IS **UNCONDITIONAL**, AND GUARDING IT ON `migrated.length > 0` WAS A
+    // SILENT NO-GRANT. Round-4 review, reproduced: the consent dialog sends the app's whole
+    // consent-gated set (`blocks.router.ts` intersects the viewer's request with the app's
+    // ceiling), so on a whole-grant-revoked row `incoming` covers everything and `migrated`
+    // is `[]` — the guard then skipped the column, `revoked_scopes` kept the full list the
+    // revoke had written, and `revoked_at` cleared anyway. Post-state: granted = all,
+    // revoked = all, flag = null, so `liveGrantedScopes` returned NOTHING. The mutation
+    // reported success and conveyed no scope; a SECOND identical click recovered (by then
+    // `existingRevokedAt` is null so `revocationData` handles it), which is why the symptom
+    // reads as "I had to press Allow twice" rather than as a failure.
+    //
+    // Writing `[]` is not redundant — it is the only thing that clears a suppression list the
+    // revoke wrote. And the timestamp follows the list: `null` once nothing is withheld,
+    // matching `revocationData`'s rule below so the two clear-capable paths cannot disagree
+    // about what an empty list means.
+    // 🔴 REPORT THE MIGRATION TO THE CALLER. This function writes `revoked_scopes` just as
+    // `revocationData` does, so leaving `clearedTo` null here made `revokedScopesAfterClear`
+    // claim "this write did not touch revocations" about a write that rewrote the whole list —
+    // and the router skips `ConsentRevocation.publish` on `null`, so the suppressions this path
+    // creates never reached in-flight tokens. Same round-4 review.
+    clearedTo = migrated;
     return {
       revokedAt: null,
-      ...(migrated.length > 0 ? { revokedScopes: migrated, revokedScopesAt: new Date() } : {}),
+      revokedScopes: migrated,
+      revokedScopesAt: migrated.length > 0 ? new Date() : null,
     };
   }
 
@@ -694,6 +748,11 @@ export async function recordScopeGrant(opts: {
    * What the clear resolved to, for the return value. Stays `null` unless a clear was
    * requested AND actually lifted something — see the return type for why `null` and `[]`
    * must not be collapsed.
+   *
+   * 🔴 BOTH clear-capable paths assign it: `revocationData` (plain subtraction) and
+   * `unrevokeData` (whole-grant migration). Only one of them runs per write — the migration
+   * makes `revocationData` yield — so there is no ordering question, but a future third writer
+   * of `revoked_scopes` MUST set this too or the router silently skips the marker publish.
    */
   let clearedTo: string[] | null = null;
 
@@ -730,6 +789,16 @@ export async function recordScopeGrant(opts: {
   /** Set by `readExisting` when a clear is possible — `unrevokeData` branches on it. */
   let existingRevokedAt: Date | null = null;
 
+  /**
+   * 🔴 FALSE ONCE THE PRE-WRITE READ HAS FALLEN BACK TO THE NARROW SELECT, i.e. this database
+   * has no `revoked_scopes` column. `unrevokeData` MUST NOT write that column when this is
+   * false — the update would P2022 and 500 the consent mutation — so it takes a conditional
+   * clear instead. Declared here rather than inferred from `existing.revokedScopes === undefined`
+   * because `undefined` is also what a post-migration row with an empty list deserializes to on
+   * the non-clear path, and conflating the two would gate a real write on a false negative.
+   */
+  let revokedScopesColumnAvailable = true;
+
   async function readExisting(): Promise<{
     id: string;
     grantedScopes: string[];
@@ -761,10 +830,17 @@ export async function recordScopeGrant(opts: {
     } catch (err) {
       if (!isMissingColumnError(err)) throw err;
       logMissingRevokedScopesColumn('recordScopeGrant', err);
-      return (await dbWrite.appUserScopeGrant.findUnique({
+      revokedScopesColumnAvailable = false;
+      // 🔴 `revokedAt` IS STILL SELECTED HERE — it predates this migration, so the narrow
+      // fallback can read it for free, and `unrevokeData` needs it to tell a whole-grant revoke
+      // from a redundant `null` write. Omitting it is what made the pre-migration population
+      // take the wholesale lift.
+      const narrow = (await dbWrite.appUserScopeGrant.findUnique({
         where,
-        select: { id: true, grantedScopes: true },
-      })) as { id: string; grantedScopes: string[] } | null;
+        select: { id: true, grantedScopes: true, revokedAt: true },
+      })) as { id: string; grantedScopes: string[]; revokedAt: Date | null } | null;
+      existingRevokedAt = narrow?.revokedAt ?? null;
+      return narrow;
     }
   }
 

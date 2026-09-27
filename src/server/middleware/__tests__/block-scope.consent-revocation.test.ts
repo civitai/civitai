@@ -108,11 +108,20 @@ const SCOPE = 'ai:write:budgeted';
  * that assertion able to fail.
  */
 const OTHER_SCOPE = 'posts:write:self';
+/**
+ * A consent-EXEMPT scope, and the one 21 routes actually DECLARE (5 `app-storage/*`,
+ * 13 `shared-storage/*`, 3 `collections/*`). `revokeScopes` refuses an exempt scope with a
+ * specific error, so no marker can ever name it — which is what makes refusing such a route
+ * during a cache incident a pure self-inflicted outage.
+ */
+const EXEMPT_SCOPE = 'collections:read:self';
 const USER_ID = 4242;
 
 const findUniqueMock = dbMock.dbRead.appBlock.findUnique;
 
-async function mint(opts: { userId?: number | null } = {}): Promise<string> {
+async function mint(
+  opts: { userId?: number | null; extraScopes?: string[] } = {}
+): Promise<string> {
   const { token } = await BlockTokenService.sign({
     // `userId: null` mints the anon subject, which is one of the two documented skips.
     userId: opts.userId === undefined ? USER_ID : opts.userId,
@@ -122,7 +131,7 @@ async function mint(opts: { userId?: number | null } = {}): Promise<string> {
     blockInstanceId: 'bki_consent',
     // OTHER_SCOPE first — see its docblock; `claims.scopes[0] !== requiredScope` is what makes
     // the "asks about the route's scope" assertion killable.
-    scopes: [OTHER_SCOPE, SCOPE],
+    scopes: [OTHER_SCOPE, SCOPE, ...(opts.extraScopes ?? [])],
     ctx: {},
     buzzBudget: 100,
   } as Parameters<typeof BlockTokenService.sign>[0]);
@@ -177,13 +186,20 @@ function makeReq(token: string): NextApiRequest {
 }
 
 /** Drives the real middleware. `requiredScope: null` exercises any-token mode. */
-/** Label sets currently recorded on a counter in the real default registry. */
-async function labelsFor(name: string): Promise<Array<Record<string, string>>> {
+/**
+ * Label sets currently recorded on a counter in the real default registry, **with their values**.
+ *
+ * 🔴 THE `value` IS LOAD-BEARING. prom-client aggregates by label set, so dropping it makes one
+ * increment and a hundred increments indistinguishable — and "ONE increment per scope removed
+ * from THAT request's token, NOT one per refusal" is the counter's entire documented claim.
+ * Round-4 review measured two doubled-`inc` mutants SURVIVING the full set because of it.
+ */
+async function labelsFor(name: string): Promise<Array<Record<string, string | number>>> {
   const metrics = await client.register.getMetricsAsJSON();
   const m = metrics.find((x) => x.name === name) as
-    | { values?: Array<{ labels: Record<string, string> }> }
+    | { values?: Array<{ labels: Record<string, string>; value: number }> }
     | undefined;
-  return (m?.values ?? []).map((v) => v.labels);
+  return (m?.values ?? []).map((v) => ({ ...v.labels, value: v.value }));
 }
 const consentLabels = () => labelsFor('civitai_app_block_consent_revocation_refusals_total');
 const unavailableLabels = () => labelsFor('civitai_app_block_consent_marker_unavailable_total');
@@ -248,7 +264,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
     // and the leaf `inc` live in the same module, so `vi.mock` on the leaf cannot intercept the
     // intra-module call — mocking the fan-out instead would stub out the intersection rule that
     // is the thing worth exercising. The registry sees the whole chain, clamp included.
-    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: SCOPE }]);
+    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: SCOPE, value: 1 }]);
   });
 
   /**
@@ -261,7 +277,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
     const { res } = await drive(await mint(), SCOPE);
     expect(res.statusCode).toBe(200);
-    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: OTHER_SCOPE }]);
+    expect(await consentLabels()).toEqual([{ surface: 'rest', scope: OTHER_SCOPE, value: 1 }]);
   });
 
   /**
@@ -465,6 +481,61 @@ describe('a token carrying a now-revoked scope is refused', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 AND IT REFUSES ONLY A ROUTE WHOSE OWN SCOPE IS REVOKABLE. Placing the `unavailable` branch
+   * AHEAD of the `requiredScope` test made it refuse every consulted request — including the 21
+   * routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member. `revokeScopes` refuses an
+   * exempt scope, so no marker can ever have named one: those refusals protect nothing and are
+   * exactly the self-inflicted outage `revokedScopesForToken`'s docblock argues against. And
+   * `shouldConsultMarker` reaches them constantly — the mint signs the app's WHOLE effective set,
+   * so an app declaring one gated scope is looked up on its exempt routes too (12 of 15 first-party
+   * manifests).
+   *
+   * ⚠️ THE TRIGGER IS NOT ONLY "REDIS IS DOWN": `lookup` returns `unavailable` for a marker value
+   * it cannot parse, so one malformed key would have killed a viewer's storage and collections
+   * traffic until the TTL expired.
+   *
+   * 🔴 SERVING IS NOT RELAXING — the gated scopes are still stripped fail-CLOSED, which the second
+   * half of this arm pins. Without that half, deleting the whole `unavailable` handling would pass.
+   *
+   * RED at `a50a7e3643` (503 `permission_state_unavailable`, handler never called).
+   *
+   * MUTATIONS THAT MUST KILL IT: drop the `!isConsentExemptScope(opts.requiredScope)` conjunct
+   * (503 returns); make the fall-through skip the strip (the handler then sees the gated scopes).
+   */
+  it('🔴 an unreadable marker does NOT refuse a route whose requiredScope is consent-EXEMPT', async () => {
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    const seen: string[][] = [];
+    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
+      seen.push([...(req as unknown as { blockClaims: { scopes: string[] } }).blockClaims.scopes]);
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(
+      handler as never,
+      {
+        endpoint: 'me',
+        requiredScope: EXEMPT_SCOPE,
+      } as never
+    );
+    const res = makeRes();
+    await route(makeReq(await mint({ extraScopes: [EXEMPT_SCOPE] })) as never, res as never);
+
+    expect(
+      res.statusCode,
+      'a cache blip refused traffic on a scope no revoke could ever have touched — 21 routes, ' +
+        'reachable whenever the app declares any gated scope'
+    ).toBe(200);
+    // …and the gated scopes it happened to carry are STILL withheld: serving the exempt route is
+    // not a relaxation of the fail-closed posture.
+    expect(
+      seen[0],
+      'the fall-through served the request WITHOUT stripping, so an in-handler ' +
+        '`claims.scopes.includes(...)` sub-check would pass during the incident'
+    ).toEqual([EXEMPT_SCOPE]);
+    // Nothing was refused, so the refusal counter must stay silent.
+    expect(await unavailableLabels()).toEqual([]);
+  });
+
   /** It is NOT reported as a consent withdrawal on the per-scope counter either — that series is
    *  product signal, and an infra refusal in it is what made the help text wrong. */
   it('the 503 is counted as marker-unavailable, not as a scope withdrawal', async () => {
@@ -472,7 +543,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
     await drive(await mint(), SCOPE);
     // The per-scope series is PRODUCT signal; an infra refusal must not land in it.
     expect(await consentLabels()).toEqual([]);
-    expect(await unavailableLabels()).toEqual([{ surface: 'rest' }]);
+    expect(await unavailableLabels()).toEqual([{ surface: 'rest', value: 1 }]);
   });
 
   /**

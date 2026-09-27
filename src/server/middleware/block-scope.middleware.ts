@@ -19,6 +19,10 @@ import {
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
+// Static, not the dynamic `await import(...)` this file uses for `getGrantedScopes` further
+// down: `consent-revocation.service` above already pulls `scope-grant.service` into this
+// module's static graph, so naming one more pure predicate from it adds no edge and no cycle.
+import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
@@ -1300,8 +1304,13 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // rejection — which is why it catches.
     // 🔴 THE ANY-TOKEN CATALOG ROUTES ARE SKIPPED, AND THIS SKIP WAS DELETED BY MISTAKE. The
     // first cut had it; removing the route condition wholesale — the right move for the SCOPE
-    // test, which was the actual defect — took this with it. These five routes
-    // (`blocks/{models,images,gated-images,tools,user-checkpoint/set}.ts`) declare no
+    // test, which was the actual defect — took this with it. ⚠️ DERIVE THE COUNT, DO NOT QUOTE
+    // ONE: this comment said "five" while the guard already derived SIX, and the commit that
+    // added the guard said "seven" — which double-counted `blocks/me.ts`, a route that declares
+    // `requiredScope: 'user:read:self'` and is therefore not in this population at all. At the
+    // time of writing the derivation yields
+    // `blocks/{gated-images,generation-resources,images,models,tools,user-checkpoint/set}.ts`;
+    // `no-unguarded-block-rest-token.test.ts` re-derives it and the number here is prose. They declare no
     // `requiredScope` and, enumerated, reference `claims.scopes` NOWHERE: they authorize on
     // token validity alone and derive their only authority from `claims.maxBrowsingLevel`. So a
     // marker read there can neither refuse nor usefully strip — it is pure cost on the routes
@@ -1311,7 +1320,8 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // ⚠️ THIS IS A ROUTE CONDITION, WHICH IS THE SHAPE THAT CAUSED THE ORIGINAL HOLE — so it is
     // narrow and ledgered, not a judgement about scopes. It keys on "this route exercises NO
     // scope", not on WHICH scope; a route that names a `requiredScope` is always consulted, and
-    // `no-unguarded-block-rest-token.test.ts` asserts these five still read no scopes.
+    // `no-unguarded-block-rest-token.test.ts` asserts every route in that derived population
+    // still reads no scopes.
     const consentUserId = parseSubjectUserId(claims.sub);
     const consentLookup =
       opts.requiredScope !== undefined &&
@@ -1412,7 +1422,28 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
       // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
       // done here. Do not read this branch as delivering retry.
-      if (verdict.kind === 'unavailable') {
+      // 🔴 AND IT REFUSES ONLY WHEN THE ROUTE'S OWN SCOPE IS REVOKABLE. Placing this branch
+      // ahead of the `requiredScope` test made it refuse EVERY consulted request, including the
+      // 21 routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member (5 `app-storage/*`,
+      // 13 `shared-storage/*`, 3 `collections/*`) — traffic no revoke could ever have touched,
+      // because `revokeScopes` refuses an exempt scope with a specific error. That is precisely
+      // the self-inflicted outage `revokedScopesForToken`'s own docblock argues against, and
+      // `shouldConsultMarker` reaches those routes constantly: the mint signs the app's whole
+      // effective set, so any app declaring one gated scope is consulted on its exempt routes too.
+      //
+      // ⚠️ THE TRIGGER IS NOT ONLY "REDIS IS DOWN". `lookup` returns `unavailable` for a marker
+      // value it cannot parse, so one malformed key for one (user, app) would have killed that
+      // viewer's storage and collections traffic until the TTL expired.
+      //
+      // Falling through is not a relaxation: `revokedScopesForToken` synthesises "every revokable
+      // scope this token carries is revoked" on an `unavailable` verdict, so the gated scopes are
+      // still stripped fail-CLOSED and an in-handler sub-check still cannot pass. The only thing
+      // that changes is that the exempt scope the route actually declared is served.
+      // Round-4 review; measured both ways on the same probe.
+      if (
+        verdict.kind === 'unavailable' &&
+        (opts.requiredScope === undefined || !isConsentExemptScope(opts.requiredScope))
+      ) {
         recordBlockConsentMarkerUnavailable('rest');
         res.status(503).json({
           error: 'permission state is temporarily unavailable — retry shortly',

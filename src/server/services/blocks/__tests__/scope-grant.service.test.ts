@@ -336,6 +336,87 @@ describe('scope-grant.service', () => {
       ).rejects.toMatchObject({ message: CONSENT_REVOKE_UNAVAILABLE_MESSAGE });
     });
 
+    /**
+     * 🔴 THE PRE-MIGRATION POPULATION IS THE ONE THE MIGRATION WAS WRITTEN FOR, AND IT WAS THE
+     * ONE IT DID NOT REACH. `existingRevokedAt` was assigned on the WIDE read only, so the narrow
+     * fallback left it `null`, `unrevokeData` took `return { revokedAt: null }`, and a partial
+     * re-consent lifted a whole-grant revoke wholesale — restoring every scope in
+     * `granted_scopes`, `ai:write:budgeted` at its old ceiling included. That is exactly the
+     * fail-open the migration exists to close, surviving on the only database where the row shape
+     * actually occurs today: `revoked_at` is set BY HAND (the `2026-09-16` oneoff) and
+     * `revoked_scopes` does not exist yet because a human has not applied the migration.
+     *
+     * `revoked_at` PREDATES this migration, so the narrow select can read it for free.
+     *
+     * The migration itself is not expressible here (no column to write), so the clear is
+     * CONDITIONAL: a partial re-consent leaves the viewer withheld rather than over-granted.
+     *
+     * MUTATIONS THAT MUST KILL IT: drop `revokedAt: true` from the narrow select; drop the
+     * `existingRevokedAt = narrow?.revokedAt ?? null` assignment; make the
+     * `!revokedScopesColumnAvailable` branch `return { revokedAt: null }` unconditionally.
+     */
+    it('🔴 refuses to lift a whole-grant revoke on a PARTIAL re-consent (cannot migrate)', async () => {
+      mockDb.appUserScopeGrant.findUnique
+        .mockRejectedValueOnce(missingColumnError())
+        .mockResolvedValueOnce({
+          id: 'augr_1',
+          grantedScopes: ['ai:write:budgeted', 'posts:write:self'],
+          revokedAt: new Date('2026-09-16T00:00:00Z'),
+        });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      const res = await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        // Names ONE of the two suspended scopes.
+        scopes: ['posts:write:self'],
+        clearRevocations: true,
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(
+        data,
+        'the flag was lifted from a dialog that named one scope, so ai:write:budgeted came back ' +
+          'at its old ceiling with no consent for it anywhere — and on this database there is no ' +
+          'revoked_scopes column to express the alternative'
+      ).not.toHaveProperty('revokedAt');
+      // Still never NAMES the missing column — that is what stops the 500.
+      expect(data).not.toHaveProperty('revokedScopes');
+      expect(data).not.toHaveProperty('revokedScopesAt');
+      expect(res.revokedScopesAfterClear).toBeNull();
+    });
+
+    /**
+     * CONTROL, and the case that must keep working: re-consenting to EVERYTHING the row granted
+     * leaves nothing to suppress, so the migration would have produced an empty list anyway and
+     * clearing the flag loses no information. This is the flow the oneoff wants, and it is what
+     * makes the conditional clear a narrowing rather than a dead end.
+     */
+    it('CONTROL: a re-consent covering the whole granted set DOES lift it', async () => {
+      const whole = ['ai:write:budgeted', 'posts:write:self'];
+      mockDb.appUserScopeGrant.findUnique
+        .mockRejectedValueOnce(missingColumnError())
+        .mockResolvedValueOnce({
+          id: 'augr_1',
+          grantedScopes: whole,
+          revokedAt: new Date('2026-09-16T00:00:00Z'),
+        });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      const res = await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '1.0.0',
+        scopes: whole,
+        clearRevocations: true,
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(data.revokedAt).toBeNull();
+      expect(data).not.toHaveProperty('revokedScopes');
+      // `[]`, not `null` — nothing is withheld after this write, so any stale marker must go.
+      expect(res.revokedScopesAfterClear).toEqual([]);
+    });
+
     // A prompted re-consent must keep working on such a database — it simply has nothing to
     // clear. Without the tolerant read, `grantScopes` would 500 for every user.
     it('recordScopeGrant({ clearRevocations }) degrades to a plain grant write', async () => {
@@ -570,6 +651,68 @@ describe('scope-grant.service', () => {
       // …and `collections:read:private`, which the dialog DID name, is genuinely lifted.
       expect(new Set(data.revokedScopes).has('collections:read:private')).toBe(false);
       expect(data.revokedScopesAt).toBeInstanceOf(Date);
+    });
+
+    /**
+     * 🔴 THE BOUNDARY THE MIGRATION WAS GUARDED ON, AND IT WAS A SILENT NO-GRANT.
+     *
+     * `unrevokeData` used to write `revoked_scopes` only `if (migrated.length > 0)`. But the
+     * consent dialog sends the app's WHOLE consent-gated set — `blocks.router.ts` intersects the
+     * viewer's request with the app's ceiling — so on a whole-grant-revoked row `incoming` covers
+     * everything and `migrated` is `[]`. The guard then skipped the column entirely: the
+     * suppression list the revoke had written SURVIVED, `revoked_at` cleared anyway, and
+     * `liveGrantedScopes` (granted ∖ revoked) returned NOTHING. The mutation reported success and
+     * conveyed no scope. A SECOND identical click recovered — by then `existingRevokedAt` is null
+     * so `revocationData` handles it — which is why the user-visible symptom is "I had to press
+     * Allow twice", with the first press reporting success.
+     *
+     * Reachability is the ordinary flow, not a corner: `revokeScopes` stamps `revoked_at` exactly
+     * when the granted set empties, and at that moment `revoked_scopes` holds the whole set. So
+     * "revoke everything, then allow again" lands here every time.
+     *
+     * RED at `a50a7e3643` (`revokedScopes: undefined` — the column was not written).
+     *
+     * MUTATIONS THAT MUST KILL IT: restore the `migrated.length > 0` guard; write
+     * `revokedScopesAt: new Date()` unconditionally; drop the `clearedTo = migrated` assignment.
+     */
+    it('🔴 CLEARS the suppression list when the re-consent covers everything (migrated === [])', async () => {
+      const whole = ['ai:write:budgeted', 'posts:write:self'];
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        // The shape `revokeScopes` itself leaves behind on a full revoke: granted emptied of
+        // nothing (the union put it back at install), every scope suppressed, flag stamped.
+        grantedScopes: whole,
+        revokedScopes: whole,
+        revokedAt: new Date('2026-09-20T00:00:00Z'),
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      const res = await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '2.0.0',
+        scopes: whole,
+        clearRevocations: true,
+      });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(data.revokedAt).toBeNull();
+      expect(
+        data.revokedScopes,
+        'the consent wrote no revoked_scopes at all, so the full suppression list the revoke had ' +
+          'written survived while revoked_at cleared — granted = all, revoked = all, so ' +
+          'liveGrantedScopes() returns EMPTY. The mutation reports success and grants nothing.'
+      ).toEqual([]);
+      // The timestamp follows the list: nothing is withheld, so "permissions last withheld at"
+      // must not keep pointing at the revoke.
+      expect(data.revokedScopesAt).toBeNull();
+      // 🔴 AND THE CALLER IS TOLD. `[]`, never `null`: the router skips
+      // `ConsentRevocation.publish` on `null`, so a stale Redis marker would keep suppressing
+      // every scope this write just restored, for up to a token lifetime.
+      expect(
+        res.revokedScopesAfterClear,
+        'null here means the router skips the marker publish, so the in-flight suppression ' +
+          'outlives the consent that removed it'
+      ).toEqual([]);
     });
 
     /** CONTROL: with no whole-grant revoke, the flag is simply cleared and nothing is migrated. */

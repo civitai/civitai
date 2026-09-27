@@ -82,13 +82,22 @@ import { authorizeBlockBridgeToken } from '../block-bridge-auth.service';
  * `vi.mock` on the leaf cannot intercept the intra-module call — and mocking the fan-out instead
  * would stub out the intersection rule (emit per scope removed from THIS token, not per marker
  * entry) that these arms exist to pin. The registry sees the whole chain, clamp included.
+ *
+ * 🔴 THE `value` IS PART OF THE RETURN, AND OMITTING IT UNPINNED THE COUNTER'S ONLY CLAIM.
+ * prom-client aggregates by LABEL SET, so a mapping that keeps `labels` alone reports one entry
+ * whether the emitter incremented once or a hundred times — and "ONE increment per scope removed
+ * from THAT request's token, NOT one per refusal" is exactly what the help text asserts. Measured
+ * by round-4 review: two mutants that doubled the `inc` (in `recordConsentStrip` and in
+ * `recordBlockConsentMarkerUnavailable`) both SURVIVED the full 237-test set. The version this
+ * file replaced pinned it incidentally via `recordMock.mock.calls`; carrying `value` restores it
+ * deliberately.
  */
-async function labelsFor(name: string): Promise<Array<Record<string, string>>> {
+async function labelsFor(name: string): Promise<Array<Record<string, string | number>>> {
   const metrics = await client.register.getMetricsAsJSON();
   const m = metrics.find((x) => x.name === name) as
-    | { values?: Array<{ labels: Record<string, string> }> }
+    | { values?: Array<{ labels: Record<string, string>; value: number }> }
     | undefined;
-  return (m?.values ?? []).map((v) => v.labels);
+  return (m?.values ?? []).map((v) => ({ ...v.labels, value: v.value }));
 }
 const consentLabels = () => labelsFor('civitai_app_block_consent_revocation_refusals_total');
 const unavailableLabels = () => labelsFor('civitai_app_block_consent_marker_unavailable_total');
@@ -203,7 +212,7 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
   it('the unavailable refusal is counted, and not as a scope withdrawal', async () => {
     lookupMock.mockResolvedValue({ kind: 'unavailable' });
     await authorizeBlockBridgeToken('tok').catch(() => undefined);
-    expect(await unavailableLabels()).toEqual([{ surface: 'bridge' }]);
+    expect(await unavailableLabels()).toEqual([{ surface: 'bridge', value: 1 }]);
     expect(await consentLabels()).toEqual([]);
   });
 
@@ -244,13 +253,17 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
       await consentLabels(),
       'the emitter reported a scope this token never carried — it is iterating the marker set ' +
         'rather than intersecting it with the token'
-    ).toEqual([{ surface: 'bridge', scope: POSTS }]);
+    ).toEqual([{ surface: 'bridge', scope: POSTS, value: 1 }]);
   });
 
   it('emits one per removed scope when several are removed, and none when nothing is', async () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([POSTS, BUZZ]) });
     await authorizeBlockBridgeToken('tok');
-    expect((await consentLabels()).map((l) => l.scope).sort()).toEqual([BUZZ, POSTS].sort());
+    expect(
+      (await consentLabels()).map((l) => `${l.scope}=${l.value}`).sort(),
+      'each removed scope must contribute EXACTLY one increment — a doubled inc reads identically ' +
+        'once the value is dropped, which is how two such mutants survived'
+    ).toEqual([`${BUZZ}=1`, `${POSTS}=1`].sort());
 
     client.register.resetMetrics();
     lookupMock.mockResolvedValue({ kind: 'none' });

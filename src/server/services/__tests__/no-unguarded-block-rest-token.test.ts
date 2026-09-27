@@ -1643,7 +1643,15 @@ describe('the approval predicate is not open-coded a second time', () => {
    * targets `src/pages/api`, while all four real `verifyBlockToken` call sites live under
    * `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
    * false. Same description-wider-than-body defect this commit fixed twice elsewhere, reproduced
-   * inside its own new guard. The callers are now enumerated from `src/server` + `src/pages`.
+   * inside its own new guard. The callers are now enumerated from **`src`**, whole.
+   *
+   * ⚠️ IT WAS `src/server` + `src/pages`, WHICH IS A BOUND NOTHING JUSTIFIED. No caller lives
+   * outside those two today — measured, the only other mentions of the name anywhere in `src` are
+   * comments in `src/env/server-schema.ts` and `src/shared/constants/block-scope.constants.ts` —
+   * but the guard's whole claim is "a FIFTH caller is loud", and a caller added under
+   * `src/shared`, `src/utils` or `src/libs` would have been exactly as invisible as the
+   * `src/server` ones were to the version before it. Walking one root instead of two costs
+   * nothing and removes the residual.
    */
   const CONSENT_STRIP_SEAMS: Record<string, string> = {
     'src/server/middleware/block-scope.middleware.ts':
@@ -1666,9 +1674,11 @@ describe('the approval predicate is not open-coded a second time', () => {
   };
 
   /**
-   * Every production file that CALLS `verifyBlockToken`, derived by walking the two roots the
-   * callers actually live in. `block-scope.middleware.ts` is excluded as the DEFINER — it exports
-   * the function, and its own call is the REST seam, which is ledgered by name.
+   * Every production file that CALLS `verifyBlockToken`, derived by walking `src` whole.
+   * `block-scope.middleware.ts` is excluded as the DEFINER — it exports the function, and its own
+   * call is the REST seam, which is ledgered by name. The exclusion is safe because both sides of
+   * the equality use the same constant, so a RENAME breaks the comparison loudly rather than
+   * quietly dropping a caller.
    */
   function verifyTokenCallers(): string[] {
     /** Every `.ts`/`.tsx` under a repo-relative dir, excluding tests. Uses this file's own
@@ -1686,7 +1696,7 @@ describe('the approval predicate is not open-coded a second time', () => {
       return out;
     }
     const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
-    return [...tsFiles('src/server'), ...tsFiles('src/pages')]
+    return tsFiles('src')
       .filter((rel) => rel !== DEFINER)
       .filter((rel) => /verifyBlockToken\s*\(/.test(stripNonCode(read(rel))))
       .sort();
@@ -1761,24 +1771,66 @@ describe('the approval predicate is not open-coded a second time', () => {
    * neither refuse nor usefully strip. That holds only while those routes really do ignore
    * `claims.scopes`; if one starts reading them, a viewer's revoke is silently unenforced there.
    *
-   * ⚠️ THE FIRST VERSION HARDCODED FIVE PATHS AND THE POPULATION IS SEVEN — `generation-resources.ts`
-   * and `me.ts` were both missing. A hand-list is exactly what this file's own preamble forbids
-   * ("A RELATIONSHIP, NOT A COUNT … the KEY SET must equal the DERIVED set, in both directions"),
-   * and it is the shape that let the skip's soundness guard cover 5 of 7 while claiming the
-   * population. So the set is derived from the same `blockScopedRoutes()` walk every other ledger
-   * here uses, and a seventh or eighth route is covered the day it is added.
+   * ⚠️ THE FIRST VERSION HARDCODED FIVE PATHS AND THE POPULATION IS SIX — `generation-resources.ts`
+   * was missing. A hand-list ALONE is exactly what this file's own preamble forbids ("A
+   * RELATIONSHIP, NOT A COUNT … the KEY SET must equal the DERIVED set, in both directions"), and
+   * it is the shape that let the skip's soundness guard cover 5 of 6 while claiming the population.
+   * So the set is DERIVED from the same `blockScopedRoutes()` walk every other ledger here uses,
+   * and a seventh route is covered the day it is added.
+   *
+   * ⚠️ THE FIX THAT CLAIMED SIX SAID SEVEN. The commit adding this derivation asserted a population
+   * of seven by also counting `blocks/me.ts` — which declares `requiredScope: 'user:read:self'` and
+   * is therefore not in this population at all. Both the five and the seven were stated without
+   * being derived; that is why the ledger below exists.
    */
   function anyTokenRoutes(): string[] {
-    return blockScopedRoutes().filter((rel) => !/requiredScope\s*:/.test(stripNonCode(read(rel))));
+    return blockScopedRoutes()
+      .filter((rel) => !/requiredScope\s*:/.test(stripNonCode(read(rel))))
+      .sort();
   }
 
-  it('POSITIVE CONTROL: the any-token population is derived and non-empty', () => {
-    // Without this, every assertion below passes vacuously on an empty derivation — which is how
-    // a hand-list of five stood in for a population of seven.
+  /**
+   * 🔴 THE LEDGER THE DERIVATION IS GRADED AGAINST — the idiom this file's preamble mandates, and
+   * the only control that fails when the derivation SHRINKS.
+   *
+   * `expect(routes.length).toBeGreaterThan(3)` was measured too loose to be worth keeping: with a
+   * derived population of six, a walk that silently lost 2 of 6 still passed, which is a WEAKER
+   * property than the hand-list defect it replaced (missing 1 of 6). Established by mutating
+   * `stripNonCode` to the identity function — the population collapsed from 6 to 3 and the control
+   * failed by exactly one. The companion `toBeLessThan(blockScopedRoutes().length)` was free: that
+   * side is 35.
+   *
+   * Set equality in BOTH directions is what makes a lost route and a new route each loud. Adding a
+   * route here is a deliberate act: it asserts the route reads no `claims.scopes`, which the arm
+   * below then verifies mechanically.
+   */
+  const ANY_TOKEN_ROUTES = [
+    'src/pages/api/v1/blocks/gated-images.ts',
+    'src/pages/api/v1/blocks/generation-resources.ts',
+    'src/pages/api/v1/blocks/images.ts',
+    'src/pages/api/v1/blocks/models.ts',
+    'src/pages/api/v1/blocks/tools.ts',
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+  ];
+
+  it('POSITIVE CONTROL: the any-token population is derived and equals its ledger', () => {
     const routes = anyTokenRoutes();
+    // Non-vacuous first: an empty derivation makes the soundness arm below assert nothing.
     expect(routes.length).toBeGreaterThan(3);
     // …and it is a strict subset of the wrapped routes, i.e. the filter really filtered.
     expect(routes.length).toBeLessThan(blockScopedRoutes().length);
+    // 🔴 BOTH DIRECTIONS. A route that STOPS being any-token (it gained a `requiredScope`) and a
+    // route that STARTS being one (a new catalog route) are both findings: the first means this
+    // ledger over-claims, the second means the middleware's marker skip just widened without
+    // anyone checking the new route ignores `claims.scopes`.
+    expect(
+      routes,
+      'the derived any-token population no longer matches its ledger. A route ADDED here must be ' +
+        'confirmed to read no claims.scopes (the arm below does that); a route REMOVED here now ' +
+        'declares a requiredScope and is consulted normally — update the list either way. A ' +
+        'SHRINKING derivation is the dangerous direction: it silently reduces what the soundness ' +
+        'arm covers, which is how a list of five stood in for a population of six.'
+    ).toEqual([...ANY_TOKEN_ROUTES].sort());
   });
 
   it('every any-token route reads no scopes, so the marker skip is sound', () => {

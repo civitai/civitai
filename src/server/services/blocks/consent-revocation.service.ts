@@ -309,8 +309,13 @@ export function revokedScopesForToken(
  * the revoke with no per-gate enumeration to keep current. The first version enumerated,
  * and missed the two most sensitive scopes.
  *
- * Returns the SAME object when nothing was revoked, so the common path allocates nothing
- * and a caller can use identity to tell whether anything changed.
+ * Returns the SAME object when nothing was revoked, so the common path allocates nothing.
+ *
+ * ⚠️ DO NOT BUILD ON THAT IDENTITY. This used to promise "a caller can use identity to tell
+ * whether anything changed", and the one caller that did (`narrowed !== claims` in the REST
+ * middleware) is gone — the middleware now assigns unconditionally. So the guarantee is an
+ * allocation optimisation with no consumer, not a contract: a future refactor is free to return
+ * a fresh object, and nothing should start depending on reference equality here.
  */
 export function applyRevocations<T extends { scopes: string[]; buzzBudget?: number }>(
   claims: T,
