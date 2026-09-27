@@ -86,6 +86,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE } from '~/server/services/blocks/consent-revocation.service';
 
 const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 const grantMock = dbMock.dbWrite.appUserScopeGrant;
@@ -94,6 +95,8 @@ const USER = 42;
 const APP = 'apb_x';
 const SPEND = 'ai:write:budgeted';
 const POSTS = 'posts:write:self';
+/** A THIRD gated scope, so a prior-revocation fixture is distinguishable from this call's. */
+const PRIVATE = 'collections:read:private';
 
 /** ctx with the appBlocks feature on — the proc gates on `ctx.features.appBlocks`. */
 function consentCtx(userId = USER) {
@@ -151,29 +154,75 @@ beforeEach(() => {
 
 describe('blocks.revokeScopes — the happy path writes BOTH halves', () => {
   it('records the suppression in Postgres and publishes the in-flight marker', async () => {
+    // 🔴 A PRIOR REVOCATION IN THE FIXTURE, AND IT IS THE POINT. Every arm in this file used to
+    // start from `revokedScopes: []`, which made `result.revoked` (this call's DELTA) and
+    // `result.revokedScopes` (the WHOLE list) byte-identical in every single test — so
+    // publishing the delta instead of the whole list survived the entire suite, as did swapping
+    // the two response fields. `ConsentRevocation.publish`'s own docblock forbids a delta by
+    // name ("WRITES THE WHOLE LIST, NOT A DELTA … rather than an accumulating side channel"),
+    // and nothing enforced it. Live effect of that mutant: on a viewer's SECOND revoke the
+    // marker is overwritten with only the new scope, so the FIRST revoked scope stops being
+    // refused on tokens already in flight.
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [SPEND, POSTS],
+      revokedScopes: [PRIVATE],
+    });
+
     const out = await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
 
     // ── The DURABLE half — governs every future mint.
     const data = grantMock.update.mock.calls[0][0].data;
-    expect(data.revokedScopes).toEqual([POSTS]);
+    expect(new Set(data.revokedScopes)).toEqual(new Set([PRIVATE, POSTS]));
     expect(data.grantedScopes).toEqual([SPEND]);
 
-    // ── The IN-FLIGHT half — closes the window on tokens already signed. Asserted against
-    // the REAL key constant, never a hand-typed string: fifteen constants across six files
-    // had silently drifted from production while their suites passed.
+    // ── The IN-FLIGHT half. Asserted against the REAL key constant, never a hand-typed string:
+    // fifteen constants across six files had silently drifted from production while their
+    // suites passed.
     expect(redisMock.redis.set).toHaveBeenCalledTimes(1);
     const [key, value] = redisMock.redis.set.mock.calls[0];
     expect(key).toBe(`${REDIS_KEYS.BLOCKS.CONSENT_REVOKED_SCOPES}:${USER}:${APP}`);
-    expect(JSON.parse(value as string)).toEqual([POSTS]);
+    expect(
+      new Set(JSON.parse(value as string)),
+      'the marker carries only this call’s delta. A viewer’s earlier revocation then stops ' +
+        'being enforced on in-flight tokens the moment they revoke anything else.'
+    ).toEqual(new Set([PRIVATE, POSTS]));
 
+    // ── And the two response fields are NOT interchangeable.
+    expect(out.revoked, '`revoked` must be THIS call’s delta').toEqual([POSTS]);
+    expect(new Set(out.revokedScopes), '`revokedScopes` must be the whole list').toEqual(
+      new Set([PRIVATE, POSTS])
+    );
     expect(out).toMatchObject({
       ok: true,
-      revoked: [POSTS],
-      revokedScopes: [POSTS],
       grantedScopes: [SPEND],
       fullyRevoked: false,
       budgetCleared: false,
     });
+  });
+
+  /**
+   * 🔴 UNKNOWN SCOPE STRINGS ARE REFUSED BEFORE ANYTHING IS STORED. Whatever lands in
+   * `revoked_scopes` is what the marker carries, and the marker is GET+`JSON.parse`d on every
+   * authed block request for that (user, app) pair — so 32 arbitrary strings per call, unioned
+   * and never pruned, grow both the row and a hot-path payload without bound. An unknown string
+   * could never suppress anything either: `partitionByConsent` only consults scopes the mint
+   * signs.
+   */
+  it('refuses an unknown scope string, storing nothing', async () => {
+    await expect(
+      caller().revokeScopes({ appBlockId: APP, scopes: ['not:a:real:scope'] })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.update).not.toHaveBeenCalled();
+    expect(grantMock.create).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  it('refuses the WHOLE call when one scope of several is unknown', async () => {
+    await expect(
+      caller().revokeScopes({ appBlockId: APP, scopes: [POSTS, 'nope:nope:nope'] })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(grantMock.update).not.toHaveBeenCalled();
   });
 
   /**
@@ -207,13 +256,42 @@ describe('blocks.revokeScopes — the happy path writes BOTH halves', () => {
    * MUTATION THAT MUST KILL IT: add `.catch(() => {})` to the `ConsentRevocation.publish`
    * call in the procedure.
    */
-  it('reports an error — naming the in-flight caveat — if the marker cannot be published', async () => {
+  it('reports SERVICE_UNAVAILABLE with the in-flight caveat if the marker cannot be published', async () => {
     redisMock.redis.set.mockRejectedValue(new Error('redis down'));
     await expect(caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] })).rejects.toMatchObject(
-      { message: expect.stringMatching(/already-open app session/i) }
+      {
+        // 🔴 THE **CODE** IS THE LOAD-BEARING HALF, and the first version asserted only the
+        // message. `src/server/trpc/client-safe-error.ts` replaces the message of every
+        // `status >= 500 && status !== 503`, so under the `INTERNAL_SERVER_ERROR` this used to
+        // throw, the careful wording was discarded one layer below and the viewer saw a generic
+        // "something went wrong (ref: …)" — while this assertion passed, because it reads the
+        // error at the procedure boundary, ABOVE where the message is thrown away. 503 is that
+        // formatter's own carve-out.
+        code: 'SERVICE_UNAVAILABLE',
+        message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+      }
     );
     // …and the durable half really did land first, which is what makes that message true.
     expect(grantMock.update).toHaveBeenCalledTimes(1);
+  });
+
+  // The structural half of the same claim: a 4xx/503 message survives the client-safe
+  // formatter. Without this, swapping the code back to a 500 fails only the spelling above.
+  it('the publish-failure message survives the client-safe error formatter', async () => {
+    const { getClientSafeError } = await import('~/server/trpc/client-safe-error');
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    const err = await caller()
+      .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+      .then(
+        () => null,
+        (e) => e
+      );
+    expect(err).not.toBeNull();
+    expect(
+      getClientSafeError(err as never),
+      'the formatter replaced this message, so the viewer cannot tell "recorded, enforcement ' +
+        'lags" from "nothing was recorded" — which is the whole point of the wording'
+    ).toBeUndefined();
   });
 
   it('reports fullyRevoked + budgetCleared when the last spend scope goes', async () => {
@@ -392,18 +470,12 @@ describe('no manifest ceiling is applied', () => {
 describe('the OAuth mirror', () => {
   /**
    * 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE. It mirrors the grant into a
-   * bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive
-   * this mutation — so a revoke that ignores it is incomplete. Deleting the mirror (and its
-   * access/refresh keys) is what stops them.
+   * bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive this
+   * mutation. Deleting the mirror — and the `Access`/`Refresh` keys alongside it — is what
+   * stops them.
    */
-  it('tears the mirror down for an OAuth app', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' } });
-    // `revokeOauthConsentForBlock` resolves the client id off the app row, then deletes the
-    // api keys and the consent row.
-    dbMock.dbRead.appBlock.findUnique.mockResolvedValue({
-      manifest: { auth: 'oauth' },
-      appId: 'oauth_client_1',
-    });
+  it('tears the mirror down, deleting both the consent row and the live keys', async () => {
+    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER, clientId: 'oauth_client_1' },
@@ -414,25 +486,86 @@ describe('the OAuth mirror', () => {
   });
 
   /**
-   * THE CONTROL: a JWT app has no mirror, so nothing is deleted. Without this, an
-   * implementation that tore down unconditionally would pass the test above — and would be
-   * issuing pointless deletes on every revoke of every non-OAuth app.
+   * 🔴 UNCONDITIONALLY — AND THIS ARM REPLACES A "CONTROL: does nothing for a non-OAuth app"
+   * THAT PINNED A HOLE. Three separate conditions used to stand between a revoke and the
+   * teardown, and each could be false while a live mirror row existed: today's
+   * `manifest.auth`, which a publisher push replaces without re-approval (the very reason this
+   * procedure applies no manifest ceiling); `env.APP_BLOCK_OAUTH_TOKENS_ENABLED` being true
+   * NOW, which can be switched off after rows exist; and — the one that actually bit —
+   * position AFTER the Redis publish, so a Redis failure threw past it and the mirror was
+   * never touched at all.
+   *
+   * `revokeOauthConsentForBlock` is a no-op when there is no row, so calling it always costs a
+   * bounded query on a cold path and closes all three.
+   *
+   * MUTATION THAT MUST KILL IT: re-add `if (env.APP_BLOCK_OAUTH_TOKENS_ENABLED && manifest.auth === 'oauth')`.
    */
-  it('CONTROL: does nothing for a non-OAuth app', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'jwt' } });
+  it('tears the mirror down even for a JWT app (a stale mirror row may still exist)', async () => {
+    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'jwt' }, appId: 'jwt_client' });
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
-    expect(dbMock.dbWrite.oauthConsent.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER, clientId: 'jwt_client' },
+    });
+  });
+
+  it('tears the mirror down even with APP_BLOCK_OAUTH_TOKENS_ENABLED off', async () => {
+    setEnv({ APP_BLOCK_OAUTH_TOKENS_ENABLED: false });
+    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledTimes(1);
   });
 
   /**
-   * Best-effort: the block-JWT surface is already closed by the two writes above, so a
-   * failure here must not tell the viewer nothing was recorded when the durable half was.
+   * 🔴 BEFORE THE REDIS PUBLISH — the ordering finding, pinned. With the teardown after the
+   * publish, a Redis blip threw past it: the durable row was written, the viewer saw an error,
+   * and the app's live OAuth tokens kept working against the pre-revoke bitmask with nothing
+   * scheduled to clean them up.
+   *
+   * MUTATION THAT MUST KILL IT: move the teardown block back below the publish `try`.
+   */
+  it('tears the mirror down EVEN WHEN the marker publish fails', async () => {
+    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] })).rejects.toMatchObject(
+      { code: 'SERVICE_UNAVAILABLE' }
+    );
+    expect(
+      dbMock.dbWrite.oauthConsent.deleteMany,
+      'the OAuth mirror was never touched because the Redis failure threw past it — the ' +
+        'app’s live OAuth tokens keep working against the pre-revoke bitmask'
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes Postgres, then the mirror teardown, then Redis', async () => {
+    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    const order: string[] = [];
+    grantMock.update.mockImplementation(async () => {
+      order.push('pg');
+      return {};
+    });
+    dbMock.dbWrite.oauthConsent.deleteMany.mockImplementation(async () => {
+      order.push('oauth');
+      return { count: 1 };
+    });
+    redisMock.redis.set.mockImplementation(async () => {
+      order.push('redis');
+      return 'OK';
+    });
+    await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(order).toEqual(['pg', 'oauth', 'redis']);
+  });
+
+  /**
+   * Best-effort: the durable row is written and the marker still follows, so a teardown failure
+   * must not tell the viewer nothing was recorded.
    */
   it('does not fail the mutation if the mirror teardown throws', async () => {
     appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
     dbMock.dbWrite.oauthConsent.deleteMany.mockRejectedValue(new Error('pg down'));
     const out = await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(out.ok).toBe(true);
+    // …and the marker still went out, which is what makes "best-effort" defensible here.
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -458,5 +591,123 @@ describe('input bounds and the feature gate', () => {
       blocksRouter.createCaller(ctx as never).revokeScopes({ appBlockId: APP, scopes: [POSTS] })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(grantMock.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 `blocks.grantScopes`' MARKER RE-PUBLISH — behaviour that had NO test at all.
+ *
+ * Review found two mutations surviving the whole repo suite:
+ *   - DELETE the re-publish block: a prompted re-consent lifts the suppression in Postgres
+ *     while the Redis marker keeps refusing the scope for up to a full token lifetime (900s,
+ *     4h dev). The viewer clicks *Allow* and the app still gets `403 consent_revoked`.
+ *   - DROP the `!== null` guard (`revokedScopesAfterClear ?? []`): every ordinary install or
+ *     consent then `redis.del`s a LIVE suppression marker — which that block's own docblock
+ *     names as "reopening in Redis the resurrection hole `clearRevocations` closes in
+ *     Postgres".
+ *
+ * The reason nothing caught either: `blocks.router.getInstallConfig.test.ts` is the only suite
+ * that calls `grantScopes`, it never asserts on `redis.set`/`redis.del`, and every one of its
+ * grant fixtures omits `revokedScopes` — so `clearedTo` stayed `null` and the branch was never
+ * entered by any test in the repo. These arms live here, beside the revoke they undo, rather
+ * than in that suite.
+ */
+describe('blocks.grantScopes — the marker re-publish', () => {
+  const MANIFEST = { auth: 'jwt', scopes: [SPEND, POSTS, PRIVATE] };
+
+  beforeEach(() => {
+    appBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      version: '1.2.3',
+      manifest: MANIFEST,
+      approvedScopes: [SPEND, POSTS, PRIVATE],
+    });
+  });
+
+  /**
+   * MUTATION THAT MUST KILL IT: delete the `if (cleared.revokedScopesAfterClear !== null)`
+   * block from `grantScopes`.
+   */
+  it('re-publishes the NARROWED list when a re-consent lifts one of two suppressions', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [],
+      revokedScopes: [POSTS, PRIVATE],
+    });
+    await caller().grantScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(redisMock.redis.set.mock.calls[0][1] as string),
+      'the marker was not narrowed, so the scope the viewer just re-consented to keeps being ' +
+        'refused for the rest of an in-flight token’s life'
+    ).toEqual([PRIVATE]);
+    expect(redisMock.redis.del).not.toHaveBeenCalled();
+  });
+
+  /** The last suppression lifted ⇒ the key goes, rather than waiting out its TTL. */
+  it('DELETES the marker when the last suppression is lifted', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [],
+      revokedScopes: [POSTS],
+    });
+    await caller().grantScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(redisMock.redis.del).toHaveBeenCalledWith(
+      `${REDIS_KEYS.BLOCKS.CONSENT_REVOKED_SCOPES}:${USER}:${APP}`
+    );
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE CONTROL, AND THE ONE THAT MAKES THE `!== null` GUARD TESTABLE. An ordinary consent
+   * with nothing suppressed must touch the marker NEITHER way. With `?? []` in place of the
+   * guard, this arm reds on the `redis.del` — which is the mutant that would otherwise silently
+   * delete a live suppression on every install.
+   *
+   * MUTATION THAT MUST KILL IT: `revokedScopes: cleared.revokedScopesAfterClear ?? []`.
+   */
+  it('CONTROL: an ordinary consent with nothing revoked touches the marker neither way', async () => {
+    grantMock.findUnique.mockResolvedValue({ id: 'augr_1', grantedScopes: [], revokedScopes: [] });
+    await caller().grantScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(
+      redisMock.redis.del,
+      'an ordinary consent DELETED the suppression marker. `null` (nothing was cleared) and ' +
+        '`[]` (the last suppression was lifted) have been collapsed, which reopens the ' +
+        'resurrection hole in the Redis layer.'
+    ).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 AND IT CLEARS ONLY WHAT THE DIALOG NAMED. Re-consenting to POSTS must leave a revoked
+   * PRIVATE suppressed in Postgres too, not just in the marker — the wholesale-clear shape
+   * would restore a permission the viewer withdrew and was never asked about again.
+   */
+  it('leaves an unrelated suppression in place in Postgres', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [],
+      revokedScopes: [POSTS, PRIVATE],
+    });
+    await caller().grantScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(grantMock.update.mock.calls[0][0].data.revokedScopes).toEqual([PRIVATE]);
+  });
+
+  /**
+   * A re-publish failure must not fail a SUCCESSFUL consent write — the opposite of the revoke
+   * path, and the asymmetry is the safe direction: failing to WIDEN access costs the viewer at
+   * most one token lifetime of refusals on a permission they just re-granted, and it self-heals
+   * when the marker expires. Failing to NARROW it does not self-correct.
+   */
+  it('does not fail the consent if the re-publish throws', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [],
+      revokedScopes: [POSTS, PRIVATE],
+    });
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    await expect(caller().grantScopes({ appBlockId: APP, scopes: [POSTS] })).resolves.toMatchObject(
+      { ok: true }
+    );
   });
 });

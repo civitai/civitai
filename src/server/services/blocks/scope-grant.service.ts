@@ -33,6 +33,7 @@
  * the mint-time intersection is a direct set operation, not a bitmask op.
  */
 
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
@@ -180,6 +181,38 @@ async function readGrantRow(
 }
 
 /**
+ * `granted_scopes ∖ revoked_scopes`, with a non-NULL `revoked_at` collapsing to the empty
+ * set — the ONE statement of what a grant row actually conveys.
+ *
+ * 🔴 IT IS A SHARED PROJECTION BECAUSE THE RULE HAD THREE HOMES AND ONE OF THEM WAS WRONG.
+ * Review found `oauth-consent-sync.service.ts` reading the RAW `granted_scopes` column, so a
+ * revoked scope was re-granted on the OAuth surface after any install re-unioned it; and the
+ * permissions surface's copy carried the comment "🔴 MIRROR `getGrantedScopes` EXACTLY,
+ * SUBTRACTION INCLUDED", which is the reliable tell that a rule has more than one home. The
+ * mirror directly beside it (for the budget guards, "Mirror getConsentBuzzBudget's guards
+ * EXACTLY") had ALREADY drifted — it omits `Number.isFinite` — and is inert only because the
+ * column is an `Int?`. So: three statements, one wrong, one already drifted. Now one.
+ *
+ * Takes a ROW rather than two arrays so a caller cannot pass the granted set and forget the
+ * other two fields — the exact omission that produced the OAuth hole.
+ *
+ * 🔴 `revokedScopes` IS OPTIONAL, and that is the pre-migration contract rather than
+ * laxness: `readGrantRow`'s P2022 fallback and the permissions surface's stage-1 retry both
+ * produce rows without it, on a database where the column does not exist and therefore no
+ * revocation can ever have been recorded. `undefined` here means "none", which is the only
+ * state such a database can be in — not a guess.
+ */
+export function liveGrantedScopes(row: {
+  grantedScopes: string[] | null | undefined;
+  revokedScopes?: string[] | null;
+  revokedAt?: Date | null;
+}): string[] {
+  if (row.revokedAt) return [];
+  const revoked = new Set(row.revokedScopes ?? []);
+  return (row.grantedScopes ?? []).filter((s) => !revoked.has(s));
+}
+
+/**
  * Returns the set of block-scope strings the user currently has granted for
  * the given app block: `granted_scopes` MINUS `revoked_scopes`. Empty set when there is
  * no grant row OR the whole grant has been revoked (fail-closed: mint withholds every
@@ -204,9 +237,8 @@ export async function getGrantedScopes(opts: {
 }): Promise<Set<string>> {
   const client = opts.db === 'write' ? dbWrite : dbRead;
   const row = await readGrantRow(client, opts.userId, opts.appBlockId, 'getGrantedScopes');
-  if (!row || row.revokedAt) return new Set();
-  const revoked = new Set(row.revokedScopes ?? []);
-  return new Set((row.grantedScopes ?? []).filter((s) => !revoked.has(s)));
+  if (!row) return new Set();
+  return new Set(liveGrantedScopes(row));
 }
 
 /**
@@ -759,6 +791,12 @@ export async function revokeScopes(
   const nextRevoked = Array.from(new Set([...priorRevoked, ...incoming]));
   const newlyRevoked = incoming.filter((s) => !priorRevoked.includes(s));
   const fullyRevoked = nextGranted.length === 0;
+  // 🔴 `incomingSet`, NOT `nextRevoked` — THIS CALL'S scopes, not the accumulated list. A
+  // viewer who already revoked spend and now withdraws something unrelated has nothing to
+  // clear: the budget is already NULL. Keying on `nextRevoked` would name
+  // `buzz_budget_per_day` in every subsequent write, which is a 500 on a database that has
+  // not had THAT migration applied (a different, earlier hand-applied one) — and would
+  // report `budgetCleared: true` for a call that cleared nothing.
   const budgetCleared = incomingSet.has(CONSENT_SPEND_SCOPE);
   const now = new Date();
 
@@ -766,7 +804,30 @@ export async function revokeScopes(
     grantedScopes: nextGranted,
     revokedScopes: nextRevoked,
     revokedScopesAt: now,
-    revokedAt: fullyRevoked ? now : null,
+    // 🔴 SET, NEVER CLEARED — AND THE FIRST VERSION WROTE `: null` ON EVERY PARTIAL REVOKE,
+    // WHICH MADE A REVOKE **GRANT** PERMISSIONS. Read this before "simplifying" it back to a
+    // ternary.
+    //
+    // `revoked_at` non-NULL together with a NON-EMPTY `granted_scopes` is a REAL, INTENDED
+    // production state, not an impossible one: `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql`
+    // runs `SET revoked_at = now() WHERE 'ai:write:budgeted' = ANY (granted_scopes)` and
+    // deliberately leaves the array intact, to force a fresh consent prompt while keeping the
+    // audit trail (its own comment: "Re-granting restores them cleanly"). On such a row
+    // `getGrantedScopes` returns {} and `resolveConsentSpendPosture` returns
+    // `revoked/grant_revoked` — the app is withheld pending explicit re-consent.
+    //
+    // A `: null` here meant that withdrawing ANY scope — including one the viewer does not
+    // even hold, which this service accepts on purpose — cleared that suspension and
+    // re-granted every other scope on the row with no prompt, `ai:write:budgeted` among
+    // them, with the old `buzz_budget_per_day` springing back alongside it. An action the
+    // user reads as narrowing that widens: the same shape as the spend-path inversion this
+    // whole change exists to fix.
+    //
+    // So the key is OMITTED unless this revoke empties the granted set. Omitting is what
+    // Prisma reads as "leave the column alone"; a partial revoke must neither stamp it (that
+    // would hide the app's remaining permissions from the permissions page, which skips rows
+    // carrying it) nor clear it.
+    ...(fullyRevoked ? { revokedAt: now } : {}),
     ...(budgetCleared ? { buzzBudgetPerDay: null } : {}),
   };
 
@@ -781,6 +842,8 @@ export async function revokeScopes(
       // `version: ''` — the same placeholder `blocks.grantScopes` writes when an AppBlock
       // carries no version. This row records a REFUSAL, so there is no version the
       // consent was taken against; inventing one would make the staleness display lie.
+      // A create has no prior row, so the omit-vs-clear distinction above does not apply —
+      // `revoked_at` defaults to NULL and `data` supplies it only when this revoke is total.
       await dbWrite.appUserScopeGrant.create({
         data: { id: newAppUserScopeGrantId(), userId, appBlockId, version: '', ...data },
         select: WRITE_RETURN_SELECT,
@@ -806,22 +869,43 @@ export async function revokeScopes(
 }
 
 /**
- * Renames a P2022 into something an operator can act on, and passes everything else
- * through untouched.
+ * The message a VIEWER sees when they withdraw a permission before the manual-apply
+ * migration has run on their environment.
  *
- * Prisma's own message names a column, which reads as a code bug rather than as an
- * outstanding migration — and this is a user-facing consent action, so somebody will be
- * reading the error while a viewer waits. The migration name is the actionable part.
+ * Exported so tests assert the exact string rather than a substring of their own invention,
+ * and so a mutant that swaps the guard for a different error is killed by the MESSAGE rather
+ * than merely by "something threw" — the same reason `SOURCE_REPO_UNAVAILABLE_MESSAGE` is
+ * exported from `app-listing-source-repo.service.ts`, which is this repo's worked precedent
+ * for an author-originated write gated on a hand-applied column.
+ */
+export const CONSENT_REVOKE_UNAVAILABLE_MESSAGE =
+  'Withdrawing a permission is not available on this environment yet. Nothing was changed. Try again later.';
+
+/**
+ * Turns a P2022 on the revocation columns into a refusal the VIEWER and the OPERATOR can
+ * each act on, and passes everything else through untouched.
+ *
+ * 🔴 `PRECONDITION_FAILED`, NOT A BARE `Error` — AND THE FIRST VERSION THREW THE BARE ONE.
+ * That mattered more than it looks: `src/server/trpc/client-safe-error.ts` replaces the
+ * message of every `status >= 500 && status !== 503` with a generic one, so a bare `Error`
+ * became `INTERNAL_SERVER_ERROR` and the carefully-worded migration text reached nobody —
+ * the viewer got an opaque server error and could not tell "nothing was recorded" from
+ * "recorded, enforcement lags". `PRECONDITION_FAILED` is a 4xx, so its message survives the
+ * formatter, and it is the same code (and the same argument) `assertSourceRepoWritable`
+ * uses: the value is not malformed and there is nothing the viewer can do — the environment
+ * is not ready.
+ *
+ * The MIGRATION NAME goes to the operator via `logMissingRevokedScopesColumn` (Axiom, once
+ * per process, error level) rather than into the viewer's error, because a migration
+ * identifier is not actionable by them and this string is shown in a product surface.
  */
 function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown {
   if (!isMissingColumnError(err)) return err;
   logMissingRevokedScopesColumn(site, err);
-  return new Error(
-    'cannot record a permission revocation: app_user_scope_grants.revoked_scopes does not ' +
-      'exist in this database. Apply migration ' +
-      '20260927120000_app_user_scope_grant_revoked_scopes. Refusing rather than reporting ' +
-      'success for a revoke that would not persist.'
-  );
+  return new TRPCError({
+    code: 'PRECONDITION_FAILED',
+    message: CONSENT_REVOKE_UNAVAILABLE_MESSAGE,
+  });
 }
 
 /**

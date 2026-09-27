@@ -32,7 +32,11 @@ import type { ScopeGrantOrigin } from '~/shared/constants/app-surface-provenance
 // import graph is a subset of this one's, so this costs nothing at load time.
 import {
   CONSENT_SPEND_SCOPE,
-  isConsentExemptScope,
+  consentGatedScopes,
+  isMissingColumnError,
+  liveGrantedScopes,
+  logMissingBudgetColumn,
+  logMissingRevokedScopesColumn,
 } from '~/server/services/blocks/scope-grant.service';
 
 /**
@@ -502,8 +506,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // CAN BE OUTSTANDING. See `isMissingColumnError`. Any other error still throws: a
       // permissions page that quietly renders "no limits" because the DB is unreachable
       // would be a lie about the user's own settings.
-      const { isMissingColumnError, logMissingBudgetColumn, logMissingRevokedScopesColumn } =
-        await import('~/server/services/blocks/scope-grant.service');
+      // 🔴 STATIC IMPORTS, not a dynamic one. The `await import(...)` that used to sit here
+      // was justified by keeping this module off the load graph, and that justification died
+      // the moment this file began importing the same module statically for
+      // `liveGrantedScopes` / `consentGatedScopes` — leaving a dynamic import that read as a
+      // deliberate deferral and was not one.
       if (!isMissingColumnError(err)) throw err;
       // STAGE 1 — retry WITHOUT the revocation columns
       // (`20260927120000_app_user_scope_grant_revoked_scopes`). Revocations then read as
@@ -515,7 +522,14 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // missing `revoked_scopes` would have emptied `grants` wholesale and silently
       // regressed every budget display and every grant-only row on a database that has
       // `buzz_budget_per_day` perfectly well.
-      logMissingRevokedScopesColumn('listMyScopeGrants', err);
+      //
+      // 🔴 NOTHING IS LOGGED YET, AND THAT ORDERING IS THE FIX FOR A MISLEADING LINE. The
+      // first version called `logMissingRevokedScopesColumn` HERE, before knowing which
+      // column was missing — so on a database missing only `buzz_budget_per_day` the
+      // once-per-process error line named the WRONG migration, and an operator would have
+      // applied a migration that was already applied. The retry's OUTCOME is what
+      // discriminates: it succeeding means the revocation columns were the missing ones; it
+      // raising P2022 again means the budget column is missing too.
       try {
         grants = (await dbRead.appUserScopeGrant.findMany({
           where: { userId },
@@ -527,6 +541,9 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
             appBlock: appBlockSelect,
           },
         })) as GrantRow[];
+        // The narrow select succeeded, so `revoked_scopes` really was the absent column.
+        // NOW it is safe to name that migration.
+        logMissingRevokedScopesColumn('listMyScopeGrants', err);
       } catch (retryErr) {
         // STAGE 2 — `buzz_budget_per_day` is missing too
         // (`20260910120000_app_user_scope_grant_buzz_budget`). This is the pre-existing
@@ -557,18 +574,18 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
           ? Math.floor(g.buzzBudgetPerDay)
           : null;
       budgetByAppBlock.set(g.appBlockId, usable);
-      // 🔴 MIRROR `getGrantedScopes` EXACTLY, SUBTRACTION INCLUDED. A whole-grant revoke
-      // conveys nothing, AND a per-scope revocation is subtracted — so the raw
-      // `granted_scopes` column is never the answer on its own. Getting this wrong in
-      // either direction is a display that disagrees with enforcement: too wide offers a
-      // budget editor for an app that cannot spend, too narrow hides a permission the app
-      // really holds.
-      const revokedSet = new Set(g.revokedScopes ?? []);
-      const liveGranted = g.revokedAt
-        ? []
-        : (g.grantedScopes ?? []).filter((s) => !revokedSet.has(s));
+      // 🔴 THE SHARED PROJECTION, NOT A MIRROR OF IT. This used to open
+      // "MIRROR `getGrantedScopes` EXACTLY, SUBTRACTION INCLUDED" and re-implement the
+      // subtraction — and a comment telling you to mirror something exactly is the reliable
+      // tell that a rule has two homes. Review found a THIRD home
+      // (`oauth-consent-sync.service.ts`) that had it wrong, and the mirror two lines below
+      // this one (for the budget guards) had already drifted. `liveGrantedScopes` is now the
+      // single statement; getting this wrong in either direction is a display that disagrees
+      // with enforcement — too wide offers a budget editor for an app that cannot spend, too
+      // narrow hides a permission the app really holds.
+      const liveGranted = liveGrantedScopes(g);
       grantedScopesByAppBlock.set(g.appBlockId, [...liveGranted].sort());
-      revokedScopesByAppBlock.set(g.appBlockId, Array.from(revokedSet).sort());
+      revokedScopesByAppBlock.set(g.appBlockId, [...(g.revokedScopes ?? [])].sort());
       revokedAtByAppBlock.set(g.appBlockId, g.revokedScopesAt ?? null);
       if (liveGranted.includes(CONSENT_SPEND_SCOPE)) {
         spendGrantedByAppBlock.add(g.appBlockId);
@@ -800,7 +817,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     // with no install and no consent, entirely through `CONSENT_EXEMPT_SCOPES` — there is
     // nothing consent-gated to withdraw, and a button there would be the same lie the
     // exempt refusal in `blocks.revokeScopes` exists to prevent.
-    const revokableScopes = displayedScopes.filter((s) => !isConsentExemptScope(s));
+    // `consentGatedScopes`, not a re-spelling of its filter. It is the same predicate the
+    // MINT consults, so a local copy would drift from the thing that actually decides — and
+    // silently, in the direction that offers a control which records a preference nothing
+    // reads.
+    const revokableScopes = consentGatedScopes(displayedScopes);
 
     result.push({
       appBlockId,

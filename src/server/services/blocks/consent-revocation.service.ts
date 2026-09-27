@@ -1,5 +1,6 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-lifetimes';
+import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
 
 /**
  * PER-SCOPE CONSENT REVOCATION, ENFORCED ON TOKENS ALREADY IN FLIGHT.
@@ -16,7 +17,32 @@ import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-
  *
  * This marker is what makes the revoke take effect at the next REQUEST rather than at the
  * next mint. It is written by `blocks.revokeScopes` in the same mutation as the Postgres
- * write, and read by the block-scope middleware beside `BlockRevocation.isRevoked`.
+ * write, and read at BOTH token seams — `withBlockScope` (REST) and
+ * `authorizeBlockBridgeToken` (tRPC) — which then STRIP the revoked scopes from the
+ * verified claims.
+ *
+ * ## 🔴 STRIPPING, NOT ONLY REFUSING — AND THE FIRST VERSION OF THIS FILE GOT IT WRONG
+ *
+ * The first cut asked one question: "is the ROUTE's declared `requiredScope` revoked?".
+ * That is narrower than the revoke, in the direction that matters, and review caught it by
+ * enumeration: of the six consent-gated scopes, only four are ever a declared
+ * `requiredScope`. The two that are NOT are the two most sensitive —
+ * `posts:write:self`, authorized on the tRPC bridge at `authorizeBlockPostRequest` which
+ * never passes through `withBlockScope` at all; and `collections:read:private`, an
+ * IN-HANDLER sub-check (`pages/api/v1/blocks/collections/index.ts`,
+ * `collections/[id]/index.ts`) sitting under a route whose declared scope is the
+ * consent-EXEMPT `collections:read:self`. So revoking the scope this repo calls "the first
+ * block scope that writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S
+ * name" enforced nothing, and the middleware's own comment claiming "the refusal is as
+ * narrow as the revoke was" was false — it was narrower.
+ *
+ * The fix is to stop enumerating gates. Every consumer of a block token — the REST
+ * middleware's own `requiredScope` check, every in-handler `claims.scopes.includes(...)`
+ * sub-check, and every bridge procedure — authorizes off `claims.scopes`. Removing the
+ * revoked members from that array at the two places a token is verified makes all of them
+ * honour the revoke with no per-gate list to keep current. {@link applyRevocations} is that
+ * step; the `consent_revoked` 403 remains on top of it, so an app gets a distinguishable
+ * code instead of a bare `insufficient_scope`.
  *
  * ## 🔴 IT FAILS **CLOSED**, AND `BlockRevocation` FAILS **OPEN** — ON PURPOSE
  *
@@ -38,11 +64,17 @@ import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-
  * "tidying". One call has one `catch`, and these two need opposite ones. Folding them
  * would silently convert whichever half lost the argument.
  *
- * 🔴 THE PRICE, STATED PLAINLY: a Redis outage refuses every authed, scope-bound block
- * REST request. That is a real availability coupling on the whole App Blocks REST
- * surface, accepted as the cost of the guarantee above. It is narrowed by only reading at
- * all when a read could matter (see `isScopeRevoked`'s two skips), which keeps anon and
- * any-token-mode traffic out of it entirely, but it is not eliminated.
+ * 🔴 THE PRICE, STATED PLAINLY: during a Redis outage every revokable scope is stripped
+ * from every authed token, and a route whose `requiredScope` is revokable refuses. That is
+ * a real availability coupling on the App Blocks surface, accepted as the cost of the
+ * guarantee above.
+ *
+ * It is narrowed by reading at all ONLY when a read could change the outcome — see
+ * {@link shouldConsultMarker}: an anon token has no (user, app) pair, and a token carrying
+ * no consent-gated scope cannot be affected by any marker. That keeps every
+ * `apps:storage:*` and `collections:read:self`/`write:self` app out of the coupling
+ * entirely, which measured at 20 of the 29 scope-bound REST routes. It is deliberately NOT
+ * narrowed by testing the ROUTE's declared scope — that was the first version's defect.
  *
  * ## Why the value carries the scope set
  *
@@ -115,40 +147,135 @@ export class ConsentRevocation {
   }
 
   /**
-   * Whether `scope` is currently revoked for this (user, app) — FAIL CLOSED.
+   * The viewer's current suppression set for one app, as a three-way verdict — FAIL CLOSED.
    *
-   * Outcomes, all four of them deliberate:
-   *   - no key                → `false`. The overwhelmingly common case; one GET, one miss.
-   *   - key present, listed   → `true`. The refusal this whole module exists for.
-   *   - key present, NOT listed → `false`. The narrowing described in the module docblock:
-   *                             a viewer who revoked one permission has not revoked the
-   *                             others, and refusing them would break the app for a
-   *                             reason the user did not ask for.
-   *   - Redis threw, OR the value would not parse as a string array → `true`.
+   * Outcomes, all four states deliberate:
+   *   - no key                  → `{ kind: 'none' }`. The overwhelmingly common case; one
+   *                               GET, one miss.
+   *   - key present and parsed   → `{ kind: 'revoked', scopes }`.
+   *   - Redis threw              → `{ kind: 'unavailable' }`.
+   *   - value would not parse as a string array → `{ kind: 'unavailable' }`.
    *
-   * 🔴 THAT LAST ARM IS THE POINT AND IT COVERS **BOTH** FAILURES. A throw is the obvious
-   * one. A value that does not parse is the same situation wearing different clothes: the
-   * key EXISTS, so something published a revocation, and we cannot tell which scopes it
-   * covered. Reading an unparseable marker as "nothing revoked" would turn a corrupt write
-   * — or a future format change rolled out to some pods first — into a silent
-   * fail-open on the one control a user explicitly asked for. Refuse and be wrong in the
-   * direction that is recoverable by re-consenting.
+   * 🔴 THE LAST TWO ARE ONE ARM BECAUSE THEY ARE THE SAME SITUATION. A throw is the obvious
+   * one. A value that does not parse is it wearing different clothes: the key EXISTS, so
+   * something published a revocation, and we cannot tell which scopes it covered. Reading
+   * an unparseable marker as "nothing revoked" would turn a corrupt write — or a format
+   * change rolled out to some pods first — into a silent fail-open on the one control a
+   * user explicitly asked for.
+   *
+   * 🔴 `unavailable` IS NOT `none`, AND THE CALLER MUST NOT COLLAPSE THEM. This function
+   * deliberately does not decide what to do about it: a verdict that folded "unknown" into
+   * "everything is revoked" here would be right for the REST gate and wrong for the
+   * any-token catalog routes. {@link applyRevocations} owns that decision, in one place.
    */
-  static async isScopeRevoked(opts: {
+  static async lookup(opts: {
     userId: number;
     appBlockId: string;
-    scope: string;
-  }): Promise<boolean> {
+  }): Promise<ConsentRevocationVerdict> {
     try {
       const raw = await redis.get(consentRevokedKey(opts.userId, opts.appBlockId));
-      if (raw == null) return false;
+      if (raw == null) return { kind: 'none' };
       const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.some((s) => typeof s !== 'string')) return true;
-      return (parsed as string[]).includes(opts.scope);
+      if (!Array.isArray(parsed) || parsed.some((s) => typeof s !== 'string')) {
+        return { kind: 'unavailable' };
+      }
+      return { kind: 'revoked', scopes: new Set(parsed as string[]) };
     } catch {
-      // FAIL CLOSED — see the docblock. Covers both the Redis error and a JSON.parse
-      // throw on a malformed value.
-      return true;
+      // FAIL CLOSED — see the docblock. Covers both the Redis error and a JSON.parse throw.
+      return { kind: 'unavailable' };
     }
   }
+}
+
+/**
+ * What a viewer is told when the durable revoke landed but the in-flight marker did not.
+ *
+ * 🔴 IT MUST BE CARRIED BY A **4xx** TO REACH THEM. `src/server/trpc/client-safe-error.ts`
+ * replaces the message of every `status >= 500 && status !== 503`, so throwing this under
+ * `INTERNAL_SERVER_ERROR` — the first version — discarded it one layer below the throw and
+ * showed a generic "something went wrong (ref: …)". The whole value of this wording is
+ * letting the viewer tell "recorded, enforcement lags" from "nothing was recorded"; a
+ * generic 500 says neither. `SERVICE_UNAVAILABLE` is that formatter's carve-out.
+ *
+ * Exported so the test pins the exact string and a mutant that swaps it for a different
+ * error is killed by the MESSAGE, not merely by "something threw".
+ */
+export const CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE =
+  'The permission was removed and will not be granted again, but an already-open app session ' +
+  'may keep using it for a few more minutes. Reload the app to be sure.';
+
+/** The three states a marker read can be in. `unavailable` is NOT `none` — see `lookup`. */
+export type ConsentRevocationVerdict =
+  | { kind: 'none' }
+  | { kind: 'revoked'; scopes: Set<string> }
+  | { kind: 'unavailable' };
+
+/**
+ * Whether a marker read can change this request's outcome at all.
+ *
+ * 🔴 TWO SKIPS, EACH FOR ITS OWN REASON — and NEITHER of them is the route's declared
+ * scope, which is what the first version tested and where its hole was.
+ *
+ *   - ANON subject: consent is per (user, app). An anon token has no user, so no marker can
+ *     exist for it.
+ *   - NO CONSENT-GATED SCOPE IN THE TOKEN: `partitionByConsent` signs a
+ *     `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it consults the grant,
+ *     and `blocks.revokeScopes` refuses to record a suppression for one — so a marker can
+ *     never name a scope such a token carries. Measured: 20 of the 29 scope-bound REST
+ *     routes declare an exempt scope, and an app whose whole manifest is exempt
+ *     (`apps:storage:*`, shared storage, `collections:read:self`) never reads the marker.
+ *
+ * Both are also what keeps those populations out of the fail-closed availability coupling,
+ * which is a welcome consequence and not the reason either exists.
+ */
+export function shouldConsultMarker(opts: {
+  userId: number | null;
+  scopes: readonly string[];
+}): boolean {
+  if (opts.userId === null) return false;
+  return opts.scopes.some((s) => !isConsentExemptScope(s));
+}
+
+/**
+ * The scopes to treat as revoked for a token, given a verdict — the ONE place "unknown"
+ * becomes a decision.
+ *
+ * 🔴 `unavailable` FAILS CLOSED BY NAMING EVERY REVOKABLE SCOPE THE TOKEN CARRIES, not by
+ * naming all of them. Stripping a consent-EXEMPT scope during a Redis incident would refuse
+ * `apps:storage:*` and `collections:read:self` traffic that no revoke could ever have
+ * touched — a self-inflicted outage on a population the feature does not apply to. Exempt
+ * scopes are signed without a grant, so there is nothing about them for a marker to be
+ * unknown about.
+ */
+export function revokedScopesForToken(
+  verdict: ConsentRevocationVerdict,
+  scopes: readonly string[]
+): Set<string> {
+  if (verdict.kind === 'none') return new Set();
+  if (verdict.kind === 'revoked') return verdict.scopes;
+  return new Set(scopes.filter((s) => !isConsentExemptScope(s)));
+}
+
+/**
+ * Removes every revoked scope from a verified token's scope array.
+ *
+ * 🔴 THIS IS THE WHOLE ENFORCEMENT MECHANISM, AND IT IS A STRIP RATHER THAN A LIST OF
+ * GATES ON PURPOSE. Every consumer of a block token authorizes off `claims.scopes` — the
+ * REST middleware's `requiredScope` check, the in-handler `claims.scopes.includes(...)`
+ * sub-checks that gate `collections:read:private`, and every one of the bridge procedures.
+ * Removing the revoked members once, where the token is verified, makes all of them honour
+ * the revoke with no per-gate enumeration to keep current. The first version enumerated,
+ * and missed the two most sensitive scopes.
+ *
+ * Returns the SAME object when nothing was revoked, so the common path allocates nothing
+ * and a caller can use identity to tell whether anything changed.
+ */
+export function applyRevocations<T extends { scopes: string[] }>(
+  claims: T,
+  revoked: Set<string>
+): T {
+  if (revoked.size === 0) return claims;
+  const kept = claims.scopes.filter((s) => !revoked.has(s));
+  if (kept.length === claims.scopes.length) return claims;
+  return { ...claims, scopes: kept };
 }

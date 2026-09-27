@@ -31,6 +31,7 @@ import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  isKnownBlockScope,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -255,6 +256,17 @@ import type { BlockWorkflowStatus } from '~/server/services/blocks/block-workflo
 // value import here would pull the consent ledger into this router's load graph and give
 // every suite that mocks it a second specifier to know about.
 import type { ConsentSpendPosture } from '~/server/services/blocks/scope-grant.service';
+// The one scope that can spend the viewer's Buzz. A bare constant, so a value import costs
+// nothing the type-only line above was avoiding.
+import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
+// Two VALUE imports from the consent-revocation module: the marker writer and the message a
+// degraded publish reports. Static rather than dynamic — the module's own graph is Redis +
+// two constants modules, all of which this router already carries, so there is nothing to
+// defer, and a dynamic import for a STRING would be noise.
+import {
+  ConsentRevocation,
+  CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+} from '~/server/services/blocks/consent-revocation.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -3137,10 +3149,11 @@ export const blocksRouter = router({
       const { recordScopeGrant, getGrantedScopes } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
-      const { ConsentRevocation } = await import(
-        '~/server/services/blocks/consent-revocation.service'
-      );
-      const grantsSpend = toGrant.includes('ai:write:budgeted');
+      // `CONSENT_SPEND_SCOPE`, not the literal. Its own docblock enumerates the sites that
+      // branch on it and says a string repeated at N sites is a predicate that will be wrong
+      // at N−1 of them the first time the vocabulary moves; these two were the copies it was
+      // written to absorb.
+      const grantsSpend = toGrant.includes(CONSENT_SPEND_SCOPE);
       const alreadyGrantsSpend =
         !grantsSpend &&
         input.buzzBudgetPerDay !== undefined &&
@@ -3158,7 +3171,7 @@ export const blocksRouter = router({
             appBlockId: input.appBlockId,
             db: 'write',
           })
-        ).has('ai:write:budgeted');
+        ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
       const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
@@ -3292,10 +3305,22 @@ export const blocksRouter = router({
       const { revokeScopes: revokeScopesForUser, isConsentExemptScope } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
-      const { ConsentRevocation } = await import(
-        '~/server/services/blocks/consent-revocation.service'
-      );
 
+      // 🔴 KNOWN SCOPES ONLY, AND THIS IS A HOT-PATH BOUND RATHER THAN TIDINESS. Whatever
+      // lands in `revoked_scopes` is what `ConsentRevocation.publish` writes into the marker,
+      // and `ConsentRevocation.lookup` then GETs and `JSON.parse`s that value on EVERY authed
+      // block request for this (user, app) pair. 32 arbitrary 1–64-char strings per call, with
+      // the array unioned and never pruned, grows both the row and that per-request payload
+      // without bound — self-targeted, but paid on a hot path and parsed under a fail-closed
+      // catch. An unknown string could also never suppress anything: `partitionByConsent`
+      // only ever consults scopes the mint signs.
+      const unknown = input.scopes.filter((s) => !isKnownBlockScope(s));
+      if (unknown.length > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `unknown scope(s): ${unknown.join(', ')}`,
+        });
+      }
       const exempt = input.scopes.filter((s) => isConsentExemptScope(s));
       if (exempt.length > 0) {
         throw new TRPCError({
@@ -3311,26 +3336,78 @@ export const blocksRouter = router({
         });
       }
 
-      // POSTGRES FIRST, REDIS SECOND, and the order is the whole recovery story. The row
-      // is the authority — it governs every FUTURE mint, permanently — while the marker
-      // only closes the window on tokens already in flight and expires by itself within
-      // one token lifetime. So a failure after the row is written leaves the revoke
-      // DURABLE but not immediate, which is recoverable; the reverse order would leave a
-      // marker refusing a permission the ledger still grants, which self-heals into the
-      // permission coming back.
+      // POSTGRES FIRST, then the durable OAuth teardown, then Redis. The row is the
+      // authority — it governs every FUTURE mint, permanently — while the marker only closes
+      // the window on tokens already in flight and expires by itself within one token
+      // lifetime. So a failure after the row is written leaves the revoke DURABLE but not
+      // immediate, which is recoverable; the reverse order would leave a marker refusing a
+      // permission the ledger still grants, which self-heals into the permission coming back.
       const result = await revokeScopesForUser({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         scopes: input.scopes,
       });
 
+      // ── TEAR DOWN THE OAUTH MIRROR.
+      //
+      // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE AND A REVOKE THAT IGNORES
+      // IT IS INCOMPLETE. `syncOauthConsentFromGrant` mirrors the grant into a bitmask the
+      // auth hub mints real OAuth access tokens against, and those tokens outlive this
+      // mutation. Deleting the mirror — and the `Access`/`Refresh` keys alongside it — is
+      // what stops them.
+      //
+      // 🔴 BEFORE THE REDIS PUBLISH, AND UNCONDITIONALLY. Three separate conditions used to
+      // stand between a revoke and this call, and each of them could be false while a live
+      // mirror row existed:
+      //   - it ran AFTER the publish, inside the same function, so a Redis failure threw past
+      //     it and the mirror was never touched at all — the one failure mode the publish's
+      //     own error message tells the viewer was merely "enforcement lags a few minutes";
+      //   - it was gated on `env.APP_BLOCK_OAUTH_TOKENS_ENABLED` being true NOW, which can be
+      //     switched off after rows exist;
+      //   - it was gated on today's `manifest.auth === 'oauth'`, and a publisher push replaces
+      //     `manifest` without re-approval — the very reason this procedure applies no
+      //     manifest ceiling twenty lines above.
+      // `revokeOauthConsentForBlock` is already a no-op when there is no row (it `deleteMany`s
+      // and returns early on a missing AppBlock), so calling it always costs a bounded query
+      // on a cold path and closes all three.
+      //
+      // ⚠️ DELIBERATELY THE COARSE HELPER, on EVERY revoke rather than only a full one. It
+      // drops the whole mirror for this app, so a PARTIAL revoke also ends the app's OAuth
+      // session and the next mint rebuilds a narrower mirror from the grant. That is
+      // over-broad and it is the safe direction: the alternative is recomputing a bitmask
+      // here, which duplicates the sync service's rules at a second site — and a bitmask wrong
+      // in the OTHER direction leaves a revoked scope mintable. A re-login is a visible,
+      // self-service cost; a stale permission bit is neither.
+      //
+      // Best-effort, and that is now a much smaller claim than it was: the durable row is
+      // already written, and this runs before the marker rather than after it, so a failure
+      // here no longer hides behind the publish's error path.
+      {
+        const { revokeOauthConsentForBlock } = await import(
+          '~/server/services/blocks/oauth-consent-sync.service'
+        );
+        await revokeOauthConsentForBlock({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+        }).catch(() => {
+          /* the block-token surface is closed by the row above and the marker below */
+        });
+      }
+
       // 🔴 PUBLISH FAILURES ARE SURFACED, NOT SWALLOWED — the opposite of the re-publish in
       // `grantScopes`. This is the NARROWING direction: if the marker is not written, an
       // already-minted token keeps the revoked scope for up to its remaining life (4h for a
       // dev token), and the viewer has just been told the permission was removed. Telling
       // them "recorded, but an in-flight session may keep it for a few minutes" is honest;
-      // a silent success is not. The Postgres row is already committed either way, which is
-      // what the message promises.
+      // a silent success is not.
+      //
+      // 🔴 `SERVICE_UNAVAILABLE` (503), NOT `INTERNAL_SERVER_ERROR` — AND THE FIRST VERSION
+      // USED THE 500, WHICH THREW THIS MESSAGE AWAY. `src/server/trpc/client-safe-error.ts`
+      // replaces the message of every `status >= 500 && status !== 503` with a generic
+      // "something went wrong (ref: …)", so the whole point of the careful wording — letting
+      // the viewer tell "recorded, enforcement lags" from "nothing was recorded" — was lost
+      // one layer below the throw, while the test asserting it passed at the procedure
+      // boundary. 503 is that formatter's own carve-out, which is why it is the code here.
       try {
         await ConsentRevocation.publish({
           userId: ctx.user!.id,
@@ -3339,44 +3416,8 @@ export const blocksRouter = router({
         });
       } catch {
         throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message:
-            'The permission was removed and will not be granted again, but an already-open ' +
-            'app session may keep using it for a few more minutes. Reload the app to be sure.',
-        });
-      }
-
-      // ── TEAR DOWN THE OAUTH MIRROR when the app authenticates that way.
-      //
-      // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE AND A REVOKE THAT IGNORES
-      // IT IS INCOMPLETE. `syncOauthConsentFromGrant` mirrors the grant into a bitmask the
-      // auth hub mints real OAuth access tokens against, and those tokens outlive this
-      // mutation. Deleting the mirror (and its access/refresh keys) is what stops them.
-      //
-      // ⚠️ DELIBERATELY THE COARSE HELPER, on EVERY revoke rather than only a full one.
-      // `revokeOauthConsentForBlock` drops the whole mirror for this app, so a PARTIAL
-      // revoke also ends the app's OAuth session and the next mint rebuilds a narrower
-      // mirror from the grant. That is over-broad and it is the safe direction: the
-      // alternative is recomputing a bitmask here, which duplicates the sync service's
-      // rules at a second site — and a bitmask that is wrong in the OTHER direction leaves
-      // a revoked scope mintable. A re-login is a visible, self-service cost; a stale
-      // permission bit is neither.
-      //
-      // Best-effort: the block-JWT path is already closed by the two writes above, and
-      // failing the whole mutation here would tell the viewer nothing was recorded when the
-      // durable half was.
-      if (
-        env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
-        (block.manifest as { auth?: unknown }).auth === 'oauth'
-      ) {
-        const { revokeOauthConsentForBlock } = await import(
-          '~/server/services/blocks/oauth-consent-sync.service'
-        );
-        await revokeOauthConsentForBlock({
-          userId: ctx.user!.id,
-          appBlockId: input.appBlockId,
-        }).catch(() => {
-          /* see above — the block-token surface is already closed */
+          code: 'SERVICE_UNAVAILABLE',
+          message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
         });
       }
 

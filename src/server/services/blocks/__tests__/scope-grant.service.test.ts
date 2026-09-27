@@ -268,31 +268,72 @@ describe('scope-grant.service', () => {
       );
     });
 
-    // 🔴 THE WRITE HALF, AND THE ONE THAT MATTERS MOST. The error must NAME THE MIGRATION:
-    // Prisma's own message names a column, which reads as a code bug to whoever is looking
-    // at it while a viewer waits for their revoke to work.
-    it('revokeScopes THROWS, naming the migration, rather than reporting success', async () => {
+    // 🔴 THE WRITE HALF, AND THE ONE THAT MATTERS MOST. It must refuse rather than report a
+    // success it did not persist, AND the refusal must actually REACH the viewer.
+    //
+    // ⚠️ THE ASSERTION USED TO MATCH THE MIGRATION NAME, and that was the wrong target twice
+    // over. It was a bare `Error`, so tRPC classified it `INTERNAL_SERVER_ERROR` and
+    // `src/server/trpc/client-safe-error.ts` replaced the whole message with a generic
+    // "something went wrong (ref: …)" — the carefully-worded text reached nobody while this
+    // test passed one layer above where it was discarded. And a migration identifier is not
+    // actionable by a viewer anyway; it belongs in the operator's log line, which
+    // `logMissingRevokedScopesColumn` still emits.
+    //
+    // So: `PRECONDITION_FAILED` (a 4xx, whose message survives the formatter) carrying the
+    // EXPORTED viewer-facing string, pinned exactly — so a mutant that swaps the guard for a
+    // different error is killed by the MESSAGE, not merely by "something threw".
+    it('revokeScopes refuses with PRECONDITION_FAILED and the viewer-facing message', async () => {
       mockDb.appUserScopeGrant.findUnique.mockRejectedValueOnce(missingColumnError());
-      const { revokeScopes } = await import('../scope-grant.service');
+      const { revokeScopes, CONSENT_REVOKE_UNAVAILABLE_MESSAGE } = await import(
+        '../scope-grant.service'
+      );
       await expect(
         revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: ['ai:write:budgeted'] })
-      ).rejects.toThrow(/20260927120000_app_user_scope_grant_revoked_scopes/);
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: CONSENT_REVOKE_UNAVAILABLE_MESSAGE,
+      });
       // And it wrote NOTHING — a partial write would be worse than the refusal.
       expect(mockDb.appUserScopeGrant.update).not.toHaveBeenCalled();
       expect(mockDb.appUserScopeGrant.create).not.toHaveBeenCalled();
     });
 
-    it('revokeScopes throws on a P2022 raised by the WRITE, not only by the read', async () => {
+    // 🔴 THE MESSAGE SURVIVES THE CLIENT-SAFE FORMATTER. Asserting the code alone would not
+    // establish that: the whole defect was a status class whose message is replaced, and this
+    // is the check that pins the class rather than the spelling.
+    it('the refusal is a 4xx, so its message is not replaced by the generic 500 text', async () => {
+      const { getHTTPStatusCodeFromError } = await import('@trpc/server/http');
+      const { getClientSafeError } = await import('~/server/trpc/client-safe-error');
+      mockDb.appUserScopeGrant.findUnique.mockRejectedValueOnce(missingColumnError());
+      const { revokeScopes } = await import('../scope-grant.service');
+      const err = await revokeScopes({
+        userId: 1,
+        appBlockId: 'ab_x',
+        scopes: ['ai:write:budgeted'],
+      }).then(
+        () => null,
+        (e) => e as Parameters<typeof getHTTPStatusCodeFromError>[0]
+      );
+      expect(err).not.toBeNull();
+      const status = getHTTPStatusCodeFromError(err!);
+      expect(status).toBeLessThan(500);
+      // `undefined` from the formatter means "this message is safe to show as-is".
+      expect(getClientSafeError(err as never)).toBeUndefined();
+    });
+
+    it('revokeScopes refuses on a P2022 raised by the WRITE, not only by the read', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
         id: 'augr_1',
         grantedScopes: ['ai:write:budgeted'],
         revokedScopes: [],
       });
       mockDb.appUserScopeGrant.update.mockRejectedValueOnce(missingColumnError());
-      const { revokeScopes } = await import('../scope-grant.service');
+      const { revokeScopes, CONSENT_REVOKE_UNAVAILABLE_MESSAGE } = await import(
+        '../scope-grant.service'
+      );
       await expect(
         revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: ['ai:write:budgeted'] })
-      ).rejects.toThrow(/20260927120000_app_user_scope_grant_revoked_scopes/);
+      ).rejects.toMatchObject({ message: CONSENT_REVOKE_UNAVAILABLE_MESSAGE });
     });
 
     // A prompted re-consent must keep working on such a database — it simply has nothing to
@@ -563,7 +604,7 @@ describe('scope-grant.service', () => {
     // rows that carry it, so stamping it on a PARTIAL revoke would make a viewer's first
     // revoke delete the card they revoked from — along with every remaining permission's
     // control.
-    it('leaves revokedAt NULL while any granted scope remains', async () => {
+    it('does not TOUCH revokedAt while any granted scope remains', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(liveGrant());
       mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
       const { revokeScopes } = await import('../scope-grant.service');
@@ -572,8 +613,75 @@ describe('scope-grant.service', () => {
         appBlockId: 'ab_x',
         scopes: ['posts:write:self'],
       });
-      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data.revokedAt).toBeNull();
+      // ⚠️ `not.toHaveProperty`, NOT `toBeNull()`. This assertion used to read
+      // `…data.revokedAt).toBeNull()` — it PINNED THE DEFECT. See the arm below.
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data).not.toHaveProperty('revokedAt');
       expect(res.fullyRevoked).toBe(false);
+    });
+
+    /**
+     * 🔴 A PARTIAL REVOKE MUST NOT UN-REVOKE A WHOLE-GRANT REVOKE. This is the arm the
+     * original suite could not fail: its fixture already had `revokedAt: null`, so a write of
+     * `revokedAt: null` was indistinguishable from leaving it alone, and the test was NAMED
+     * after the intent while pinning the opposite.
+     *
+     * The state is real and intended, not hypothetical:
+     * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` runs
+     * `SET revoked_at = now() WHERE 'ai:write:budgeted' = ANY (granted_scopes)` and
+     * deliberately leaves the array intact, to force a fresh consent prompt. On such a row a
+     * `revokedAt: null` write re-granted EVERY other scope with no prompt —
+     * `ai:write:budgeted` among them, with the old `buzz_budget_per_day` springing back — so
+     * withdrawing one permission widened five. The same inversion class this change exists to
+     * fix.
+     *
+     * MUTATION THAT MUST KILL IT: `...(fullyRevoked ? { revokedAt: now } : {})` →
+     * `revokedAt: fullyRevoked ? now : null`.
+     */
+    it('🔴 does not clear a PRE-EXISTING whole-grant revoke (the re-consent oneoff’s state)', async () => {
+      // The oneoff's row shape: suspended, but the granted array untouched.
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(
+        liveGrant({ grantedScopes: ['ai:write:budgeted', 'posts:write:self'] })
+      );
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      await revokeScopes({ userId: 1, appBlockId: 'ab_x', scopes: ['posts:write:self'] });
+      const data = mockDb.appUserScopeGrant.update.mock.calls[0][0].data;
+      expect(
+        data,
+        'the write NAMES revokedAt on a partial revoke. If the row carried a non-NULL ' +
+          'revoked_at — which the 2026-09-16 re-consent oneoff produces deliberately — this ' +
+          'clears it and re-grants every other scope on the row with no consent prompt.'
+      ).not.toHaveProperty('revokedAt');
+    });
+
+    /**
+     * 🔴 AND THE CONTROL FOR THE BUDGET CLEAR, which review found survived every fixture: no
+     * arm had `priorRevoked ⊇ {spend}` with `incoming ∌ spend`, so keying `budgetCleared` on
+     * the accumulated `revoked_scopes` instead of THIS call's scopes was invisible. That
+     * mutant names `buzz_budget_per_day` on every subsequent revoke — a 500 on a database
+     * missing that (earlier, separate) migration — and reports `budgetCleared: true` for a
+     * call that cleared nothing.
+     *
+     * MUTATION THAT MUST KILL IT: `incomingSet.has(CONSENT_SPEND_SCOPE)` →
+     * `nextRevoked.includes(CONSENT_SPEND_SCOPE)`.
+     */
+    it('does not re-clear the budget when spend was ALREADY revoked earlier', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(
+        liveGrant({ grantedScopes: ['posts:write:self'], revokedScopes: ['ai:write:budgeted'] })
+      );
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      const res = await revokeScopes({
+        userId: 1,
+        appBlockId: 'ab_x',
+        scopes: ['posts:write:self'],
+      });
+      expect(
+        mockDb.appUserScopeGrant.update.mock.calls[0][0].data,
+        'the write names buzz_budget_per_day for a call that revoked no spend scope — it is ' +
+          'keyed on the accumulated revoked set rather than on THIS call’s scopes'
+      ).not.toHaveProperty('buzzBudgetPerDay');
+      expect(res.budgetCleared).toBe(false);
     });
 
     it('stamps revokedAt once the LAST granted scope goes', async () => {

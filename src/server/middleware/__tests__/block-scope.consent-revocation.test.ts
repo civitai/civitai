@@ -37,17 +37,23 @@ import type * as ConsentRevocationModule from '~/server/services/blocks/consent-
  * were run.
  */
 
-/** The one argument shape `ConsentRevocation.isScopeRevoked` takes. */
-type ConsentRevokedQuery = { userId: number; appBlockId: string; scope: string };
+/** What `ConsentRevocation.lookup` is asked, and what it answers. */
+type ConsentLookupQuery = { userId: number; appBlockId: string };
+type ConsentVerdict =
+  | { kind: 'none' }
+  | { kind: 'revoked'; scopes: Set<string> }
+  | { kind: 'unavailable' };
 
-const { isFliptMock, isRevokedMock, isScopeRevokedMock } = vi.hoisted(() => ({
+const { isFliptMock, isRevokedMock, lookupMock } = vi.hoisted(() => ({
   isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
   isRevokedMock: vi.fn(async () => false),
   // 🔴 THE SIGNATURE IS DECLARED AS A GENERIC, not inferred from a zero-arg arrow. Without it
   // vitest types `mock.calls` as `[]` and `mock.calls[0][0]` is a TS2493 — and that is exactly
   // the assertion pinning WHAT the middleware asks about, i.e. the one this file cannot do
   // without. Declared on `vi.fn<…>` rather than as an unused `_opts` parameter, which lints.
-  isScopeRevokedMock: vi.fn<(opts: ConsentRevokedQuery) => Promise<boolean>>(async () => false),
+  lookupMock: vi.fn<(opts: ConsentLookupQuery) => Promise<ConsentVerdict>>(async () => ({
+    kind: 'none',
+  })),
 }));
 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
@@ -65,8 +71,18 @@ vi.mock('~/server/services/block-revocation.service', () => ({
  * the bottom asserting the middleware does not wrap the call in its own `try`, which is the
  * only way this file could be fooled about the fail-closed posture.
  */
-vi.mock('~/server/services/blocks/consent-revocation.service', () => ({
-  ConsentRevocation: { isScopeRevoked: isScopeRevokedMock },
+/**
+ * 🔴 ONLY THE REDIS-TOUCHING CLASS IS REPLACED; THE THREE PURE HELPERS STAY REAL. The
+ * middleware imports `shouldConsultMarker`, `revokedScopesForToken` and `applyRevocations`
+ * from this same specifier, so a factory naming only `ConsentRevocation` would make the module
+ * fail to LOAD — and they are the decisions worth exercising for real here: which tokens are
+ * consulted at all, what "unavailable" means, and what a strip leaves behind. Spreading
+ * `importOriginal` and overriding the one class is the shape the sibling approved-gate suite
+ * uses, for the same reason.
+ */
+vi.mock('~/server/services/blocks/consent-revocation.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  ConsentRevocation: { lookup: lookupMock },
 }));
 
 import { readFileSync } from 'fs';
@@ -80,6 +96,17 @@ const APP_ID = 'app_consent';
 const BLOCK_ID = 'blk_consent';
 const APP_BLOCK_ID = 'apb_consent';
 const SCOPE = 'ai:write:budgeted';
+/**
+ * A SECOND consent-gated scope the token also carries, listed FIRST.
+ *
+ * 🔴 THIS IS A FIXTURE-SHAPE FIX, NOT DECORATION. Review established that with a single-scope
+ * token, `opts.requiredScope`, `claims.scopes[0]` and a hardcoded `'ai:write:budgeted'` were
+ * the same string in every arm — so a middleware mutated to ask about `claims.scopes[0]`, or
+ * about a literal, passed the whole file including the arm whose name is "asks about the
+ * ROUTE's required scope". Two distinct gated scopes, with the OTHER one first, is what makes
+ * that assertion able to fail.
+ */
+const OTHER_SCOPE = 'posts:write:self';
 const USER_ID = 4242;
 
 const findUniqueMock = dbMock.dbRead.appBlock.findUnique;
@@ -92,7 +119,9 @@ async function mint(opts: { userId?: number | null } = {}): Promise<string> {
     appId: APP_ID,
     appBlockId: APP_BLOCK_ID,
     blockInstanceId: 'bki_consent',
-    scopes: [SCOPE],
+    // OTHER_SCOPE first — see its docblock; `claims.scopes[0] !== requiredScope` is what makes
+    // the "asks about the route's scope" assertion killable.
+    scopes: [OTHER_SCOPE, SCOPE],
     ctx: {},
     buzzBudget: 100,
   } as Parameters<typeof BlockTokenService.sign>[0]);
@@ -171,7 +200,7 @@ beforeEach(() => {
   findUniqueMock.mockResolvedValue({ status: 'approved' });
   isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
   isRevokedMock.mockImplementation(async () => false);
-  isScopeRevokedMock.mockImplementation(async () => false);
+  lookupMock.mockImplementation(async () => ({ kind: 'none' }));
   // Reset between tests so the SEAM block's per-test Redis behaviour cannot leak into the
   // boundary-mocked blocks (where a rejected `get` would be an unhandled rejection in a
   // test that never touches Redis).
@@ -184,11 +213,11 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * 🔴 THE CENTRAL MIDDLEWARE CLAIM: 403 with `code: 'consent_revoked'`, and the wrapped
    * handler never runs.
    *
-   * MUTATION THAT MUST KILL IT: delete the `ConsentRevocation.isScopeRevoked` block from
+   * MUTATION THAT MUST KILL IT: delete the `ConsentRevocation.lookup` block from
    * `withBlockScope`.
    */
   it('403s with code consent_revoked and does not reach the handler', async () => {
-    isScopeRevokedMock.mockResolvedValue(true);
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
     const { handler, res } = await drive(await mint());
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'consent_revoked' });
@@ -207,7 +236,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * 403'd unconditionally would pass every other assertion here.
    */
   it('CONTROL: with no revocation the same request is served', async () => {
-    isScopeRevokedMock.mockResolvedValue(false);
+    lookupMock.mockResolvedValue({ kind: 'none' });
     const { handler, res } = await drive(await mint());
     expect(res.statusCode).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
@@ -219,15 +248,77 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * wrong requests — and every test above would still pass, because the mock answers
    * whatever it is asked.
    */
-  it('asks about the ROUTE’s required scope, the token’s user and the token’s app', async () => {
-    isScopeRevokedMock.mockResolvedValue(false);
+  /**
+   * 🔴 IT ASKS ABOUT THE RIGHT (user, app) PAIR. A gate keyed on anything else would refuse
+   * the wrong requests, and every outcome assertion in this file would still pass because the
+   * mock answers whatever it is asked.
+   */
+  it('looks the marker up by the token’s user and the token’s app', async () => {
+    lookupMock.mockResolvedValue({ kind: 'none' });
     await drive(await mint());
-    expect(isScopeRevokedMock).toHaveBeenCalledTimes(1);
-    expect(isScopeRevokedMock.mock.calls[0][0]).toEqual({
+    expect(lookupMock).toHaveBeenCalledTimes(1);
+    expect(lookupMock.mock.calls[0][0]).toEqual({
       userId: USER_ID,
       appBlockId: APP_BLOCK_ID,
-      scope: SCOPE,
     });
+  });
+
+  /**
+   * 🔴 THE REFUSAL IS DECIDED BY THE **ROUTE'S** SCOPE, NOT BY THE TOKEN'S FIRST ONE.
+   *
+   * This is the arm the first version could not express. `lookup` no longer takes a scope, so
+   * "which scope does it check" is only answerable behaviourally: the marker names ONE of the
+   * token's two gated scopes and the route requires the OTHER, so a middleware comparing
+   * `claims.scopes[0]`, or a hardcoded literal, gives the wrong answer here and only here.
+   *
+   * MUTATIONS THAT MUST KILL THIS PAIR: `revoked.has(claims.scopes[0])` or
+   * `revoked.has('ai:write:budgeted')` in place of `revoked.has(opts.requiredScope)`.
+   */
+  it('refuses when the ROUTE’s scope is the revoked one', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
+    const { res } = await drive(await mint(), SCOPE);
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toMatchObject({ code: 'consent_revoked' });
+  });
+
+  it('SERVES when only the token’s OTHER scope is revoked', async () => {
+    // The marker names OTHER_SCOPE, which is `claims.scopes[0]`; the route requires SCOPE.
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
+    const { handler, res } = await drive(await mint(), SCOPE);
+    expect(
+      res.statusCode,
+      'the gate refused a route whose required scope was NOT revoked — it is comparing against ' +
+        'the wrong scope (the token’s first, or a literal) rather than opts.requiredScope'
+    ).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 AND THE OTHER SCOPE IS STILL **STRIPPED** FROM THE CLAIMS THE HANDLER SEES — which is
+   * the whole reason the mechanism is a strip and not a refusal. `collections:read:private` is
+   * read exactly like this: an in-handler `claims.scopes.includes(...)` under a route that
+   * declares a different scope. If the strip did not happen, that sub-check would still pass.
+   *
+   * MUTATION THAT MUST KILL IT: delete the `claims = applyRevocations(claims, revoked)` line.
+   */
+  it('STRIPS a revoked scope the route does not require, so in-handler checks honour it', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
+    const seen: string[][] = [];
+    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
+      seen.push([...(req as unknown as { blockClaims: { scopes: string[] } }).blockClaims.scopes]);
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(handler as never, { endpoint: 'me', requiredScope: SCOPE });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(
+      seen[0],
+      'the handler saw the revoked scope. Every in-handler `claims.scopes.includes(...)` ' +
+        'sub-check — which is how collections:read:private is gated — would therefore still ' +
+        'grant it for the rest of the token’s life.'
+    ).toEqual([SCOPE]);
   });
 
   /**
@@ -235,12 +326,12 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * that), and the middleware must honour it as a refusal rather than, say, catching and
    * serving.
    *
-   * MUTATION THAT MUST KILL IT: wrap the middleware's `isScopeRevoked` call in
+   * MUTATION THAT MUST KILL IT: wrap the middleware's `lookup` call in
    * `try { … } catch { /* serve *\/ }`, or flip the primitive's `catch` to `return false`.
    */
   it('refuses when the marker read is UNAVAILABLE (fail closed)', async () => {
     // What the real primitive does on a Redis incident.
-    isScopeRevokedMock.mockResolvedValue(true);
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
     const { res } = await drive(await mint());
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'consent_revoked' });
@@ -251,21 +342,53 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * distinguish "honours the refusal" from "swallowed a throw and happened to refuse". If
    * the middleware wrapped the call in its own `try`, a THROWN Redis error would be served.
    */
-  it('does not wrap the marker read in its own catch', () => {
+  it('does not wrap the marker read in its own try/catch', () => {
     const source = readFileSync(
       path.resolve(__dirname, '../block-scope.middleware.ts'),
       'utf8'
     ).replace(/\/\*[\s\S]*?\*\//g, '');
-    const at = source.indexOf('ConsentRevocation.isScopeRevoked');
+    const at = source.indexOf('ConsentRevocation.lookup');
     expect(at, 'the middleware no longer calls the consent marker at all').toBeGreaterThan(-1);
-    // Look at the 600 characters around the call. A `catch` there would be the fail-open
-    // this gate must not have. (`BlockRevocation.isRevoked`'s fail-open lives INSIDE the
-    // primitive, not at the call site, so no legitimate `catch` belongs here.)
-    const around = source.slice(Math.max(0, at - 300), at + 300);
+
+    // 🔴 A BRACE WALK, NOT A ±N-CHARACTER WINDOW — AND THE WINDOW VERSION WAS WALKABLE.
+    // Review measured it: the refusal block's own `return;` sits 731 characters past the call,
+    // so the natural tidy-up (wrapping the WHOLE `if (opts.requiredScope !== undefined)` block
+    // in `try { … } catch { /* serve */ }`) puts the `catch` ~760 chars away — outside a ±300
+    // window, guard green, fail-closed silently gone. The behavioural SEAM arm cannot see it
+    // either, because the real primitive never throws.
+    //
+    // So: walk OUTWARDS from the call, tracking brace depth, and assert no enclosing block is
+    // a `try`. That is depth-based rather than distance-based, so it cannot be defeated by
+    // moving the `catch` further away.
+    const enclosingIsTry = (() => {
+      let depth = 0;
+      for (let i = at; i >= 0; i--) {
+        const c = source[i];
+        if (c === '}') depth++;
+        else if (c === '{') {
+          if (depth > 0) {
+            depth--;
+            continue;
+          }
+          // An unmatched `{` walking backwards opens a block that CONTAINS the call. Read the
+          // keyword immediately before it.
+          const head = source.slice(Math.max(0, i - 60), i);
+          if (/\btry\s*$/.test(head)) return true;
+          // Stop at the enclosing function/handler: anything further out is not "its own"
+          // catch, and `withBlockScope`'s body legitimately contains try/catch elsewhere.
+          if (/\)\s*=>\s*$|\basync\s*\([^)]*\)\s*=>\s*$|\bfunction\b[^{]*$/.test(head)) {
+            return false;
+          }
+        }
+      }
+      return false;
+    })();
+
     expect(
-      /\bcatch\b/.test(around),
-      'a `catch` appeared around the consent-marker read. This gate must fail CLOSED; a ' +
-        'catch here serves a request whose permission the viewer revoked.'
+      enclosingIsTry,
+      'the consent-marker read is lexically inside a `try`. This gate must fail CLOSED; a ' +
+        'catch around it serves a request whose permission the viewer revoked, and the ' +
+        'behavioural seam arm cannot see it because the primitive never throws.'
     ).toBe(false);
   });
 });
@@ -280,7 +403,7 @@ describe('a token carrying a now-revoked scope is refused', () => {
  * whole file GREEN, 11/11, while breaking the guarantee the file is about. Two components each
  * mutation-swept and audit-clean, broken together, with every fixture scoped to one surface.
  *
- * So this block asks the composed question: Redis throws, the REAL `isScopeRevoked` runs, and
+ * So this block asks the composed question: Redis throws, the REAL `lookup` runs, and
  * the middleware must 403. It is the arm that makes the fail-closed posture attributable to the
  * code rather than to a mock's return value.
  */
@@ -290,11 +413,11 @@ describe('SEAM: fail-closed through the real primitive', () => {
     const actual = await vi.importActual<typeof ConsentRevocationModule>(
       '~/server/services/blocks/consent-revocation.service'
     );
-    isScopeRevokedMock.mockImplementation((opts) => actual.ConsentRevocation.isScopeRevoked(opts));
+    lookupMock.mockImplementation((opts) => actual.ConsentRevocation.lookup(opts));
   }
 
   /**
-   * MUTATION THAT MUST KILL IT: change `isScopeRevoked`'s `catch` to `return false` in
+   * MUTATION THAT MUST KILL IT: change `lookup`'s `catch` to `return { kind: 'none' }` in
    * `blocks/consent-revocation.service.ts`.
    */
   it('a Redis THROW refuses the request', async () => {
@@ -344,20 +467,33 @@ describe('SEAM: fail-closed through the real primitive', () => {
 
 describe('the two documented skips', () => {
   /**
-   * ANY-TOKEN MODE (the public catalog routes, `requiredScope` omitted): no scope is being
-   * exercised, so there is nothing a per-scope revoke could refuse. Refusing on a token's
-   * unrelated revoked scope would break the catalog for a reason the viewer never asked for.
+   * ANY-TOKEN MODE (the public catalog routes, `requiredScope` omitted).
    *
-   * 🔴 THE MARKER IS NOT EVEN READ, and asserting that — not just the 200 — is the point:
-   * the skip must be upstream of the Redis call, or these routes pay a GET (and the
-   * fail-closed availability coupling) for a question that cannot apply to them.
+   * ⚠️ THIS ARM USED TO ASSERT THE MARKER WAS NOT CONSULTED AT ALL, AND THAT IS RETRACTED.
+   * The skip is keyed on the TOKEN's scopes, not the route's — because keying it on the route
+   * is what left `posts:write:self` and `collections:read:private` unenforced. So a token
+   * carrying gated scopes IS looked up here.
+   *
+   * What must hold is that nothing is REFUSED: no scope is being exercised by the route, so
+   * there is nothing for a per-scope revoke to refuse, and refusing on a token's unrelated
+   * revoked scope would break the public catalog for a reason the viewer never asked for. The
+   * revoked scope is still stripped, so anything the handler reads off `claims.scopes` honours
+   * it.
    */
-  it('any-token mode does not consult the marker at all', async () => {
-    isScopeRevokedMock.mockResolvedValue(true);
-    const { handler, res } = await drive(await mint(), null);
+  it('any-token mode is SERVED even when a scope is revoked, and the scope is stripped', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
+    const seen: string[][] = [];
+    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
+      seen.push([...(req as unknown as { blockClaims: { scopes: string[] } }).blockClaims.scopes]);
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(handler as never, { endpoint: 'me' } as never);
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
     expect(res.statusCode).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(isScopeRevokedMock).not.toHaveBeenCalled();
+    expect(seen[0]).toEqual([OTHER_SCOPE]);
   });
 
   /**
@@ -371,14 +507,14 @@ describe('the two documented skips', () => {
    * token really reached and passed this gate.
    */
   it('an anon token is served without consulting the marker', async () => {
-    isScopeRevokedMock.mockResolvedValue(true);
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
     const { handler, res } = await drive(await mint({ userId: null }));
     expect(
       res.statusCode,
       `anon request did not reach the handler: ${JSON.stringify(res.body)}`
     ).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(isScopeRevokedMock).not.toHaveBeenCalled();
+    expect(lookupMock).not.toHaveBeenCalled();
   });
 });
 
@@ -391,13 +527,15 @@ describe('gate ORDER and the sibling 403s', () => {
    */
   it('a revoked INSTANCE is reported as instance_revoked, not consent_revoked', async () => {
     isRevokedMock.mockResolvedValue(true);
-    isScopeRevokedMock.mockResolvedValue(true);
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
     const { res } = await drive(await mint());
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'instance_revoked' });
-    // And the consent marker was never read — the instance check short-circuits, which is
-    // one fewer Redis round trip on a request that is refused either way.
-    expect(isScopeRevokedMock).not.toHaveBeenCalled();
+    // ⚠️ NO "the marker was never read" ASSERTION, AND ITS REMOVAL IS DELIBERATE. It used to
+    // be here and it pinned a SERIALISATION this change removed on purpose: the consent
+    // lookup is now STARTED before the instance check is awaited, so the two Redis GETs
+    // pipeline in one tick instead of costing two round trips. The instance refusal still wins
+    // — which is what the `code` above asserts, and it is the property that matters.
   });
 
   /**
@@ -409,11 +547,14 @@ describe('gate ORDER and the sibling 403s', () => {
    * (which asks about that same scope) answers "not revoked" and the later check refuses.
    */
   it('a scope the token never carried is insufficient_scope', async () => {
-    isScopeRevokedMock.mockResolvedValue(false);
-    const { handler, res } = await drive(await mint(), 'posts:write:self');
+    lookupMock.mockResolvedValue({ kind: 'none' });
+    // A THIRD gated scope, carried by neither the token nor the marker — the fixture token
+    // now holds both SCOPE and OTHER_SCOPE, so neither of those can play this role.
+    const ABSENT = 'collections:read:private';
+    const { handler, res } = await drive(await mint(), ABSENT);
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'insufficient_scope' });
-    expect((res.body as { error: string }).error).toContain('posts:write:self');
+    expect((res.body as { error: string }).error).toContain(ABSENT);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -425,7 +566,7 @@ describe('gate ORDER and the sibling 403s', () => {
    */
   it('a revoked scope on a SUSPENDED app is reported as consent_revoked', async () => {
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
-    isScopeRevokedMock.mockResolvedValue(true);
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
     const { res } = await drive(await mint());
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'consent_revoked' });
@@ -438,7 +579,7 @@ describe('gate ORDER and the sibling 403s', () => {
    */
   it('CONTROL: with no revocation a suspended app is refused by the approval gate', async () => {
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
-    isScopeRevokedMock.mockResolvedValue(false);
+    lookupMock.mockResolvedValue({ kind: 'none' });
     const { res } = await drive(await mint());
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ error: 'app block is not approved' });

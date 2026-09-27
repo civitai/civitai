@@ -3,8 +3,18 @@ import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
-import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordBlockConsentRevocationRefusal,
+  recordBlockRevocationRefusal,
+} from '~/server/metrics/app-block-runtime.metrics';
+import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
+import {
+  applyRevocations,
+  ConsentRevocation,
+  revokedScopesForToken,
+  shouldConsultMarker,
+} from '~/server/services/blocks/consent-revocation.service';
 import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 
 /**
@@ -145,6 +155,49 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   }
 
   await assertAppBlockApproved(claims);
+
+  // ── PER-SCOPE CONSENT REVOCATION, ON THE BRIDGE.
+  //
+  // 🔴 THE BRIDGE WAS THE HALF THE FIRST CUT LEFT OPEN, AND IT HOLDS THE SCOPE THE REPO
+  // CALLS THE MOST SENSITIVE. `posts:write:self` is authorized HERE — by
+  // `authorizeBlockPostRequest`'s `claims.scopes.includes('posts:write:self')` — and the
+  // REST middleware, where the consent marker was first wired, is never on that path. Nor
+  // are `buzz:read:self` and `user:read:self`, which several bridge procs read off
+  // `claims.scopes` directly. So a viewer who withdrew any of those kept having them
+  // honoured for the rest of an already-minted token's life: 900s, or 4h for a dev token.
+  //
+  // 🔴 A STRIP, NOT A REFUSAL, AND THAT IS WHY ONE LINE COVERS ~20 PROCEDURES. Every bridge
+  // proc authorizes off `claims.scopes.includes(...)`; removing the revoked members from
+  // the claims this function RETURNS makes all of them honour the revoke with no per-proc
+  // enumeration to keep current. The procs then refuse with their own existing
+  // "block lacks <scope> scope" FORBIDDEN, which is the message their callers already
+  // handle — deliberately not a new bridge-specific error, because a `code` on the REST
+  // envelope has no equivalent here.
+  //
+  // FAILS CLOSED, like the REST side and unlike `isRevoked` above; `shouldConsultMarker`
+  // keeps anon tokens and tokens carrying only consent-exempt scopes out of the read (and
+  // therefore out of the availability coupling). See `blocks/consent-revocation.service.ts`
+  // for the full asymmetry argument — it is stated there rather than a third time here.
+  const consentUserId = parseSubjectUserId(claims.sub);
+  if (shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })) {
+    const verdict = await ConsentRevocation.lookup({
+      // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+      userId: consentUserId as number,
+      appBlockId: claims.appBlockId,
+    });
+    const revoked = revokedScopesForToken(verdict, claims.scopes);
+    const narrowed = applyRevocations(claims, revoked);
+    if (narrowed !== claims) {
+      // `applyRevocations` returns the SAME object when nothing changed, so identity is the
+      // cheap test for "did this request lose a scope" — which is the only case worth a
+      // counter emit. `scope` is the label; emit one per removed scope so the series answers
+      // "which permission is actually being withdrawn" on this surface too.
+      for (const scope of claims.scopes.filter((s) => revoked.has(s))) {
+        recordBlockConsentRevocationRefusal('bridge', scope);
+      }
+      return narrowed;
+    }
+  }
 
   return claims;
 }

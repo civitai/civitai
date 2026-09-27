@@ -47,6 +47,111 @@ beforeEach(() => {
   dbMock.dbWrite.oauthConsent.upsert.mockResolvedValue({ id: 1 });
 });
 
+/**
+ * 🔴 THE MIRROR HONOURS `revoked_scopes` — the one read of the grant row that did not.
+ *
+ * This surface is what the revoke mutation itself calls "a SECOND ENFORCEMENT SURFACE": the
+ * `OauthConsent` row carries a bitmask the auth hub mints real OAuth access tokens against, and
+ * `src/server/auth/bearer-token.ts` resolves every OAuth bearer's spend ceiling from its
+ * `buzzLimit`. Both outlive the mutation.
+ *
+ * The chain review found, which these arms pin:
+ *   1. viewer revokes `ai:write:budgeted` — the row loses it from `granted_scopes`, gains it in
+ *      `revoked_scopes`, `buzz_budget_per_day` → NULL, and the mirror is deleted;
+ *   2. viewer installs or subscribes to the app again — `recordInstallConsent` UNIONS the app's
+ *      whole consent-gated set back into `granted_scopes` (the union the suppression list exists
+ *      to survive), and `revoked_scopes` still holds the scope;
+ *   3. the next OAuth mint calls this function — which read the RAW column and wrote a row
+ *      carrying `AIServicesWrite` with `buzzLimit: null`. The viewer's revoke had removed their
+ *      own ceiling and left it removed DURABLY.
+ *
+ * RED at `a8b75427f5`, where the select omitted `revokedScopes` entirely.
+ */
+describe('syncOauthConsentFromGrant — the suppression list', () => {
+  /**
+   * MUTATION THAT MUST KILL IT: read `grant.grantedScopes` instead of `liveGrantedScopes(grant)`,
+   * or drop `revokedScopes` from the select.
+   */
+  it('does NOT mirror a revoked scope, even while the raw column still holds it', async () => {
+    // The post-install state: the union put the scope back, the suppression stands.
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+      revokedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+      buzzBudgetPerDay: null,
+    });
+    const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+    expect(
+      result,
+      'the OAuth mirror re-granted a scope the viewer revoked. The hub mints real access tokens ' +
+        'against this bitmask, and the row is durable.'
+    ).toEqual({ clientId: CLIENT_ID, scope: TokenScope.UserRead });
+    const written = dbMock.dbWrite.oauthConsent.upsert.mock.calls[0][0];
+    expect(written.create.scope & TokenScope.AIServicesWrite).toBe(0);
+  });
+
+  /**
+   * 🔴 THE CONTROL. The identical row with an EMPTY suppression list DOES mirror the spend bit —
+   * so "drops the bit" is not the answer this function gives for everything.
+   */
+  it('CONTROL: mirrors the spend bit when nothing is revoked', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+      revokedScopes: [],
+      revokedAt: null,
+      buzzBudgetPerDay: null,
+    });
+    const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+    expect(result).toEqual({
+      clientId: CLIENT_ID,
+      scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+    });
+  });
+
+  /**
+   * The MINT PREDICATE reads the live set too. A viewer whose only remaining path to the OAuth
+   * baseline is a REVOKED `user:read:self` has no consent to mirror, so this must write NOTHING
+   * — the #5127 contract ("a row that cannot mint is worse than no row") applied to revocation.
+   */
+  it('writes NOTHING when the baseline scope is the revoked one', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+      revokedScopes: ['user:read:self'],
+      revokedAt: null,
+      buzzBudgetPerDay: null,
+    });
+    const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+    expect(result).toBeNull();
+    expect(dbMock.dbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
+  });
+
+  /**
+   * PRE-MIGRATION: a row with no `revoked_scopes` key at all (what the column-less database
+   * produces) mirrors exactly as it always did. `undefined` means "none", which is the only state
+   * such a database can be in.
+   */
+  it('behaves exactly as before on a row with no revocation column', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['user:read:self', 'ai:write:budgeted'],
+      revokedAt: null,
+      buzzBudgetPerDay: 500,
+    });
+    const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+    expect(result).toEqual({
+      clientId: CLIENT_ID,
+      scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+    });
+  });
+
+  it('selects the revocation column, so the subtraction has something to read', async () => {
+    await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+    expect(dbMock.dbWrite.appUserScopeGrant.findUnique.mock.calls[0][0].select).toHaveProperty(
+      'revokedScopes',
+      true
+    );
+  });
+});
+
 describe('syncOauthConsentFromGrant', () => {
   it('maps granted scopes to OAuth bits and the daily budget to a sliding limit', async () => {
     const result = await syncOauthConsentFromGrant({ userId: USER_ID, appBlockId: APP_BLOCK_ID });

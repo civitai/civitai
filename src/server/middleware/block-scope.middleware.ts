@@ -12,7 +12,12 @@ import {
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
-import { ConsentRevocation } from '~/server/services/blocks/consent-revocation.service';
+import {
+  applyRevocations,
+  ConsentRevocation,
+  revokedScopesForToken,
+  shouldConsultMarker,
+} from '~/server/services/blocks/consent-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
@@ -1154,7 +1159,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       return handler(req, res);
     }
 
-    const claims = isJwt
+    // `let`, not `const`: the consent-revocation block below REPLACES this with a narrowed
+    // copy when the viewer has withdrawn a scope the token still carries. Everything after
+    // that point — the approval verdict, the required-scope check, context binding, the
+    // handler and the invocation audit row — must see the narrowed set, which is the whole
+    // reason the strip happens here rather than at each gate.
+    let claims = isJwt
       ? await verifyBlockToken(bearer)
       : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await resolveHubTokenClaims(bearer, req)
@@ -1271,6 +1281,30 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // `claims.sub` verbatim: the subject-scoped ban keyspace exists because
     // `page_ephemeral-<slug>` is NOT globally unique across users, so a global marker
     // there would refuse an innocent author's own tunnel. See `bannedSubjectKey`.
+    // 🔴 BOTH REVOCATION READS ARE ISSUED IN ONE TICK. The consent lookup is STARTED here,
+    // before the instance check is awaited, and awaited below — so the two Redis GETs
+    // pipeline instead of serialising. They remain two calls with two `catch`es because
+    // their postures are opposite (this one fails OPEN, that one fails CLOSED), which is
+    // what makes a shared `mGet` impossible: the wrapper's `Promise.all(keys.map(get))`
+    // rejects with the first error and the throw cannot be attributed to a key. Per-
+    // PRIMITIVE concurrency has no such problem, because each already owns its posture.
+    //
+    // 🔴 SAFE TO LEAVE UNAWAITED ON THE REFUSAL PATH BELOW: `ConsentRevocation.lookup`
+    // catches everything and resolves to a verdict, so an early `return` cannot strand a
+    // rejecting promise. If it is ever changed to throw, this becomes an unhandled
+    // rejection — which is why it catches.
+    const consentUserId = parseSubjectUserId(claims.sub);
+    const consentLookup = shouldConsultMarker({
+      userId: consentUserId,
+      scopes: claims.scopes,
+    })
+      ? ConsentRevocation.lookup({
+          // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+          userId: consentUserId as number,
+          appBlockId: claims.appBlockId,
+        })
+      : null;
+
     if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
       // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
       // `res.on('finish')` handler further down, AFTER this early return, so a revocation
@@ -1287,8 +1321,8 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       return;
     }
 
-    // ── PER-SCOPE CONSENT REVOCATION. The viewer withdrew THIS route's permission for
-    // THIS app, and the token in the caller's hand was minted before they did.
+    // ── PER-SCOPE CONSENT REVOCATION. The viewer withdrew a permission for this app, and
+    // the token in the caller's hand was minted before they did.
     //
     // 🔴 WHY A SECOND MECHANISM AT ALL. The grant table is read at MINT; this path then
     // trusts `claims.scopes` verbatim (only `resolveHubTokenClaims` re-derives from the
@@ -1297,38 +1331,42 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // above cannot cover it: it is keyed per-`blockInstanceId` and knows nothing about
     // `app_user_scope_grants`.
     //
+    // 🔴 IT **STRIPS**, AND THE FIRST VERSION ONLY REFUSED — WHICH ENFORCED NOTHING FOR THE
+    // TWO MOST SENSITIVE SCOPES. That version asked "is `opts.requiredScope` revoked?".
+    // Review enumerated the declared scopes across `src/pages/api`: of the six
+    // consent-gated ones, only `ai:write:budgeted`, `social:tip:self`, `user:read:self` and
+    // `buzz:read:self` are ever a route's `requiredScope`. `posts:write:self` is authorized
+    // on the tRPC BRIDGE, which never reaches this function; `collections:read:private` is
+    // an IN-HANDLER sub-check under a route declaring the consent-EXEMPT
+    // `collections:read:self`. Both were unenforced, while this comment claimed "the
+    // refusal is as narrow as the revoke was" — it was NARROWER.
+    //
+    // So the revoked scopes are removed from `claims` here, once, and every downstream
+    // consumer — the `requiredScope` check below, `enforceContextBinding`, and every
+    // in-handler `claims.scopes.includes(...)` — honours the revoke with no per-gate list to
+    // keep current. `authorizeBlockBridgeToken` does the same for the bridge.
+    //
     // 🔴 WHY IT FAILS **CLOSED** WHILE THE CHECK ABOVE FAILS **OPEN**. `isRevoked`
     // swallows a Redis error so that a cache incident can never block an uninstall or a
     // ban — operations with no user waiting on the refusal, whose exposure is already
     // bounded by the token lifetime. This marker exists only because a USER asked for one
     // permission to stop being granted, and was told it was done; "the cache was down so
     // we kept granting it" is that promise not being kept rather than a degradation of
-    // it. The asymmetry is deliberate, is documented at the primitive too
-    // (`blocks/consent-revocation.service.ts`, `block-revocation.service.ts`), and is
-    // also why the two reads cannot be folded into one `mGet` — one call has one `catch`.
+    // it. The asymmetry is documented at the primitive too
+    // (`blocks/consent-revocation.service.ts`, `block-revocation.service.ts`).
     //
-    // 🔴 THE PRICE: a Redis outage refuses every authed, scope-bound block REST request.
-    // Real availability coupling, accepted for the guarantee above and narrowed by the
-    // two skips below.
+    // 🔴 THE TWO READS ARE ISSUED IN ONE TICK, NOT SERIALISED — see the `consentLookup`
+    // declaration above the instance check for the mechanism and for why a shared `mGet`
+    // cannot replace it.
     //
-    // TWO SKIPS, EACH FOR ITS OWN REASON — not one condition wearing two hats:
-    //   - NO `requiredScope` (the any-token catalog routes): no scope is being exercised,
-    //     so there is nothing a per-scope revoke could refuse. Refusing on a token's
-    //     unrelated revoked scope would break the public catalog for a reason the viewer
-    //     never asked for.
-    //   - ANON subject: consent is per (user, app) and an anon token has no user, so no
-    //     marker can exist for it. Both skips also keep those populations out of the
-    //     availability coupling above, which is worth having but is not why they are here.
-    if (opts.requiredScope !== undefined) {
-      const consentUserId = parseSubjectUserId(claims.sub);
-      if (
-        consentUserId !== null &&
-        (await ConsentRevocation.isScopeRevoked({
-          userId: consentUserId,
-          appBlockId: claims.appBlockId,
-          scope: opts.requiredScope,
-        }))
-      ) {
+    // 🔴 THE PRICE: during a Redis outage every revokable scope is stripped and a route
+    // whose `requiredScope` is revokable refuses. Narrowed by `shouldConsultMarker`, which
+    // skips anon tokens and any token carrying no consent-gated scope at all — measured at
+    // 20 of the 29 scope-bound routes. Deliberately NOT narrowed by the route's declared
+    // scope; that was the first version's defect.
+    if (consentLookup !== null) {
+      const revoked = revokedScopesForToken(await consentLookup, claims.scopes);
+      if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
         recordBlockConsentRevocationRefusal('rest', opts.requiredScope);
         // A DISTINCT `code` from the missing-scope 403 further down, which is the whole
         // point of adding codes: "you never had this" and "the user took this away" call
@@ -1340,6 +1378,9 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         });
         return;
       }
+      // Not refused, but the token may still carry OTHER revoked scopes — an in-handler
+      // sub-check is exactly where `collections:read:private` is read. Strip them.
+      claims = applyRevocations(claims, revoked);
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
@@ -1402,7 +1443,10 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // `onApprovalLookupFailure: 'serve'`. A non-approved app must not be served on
         // any route because a CACHE read failed, and a cache fault must not be reported
         // as a replica fault. Refusing here keeps both halves honest.
-        res.status(403).json({ error: 'app block is not approved' });
+        // `code` on EVERY 403 this wrapper emits, so an app can treat it as always-present
+        // rather than having to test for it. Review found it on 3 of 5; the two it was
+        // missing are this one and the context-binding refusal below.
+        res.status(403).json({ error: 'app block is not approved', code: 'app_not_approved' });
         return;
       }
       if (approval === 'lookup_failed') {
@@ -1469,7 +1513,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         enforceContextBinding(claims, req, opts.requiredScope);
       } catch (err) {
         if (err instanceof ForbiddenError) {
-          res.status(403).json({ error: err.message });
+          // `context_binding` — the token carries the scope and the REQUEST does not match
+          // what it was bound to (wrong modelId, anon subject on a self-bound scope, an
+          // array-form query param). A fourth distinct cause, and an app's remedy differs
+          // again: re-request the token for the right context rather than re-prompt for
+          // consent. `err.message` stays the human half, unchanged.
+          res.status(403).json({ error: err.message, code: 'context_binding' });
           return;
         }
         throw err;

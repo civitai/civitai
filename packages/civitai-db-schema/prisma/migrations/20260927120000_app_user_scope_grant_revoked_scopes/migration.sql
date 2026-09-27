@@ -42,8 +42,17 @@
 -- in lockstep with every registry change, and a stale one would refuse a legitimate
 -- revoke of a scope the user really holds. Unknown strings are harmless here — a
 -- suppression entry that matches no scope suppresses nothing.
+-- 🔴 ONE STATEMENT, TWO COLUMNS — SO `ACCESS EXCLUSIVE` IS TAKEN ONCE. Two separate ALTERs
+-- take it twice, and each acquisition queues behind any open transaction touching the table
+-- and then blocks every reader behind it. The reader here is the token MINT
+-- (`getGrantedScopes`), so the cost of the second lock is measured in refused app loads. The
+-- table is 40 rows today and this is theory; it is one statement anyway because the shape is
+-- free and the next person copying this file inherits it.
+--
+-- `lock_timeout` is deliberately NOT set: a metadata-only ALTER that cannot get its lock
+-- should WAIT and be seen to wait by the human running it, not fail half-applied. If it does
+-- not return promptly, something holds a long transaction on this table and that is the thing
+-- to look at.
 ALTER TABLE "app_user_scope_grants"
-  ADD COLUMN IF NOT EXISTS "revoked_scopes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
-
-ALTER TABLE "app_user_scope_grants"
+  ADD COLUMN IF NOT EXISTS "revoked_scopes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   ADD COLUMN IF NOT EXISTS "revoked_scopes_at" TIMESTAMPTZ(6);

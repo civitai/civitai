@@ -6,7 +6,7 @@ import { simpleBuzzLimitToBudgets, type BuzzLimit } from '~/server/schema/api-ke
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { consentGatedScopes, getConsentBuzzBudget } from './scope-grant.service';
+import { consentGatedScopes, getConsentBuzzBudget, liveGrantedScopes } from './scope-grant.service';
 
 export interface OauthConsentMirror {
   clientId: string;
@@ -77,7 +77,7 @@ export async function syncOauthConsentFromGrant(opts: {
    * A consent-GATED scope in this list is IGNORED. ⚠️ DEFENCE IN DEPTH WITH NO
    * REACHABLE PATH TODAY — not coverage: the only mint caller passes
    * `partitionByConsent(...).signable`, so every gated scope this filter would strip
-   * is already present in `grant.grantedScopes`, read from the same `dbWrite`
+   * is already present in the grant's LIVE set, read from the same `dbWrite`
    * client. It is kept because the grant row is the right sole authority for gated
    * scopes, so a FUTURE caller passing a raw manifest list cannot ask this function
    * to assert `AIServicesWrite` / `BuzzRead` / `SocialTip` consent that does not
@@ -90,9 +90,22 @@ export async function syncOauthConsentFromGrant(opts: {
   const [block, grant] = await Promise.all([
     dbRead.appBlock.findUnique({ where: { id: appBlockId }, select: { appId: true } }),
     // Primary: this runs right after the grant write it mirrors.
+    //
+    // 🔴 `revokedScopes` IS SELECTED AND SUBTRACTED BELOW. Omitting it was a live fail-open:
+    // this is the ONE read of the grant row that did not honour the per-scope suppression
+    // list, on the surface the revoke mutation itself calls "a SECOND ENFORCEMENT SURFACE".
+    // The chain review found: viewer revokes `ai:write:budgeted` (row loses it from
+    // `granted_scopes`, gains it in `revoked_scopes`, `buzz_budget_per_day` → NULL, mirror
+    // deleted) → viewer installs the app again → `recordInstallConsent` UNIONS the whole
+    // consent-gated set back into `granted_scopes` → the next mint calls this function,
+    // which read the RAW column and wrote an `OauthConsent` row carrying
+    // `TokenScope.AIServicesWrite` with `buzzLimit: null`. `src/server/auth/bearer-token.ts`
+    // resolves every OAuth bearer's spend ceiling from that `buzzLimit`, so the viewer's
+    // revoke had removed their own cap and left it removed DURABLY — which is exactly what
+    // `revokeOauthConsentForBlock` exists to prevent.
     dbWrite.appUserScopeGrant.findUnique({
       where: { userId_appBlockId: { userId, appBlockId } },
-      select: { grantedScopes: true, revokedAt: true },
+      select: { grantedScopes: true, revokedAt: true, revokedScopes: true },
     }),
   ]);
   // 🔴 #5127: this read `grant?.revokedAt`, which is `undefined` — falsy — for a
@@ -103,6 +116,18 @@ export async function syncOauthConsentFromGrant(opts: {
   // `consent_required` fallback instead of a manufactured record.
   if (!block || !grant || grant.revokedAt) return null;
 
+  // 🔴 THE LIVE GRANTED SET, `granted_scopes ∖ revoked_scopes` — the same projection
+  // `getGrantedScopes` applies, and the reason the whole design can say "a scope listed in
+  // `revoked_scopes` is subtracted at EVERY read". Everything below reads `live`, never
+  // `grant.grantedScopes`.
+  //
+  // ⚠️ NOT `getGrantedScopes` ITSELF, deliberately: that would be a THIRD round trip to the
+  // same unique key (this function already reads the row, in parallel with the AppBlock
+  // read, precisely to avoid one). The projection is shared instead — see
+  // `liveGrantedScopes` in `scope-grant.service.ts`, which both callers use, so the rule has
+  // one statement rather than two that agree by coincidence.
+  const live = liveGrantedScopes(grant);
+
   // 🔴 #5127, SECOND SHAPE — a grant row EXISTS but does not carry the baseline. The
   // guard above is not enough: for a viewer who granted, say, `ai:write:budgeted` but
   // not `user:read:self` (exactly the "a v2 manifest adds a scope" case the per-user
@@ -111,15 +136,15 @@ export async function syncOauthConsentFromGrant(opts: {
   // here instead, so no unmintable row is written at all — see the contract above for
   // why a narrower row is worse than none.
   //
-  // Reads `grant.grantedScopes` ALONE: the caller-supplied `scopes` must not be able
-  // to answer this. Depends on `blockScopesToOauthScope` starting at 0 — restore the
-  // `UserRead` seed and this mask is always non-zero and the guard never fires.
-  if (!(blockScopesToOauthScope(grant.grantedScopes) & TokenScope.UserRead)) return null;
+  // Reads the GRANT alone: the caller-supplied `scopes` must not be able to answer this.
+  // Depends on `blockScopesToOauthScope` starting at 0 — restore the `UserRead` seed and this
+  // mask is always non-zero and the guard never fires.
+  if (!(blockScopesToOauthScope(live) & TokenScope.UserRead)) return null;
 
   const clientId = block.appId;
   const requested = [...scopes];
   const gated = new Set(consentGatedScopes(requested));
-  const consented = [...grant.grantedScopes, ...requested.filter((s) => !gated.has(s))];
+  const consented = [...live, ...requested.filter((s) => !gated.has(s))];
   const scope = blockScopesToOauthScope(consented);
   const budget = await getConsentBuzzBudget({ userId, appBlockId });
   const buzzLimit = simpleBuzzLimitToBudgets(

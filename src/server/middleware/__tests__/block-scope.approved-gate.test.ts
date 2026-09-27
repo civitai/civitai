@@ -488,7 +488,7 @@ describe('withBlockScope — the gate on the real request path', () => {
     const { handler, res } = await drive(await mint());
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
   });
 
   /**
@@ -640,7 +640,7 @@ describe('withBlockScope — the gate on the real request path', () => {
 
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
   });
 
   /**
@@ -716,7 +716,7 @@ describe('withBlockScope — the gate on the real request path', () => {
 
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
   });
 
   /**
@@ -770,7 +770,7 @@ describe('withBlockScope — the gate on the real request path', () => {
     const { handler, res } = await drive(await mint({ dev: true }));
     expect(handler).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
     // 🔴 AND IT IS COUNTED. This change creates a brand-new population of `not_approved`
     // refusals — stale dev tokens — and the counter is the only way an operator sees the
     // 4h window actually closing. Every other test in the verdict-counter block uses a
@@ -806,7 +806,7 @@ describe('withBlockScope — the gate on the real request path', () => {
       const { handler, res } = await drive(await mint({ dev: true }));
       expect(handler).not.toHaveBeenCalled();
       expect(res.statusCode).toBe(403);
-      expect(res.body).toEqual({ error: 'app block is not approved' });
+      expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
       // 🔴 ITS OWN LABEL, AND THIS IS THE ASSERTION THAT MATTERS. Folded into
       // `not_approved` a sysRedis fault would land on the exact series this change ships
       // to be watched on and read as the narrowing working. Two earlier rounds answered

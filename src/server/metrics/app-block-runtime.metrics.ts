@@ -36,6 +36,10 @@
 // enumerated (see AppBlockEndpoint / normalizeSlotId / *Result below) so they
 // can never blow up cardinality regardless of client input.
 import client, { type Counter, type Histogram, type Registry } from 'prom-client';
+// The block-scope VOCABULARY, imported only to CLAMP a label. A pure constants module — no
+// server graph — so it costs this metrics module nothing at load time, and it is what keeps
+// `scope` a bounded label rather than a bounded-by-convention one.
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -1065,7 +1069,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const consentRevocationRefusalsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_consent_revocation_refusals_total',
-    'Block-token requests refused because the viewer had REVOKED the route\'s required scope for that app (per-(user, app) Redis marker, blocks/consent-revocation.service.ts), by guard surface and scope. surface: rest = withBlockScope (403 with body code "consent_revoked"). 🔴 This guard FAILS CLOSED — a Redis error or an unparseable marker refuses — so a spike correlated with a cache incident is infra, NOT users withdrawing consent; read it against Redis health before treating it as product signal. The inverse of civitai_app_block_revocation_refusals_total, which fails OPEN and therefore undercounts during the same incident. A flat zero means no viewer has revoked a scope an in-flight token still carried, which on a pre-GA moderator-gated feature is the expected steady state',
+    'Block-token scopes withdrawn from an in-flight token because the viewer REVOKED them for that app (per-(user, app) Redis marker, blocks/consent-revocation.service.ts), by guard surface and scope. surface: rest = withBlockScope refused the route\'s required scope with body code "consent_revoked"; bridge = authorizeBlockBridgeToken STRIPPED the scope from the claims it returned, so the proc refuses with its own "block lacks <scope> scope". 🔴 Both guards FAIL CLOSED — a Redis error or an unparseable marker treats every revokable scope in the token as revoked — so a spike correlated with a cache incident is infra, NOT users withdrawing consent; read it against Redis health before treating it as product signal. The inverse of civitai_app_block_revocation_refusals_total, which fails OPEN and therefore undercounts during the same incident. `scope` is clamped to the known block-scope vocabulary (unknown -> "other"). A flat zero means no viewer has revoked a scope an in-flight token still carried, which on a pre-GA moderator-gated feature is the expected steady state',
     ['surface', 'scope']
   );
 
@@ -1566,7 +1570,15 @@ export function recordBlockConsentRevocationRefusal(
 ): void {
   try {
     const { consentRevocationRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
-    consentRevocationRefusalsTotal.inc({ surface, scope });
+    // 🔴 CLAMPED, like `revocationNamespaceLabel` on the counter above — the bound must be
+    // ENFORCED here, not left to callers. The parameter is a bare `string` and
+    // `WithBlockScopeOpts.requiredScope` is `string` too, so neither the type system nor a
+    // review catches a caller that derives this value; an unbounded label set is retained
+    // in the Node heap forever, per pod, across ~130 pods.
+    consentRevocationRefusalsTotal.inc({
+      surface,
+      scope: isKnownBlockScope(scope) ? scope : 'other',
+    });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

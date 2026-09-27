@@ -260,8 +260,8 @@ describe('an install after a revoke does not resurrect the revoked scope', () =>
  *
  * ## 🔴 WHAT THIS DOES **NOT** CHECK, stated so nobody reads it as wider than it is
  *
- * It is a SOURCE-TEXT ledger over Prisma MUTATIONS of `appUserScopeGrant` whose argument
- * names `grantedScopes`. It does not prove a writer handles revocations correctly — the
+ * It is a SOURCE-TEXT ledger over Prisma MUTATIONS of `appUserScopeGrant`. It does not prove a
+ * writer handles revocations correctly — the
  * behavioural tests above and in `scope-grant.service.test.ts` do that — and it cannot see
  * a write performed through `$queryRaw` / `$executeRaw`, a Kysely builder, a dynamically
  * computed property key, or a data object assembled in a different file from the
@@ -278,7 +278,7 @@ describe('an install after a revoke does not resurrect the revoked scope', () =>
  * It scans production source only: a fixture is free to spell a grant row any way it likes,
  * and a ledger that fails on someone else's test data is a ledger people delete.
  */
-describe('every writer of granted_scopes is accounted for', () => {
+describe('every Prisma mutation of the grant table is accounted for', () => {
   const SRC = path.resolve(__dirname, '../../../..');
   const REPO = path.resolve(SRC, '..');
 
@@ -315,7 +315,12 @@ describe('every writer of granted_scopes is accounted for', () => {
    */
   function grantMutationArgs(code: string): string[] {
     const regions: string[] = [];
-    const re = /appUserScopeGrant\s*\.\s*(create|createMany|update|updateMany|upsert)\s*\(/g;
+    // `createManyAndReturn` / `updateManyAndReturn` are in the list because Prisma has them and
+    // a writer using one would otherwise be unseen. `delete`/`deleteMany` are deliberately NOT:
+    // removing the row removes the suppression WITH the grant, which is not a resurrection —
+    // and the FK cascade from `User`/`AppBlock` does exactly that already.
+    const re =
+      /appUserScopeGrant\s*\.\s*(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\s*\(/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(code)) !== null) {
       let depth = 0;
@@ -333,25 +338,61 @@ describe('every writer of granted_scopes is accounted for', () => {
     return regions;
   }
 
-  /** True when a source contains a Prisma mutation of the grant table naming the field. */
+  /**
+   * True when a source performs ANY Prisma mutation of the grant table.
+   *
+   * 🔴 THE `grantedScopes:` FIELD TEST IS GONE, AND ITS REMOVAL IS THE WHOLE FIX. Review
+   * re-implemented the old detector and ran it: of the FIVE `appUserScopeGrant` mutation regions
+   * in the ledgered file, `revokeScopes`' own `update` and `create` did NOT match — because
+   * `revokeScopes` hoists its payload into `const data = {…}` and passes `data,`. The ledger was
+   * green purely on `recordScopeGrant`'s inline object. So a NEW writer file, written in the
+   * idiom the ledgered file itself already uses, was INVISIBLE: `unexpected = []`, `stale = []`
+   * (scope-grant still matched via the other function), green, hazard reintroduced. Same for
+   * `data: { ...payload }`, a delegate held in a local, and `dbWrite['appUserScopeGrant']`.
+   *
+   * And the field test bought nothing. Measured over the whole production corpus, "any
+   * `appUserScopeGrant` mutation call" returns the SAME single file. The four DTO false
+   * positives the first version was narrowed to avoid — `pageBlockHostLogic.ts`,
+   * `requestConsentGate.ts`, the tRPC response field, the `ScopeGrantSurface` field — are not
+   * Prisma calls at all, so the balanced-paren match already excludes them. The narrowing cost
+   * the entire blind spot and saved nothing.
+   *
+   * A mutation of this table is worth a ledger line whatever fields it names: `revoked_scopes`,
+   * `revoked_at` and `buzz_budget_per_day` are each as capable of undoing a revoke as
+   * `granted_scopes` is — as the `revokedAt: null` defect this very suite now guards proved.
+   */
   function writesGrantedScopes(source: string): boolean {
-    const code = stripComments(source);
-    return grantMutationArgs(code).some((region) => /\bgrantedScopes\s*:/.test(region));
+    return grantMutationArgs(stripComments(source)).length > 0;
   }
 
   /**
-   * THE LEDGER. Key = file, value = why it writes `grantedScopes` and whether it may lift a
-   * suppression. Adding a writer means adding a line here AND answering that second
-   * question — which is the whole point: the question is the thing that gets forgotten.
+   * THE WRITER LEDGER. Key = file, value = why it mutates the table.
+   *
+   * ⚠️ IT USED TO CARRY A `mayClearRevocations` FLAG THAT NOTHING READ, and the docblock said
+   * adding a writer meant "answering that second question" — so its description was wider than
+   * its body, which is the one property this whole file exists to hold itself to. The flag is
+   * gone; the question it was standing in for is asked by `CLEAR_REVOCATION_CALLERS` below,
+   * which IS asserted. A ledger field no assertion reads is decoration that reads as coverage.
    */
-  const ALLOWED_WRITERS: Record<string, { why: string; mayClearRevocations: boolean }> = {
-    'src/server/services/blocks/scope-grant.service.ts': {
-      why:
-        'THE ledger module. `recordScopeGrant` unions (install / subscribe / re-consent) and ' +
-        '`revokeScopes` subtracts. It is also the only place that may name `revokedScopes`, ' +
-        'and it honours a clear ONLY for the scopes a prompted consent covered.',
-      mayClearRevocations: true,
-    },
+  const ALLOWED_WRITERS: Record<string, string> = {
+    'src/server/services/blocks/scope-grant.service.ts':
+      'THE ledger module. `recordScopeGrant` unions (install / subscribe / re-consent) and ' +
+      '`revokeScopes` subtracts. It is also the only place that may name `revokedScopes` or ' +
+      '`revoked_at`, and it honours a clear ONLY for the scopes a prompted consent covered.',
+  };
+
+  /**
+   * THE CLEAR LEDGER — every production site that may pass `clearRevocations`, with the reason
+   * it is allowed to. Separate from the writer ledger because it is a different question about
+   * a different population: a `clearRevocations` caller is not necessarily a Prisma writer (the
+   * router is not), and a Prisma writer is not necessarily allowed to clear.
+   */
+  const CLEAR_REVOCATION_CALLERS: Record<string, string> = {
+    'src/server/routers/blocks.router.ts':
+      'THE prompted consent path. `blocks.grantScopes` takes its scope set from the consent ' +
+      'modal the viewer just accepted, so lifting the suppression FOR THOSE SCOPES is the ' +
+      'viewer re-consenting. `BlockRegistry.recordInstallConsent` must never appear here — its ' +
+      'set is the app’s whole ceiling, supplied with no prompt.',
   };
 
   it('POSITIVE CONTROL: the scan reads real files and finds the known writer', () => {
@@ -366,25 +407,49 @@ describe('every writer of granted_scopes is accounted for', () => {
     expect(writesGrantedScopes(readFileSync(path.resolve(REPO, ledgerFile), 'utf8'))).toBe(true);
   });
 
-  it('NEGATIVE CONTROL: the detector separates writes from reads and from prose', () => {
-    // Fires on a real write, across lines, with a nested call in the way.
+  it('NEGATIVE CONTROL: the detector sees every write shape, and no read or prose', () => {
+    // Fires on an INLINE payload, across lines, with a nested call in the way.
     expect(
       writesGrantedScopes(`await dbWrite.appUserScopeGrant.update({
         where: { id },
         data: { grantedScopes: Array.from(new Set([...a, ...b])) },
       });`)
     ).toBe(true);
-    // Does NOT fire on a select projection…
+
+    // 🔴 AND ON A HOISTED PAYLOAD — THE SHAPE THE FIRST VERSION COULD NOT SEE, in the very
+    // file it ledgers. A control that only feeds cases it already handles proves the regex
+    // fires, never that it is WIDE enough; this is the case whose absence hid the gap.
+    expect(
+      writesGrantedScopes(`const data = { grantedScopes: next, revokedScopes: nextRevoked };
+      await dbWrite.appUserScopeGrant.update({ where: { id }, data, select: { id: true } });`),
+      'the detector cannot see a write whose payload is hoisted into a local — which is how ' +
+        'revokeScopes writes, so a new writer copying that idiom would be invisible'
+    ).toBe(true);
+    // A spread payload, and a create, likewise.
+    expect(
+      writesGrantedScopes(`await dbWrite.appUserScopeGrant.create({ data: { ...payload } });`)
+    ).toBe(true);
+    // A mutation that names NO scope field at all is still a mutation of this table.
+    expect(
+      writesGrantedScopes(`await dbWrite.appUserScopeGrant.update({
+        where: { id },
+        data: { revokedAt: null },
+      });`),
+      'a write that only touches revoked_at is unseen — and `revokedAt: null` on a partial ' +
+        'revoke is precisely the defect this suite now guards'
+    ).toBe(true);
+
+    // Does NOT fire on a READ…
     expect(
       writesGrantedScopes(`await dbRead.appUserScopeGrant.findUnique({
         select: { grantedScopes: true },
       });`)
     ).toBe(false);
-    // …nor on a DTO property, which is what the four false positives all were…
+    // …nor on a DTO property, which is what the four earlier false positives all were…
     expect(writesGrantedScopes('return { ok: true, grantedScopes: result.grantedScopes };')).toBe(
       false
     );
-    // …nor on a comment that names the field.
+    // …nor on a comment that names the call.
     expect(
       writesGrantedScopes(`// dbWrite.appUserScopeGrant.update({ data: { grantedScopes: x } })`)
     ).toBe(false);
@@ -402,16 +467,17 @@ describe('every writer of granted_scopes is accounted for', () => {
 
     expect(
       unexpected,
-      `${unexpected.join(', ')} writes app_user_scope_grants.granted_scopes and is not in ` +
-        `ALLOWED_WRITERS. A grant write is a UNION, so it can resurrect a scope the viewer ` +
-        `revoked: confirm the new writer either goes through recordScopeGrant WITHOUT ` +
-        `clearRevocations, or has an explicit prompted-consent reason to clear one — then ` +
-        `add it here with that reason.`
+      `${unexpected.join(', ')} mutates app_user_scope_grants and is not in ALLOWED_WRITERS. ` +
+        `A grant write is a UNION, so it can resurrect a scope the viewer revoked; a write to ` +
+        `revoked_at can un-revoke a whole grant; a write to buzz_budget_per_day can restore a ` +
+        `ceiling they walked back. Confirm the new writer goes through recordScopeGrant WITHOUT ` +
+        `clearRevocations, or has an explicit prompted-consent reason to clear one — then add ` +
+        `it here with that reason.`
     ).toEqual([]);
 
     expect(
       stale,
-      `${stale.join(', ')} is listed in ALLOWED_WRITERS but no longer writes granted_scopes. ` +
+      `${stale.join(', ')} is listed in ALLOWED_WRITERS but no longer mutates the table. ` +
         `Remove it — a stale entry makes this ledger read as coverage of a file that is not ` +
         `there.`
     ).toEqual([]);
@@ -422,20 +488,42 @@ describe('every writer of granted_scopes is accounted for', () => {
    * hold, so the number of sites that PASS it is pinned separately — and to the one caller
    * whose scope set comes from a consent dialog the user actually saw.
    */
-  it('exactly one production site passes clearRevocations, and it is the prompted path', () => {
+  /**
+   * 🔴 ANY MENTION, NOT THE SPELLING `clearRevocations: true`.
+   *
+   * The first version matched `/clearRevocations\s*:\s*true/`, which review flagged as SPELLED
+   * rather than structural: object shorthand (`clearRevocations,`), a variable
+   * (`clearRevocations: prompted`), or a spread all evade it while passing the flag. The
+   * DECLARING module is excluded by name — it necessarily mentions its own parameter — and
+   * everything else that so much as names the identifier has to be ledgered. That is
+   * deliberately over-broad: a false positive costs one ledger line, a false negative costs the
+   * asymmetry the whole suppression design rests on.
+   */
+  it('only the prompted consent path names clearRevocations at all', () => {
+    const DECLARING_MODULE = 'src/server/services/blocks/scope-grant.service.ts';
     const passers: string[] = [];
     for (const rel of productionSources()) {
+      if (rel === DECLARING_MODULE) continue;
       const code = stripComments(readFileSync(path.resolve(REPO, rel), 'utf8'));
-      // The DECLARATION in the service is not a call site — match an assignment to `true`,
-      // which is what a caller writes.
-      if (/clearRevocations\s*:\s*true/.test(code)) passers.push(rel);
+      if (/\bclearRevocations\b/.test(code)) passers.push(rel);
     }
     expect(
       passers.sort(),
-      `clearRevocations is passed by ${passers.join(', ')}. It lifts a suppression the ` +
-        `viewer created deliberately, so it is legitimate ONLY from a path that showed them ` +
-        `a consent dialog naming those exact scopes. BlockRegistry.recordInstallConsent must ` +
-        `never pass it — its set is the app's whole ceiling, with no prompt.`
-    ).toEqual(['src/server/routers/blocks.router.ts']);
+      `clearRevocations is named by ${passers.join(', ')}. It lifts a suppression the viewer ` +
+        `created deliberately, so it is legitimate ONLY from a path that showed them a consent ` +
+        `dialog naming those exact scopes. BlockRegistry.recordInstallConsent must never pass ` +
+        `it — its set is the app's whole ceiling, with no prompt.`
+    ).toEqual(Object.keys(CLEAR_REVOCATION_CALLERS).sort());
+  });
+
+  it('POSITIVE CONTROL: the clearRevocations detector is not inert', () => {
+    // It must see every shape a caller could use, or "exactly one passer" is a claim about the
+    // regex rather than about the tree.
+    const detect = (src: string) => /\bclearRevocations\b/.test(stripComments(src));
+    expect(detect('recordScopeGrant({ scopes, clearRevocations: true });')).toBe(true);
+    expect(detect('recordScopeGrant({ scopes, clearRevocations });')).toBe(true);
+    expect(detect('recordScopeGrant({ scopes, clearRevocations: prompted });')).toBe(true);
+    expect(detect('// clearRevocations: true')).toBe(false);
+    expect(detect('recordScopeGrant({ scopes });')).toBe(false);
   });
 });

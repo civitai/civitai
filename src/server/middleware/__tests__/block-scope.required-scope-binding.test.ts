@@ -207,7 +207,10 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
 
     expect(res.statusCode).toBe(403);
     // Name the scope: a bare 403 would pass while some other gate fired.
-    expect(res.body).toEqual({ error: `${SHARED_WRITE} requires authenticated subject` });
+    expect(res.body).toEqual({
+      error: `${SHARED_WRITE} requires authenticated subject`,
+      code: 'context_binding',
+    });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -244,7 +247,10 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
     const badRes = makeRes();
     await bad.wrapped(makeReq(token, { id: String(OTHER_MODEL_ID) }) as never, badRes as never);
     expect(badRes.statusCode).toBe(403);
-    expect(badRes.body).toEqual({ error: 'models:read:self bound to different modelId' });
+    expect(badRes.body).toEqual({
+      error: 'models:read:self bound to different modelId',
+      code: 'context_binding',
+    });
     expect(bad.handler).not.toHaveBeenCalled();
 
     const good = route(MODELS_READ);

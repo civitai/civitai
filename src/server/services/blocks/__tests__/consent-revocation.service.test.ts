@@ -8,7 +8,12 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 // asserting against keys Redis never sees.
 import { REDIS_KEYS } from '~/server/redis/client';
 import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-lifetimes';
-import { ConsentRevocation } from '../consent-revocation.service';
+import {
+  applyRevocations,
+  ConsentRevocation,
+  revokedScopesForToken,
+  shouldConsultMarker,
+} from '../consent-revocation.service';
 
 /**
  * The PER-SCOPE CONSENT REVOCATION marker — the control that makes a revoke take effect on
@@ -20,8 +25,12 @@ import { ConsentRevocation } from '../consent-revocation.service';
  *      error and returns "not revoked", this refuses. The marker exists because a USER
  *      asked for a permission to stop being granted and was told it was done; "the cache
  *      was down so we kept granting it" is that promise not being kept.
- *   2. IT IS PER-SCOPE. A boolean marker would refuse the app's entire surface for up to a
- *      token lifetime because the viewer withdrew ONE permission.
+ *   2. IT IS PER-SCOPE, and the ENFORCEMENT IS A STRIP rather than a list of gates. A
+ *      boolean marker would refuse the app's entire surface for up to a token lifetime
+ *      because the viewer withdrew ONE permission; and a guard that only tested the ROUTE's
+ *      declared scope — the first version — enforced nothing for `posts:write:self` (bridge
+ *      only) or `collections:read:private` (an in-handler sub-check under an EXEMPT declared
+ *      scope), which are the two most sensitive gated scopes in the vocabulary.
  *   3. ITS KEYSPACE IS DISJOINT from both `BlockRevocation` keyspaces. That separation is a
  *      security control with a history: when the install and ban causes shared one key, an
  *      ordinary model owner's `toggleEnabled(false)` overwrote a ban marker and
@@ -104,97 +113,169 @@ describe('ConsentRevocation.publish', () => {
   });
 });
 
-describe('ConsentRevocation.isScopeRevoked', () => {
-  it('is FALSE when no marker exists (the common case, one GET)', async () => {
+describe('ConsentRevocation.lookup', () => {
+  it('is `none` when no marker exists (the common case, one GET)', async () => {
     redisMock.redis.get.mockResolvedValueOnce(null);
-    expect(
-      await ConsentRevocation.isScopeRevoked({
-        userId: USER,
-        appBlockId: APP,
-        scope: 'ai:write:budgeted',
-      })
-    ).toBe(false);
+    expect(await ConsentRevocation.lookup({ userId: USER, appBlockId: APP })).toEqual({
+      kind: 'none',
+    });
     expect(redisMock.redis.get).toHaveBeenCalledWith(EXPECTED_KEY);
   });
 
-  it('is TRUE for a scope the marker lists', async () => {
-    redisMock.redis.get.mockResolvedValueOnce(JSON.stringify(['ai:write:budgeted']));
-    expect(
-      await ConsentRevocation.isScopeRevoked({
-        userId: USER,
-        appBlockId: APP,
-        scope: 'ai:write:budgeted',
-      })
-    ).toBe(true);
+  it('returns the SET a marker lists', async () => {
+    redisMock.redis.get.mockResolvedValueOnce(
+      JSON.stringify(['ai:write:budgeted', 'posts:write:self'])
+    );
+    const verdict = await ConsentRevocation.lookup({ userId: USER, appBlockId: APP });
+    expect(verdict).toEqual({
+      kind: 'revoked',
+      scopes: new Set(['ai:write:budgeted', 'posts:write:self']),
+    });
   });
 
   /**
-   * 🔴 THE NARROWING, AND IT IS THE CONTROL THAT MAKES THE TEST ABOVE ATTRIBUTABLE. Without
-   * it, an implementation that returned `true` whenever the key exists — a per-app boolean
-   * — passes every other assertion in this block while breaking an app's unrelated
-   * rendering for up to four hours because the viewer withdrew one permission.
-   */
-  it('is FALSE for a DIFFERENT scope, even though a marker exists', async () => {
-    redisMock.redis.get.mockResolvedValue(JSON.stringify(['posts:write:self']));
-    expect(
-      await ConsentRevocation.isScopeRevoked({
-        userId: USER,
-        appBlockId: APP,
-        scope: 'ai:write:budgeted',
-      })
-    ).toBe(false);
-    // And the listed one IS refused in the same world, so this is not "false for
-    // everything".
-    expect(
-      await ConsentRevocation.isScopeRevoked({
-        userId: USER,
-        appBlockId: APP,
-        scope: 'posts:write:self',
-      })
-    ).toBe(true);
-  });
-
-  /**
-   * 🔴 FAIL CLOSED ON A REDIS ERROR.
+   * 🔴 `unavailable`, NOT `none`, ON A REDIS ERROR — and the two must stay distinguishable at
+   * this layer. Folding "unknown" into "nothing revoked" here is the fail-open the whole
+   * module exists to prevent; folding it into "everything revoked" would be wrong for the
+   * any-token catalog routes. `revokedScopesForToken` owns that decision, in one place.
    *
-   * MUTATION THAT MUST KILL THIS: change the `catch` in `isScopeRevoked` to `return false`
-   * (i.e. align it with `BlockRevocation.isRevoked`, which is the tempting "cleanup").
+   * MUTATION THAT MUST KILL THIS: return `{ kind: 'none' }` from the `catch`.
    */
-  it('FAILS CLOSED when Redis throws', async () => {
+  it('is `unavailable` when Redis throws (fail closed, and distinguishable)', async () => {
     redisMock.redis.get.mockRejectedValueOnce(new Error('connection reset'));
     expect(
-      await ConsentRevocation.isScopeRevoked({
-        userId: USER,
-        appBlockId: APP,
-        scope: 'ai:write:budgeted',
-      }),
-      'a Redis error made the consent-revocation guard report NOT revoked. That is the ' +
-        'fail-OPEN posture of BlockRevocation.isRevoked, which is deliberate THERE and ' +
-        'wrong here: this marker exists because a user asked for a permission to stop ' +
-        'being granted and was told it was done.'
-    ).toBe(true);
+      await ConsentRevocation.lookup({ userId: USER, appBlockId: APP }),
+      'a Redis error reported `none`, i.e. "nothing is revoked". That is the fail-OPEN posture ' +
+        'of BlockRevocation.isRevoked, deliberate THERE and wrong here.'
+    ).toEqual({ kind: 'unavailable' });
   });
 
   /**
-   * 🔴 AND CLOSED ON AN UNPARSEABLE MARKER, which is the same situation in different
-   * clothes: the key EXISTS, so something published a revocation, and we cannot tell which
-   * scopes it covered. Reading it as "nothing revoked" turns a corrupt write — or a format
-   * change rolled out to some pods first — into a silent fail-open.
+   * 🔴 AND ON AN UNPARSEABLE MARKER, which is the same situation in different clothes: the key
+   * EXISTS, so something published a revocation, and we cannot tell which scopes it covered.
    */
   it.each([
     ['not JSON at all', 'not-json'],
     ['JSON but not an array', '{"scope":"ai:write:budgeted"}'],
     ['an array of non-strings', '[1,2,3]'],
     ['the legacy boolean marker shape', '1'],
-  ])('FAILS CLOSED on a malformed marker (%s)', async (_label, raw) => {
+  ])('is `unavailable` on a malformed marker (%s)', async (_label, raw) => {
     redisMock.redis.get.mockResolvedValueOnce(raw);
+    expect(await ConsentRevocation.lookup({ userId: USER, appBlockId: APP })).toEqual({
+      kind: 'unavailable',
+    });
+  });
+});
+
+/**
+ * THE THREE PURE HELPERS that turn a verdict into a decision. They are exported and tested
+ * separately because BOTH token seams — `withBlockScope` and `authorizeBlockBridgeToken` —
+ * consume them, and a rule stated twice is a rule that drifts.
+ */
+describe('shouldConsultMarker', () => {
+  /**
+   * 🔴 THE SKIP IS ON THE **TOKEN'S** SCOPES, NOT THE ROUTE'S. That is the whole correction
+   * from the first version: testing the route's declared scope skipped the two scopes that
+   * are never a declared scope, so revoking them enforced nothing.
+   */
+  it('is TRUE for an authed token carrying a consent-gated scope', () => {
+    expect(shouldConsultMarker({ userId: USER, scopes: ['ai:write:budgeted'] })).toBe(true);
+  });
+
+  it('is TRUE for a token whose only gated scope is one no route ever declares', () => {
+    // `posts:write:self` and `collections:read:private` appear ZERO times as a declared
+    // `requiredScope` across `src/pages/api`. A skip keyed on the route would miss both.
+    expect(shouldConsultMarker({ userId: USER, scopes: ['posts:write:self'] })).toBe(true);
     expect(
-      await ConsentRevocation.isScopeRevoked({
+      shouldConsultMarker({
         userId: USER,
-        appBlockId: APP,
-        scope: 'ai:write:budgeted',
+        scopes: ['collections:read:self', 'collections:read:private'],
       })
     ).toBe(true);
+  });
+
+  it('is FALSE for an anon subject (no user ⇒ no (user, app) marker can exist)', () => {
+    expect(shouldConsultMarker({ userId: null, scopes: ['ai:write:budgeted'] })).toBe(false);
+  });
+
+  /**
+   * The narrowing that keeps 20 of the 29 scope-bound REST routes out of the read AND out of
+   * the fail-closed availability coupling: an all-exempt token cannot be affected by any
+   * marker, because `blocks.revokeScopes` refuses to record a suppression for an exempt scope
+   * and `partitionByConsent` signs them without consulting the grant at all.
+   */
+  it.each([
+    ['per-user storage', ['apps:storage:read', 'apps:storage:write']],
+    ['shared storage', ['apps:storage:shared:read', 'apps:storage:shared:write']],
+    ['the exempt collections pair', ['collections:read:self', 'collections:write:self']],
+    ['own-models read', ['models:read:self']],
+  ])('is FALSE for a token carrying only exempt scopes (%s)', (_label, scopes) => {
+    expect(shouldConsultMarker({ userId: USER, scopes })).toBe(false);
+  });
+
+  it('is FALSE for an empty scope list', () => {
+    expect(shouldConsultMarker({ userId: USER, scopes: [] })).toBe(false);
+  });
+});
+
+describe('revokedScopesForToken', () => {
+  const TOKEN = ['ai:write:budgeted', 'posts:write:self', 'models:read:self'];
+
+  it('`none` ⇒ nothing is revoked', () => {
+    expect(revokedScopesForToken({ kind: 'none' }, TOKEN)).toEqual(new Set());
+  });
+
+  it('`revoked` ⇒ exactly the marker’s set, verbatim', () => {
+    const scopes = new Set(['posts:write:self']);
+    expect(revokedScopesForToken({ kind: 'revoked', scopes }, TOKEN)).toEqual(scopes);
+  });
+
+  /**
+   * 🔴 `unavailable` FAILS CLOSED BY NAMING EVERY REVOKABLE SCOPE THE TOKEN CARRIES — and
+   * NOT the exempt ones. Stripping an exempt scope during a Redis incident would refuse
+   * `apps:storage:*` / `collections:read:self` traffic no revoke could ever have touched: a
+   * self-inflicted outage on a population the feature does not apply to.
+   *
+   * MUTATION THAT MUST KILL THIS: return `new Set(scopes)` (all of them) or `new Set()` (none).
+   */
+  it('`unavailable` ⇒ every REVOKABLE scope in the token, and no exempt one', () => {
+    const revoked = revokedScopesForToken({ kind: 'unavailable' }, TOKEN);
+    expect(revoked).toEqual(new Set(['ai:write:budgeted', 'posts:write:self']));
+    expect(revoked.has('models:read:self')).toBe(false);
+  });
+
+  it('`unavailable` on an all-exempt token revokes nothing', () => {
+    expect(revokedScopesForToken({ kind: 'unavailable' }, ['models:read:self'])).toEqual(new Set());
+  });
+});
+
+describe('applyRevocations', () => {
+  /**
+   * 🔴 THE STRIP IS THE ENFORCEMENT MECHANISM. Every consumer of a block token authorizes off
+   * `claims.scopes` — the REST `requiredScope` check, the in-handler
+   * `claims.scopes.includes('collections:read:private')` sub-checks, and every bridge
+   * procedure. Removing the revoked members once is what makes all of them honour the revoke.
+   */
+  it('removes the revoked scopes and keeps the rest', () => {
+    const claims = { scopes: ['a', 'b', 'c'], other: 1 };
+    const out = applyRevocations(claims, new Set(['b']));
+    expect(out.scopes).toEqual(['a', 'c']);
+    // Everything else on the claims object survives — it is a token, not just a scope list.
+    expect(out.other).toBe(1);
+  });
+
+  /**
+   * Returns the SAME OBJECT when nothing changed, which both callers use as the cheap
+   * "did this request lose a scope" test — the bridge emits its counter off exactly that.
+   */
+  it('returns the same object identity when nothing is revoked', () => {
+    const claims = { scopes: ['a', 'b'] };
+    expect(applyRevocations(claims, new Set())).toBe(claims);
+    expect(applyRevocations(claims, new Set(['zzz']))).toBe(claims);
+  });
+
+  it('can empty the scope list entirely', () => {
+    expect(applyRevocations({ scopes: ['a'] }, new Set(['a'])).scopes).toEqual([]);
   });
 });
 
