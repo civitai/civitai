@@ -716,10 +716,16 @@ export async function recordScopeGrant(opts: {
     //       revoke exactly the scopes a viewer granted last month. `revokableScopes` is what the
     //       UI OFFERS, which is not an enforcement boundary — a client may send any known
     //       non-exempt scope. And revoking the stale scope WOULD empty the residual, via (a).
-    //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. Its
-    //       pre-write read selects `revokedScopes`, and the P2022 is rethrown as
-    //       `PRECONDITION_FAILED`. So there is no revoke to perform, and `incoming`'s ceiling
-    //       bound closes the only other route.
+    //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. It has
+    //       no early return before its read; that read selects `revokedScopes` and has no narrow
+    //       fallback, so the P2022 is rethrown as `PRECONDITION_FAILED` — and the WRITE path
+    //       converts the same error through the same helper. So there is no revoke to perform, and
+    //       `incoming`'s ceiling bound closes the only other route. ⚠️ One sub-case is REASONED,
+    //       not measured, and a mock cannot settle it: with no matching row, the refusal still
+    //       holds only because Postgres raises 42703 at PARSE time, i.e. row-independently. At the
+    //       mock boundary a P2022 rejection is the entire observable, so an arm asserting it would
+    //       be measuring the fixture. Said plainly rather than covered by a test that proves
+    //       nothing.
     // Hence "no viewer action can empty the residual" is true, and unreachable is the right word —
     // for reason (c). ⚠️ The residual becomes escapable the instant the migration lands, which is
     // harmless because this branch is unreachable by then. Stated because (b) would mislead
@@ -760,8 +766,20 @@ export async function recordScopeGrant(opts: {
             // 🔴 `warning`, NOT `error`, AND IT WAS `error`. `PRECONDITION_FAILED` is a member of
             // `CLIENT_FAULT_TRPC_CODES`, whose docblock in `~/server/logging/client` says these
             // "are NOT incidents and must never be logged at error severity, or they drown out
-            // the real server-side failures on the error board" — and `type: 'error'` is exactly
-            // what resolves a line to `detected_level="error"` there. The OPERATOR's actionable
+            // the real server-side failures on the error board" — and a line carrying
+            // `type: 'error'` with no `level` key is findable as an error on that board (measured
+            // in `@civitai/axiom`: `| type="error"` returns rows, and such lines resolve to
+            // `detected_level="error"` 100% of the time).
+            //
+            // 🔴 THE CO-OCCURRENCE IS MEASURED; THE MECHANISM IS DELIBERATELY NOT ASSERTED. This
+            // comment first said `type: 'error'` "is exactly what RESOLVES a line to
+            // `detected_level="error"`" — which is theory #1 of three that `@civitai/axiom`'s own
+            // docblock records as each having been refuted by the next round's measurement, under
+            // a sign that says in words: do not add a fourth theory, and do not extend that
+            // comment with a guess. Round-8 review caught it propagating here. If you need the
+            // mechanism, measure it.
+            //
+            // The OPERATOR's actionable
             // cause (missing column, apply the migration) is already on that board once per
             // process via `logMissingRevokedScopesColumn`; this event exists to make the
             // viewer-facing CONSEQUENCE countable, which `warning` does without competing with

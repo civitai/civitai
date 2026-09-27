@@ -1540,19 +1540,44 @@ describe('scope-grant.service', () => {
    * ⚠️ WHY STRUCTURAL AND NOT BEHAVIOURAL. Pinning this behaviourally needs `vi.mock` on
    * `~/server/logging/client` in a suite that deliberately mocks only the db, and two of this
    * repo's own lint-rule guards police wholesale module mocks. This scan costs one file read, pins
-   * BOTH sites and any future one, and fails when a site is ADDED without the catch — which is the
-   * direction that matters.
+   * all THREE sites and any future one, and fails when a site is ADDED without the catch — which is
+   * the direction that matters. (It said "BOTH sites" for one round, in the same commit whose
+   * positive-control comment below corrects the very same miscount. Derive, then quote.)
    *
-   * It reads the SOURCE, comment-stripped, so a `logToAxiom(` written in prose cannot satisfy or
-   * break it. The count assertion is the positive control: a scan that finds nothing would
-   * otherwise pass vacuously, which is how a guard reads as coverage while providing none.
+   * It reads the SOURCE comment-stripped, so a future `logToAxiom(` written in prose cannot break
+   * it — ⚠️ DEFENSIVE ONLY, not a working property: measured, no comment in that module contains
+   * the call shape today (3 raw occurrences, 3 stripped), so mutating the stripper to the identity
+   * function SURVIVES. It is here so the guard does not start false-failing the first time someone
+   * documents the call, not because it is doing work now.
+   *
+   * The count assertion is the positive control: a scan that finds nothing would otherwise pass
+   * vacuously, which is how a guard reads as coverage while providing none.
+   *
+   * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
+   * SPELLED guard, and it errs in BOTH directions by one shape each:
+   *   - FALSE PASS: `.catch()`, `.catch(undefined)` and `.catch(null)` are pass-throughs that
+   *     leave the rejection unhandled. The matcher below rejects all three by name; a variable
+   *     that merely HOLDS `undefined` is beyond a source scan and is not claimed.
+   *   - FALSE FAIL: `await logToAxiom(...)` inside a `try/catch` is SAFE and carries no `.catch(`,
+   *     so this would go red on a correct refactor. Accepted: a visible, cheap false failure is
+   *     the right direction for a guard on a promise-rejection hazard, and `.then(undefined, fn)`
+   *     — also safe — is rejected for the same reason.
    */
   describe('logToAxiom call sites cannot break a consent path', () => {
     function stripComments(src: string): string {
       return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
     }
 
-    /** Index just past the `)` that closes the call opening at `openIdx`. */
+    /**
+     * Index just past the `)` that closes the call opening at `openIdx`.
+     *
+     * ⚠️ STRING-BLIND. It counts parens without tracking quotes or template literals, so an
+     * UNBALANCED paren inside one of the call's message literals throws the walk off. Both
+     * directions still fail loudly rather than passing — an unbalanced `(` returns -1 and trips the
+     * explicit assertion below, an unbalanced `)` terminates early and reports the wrong CAUSE
+     * ("does not swallow its own rejection" for a call that does). Latent today: all three call
+     * bodies' literals are balanced. Worth knowing before you debug a confusing failure here.
+     */
     function endOfCall(src: string, openIdx: number): number {
       let depth = 0;
       for (let i = openIdx; i < src.length; i += 1) {
@@ -1609,7 +1634,13 @@ describe('scope-grant.service', () => {
           'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
             'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
             'it contradicts the neighbouring comment promising logging can never break the path.'
-        ).toMatch(/^\s*\.catch\s*\(/);
+          // 🔴 A REAL HANDLER IS REQUIRED. `.catch()`, `.catch(undefined)` and `.catch(null)` are
+          // all pass-throughs — the rejection stays unhandled — and all three SURVIVED the first
+          // draft of this matcher (`.catch(` alone). ⚠️ The SECOND draft, `\(\s*[^)\s]`, closed
+          // only the bare one: `undefined` starts with a non-`)` character, so it sailed through.
+          // Measured both times rather than reasoned. A variable that merely HOLDS `undefined` is
+          // beyond any source scan and is not claimed.
+        ).toMatch(/^\s*\.catch\s*\(\s*(?!\)|undefined\b|null\b)/);
       }
     });
   });
