@@ -753,11 +753,19 @@ function domainColorOf(payWith: BuzzAccountType[]): BuzzAccountType {
   return payWith.find((color) => color !== 'blue') ?? 'yellow';
 }
 
+/**
+ * Above any reachable total — a manifest may declare at most
+ * BLOCK_GOOD_MAX_PER_MANIFEST goods — with headroom for the ids an app has
+ * retired across versions, since an entitlement outlives the version that sold
+ * it. A CONSTANT rather than a parameter: the sole caller never passed one, and
+ * a configurable knob with no configurer is a decision nobody made.
+ */
+const ENTITLEMENTS_READ_LIMIT = 200;
+
 export type ListBlockGoodEntitlementsArgs = {
   userId: number;
   /** From `claims.appBlockId` — the ONLY app an entitlement read can see. */
   appBlockId: string;
-  limit?: number;
 };
 
 /**
@@ -775,7 +783,7 @@ export async function listBlockGoodEntitlements(
     where: { userId: args.userId, appBlockId: args.appBlockId, revokedAt: null },
     select: { goodId: true, kind: true, payload: true, grantedAt: true },
     orderBy: { grantedAt: 'desc' },
-    take: args.limit ?? 200,
+    take: ENTITLEMENTS_READ_LIMIT,
   });
   return rows.map(serializeEntitlement);
 }

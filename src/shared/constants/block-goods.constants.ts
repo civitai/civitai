@@ -52,6 +52,11 @@ export function blueLegOfPayout(args: {
   priceBuzz: number;
 }): number {
   const { recipientAmount, bluePaid, priceBuzz } = args;
+  // INVARIANT GUARD, not coverage: a zero price is unreachable in production —
+  // the manifest parser floors it at BLOCK_GOOD_MIN_PRICE_BUZZ and the
+  // `price_buzz > 0` CHECK enforces it at the database. It is here so the
+  // division cannot produce NaN if this pure helper is ever reused somewhere
+  // those two bounds do not apply.
   if (priceBuzz <= 0) return 0;
   return Math.floor((recipientAmount * bluePaid) / priceBuzz);
 }
