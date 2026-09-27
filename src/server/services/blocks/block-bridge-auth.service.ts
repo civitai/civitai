@@ -1,17 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import {
+  parseSubjectUserId,
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
-import {
-  recordBlockConsentRevocationRefusal,
-  recordBlockRevocationRefusal,
-} from '~/server/metrics/app-block-runtime.metrics';
-import { parseSubjectUserId } from '~/server/middleware/block-scope.middleware';
+import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   applyRevocations,
   ConsentRevocation,
+  recordConsentStrip,
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
@@ -60,7 +58,10 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *      rather than running to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
  *
- * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside
+ * Each step fails closed. ⚠️ THE INSTANCE-revocation step still fails OPEN by construction, but
+ * the PER-SCOPE consent step added below fails CLOSED — as a retryable 503, so a cache incident
+ * refuses without telling the client to give up. This sentence used to say "EXCEPT revocation,
+ * which fails OPEN", which is now true of only one of the two revocation legs inside
  * `BlockRevocation.isRevoked` (a Redis incident must not take the bridge down; exposure
  * is bounded by the token lifetime instead of by Redis recovery time — see that
  * service's own note). That is a property of the primitive, deliberately inherited here
@@ -141,6 +142,23 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
+  // 🔴 STARTED HERE, AWAITED AFTER THE APPROVAL READ — so the consent GET pipelines with
+  // `isRevoked`'s instead of adding a serial round trip. The first cut of this seam awaited it
+  // last, which put a full Redis RTT on the critical path of every bridge call including the
+  // timer-driven `pollWorkflow`; the REST side had already taken this shape and only one of the
+  // two seams got it. Every input is available the moment the token verifies.
+  //
+  // Safe to leave unawaited on the refusal paths below: `ConsentRevocation.lookup` catches
+  // everything and resolves to a verdict, so an early throw cannot strand a rejection.
+  const consentUserId = parseSubjectUserId(claims.sub);
+  const consentLookup = shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })
+    ? ConsentRevocation.lookup({
+        // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+        userId: consentUserId as number,
+        appBlockId: claims.appBlockId,
+      })
+    : null;
+
   // Per-instance revocation. Keyed on the token's OWN `blockInstanceId` claim, never on
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
@@ -158,43 +176,52 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
 
   // ── PER-SCOPE CONSENT REVOCATION, ON THE BRIDGE.
   //
-  // 🔴 THE BRIDGE WAS THE HALF THE FIRST CUT LEFT OPEN, AND IT HOLDS THE SCOPE THE REPO
-  // CALLS THE MOST SENSITIVE. `posts:write:self` is authorized HERE — by
-  // `authorizeBlockPostRequest`'s `claims.scopes.includes('posts:write:self')` — and the
-  // REST middleware, where the consent marker was first wired, is never on that path. Nor
-  // are `buzz:read:self` and `user:read:self`, which several bridge procs read off
-  // `claims.scopes` directly. So a viewer who withdrew any of those kept having them
-  // honoured for the rest of an already-minted token's life: 900s, or 4h for a dev token.
+  // 🔴 THE BRIDGE WAS THE HALF THE FIRST CUT LEFT OPEN, AND IT HOLDS THE SCOPE THE REPO CALLS
+  // THE MOST SENSITIVE. `posts:write:self` is authorized HERE — by `authorizeBlockPostRequest`'s
+  // `claims.scopes.includes('posts:write:self')` — and the REST middleware, where the consent
+  // marker was first wired, is never on that path. Nor are `buzz:read:self` and
+  // `user:read:self`, which several bridge procs read off `claims.scopes` directly.
   //
-  // 🔴 A STRIP, NOT A REFUSAL, AND THAT IS WHY ONE LINE COVERS ~20 PROCEDURES. Every bridge
-  // proc authorizes off `claims.scopes.includes(...)`; removing the revoked members from
-  // the claims this function RETURNS makes all of them honour the revoke with no per-proc
-  // enumeration to keep current. The procs then refuse with their own existing
-  // "block lacks <scope> scope" FORBIDDEN, which is the message their callers already
-  // handle — deliberately not a new bridge-specific error, because a `code` on the REST
-  // envelope has no equivalent here.
+  // 🔴 A STRIP, NOT A PER-PROC GATE, which is why one site covers all of them. Every bridge proc
+  // authorizes off `claims.scopes.includes(...)`; removing the revoked members from the claims
+  // this function RETURNS makes all of them honour the revoke with no enumeration to keep
+  // current. The procs then refuse with their own existing "block lacks <scope> scope".
   //
-  // FAILS CLOSED, like the REST side and unlike `isRevoked` above; `shouldConsultMarker`
-  // keeps anon tokens and tokens carrying only consent-exempt scopes out of the read (and
-  // therefore out of the availability coupling). See `blocks/consent-revocation.service.ts`
-  // for the full asymmetry argument — it is stated there rather than a third time here.
-  const consentUserId = parseSubjectUserId(claims.sub);
-  if (shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })) {
-    const verdict = await ConsentRevocation.lookup({
-      // Non-null by `shouldConsultMarker`, which returns false for a null userId.
-      userId: consentUserId as number,
-      appBlockId: claims.appBlockId,
-    });
+  // ⚠️ KNOWN AND ACCEPTED: that message is INDISTINGUISHABLE from a never-granted scope. The
+  // REST seam can say `consent_revoked` because it knows the route's required scope; this one
+  // does not, and the alternative — threading a reason through ~17 per-proc refusals — is the
+  // per-gate list the strip exists to avoid. The security property (the scope stops working) is
+  // delivered; the message quality on this seam is not, and that is a stated limitation rather
+  // than an oversight.
+  if (consentLookup !== null) {
+    const verdict = await consentLookup;
+
+    // 🔴 AN UNREADABLE MARKER IS A **RETRYABLE** REFUSAL, NOT A SILENT STRIP — AND THE FIRST CUT
+    // GOT THIS WRONG IN A WAY THAT BREAKS PAID WORK. On `unavailable` the strip removed every
+    // revokable scope, so `pollWorkflow` threw `FORBIDDEN "block lacks ai:write:budgeted scope"`:
+    // a Redis blip presented to the SDK as a permanent manifest/approval problem, whose rational
+    // response is to STOP POLLING. A generation the viewer had already paid for then looked
+    // permanently broken — the exact harm `block-catalog-rate-limit.ts` says never to inflict.
+    // This file's own docblock also promised revocation "fails OPEN … a Redis incident must not
+    // take the bridge down", which the strip had quietly made false.
+    //
+    // So: fail CLOSED (the request is refused) but say it is TRANSIENT, so a client retries
+    // instead of giving up. `SERVICE_UNAVAILABLE` rather than `FORBIDDEN` is the whole point —
+    // and it is the one tRPC 5xx whose message survives `client-safe-error.ts`.
+    if (verdict.kind === 'unavailable') {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'permission state is temporarily unavailable — retry shortly',
+      });
+    }
+
     const revoked = revokedScopesForToken(verdict, claims.scopes);
     const narrowed = applyRevocations(claims, revoked);
     if (narrowed !== claims) {
       // `applyRevocations` returns the SAME object when nothing changed, so identity is the
-      // cheap test for "did this request lose a scope" — which is the only case worth a
-      // counter emit. `scope` is the label; emit one per removed scope so the series answers
-      // "which permission is actually being withdrawn" on this surface too.
-      for (const scope of claims.scopes.filter((s) => revoked.has(s))) {
-        recordBlockConsentRevocationRefusal('bridge', scope);
-      }
+      // cheap test for "did this request lose a scope". The emitter is SHARED with the REST seam
+      // so the two cannot report different things under one counter name.
+      recordConsentStrip('bridge', claims.scopes, revoked);
       return narrowed;
     }
   }

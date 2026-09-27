@@ -346,7 +346,11 @@ describe('finding 5 — revoke is NOT gated on the app being approved', () => {
    */
   it('does not read the status column at all', async () => {
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
-    expect(appBlockFindUnique.mock.calls[0][0].select).toEqual({ manifest: true });
+    // 🔴 `{ id: true }` — it does not even select `manifest` any more. A column the procedure
+    // cannot see is a gate it cannot accidentally grow, and the teardown stopped branching on
+    // `manifest.auth` (a publisher push replaces it without re-approval, which is the same
+    // reason this procedure applies no manifest ceiling).
+    expect(appBlockFindUnique.mock.calls[0][0].select).toEqual({ id: true });
   });
 
   // The app must still EXIST — the grant row's FK requires it, so a bad id is a 404 rather
@@ -468,14 +472,25 @@ describe('no manifest ceiling is applied', () => {
 });
 
 describe('the OAuth mirror', () => {
+  /** A live mirror row for this (user, client) — what the teardown is now gated on. */
+  function mirrorExists(clientId = 'oauth_client_1') {
+    appBlockFindUnique.mockResolvedValue({ id: APP, appId: clientId });
+    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue({ id: 1 });
+  }
+
+  beforeEach(() => {
+    // DEFAULT: no mirror. The teardown must be gated on one EXISTING, so "no mirror" is the
+    // world every test that is not about it runs in.
+    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue(null);
+  });
+
   /**
    * 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE. It mirrors the grant into a
    * bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive this
-   * mutation. Deleting the mirror — and the `Access`/`Refresh` keys alongside it — is what
-   * stops them.
+   * mutation. Deleting it — and the `Access`/`Refresh` keys alongside it — is what stops them.
    */
   it('tears the mirror down, deleting both the consent row and the live keys', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    mirrorExists();
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER, clientId: 'oauth_client_1' },
@@ -486,85 +501,128 @@ describe('the OAuth mirror', () => {
   });
 
   /**
-   * 🔴 UNCONDITIONALLY — AND THIS ARM REPLACES A "CONTROL: does nothing for a non-OAuth app"
-   * THAT PINNED A HOLE. Three separate conditions used to stand between a revoke and the
-   * teardown, and each could be false while a live mirror row existed: today's
-   * `manifest.auth`, which a publisher push replaces without re-approval (the very reason this
-   * procedure applies no manifest ceiling); `env.APP_BLOCK_OAUTH_TOKENS_ENABLED` being true
-   * NOW, which can be switched off after rows exist; and — the one that actually bit —
-   * position AFTER the Redis publish, so a Redis failure threw past it and the mirror was
-   * never touched at all.
+   * 🔴 GATED ON THE MIRROR EXISTING — NOT ON `manifest.auth`, NOT ON THE ENV FLAG, AND NOT
+   * UNCONDITIONAL. Three stale gates each let a live mirror row survive a revoke: today's
+   * `manifest.auth` (a publisher push replaces it without re-approval), the env flag (can be
+   * switched off after rows exist), and position after the publish. Dropping all gates closed
+   * those and overcorrected — the callee is NOT a no-op without a row: two primary `deleteMany`s
+   * plus `deleteAuthSubject` plus an AWAITED `invalidateCivitaiUser`, an untimed outbound
+   * orchestrator call, on every revoke of every app.
    *
-   * `revokeOauthConsentForBlock` is a no-op when there is no row, so calling it always costs a
-   * bounded query on a cold path and closes all three.
-   *
-   * MUTATION THAT MUST KILL IT: re-add `if (env.APP_BLOCK_OAUTH_TOKENS_ENABLED && manifest.auth === 'oauth')`.
+   * MUTATION THAT MUST KILL IT: remove the `oauthConsent.findFirst` gate.
    */
-  it('tears the mirror down even for a JWT app (a stale mirror row may still exist)', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'jwt' }, appId: 'jwt_client' });
+  it('does NOT touch the mirror when there is none', async () => {
+    appBlockFindUnique.mockResolvedValue({ id: APP, appId: 'jwt_client' });
+    dbMock.dbRead.oauthConsent.findFirst.mockResolvedValue(null);
+    await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
+    expect(
+      dbMock.dbWrite.oauthConsent.deleteMany,
+      'the teardown ran with no mirror row, which costs two primary writes plus an UNTIMED ' +
+        'outbound orchestrator call on every revoke of every app'
+    ).not.toHaveBeenCalled();
+  });
+
+  /**
+   * …but a stale mirror on a now-JWT app IS torn down: the gate is the ROW, so a manifest that
+   * has since flipped away from `oauth` cannot strand it. This is the hole the `manifest.auth`
+   * gate left.
+   */
+  it('tears down a stale mirror even on a JWT app', async () => {
+    mirrorExists('jwt_client');
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledWith({
       where: { userId: USER, clientId: 'jwt_client' },
     });
   });
 
-  it('tears the mirror down even with APP_BLOCK_OAUTH_TOKENS_ENABLED off', async () => {
+  it('tears down a stale mirror even with APP_BLOCK_OAUTH_TOKENS_ENABLED off', async () => {
     setEnv({ APP_BLOCK_OAUTH_TOKENS_ENABLED: false });
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    mirrorExists();
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledTimes(1);
   });
 
   /**
-   * 🔴 BEFORE THE REDIS PUBLISH — the ordering finding, pinned. With the teardown after the
-   * publish, a Redis blip threw past it: the durable row was written, the viewer saw an error,
-   * and the app's live OAuth tokens kept working against the pre-revoke bitmask with nothing
-   * scheduled to clean them up.
+   * 🔴 IT RUNS EVEN WHEN THE MARKER PUBLISH FAILS — it is in a `finally`. With the teardown
+   * merely sequenced after the publish, a Redis blip threw past it: the durable row was written,
+   * the viewer saw an error, and the app's live OAuth tokens kept working against the pre-revoke
+   * bitmask with nothing scheduled to clean them up.
    *
-   * MUTATION THAT MUST KILL IT: move the teardown block back below the publish `try`.
+   * MUTATION THAT MUST KILL IT: move the teardown out of the `finally` to after the throw.
    */
   it('tears the mirror down EVEN WHEN the marker publish fails', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    mirrorExists();
     redisMock.redis.set.mockRejectedValue(new Error('redis down'));
     await expect(caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] })).rejects.toMatchObject(
       { code: 'SERVICE_UNAVAILABLE' }
     );
     expect(
       dbMock.dbWrite.oauthConsent.deleteMany,
-      'the OAuth mirror was never touched because the Redis failure threw past it — the ' +
-        'app’s live OAuth tokens keep working against the pre-revoke bitmask'
+      'the mirror was never touched because the Redis failure threw past it — the app’s live ' +
+        'OAuth tokens keep working against the pre-revoke bitmask'
     ).toHaveBeenCalledTimes(1);
   });
 
-  it('writes Postgres, then the mirror teardown, then Redis', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+  /**
+   * 🔴 POSTGRES, THEN REDIS, THEN THE MIRROR — and the middle step moved BACK in front of the
+   * teardown deliberately. Putting the teardown first did close the unreachability hole, but
+   * `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator DELETE
+   * with NO timeout, so a slow orchestrator delayed the "immediate" half of the revoke for
+   * exactly as long as it was slow — and that window is the one the 503 message apologises for.
+   * A `finally` gets both properties.
+   */
+  it('writes Postgres, then Redis, then the mirror teardown', async () => {
+    mirrorExists();
     const order: string[] = [];
     grantMock.update.mockImplementation(async () => {
       order.push('pg');
       return {};
     });
-    dbMock.dbWrite.oauthConsent.deleteMany.mockImplementation(async () => {
-      order.push('oauth');
-      return { count: 1 };
-    });
     redisMock.redis.set.mockImplementation(async () => {
       order.push('redis');
       return 'OK';
     });
+    dbMock.dbWrite.oauthConsent.deleteMany.mockImplementation(async () => {
+      order.push('oauth');
+      return { count: 1 };
+    });
     await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
-    expect(order).toEqual(['pg', 'oauth', 'redis']);
+    expect(order).toEqual(['pg', 'redis', 'oauth']);
   });
 
   /**
-   * Best-effort: the durable row is written and the marker still follows, so a teardown failure
-   * must not tell the viewer nothing was recorded.
+   * 🔴 IT RUNS BEFORE THE THROW, NOT AFTER IT — the property a plain sequential block does NOT
+   * give you. `finally` is load-bearing: any teardown placed after the `if (publishFailed) throw`
+   * is simply never reached on the failure path, which is the original hole in a new spelling.
+   * This asserts the ordering directly, so moving the block past the throw reds.
    */
+  it('the teardown completes BEFORE the publish-failure throw propagates', async () => {
+    mirrorExists();
+    const order: string[] = [];
+    redisMock.redis.set.mockImplementation(async () => {
+      order.push('publish-failed');
+      throw new Error('redis down');
+    });
+    dbMock.dbWrite.oauthConsent.deleteMany.mockImplementation(async () => {
+      order.push('oauth');
+      return { count: 1 };
+    });
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] })).rejects.toMatchObject(
+      { code: 'SERVICE_UNAVAILABLE' }
+    );
+    expect(
+      order,
+      'the teardown did not run before the throw — anything sequenced after the throw is never ' +
+        'reached on the failure path, which is the original unreachability hole respelled'
+    ).toEqual(['publish-failed', 'oauth']);
+  });
+
+  /** Best-effort: the durable row is written and the marker has gone out. */
   it('does not fail the mutation if the mirror teardown throws', async () => {
-    appBlockFindUnique.mockResolvedValue({ manifest: { auth: 'oauth' }, appId: 'oauth_client_1' });
+    mirrorExists();
     dbMock.dbWrite.oauthConsent.deleteMany.mockRejectedValue(new Error('pg down'));
     const out = await caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] });
     expect(out.ok).toBe(true);
-    // …and the marker still went out, which is what makes "best-effort" defensible here.
     expect(redisMock.redis.set).toHaveBeenCalledTimes(1);
   });
 });

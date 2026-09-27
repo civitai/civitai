@@ -3,7 +3,6 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
-  recordBlockConsentRevocationRefusal,
   recordBlockRestApprovalVerdict,
   recordBlockRevocationRefusal,
   statusToRequestResult,
@@ -11,10 +10,15 @@ import {
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
+// The one scope that can spend the viewer's Buzz — needed to drop `buzzBudget` alongside it when
+// the strip removes it. A bare string constant; the module is already in this graph via
+// `consent-revocation.service`.
+import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   applyRevocations,
   ConsentRevocation,
+  recordConsentStrip,
   revokedScopesForToken,
   shouldConsultMarker,
 } from '~/server/services/blocks/consent-revocation.service';
@@ -1282,8 +1286,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // `page_ephemeral-<slug>` is NOT globally unique across users, so a global marker
     // there would refuse an innocent author's own tunnel. See `bannedSubjectKey`.
     // 🔴 BOTH REVOCATION READS ARE ISSUED IN ONE TICK. The consent lookup is STARTED here,
-    // before the instance check is awaited, and awaited below — so the two Redis GETs
-    // pipeline instead of serialising. They remain two calls with two `catch`es because
+    // before the instance check is awaited, and awaited below — so they pipeline instead of
+    // serialising. ⚠️ NOT "the two GETs": `isRevoked` issues TWO through the `mGet` wrapper's
+    // `Promise.all(keys.map(get))` (three for a `page_ephemeral-*` subject), so this tick
+    // carries THREE or FOUR. Undercounting them is a documented repeat offence in this
+    // subsystem — see `block-bridge-auth.service.ts`, which says its own count "HAS NOW BEEN
+    // WRONG THREE TIMES". They remain two calls with two `catch`es because
     // their postures are opposite (this one fails OPEN, that one fails CLOSED), which is
     // what makes a shared `mGet` impossible: the wrapper's `Promise.all(keys.map(get))`
     // rejects with the first error and the throw cannot be attributed to a key. Per-
@@ -1293,17 +1301,33 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // catches everything and resolves to a verdict, so an early `return` cannot strand a
     // rejecting promise. If it is ever changed to throw, this becomes an unhandled
     // rejection — which is why it catches.
+    // 🔴 THE ANY-TOKEN CATALOG ROUTES ARE SKIPPED, AND THIS SKIP WAS DELETED BY MISTAKE. The
+    // first cut had it; removing the route condition wholesale — the right move for the SCOPE
+    // test, which was the actual defect — took this with it. These five routes
+    // (`blocks/{models,images,gated-images,tools,user-checkpoint/set}.ts`) declare no
+    // `requiredScope` and, enumerated, reference `claims.scopes` NOWHERE: they authorize on
+    // token validity alone and derive their only authority from `claims.maxBrowsingLevel`. So a
+    // marker read there can neither refuse nor usefully strip — it is pure cost on the routes
+    // that burst hardest (they have their own 120-req/10s bucket for exactly that reason), and
+    // it drags them into the fail-closed coupling they were deliberately outside.
+    //
+    // ⚠️ THIS IS A ROUTE CONDITION, WHICH IS THE SHAPE THAT CAUSED THE ORIGINAL HOLE — so it is
+    // narrow and ledgered, not a judgement about scopes. It keys on "this route exercises NO
+    // scope", not on WHICH scope; a route that names a `requiredScope` is always consulted, and
+    // `no-unguarded-block-rest-token.test.ts` asserts these five still read no scopes.
     const consentUserId = parseSubjectUserId(claims.sub);
-    const consentLookup = shouldConsultMarker({
-      userId: consentUserId,
-      scopes: claims.scopes,
-    })
-      ? ConsentRevocation.lookup({
-          // Non-null by `shouldConsultMarker`, which returns false for a null userId.
-          userId: consentUserId as number,
-          appBlockId: claims.appBlockId,
-        })
-      : null;
+    const consentLookup =
+      opts.requiredScope !== undefined &&
+      shouldConsultMarker({
+        userId: consentUserId,
+        scopes: claims.scopes,
+      })
+        ? ConsentRevocation.lookup({
+            // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+            userId: consentUserId as number,
+            appBlockId: claims.appBlockId,
+          })
+        : null;
 
     if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
       // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
@@ -1359,15 +1383,23 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // declaration above the instance check for the mechanism and for why a shared `mGet`
     // cannot replace it.
     //
-    // 🔴 THE PRICE: during a Redis outage every revokable scope is stripped and a route
-    // whose `requiredScope` is revokable refuses. Narrowed by `shouldConsultMarker`, which
-    // skips anon tokens and any token carrying no consent-gated scope at all — measured at
-    // 20 of the 29 scope-bound routes. Deliberately NOT narrowed by the route's declared
-    // scope; that was the first version's defect.
+    // 🔴 THE PRICE: during a Redis outage every revokable scope is stripped and a route whose
+    // `requiredScope` is revokable refuses. Narrowed by `shouldConsultMarker` (anon tokens, and
+    // apps whose entire granted set is exempt) plus the any-token skip above.
+    //
+    // ⚠️ DO NOT RESTATE "20 of the 29 scope-bound routes" HERE — that figure is the FIRST
+    // version's saving, from testing the ROUTE's declared scope. `shouldConsultMarker` never
+    // reads a route: the mint signs the app's whole effective set, so an app declaring ANY gated
+    // scope is looked up on its exempt-scope routes too. Enumerated over the first-party
+    // manifests, 12 of 15 carry a gated scope, so the real coupling is WIDER than that figure
+    // suggests. See `shouldConsultMarker`'s own docblock for the honest population.
     if (consentLookup !== null) {
       const revoked = revokedScopesForToken(await consentLookup, claims.scopes);
       if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
-        recordBlockConsentRevocationRefusal('rest', opts.requiredScope);
+        // The SHARED emitter, so this seam and the bridge cannot report different things under
+        // one counter name. One increment per scope this token lost — here that is the route's
+        // own scope plus any other the marker names.
+        recordConsentStrip('rest', claims.scopes, revoked);
         // A DISTINCT `code` from the missing-scope 403 further down, which is the whole
         // point of adding codes: "you never had this" and "the user took this away" call
         // for different app behaviour — the second one should stop asking and let the host
@@ -1380,7 +1412,24 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       }
       // Not refused, but the token may still carry OTHER revoked scopes — an in-handler
       // sub-check is exactly where `collections:read:private` is read. Strip them.
-      claims = applyRevocations(claims, revoked);
+      //
+      // 🔴 EMITTED HERE TOO, AND THIS BRANCH USED TO EMIT NOTHING. That made the counter blind
+      // to the very case the strip was built for — a `collections:read:private` withdrawal that
+      // refuses no route — while its help text claimed a flat zero meant no viewer had revoked a
+      // scope an in-flight token still carried.
+      recordConsentStrip('rest', claims.scopes, revoked);
+      const narrowed = applyRevocations(claims, revoked);
+      // 🔴 THE PER-CALL BUZZ CEILING GOES WITH THE SPEND SCOPE. `applyRevocations` narrows
+      // `scopes` only, so a token whose `ai:write:budgeted` was just stripped still advertised
+      // `buzzBudget` to the block (`blocks.getMyViewer`, `/api/v1/blocks/me`). Not a spend hole
+      // — every spend site gates on the scope first — but it published a ceiling for a
+      // permission that will now 403, and `enforceContextBinding`'s `ai:write:budgeted` case
+      // treats a positive `buzzBudget` AS the binding, which is the shape that turns this into a
+      // real hole on the next edit.
+      claims =
+        narrowed !== claims && revoked.has(CONSENT_SPEND_SCOPE) && narrowed.buzzBudget !== undefined
+          ? { ...narrowed, buzzBudget: undefined }
+          : narrowed;
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
@@ -1425,10 +1474,15 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // primitive (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so
     // a "cleanup" here could not align them even if it wanted to.
     //
-    // ORDER MATTERS AND MIRRORS THE BRIDGE: revocation is a Redis GET and responds to a
-    // USER action within seconds, so it runs first and a revoked-AND-suspended instance
-    // is reported as revoked. This DB read runs second and only on instances that
-    // survived it.
+    // ORDER MATTERS: revocation is a Redis GET and responds to a USER action within seconds, so
+    // it runs first and a revoked-AND-suspended instance is reported as revoked. This DB read
+    // runs second and only on instances that survived it.
+    //
+    // ⚠️ THIS SAID "AND MIRRORS THE BRIDGE", WHICH IS FALSE FOR THE CONSENT LEG. Here the
+    // per-scope consent check runs BEFORE this DB read; on the bridge it runs AFTER
+    // `assertAppBlockApproved`. Both refuse, so there is no defect — but the bridge pays a
+    // replica `findUnique` before its cheaper Redis GET, and a reader trusting "mirrors" would
+    // draw the wrong conclusion about either side.
     const approval = await resolveRestApprovalVerdict(claims);
     if (approval !== 'ok' && approval !== 'dev_exempt') {
       recordBlockRestApprovalVerdict(approval);

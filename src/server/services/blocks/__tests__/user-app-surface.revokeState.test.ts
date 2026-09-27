@@ -95,6 +95,12 @@ function grant(over: Record<string, unknown> = {}) {
   };
 }
 
+/** Points the subscription leg at a specific AppBlock, so one arm can vary the manifest. */
+function mockDbRead_blockUserSubscription_findMany(block: ReturnType<typeof appBlock>) {
+  read.blockUserSubscription.findMany.mockResolvedValue([sub({ appBlock: block })]);
+  read.appUserScopeGrant.findMany.mockResolvedValue([]);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // `clearAllMocks` clears CALLS but not the hybrid nodes' declared behaviour, so every query
@@ -278,6 +284,42 @@ describe('revokableScopes', () => {
     const [row] = await listMyScopeGrants(USER);
     expect(row.scopes).toEqual([scope]);
     expect(row.revokableScopes).toEqual([]);
+  });
+
+  /**
+   * 🔴 A SCOPE RETIRED FROM THE REGISTRY IS NOT OFFERED, AND THE BLAST RADIUS WAS THE OTHER
+   * SCOPES IT TOOK DOWN WITH IT.
+   *
+   * `effectiveBlockScopes` is deliberately NOT registry-filtered (its own docblock says the mint
+   * applies that filter), and `consentGatedScopes` only subtracts the exempt set. So a scope
+   * removed from the vocabulary — `block:settings:read`/`write`, `media:read:owned` — but still
+   * sitting in an app's `manifest.scopes` AND `approved_scopes` from before the hygiene pass
+   * reached this list. `blocks.revokeScopes` refuses unknown strings ALL-OR-NOTHING, so a
+   * withdraw-all built on this field would have failed the whole call and the viewer could not
+   * revoke `posts:write:self` or `ai:write:budgeted` on that app either. The retired scope itself
+   * is harmless (not mintable, grants nothing); the other scopes were the cost.
+   *
+   * MUTATION THAT MUST KILL IT: drop the `isKnownBlockScope` filter from `revokableScopes`.
+   */
+  it('never offers a scope retired from the registry', async () => {
+    const RETIRED = 'block:settings:write';
+    const block = appBlock({
+      manifest: { name: 'x', scopes: [SPEND, RETIRED, POSTS] },
+      approvedScopes: [SPEND, RETIRED, POSTS],
+    });
+    mockDbRead_blockUserSubscription_findMany(block);
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    const [row] = await listMyScopeGrants(USER);
+    // The app-side row list still shows it — that set is "what the app may be exercised with",
+    // and the retired scope really is in its approved manifest.
+    expect(row.scopes).toContain(RETIRED);
+    // …but it is NOT offered as revokable, because the mutation would refuse the whole call.
+    expect(
+      row.revokableScopes,
+      'a registry-retired scope was offered as revokable. `blocks.revokeScopes` refuses unknown ' +
+        'strings all-or-nothing, so a withdraw-all on this app would fail entirely and the ' +
+        'viewer could revoke NOTHING on it.'
+    ).toEqual([SPEND, POSTS]);
   });
 
   /**

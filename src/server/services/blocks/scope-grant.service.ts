@@ -42,11 +42,15 @@ import { newAppUserScopeGrantId } from '~/server/utils/app-block-ids';
  * The one scope in the vocabulary that can spend the viewer's Buzz, and therefore the
  * only one a `buzz_budget_per_day` bounds.
  *
- * Named rather than open-coded because FOUR sites now branch on it — the budget's
- * meaningfulness test in `blocks.grantScopes`, the permissions surface's
- * `spendScopeGranted`, the spend-posture read below, and the budget clear in
- * `revokeScopes`. A string literal repeated at four sites is a predicate that will be
- * wrong at three of them the first time the vocabulary moves.
+ * Named rather than open-coded because a string literal repeated at N sites is a predicate
+ * that will be wrong at N−1 of them the first time the vocabulary moves.
+ *
+ * ⚠️ NO COUNT AND NO LIST HERE, DELIBERATELY. This docblock once said "FOUR sites now branch
+ * on it" and enumerated them, while `blocks.router.ts` alone still held ELEVEN identical
+ * `claims.scopes.includes(...)` spend gates spelled as the literal. An enumeration covering 4
+ * of 19 sites is worse than none — it stops the next person looking. Those eleven are swept;
+ * `git grep "'ai:write:budgeted'"` is the authority on what remains, and a non-zero answer is
+ * expected (tag strings, manifest keys and scope-LIST members are not this predicate).
  */
 export const CONSENT_SPEND_SCOPE = 'ai:write:budgeted';
 
@@ -146,7 +150,18 @@ export function logMissingRevokedScopesColumn(site: string, err: unknown): void 
  * rather than absent, and treating unknown as empty would be a fail-OPEN on a consent
  * gate.
  *
- * The retry costs a second round trip, and only in a database that is mid-migration.
+ * 🔴 THE RETRY COSTS A SECOND ROUND TRIP, AND "MID-MIGRATION" IS THE **DEFAULT STATE ON
+ * DEPLOY**, NOT A NARROW WINDOW. This read "only in a database that is mid-migration" — true,
+ * and it reads as rare. It is not: migrations here are applied by hand with nothing in CI or
+ * the deploy running them, and review confirmed neither column exists on the production
+ * cluster as this ships. So from deploy until a human applies it, EVERY call on the mint path,
+ * the hub-claims path and the spend path pays two queries instead of one (three on the spend
+ * path, which also reads the budget). The only signal is the once-per-process Axiom line
+ * below. At current App Blocks volume that is free; the EXPECTATION was what was wrong.
+ *
+ * Post-migration it cannot fire: DDL replicates in the WAL, so a standby has the column as
+ * soon as it replays; the only residual window is sub-second replay lag on `dbRead`.
+ *
  * The alternative — always issuing the narrow select and widening later — would need a
  * process-wide "has the column" cache, i.e. state that is wrong for the whole window
  * either side of the ALTER.
@@ -202,6 +217,32 @@ async function readGrantRow(
  * revocation can ever have been recorded. `undefined` here means "none", which is the only
  * state such a database can be in — not a guess.
  */
+/**
+ * The USABLE per-day consent budget on a grant row, or `null` when there is none.
+ *
+ * 🔴 SHARED FOR THE SAME REASON `liveGrantedScopes` IS — and review found this rule had
+ * ALREADY drifted between its two homes. `user-app-surface.service.ts` carried the comment
+ * "Mirror getConsentBuzzBudget's guards EXACTLY" while omitting `Number.isFinite`, so the
+ * display and the enforcement disagreed for a non-finite stored value. Inert today
+ * (`buzz_budget_per_day` is an `Int?`, so `Infinity` cannot be stored, and `NaN > 0` is false
+ * so NaN happens to agree) — but a comment asserting exactness beside an inexact copy reads as
+ * coverage, which is worse than no comment.
+ *
+ * Guards the VALUE, not just its presence: a 0 or negative becomes a cap of 0 (deny
+ * everything) and a NaN makes `total > NaN` always false, i.e. a corrupt row would silently
+ * DISABLE the cap. Any unusable value reads as "no budget set", routing to the platform
+ * ceiling — the behaviour every pre-column grant already had.
+ */
+export function usableConsentBudget(row: {
+  buzzBudgetPerDay?: number | null;
+  revokedAt?: Date | null;
+}): number | null {
+  if (row.revokedAt) return null;
+  const budget = row.buzzBudgetPerDay;
+  if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) return null;
+  return Math.floor(budget);
+}
+
 export function liveGrantedScopes(row: {
   grantedScopes: string[] | null | undefined;
   revokedScopes?: string[] | null;
@@ -365,14 +406,10 @@ export async function getConsentBuzzBudget(opts: {
     logMissingBudgetColumn('getConsentBuzzBudget', err);
     return null;
   }
-  if (!row || row.revokedAt) return null;
-  const budget = row.buzzBudgetPerDay;
-  // Guard the VALUE, not just its presence: a non-positive or non-finite number
-  // read back from the DB would otherwise become a cap of 0 or NaN, and `total >
-  // NaN` is false — i.e. a corrupt row would silently DISABLE the cap. Treat any
-  // unusable value as "no budget set" (the platform cap still applies).
-  if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) return null;
-  return Math.floor(budget);
+  if (!row) return null;
+  // The guards live in `usableConsentBudget` — see there for why the VALUE is guarded and for
+  // the drifted mirror that made it shared.
+  return usableConsentBudget(row);
 }
 
 /**
@@ -441,10 +478,16 @@ export async function resolveConsentSpendPosture(opts: {
   if ((row?.revokedScopes ?? []).includes(CONSENT_SPEND_SCOPE)) {
     return { kind: 'revoked', reason: 'spend_scope_revoked' };
   }
-  // Reuses the budget reader rather than widening `readGrantRow`'s select: that keeps
-  // the value guards (non-finite / non-positive → "no budget") and the budget column's
-  // OWN P2022 branch in exactly one place. Costs a second indexed lookup on the same
-  // unique key, and only once a spend is actually being attempted.
+  // Reuses the budget reader rather than widening `readGrantRow`'s select, which keeps the
+  // value guards and the budget column's OWN P2022 branch in exactly one place.
+  //
+  // ⚠️ THAT IS A CODE-ORGANISATION ARGUMENT, NOT A COST ONE, and the first wording blurred
+  // them by opening "Costs a second indexed lookup". It DOES buy a second lookup on the same
+  // unique key per spend attempt — measured during review at ~0.3 ms for the pair against a
+  // 40-row table, noise beside the orchestrator call and the Buzz reserve on the same path.
+  // If this path ever becomes hot the cheaper shape exists (one wider select plus a
+  // `meta.column`-keyed narrowing retry), so do not cite the one-place argument as a
+  // prohibition.
   const budget = await getConsentBuzzBudget(opts);
   return budget == null ? { kind: 'no-budget' } : { kind: 'budget', budget };
 }
@@ -565,6 +608,34 @@ export async function recordScopeGrant(opts: {
   const incomingSet = new Set(incoming);
 
   /**
+   * Whether this write may clear a WHOLE-GRANT revoke (`revoked_at`).
+   *
+   * 🔴 GATED ON `clearRevocations`, AND IT USED TO BE UNCONDITIONAL — WHICH LEFT AN INSTALL
+   * ABLE TO UN-REVOKE. Review found this after the sibling defect in `revokeScopes` was fixed:
+   * `revoked_at` had TWO clearers and only one was closed. `recordInstallConsent` calls this
+   * with no `clearRevocations`, from install and from subscribe, and an unconditional
+   * `revokedAt: null` meant an ordinary install silently lifted a whole-grant revoke with no
+   * consent prompt anywhere.
+   *
+   * The exposed population is the hand-written one — `revoked_at` set with `granted_scopes`
+   * still populated — which is exactly what
+   * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` STEP 2 produces to force a
+   * fresh consent prompt. On such a row an install merged the whole consent-gated set back in,
+   * cleared `revoked_at` and left `buzz_budget_per_day` untouched: the forced re-consent gone,
+   * spend live again, the old ceiling back. Rows written by `revokeScopes` are NOT exposed,
+   * because a full revoke also populates `revoked_scopes`, which survives the union — so the
+   * residual was precisely the operator-written state.
+   *
+   * ⚠️ THE ONEOFF'S HEADER DOCUMENTS THE OLD BEHAVIOUR AS INTENDED ("Re-granting un-revokes
+   * cleanly through the existing upsert"). That was a true statement about a world with no
+   * user-facing revoke; it is not a licence for an UNPROMPTED path to do it now. A prompted
+   * re-consent still clears it, which is the flow that oneoff actually wants.
+   */
+  function unrevokeData(): Record<string, unknown> {
+    return opts.clearRevocations ? { revokedAt: null } : {};
+  }
+
+  /**
    * What the clear resolved to, for the return value. Stays `null` unless a clear was
    * requested AND actually lifted something — see the return type for why `null` and `[]`
    * must not be collapsed.
@@ -629,7 +700,7 @@ export async function recordScopeGrant(opts: {
       data: {
         grantedScopes: merged,
         version,
-        revokedAt: null,
+        ...unrevokeData(),
         ...budgetData,
         ...revocationData(existing.revokedScopes),
       },
@@ -666,7 +737,7 @@ export async function recordScopeGrant(opts: {
       data: {
         grantedScopes: merged,
         version,
-        revokedAt: null,
+        ...unrevokeData(),
         ...budgetData,
         ...revocationData(row.revokedScopes),
       },
@@ -771,21 +842,34 @@ export async function revokeScopes(
     id: string;
     grantedScopes: string[];
     revokedScopes: string[];
+    revokedAt: Date | null;
   } | null;
   try {
+    // 🔴 `revokedAt` IS SELECTED, AND ITS ABSENCE WAS A REPORTING BUG ON THE ONE ROW SHAPE
+    // THIS FEATURE EXISTS FOR. Without it, a partial revoke on a row that ALREADY carried a
+    // whole-grant revoke (the `2026-09-16` oneoff's state) returned `fullyRevoked: false` and
+    // a non-empty `grantedScopes`, while `liveGrantedScopes` — and therefore every mint, the
+    // OAuth mirror and the permissions page — correctly said the grant conveys nothing. The
+    // router hands both fields straight to the client, so the UI would have contradicted
+    // enforcement. It is also what makes the oneoff-row test able to exercise this at all.
     existing = (await dbWrite.appUserScopeGrant.findUnique({
       where,
-      select: { id: true, grantedScopes: true, revokedScopes: true },
+      select: { id: true, grantedScopes: true, revokedScopes: true, revokedAt: true },
     })) as {
       id: string;
       grantedScopes: string[];
       revokedScopes: string[];
+      revokedAt: Date | null;
     } | null;
   } catch (err) {
     throw rethrowMissingRevokedScopesColumn(err, 'revokeScopes:read');
   }
 
-  const priorGranted = existing?.grantedScopes ?? [];
+  // 🔴 THE **EFFECTIVE** PRIOR GRANT, VIA THE SHARED PROJECTION — not the raw array. A row
+  // whose `revoked_at` is already set conveys nothing, so its effective granted set is empty
+  // and any revoke against it is `fullyRevoked`. Reading the raw column here is what made the
+  // reported `fullyRevoked`/`grantedScopes` disagree with every reader of the same row.
+  const priorGranted = existing ? liveGrantedScopes(existing) : [];
   const priorRevoked = existing?.revokedScopes ?? [];
   const nextGranted = priorGranted.filter((s) => !incomingSet.has(s));
   const nextRevoked = Array.from(new Set([...priorRevoked, ...incoming]));
@@ -827,6 +911,9 @@ export async function revokeScopes(
     // Prisma reads as "leave the column alone"; a partial revoke must neither stamp it (that
     // would hide the app's remaining permissions from the permissions page, which skips rows
     // carrying it) nor clear it.
+    // Stamped when this revoke empties the EFFECTIVE granted set. On a row that was already
+    // whole-grant revoked that is trivially true, so the timestamp refreshes rather than being
+    // cleared — which is the safe direction and keeps `revoked_at` monotonic in effect.
     ...(fullyRevoked ? { revokedAt: now } : {}),
     ...(budgetCleared ? { buzzBudgetPerDay: null } : {}),
   };

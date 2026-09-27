@@ -319,8 +319,14 @@ describe('every Prisma mutation of the grant table is accounted for', () => {
     // a writer using one would otherwise be unseen. `delete`/`deleteMany` are deliberately NOT:
     // removing the row removes the suppression WITH the grant, which is not a resurrection —
     // and the FK cascade from `User`/`AppBlock` does exactly that already.
+    // 🔴 BRACKET ACCESS IS MATCHED TOO, AND ITS ABSENCE WAS THIS FILE'S OWN FINDING RECURRING
+    // INSIDE ITS OWN FIX. The docblock listed three shapes the previous detector could not see;
+    // the control fed it ONE, and review measured `dbWrite['appUserScopeGrant'].update({…})` and
+    // a delegate held in a local as both still MISSED while the control was titled "sees every
+    // write shape". The local-alias case is caught by `aliasesGrantDelegate`; `$executeRaw`
+    // against the table remains outside this, stated rather than silent.
     const re =
-      /appUserScopeGrant\s*\.\s*(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\s*\(/g;
+      /appUserScopeGrant['"\]]*\s*\.\s*(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\s*\(/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(code)) !== null) {
       let depth = 0;
@@ -336,6 +342,15 @@ describe('every Prisma mutation of the grant table is accounted for', () => {
       regions.push(code.slice(start, i + 1));
     }
     return regions;
+  }
+
+  /**
+   * A local alias for the delegate, e.g. `const g = dbWrite.appUserScopeGrant;` — after which
+   * `g.update({…})` names the table nowhere near the call. Matched as a WHOLE-FILE property: if a
+   * file binds the delegate to a local at all, it is ledgered.
+   */
+  function aliasesGrantDelegate(code: string): boolean {
+    return /=\s*\w+(?:\.|\[['"])appUserScopeGrant/.test(code);
   }
 
   /**
@@ -362,7 +377,8 @@ describe('every Prisma mutation of the grant table is accounted for', () => {
    * `granted_scopes` is — as the `revokedAt: null` defect this very suite now guards proved.
    */
   function writesGrantedScopes(source: string): boolean {
-    return grantMutationArgs(stripComments(source)).length > 0;
+    const code = stripComments(source);
+    return grantMutationArgs(code).length > 0 || aliasesGrantDelegate(code);
   }
 
   /**
@@ -429,6 +445,18 @@ describe('every Prisma mutation of the grant table is accounted for', () => {
     expect(
       writesGrantedScopes(`await dbWrite.appUserScopeGrant.create({ data: { ...payload } });`)
     ).toBe(true);
+    // 🔴 THE TWO SHAPES THE PREVIOUS CONTROL NAMED IN PROSE AND NEVER FED IT.
+    expect(
+      writesGrantedScopes(`await dbWrite['appUserScopeGrant'].update({ where: { id }, data });`),
+      'bracket access to the delegate is unseen'
+    ).toBe(true);
+    expect(
+      writesGrantedScopes(
+        `const g = dbWrite.appUserScopeGrant;\nawait g.update({ where: { id }, data });`
+      ),
+      'a delegate held in a local is unseen — the call names the table nowhere'
+    ).toBe(true);
+
     // A mutation that names NO scope field at all is still a mutation of this table.
     expect(
       writesGrantedScopes(`await dbWrite.appUserScopeGrant.update({

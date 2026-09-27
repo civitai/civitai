@@ -1626,4 +1626,111 @@ describe('the approval predicate is not open-coded a second time', () => {
       'src/server/services/blocks/block-bridge-auth.service.ts'
     );
   });
+
+  /**
+   * 🔴 WHICH TOKEN SEAMS APPLY PER-SCOPE CONSENT REVOCATIONS — a growth/shrink ledger, because
+   * the enforcement is a STRIP and a strip is invisible where it is absent.
+   *
+   * `verifyBlockToken` has FOUR call sites. Two of them apply revocations
+   * (`consent-revocation.service`'s `applyRevocations`); two do not, and that is safe ONLY
+   * because each of those authorizes exclusively `apps:storage:*` / `apps:storage:shared:*`,
+   * every one of which is in `CONSENT_EXEMPT_SCOPES` — so no marker can ever name a scope they
+   * check. Nothing asserted that property, which means a gated scope added to the storage family
+   * would be silently unenforced on those two paths. This is that assertion.
+   *
+   * It fails in BOTH directions: a NEW seam (a fifth `verifyBlockToken` caller, or one of the two
+   * starting to authorize a gated scope) and a seam that STOPS applying revocations.
+   */
+  const CONSENT_STRIP_SEAMS: Record<string, string> = {
+    'src/server/middleware/block-scope.middleware.ts':
+      "REST. Refuses with `code: consent_revoked` when the route's own requiredScope is revoked, " +
+      'and strips every other revoked scope so in-handler sub-checks — which is how ' +
+      '`collections:read:private` is gated — honour the revoke too.',
+    'src/server/services/blocks/block-bridge-auth.service.ts':
+      'tRPC bridge. Strips, so all of its procedures honour the revoke through their own ' +
+      '`claims.scopes.includes(...)` gates. This is the only path that authorizes ' +
+      '`posts:write:self`.',
+  };
+
+  /** The seams that verify a token but apply NO revocations, with the property that makes it safe. */
+  const EXEMPT_ONLY_SEAMS: Record<string, readonly string[]> = {
+    'src/server/routers/apps-shared.router.ts': [
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ],
+    'src/server/services/apps/app-storage.service.ts': ['apps:storage:read', 'apps:storage:write'],
+  };
+
+  it('every verifyBlockToken seam either applies revocations or authorizes only exempt scopes', async () => {
+    const { isConsentExemptScope } = await import('~/server/services/blocks/scope-grant.service');
+    const seams = [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)].sort();
+
+    // POSITIVE CONTROL on the enumeration itself: every ledgered seam must really call
+    // `verifyBlockToken`, or this whole block is a claim about a list rather than the tree.
+    for (const rel of seams) {
+      expect(stripNonCode(read(rel)), `${rel} does not verify a block token`).toMatch(
+        /verifyBlockToken\s*\(/
+      );
+    }
+
+    for (const [rel, why] of Object.entries(CONSENT_STRIP_SEAMS)) {
+      expect(
+        stripNonCode(read(rel)),
+        `${rel} is ledgered as applying consent revocations (${why}) and does not call ` +
+          `applyRevocations. A strip that is absent is invisible: every scope the viewer ` +
+          `withdrew keeps working on that seam for the rest of the token's life.`
+      ).toMatch(/applyRevocations\s*\(/);
+    }
+
+    for (const [rel, scopes] of Object.entries(EXEMPT_ONLY_SEAMS)) {
+      const code = stripNonCode(read(rel));
+      expect(code, `${rel} now applies revocations — move it to CONSENT_STRIP_SEAMS.`).not.toMatch(
+        /applyRevocations\s*\(/
+      );
+      for (const scope of scopes) {
+        expect(
+          isConsentExemptScope(scope),
+          `${rel} authorizes "${scope}", which is NO LONGER consent-exempt. That seam applies ` +
+            `no revocations, so a viewer withdrawing it would be silently ignored there. Either ` +
+            `wire the strip in, or re-exempt the scope deliberately.`
+        ).toBe(true);
+      }
+      // …and the scopes it authorizes are still the ones ledgered here. Read the RAW source for
+      // this one: `stripNonCode` blanks string literals, so the scope names are gone from `code`.
+      const raw = read(rel);
+      for (const scope of scopes) {
+        expect(raw, `${rel} no longer authorizes "${scope}" — re-derive this ledger`).toContain(
+          scope
+        );
+      }
+    }
+  });
+
+  /**
+   * 🔴 THE ANY-TOKEN ROUTES READ NO SCOPES, which is what makes the middleware's marker skip for
+   * them sound. If one ever starts reading `claims.scopes`, that skip becomes a silent hole —
+   * exactly the shape of the original defect, where enforcement was keyed on a route property.
+   */
+  const ANY_TOKEN_ROUTES = [
+    'src/pages/api/v1/blocks/models.ts',
+    'src/pages/api/v1/blocks/images.ts',
+    'src/pages/api/v1/blocks/gated-images.ts',
+    'src/pages/api/v1/blocks/tools.ts',
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+  ];
+
+  it('the any-token routes declare no requiredScope and read no scopes', () => {
+    for (const rel of ANY_TOKEN_ROUTES) {
+      const code = stripNonCode(read(rel));
+      expect(
+        code,
+        `${rel} now declares a requiredScope — it is no longer an any-token route`
+      ).not.toMatch(/requiredScope\s*:/);
+      expect(
+        code,
+        `${rel} reads claims.scopes. The consent-marker skip for any-token routes assumes it ` +
+          `cannot act on a scope, so a viewer's revoke would be silently unenforced here.`
+      ).not.toMatch(/\bscopes\b/);
+    }
+  });
 });

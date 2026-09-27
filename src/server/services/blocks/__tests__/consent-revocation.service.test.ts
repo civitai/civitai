@@ -225,9 +225,44 @@ describe('revokedScopesForToken', () => {
     expect(revokedScopesForToken({ kind: 'none' }, TOKEN)).toEqual(new Set());
   });
 
-  it('`revoked` ⇒ exactly the marker’s set, verbatim', () => {
+  it('`revoked` ⇒ the marker’s set, minus anything exempt', () => {
     const scopes = new Set(['posts:write:self']);
     expect(revokedScopesForToken({ kind: 'revoked', scopes }, TOKEN)).toEqual(scopes);
+  });
+
+  /**
+   * 🔴 THE EXEMPT FILTER APPLIES TO THE `revoked` ARM TOO, AND IT USED TO GUARD ONLY THE
+   * `unavailable` ONE — backwards, because `unavailable`'s set is invented here while
+   * `revoked`'s is read from EXTERNALLY WRITTEN Redis data.
+   *
+   * Unreachable today only because `blocks.revokeScopes` refuses an exempt scope before storage,
+   * and `revokeScopes`' own docblock says the service does NOT filter and the caller must. One
+   * new caller of that exported function, or one hand-written `revoked_scopes` row — and this
+   * table has a committed precedent for exactly that — and exempt scopes would be stripped at
+   * both seams, which the same file calls "explicitly NOT the design".
+   *
+   * MUTATION THAT MUST KILL IT: return `verdict.scopes` verbatim.
+   */
+  it('a marker naming an EXEMPT scope strips nothing (defence in depth)', () => {
+    const revoked = revokedScopesForToken(
+      { kind: 'revoked', scopes: new Set(['models:read:self', 'apps:storage:read']) },
+      TOKEN
+    );
+    expect(
+      revoked,
+      'an exempt scope named by a hand-written or future-written marker was stripped — the mint ' +
+        'signs those without consulting the grant at all, so removing them refuses traffic no ' +
+        'revoke could ever have touched'
+    ).toEqual(new Set());
+  });
+
+  it('a mixed marker strips only the gated members', () => {
+    expect(
+      revokedScopesForToken(
+        { kind: 'revoked', scopes: new Set(['models:read:self', 'posts:write:self']) },
+        TOKEN
+      )
+    ).toEqual(new Set(['posts:write:self']));
   });
 
   /**

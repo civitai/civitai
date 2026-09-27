@@ -44,7 +44,8 @@ type ConsentVerdict =
   | { kind: 'revoked'; scopes: Set<string> }
   | { kind: 'unavailable' };
 
-const { isFliptMock, isRevokedMock, lookupMock } = vi.hoisted(() => ({
+const { isFliptMock, isRevokedMock, lookupMock, recordMock } = vi.hoisted(() => ({
+  recordMock: vi.fn<(surface: string, scope: string) => void>(),
   isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
   isRevokedMock: vi.fn(async () => false),
   // 🔴 THE SIGNATURE IS DECLARED AS A GENERIC, not inferred from a zero-arg arrow. Without it
@@ -80,6 +81,23 @@ vi.mock('~/server/services/block-revocation.service', () => ({
  * `importOriginal` and overriding the one class is the shape the sibling approved-gate suite
  * uses, for the same reason.
  */
+/**
+ * The metric emitter, so this suite can pin that the REST seam actually reports. Review measured
+ * BOTH deleting `recordConsentStrip('rest', …)` and relabelling its surface to `'bridge'` as
+ * SURVIVING mutants: the bridge side was pinned, this side was not, and
+ * `block-scope.metrics.test.ts` only calls the emitter directly. That matters more than a normal
+ * metrics gap because of the code's own argument on the sibling branch —
+ * `recordScopeInvocation` registers its `finish` handler AFTER the early return, so a consent
+ * 403 writes no audit row, and this counter is the only thing separating "revocation fired" from
+ * "revocation is broken and silently serving".
+ *
+ * Only the leaf emitter is replaced; `recordConsentStrip` stays REAL, so its per-scope fan-out is
+ * exercised rather than stubbed.
+ */
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  recordBlockConsentRevocationRefusal: recordMock,
+}));
 vi.mock('~/server/services/blocks/consent-revocation.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   ConsentRevocation: { lookup: lookupMock },
@@ -201,6 +219,7 @@ beforeEach(() => {
   isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
   isRevokedMock.mockImplementation(async () => false);
   lookupMock.mockImplementation(async () => ({ kind: 'none' }));
+  recordMock.mockReset();
   // Reset between tests so the SEAM block's per-test Redis behaviour cannot leak into the
   // boundary-mocked blocks (where a rejected `get` would be an unhandled rejection in a
   // test that never touches Redis).
@@ -228,6 +247,80 @@ describe('a token carrying a now-revoked scope is refused', () => {
       'the wrapped handler ran despite a revoked scope — the gate returned without ' +
         'refusing, or it sits AFTER the handler dispatch'
     ).not.toHaveBeenCalled();
+    // 🔴 AND IT REPORTS, WITH THE **REST** SURFACE. Both deleting this emit and relabelling it
+    // `'bridge'` were surviving mutants before this assertion existed.
+    expect(recordMock).toHaveBeenCalledWith('rest', SCOPE);
+  });
+
+  /**
+   * 🔴 THE STRIP BRANCH REPORTS TOO — the case the whole mechanism was built for
+   * (`collections:read:private`, withdrawn but refusing no route) emitted NOTHING, while the
+   * counter's help text claimed a flat zero meant no viewer had revoked a scope an in-flight
+   * token still carried.
+   */
+  it('reports on the STRIP branch, not only on a refusal', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
+    const { res } = await drive(await mint(), SCOPE);
+    expect(res.statusCode).toBe(200);
+    expect(recordMock).toHaveBeenCalledWith('rest', OTHER_SCOPE);
+  });
+
+  /**
+   * 🔴 THE PER-CALL BUZZ CEILING GOES WITH THE SPEND SCOPE. `applyRevocations` narrows `scopes`
+   * only, so a token whose `ai:write:budgeted` was just stripped still advertised `buzzBudget` to
+   * the block (`blocks.getMyViewer`, `/api/v1/blocks/me`). Not a spend hole — every spend site
+   * gates on the scope first — but it publishes a ceiling for a permission that will now 403, and
+   * `enforceContextBinding`'s `ai:write:budgeted` case treats a positive `buzzBudget` AS the
+   * binding, which is the shape that turns this into a real hole on the next edit.
+   *
+   * MUTATION THAT MUST KILL IT: `claims = narrowed;` without the buzzBudget clear.
+   */
+  it('drops buzzBudget when the spend scope is stripped', async () => {
+    // The route requires OTHER_SCOPE so the request is SERVED; the marker revokes the spend scope,
+    // which is therefore stripped rather than refused.
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
+    let seen: { scopes: string[]; buzzBudget?: number } | undefined;
+    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
+      seen = (req as unknown as { blockClaims: { scopes: string[]; buzzBudget?: number } })
+        .blockClaims;
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(handler as never, {
+      endpoint: 'me',
+      requiredScope: OTHER_SCOPE,
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(seen?.scopes).toEqual([OTHER_SCOPE]);
+    expect(
+      seen?.buzzBudget,
+      'the handler still saw a per-call Buzz ceiling for a spend scope that was just stripped — ' +
+        'and enforceContextBinding treats a positive buzzBudget AS the ai:write:budgeted binding'
+    ).toBeUndefined();
+  });
+
+  /** CONTROL: an unrelated strip leaves the ceiling alone. */
+  it('keeps buzzBudget when an unrelated scope is stripped', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
+    let seen: { buzzBudget?: number } | undefined;
+    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
+      seen = (req as unknown as { blockClaims: { buzzBudget?: number } }).blockClaims;
+      res.status(200).json({ ok: true });
+    });
+    const route = withBlockScope(handler as never, { endpoint: 'me', requiredScope: SCOPE });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+    expect(res.statusCode).toBe(200);
+    expect(seen?.buzzBudget).toBe(100);
+  });
+
+  /** And nothing when nothing was lost — otherwise the series is noise. */
+  it('reports nothing when no scope is revoked', async () => {
+    lookupMock.mockResolvedValue({ kind: 'none' });
+    await drive(await mint(), SCOPE);
+    expect(recordMock).not.toHaveBeenCalled();
   });
 
   /**
@@ -279,6 +372,31 @@ describe('a token carrying a now-revoked scope is refused', () => {
     const { res } = await drive(await mint(), SCOPE);
     expect(res.statusCode).toBe(403);
     expect(res.body).toMatchObject({ code: 'consent_revoked' });
+  });
+
+  /**
+   * 🔴 THE ROUTE REQUIRES `OTHER_SCOPE`, AND WITHOUT THIS ARM A HARDCODED LITERAL SURVIVED.
+   * Review measured it: `revoked.has('ai:write:budgeted')` in place of
+   * `revoked.has(opts.requiredScope)` passed 109/109, because `SCOPE` IS that literal and every
+   * `drive()` call passed `SCOPE` (or a scope the marker did not name) as the route's
+   * requirement. Adding `OTHER_SCOPE` to the TOKEN fixed the `claims.scopes[0]` axis and left
+   * the literal axis untouched — the fixture has to be distinct from the hardcoded constant on
+   * the ROUTE side too.
+   *
+   * Live effect of that surviving mutant: `consent_revoked` only for spend routes, while a
+   * revoked `social:tip:self` / `buzz:read:self` / `user:read:self` route fell through to
+   * `insufficient_scope` — the wrong machine-readable code, on the exact distinction the `code`
+   * field exists to make reliable.
+   */
+  it('refuses when the route requires the OTHER gated scope', async () => {
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([OTHER_SCOPE]) });
+    const { res } = await drive(await mint(), OTHER_SCOPE);
+    expect(res.statusCode).toBe(403);
+    expect(
+      res.body,
+      'a revoked non-spend scope fell through to insufficient_scope — the refusal is comparing ' +
+        'against a hardcoded scope rather than opts.requiredScope'
+    ).toMatchObject({ code: 'consent_revoked' });
   });
 
   it('SERVES when only the token’s OTHER scope is revoked', async () => {
@@ -342,53 +460,98 @@ describe('a token carrying a now-revoked scope is refused', () => {
    * distinguish "honours the refusal" from "swallowed a throw and happened to refuse". If
    * the middleware wrapped the call in its own `try`, a THROWN Redis error would be served.
    */
-  it('does not wrap the marker read in its own try/catch', () => {
-    const source = readFileSync(
-      path.resolve(__dirname, '../block-scope.middleware.ts'),
-      'utf8'
-    ).replace(/\/\*[\s\S]*?\*\//g, '');
-    const at = source.indexOf('ConsentRevocation.lookup');
-    expect(at, 'the middleware no longer calls the consent marker at all').toBeGreaterThan(-1);
+  /**
+   * 🔴 THE FAIL-CLOSED POSTURE AT THE **CALL SITE**, AS A STRUCTURAL CHECK — and the two
+   * previous versions of this guard COULD NOT GO RED.
+   *
+   * History, because it is the whole reason this is shaped the way it is. v1 read a ±300-char
+   * window around the call and asserted no `catch` in it; review measured that the natural
+   * tidy-up (wrapping the whole `if` block) puts the `catch` ~760 chars away, outside the
+   * window. v2 replaced the window with a brace walk — and kept v1's anchor, which strips only
+   * `/* … *\/` comments while the middleware's comments are `//`. So
+   * `indexOf('ConsentRevocation.lookup')` landed inside a LINE COMMENT 400 chars before the real
+   * call, the walk immediately hit the enclosing arrow function, and the result was a constant
+   * `false`. Three mutants survived, including the guard's own positive control.
+   *
+   * What changed: line comments are stripped too, the anchor requires the CALL (`lookup({`), the
+   * property is "no SWALLOW" rather than "no `try`" (a `.catch(() => …)` needs no `try`), BOTH
+   * sites are checked because the read and the `await` now live in different blocks, and there is
+   * a POSITIVE CONTROL that feeds the walker a synthetic source containing a `try` and asserts
+   * it returns `true`. A guard with no proof it can fire is the defect it was written to catch.
+   */
+  /** Comments removed — BOTH kinds. Stripping only block comments is what broke v2. */
+  function stripAllComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  }
 
-    // 🔴 A BRACE WALK, NOT A ±N-CHARACTER WINDOW — AND THE WINDOW VERSION WAS WALKABLE.
-    // Review measured it: the refusal block's own `return;` sits 731 characters past the call,
-    // so the natural tidy-up (wrapping the WHOLE `if (opts.requiredScope !== undefined)` block
-    // in `try { … } catch { /* serve */ }`) puts the `catch` ~760 chars away — outside a ±300
-    // window, guard green, fail-closed silently gone. The behavioural SEAM arm cannot see it
-    // either, because the real primitive never throws.
-    //
-    // So: walk OUTWARDS from the call, tracking brace depth, and assert no enclosing block is
-    // a `try`. That is depth-based rather than distance-based, so it cannot be defeated by
-    // moving the `catch` further away.
-    const enclosingIsTry = (() => {
-      let depth = 0;
-      for (let i = at; i >= 0; i--) {
-        const c = source[i];
-        if (c === '}') depth++;
-        else if (c === '{') {
-          if (depth > 0) {
-            depth--;
-            continue;
-          }
-          // An unmatched `{` walking backwards opens a block that CONTAINS the call. Read the
-          // keyword immediately before it.
-          const head = source.slice(Math.max(0, i - 60), i);
-          if (/\btry\s*$/.test(head)) return true;
-          // Stop at the enclosing function/handler: anything further out is not "its own"
-          // catch, and `withBlockScope`'s body legitimately contains try/catch elsewhere.
-          if (/\)\s*=>\s*$|\basync\s*\([^)]*\)\s*=>\s*$|\bfunction\b[^{]*$/.test(head)) {
-            return false;
-          }
+  /**
+   * True when `needle`'s first occurrence in `code` is lexically inside a `try` block, stopping
+   * at the enclosing function so unrelated try/catch elsewhere in `withBlockScope` is ignored.
+   */
+  function insideTry(code: string, needle: string): boolean {
+    const at = code.indexOf(needle);
+    if (at < 0) return false;
+    let depth = 0;
+    for (let i = at; i >= 0; i--) {
+      const c = code[i];
+      if (c === '}') depth++;
+      else if (c === '{') {
+        if (depth > 0) {
+          depth--;
+          continue;
         }
+        const head = code.slice(Math.max(0, i - 60), i);
+        if (/\btry\s*$/.test(head)) return true;
+        if (/\)\s*=>\s*$|\bfunction\b[^{]*$/.test(head)) return false;
       }
-      return false;
-    })();
+    }
+    return false;
+  }
 
+  it('POSITIVE CONTROL: the walker can detect an enclosing try', () => {
+    // Without this the assertions below could pass on a walker that returns false for
+    // everything — which is exactly what the previous two versions did.
     expect(
-      enclosingIsTry,
-      'the consent-marker read is lexically inside a `try`. This gate must fail CLOSED; a ' +
-        'catch around it serves a request whose permission the viewer revoked, and the ' +
-        'behavioural seam arm cannot see it because the primitive never throws.'
+      insideTry(
+        `const f = async () => { try { const x = await LOOKUP({ a: 1 }); } catch {} };`,
+        'LOOKUP({'
+      )
+    ).toBe(true);
+    expect(
+      insideTry(`const f = async () => { const x = await LOOKUP({ a: 1 }); };`, 'LOOKUP({')
+    ).toBe(false);
+    // …and that stripping removes LINE comments, the v2 anchor bug.
+    expect(stripAllComments('// LOOKUP({ a: 1 })\nreal;')).not.toContain('LOOKUP({');
+  });
+
+  it('the consent marker read and await are not swallowed at the call site', () => {
+    const code = stripAllComments(
+      readFileSync(path.resolve(__dirname, '../block-scope.middleware.ts'), 'utf8')
+    );
+    // Anchored on the CALL, not the bare identifier — and asserted present, so deleting the call
+    // and leaving a comment cannot satisfy this file.
+    expect(
+      code.includes('ConsentRevocation.lookup({'),
+      'the middleware no longer CALLS the consent marker (a prose mention does not count)'
+    ).toBe(true);
+
+    for (const site of ['ConsentRevocation.lookup({', 'await consentLookup']) {
+      expect(
+        insideTry(code, site),
+        `"${site}" is lexically inside a \`try\`. This gate must fail CLOSED; a catch around ` +
+          `either the read or the await serves a request whose permission the viewer revoked, ` +
+          `and the behavioural seam arm cannot see it because the primitive never throws.`
+      ).toBe(false);
+    }
+
+    // 🔴 AND NO SWALLOW WITHOUT A `try` EITHER — `.catch(() => …)` on the promise is the
+    // fail-open that needs no enclosing block, and a try-only test walks straight past it.
+    const swallow =
+      /consentLookup\s*(?:\n\s*)?\.catch\s*\(|ConsentRevocation\.lookup\([^;]*\)\s*\.catch\s*\(/;
+    expect(
+      swallow.test(code),
+      'a `.catch(...)` is attached to the consent lookup, which is a fail-open with no `try` ' +
+        'for a brace walk to find.'
     ).toBe(false);
   });
 });
@@ -467,33 +630,33 @@ describe('SEAM: fail-closed through the real primitive', () => {
 
 describe('the two documented skips', () => {
   /**
-   * ANY-TOKEN MODE (the public catalog routes, `requiredScope` omitted).
+   * ANY-TOKEN MODE (the public catalog routes, `requiredScope` omitted) — the marker is not
+   * consulted at all.
    *
-   * ⚠️ THIS ARM USED TO ASSERT THE MARKER WAS NOT CONSULTED AT ALL, AND THAT IS RETRACTED.
-   * The skip is keyed on the TOKEN's scopes, not the route's — because keying it on the route
-   * is what left `posts:write:self` and `collections:read:private` unenforced. So a token
-   * carrying gated scopes IS looked up here.
+   * ⚠️ THIS ARM HAS FLIPPED TWICE, AND BOTH FLIPS WERE REAL DECISIONS. It began as "not
+   * consulted" (a skip keyed on the ROUTE), was inverted to "consulted but served" when that
+   * route condition was deleted wholesale — the right move for the SCOPE test, which was the
+   * actual defect — and is now back, because deleting it took a narrow, sound skip with it.
+   * These five routes (`blocks/{models,images,gated-images,tools,user-checkpoint/set}.ts`)
+   * reference `claims.scopes` NOWHERE: they authorize on token validity alone and derive their
+   * only authority from `claims.maxBrowsingLevel`. A marker read there can neither refuse nor
+   * usefully strip, so it is pure cost on the routes that burst hardest, and it drags them into
+   * the fail-closed coupling they were deliberately outside.
    *
-   * What must hold is that nothing is REFUSED: no scope is being exercised by the route, so
-   * there is nothing for a per-scope revoke to refuse, and refusing on a token's unrelated
-   * revoked scope would break the public catalog for a reason the viewer never asked for. The
-   * revoked scope is still stripped, so anything the handler reads off `claims.scopes` honours
-   * it.
+   * The skip keys on "this route exercises NO scope", never on WHICH scope — that distinction is
+   * what separates it from the original hole, and `no-unguarded-block-rest-token.test.ts`
+   * asserts these five still read no scopes.
    */
-  it('any-token mode is SERVED even when a scope is revoked, and the scope is stripped', async () => {
+  it('any-token mode does not consult the marker at all', async () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([SCOPE]) });
-    const seen: string[][] = [];
-    const handler = vi.fn(async (req: NextApiRequest, res: NextApiResponse) => {
-      seen.push([...(req as unknown as { blockClaims: { scopes: string[] } }).blockClaims.scopes]);
-      res.status(200).json({ ok: true });
-    });
-    const route = withBlockScope(handler as never, { endpoint: 'me' } as never);
-    const res = makeRes();
-    await route(makeReq(await mint()) as never, res as never);
-
+    const { handler, res } = await drive(await mint(), null);
     expect(res.statusCode).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(seen[0]).toEqual([OTHER_SCOPE]);
+    expect(
+      lookupMock,
+      'an any-token route paid for a marker GET it can never act on, and joined the ' +
+        'fail-closed coupling with it'
+    ).not.toHaveBeenCalled();
   });
 
   /**

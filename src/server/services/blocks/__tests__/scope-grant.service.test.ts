@@ -479,7 +479,7 @@ describe('scope-grant.service', () => {
       expect(arg.data.id).toMatch(/^augr_/);
     });
 
-    it('is additive: merges new scopes into the existing grant + clears revokedAt', async () => {
+    it('is additive: merges new scopes into the existing grant', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
         id: 'augr_1',
         grantedScopes: ['models:read:self'],
@@ -498,7 +498,38 @@ describe('scope-grant.service', () => {
         new Set(['models:read:self', 'ai:write:budgeted'])
       );
       expect(arg.data.version).toBe('2.0.0');
-      expect(arg.data.revokedAt).toBeNull();
+      // 🔴 IT DOES **NOT** CLEAR `revokedAt`, AND THIS ASSERTION USED TO REQUIRE THAT IT DID.
+      // `revoked_at` had two clearers and closing only `revokeScopes`' left an INSTALL able to
+      // un-revoke: `recordInstallConsent` calls this with no `clearRevocations`, so the
+      // unconditional `revokedAt: null` lifted a whole-grant revoke with no consent prompt. The
+      // exposed population is the hand-written one the `2026-09-16` re-consent oneoff creates.
+      // A PROMPTED re-consent still clears it — the arm below.
+      expect(arg.data).not.toHaveProperty('revokedAt');
+    });
+
+    /**
+     * 🔴 THE PROMPTED PATH STILL UN-REVOKES, which is the flow the oneoff wants: the host
+     * surfaces `needs_consent`, the viewer accepts, and THAT clears both the whole-grant flag
+     * and the suppression for the scopes they just consented to.
+     *
+     * MUTATION THAT MUST KILL IT: make `unrevokeData()` return `{}` unconditionally.
+     */
+    it('a PROMPTED re-consent clears revokedAt', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: ['models:read:self'],
+        revokedScopes: [],
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { recordScopeGrant } = await import('../scope-grant.service');
+      await recordScopeGrant({
+        userId: 1,
+        appBlockId: 'ab_x',
+        version: '2.0.0',
+        scopes: ['ai:write:budgeted'],
+        clearRevocations: true,
+      });
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data.revokedAt).toBeNull();
     });
 
     it('recovers from a concurrent first-write P2002 race via additive update', async () => {
@@ -652,6 +683,43 @@ describe('scope-grant.service', () => {
           'revoked_at — which the 2026-09-16 re-consent oneoff produces deliberately — this ' +
           'clears it and re-grants every other scope on the row with no consent prompt.'
       ).not.toHaveProperty('revokedAt');
+    });
+
+    /**
+     * 🔴 AN ALREADY WHOLE-GRANT-REVOKED ROW CONVEYS NOTHING, SO ANY REVOKE AGAINST IT IS TOTAL —
+     * and the select used to omit `revokedAt`, so this could not even be expressed.
+     *
+     * This is the `2026-09-16` oneoff's row shape: `revoked_at` set, `granted_scopes` still
+     * populated. Reading the raw array made `revokeScopes` report `fullyRevoked: false` and a
+     * non-empty `grantedScopes`, while `liveGrantedScopes` — and therefore every mint, the OAuth
+     * mirror and the permissions page — said the grant conveys nothing. The router hands both
+     * fields straight to the client, so the UI would have contradicted enforcement.
+     *
+     * MUTATION THAT MUST KILL IT: `existing?.grantedScopes ?? []` in place of
+     * `liveGrantedScopes(existing)`.
+     */
+    it('treats an already-revoked row as conveying nothing', async () => {
+      mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce({
+        id: 'augr_1',
+        grantedScopes: ['ai:write:budgeted', 'posts:write:self'],
+        revokedScopes: [],
+        revokedAt: new Date('2026-09-16T00:00:00Z'),
+      });
+      mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
+      const { revokeScopes } = await import('../scope-grant.service');
+      const res = await revokeScopes({
+        userId: 1,
+        appBlockId: 'ab_x',
+        scopes: ['posts:write:self'],
+      });
+      expect(
+        res.fullyRevoked,
+        'reported a partially-granted row for a grant that already conveys nothing — the client ' +
+          'would be shown permissions the mint withholds'
+      ).toBe(true);
+      expect(res.grantedScopes).toEqual([]);
+      // …and `revoked_at` is (re)stamped rather than cleared, so the suspension survives.
+      expect(mockDb.appUserScopeGrant.update.mock.calls[0][0].data.revokedAt).toBeInstanceOf(Date);
     });
 
     /**

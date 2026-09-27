@@ -150,18 +150,43 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
   });
 
   /**
-   * 🔴 FAILS CLOSED, and NOT by stripping the exempt scope. `unavailable` names every REVOKABLE
-   * scope the token carries; removing `models:read:self` as well would refuse traffic no revoke
-   * could ever have touched — a self-inflicted outage on a population the feature does not
-   * apply to.
+   * 🔴 FAILS CLOSED AS A **RETRYABLE** REFUSAL, NOT A SILENT STRIP — AND THE STRIP WAS A REAL
+   * HARM, NOT A STYLE CHOICE.
    *
-   * MUTATION THAT MUST KILL IT: make `revokedScopesForToken`'s `unavailable` arm return
-   * `new Set()` (fail open) or `new Set(scopes)` (strip the exempt one too).
+   * With a strip, `{kind:'unavailable'}` removed every revokable scope, so `pollWorkflow` threw
+   * `FORBIDDEN "block lacks ai:write:budgeted scope"`: a Redis blip reached the SDK as a
+   * permanent manifest/approval problem, whose rational response is to STOP POLLING. A
+   * generation the viewer had already paid for then looked permanently broken — the exact harm
+   * `block-catalog-rate-limit.ts` says never to inflict. This file's own docblock also promised
+   * revocation "fails OPEN … a Redis incident must not take the bridge down", which the strip
+   * had quietly made false.
+   *
+   * So the request is still REFUSED (fail closed) but told it is TRANSIENT.
+   *
+   * MUTATIONS THAT MUST KILL IT: strip instead of throwing; or throw `FORBIDDEN` instead of
+   * `SERVICE_UNAVAILABLE`, which is the difference between "retry" and "give up".
    */
-  it('FAILS CLOSED on an unavailable marker, keeping only the exempt scope', async () => {
+  it('FAILS CLOSED on an unavailable marker, as a RETRYABLE refusal', async () => {
     lookupMock.mockResolvedValue({ kind: 'unavailable' });
-    const out = await authorizeBlockBridgeToken('tok');
-    expect(out.scopes).toEqual([EXEMPT]);
+    await expect(
+      authorizeBlockBridgeToken('tok'),
+      'an unreadable marker was absorbed into a strip, so a bridge proc reports a permanent ' +
+        '"block lacks <scope> scope" for a transient cache fault and the SDK stops polling a ' +
+        'generation the viewer paid for'
+    ).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+  });
+
+  /**
+   * And it says so in words the client can act on — a 503 is the one tRPC 5xx whose message
+   * survives `client-safe-error.ts`, which is why the code and not just the status matters.
+   */
+  it('the unavailable refusal carries a transient, retryable message', async () => {
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    const err = await authorizeBlockBridgeToken('tok').then(
+      () => null,
+      (e) => e as { message: string }
+    );
+    expect(err?.message).toMatch(/temporarily unavailable|retry/i);
   });
 
   it('asks about the token’s own user and app', async () => {
@@ -170,11 +195,36 @@ describe('authorizeBlockBridgeToken strips revoked scopes', () => {
     expect(lookupMock.mock.calls[0][0]).toEqual({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
   });
 
-  it('emits one counter per scope actually removed, and none when nothing is', async () => {
+  /**
+   * 🔴 THE MARKER'S SET IS INTERSECTED WITH THE **TOKEN'S** SCOPES, and the fixture has to be
+   * able to see that. Review measured `claims.scopes.filter((s) => revoked.has(s))` → `[...revoked]`
+   * as a SURVIVING mutant: in every arm the revoked set was a subset of the token's scopes, so
+   * intersection and set were the same list.
+   *
+   * In production they are routinely different — the marker carries the viewer's WHOLE
+   * suppression list for the app, while a token is minted with whatever one page declares. The
+   * mutant would emit counters for refusals that did not happen and widen the retained `scope`
+   * label set with scopes this request never carried.
+   */
+  it('emits one counter per scope actually removed from THIS token', async () => {
+    // The marker names a carried scope AND one the token was not minted with.
+    lookupMock.mockResolvedValue({
+      kind: 'revoked',
+      scopes: new Set([POSTS, 'collections:read:private']),
+    });
+    await authorizeBlockBridgeToken('tok');
+    expect(
+      recordMock.mock.calls.map((c) => c[1]),
+      'the emitter reported a scope this token never carried — it is iterating the marker set ' +
+        'rather than intersecting it with the token'
+    ).toEqual([POSTS]);
+    expect(recordMock.mock.calls.every((c) => c[0] === 'bridge')).toBe(true);
+  });
+
+  it('emits one per removed scope when several are removed, and none when nothing is', async () => {
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([POSTS, BUZZ]) });
     await authorizeBlockBridgeToken('tok');
     expect(recordMock.mock.calls.map((c) => c[1]).sort()).toEqual([BUZZ, POSTS].sort());
-    expect(recordMock.mock.calls.every((c) => c[0] === 'bridge')).toBe(true);
 
     recordMock.mockClear();
     lookupMock.mockResolvedValue({ kind: 'none' });
@@ -213,14 +263,18 @@ describe('the strip runs AFTER the earlier gates', () => {
    * A revoked INSTANCE still wins, with its own message — the consent strip must not turn a
    * refusal into a served-but-narrowed request.
    */
-  it('a revoked instance still throws, and the marker is not consulted', async () => {
+  it('a revoked instance still throws, with its own message', async () => {
     mockIsRevoked.mockResolvedValue(true);
     lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([POSTS]) });
     await expect(authorizeBlockBridgeToken('tok')).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'block instance revoked',
     });
-    expect(lookupMock).not.toHaveBeenCalled();
+    // ⚠️ NO "the marker was not consulted" ASSERTION. It used to be here and it pinned a
+    // SERIALISATION that was removed on purpose: the consent lookup is now STARTED right after
+    // the token verifies, so it pipelines with `isRevoked`'s GETs instead of adding a serial
+    // round trip to every bridge call — including the timer-driven `pollWorkflow`. The instance
+    // refusal still wins, which is what the message above asserts.
   });
 
   /** A non-approved app still throws, ahead of any strip. */
@@ -245,12 +299,13 @@ describe('SEAM: through the REAL primitive', () => {
     lookupMock.mockImplementation((opts) => actual.ConsentRevocation.lookup(opts));
   }
 
-  it('a Redis THROW strips every revokable scope', async () => {
+  it('a Redis THROW becomes a retryable refusal, through the real primitive', async () => {
     const { redisMock } = await import('~/__tests__/mocks/redis.mock');
     await useRealPrimitive();
     redisMock.redis.get.mockRejectedValue(new Error('connection reset'));
-    const out = await authorizeBlockBridgeToken('tok');
-    expect(out.scopes).toEqual([EXEMPT]);
+    await expect(authorizeBlockBridgeToken('tok')).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
   });
 
   it('CONTROL: a marker MISS returns the full set', async () => {

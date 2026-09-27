@@ -1,3 +1,4 @@
+import { recordBlockConsentRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-lifetimes';
 import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
@@ -17,9 +18,19 @@ import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.servi
  *
  * This marker is what makes the revoke take effect at the next REQUEST rather than at the
  * next mint. It is written by `blocks.revokeScopes` in the same mutation as the Postgres
- * write, and read at BOTH token seams — `withBlockScope` (REST) and
- * `authorizeBlockBridgeToken` (tRPC) — which then STRIP the revoked scopes from the
- * verified claims.
+ * write, and read at the TWO token seams that authorize consent-gated scopes —
+ * `withBlockScope` (REST) and `authorizeBlockBridgeToken` (tRPC) — which then STRIP the revoked
+ * scopes from the verified claims.
+ *
+ * ⚠️ "BOTH token seams" WAS WRONG AS A COUNT: there are FOUR `verifyBlockToken` call sites, and
+ * this repo ledgers them as four (`src/shared/constants/block-scope.constants.ts`). The other
+ * two — `resolveSharedContext` (`apps-shared.router.ts`) and `resolveStorageContext`
+ * (`apps/app-storage.service.ts`) — re-verify the raw bearer themselves and do NOT apply
+ * revocations. That is harmless because each authorizes only `apps:storage:*` /
+ * `apps:storage:shared:*`, every one of which is consent-exempt, so no marker can ever name a
+ * scope they check. It is harmless by a PROPERTY, not by construction, so it is asserted:
+ * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts` ledgers which seams
+ * apply revocations and why the other two need not, and fails if either set moves.
  *
  * ## 🔴 STRIPPING, NOT ONLY REFUSING — AND THE FIRST VERSION OF THIS FILE GOT IT WRONG
  *
@@ -73,8 +84,17 @@ import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.servi
  * {@link shouldConsultMarker}: an anon token has no (user, app) pair, and a token carrying
  * no consent-gated scope cannot be affected by any marker. That keeps every
  * `apps:storage:*` and `collections:read:self`/`write:self` app out of the coupling
- * entirely, which measured at 20 of the 29 scope-bound REST routes. It is deliberately NOT
- * narrowed by testing the ROUTE's declared scope — that was the first version's defect.
+ * entirely, which is keyed on the app's MANIFEST, not on the route.
+ *
+ * ⚠️ DO NOT QUOTE "20 of the 29 scope-bound routes" FOR THIS PREDICATE — that figure belongs to
+ * the FIRST version, which tested the route's declared scope, and reading it as this one's
+ * saving is how the perf re-review mis-priced the change. The mint signs the app's whole
+ * effective set, so an app declaring ANY gated scope is looked up on every route including its
+ * exempt-scope ones. The population actually skipped is anon tokens (doubly — the mint strips
+ * gated scopes for them) plus apps whose entire granted set is exempt; enumerated over the
+ * first-party manifests on one box, 12 of 15 carry at least one gated scope, so the skip is a
+ * minority of authed traffic and the fail-closed coupling is WIDER than the first estimate.
+ * Stated plainly here because the honest number is the one that gets acted on.
  *
  * ## Why the value carries the scope set
  *
@@ -251,9 +271,23 @@ export function revokedScopesForToken(
   verdict: ConsentRevocationVerdict,
   scopes: readonly string[]
 ): Set<string> {
+  // 🔴 THE EXEMPT FILTER IS APPLIED TO **BOTH** ARMS, AND IT USED TO GUARD ONLY THE
+  // HYPOTHETICAL ONE. The `unavailable` arm — a set this function invents — was filtered,
+  // while the `revoked` arm — a set read from EXTERNALLY WRITTEN Redis data — was returned
+  // verbatim. That is backwards: the arm carrying untrusted input was the unguarded one.
+  //
+  // Unreachable today only because `blocks.revokeScopes` refuses an exempt scope before
+  // storage, and `revokeScopes`' own docblock says in words that the service does not filter
+  // and "THE CALLER MUST REFUSE AN EXEMPT ONE FIRST". One new caller of that exported
+  // function, or one hand-written `revoked_scopes` row — and this table has a committed
+  // precedent for exactly that — and exempt scopes would be stripped at both seams, which the
+  // same file calls "explicitly NOT the design". Filtering once, ahead of the switch, costs
+  // nothing and makes it unrepresentable.
+  const revokable = (set: Iterable<string>) =>
+    new Set([...set].filter((s) => !isConsentExemptScope(s)));
   if (verdict.kind === 'none') return new Set();
-  if (verdict.kind === 'revoked') return verdict.scopes;
-  return new Set(scopes.filter((s) => !isConsentExemptScope(s)));
+  if (verdict.kind === 'revoked') return revokable(verdict.scopes);
+  return revokable(scopes);
 }
 
 /**
@@ -278,4 +312,29 @@ export function applyRevocations<T extends { scopes: string[] }>(
   const kept = claims.scopes.filter((s) => !revoked.has(s));
   if (kept.length === claims.scopes.length) return claims;
   return { ...claims, scopes: kept };
+}
+
+/**
+ * Emits one counter per scope this request actually LOST, on either seam.
+ *
+ * 🔴 SHARED BECAUSE THE TWO SEAMS HAD ALREADY DIVERGED. REST emitted exactly one increment —
+ * for `opts.requiredScope`, and only on the refusal branch — while the bridge emitted one per
+ * stripped scope. `sum by(scope)` therefore mixed "requests refused" with "scopes stripped",
+ * one bridge request could contribute six, and the case the whole fix was built for (a
+ * `collections:read:private` STRIP with no refusal) emitted nothing at all on the surface where
+ * it happens. The counter's own help text claimed "a flat zero means no viewer has revoked a
+ * scope an in-flight token still carried", which that made false.
+ *
+ * One rule now: one increment per scope removed from THIS token, wherever it was removed. The
+ * refusal keeps its own distinguishable 403 `code`; it does not need a second counter shape.
+ */
+export function recordConsentStrip(
+  surface: 'rest' | 'bridge',
+  tokenScopes: readonly string[],
+  revoked: Set<string>
+): void {
+  if (revoked.size === 0) return;
+  for (const scope of tokenScopes) {
+    if (revoked.has(scope)) recordBlockConsentRevocationRefusal(surface, scope);
+  }
 }

@@ -22,6 +22,9 @@ import {
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
+// The registry predicate, used to keep a RETIRED scope out of the revokable list — see the
+// `revokableScopes` computation for why an unknown string there broke revoke for the whole app.
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import type { ScopeGrantOrigin } from '~/shared/constants/app-surface-provenance';
 // STATIC, unlike the `isMissingColumnError` import inside the catch below — these two are a
 // constant and a pure predicate, and this surface MUST agree with the module that decides
@@ -37,6 +40,7 @@ import {
   liveGrantedScopes,
   logMissingBudgetColumn,
   logMissingRevokedScopesColumn,
+  usableConsentBudget,
 } from '~/server/services/blocks/scope-grant.service';
 
 /**
@@ -552,6 +556,12 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
         // `null` (= "platform cap only"), exactly what the spend path enforces in that
         // same database.
         if (!isMissingColumnError(retryErr)) throw retryErr;
+        // 🔴 BOTH MIGRATIONS ARE NAMED HERE, AND THE REORDER HAD SILENTLY DROPPED ONE. Moving
+        // the revocation log after the retry fixed the wrong-migration line (it used to fire
+        // before anything knew which column was missing) and created a new silent case: a
+        // database missing BOTH columns reaches this arm, so the revocation migration was never
+        // named at all. An operator would have applied one and still been broken.
+        logMissingRevokedScopesColumn('listMyScopeGrants', retryErr);
         logMissingBudgetColumn('listMyScopeGrants', retryErr);
         grants = [];
       }
@@ -566,13 +576,14 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // Postgres enforces the FK), and aligned anyway: one predicate, applied once, is what
       // stops the three writes disagreeing.
       if (!g.appBlock) continue;
-      // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
-      // non-positive stored value → null — so this display can never disagree with
-      // what the spend path enforces.
-      const usable =
-        !g.revokedAt && typeof g.buzzBudgetPerDay === 'number' && g.buzzBudgetPerDay > 0
-          ? Math.floor(g.buzzBudgetPerDay)
-          : null;
+      // 🔴 THE SHARED PROJECTION, NOT A MIRROR OF IT — and the mirror it replaces had ALREADY
+      // DRIFTED. This read "Mirror getConsentBuzzBudget's guards EXACTLY" while omitting
+      // `Number.isFinite`, so display and enforcement disagreed for a non-finite stored value.
+      // Inert (the column is an `Int?`, so `Infinity` cannot be stored and `NaN > 0` is false so
+      // NaN agrees) — but a comment asserting exactness beside an inexact copy reads as coverage.
+      // `usableConsentBudget` is now the single statement, exactly as `liveGrantedScopes` is for
+      // the scope rule two lines below.
+      const usable = usableConsentBudget(g);
       budgetByAppBlock.set(g.appBlockId, usable);
       // 🔴 THE SHARED PROJECTION, NOT A MIRROR OF IT. This used to open
       // "MIRROR `getGrantedScopes` EXACTLY, SUBTRACTION INCLUDED" and re-implement the
@@ -821,7 +832,17 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     // MINT consults, so a local copy would drift from the thing that actually decides — and
     // silently, in the direction that offers a control which records a preference nothing
     // reads.
-    const revokableScopes = consentGatedScopes(displayedScopes);
+    // 🔴 FILTERED TO THE KNOWN VOCABULARY TOO, AND ITS ABSENCE WOULD HAVE BROKEN REVOKE
+    // ENTIRELY FOR SOME APPS. `effectiveBlockScopes` is deliberately NOT registry-filtered (its
+    // own docblock says so — the mint applies that filter), and `consentGatedScopes` only
+    // subtracts the exempt set. So a scope RETIRED from the registry but still present in an
+    // app's `manifest.scopes` AND `approved_scopes` — `block:settings:read`/`write`,
+    // `media:read:owned` — reached this list. `blocks.revokeScopes` refuses unknown strings
+    // all-or-nothing, so a withdraw-all built on this field would have failed the whole call and
+    // the viewer could not revoke `posts:write:self` or `ai:write:budgeted` on that app either.
+    // The individual retired scope is harmless (not mintable, grants nothing); the blast radius
+    // was the other scopes it took down with it.
+    const revokableScopes = consentGatedScopes(displayedScopes).filter((s) => isKnownBlockScope(s));
 
     result.push({
       appBlockId,

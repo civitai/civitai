@@ -3149,10 +3149,15 @@ export const blocksRouter = router({
       const { recordScopeGrant, getGrantedScopes } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
-      // `CONSENT_SPEND_SCOPE`, not the literal. Its own docblock enumerates the sites that
-      // branch on it and says a string repeated at N sites is a predicate that will be wrong
-      // at N−1 of them the first time the vocabulary moves; these two were the copies it was
-      // written to absorb.
+      // `CONSENT_SPEND_SCOPE`, not the literal — along with the ELEVEN identical
+      // `claims.scopes.includes(...)` spend gates elsewhere in this file.
+      //
+      // ⚠️ THIS COMMENT ONCE SAID "these two were the copies it was written to absorb", and
+      // review counted 15 live literals still in this file against 4 uses of the constant. A
+      // docblock that reads as an enumeration while covering 4 of 19 sites is worse than none,
+      // because it stops the next person looking. The sweep is now done for this file's spend
+      // gates; the remaining literals here are not that predicate (a tag string, a manifest
+      // key, a scope LIST member), which is why they are still spelled.
       const grantsSpend = toGrant.includes(CONSENT_SPEND_SCOPE);
       const alreadyGrantsSpend =
         !grantsSpend &&
@@ -3293,12 +3298,15 @@ export const blocksRouter = router({
           message: 'Apps are not available to this account',
         });
       }
-      // NO `status` in the select and no status check — see the docblock. The row is read
-      // only to confirm the app exists (the grant row's FK) and to decide whether the
-      // OAuth mirror needs tearing down.
+      // NO `status` in the select and no status check — see the docblock. The row is read ONLY
+      // to confirm the app exists, because the grant row's FK requires it.
+      //
+      // ⚠️ IT NO LONGER SELECTS `manifest`, AND THE COMMENT THAT SAID IT DID WAS STALE THE MOMENT
+      // THE TEARDOWN STOPPED BRANCHING ON `manifest.auth`. Selecting a JSONB column nothing reads
+      // is the kind of leftover that later reads as a dependency.
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
-        select: { manifest: true },
+        select: { id: true },
       });
       if (!block) throw throwNotFoundError('App block not found');
 
@@ -3348,66 +3356,21 @@ export const blocksRouter = router({
         scopes: input.scopes,
       });
 
-      // ── TEAR DOWN THE OAUTH MIRROR.
+      // ── THE IN-FLIGHT MARKER, THEN THE OAUTH MIRROR.
       //
-      // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE AND A REVOKE THAT IGNORES
-      // IT IS INCOMPLETE. `syncOauthConsentFromGrant` mirrors the grant into a bitmask the
-      // auth hub mints real OAuth access tokens against, and those tokens outlive this
-      // mutation. Deleting the mirror — and the `Access`/`Refresh` keys alongside it — is
-      // what stops them.
+      // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
+      // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
+      // real hole (a Redis failure threw past it, so the mirror was never touched), but
+      // `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator
+      // `DELETE` with NO timeout — so a slow orchestrator delayed the "immediate" half of the
+      // revoke for exactly as long as it was slow. That window is the one the 503 below
+      // apologises for. A `finally` gets both: the marker goes out first, and the teardown runs
+      // whether or not it succeeded.
       //
-      // 🔴 BEFORE THE REDIS PUBLISH, AND UNCONDITIONALLY. Three separate conditions used to
-      // stand between a revoke and this call, and each of them could be false while a live
-      // mirror row existed:
-      //   - it ran AFTER the publish, inside the same function, so a Redis failure threw past
-      //     it and the mirror was never touched at all — the one failure mode the publish's
-      //     own error message tells the viewer was merely "enforcement lags a few minutes";
-      //   - it was gated on `env.APP_BLOCK_OAUTH_TOKENS_ENABLED` being true NOW, which can be
-      //     switched off after rows exist;
-      //   - it was gated on today's `manifest.auth === 'oauth'`, and a publisher push replaces
-      //     `manifest` without re-approval — the very reason this procedure applies no
-      //     manifest ceiling twenty lines above.
-      // `revokeOauthConsentForBlock` is already a no-op when there is no row (it `deleteMany`s
-      // and returns early on a missing AppBlock), so calling it always costs a bounded query
-      // on a cold path and closes all three.
-      //
-      // ⚠️ DELIBERATELY THE COARSE HELPER, on EVERY revoke rather than only a full one. It
-      // drops the whole mirror for this app, so a PARTIAL revoke also ends the app's OAuth
-      // session and the next mint rebuilds a narrower mirror from the grant. That is
-      // over-broad and it is the safe direction: the alternative is recomputing a bitmask
-      // here, which duplicates the sync service's rules at a second site — and a bitmask wrong
-      // in the OTHER direction leaves a revoked scope mintable. A re-login is a visible,
-      // self-service cost; a stale permission bit is neither.
-      //
-      // Best-effort, and that is now a much smaller claim than it was: the durable row is
-      // already written, and this runs before the marker rather than after it, so a failure
-      // here no longer hides behind the publish's error path.
-      {
-        const { revokeOauthConsentForBlock } = await import(
-          '~/server/services/blocks/oauth-consent-sync.service'
-        );
-        await revokeOauthConsentForBlock({
-          userId: ctx.user!.id,
-          appBlockId: input.appBlockId,
-        }).catch(() => {
-          /* the block-token surface is closed by the row above and the marker below */
-        });
-      }
-
-      // 🔴 PUBLISH FAILURES ARE SURFACED, NOT SWALLOWED — the opposite of the re-publish in
-      // `grantScopes`. This is the NARROWING direction: if the marker is not written, an
-      // already-minted token keeps the revoked scope for up to its remaining life (4h for a
-      // dev token), and the viewer has just been told the permission was removed. Telling
-      // them "recorded, but an in-flight session may keep it for a few minutes" is honest;
-      // a silent success is not.
-      //
-      // 🔴 `SERVICE_UNAVAILABLE` (503), NOT `INTERNAL_SERVER_ERROR` — AND THE FIRST VERSION
-      // USED THE 500, WHICH THREW THIS MESSAGE AWAY. `src/server/trpc/client-safe-error.ts`
-      // replaces the message of every `status >= 500 && status !== 503` with a generic
-      // "something went wrong (ref: …)", so the whole point of the careful wording — letting
-      // the viewer tell "recorded, enforcement lags" from "nothing was recorded" — was lost
-      // one layer below the throw, while the test asserting it passed at the procedure
-      // boundary. 503 is that formatter's own carve-out, which is why it is the code here.
+      // 🔴 THE ORDER *WITHIN* THE TEARDOWN IS ALSO LOAD-BEARING and lives in the callee: it
+      // deletes the Access/Refresh keys BEFORE the consent row, because a key with no consent row
+      // resolves a null `buzzLimit` — i.e. no cap — in `bearer-token.ts`.
+      let publishFailed = false;
       try {
         await ConsentRevocation.publish({
           userId: ctx.user!.id,
@@ -3415,6 +3378,61 @@ export const blocksRouter = router({
           revokedScopes: result.revokedScopes,
         });
       } catch {
+        publishFailed = true;
+      } finally {
+        // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE. It mirrors the grant into a
+        // bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive
+        // this mutation. Deleting it — and the `Access`/`Refresh` keys alongside it — is what
+        // stops them.
+        //
+        // 🔴 GATED ON A MIRROR ACTUALLY EXISTING, NOT ON `manifest.auth` OR AN ENV FLAG, AND NOT
+        // UNCONDITIONAL EITHER. Three stale gates each let a live mirror row survive a revoke:
+        // today's `manifest.auth`, which a publisher push replaces without re-approval (the very
+        // reason this procedure applies no manifest ceiling); `APP_BLOCK_OAUTH_TOKENS_ENABLED`,
+        // which can be switched off after rows exist; and position after the publish. Dropping
+        // all gates closed those but overcorrected — the callee is NOT a no-op without a row (an
+        // earlier comment here claimed it was, and that was false): it does two primary
+        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
+        // regardless. One cheap existence read gates all of it on the only condition that
+        // matters.
+        const { revokeOauthConsentForBlock } = await import(
+          '~/server/services/blocks/oauth-consent-sync.service'
+        );
+        await (async () => {
+          const block = await dbRead.appBlock.findUnique({
+            where: { id: input.appBlockId },
+            select: { appId: true },
+          });
+          if (!block) return;
+          const mirror = await dbRead.oauthConsent.findFirst({
+            where: { userId: ctx.user!.id, clientId: block.appId },
+            select: { id: true },
+          });
+          if (!mirror) return;
+          await revokeOauthConsentForBlock({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+          });
+        })().catch(() => {
+          // Best-effort: the durable row is written and the marker has already gone out, so the
+          // block-token surface is closed either way. Failing the mutation here would tell the
+          // viewer nothing was recorded when the half that governs every future mint was.
+        });
+      }
+
+      // 🔴 PUBLISH FAILURES ARE SURFACED, NOT SWALLOWED — the opposite of the re-publish in
+      // `grantScopes`. This is the NARROWING direction: if the marker is not written, an
+      // already-minted token keeps the revoked scope for up to its remaining life (4h for a dev
+      // token), and the viewer has just been told the permission was removed. Telling them
+      // "recorded, but an in-flight session may keep it for a few minutes" is honest; a silent
+      // success is not.
+      //
+      // 🔴 `SERVICE_UNAVAILABLE` (503), NOT `INTERNAL_SERVER_ERROR`. `client-safe-error.ts`
+      // replaces the message of every `status >= 500 && status !== 503`, so under the 500 this
+      // first threw, the careful wording was discarded one layer below the test that asserted it
+      // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
+      // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      if (publishFailed) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
@@ -4107,7 +4125,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4341,7 +4359,7 @@ export const blocksRouter = router({
     )
     .query(async ({ input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4419,7 +4437,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4606,7 +4624,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit: an app authorized to spend the viewer's
       // Buzz on generation can read the subqueue of gens it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4706,7 +4724,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4834,7 +4852,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit/query: an app authorized to spend the
       // viewer's Buzz on generation can publish the outputs it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -5486,7 +5504,7 @@ export const blocksRouter = router({
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. An
@@ -5928,7 +5946,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
@@ -8529,7 +8547,7 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
   }
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
@@ -8617,7 +8635,7 @@ async function submitCustomComfyWorkflow(opts: {
   // missing and must not be counted as the gate. It replaces the author-capability
   // belt that used to sit in this slot, keeping the helper safe on its own terms
   // if it ever gains a caller that does not pre-check.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   // The outer proc already gated this, but re-narrow here (defense-in-depth) so
@@ -9436,7 +9454,7 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
   // already rejected a token missing `ai:write:budgeted`, so this line is not
   // reachable with the scope absent — see estimateCustomComfyWorkflow for why it
   // is written anyway, and why it must not be reported as closing a gap.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
