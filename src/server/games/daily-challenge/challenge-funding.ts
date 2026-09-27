@@ -84,8 +84,11 @@ export async function chargeInitialPrize({
     // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
     // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
     // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
-    // would be silently dropped (createBuzzTransaction dedups on externalTransactionId) — leaving an
-    // unfunded pool. `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
+    // would be REFUSED — leaving an unfunded pool. (Refused, not silently dropped: the header above
+    // records that a retry gets an idempotency `conflict`, and `CreateTransactionResponse` has no
+    // conflict field to report one in band, so it arrives as a throw. Either way the pool goes
+    // unfunded, which is what the suffix prevents.)
+    // `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
     externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
   });
@@ -125,8 +128,7 @@ export async function chargeEntryFees({
   entryFee: number;
   fromAccountType: ChallengeBuzzType;
 }): Promise<ChargeEntryFeesResult> {
-  if (entryFee <= 0 || imageIds.length === 0)
-    return { paidImageIds: imageIds, unpaidImageIds: [] };
+  if (entryFee <= 0 || imageIds.length === 0) return { paidImageIds: imageIds, unpaidImageIds: [] };
 
   const houseAmount = Math.min(entryFee, CHALLENGE_ENTRY_HOUSE_CUT);
   const poolAmount = entryFee - houseAmount;
@@ -201,7 +203,8 @@ export async function chargeEntryFees({
   }
 
   if (unpaidImageIds.length > 0) {
-    const houseOrphans = paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
+    const houseOrphans =
+      paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
     logToAxiom({
       type: 'warning',
       name: 'challenge-entry-fee-partial-charge',

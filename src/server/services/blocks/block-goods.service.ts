@@ -361,6 +361,13 @@ export function blockGoodPayoutTransactionId(
  * retries reading the same newest row derive the SAME key — deliberately: the
  * UNIQUE claim index is what settles them, exactly as within a generation.
  *
+ * 🔴 READ FROM THE PRIMARY, like the post-conflict owner lookup below it. The
+ * row this needs to see was very likely written MILLISECONDS ago by the attempt
+ * that is now being retried, and a replica that has not caught up returns null
+ * — which re-derives the burned key and lands the viewer on a ledger conflict,
+ * the exact outcome this function exists to prevent. Replica lag would turn the
+ * fix into an intermittent version of the bug.
+ *
  * ⚠️ One extra indexed read on the purchase path, served by `bgp_buyer_idx`
  * (`user_id, created_at DESC`). It is not merged into the entitlement read
  * above because they are different tables; the alternative — keeping two
@@ -371,7 +378,7 @@ async function newestSupersededPurchaseId(args: {
   appBlockId: string;
   goodId: string;
 }): Promise<string | null> {
-  const previous = await dbRead.blockGoodPurchase.findFirst({
+  const previous = await dbWrite.blockGoodPurchase.findFirst({
     where: {
       userId: args.buyerUserId,
       appBlockId: args.appBlockId,
@@ -1001,13 +1008,22 @@ async function payBlockGoodOwner(args: {
     //
     // 🔴 EACH LEG IS SKIPPED ONCE IT HAS LANDED, AND THAT IS WHAT MAKES THE
     // RETRY CONVERGE. The comment here used to say a re-run was "deduped by the
-    // ledger rather than double-paying", and that was FALSE: the Buzz client
-    // throws on any non-2xx, so a duplicate `externalTransactionId` is a THROW,
-    // not a no-op. On a mixed-colour payout whose blue leg landed and whose
-    // yellow leg blipped, every retry re-sent blue, collided with itself, and
-    // failed the whole closure — three attempts, no progress, `payouts` left
-    // `[]`, and a later refund therefore clawed back NOTHING while refunding
-    // the buyer in full. Dedupe is ours to do, here.
+    // ledger rather than double-paying", which is not a property this call has.
+    // `createBuzzTransaction`'s response type — `CreateTransactionResponse` in
+    // `packages/civitai-buzz/src/responses.ts` — carries only `transactionId`
+    // and `remainingBalance`. It has NO conflict field, unlike its siblings:
+    // the multi-account response marks each leg `duplicate`, and the bulk one
+    // returns a `conflicts` array. A duplicate on THIS endpoint therefore
+    // cannot be reported in band, so it arrives as a non-2xx, and the client
+    // throws on any non-2xx. `challenge-funding.ts`'s header records the same
+    // ledger behaviour from the other side: a re-charge of an already-paid leg
+    // "conflicts".
+    //
+    // So on a mixed-colour payout whose blue leg landed and whose yellow leg
+    // blipped, every retry re-sent blue, collided with itself, and failed the
+    // whole closure — four attempts, no progress, `payouts` left `[]`, and a
+    // later refund therefore clawed back NOTHING while refunding the buyer in
+    // full. Dedupe is ours to do, here.
     await withRetries(async () => {
       for (const leg of legs) {
         if (landed.has(leg.color)) continue;

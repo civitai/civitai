@@ -166,7 +166,7 @@ function stubCleanDb() {
   // No earlier generation of this purchase: the base key is derived. Stated
   // rather than left to the mock default, because it is what makes every
   // `BUY_KEY` assertion below mean "base generation".
-  dbMock.dbRead.blockGoodPurchase.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.blockGoodPurchase.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.blockGoodPurchase.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.blockGoodPurchase.updateMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.blockGoodPurchase.create.mockResolvedValue({});
@@ -625,7 +625,7 @@ describe('purchaseBlockGood — the money path', () => {
     });
     // The generation now comes from the PURCHASE row, not the entitlement —
     // see `newestSupersededPurchaseId`.
-    dbMock.dbRead.blockGoodPurchase.findFirst.mockResolvedValue({ id: 'bgp_FIRST' });
+    dbMock.dbWrite.blockGoodPurchase.findFirst.mockResolvedValue({ id: 'bgp_FIRST' });
     const result = await purchaseBlockGood(purchaseInput());
     expect(result.ok).toBe(true);
 
@@ -644,7 +644,7 @@ describe('purchaseBlockGood — the money path', () => {
     // 🔴 …and it is only searching within THIS (buyer, app, good). A lookup that
     // dropped one of the three would supersede an unrelated purchase and derive
     // a key that has nothing to do with this good.
-    expect(dbMock.dbRead.blockGoodPurchase.findFirst).toHaveBeenCalledWith(
+    expect(dbMock.dbWrite.blockGoodPurchase.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           userId: BUYER,
@@ -818,7 +818,7 @@ describe('purchaseBlockGood — the money path', () => {
     expect(typeof tombstone.data.refundReason).toBe('string');
 
     // The retry: that row is now the newest superseded generation.
-    dbMock.dbRead.blockGoodPurchase.findFirst.mockResolvedValue({ id: firstPurchaseId });
+    dbMock.dbWrite.blockGoodPurchase.findFirst.mockResolvedValue({ id: firstPurchaseId });
     const second = await purchaseBlockGood(purchaseInput());
     expect(second.ok).toBe(true);
 
