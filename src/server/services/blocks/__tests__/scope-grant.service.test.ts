@@ -1577,6 +1577,9 @@ describe('scope-grant.service', () => {
       expect(isMissingColumnError(undefined)).toBe(false);
       expect(isMissingColumnError('P2022')).toBe(false);
       expect(isMissingColumnError({ code: 'P2000', meta: 'P2022' })).toBe(false);
+      // The fifth input the comment above names — it had no arm for one round, so the prose and the
+      // assertions were different populations.
+      expect(isMissingColumnError(42703)).toBe(false);
     });
   });
 
@@ -1649,10 +1652,25 @@ describe('scope-grant.service', () => {
       return -1;
     }
 
-    it('every logToAxiom(...) is followed by .catch(', () => {
-      const src = stripComments(
-        fs.readFileSync(path.resolve(__dirname, '../scope-grant.service.ts'), 'utf8')
-      );
+    /**
+     * The handled-rejection predicate, at DESCRIBE scope so the real scan and its positive control
+     * grade the SAME regex. Two copies would let the guard drift from the thing that certifies it.
+     */
+    const HANDLED = /^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/;
+
+    /**
+     * 🔴 EVERY TAIL THAT FOLLOWS A `logToAxiom(...)` CALL IN `source` — THE ONE CODE PATH THE REAL
+     * SCAN AND ITS POSITIVE CONTROL BOTH RUN.
+     *
+     * Extracted because the control was MEASURED not to cover the scan's own slicing: with the
+     * probe computing its slice independently, reinstating the 4096-character window — the exact
+     * defect round 11 removed — SURVIVED it, and so did reinstating the 40-character one. That is
+     * the "verified in isolation" seam: two halves each tested, the seam between them owned by
+     * nobody. One helper makes a window, a lost site or a broken paren walk fail the control
+     * instead of waiting for a reviewer to re-measure it by hand.
+     */
+    function callTails(source: string): string[] {
+      const src = stripComments(source);
       // 🔴 `indexOf`, NOT `regex.exec` IN A `while` — AND THAT IS NOT STYLE. The first draft used
       // `while ((m = re.exec(src)) !== null)`, which advances only while the regex carries the `g`
       // flag: a later edit dropping it makes this loop spin FOREVER, so the suite HANGS instead of
@@ -1660,14 +1678,8 @@ describe('scope-grant.service', () => {
       // scored SURVIVED by a driver that never got a verdict. A hang is the worst failure mode a
       // guard can have, because it reads as infrastructure trouble rather than as a finding.
       // An `indexOf` walk cannot regress that way: the cursor is advanced explicitly.
-      const sites: string[] = [];
       const NAME = 'logToAxiom';
-      /**
-       * Hoisted so the assertion can MATCH the whole tail (see the no-window note below) while
-       * REPORTING only a short prefix — otherwise a failure prints the rest of the module and the
-       * offending call is unfindable in the output.
-       */
-      const HANDLED = /^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/;
+      const tails: string[] = [];
       for (let from = src.indexOf(NAME); from !== -1; from = src.indexOf(NAME, from + 1)) {
         const open = src.indexOf('(', from + NAME.length);
         // Only a CALL counts. Anything between the name and the next `(` that is not whitespace
@@ -1691,8 +1703,15 @@ describe('scope-grant.service', () => {
         // 1,000 `RE.test` calls over the whole ~87 KB module run in ~0.06 ms, and the
         // comment-consuming alternation's adversarial input (20,000 alternating `" /"` pairs) is
         // FASTER than plain spaces — no catastrophic backtracking.
-        sites.push(src.slice(end));
+        tails.push(src.slice(end));
       }
+      return tails;
+    }
+
+    it('every logToAxiom(...) is followed by .catch(', () => {
+      const sites = callTails(
+        fs.readFileSync(path.resolve(__dirname, '../scope-grant.service.ts'), 'utf8')
+      );
       // 🔴 POSITIVE CONTROL, AND ITS FLOOR IS THE DERIVED COUNT — **THREE**, not two.
       // `logMissingBudgetColumn`, `logMissingRevokedScopesColumn` and the pre-migration
       // re-consent refusal. (This comment said "two sites" on its first draft, counting only the
@@ -1707,11 +1726,20 @@ describe('scope-grant.service', () => {
           '— check the regex and the comment stripper before believing a green result here'
       ).toBeGreaterThanOrEqual(3);
       for (const after of sites) {
+        // 🔴 THE BOOLEAN IS THE VERDICT AND THE PREFIX RIDES IN THE MESSAGE. The previous draft
+        // asserted `` `${HANDLED.test(after)} :: ${prefix}` `` against `/^true ::/`, which made the
+        // REPORTING FORMAT part of the verdict — renaming the separator failed the guard, reporting
+        // "does not swallow its own rejection" about a call that handles it perfectly: the
+        // misleading-cause class this file already documents for `endOfCall`, one level up. It also
+        // opened a hardcode surface the plain form never had — replacing `HANDLED.test(after)` with
+        // a literal `true` SURVIVED, because the constant hid inside a template string whose
+        // assertion read `/^true ::/`. Round-12 review.
         expect(
-          `${HANDLED.test(after)} :: ${after.slice(0, 60).replace(/\n/g, '\\n')}`,
+          HANDLED.test(after),
           'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
             'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
-            'it contradicts the neighbouring comment promising logging can never break the path.'
+            'it contradicts the neighbouring comment promising logging can never break the path. ' +
+            `Offending tail: ${after.slice(0, 60).replace(/\n/g, '\\n')}`
           // 🔴 A REAL HANDLER IS REQUIRED, AND THIS MATCHER TOOK **THREE** DRAFTS, EACH FIXING A
           // HAZARD THE PREVIOUS ONE PASSED. `.catch()`, `.catch(undefined)`, `.catch(null)` and
           // `.catch(void 0)` are all pass-throughs — the rejection stays unhandled — so each is
@@ -1755,7 +1783,89 @@ describe('scope-grant.service', () => {
           // regex alone — which is why it was invisible to the previous round's pure-function
           // check. `(?:\s|//[^\n]*)*` consumes both, and a trailing comment FOLLOWED by a real
           // handler still passes.
-        ).toMatch(/^true ::/);
+        ).toBe(true);
+      }
+    });
+
+    /**
+     * 🔴 THE GUARD'S OWN CORRECTNESS IS PINNED HERE, AND FOR FOUR DRAFTS IT WAS NOT.
+     *
+     * The scan above can only fail on what the real module happens to contain, and the real module
+     * contains no pathological `.catch(`. So every hole this matcher has had — and it has had one
+     * per draft — was invisible to CI and found only by a reviewer re-measuring it in a throwaway
+     * script. Round-12 review made that concrete: reinstating the 4096-character window, the exact
+     * defect the previous round removed, SURVIVED the whole suite.
+     *
+     * This arm runs the LIVE pipeline — the same `callTails` (stripper, `indexOf` walk, `endOfCall`,
+     * unbounded slice) and the same `HANDLED` — over synthetic tails whose classification is known,
+     * so a future draft that reintroduces any of those holes fails HERE.
+     *
+     * 🔴 THE SET IS THE HISTORICAL ONE, NOT AN IMAGINED ONE. Every hazard below actually slipped
+     * through some draft. A battery built from mutations I could think of would have missed the two
+     * that mattered — a trailing line comment surviving the stripper's line-start anchor, and a
+     * whitespace run longer than the scan window — because neither is a shape anyone would guess.
+     *
+     * 🔴 WHAT THIS ARM STILL CANNOT SEE, measured so nobody re-chases it. Hardcoding either
+     * assertion's verdict — the scan's `HANDLED.test(after)` to `true`, or this arm's
+     * `HANDLED.test(tails[0])` to `kind === 'SAFE'` — SURVIVES, and no amount of cross-grading fixes
+     * it: a guard cannot guard its own assertion. Both are conspicuous in a diff, which is the whole
+     * defence. Also surviving, and declared elsewhere too: `stripComments` reduced to the identity
+     * function, because the module holds no comment carrying the call shape AND the matcher's own
+     * lookahead consumes line comments — the stripper is defence against a future prose mention,
+     * not a working part today.
+     *
+     * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
+     * reverted to draft 1 or draft 3, a matcher matching everything or nothing, and dropping the
+     * walk's is-this-a-call guard all go red — on this arm, on the scan, or on both.
+     */
+    it('POSITIVE CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
+      const WIDE = ' '.repeat(5000);
+      const cases: Array<[kind: 'HAZARD' | 'SAFE', tail: string]> = [
+        // Pass-throughs: the rejection stays unhandled. Each passed at least one earlier draft.
+        ['HAZARD', ''],
+        ['HAZARD', '.catch()'],
+        ['HAZARD', '.catch( )'],
+        ['HAZARD', '.catch(undefined)'],
+        ['HAZARD', '.catch( undefined )'],
+        ['HAZARD', '.catch(null)'],
+        ['HAZARD', '.catch(void 0)'],
+        // Survived the `^[ \t]*//`-anchored stripper (round 10).
+        ['HAZARD', '.catch( // why\n)'],
+        // Lay past the scan window, so the NEGATIVE lookahead succeeded (rounds 10 and 11).
+        ['HAZARD', `.catch(${WIDE})`],
+        ['HAZARD', `.catch(${WIDE}undefined)`],
+        // Real handlers, which must keep passing.
+        ['SAFE', '.catch(() => {})'],
+        ['SAFE', '.catch( () => {} )'],
+        ['SAFE', '.catch(String)'],
+        ['SAFE', '.catch((e) => void e)'],
+        ['SAFE', '.catch( // why\n () => {})'],
+        ['SAFE', `.catch(${WIDE}() => {})`],
+        // `\b` boundaries: an identifier that merely STARTS with a forbidden word is a handler.
+        ['SAFE', '.catch(nullHandler)'],
+        ['SAFE', '.catch(voidHandler)'],
+      ];
+      // Non-vacuous, and BOTH directions represented — an all-SAFE set passes with the matcher
+      // deleted, an all-HAZARD set passes with it always-false, and an empty set asserts nothing.
+      expect(cases.length).toBeGreaterThanOrEqual(18);
+      expect(cases.filter(([k]) => k === 'HAZARD').length).toBeGreaterThanOrEqual(8);
+      expect(cases.filter(([k]) => k === 'SAFE').length).toBeGreaterThanOrEqual(8);
+
+      for (const [kind, tail] of cases) {
+        // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
+        // computes its own slice is blind to the scan's slicing, which is how both historical
+        // windows survived this arm's first draft.
+        const tails = callTails(`logToAxiom({ a: 1 })${tail};`);
+        const shown = JSON.stringify(tail.replace(WIDE, '<5000 spaces>'));
+        expect(tails.length, `the pipeline found ${tails.length} calls, not 1, for ${shown}`).toBe(
+          1
+        );
+        expect(
+          HANDLED.test(tails[0]),
+          `${kind} shape misclassified by the live scan pipeline: ${shown}. A HAZARD that passes ` +
+            'means the guard has a hole; a SAFE shape that fails means it will false-fail on a ' +
+            'correct refactor.'
+        ).toBe(kind === 'SAFE');
       }
     });
   });
