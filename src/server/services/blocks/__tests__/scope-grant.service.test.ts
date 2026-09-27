@@ -1571,8 +1571,10 @@ describe('scope-grant.service', () => {
       // `undefined`, `'P2022'`, `42703` and `{ meta: 'P2022' }` all returned `false` and NONE threw,
       // because optional chaining already handled them. So the two `typeof` guards are equivalent
       // mutants — removing either changes no observable answer, and round-11 review scored both
-      // SURVIVED. These four arms pin an invariant the bug never violated; they are worth keeping
-      // and must not be counted as coverage of a defect.
+      // SURVIVED. These FIVE arms pin an invariant the bug never violated; they are worth keeping
+      // and must not be counted as coverage of a defect. (It said "four" for one round, before the
+      // fifth input named above finally got an arm — the prose and the assertions were different
+      // populations, and then the count was.)
       expect(isMissingColumnError(null)).toBe(false);
       expect(isMissingColumnError(undefined)).toBe(false);
       expect(isMissingColumnError('P2022')).toBe(false);
@@ -1740,7 +1742,7 @@ describe('scope-grant.service', () => {
             'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
             'it contradicts the neighbouring comment promising logging can never break the path. ' +
             `Offending tail: ${after.slice(0, 60).replace(/\n/g, '\\n')}`
-          // 🔴 A REAL HANDLER IS REQUIRED, AND THIS MATCHER TOOK **THREE** DRAFTS, EACH FIXING A
+          // 🔴 A REAL HANDLER IS REQUIRED, AND THIS MATCHER TOOK **FOUR** DRAFTS, EACH FIXING A
           // HAZARD THE PREVIOUS ONE PASSED. `.catch()`, `.catch(undefined)`, `.catch(null)` and
           // `.catch(void 0)` are all pass-throughs — the rejection stays unhandled — so each is
           // this guard's exact hazard, spelled differently.
@@ -1805,14 +1807,21 @@ describe('scope-grant.service', () => {
      * that mattered — a trailing line comment surviving the stripper's line-start anchor, and a
      * whitespace run longer than the scan window — because neither is a shape anyone would guess.
      *
-     * 🔴 WHAT THIS ARM STILL CANNOT SEE, measured so nobody re-chases it. Hardcoding either
-     * assertion's verdict — the scan's `HANDLED.test(after)` to `true`, or this arm's
-     * `HANDLED.test(tails[0])` to `kind === 'SAFE'` — SURVIVES, and no amount of cross-grading fixes
-     * it: a guard cannot guard its own assertion. Both are conspicuous in a diff, which is the whole
-     * defence. Also surviving, and declared elsewhere too: `stripComments` reduced to the identity
-     * function, because the module holds no comment carrying the call shape AND the matcher's own
-     * lookahead consumes line comments — the stripper is defence against a future prose mention,
-     * not a working part today.
+     * 🔴 WHAT THIS ARM STILL CANNOT SEE — A CLASS, NOT A LIST, and the first draft of this
+     * paragraph named two instances and read as exhaustive. The class is **any mutation of an arm's
+     * own scaffolding**: its verdict (hardcoding the scan's `HANDLED.test(after)` to `true`, or this
+     * arm's `HANDLED.test(tails[0])` to `kind === 'SAFE'`), its loop bounds (`cases.slice(0, 0)`,
+     * which satisfies every floor and asserts nothing), or its own sanity assertions (deleting this
+     * arm's `tails.length === 1` check, which is what catches a probe/module divergence). No amount
+     * of cross-grading fixes any of them: a guard cannot guard its own assertion. Every one is
+     * conspicuous in a diff, which is the whole defence.
+     *
+     * Also surviving, for a different reason — the component is INERT rather than unguarded:
+     * `stripComments` reduced to the identity function, or applied only to long inputs so probe and
+     * module diverge. Stripping is provably the identity for every probe body here, because the
+     * line-comment replace is line-start-anchored and no probe carries a block comment. The
+     * stripper is defence against a future prose mention of the call shape, not a working part
+     * today.
      *
      * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
      * reverted to draft 1 or draft 3, a matcher matching everything or nothing, and dropping the
@@ -1847,8 +1856,17 @@ describe('scope-grant.service', () => {
       ];
       // Non-vacuous, and BOTH directions represented — an all-SAFE set passes with the matcher
       // deleted, an all-HAZARD set passes with it always-false, and an empty set asserts nothing.
+      //
+      // 🔴 EVERY FLOOR SITS **AT** ITS DERIVED COUNT, AND TWO SLACK ON THE HAZARD SIDE RE-HID THE
+      // WINDOW DEFECT. The first draft asserted `HAZARD >= 8` against a derived 10, and round-13
+      // review walked straight through it: swapping the two `WIDE` hazards for two SAFE cases keeps
+      // all three floors satisfied (18 total, 8 hazard, 10 safe), and that swap COMBINED with the
+      // 4096-character window reinstated SURVIVED — the exact defect this arm exists to catch,
+      // invisible again. The total floor alone does not save it, because adding SAFE cases pays back
+      // what removing HAZARD ones cost. Same rule the site floor twenty lines up already states in
+      // words: a floor BELOW the real count lets coverage shrink silently.
       expect(cases.length).toBeGreaterThanOrEqual(18);
-      expect(cases.filter(([k]) => k === 'HAZARD').length).toBeGreaterThanOrEqual(8);
+      expect(cases.filter(([k]) => k === 'HAZARD').length).toBeGreaterThanOrEqual(10);
       expect(cases.filter(([k]) => k === 'SAFE').length).toBeGreaterThanOrEqual(8);
 
       for (const [kind, tail] of cases) {
