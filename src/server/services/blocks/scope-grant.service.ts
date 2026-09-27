@@ -720,12 +720,17 @@ export async function recordScopeGrant(opts: {
     //       no early return before its read; that read selects `revokedScopes` and has no narrow
     //       fallback, so the P2022 is rethrown as `PRECONDITION_FAILED` — and the WRITE path
     //       converts the same error through the same helper. So there is no revoke to perform, and
-    //       `incoming`'s ceiling bound closes the only other route. ⚠️ One sub-case is REASONED,
-    //       not measured, and a mock cannot settle it: with no matching row, the refusal still
-    //       holds only because Postgres raises 42703 at PARSE time, i.e. row-independently. At the
-    //       mock boundary a P2022 rejection is the entire observable, so an arm asserting it would
-    //       be measuring the fixture. Said plainly rather than covered by a test that proves
-    //       nothing.
+    //       `incoming`'s ceiling bound closes the only other route. ⚠️ One sub-case is UNVERIFIED
+    //       and a mock cannot settle it: with no matching row the refusal still holds, because
+    //       Prisma rejects the query rather than returning rows. Whether that is row-INDEPENDENT at
+    //       the database is not established anywhere in this repo, and at the mock boundary a P2022
+    //       rejection is the entire observable, so an arm asserting it would be measuring the
+    //       fixture. ⚠️ An earlier draft explained it as "Postgres raises 42703 at PARSE time" —
+    //       withdrawn twice over: nothing in-tree measures when 42703 is raised, and 42703 is the
+    //       RAW-SQL code (`app-access.service.ts` matches `P2022 || 42703` precisely because they
+    //       are different surfaces) while `isMissingColumnError` here matches `P2022` only. The
+    //       typed client is what `revokeScopes` uses, so P2022 is the right code and 42703 never
+    //       arises — citing it explained a real refusal with a mechanism from the wrong surface.
     // Hence "no viewer action can empty the residual" is true, and unreachable is the right word —
     // for reason (c). ⚠️ The residual becomes escapable the instant the migration lands, which is
     // harmless because this branch is unreachable by then. Stated because (b) would mislead
@@ -763,7 +768,7 @@ export async function recordScopeGrant(opts: {
         logToAxiom(
           {
             name: 'app-blocks-scope-grant',
-            // 🔴 `warning`, NOT `error`, AND IT WAS `error`. `PRECONDITION_FAILED` is a member of
+            // 🔴 `info`, AND IT HAS BEEN `error` THEN `warning`. `PRECONDITION_FAILED` is a member of
             // `CLIENT_FAULT_TRPC_CODES`, whose docblock in `~/server/logging/client` says these
             // "are NOT incidents and must never be logged at error severity, or they drown out
             // the real server-side failures on the error board" — and a line carrying
@@ -782,9 +787,23 @@ export async function recordScopeGrant(opts: {
             // The OPERATOR's actionable
             // cause (missing column, apply the migration) is already on that board once per
             // process via `logMissingRevokedScopesColumn`; this event exists to make the
-            // viewer-facing CONSEQUENCE countable, which `warning` does without competing with
-            // real incidents. Round-7 review.
-            type: 'warning',
+            // viewer-facing CONSEQUENCE countable, and `info` does that without competing with
+            // real incidents.
+            //
+            // 🔴 `info` IS PRESCRIBED, NOT CHOSEN — AND ROUND 7 PICKED `warning` HAVING READ ONLY
+            // HALF THE DOCBLOCK IT QUOTED. Twenty lines below the "never at error severity"
+            // sentence, the same file names the severity for exactly this class: "CLIENT fault
+            // (BAD_REQUEST / NOT_FOUND / CONFLICT / PRECONDITION_FAILED that still reach the
+            // chokepoint) → the light `safeError` shape + `type: 'info'`, so normal user-feedback
+            // rejections never flood the error stream" — and `buildCentralErrorLog` mechanically
+            // returns only `'error' | 'info'`, never `'warning'`. Round 8 concluded "there is no
+            // `info` convention" by comparing against a service that logs NOTHING, while the
+            // governing text sat in the file already being quoted. `warning` was defensible (178
+            // uses in `src/server`) but it was a judgement dressed as compliance, and it rested on
+            // a second unmeasured claim — that `warning` does not reach the error board — which
+            // nothing in this repo measures for any type other than `error`. Following the
+            // prescription removes the claim instead of adding one. Round-9 review.
+            type: 'info',
             message:
               `Refused a prompted RE-CONSENT: this database has no ` +
               `app_user_scope_grants.revoked_scopes, so a whole-grant revoke cannot be migrated ` +

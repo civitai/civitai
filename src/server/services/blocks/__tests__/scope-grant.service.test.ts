@@ -1555,13 +1555,18 @@ describe('scope-grant.service', () => {
    *
    * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
    * SPELLED guard, and it errs in BOTH directions by one shape each:
-   *   - FALSE PASS: `.catch()`, `.catch(undefined)` and `.catch(null)` are pass-throughs that
-   *     leave the rejection unhandled. The matcher below rejects all three by name; a variable
+   *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
+   *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
+   *     name, spaced or not — it took three drafts to get there, see its own comment. A variable
    *     that merely HOLDS `undefined` is beyond a source scan and is not claimed.
-   *   - FALSE FAIL: `await logToAxiom(...)` inside a `try/catch` is SAFE and carries no `.catch(`,
-   *     so this would go red on a correct refactor. Accepted: a visible, cheap false failure is
-   *     the right direction for a guard on a promise-rejection hazard, and `.then(undefined, fn)`
-   *     — also safe — is rejected for the same reason.
+   *   - FALSE FAIL: `.then(undefined, fn)` is SAFE and is rejected — accepted, because a visible
+   *     cheap false failure is the right direction for a promise-rejection guard. ⚠️ An earlier
+   *     draft also listed `await logToAxiom(...)` inside a `try/catch` here, presenting it as a
+   *     live risk; it is NOT REACHABLE at any of the three sites, because all three enclosing
+   *     functions (`logMissingBudgetColumn`, `logMissingRevokedScopesColumn`, `unrevokeData`) are
+   *     SYNCHRONOUS — the `await` variant is a transform error, not a guard signal, which is also
+   *     what made two mutants in two successive audits invalid. It would only become reachable if
+   *     a site's enclosing function were first made `async`.
    */
   describe('logToAxiom call sites cannot break a consent path', () => {
     function stripComments(src: string): string {
@@ -1634,13 +1639,25 @@ describe('scope-grant.service', () => {
           'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
             'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
             'it contradicts the neighbouring comment promising logging can never break the path.'
-          // 🔴 A REAL HANDLER IS REQUIRED. `.catch()`, `.catch(undefined)` and `.catch(null)` are
-          // all pass-throughs — the rejection stays unhandled — and all three SURVIVED the first
-          // draft of this matcher (`.catch(` alone). ⚠️ The SECOND draft, `\(\s*[^)\s]`, closed
-          // only the bare one: `undefined` starts with a non-`)` character, so it sailed through.
-          // Measured both times rather than reasoned. A variable that merely HOLDS `undefined` is
-          // beyond any source scan and is not claimed.
-        ).toMatch(/^\s*\.catch\s*\(\s*(?!\)|undefined\b|null\b)/);
+          // 🔴 A REAL HANDLER IS REQUIRED, AND THIS MATCHER TOOK **THREE** DRAFTS, EACH FIXING A
+          // HAZARD THE PREVIOUS ONE PASSED. `.catch()`, `.catch(undefined)`, `.catch(null)` and
+          // `.catch(void 0)` are all pass-throughs — the rejection stays unhandled — so each is
+          // this guard's exact hazard, spelled differently.
+          //   draft 1 `\.catch\s*\(` — passed all four.
+          //   draft 2 `\(\s*[^)\s]` — closed only `.catch()`; `undefined` starts with a non-`)`
+          //     character and sailed through.
+          //   draft 3 `\(\s*(?!\)|undefined\b|null\b)` — ⚠️ passed SEVEN shapes, and the cause was
+          //     BACKTRACKING, not the alternation: with `\s*` OUTSIDE the lookahead and optional,
+          //     a failed lookahead on `)` is retried with `\s*` matching zero characters, and
+          //     `" )"` starts with none of the three names. So every spaced variant —
+          //     `.catch( )`, `.catch( undefined )`, `.catch( null )`, `.catch(\n)` — passed, as did
+          //     `void 0`, which was named nowhere.
+          // 🔴 THE FIX IS THAT THE LOOKAHEAD OWNS THE WHITESPACE, so there is nothing to backtrack
+          // into. Measured, not reasoned, all three times — and validated in BOTH directions below:
+          // eight hazard shapes red, three handler shapes (arrow, named, spaced arrow) green, and
+          // `.then(undefined, fn)` red by design. A variable that merely HOLDS `undefined` is beyond
+          // any source scan and is not claimed.
+        ).toMatch(/^\s*\.catch\s*\((?!\s*(?:\)|undefined\b|null\b|void\b))/);
       }
     });
   });
