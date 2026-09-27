@@ -3211,11 +3211,18 @@ export const blocksRouter = router({
       // suppression really was lifted, and the marker should go so the app stops being refused
       // before the TTL elapses.
       //
-      // ⚠️ THIS USED TO GROUP "a database without the column" WITH THE `null` CASE, AND THAT IS
-      // NO LONGER TRUE — corrected by round-5 review, which found the claim falsified by the
-      // round-4 commit itself. A pre-migration database now returns `[]` when it LIFTS a
-      // whole-grant revoke (nothing is withheld afterwards, which is the honest value) and
-      // throws `PRECONDITION_FAILED` when it cannot, so it never reaches this line refusing.
+      // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
+      // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
+      // review pointed out the round-4 commit had falsified that, and the correction then listed
+      // only the two new cases — which over-corrected, as round 6 measured. All three:
+      //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
+      //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
+      //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
+      //     The original sentence was right about this one.
+      //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
+      //     value: nothing is withheld afterwards, so a stale marker must go.
+      //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
+      //     never reached refusing.
       // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
       // database before storage, so no marker can exist to delete — and in the one shape where
       // one could (migration applied, revoke taken, migration rolled back) deleting it after a

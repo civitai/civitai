@@ -337,6 +337,39 @@ describe('scope-grant.service', () => {
     });
 
     /**
+     * 🔴 THE TWO REFUSAL MESSAGES MUST DIFFER, AND NOTHING PINNED THAT.
+     *
+     * Both refusal arms import their constant and assert equality against it, which is this file's
+     * idiom and is right — it kills a mutant by TEXT rather than by "something threw". But it
+     * makes each constant's own value unpinned, and round-6 review measured the consequence:
+     * redefining `CONSENT_RECONSENT_UNAVAILABLE_MESSAGE` as `= CONSENT_REVOKE_UNAVAILABLE_MESSAGE`
+     * SURVIVED all 264 tests. A routine "dedupe these two near-identical strings" refactor would
+     * then tell a viewer who tried to UPDATE permissions that "Withdrawing a permission is not
+     * available…", with a fully green suite — and it would collapse the very distinction the
+     * mutant that swaps one message for the other is supposed to be caught by.
+     *
+     * Secondary: were they identical, `rethrowMissingRevokedScopesColumn`'s throw (same code, the
+     * revoke message) would also satisfy the re-consent arm. Not reachable from `recordScopeGrant`
+     * today — that helper is called only on the two `revokeScopes` paths — but the arm would stop
+     * being able to tell the two apart.
+     *
+     * Pinned on the DISTINCTION a viewer depends on (which verb they are told about), not on the
+     * full sentences, so ordinary copy edits stay free.
+     */
+    it('the re-consent and revoke refusals do not say the same thing', async () => {
+      const { CONSENT_RECONSENT_UNAVAILABLE_MESSAGE, CONSENT_REVOKE_UNAVAILABLE_MESSAGE } =
+        await import('../scope-grant.service');
+      expect(
+        CONSENT_RECONSENT_UNAVAILABLE_MESSAGE,
+        'the two refusals collapsed into one string, so the re-consent path now tells the viewer ' +
+          'their WITHDRAWAL is unavailable — and the mutant that swaps the messages becomes ' +
+          'undetectable'
+      ).not.toEqual(CONSENT_REVOKE_UNAVAILABLE_MESSAGE);
+      expect(CONSENT_RECONSENT_UNAVAILABLE_MESSAGE).toMatch(/Updating/);
+      expect(CONSENT_REVOKE_UNAVAILABLE_MESSAGE).toMatch(/Withdrawing/);
+    });
+
+    /**
      * 🔴 THE PRE-MIGRATION POPULATION IS THE ONE THE MIGRATION WAS WRITTEN FOR, AND IT WAS THE
      * ONE IT DID NOT REACH. `existingRevokedAt` was assigned on the WIDE read only, so the narrow
      * fallback left it `null`, `unrevokeData` took `return { revokedAt: null }`, and a partial
@@ -349,11 +382,21 @@ describe('scope-grant.service', () => {
      * `revoked_at` PREDATES this migration, so the narrow select can read it for free.
      *
      * The migration itself is not expressible here (no column to write), so the clear is
-     * CONDITIONAL: a partial re-consent leaves the viewer withheld rather than over-granted.
+     * CONDITIONAL — and a partial re-consent now **THROWS** rather than merely leaving the viewer
+     * withheld. ⚠️ THIS PROSE DESCRIBED THE BEHAVIOUR IT REPLACED for one round: returning `{}`
+     * left `grantScopes` answering `{ ok: true }` while changing nothing, permanently, because the
+     * ceiling on both `incoming` and the revoke UI means no viewer action can empty the residual.
+     * Refusing is the same fail-closed direction, said out loud — `revokeScopes` already refuses
+     * this same database with `PRECONDITION_FAILED` and an exported message.
      *
      * MUTATIONS THAT MUST KILL IT: drop `revokedAt: true` from the narrow select; drop the
      * `existingRevokedAt = narrow?.revokedAt ?? null` assignment; make the
-     * `!revokedScopesColumnAvailable` branch `return { revokedAt: null }` unconditionally.
+     * `!revokedScopesColumnAvailable` branch `return { revokedAt: null }` unconditionally; revert
+     * the refusal to `return {}` (which is also this arm's POSITIVE CONTROL — it resolves instead
+     * of rejecting, i.e. exactly the pre-change behaviour); throw a bare `Error` instead of a
+     * `TRPCError`; keep the code but carry `CONSENT_REVOKE_UNAVAILABLE_MESSAGE`; change the code
+     * while keeping the message; compute `residual` in the wrong direction, or drop its filter;
+     * flip the boundary to `>= 0`.
      */
     it('🔴 REFUSES a PARTIAL re-consent out loud, rather than lifting or silently no-op-ing', async () => {
       mockDb.appUserScopeGrant.findUnique
