@@ -841,9 +841,9 @@ describe('purchaseBlockGood — the money path', () => {
     // `duplicate` flag, so it may instead answer 200 with legs that reference
     // an EARLIER request's transactions — and this fixture is deliberately
     // shaped so every other check passes: `totalAmount` equals the price and
-    // `transactionCount` is 1, so the partial-debit refusal below cannot be
-    // what catches it. Without this branch the entitlement is granted and the
-    // owner is paid 70% of Buzz that did not move on this attempt.
+    // `transactionCount` is 1, so the partial-debit refusal cannot be what
+    // catches it. Without this branch the entitlement is granted and the owner
+    // is paid 70% of Buzz that did not move on this attempt.
     mockCreateMulti.mockResolvedValueOnce({
       transactionIds: [
         { transactionId: 'buy-y', accountType: 'yellow', amount: PRICE, duplicate: true },
@@ -857,8 +857,9 @@ describe('purchaseBlockGood — the money path', () => {
       ok: false,
       status: 409,
       reason: 'ledger_conflict',
-      // UNKNOWN, not `none`: a mixed response is money this attempt DID move,
-      // so the caller keeps the viewer's cap reservation.
+      // UNKNOWN, not `none`, for the whole branch: the rule has to cover a
+      // MIXED response, where some legs are new money, so the caller keeps the
+      // viewer's cap reservation rather than asserting a clean no-op.
       charge: 'unknown',
       retryable: false,
     });
@@ -1064,9 +1065,8 @@ describe('purchaseBlockGood — the money path', () => {
    * 🔴 THE DEFECT, AND IT WAS A REGRESSION. `rollbackCharge` returned
    * `Promise<void>` and only LOGGED its failure, so a refused reversal resolved
    * indistinguishably from a successful one and both callers went on to
-   * tombstone the row and report `charge: 'reversed'`. Each of the three things
-   * that follows is wrong in that state, and the first is strictly worse than
-   * refusing outright:
+   * tombstone the row and report `charge: 'reversed'`. All three things that
+   * follow are wrong in that state:
    *   - the endpoint refunds the daily-cap reservation for Buzz that never
    *     came back (`charge: 'reversed'`);
    *   - the tombstone asserts a refund that did not happen, so
