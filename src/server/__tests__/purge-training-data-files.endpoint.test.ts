@@ -8,6 +8,7 @@ import {
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { env } from '~/env/server';
 import type * as ModelFileService from '~/server/services/model-file.service';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as TimeoutHelpers from '~/server/utils/timeout-helpers';
@@ -232,8 +233,16 @@ function afterState(after: { versions?: boolean; head?: 'present' | 'absent' | '
   });
 }
 
+const RESOLVER_ENV = [
+  'STORAGE_RESOLVER_ENDPOINT',
+  'STORAGE_RESOLVER_INTERNAL_URL',
+  'STORAGE_RESOLVER_INTERNAL_TOKEN',
+] as const;
+const envBefore = Object.fromEntries(RESOLVER_ENV.map((k) => [k, env[k]]));
+
 beforeEach(() => {
   vi.clearAllMocks();
+  for (const k of RESOLVER_ENV) (env as Record<string, unknown>)[k] = 'configured';
   mocks.deleted = false;
   mocks.resolverBefore = 'follow';
   mocks.resolverAfter = 'follow';
@@ -274,7 +283,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  for (const k of RESOLVER_ENV) (env as Record<string, unknown>)[k] = envBefore[k];
+});
 
 describe('purge-training-data-files', () => {
   it('removes every stored version, deregisters the file, then deletes the row', async () => {
@@ -425,12 +437,27 @@ describe('purge-training-data-files', () => {
     const { body } = await call({ modelVersionIds: '10' }, 'GET');
 
     expect(body.dryRun).toBe(true);
+    expect(body.resolverReady).toBe(true);
     expect(mocks.bucket!.deletes).toEqual([]);
     expect(mocks.deregister).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.delete).not.toHaveBeenCalled();
     expect(body.results[0]).toMatchObject({ headBefore: 'present', resolverBefore: 'present' });
     expect(body.results[0].storedVersionsBefore).toHaveLength(2);
   });
+
+  it.each(RESOLVER_ENV)(
+    'refuses a destructive run without %s, since the row could not be removed after',
+    async (key) => {
+      (env as Record<string, unknown>)[key] = undefined;
+
+      const { status } = await live();
+      const dry = await call({ modelVersionIds: '10' }, 'GET');
+
+      expect(status).toBe(409);
+      expect(mocks.bucket!.deletes).toEqual([]);
+      expect(dry.body.resolverReady).toBe(false);
+    }
+  );
 
   it('refuses a destructive GET before touching storage', async () => {
     const { status } = await call({ modelVersionIds: '10', dryRun: 'false' }, 'GET');

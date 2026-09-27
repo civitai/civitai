@@ -5,6 +5,7 @@ import {
   ListObjectVersionsCommand,
 } from '@aws-sdk/client-s3';
 import * as z from 'zod';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -128,6 +129,15 @@ export default WebhookEndpoint(async (req, res) => {
   const { modelVersionIds, dryRun } = parsed.data;
   if (!dryRun && req.method !== 'POST')
     return res.status(405).json({ error: 'dryRun=false requires POST' });
+  // Without these the probe silently falls back to the CDN and deregistration returns null, so a
+  // run would delete the bytes and then be unable to remove the row.
+  const resolverReady = Boolean(
+    env.STORAGE_RESOLVER_ENDPOINT &&
+      env.STORAGE_RESOLVER_INTERNAL_URL &&
+      env.STORAGE_RESOLVER_INTERNAL_TOKEN
+  );
+  if (!dryRun && !resolverReady)
+    return res.status(409).json({ error: 'storage resolver internal access is not configured' });
 
   const files = await dbWrite.modelFile.findMany({
     where: { modelVersionId: { in: modelVersionIds }, type: 'Training Data' },
@@ -257,6 +267,7 @@ export default WebhookEndpoint(async (req, res) => {
   const foundVersionIds = new Set(files.map((f) => f.modelVersionId));
   res.status(200).json({
     dryRun,
+    resolverReady,
     noTrainingData: modelVersionIds.filter((id) => !foundVersionIds.has(id)),
     results,
   });
