@@ -16,6 +16,7 @@ import { resolveAuthGuard } from '~/server/auth/route-guard';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
+import { serializeJsonLd } from '@civitai/shared/json-ld';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
@@ -234,7 +235,7 @@ function MyApp(props: CustomAppProps) {
         {siteSchema && (
           <script
             type="application/ld+json"
-            dangerouslySetInnerHTML={{ __html: JSON.stringify(siteSchema) }}
+            dangerouslySetInnerHTML={{ __html: serializeJsonLd(siteSchema) }}
             key="site-schema"
           />
         )}
