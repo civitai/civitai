@@ -1004,11 +1004,18 @@ async function payBlockGoodOwner(args: {
   const paid: BlockGoodPayout[] = [];
   const landed = new Set<BuzzAccountType>();
 
+  /**
+   * Write what has landed so far. Deliberately allowed to THROW: inside the
+   * retry that is what re-runs it, and the driver's own error is what the log
+   * below needs to be diagnosable. Collapsing it to a boolean and rethrowing a
+   * generic message — which an earlier draft of this did — loses the only
+   * description of why a money record could not be written.
+   */
   const recordPayouts = () =>
-    dbWrite.blockGoodPurchase
-      .update({ where: { id: args.purchaseId }, data: { payouts: paid } })
-      .then(() => true)
-      .catch(() => false);
+    dbWrite.blockGoodPurchase.update({
+      where: { id: args.purchaseId },
+      data: { payouts: paid },
+    });
 
   try {
     // Retried like the cosmetic shop's distribute-funds block: one transient
@@ -1074,7 +1081,7 @@ async function payBlockGoodOwner(args: {
         }
       }
 
-      if (!(await recordPayouts())) throw new Error('could not record the owner payout');
+      await recordPayouts();
     }, 3);
   } catch (error) {
     void logToAxiom(
@@ -1095,7 +1102,24 @@ async function payBlockGoodOwner(args: {
     // owner keeps after the buyer is made whole. Skipped when nothing landed,
     // so `payouts: []` still means "nothing was paid" and still selects the
     // rows a re-runner should pick up.
-    if (paid.length > 0) await recordPayouts();
+    //
+    // Best effort by construction — if the write is what failed above it will
+    // very likely fail again — so its own failure is logged rather than thrown:
+    // the purchase is complete and the viewer already has their entitlement.
+    if (paid.length > 0)
+      await recordPayouts().catch((writeError) => {
+        void logToAxiom(
+          {
+            name: BLOCK_GOODS_LOG_NAME,
+            type: 'error',
+            message: 'could not record a partial owner payout',
+            purchaseId: args.purchaseId,
+            paidLegs: paid.length,
+            error: messageOf(writeError),
+          },
+          'civitai-prod'
+        ).catch(() => undefined);
+      });
   }
 }
 
