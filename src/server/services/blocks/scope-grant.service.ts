@@ -702,14 +702,28 @@ export async function recordScopeGrant(opts: {
     // `revoked_at`, `grantScopes` answered `{ ok: true }` each time, and — unlike the round-4
     // defect — there is no second-click recovery, because `existingRevokedAt` never clears.
     //
-    // ⚠️ THE MECHANISM WAS FIRST WRITTEN DOWN WRONG, AND THE TRUE ONE IS STRONGER. This said
-    // *"`granted_scopes` is union-only and never pruned"*; it is pruned — `revokeScopes` writes
-    // `priorGrantedRaw ∖ incoming` back to the column. What makes the residual inescapable is the
-    // CEILING on both sides: `incoming` is `input.scopes ∩ ceiling` (`blocks.router.ts`), and the
-    // revoke UI only ever offers `revokableScopes`, which derives from the app-side displayed set
-    // (`user-app-surface.service.ts`). So a scope granted under an older manifest — or one a
-    // moderator later dropped from `approvedScopes` — can enter NEITHER set, and no viewer action
-    // can empty the residual. Not merely unlikely: unreachable.
+    // ⚠️ THE MECHANISM HAS NOW BEEN WRITTEN DOWN WRONG TWICE. Rounds 5 and 6 both got it wrong
+    // in the same direction — reaching for a property of the SCOPE SET when the operative fact is
+    // a property of the DATABASE — so here is the whole ladder, because the wrong versions each
+    // looked sufficient:
+    //   (a) *"`granted_scopes` is union-only and never pruned"* — FALSE. `revokeScopes` prunes it:
+    //       it writes `priorGrantedRaw ∖ incoming` back to the column.
+    //   (b) *"the CEILING bounds both `incoming` and the revoke UI"* — HALF false, and the wrong
+    //       half is load-bearing. `incoming` is genuinely `input.scopes ∩ ceiling`
+    //       (`blocks.router.ts`), but `revokeScopes` has NO ceiling filter, deliberately: that
+    //       mutation's own docblock argues narrowing is always safe and the ceiling MOVES (a
+    //       publisher push replaces `manifest` without re-approval), so filtering would refuse to
+    //       revoke exactly the scopes a viewer granted last month. `revokableScopes` is what the
+    //       UI OFFERS, which is not an enforcement boundary — a client may send any known
+    //       non-exempt scope. And revoking the stale scope WOULD empty the residual, via (a).
+    //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. Its
+    //       pre-write read selects `revokedScopes`, and the P2022 is rethrown as
+    //       `PRECONDITION_FAILED`. So there is no revoke to perform, and `incoming`'s ceiling
+    //       bound closes the only other route.
+    // Hence "no viewer action can empty the residual" is true, and unreachable is the right word —
+    // for reason (c). ⚠️ The residual becomes escapable the instant the migration lands, which is
+    // harmless because this branch is unreachable by then. Stated because (b) would mislead
+    // precisely the person who later relaxes the revoke refusal.
     //
     // 🔴 SO THE REFUSAL IS AS PERMANENT AS THE NO-OP WAS, AND THAT IS DELIBERATE — this round made
     // the dead end VISIBLE, it did not remove it. The closing condition is a human applying
@@ -733,7 +747,8 @@ export async function recordScopeGrant(opts: {
         // 🔴 ITS OWN EVENT, NOT `logMissingRevokedScopesColumn`, AND NOT ONCE-PER-PROCESS.
         // Round-6 review: omitting a log line here left the refusal viewer-visible but
         // operator-INVISIBLE. That emitter is guarded by a module-level `once` flag, so a second
-        // call is a silent no-op — it has already fired on THIS request's degraded read — and its
+        // call is a silent no-op — it has already fired, on this request's degraded read or on an
+        // earlier request's, since the flag is module-level — and its
         // `site` is the same string either way, so no event distinguished "a viewer was refused a
         // re-consent" from "a read degraded", and at most one fired per process lifetime. On a
         // surface whose whole thesis is that silent behaviour is the enemy, the refusal has to be
@@ -742,7 +757,16 @@ export async function recordScopeGrant(opts: {
         logToAxiom(
           {
             name: 'app-blocks-scope-grant',
-            type: 'error',
+            // 🔴 `warning`, NOT `error`, AND IT WAS `error`. `PRECONDITION_FAILED` is a member of
+            // `CLIENT_FAULT_TRPC_CODES`, whose docblock in `~/server/logging/client` says these
+            // "are NOT incidents and must never be logged at error severity, or they drown out
+            // the real server-side failures on the error board" — and `type: 'error'` is exactly
+            // what resolves a line to `detected_level="error"` there. The OPERATOR's actionable
+            // cause (missing column, apply the migration) is already on that board once per
+            // process via `logMissingRevokedScopesColumn`; this event exists to make the
+            // viewer-facing CONSEQUENCE countable, which `warning` does without competing with
+            // real incidents. Round-7 review.
+            type: 'warning',
             message:
               `Refused a prompted RE-CONSENT: this database has no ` +
               `app_user_scope_grants.revoked_scopes, so a whole-grant revoke cannot be migrated ` +
@@ -1199,12 +1223,13 @@ export const CONSENT_REVOKE_UNAVAILABLE_MESSAGE =
  * THIS WHOLE ARC KEEPS PRODUCING. On a database without `revoked_scopes`, a whole-grant
  * revoke cannot be migrated to per-scope suppressions, so `unrevokeData` refuses to lift
  * `revoked_at` unless the re-consent covers everything the row granted. Round-5 review found
- * the population where that refusal is PERMANENT rather than momentary. ⚠️ The mechanism is NOT
- * "`granted_scopes` is union-only and never pruned" — `revokeScopes` does prune it; it is the
- * CEILING on both sides. `incoming` is `input.scopes ∩ ceiling`, and the revoke UI only offers
- * `revokableScopes`, derived from the app-side displayed set — so a scope granted under an older
- * manifest, or one a moderator later dropped from `approvedScopes`, can enter NEITHER set and no
- * viewer action can empty the residual. The residual is then non-empty forever, and
+ * the population where that refusal is PERMANENT rather than momentary. ⚠️ TWO WRONG MECHANISMS
+ * have been written here — see `unrevokeData`'s branch comment for the full ladder and why each
+ * looked sufficient. The short form: `granted_scopes` IS pruned (by `revokeScopes`), and
+ * `revokeScopes` has NO ceiling filter, so neither of those closes it. What closes it is that
+ * `revokeScopes` refuses OUTRIGHT on a pre-migration database (P2022 → `PRECONDITION_FAILED`), so
+ * no revoke can prune the stale scope, while `incoming = input.scopes ∩ ceiling` shuts the only
+ * other route. The residual is then non-empty forever, and
  * `grantScopes` returned `{ ok: true }` on every press with nothing changed and no second-click
  * recovery, because `existingRevokedAt` never clears. Measured over three identical presses.
  *

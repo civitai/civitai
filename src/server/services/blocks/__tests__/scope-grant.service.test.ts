@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -1522,6 +1524,93 @@ describe('scope-grant.service', () => {
           'ai:write:budgeted',
         ])
       ).toEqual(['ai:write:budgeted']);
+    });
+  });
+
+  /**
+   * 🔴 EVERY `logToAxiom` IN THIS MODULE MUST SWALLOW ITS OWN REJECTION — a STRUCTURAL assertion,
+   * because the property is asserted in a COMMENT and was pinned by nothing.
+   *
+   * All three call sites here sit on a consent or spend path and each carries a comment promising
+   * that logging can never break it. Round-7 review measured what that promise was worth: deleting the
+   * `.catch(() => {})` from the re-consent refusal SURVIVED all 265 tests. Without it a rejected
+   * `logToAxiom` is an unhandled rejection on a MUTATION path — the log line would break the very
+   * consent path its neighbour promises it cannot.
+   *
+   * ⚠️ WHY STRUCTURAL AND NOT BEHAVIOURAL. Pinning this behaviourally needs `vi.mock` on
+   * `~/server/logging/client` in a suite that deliberately mocks only the db, and two of this
+   * repo's own lint-rule guards police wholesale module mocks. This scan costs one file read, pins
+   * BOTH sites and any future one, and fails when a site is ADDED without the catch — which is the
+   * direction that matters.
+   *
+   * It reads the SOURCE, comment-stripped, so a `logToAxiom(` written in prose cannot satisfy or
+   * break it. The count assertion is the positive control: a scan that finds nothing would
+   * otherwise pass vacuously, which is how a guard reads as coverage while providing none.
+   */
+  describe('logToAxiom call sites cannot break a consent path', () => {
+    function stripComments(src: string): string {
+      return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    }
+
+    /** Index just past the `)` that closes the call opening at `openIdx`. */
+    function endOfCall(src: string, openIdx: number): number {
+      let depth = 0;
+      for (let i = openIdx; i < src.length; i += 1) {
+        if (src[i] === '(') depth += 1;
+        else if (src[i] === ')') {
+          depth -= 1;
+          if (depth === 0) return i + 1;
+        }
+      }
+      return -1;
+    }
+
+    it('every logToAxiom(...) is followed by .catch(', () => {
+      const src = stripComments(
+        fs.readFileSync(path.resolve(__dirname, '../scope-grant.service.ts'), 'utf8')
+      );
+      // 🔴 `indexOf`, NOT `regex.exec` IN A `while` — AND THAT IS NOT STYLE. The first draft used
+      // `while ((m = re.exec(src)) !== null)`, which advances only while the regex carries the `g`
+      // flag: a later edit dropping it makes this loop spin FOREVER, so the suite HANGS instead of
+      // failing. Measured while validating this very guard — the mutation that removed `g` was
+      // scored SURVIVED by a driver that never got a verdict. A hang is the worst failure mode a
+      // guard can have, because it reads as infrastructure trouble rather than as a finding.
+      // An `indexOf` walk cannot regress that way: the cursor is advanced explicitly.
+      const sites: string[] = [];
+      const NAME = 'logToAxiom';
+      for (let from = src.indexOf(NAME); from !== -1; from = src.indexOf(NAME, from + 1)) {
+        const open = src.indexOf('(', from + NAME.length);
+        // Only a CALL counts. Anything between the name and the next `(` that is not whitespace
+        // means this occurrence was the import binding or a member expression, not an invocation.
+        if (open === -1 || src.slice(from + NAME.length, open).trim() !== '') continue;
+        const end = endOfCall(src, open);
+        expect(
+          end,
+          'unbalanced parens after a logToAxiom call — the scan cannot judge it'
+        ).toBeGreaterThan(0);
+        sites.push(src.slice(end, end + 40));
+      }
+      // 🔴 POSITIVE CONTROL, AND ITS FLOOR IS THE DERIVED COUNT — **THREE**, not two.
+      // `logMissingBudgetColumn`, `logMissingRevokedScopesColumn` and the pre-migration
+      // re-consent refusal. (This comment said "two sites" on its first draft, counting only the
+      // revocation ones — the third is the budget column's, which predates this arc. Derive the
+      // population before quoting it, which is the lesson three rounds of this review keep
+      // teaching.) A floor BELOW the real count lets a scan silently stop covering a site, which
+      // is the same reads-as-coverage failure this guard exists to close; a scan finding none
+      // would make the loop below assert nothing at all.
+      expect(
+        sites.length,
+        'the logToAxiom scan lost a call site (or found none, making the assertion below vacuous) ' +
+          '— check the regex and the comment stripper before believing a green result here'
+      ).toBeGreaterThanOrEqual(3);
+      for (const after of sites) {
+        expect(
+          after,
+          'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
+            'sit on consent and spend paths — on a MUTATION that is an unhandled rejection — and ' +
+            'it contradicts the neighbouring comment promising logging can never break the path.'
+        ).toMatch(/^\s*\.catch\s*\(/);
+      }
     });
   });
 });
