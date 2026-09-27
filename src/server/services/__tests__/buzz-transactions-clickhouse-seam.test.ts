@@ -160,12 +160,17 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
 
     const sql = sentSql();
     expect(sql.length).toBeGreaterThan(0);
-    // Word-anchored on `type`, because the `to`-direction query legitimately carries
-    // `toAccountType IN ('blue','green','yellow')` — which a plain
-    // `toContain('type IN (')` misses only because `Type` is capitalised there.
-    // ⚠️ `\b` does NOT save a snake_case rename: `_` is a word character, so
-    // `to_account_type IN (` would not match this pattern either. It guards against a
-    // camelCase near-miss, nothing wider.
+    // The `to`-direction query legitimately carries
+    // `toAccountType IN ('blue','green','yellow')`, and TODAY only capitalisation
+    // keeps that out of a bare `type IN (` search — the `\b` contributes nothing
+    // against it.
+    //
+    // What the anchor buys is the FUTURE spelling: rename that column to
+    // `to_account_type` (or any lowercase `…type`) and a bare pattern matches it,
+    // false-reddening a perfectly healthy query. `\b` does not match there because
+    // `_` is a word character, so the anchor is what keeps this assertion about OUR
+    // predicate. Measured both ways rather than reasoned — two earlier versions of
+    // this comment had it backwards in both directions.
     for (const q of sql) expect(q).not.toMatch(/\btype IN \(/);
   });
 
@@ -262,8 +267,9 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    * fixture puts `ACCOUNT_ID` and `77` in fixed operand positions, so any predicate
    * that merely AGREES with `row.fromAccountId === accountId` on that one pair
    * survives — including `row.toAccountId !== accountId`, which is realistic and
-   * wrong for the case `buzz.service.ts` documents four lines from the branch: a
-   * transfer between the caller's own accounts matches BOTH sides. Production calls
+   * wrong for the case `buzz.service.ts` documents in `fetchTransactionBranches` (a
+   * long way from either direction branch): a transfer between the caller's own
+   * accounts matches BOTH sides. Production calls
    * that a debit; the mutant calls it a credit, flipping the sign and, on the export
    * path, the account-type column too.
    */
@@ -300,9 +306,11 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
   it('hydrates the other past-26 member the same way', async () => {
     mockQuery.mockResolvedValueOnce([
       // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'28'` case above, and its
-      // account types DELIBERATELY DIFFER from it. A plain CONSTANT is already killed
-      // by that case alone; what this pair uniquely kills is a function of the
-      // DIRECTION, which one credit and one debit cannot distinguish from the truth.
+      // account types DELIBERATELY DIFFER from it. Every plain CONSTANT dies somewhere
+      // in the file, though never in the case whose own expected value it copies. What
+      // this PAIR uniquely kills is a function of the DIRECTION, which one credit and
+      // one debit cannot tell from the truth — those mutants die here and nowhere
+      // else.
       row({ type: '27', amount: 5, fromAccountType: 'yellow', toAccountType: 'green' }),
     ]);
 
@@ -315,10 +323,11 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.LicenseFee);
     expect(tx.type).toBe(27);
-    // 🔴 The amount, which was unasserted here. That gap let a sign predicate keyed
-    // on a literal id survive: with the OTHER credit's counterparty varied, this is
-    // the only remaining row that exercises the predicate at `77` with an asserted
-    // output, so the three ids the suite uses now each pin a result.
+    // 🔴 The amount, which was unasserted here, and load-bearing on THIS path: the
+    // list result has no other observer of the direction, so without it a relational
+    // mutant (`from <= accountId`) survives. It is not what kills a predicate keyed on
+    // a literal ID — the self-transfer tests do that, on both paths, by running at a
+    // second account id.
     expect(tx.amount).toBe(5);
     expect(tx.fromAccountType).toBe('yellow');
     expect(tx.toAccountType).toBe('green');
@@ -383,13 +392,12 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     // whole-line `/(^|,)28,/` search would have matched the AMOUNT column instead,
     // and passed only because the fixture happens not to use 28 as an amount.
     expect(lines[1].split(',')[1]).toBe('AppAuthorFee');
-    // A credit, so the RECIPIENT side — and distinct from the other credit's.
+    // A credit, so the RECIPIENT side — and distinct from the other credit's. This
+    // also pins `isDebit === false` for this row, which is why an amount assertion
+    // here would be a second read of the same bit and is deliberately absent — on the
+    // export path the side column is an observer of the direction, so the list path's
+    // amount assertion has no twin here.
     expect(lines[1].split(',')[3]).toBe('blue');
-    // 🔴 The AMOUNT, on the one export row whose counterparty is `77`. Without it the
-    // export sign predicate was exercised at only two id values and a literal-id key
-    // reproduced both — the list path's twin gap, closed one commit earlier and left
-    // open here.
-    expect(lines[1].split(',')[2]).toBe('3');
   });
 
   /**
