@@ -147,7 +147,7 @@ import {
 } from '../services/feature-flags.service';
 import {
   getEntityCoverImage,
-  ingestImage,
+  ingestImageById,
   queueReplacedImageDeletion,
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -627,8 +627,18 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
-    const user = await getUserById({ id, select: { profilePictureId: true } });
+    const user = await getUserById({
+      id,
+      select: { profilePictureId: true, profilePicture: { select: { userId: true } } },
+    });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
+    // so any other picture is always created as a new row.
+    const newPicture =
+      profilePicture && profilePicture.id !== user.profilePictureId
+        ? { ...profilePicture, id: undefined }
+        : undefined;
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -661,20 +671,17 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        profilePicture: profilePicture
+        profilePicture: newPicture
           ? {
-              connectOrCreate: {
-                where: { id: profilePicture.id ?? -1 },
-                create: {
-                  ...profilePicture,
-                  metadata: {
-                    ...profilePicture.metadata,
-                    profilePicture: true,
-                    userId: id,
-                    username,
-                  },
+              create: {
+                ...newPicture,
+                metadata: {
+                  ...newPicture.metadata,
+                  profilePicture: true,
                   userId: id,
+                  username,
                 },
+                userId: id,
               },
             }
           : undefined,
@@ -694,25 +701,17 @@ export const updateUserHandler = async ({
     // of those are bugs on their own; they only became user-visible breakage because the
     // target was *gone* rather than merely *stale*. Queuing instead keeps the old picture
     // fetchable for the retention window, so every one of those caches self-corrects.
-    if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
+    //
+    // Only a picture this user owns is ever queued.
+    if (newPicture && user.profilePictureId && user.profilePicture?.userId === id) {
       postUpdatePromises.push(queueReplacedImageDeletion([user.profilePictureId]));
     }
 
-    if (
-      profilePicture &&
-      updatedUser.profilePictureId &&
-      user.profilePictureId !== profilePicture?.id
-    ) {
+    if (newPicture && updatedUser.profilePictureId) {
       postUpdatePromises.push(
-        ingestImage({
-          image: {
-            id: updatedUser.profilePictureId,
-            url: profilePicture.url,
-            type: profilePicture.type,
-            height: profilePicture.height,
-            width: profilePicture.width,
-          },
-        }).then(() => deleteUserProfilePictureCache(id))
+        ingestImageById({ id: updatedUser.profilePictureId }).then(() =>
+          deleteUserProfilePictureCache(id)
+        )
       );
     }
 

@@ -38,7 +38,7 @@ const {
   hubInvalidate,
   mockUpdateUserById,
   mockGetUserById,
-  mockIngestImage,
+  mockIngestImageById,
   mockDeleteImageById,
   mockGetUserSettings,
   mockPatchUserSettings,
@@ -47,7 +47,7 @@ const {
   hubInvalidate: vi.fn(),
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
-  mockIngestImage: vi.fn(),
+  mockIngestImageById: vi.fn(),
   mockDeleteImageById: vi.fn(),
   mockGetUserSettings: vi.fn(),
   mockPatchUserSettings: vi.fn(),
@@ -79,7 +79,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  ingestImage: mockIngestImage,
+  ingestImageById: mockIngestImageById,
   deleteImageById: mockDeleteImageById,
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
@@ -123,7 +123,7 @@ beforeEach(() => {
   // merely-old avatar.
   mockGetUserById.mockResolvedValue({ profilePictureId: 42 });
   mockUpdateUserById.mockResolvedValue({ id: USER_ID, profilePictureId: 99 });
-  mockIngestImage.mockResolvedValue(undefined);
+  mockIngestImageById.mockResolvedValue(undefined);
   mockDeleteImageById.mockResolvedValue(undefined);
   mockGetUserSettings.mockResolvedValue({});
   mockPatchUserSettings.mockResolvedValue({});
