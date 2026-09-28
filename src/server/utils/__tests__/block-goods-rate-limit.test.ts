@@ -180,7 +180,7 @@ const INSTANCE = 'bki_goods_1';
 // The real key prefixes, written out: `REDIS_SYS_KEYS.BLOCKS.GOODS_CAP`,
 // `REDIS_SYS_KEYS.BLOCKS.GOODS_IDEM` and `REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT`.
 const CAP_KEY = `system:blocks:goods-cap:${USER}:${FROZEN_DAY}` as const;
-const RL_KEY = `blocks:token-rate-limit:goods:${INSTANCE}` as const;
+const RL_KEY = `blocks:token-rate-limit:goods:${INSTANCE}:${USER}` as const;
 const CAP_TTL_SECONDS = 25 * 60 * 60;
 
 beforeEach(() => {
@@ -309,7 +309,7 @@ describe('refundBlockGoodSpend', () => {
 
 describe('checkBlockGoodRateLimit', () => {
   it('allows the first attempt and arms the window TTL on it', async () => {
-    const r = await checkBlockGoodRateLimit(INSTANCE);
+    const r = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(r).toEqual({ allowed: true });
     expect(redisMock.redis.incrBy).toHaveBeenCalledWith(RL_KEY, 1);
     expect(redisMock.redis.expire).toHaveBeenCalledWith(
@@ -322,32 +322,66 @@ describe('checkBlockGoodRateLimit', () => {
     // Walks the ceiling rather than asserting one side of it: this is what kills an
     // off-by-one (`<` for `<=`) in either direction.
     for (let i = 1; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) {
-      await expect(checkBlockGoodRateLimit(INSTANCE), `attempt ${i} of MAX`).resolves.toEqual({
+      await expect(checkBlockGoodRateLimit(INSTANCE, USER), `attempt ${i} of MAX`).resolves.toEqual({
         allowed: true,
       });
     }
-    const overflow = await checkBlockGoodRateLimit(INSTANCE);
+    const overflow = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(overflow.allowed).toBe(false);
   });
 
   it('meters per INSTANCE — a second install has its own window', async () => {
-    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE);
+    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE, USER);
     // The first instance is now refused; a different one is untouched.
-    await expect(checkBlockGoodRateLimit(INSTANCE)).resolves.toMatchObject({ allowed: false });
-    await expect(checkBlockGoodRateLimit('bki_goods_2')).resolves.toEqual({ allowed: true });
+    await expect(checkBlockGoodRateLimit(INSTANCE, USER)).resolves.toMatchObject({ allowed: false });
+    await expect(checkBlockGoodRateLimit('bki_goods_2', USER)).resolves.toEqual({ allowed: true });
+  });
+
+  // 🔴 REGRESSION, not an invariant guard. Before the buyer entered the key this
+  // assertion FAILED: both viewers incremented one bucket, so the second was
+  // refused after the first had spent the window. A PAGE app is the reachable
+  // case — it has no per-viewer instance row, so every viewer shares the
+  // synthetic `page_<appBlockId>` id, and the ceiling was per-PLATFORM.
+  it('meters per VIEWER on a SHARED page-app instance — one buyer cannot exhaust another', async () => {
+    const PAGE_INSTANCE = 'page_apb_shared';
+    const OTHER_USER = 9426; // distinct from USER (8317) and from every other fixture here
+
+    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) {
+      await checkBlockGoodRateLimit(PAGE_INSTANCE, USER);
+    }
+    // The first viewer has spent their window on this page app...
+    await expect(
+      checkBlockGoodRateLimit(PAGE_INSTANCE, USER)
+    ).resolves.toMatchObject({ allowed: false });
+    // ...and a DIFFERENT viewer of the SAME page app is untouched.
+    await expect(
+      checkBlockGoodRateLimit(PAGE_INSTANCE, OTHER_USER)
+    ).resolves.toEqual({ allowed: true });
+  });
+
+  it('keys the bucket on BOTH ids — neither alone identifies the window', async () => {
+    // Pins the key SHAPE, so a future edit cannot quietly drop either half and
+    // still pass the behavioural tests above (dropping the instance would make
+    // one viewer's budget global across apps; dropping the buyer restores the
+    // platform-wide bucket this change removed).
+    await checkBlockGoodRateLimit(INSTANCE, USER);
+    expect(redisMock.redis.incrBy).toHaveBeenCalledWith(
+      `blocks:token-rate-limit:goods:${INSTANCE}:${USER}`,
+      1
+    );
   });
 
   it('a refusal reports the LIVE TTL as retryAfterSeconds', async () => {
-    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE);
+    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE, USER);
     cacheTtls.set(RL_KEY, 17); // distinct from WINDOW (60), so the fallback cannot fake this
-    const r = await checkBlockGoodRateLimit(INSTANCE);
+    const r = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(r).toEqual({ allowed: false, retryAfterSeconds: 17 });
   });
 
   it('a refusal falls back to the full window when the TTL is absent (never Retry-After: -1)', async () => {
-    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE);
+    for (let i = 0; i <= BLOCK_GOOD_RATE_LIMIT_MAX; i++) await checkBlockGoodRateLimit(INSTANCE, USER);
     cacheTtls.delete(RL_KEY); // ttl → -1
-    const r = await checkBlockGoodRateLimit(INSTANCE);
+    const r = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(r).toEqual({
       allowed: false,
       retryAfterSeconds: BLOCK_GOOD_RATE_LIMIT_WINDOW_SECONDS,
@@ -355,10 +389,10 @@ describe('checkBlockGoodRateLimit', () => {
   });
 
   it('re-arms a LOST TTL (ttl < 0) on a subsequent attempt (self-heal)', async () => {
-    await checkBlockGoodRateLimit(INSTANCE); // count 1 → arms
+    await checkBlockGoodRateLimit(INSTANCE, USER); // count 1 → arms
     cacheTtls.delete(RL_KEY); // TTL lost: the window would otherwise never expire
     (redisMock.redis.expire as { mockClear: () => void }).mockClear();
-    await checkBlockGoodRateLimit(INSTANCE); // count 2 → sees ttl < 0, re-arms
+    await checkBlockGoodRateLimit(INSTANCE, USER); // count 2 → sees ttl < 0, re-arms
     expect(redisMock.redis.expire).toHaveBeenCalledWith(
       RL_KEY,
       BLOCK_GOOD_RATE_LIMIT_WINDOW_SECONDS
@@ -366,9 +400,9 @@ describe('checkBlockGoodRateLimit', () => {
   });
 
   it('does NOT re-arm the TTL while one is set', async () => {
-    await checkBlockGoodRateLimit(INSTANCE);
+    await checkBlockGoodRateLimit(INSTANCE, USER);
     (redisMock.redis.expire as { mockClear: () => void }).mockClear();
-    await checkBlockGoodRateLimit(INSTANCE);
+    await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(redisMock.redis.expire).not.toHaveBeenCalled();
   });
 
@@ -377,7 +411,7 @@ describe('checkBlockGoodRateLimit', () => {
     // 🔴 The mutation this exists to kill is DELETING THE `catch`: without it the call
     // rejects and this `await` fails the test. A `catch` that returned `allowed: true`
     // is killed by the same assertion.
-    const r = await checkBlockGoodRateLimit(INSTANCE);
+    const r = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(r).toEqual({
       allowed: false,
       retryAfterSeconds: BLOCK_GOOD_RATE_LIMIT_WINDOW_SECONDS,
@@ -388,14 +422,14 @@ describe('checkBlockGoodRateLimit', () => {
     // Reaches the `catch` through a DIFFERENT statement, so the guard is proven to
     // cover the whole body rather than one call. Count must be >1 for the ttl branch
     // to execute at all, which is why the first attempt runs unmocked.
-    await checkBlockGoodRateLimit(INSTANCE);
+    await checkBlockGoodRateLimit(INSTANCE, USER);
     redisMock.redis.ttl.mockRejectedValueOnce(new Error('redis down'));
-    const r = await checkBlockGoodRateLimit(INSTANCE);
+    const r = await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(r).toMatchObject({ allowed: false });
   });
 
   it('uses the CACHE client, never the money-path sys counter', async () => {
-    await checkBlockGoodRateLimit(INSTANCE);
+    await checkBlockGoodRateLimit(INSTANCE, USER);
     expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
     expect(sysStore.size).toBe(0);
   });
@@ -452,7 +486,7 @@ describe('checkBlockGoodReadRateLimit (the entitlements READ limiter)', () => {
     for (let i = 0; i < BLOCK_GOOD_RATE_LIMIT_MAX + 4; i++) {
       await checkBlockGoodReadRateLimit(INSTANCE, USER);
     }
-    await expect(checkBlockGoodRateLimit(INSTANCE)).resolves.toEqual({ allowed: true });
+    await expect(checkBlockGoodRateLimit(INSTANCE, USER)).resolves.toEqual({ allowed: true });
     expect(cacheStore.get(READ_KEY)).toBe(BLOCK_GOOD_RATE_LIMIT_MAX + 4);
     expect(cacheStore.get(RL_KEY)).toBe(1);
   });

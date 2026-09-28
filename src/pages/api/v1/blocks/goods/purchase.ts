@@ -133,7 +133,7 @@ export const baseHandler = withAxiom(async function handler(
   const priceBuzz = resolved.good.priceBuzz;
 
   const attemptPurchase = async (): Promise<PurchaseOutcome> => {
-    const rateLimit = await checkBlockGoodRateLimit(claims.blockInstanceId);
+    const rateLimit = await checkBlockGoodRateLimit(claims.blockInstanceId, buyerUserId);
     if (!rateLimit.allowed) {
       // TRANSIENT: nothing moved, so a retry once the window clears must be able
       // to execute — not cached under the idempotency key.
