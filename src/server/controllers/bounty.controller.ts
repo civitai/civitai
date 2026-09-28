@@ -28,7 +28,9 @@ import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { Currency, EntityType } from '~/shared/utils/prisma/enums';
+import { getLatestEntityAppeal } from '~/server/services/report.service';
+import { isBountyFlagAppealable } from '~/server/services/text-scan/flag-snapshot';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
@@ -134,6 +136,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       ...input,
       select: {
         ...getBountyDetailsSelect,
+        meta: true,
         benefactors: {
           select: {
             user: {
@@ -158,6 +161,18 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
+    const isOwner = !!user && user.id === bounty.user?.id;
+    const poiFlagged = isOwner && isBountyFlagAppealable(bounty);
+    const poiAppeal =
+      poiFlagged && user
+        ? await getLatestEntityAppeal({
+            entityType: EntityType.Bounty,
+            entityId: bounty.id,
+            userId: user.id,
+          })
+        : null;
+    const { meta: _meta, ...publicBounty } = bounty;
+
     const images = await getBountyImages({
       id: bounty.id,
       userId: user?.id,
@@ -167,7 +182,9 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
-      ...bounty,
+      ...publicBounty,
+      poiFlagged,
+      poiAppeal,
       details: bounty.details
         ? filterSensitiveProfanityData(
             bounty.details as BountyDetailsSchema,

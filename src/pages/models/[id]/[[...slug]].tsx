@@ -1470,7 +1470,9 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
+              {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                <ModelMinorFlagAlert model={model} />
+              )}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">

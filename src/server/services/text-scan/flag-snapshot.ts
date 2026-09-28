@@ -23,7 +23,13 @@ export type TextScanFlagEntry = {
   textHash?: string;
   promptIds?: PromptIds | null;
   model?: string | null;
-  prev?: Record<string, unknown>;
+  prev?: {
+    nsfw?: boolean;
+    sfwOnly?: boolean;
+    galleryLevel?: number | null;
+    lockedProperties?: string[];
+    availability?: string;
+  };
   appealGranted?: TextScanFlagDecision;
   appealUpheld?: TextScanFlagDecision;
 };

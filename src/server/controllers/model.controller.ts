@@ -163,6 +163,7 @@ import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -547,6 +548,11 @@ export const getModelHandler = async ({
       minorFlagged: resolveMinorFlagged({
         isOwner,
         minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
