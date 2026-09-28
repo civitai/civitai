@@ -3,8 +3,10 @@
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
+  '/api/mod/bounty/repay-award': () => import('~/pages/api/mod/bounty/repay-award'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),
+  '/api/mod/comment/restore-from-tos': () => import('~/pages/api/mod/comment/restore-from-tos'),
   '/api/mod/cosmetic/assign-by-target': () => import('~/pages/api/mod/cosmetic/assign-by-target'),
   '/api/mod/cosmetic/create': () => import('~/pages/api/mod/cosmetic/create'),
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
@@ -31,6 +33,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
+  '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
   '/api/mod/user/force-logout': () => import('~/pages/api/mod/user/force-logout'),
   '/api/mod/user/mute': () => import('~/pages/api/mod/user/mute'),
   '/api/mod/user/toggle-moderator': () => import('~/pages/api/mod/user/toggle-moderator'),

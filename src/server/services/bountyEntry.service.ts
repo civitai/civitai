@@ -269,7 +269,8 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       log,
     });
   } catch (e) {
-    // The award is committed; the Buzz is owed and has to be reconciled by hand.
+    // The award is committed and the Buzz is owed: `repayBountyAward` resends it under the same
+    // externalTransactionId, so a payment that did land is not duplicated.
     await log('error', 'Award committed but the Buzz payout failed', {
       bountyId: entry.bountyId,
       amount: benefactor.unitAmount,
@@ -285,6 +286,44 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
   return benefactor;
 };
+
+export async function repayBountyAward({
+  entryId,
+  benefactorUserId,
+}: {
+  entryId: number;
+  benefactorUserId: number;
+}) {
+  const entry = await dbWrite.bountyEntry.findUniqueOrThrow({
+    where: { id: entryId },
+    select: { id: true, bountyId: true, userId: true },
+  });
+  if (!entry.userId) throw throwBadRequestError('Entry has no user.');
+
+  const benefactor = await dbWrite.bountyBenefactor.findUnique({
+    where: { bountyId_userId: { bountyId: entry.bountyId, userId: benefactorUserId } },
+  });
+  if (!benefactor || benefactor.awardedToId !== entry.id)
+    throw throwBadRequestError('This supporter has not awarded this entry.');
+  // Legacy rows are paid without an externalTransactionId, so a second payment would not be
+  // deduplicated by the Buzz service.
+  if (!benefactor.buzzTransactionId?.length)
+    throw throwBadRequestError('Legacy award without transaction ids: reconcile by hand.');
+
+  const logData = { entryId, userId: benefactorUserId, bountyId: entry.bountyId };
+  const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
+    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
+
+  await payBountyAward({
+    entryId,
+    bountyId: entry.bountyId,
+    winnerUserId: entry.userId,
+    benefactor,
+    log,
+  });
+  await log('info', 'Award payout re-sent', { amount: benefactor.unitAmount });
+  return { bountyId: entry.bountyId, winnerUserId: entry.userId, amount: benefactor.unitAmount };
+}
 
 async function payBountyAward({
   entryId,

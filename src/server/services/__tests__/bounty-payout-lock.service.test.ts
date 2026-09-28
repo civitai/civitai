@@ -46,7 +46,9 @@ vi.mock('~/server/email/templates', () => ({
   bountyRefundedEmail: { send: vi.fn() },
 }));
 
-const { awardBountyEntry } = await import('~/server/services/bountyEntry.service');
+const { awardBountyEntry, repayBountyAward } = await import(
+  '~/server/services/bountyEntry.service'
+);
 const { deleteBountyById, refundBounty, refundBountyBenefactorFunds } = await import(
   '~/server/services/bounty.service'
 );
@@ -320,6 +322,48 @@ describe('awardBountyEntry', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', bountyId: 4, name: 'bounty-award' })
     );
+  });
+});
+
+describe('repayBountyAward', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.bountyEntry.findUniqueOrThrow.mockResolvedValue({ ...entry });
+    dbMock.dbWrite.bountyBenefactor.findUnique.mockImplementation(
+      async ({ where }: { where: { bountyId_userId: { userId: number } } }) => {
+        const b = find(where.bountyId_userId.userId);
+        return b ? { ...b } : null;
+      }
+    );
+  });
+
+  it('resends a failed payout under the award\'s original externalTransactionId', async () => {
+    buzz.createBuzzTransactionMany.mockRejectedValueOnce(new Error('buzz down'));
+    await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow('buzz down');
+    const [firstAttempt] = buzz.createBuzzTransactionMany.mock.calls[0];
+
+    await repayBountyAward({ entryId: 10, benefactorUserId: 5 });
+    const [resend] = buzz.createBuzzTransactionMany.mock.calls[1];
+
+    expect(resend.map((t: { externalTransactionId: string }) => t.externalTransactionId)).toEqual(
+      firstAttempt.map((t: { externalTransactionId: string }) => t.externalTransactionId)
+    );
+    expect(resend[0]).toMatchObject({ toAccountId: entry.userId, amount: 100 });
+  });
+
+  it('refuses a supporter who has not awarded this entry, and moves no Buzz', async () => {
+    await expect(repayBountyAward({ entryId: 10, benefactorUserId: 6 })).rejects.toThrow(
+      'has not awarded this entry'
+    );
+    benefactors[1].awardedToId = 11;
+    await expect(repayBountyAward({ entryId: 10, benefactorUserId: 6 })).rejects.toThrow();
+    expect(moved('award')).toBe(0);
+  });
+
+  it('refuses a legacy award without transaction ids', async () => {
+    benefactors[0].awardedToId = 10;
+    benefactors[0].buzzTransactionId = [];
+    await expect(repayBountyAward({ entryId: 10, benefactorUserId: 5 })).rejects.toThrow('Legacy');
+    expect(moved('award') + moved('buzz')).toBe(0);
   });
 });
 
