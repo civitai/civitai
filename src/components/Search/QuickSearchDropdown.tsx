@@ -33,7 +33,7 @@ import {
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
-import { SearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { emptySearchClient } from '~/components/Search/emptySearchClient';
@@ -156,12 +156,6 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
    */
   onHits?: (ids: number[]) => void;
 };
-
-export const QuickSearchDropdown = (props: QuickSearchDropdownProps) => (
-  <SearchBrowsingScope>
-    <QuickSearchDropdownInner {...props} />
-  </SearchBrowsingScope>
-);
 
 const QuickSearchDropdownInner = ({
   filters,
@@ -301,6 +295,8 @@ const QuickSearchDropdownInner = ({
     </Group>
   );
 };
+
+export const QuickSearchDropdown = withSearchBrowsingScope(QuickSearchDropdownInner);
 
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   indexName: indexNameProp,

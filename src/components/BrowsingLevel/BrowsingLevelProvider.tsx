@@ -157,12 +157,9 @@ export function useViewerBrowsingLevelDebounced() {
 }
 
 /**
- * Drops any page-level override for its subtree, so every hook below resolves to the viewer's own
- * level. The forced cap (domain, minor-safe) is kept.
- *
- * Prefer this over calling `useViewerBrowsingLevelDebounced` at one site when the subtree has
- * several readers that must agree — search's level filter and its browsing-settings addons (the
- * minor/POI exclusions) are both derived from the level, and splitting them lets one widen alone.
+ * Drops the page-level override for this subtree; the forced cap is kept. Use it rather than
+ * `useViewerBrowsingLevelDebounced` at one site when several readers derive from the level
+ * (e.g. the addons provider) and must agree.
  */
 export function ViewerBrowsingLevelScope({ children }: { children: React.ReactNode }) {
   const ctx = useBrowsingLevelContext();

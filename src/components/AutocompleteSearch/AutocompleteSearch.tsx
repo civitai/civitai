@@ -54,7 +54,7 @@ import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
-import { SearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
@@ -127,14 +127,6 @@ const targetData = [
   { value: 'tools', label: 'Tools' },
   { value: 'comics', label: 'Comics' },
 ] as const;
-
-export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((props, ref) => (
-  <SearchBrowsingScope>
-    <AutocompleteSearchInner {...props} ref={ref} />
-  </SearchBrowsingScope>
-));
-
-AutocompleteSearch.displayName = 'AutocompleteSearch';
 
 const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
@@ -259,6 +251,8 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 });
 
 AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
+
+export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
