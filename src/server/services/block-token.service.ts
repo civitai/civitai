@@ -477,7 +477,14 @@ export class BlockTokenService {
   static getJwks(): {
     keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }>;
   } {
-    const keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }> = [];
+    const keys: Array<{
+      kty: string;
+      use: string;
+      alg: string;
+      kid: string;
+      n: string;
+      e: string;
+    }> = [];
     const current = loadPublicKey();
     const next = loadNextPublicKey();
     for (const k of next ? [current, next] : [current]) {

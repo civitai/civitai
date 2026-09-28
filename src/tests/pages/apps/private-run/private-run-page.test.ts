@@ -100,7 +100,15 @@ function ctx(opts: { host?: string; slug?: string; user?: unknown } = {}) {
   };
 }
 
-async function resolver() {
+/**
+ * The page's captured `getServerSideProps` resolver.
+ *
+ * SYNCHRONOUS on purpose. An `async` accessor forced every call site into
+ * `await resolver()(ctx())`, which prettier then wrapped across three lines and
+ * which reads as two awaits of two different things. The capture itself is not async —
+ * it happened at module import — so awaiting it was never anything but noise.
+ */
+function resolver(): (c: unknown) => Promise<any> {
   if (!capturedResolver.fn) throw new Error('resolver not captured');
   return capturedResolver.fn;
 }
@@ -118,7 +126,7 @@ describe('private-run SSR — the grant path [REG]', () => {
       audience: 'moderator',
       block: BLOCK(),
     });
-    const res = await (await resolver())(ctx());
+    const res = await resolver()(ctx());
     expect(res.notFound).toBeUndefined();
     expect(res.props).toMatchObject({
       appBlockId: 'apb_privrun',
@@ -141,7 +149,7 @@ describe('private-run SSR — the grant path [REG]', () => {
       audience: 'owner',
       block: BLOCK(),
     });
-    await (await resolver())(ctx({ slug: 'another-slug' }));
+    await resolver()(ctx({ slug: 'another-slug' }));
     expect(mockResolvePrivateRunAccess).toHaveBeenCalledWith(
       expect.objectContaining({ by: { slug: 'another-slug' }, db: 'read' })
     );
@@ -153,7 +161,7 @@ describe('private-run SSR — the grant path [REG]', () => {
       audience: 'owner',
       block: BLOCK(),
     });
-    await (await resolver())(ctx());
+    await resolver()(ctx());
     expect(mockFlag).toHaveBeenCalledWith({ user: expect.objectContaining({ id: 4004 }) });
     expect(mockResolvePrivateRunAccess).toHaveBeenCalledWith(
       expect.objectContaining({ privateRunEnabled: true })
@@ -165,7 +173,7 @@ describe('private-run SSR — the grant path [REG]', () => {
     // would return the flag's BASE value rather than denying — must be unreachable. The
     // route short-circuits to `false` instead.
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'viewer-ineligible' });
-    const res = await (await resolver())(ctx({ user: null }));
+    const res = await resolver()(ctx({ user: null }));
     expect(res).toEqual({ notFound: true });
     expect(mockFlag).not.toHaveBeenCalled();
     expect(mockResolvePrivateRunAccess).toHaveBeenCalledWith(
@@ -191,12 +199,12 @@ describe('🔴 private-run SSR — NO EXISTENCE ORACLE [REG]', () => {
     // does it: a distinguishable refusal tells a signed-in prober which delisted slugs
     // exist, which are theirs, and which are undeployed.
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'no-app' });
-    const baseline = await (await resolver())(ctx());
+    const baseline = await resolver()(ctx());
     expect(baseline).toEqual({ notFound: true });
 
     for (const reason of reasons) {
       mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason });
-      const got = await (await resolver())(ctx());
+      const got = await resolver()(ctx());
       expect(got, `reason "${reason}" must be indistinguishable from a missing app`).toEqual(
         baseline
       );
@@ -208,13 +216,13 @@ describe('🔴 private-run SSR — NO EXISTENCE ORACLE [REG]', () => {
 
   it('🔴 POSITIVE CONTROL: the comparison CAN distinguish the allowed response', async () => {
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'no-app' });
-    const baseline = await (await resolver())(ctx());
+    const baseline = await resolver()(ctx());
     mockResolvePrivateRunAccess.mockResolvedValue({
       allowed: true,
       audience: 'moderator',
       block: BLOCK(),
     });
-    const granted = await (await resolver())(ctx());
+    const granted = await resolver()(ctx());
     expect(granted).not.toEqual(baseline);
     expect(granted.props).toBeDefined();
   });
@@ -225,7 +233,7 @@ describe('🔴 private-run SSR — NO EXISTENCE ORACLE [REG]', () => {
       audience: 'moderator',
       block: BLOCK({ iframeSrc: '' }),
     });
-    expect(await (await resolver())(ctx())).toEqual({ notFound: true });
+    expect(await resolver()(ctx())).toEqual({ notFound: true });
   });
 });
 
@@ -242,7 +250,7 @@ describe('private-run SSR — the inherited gates [REG]', () => {
       { appBlocks: false, appBlocksPages: false },
     ]) {
       const c = ctx();
-      const res = await (await resolver())({ ...c, features });
+      const res = await resolver()({ ...c, features });
       expect(res).toEqual({ notFound: true });
     }
     // The tell that the gate really is first: the predicate was never consulted.
@@ -250,7 +258,7 @@ describe('private-run SSR — the inherited gates [REG]', () => {
   });
 
   it('an empty slug is refused without resolving', async () => {
-    const res = await (await resolver())(ctx({ slug: '' }));
+    const res = await resolver()(ctx({ slug: '' }));
     expect(res).toEqual({ notFound: true });
     expect(mockResolvePrivateRunAccess).not.toHaveBeenCalled();
   });
@@ -265,8 +273,8 @@ describe('private-run SSR — the inherited gates [REG]', () => {
       audience: 'moderator',
       block: BLOCK({ contentRating: 'r' }),
     });
-    expect(await (await resolver())(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
-    const onRed = await (await resolver())(ctx({ host: 'civitai.red' }));
+    expect(await resolver()(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
+    const onRed = await resolver()(ctx({ host: 'civitai.red' }));
     expect(onRed.props).toBeDefined();
   });
 
@@ -274,8 +282,8 @@ describe('private-run SSR — the inherited gates [REG]', () => {
     // Ordering: a refused viewer must not be able to learn an app's content rating by
     // comparing hosts. Both answers are the same bare notFound.
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'no-role' });
-    expect(await (await resolver())(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
-    expect(await (await resolver())(ctx({ host: 'civitai.red' }))).toEqual({ notFound: true });
+    expect(await resolver()(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
+    expect(await resolver()(ctx({ host: 'civitai.red' }))).toEqual({ notFound: true });
   });
 });
 

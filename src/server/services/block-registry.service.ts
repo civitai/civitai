@@ -2070,29 +2070,29 @@ export class BlockRegistry {
     return {
       ok: true,
       block: {
-      appBlockId: ab.id,
-      blockId: ab.blockId,
-      appId: ab.appId,
-      status: ab.status,
-      approvedScopes: ab.approvedScopes ?? [],
-      manifest,
-      iframeSrc,
-      sandbox: typeof sandbox === 'string' ? sandbox : '',
-      // The COLUMN, never `manifest.trustTier` (C1 self-escalation).
-      trustTier:
-        ab.trustTier === 'verified' || ab.trustTier === 'internal'
-          ? (ab.trustTier as 'verified' | 'internal')
-          : 'unverified',
-      name,
-      pageTitle: typeof page.title === 'string' ? page.title : name,
-      scopes: declaredScopes,
-      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
-      // STRICT `=== true`: publisher JSON must not flip a host behaviour with a
-      // truthy-but-not-boolean value.
-      bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
-      currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
-      ownerUserId: ab.app?.userId ?? null,
-      listingStatus: ab.appListing?.status ?? null,
+        appBlockId: ab.id,
+        blockId: ab.blockId,
+        appId: ab.appId,
+        status: ab.status,
+        approvedScopes: ab.approvedScopes ?? [],
+        manifest,
+        iframeSrc,
+        sandbox: typeof sandbox === 'string' ? sandbox : '',
+        // The COLUMN, never `manifest.trustTier` (C1 self-escalation).
+        trustTier:
+          ab.trustTier === 'verified' || ab.trustTier === 'internal'
+            ? (ab.trustTier as 'verified' | 'internal')
+            : 'unverified',
+        name,
+        pageTitle: typeof page.title === 'string' ? page.title : name,
+        scopes: declaredScopes,
+        contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+        // STRICT `=== true`: publisher JSON must not flip a host behaviour with a
+        // truthy-but-not-boolean value.
+        bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
+        currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
+        ownerUserId: ab.app?.userId ?? null,
+        listingStatus: ab.appListing?.status ?? null,
       },
     };
   }

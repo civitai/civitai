@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 /**
  * THE PRIVATE-RUN ACCESS MATRIX — `resolvePrivateRunAccess`.
@@ -96,11 +96,7 @@ function blockRow(over: Record<string, unknown> = {}) {
 }
 
 /** Wire the block resolve + the seat resolve + the owner-ban read on BOTH pools. */
-function wire(opts: {
-  block?: unknown;
-  seatFor?: number | null;
-  ownerBannedAt?: Date | null;
-}) {
+function wire(opts: { block?: unknown; seatFor?: number | null; ownerBannedAt?: Date | null }) {
   for (const db of [mockDb, mockWriteDb]) {
     db.appBlock.findFirst.mockResolvedValue(opts.block === undefined ? blockRow() : opts.block);
     // `resolveAppAccess` reads the block by id, then the seat.
@@ -202,7 +198,9 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
     {
       name: 'suspended app that declares NO page → not-a-page',
       viewer: viewers.owner,
-      block: blockRow({ manifest: { name: 'x', scopes: [], iframe: { src: 'https://x.civit.ai' } } }),
+      block: blockRow({
+        manifest: { name: 'x', scopes: [], iframe: { src: 'https://x.civit.ai' } },
+      }),
       expected: { allowed: false, reason: 'not-a-page' },
     },
     {

@@ -606,9 +606,7 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  */
 export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
 
-export async function isAppBlocksPrivateRunEnabled(opts: {
-  user: SessionUser;
-}): Promise<boolean> {
+export async function isAppBlocksPrivateRunEnabled(opts: { user: SessionUser }): Promise<boolean> {
   const user = opts.user;
   return isFlipt(APP_BLOCKS_PRIVATE_RUN_FLAG, String(user.id), buildFliptContext(user));
 }

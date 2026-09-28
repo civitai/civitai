@@ -269,9 +269,9 @@ describe('blockInitFragmentEnabled — the PRODUCTION allowlist', () => {
       // Positive control: with the denylist EMPTY the same call returns true, so a
       // false below is the denylist winning and not the surface or a missing entry.
       expect(blockInitFragmentEnabledWith(args, allowedAnyway, new Set<string>())).toBe(true);
-      expect(
-        blockInitFragmentEnabledWith(args, allowedAnyway, BLOCK_INIT_FRAGMENT_DENYLIST)
-      ).toBe(false);
+      expect(blockInitFragmentEnabledWith(args, allowedAnyway, BLOCK_INIT_FRAGMENT_DENYLIST)).toBe(
+        false
+      );
     }
   });
 

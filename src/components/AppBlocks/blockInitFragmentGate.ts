@@ -291,11 +291,7 @@ export function blockInitFragmentEnabledWith(
   //     express "not in the tunnel". Given the fast path perturbs `location.hash`
   //     routing and the reason the app is delisted may be the very behaviour under
   //     diagnosis, the reviewer should see the app on its ordinary boot path.
-  if (
-    surface === 'dev-tunnel' ||
-    surface === 'review-preview' ||
-    surface === 'private-run'
-  ) {
+  if (surface === 'dev-tunnel' || surface === 'review-preview' || surface === 'private-run') {
     return false;
   }
 

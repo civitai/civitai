@@ -116,7 +116,9 @@ describe('the private-run seam — instrument validation', () => {
     // middleware's claim docblock among them — and none of them may count.
     const mentionsInProse = FILES.filter((f) => {
       const raw = readFileSync(join(ROOT, f), 'utf8');
-      return raw.includes('resolvePrivateRunAccess') && !CODE.get(f)!.includes('resolvePrivateRunAccess');
+      return (
+        raw.includes('resolvePrivateRunAccess') && !CODE.get(f)!.includes('resolvePrivateRunAccess')
+      );
     });
     // At least one such file must exist, or this control is proving nothing.
     expect(mentionsInProse.length).toBeGreaterThan(0);
@@ -167,7 +169,9 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     expect(registry).toContain("ab.status !== 'approved'");
     // And the PRIVATE resolver must carry the mirror-image branch: an approved app is
     // refused there, so the two surfaces partition the status space rather than overlap.
-    expect(registry).toContain("if (ab.status === 'approved') return { ok: false, reason: 'approved' }");
+    expect(registry).toContain(
+      "if (ab.status === 'approved') return { ok: false, reason: 'approved' }"
+    );
   });
 
   it('🔴 the private route does NOT import either approved-only resolver', () => {

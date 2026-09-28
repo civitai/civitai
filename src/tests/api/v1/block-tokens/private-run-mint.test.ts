@@ -3,11 +3,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbWrite = dbMock.dbWrite;
-const mockRedis = redisMock.redis;
 dbMock.dbWrite.user.findUnique.mockImplementation(async () => ({
-        deletedAt: null,
-        bannedAt: null,
-      }));
+  deletedAt: null,
+  bannedAt: null,
+}));
 redisMock.redis.incrBy.mockImplementation(async () => 1);
 redisMock.redis.expire.mockImplementation(async () => true);
 redisMock.redis.ttl.mockImplementation(async () => 60);
@@ -394,8 +393,14 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
    */
   const refusals: Array<{ name: string; verdict: Record<string, unknown> }> = [
     { name: 'flag off', verdict: { allowed: false, reason: 'flag-off' } },
-    { name: 'anon / banned / deleted viewer', verdict: { allowed: false, reason: 'viewer-ineligible' } },
-    { name: 'approved app (the public path owns it)', verdict: { allowed: false, reason: 'approved' } },
+    {
+      name: 'anon / banned / deleted viewer',
+      verdict: { allowed: false, reason: 'viewer-ineligible' },
+    },
+    {
+      name: 'approved app (the public path owns it)',
+      verdict: { allowed: false, reason: 'approved' },
+    },
     { name: 'not a page app', verdict: { allowed: false, reason: 'not-a-page' } },
     { name: 'unrelated viewer', verdict: { allowed: false, reason: 'no-role' } },
     { name: 'pending seat holder', verdict: { allowed: false, reason: 'no-role' } },

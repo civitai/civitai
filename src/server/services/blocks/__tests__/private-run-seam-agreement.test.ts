@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 /**
  * 🔴 THE BEHAVIOURAL HALF OF THE SSR⇄MINT SEAM — the half a structural ledger cannot be.
@@ -260,5 +260,4 @@ describe('SSR and the mint cannot disagree [REG]', () => {
     const c = { allowed: true as const, audience: 'editor' as const };
     expect(() => expect(a.audience).toBe(c.audience)).toThrow();
   });
-
 });

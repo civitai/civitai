@@ -24,10 +24,7 @@ import {
   USER_SUB_RE,
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
-import {
-  isKnownBlockScope,
-  isPrivateRunAudience,
-} from '~/shared/constants/block-scope.constants';
+import { isKnownBlockScope, isPrivateRunAudience } from '~/shared/constants/block-scope.constants';
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,

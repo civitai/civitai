@@ -75,10 +75,7 @@ describe('clampPrivateRunScopes — the THIRD BUZZ RAIL is stripped [REG]', () =
     // feature widens that verdict to render at all, which admits the tip route in the
     // same move — so the scope strip is the belt that widening requires.
     for (const audience of ['owner', 'editor', 'moderator'] as const) {
-      const granted = clampPrivateRunScopes(
-        ['social:tip:self', 'models:read:self'],
-        audience
-      );
+      const granted = clampPrivateRunScopes(['social:tip:self', 'models:read:self'], audience);
       expect(granted, `audience=${audience}`).not.toContain('social:tip:self');
       // …and the strip is surgical: the neighbouring scope survives.
       expect(granted).toContain('models:read:self');

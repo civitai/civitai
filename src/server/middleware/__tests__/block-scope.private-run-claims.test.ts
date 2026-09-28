@@ -26,16 +26,22 @@ describe('blockPerCallBudget — the editor read-only belt [REG]', () => {
     // deleted the belt would return 137 and MOVE the output — a fixture using 0 could
     // not tell the belt from an unbudgeted token.
     expect(
-      blockPerCallBudget({ buzzBudget: 137, privateRunAudience: 'editor' }, {
-        pricesAuthorFee: false,
-      })
+      blockPerCallBudget(
+        { buzzBudget: 137, privateRunAudience: 'editor' },
+        {
+          pricesAuthorFee: false,
+        }
+      )
     ).toBe(0);
     // And with the fee-pricing classification too, since the flag reads nothing today
     // but a future ceiling decision behind it must not resurrect the budget.
     expect(
-      blockPerCallBudget({ buzzBudget: 137, privateRunAudience: 'editor' }, {
-        pricesAuthorFee: true,
-      })
+      blockPerCallBudget(
+        { buzzBudget: 137, privateRunAudience: 'editor' },
+        {
+          pricesAuthorFee: true,
+        }
+      )
     ).toBe(0);
   });
 
@@ -46,9 +52,12 @@ describe('blockPerCallBudget — the editor read-only belt [REG]', () => {
     // caught here rather than only in a money test.
     for (const audience of ['owner', 'moderator'] as const) {
       expect(
-        blockPerCallBudget({ buzzBudget: 137, privateRunAudience: audience }, {
-          pricesAuthorFee: false,
-        }),
+        blockPerCallBudget(
+          { buzzBudget: 137, privateRunAudience: audience },
+          {
+            pricesAuthorFee: false,
+          }
+        ),
         `audience=${audience}`
       ).toBe(137);
     }
@@ -68,16 +77,22 @@ describe('blockPerCallBudget — the editor read-only belt [REG]', () => {
     // a NaN or string budget would take that path instead — same answer today by luck,
     // but the belt would not be the thing producing it, so its mutant would survive.
     expect(
-      blockPerCallBudget({ buzzBudget: NaN as number, privateRunAudience: 'editor' }, {
-        pricesAuthorFee: false,
-      })
+      blockPerCallBudget(
+        { buzzBudget: NaN as number, privateRunAudience: 'editor' },
+        {
+          pricesAuthorFee: false,
+        }
+      )
     ).toBe(0);
     // The discriminating case: a NUMBER budget with the editor audience. Only the belt
     // can produce 0 here — the type test passes.
     expect(
-      blockPerCallBudget({ buzzBudget: 301, privateRunAudience: 'editor' }, {
-        pricesAuthorFee: false,
-      })
+      blockPerCallBudget(
+        { buzzBudget: 301, privateRunAudience: 'editor' },
+        {
+          pricesAuthorFee: false,
+        }
+      )
     ).toBe(0);
   });
 
@@ -85,9 +100,12 @@ describe('blockPerCallBudget — the editor read-only belt [REG]', () => {
     // A belt test whose every row expects 0 is indistinguishable from a function that
     // always returns 0. Prove the output can move before believing any zero above.
     expect(
-      blockPerCallBudget({ buzzBudget: 301, privateRunAudience: 'owner' }, {
-        pricesAuthorFee: false,
-      })
+      blockPerCallBudget(
+        { buzzBudget: 301, privateRunAudience: 'owner' },
+        {
+          pricesAuthorFee: false,
+        }
+      )
     ).toBe(301);
   });
 });
