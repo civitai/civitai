@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   articleModerationFloorText,
-  bountyBuzzType,
   challengeDerivedNsfwLevel,
-  greenBountyPredicateText,
   isTextScanRaised,
   overrideBasisDropped,
   raiseNsfwLevelText,
@@ -182,29 +180,5 @@ describe('overrideBasisDropped', () => {
         derivedLevel: 1,
       })
     ).toBe(false);
-  });
-});
-
-describe('bountyBuzzType', () => {
-  it.each([
-    [{ buzzType: 'green', nsfw: false, lockedProperties: ['nsfw'] }, 'green'],
-    [{ buzzType: 'yellow', nsfw: false, lockedProperties: ['nsfw'] }, 'yellow'],
-    [{ buzzType: null, nsfw: false, lockedProperties: ['nsfw'] }, 'unknown'],
-    [{ buzzType: null, nsfw: true, lockedProperties: ['nsfw'] }, 'yellow'],
-    [{ buzzType: null, nsfw: false, lockedProperties: [] }, 'yellow'],
-  ] as const)('%o → %s', (row, kind) => {
-    expect(bountyBuzzType({ ...row, lockedProperties: [...row.lockedProperties] })).toBe(kind);
-  });
-});
-
-describe('greenBountyPredicateText', () => {
-  it('matches a stored green bounty and the legacy lock shape bountyBuzzType calls unknown', () => {
-    expect(greenBountyPredicateText('b')).toBe(
-      `(b."buzzType" = 'green' OR (b."buzzType" IS NULL AND b.nsfw = FALSE AND 'nsfw' = ANY(b."lockedProperties")))`
-    );
-  });
-
-  it('refuses a non-identifier alias', () => {
-    expect(() => greenBountyPredicateText('b; --')).toThrow();
   });
 });

@@ -92,8 +92,7 @@ const NOTHING_DEFERRED: RatingFloorResult = { deferredRatingNotice: null };
 
 export async function applyRatingFloor(
   entityType: RatedEntityType,
-  { entityId, workflowId, outcome }: ApplyTextScanArgs,
-  { notify = true }: { notify?: boolean } = {}
+  { entityId, workflowId, outcome }: ApplyTextScanArgs
 ): Promise<RatingFloorResult> {
   if (!outcome.nsfw) return NOTHING_DEFERRED;
 
@@ -102,7 +101,7 @@ export async function applyRatingFloor(
   if (!before) return NOTHING_DEFERRED;
   await entity.recompute([entityId]);
 
-  if (!notify || !outcome.nsfw.raised || before.moderatorNsfwLevel != null || !before.userId)
+  if (!outcome.nsfw.raised || before.moderatorNsfwLevel != null || !before.userId)
     return NOTHING_DEFERRED;
   const after = await entity.read(entityId);
   if (!after || !ratingRose(before.nsfwLevel, after.nsfwLevel)) return NOTHING_DEFERRED;

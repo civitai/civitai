@@ -105,22 +105,3 @@ export function overrideBasisDropped({
     getHighestBrowsingLevelBit(derivedLevel) < getHighestBrowsingLevelBit(moderatorNsfwLevelBasis)
   );
 }
-
-export type BountyBuzzKind = 'green' | 'yellow' | 'unknown';
-
-// Before buzzType was stored, a green bounty was recognisable only by its nsfw lock, which a
-// moderator's lock also produces. Keep in step with greenBountyPredicateText.
-export function bountyBuzzType(bounty: {
-  buzzType: string | null;
-  nsfw: boolean;
-  lockedProperties: string[];
-}): BountyBuzzKind {
-  if (bounty.buzzType === 'green' || bounty.buzzType === 'yellow') return bounty.buzzType;
-  return !bounty.nsfw && bounty.lockedProperties.includes('nsfw') ? 'unknown' : 'yellow';
-}
-
-// True for every bounty bountyBuzzType does not call yellow: green Buzz must never fund R+.
-export function greenBountyPredicateText(alias: string) {
-  const a = identifier(alias);
-  return `(${a}."buzzType" = 'green' OR (${a}."buzzType" IS NULL AND ${a}.nsfw = FALSE AND 'nsfw' = ANY(${a}."lockedProperties")))`;
-}

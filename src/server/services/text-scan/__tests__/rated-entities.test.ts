@@ -100,13 +100,6 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 
-  it('recomputes but stays silent when the caller sends its own notice', async () => {
-    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(4));
-    await applyRatingFloor('Post', args(4, true), { notify: false });
-    expect(updatePostNsfwLevels).toHaveBeenCalledWith([7]);
-    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
-  });
-
   it('does not notify when a moderator override pins the level', async () => {
     dbMock.dbWrite.post.findUnique
       .mockResolvedValueOnce(post(1, { moderatorNsfwLevel: 1 }))

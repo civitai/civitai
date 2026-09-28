@@ -194,7 +194,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
   // Get latest results for date
   for (const { id, userId, name, user } of bounties) {
     log(`Started bounty ${id}`);
-    // Claimed under the payout lock; a bounty a void, refund or manual award already claimed
+    // Claimed under the payout lock; a bounty a refund or manual award already claimed
     // is left alone. Buzz moves only after the claim commits.
     const claim = await dbWrite.$transaction(async (tx) => {
       const locked = await lockBountyForPayout(tx, id);

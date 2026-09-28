@@ -232,7 +232,6 @@ export const createBounty = async ({
       const bounty = await tx.bounty.create({
         data: {
           ...data,
-          buzzType,
           lockedProperties: lockedProperties.length ? lockedProperties : undefined,
           startsAt,
           expiresAt,
@@ -720,7 +719,7 @@ export const deleteBountyById = async ({
       throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
   }
 
-  // Read under the payout lock: a void or refund that claimed the bounty first has already
+  // Read under the payout lock: a refund that claimed the bounty first has already
   // returned the creator's funds.
   const deleted = await dbWrite.$transaction(async (tx) => {
     const locked = await lockBountyForPayout(tx, id);
@@ -1109,45 +1108,3 @@ export const refundBounty = async ({
 
   return updated;
 };
-
-export type VoidBountyForNsfwResult =
-  | { voided: true; refundedUserIds: number[] }
-  | { voided: false; reason: 'missing' | 'no-currency' | 'already-refunded' | 'in-payout' };
-
-/**
- * Cancels a bounty and refunds every benefactor, for a green-Buzz bounty the text scan rated R
- * or above. Claims under the payout lock first; a lost claim moves no Buzz.
- */
-export async function voidBountyForNsfw(id: number): Promise<VoidBountyForNsfwResult> {
-  const claim = await dbWrite.$transaction(async (tx) => {
-    const locked = await lockBountyForPayout(tx, id);
-    if (!locked) return { voided: false as const, reason: 'missing' as const };
-    if (locked.refunded) return { voided: false as const, reason: 'already-refunded' as const };
-
-    const creator = locked.userId
-      ? await tx.bountyBenefactor.findUnique({
-          where: { bountyId_userId: { bountyId: id, userId: locked.userId } },
-          select: { currency: true },
-        })
-      : null;
-    if (!creator) return { voided: false as const, reason: 'no-currency' as const };
-
-    const awarded = await tx.bountyBenefactor.count({
-      where: { bountyId: id, awardedToId: { not: null } },
-    });
-    if (locked.complete || awarded > 0)
-      return { voided: false as const, reason: 'in-payout' as const };
-
-    await tx.bounty.update({ where: { id }, data: { complete: true, refunded: true } });
-    return { voided: true as const, currency: creator.currency, ownerId: locked.userId };
-  });
-  if (!claim.voided) return claim;
-
-  const refundedUserIds = await refundBountyBenefactorFunds({
-    bountyId: id,
-    currency: claim.currency,
-  });
-  if (claim.ownerId) await userBountyCountCache.refresh(claim.ownerId);
-  await queueBountySearchIndexUpdate(id);
-  return { voided: true, refundedUserIds };
-}

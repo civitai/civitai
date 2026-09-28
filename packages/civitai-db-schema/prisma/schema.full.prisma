@@ -5281,7 +5281,6 @@ model Bounty {
   moderatorNsfwLevel      Int?
   moderatorNsfwLevelBasis Int?
   lockedProperties        String[]        @default([])
-  buzzType                String?
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]

@@ -223,7 +223,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         throw throwBadRequestError('Entry has no user.');
       }
 
-      // A void or refund that claimed the bounty first holds this lock until it commits, and
+      // A refund that claimed the bounty first holds this lock until it commits, and
       // then reads complete here.
       const bounty = await lockBountyForPayout(tx, entry.bountyId);
       if (!bounty || bounty.complete || bounty.refunded) {

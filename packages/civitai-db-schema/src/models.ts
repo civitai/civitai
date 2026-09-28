@@ -3284,7 +3284,6 @@ export interface Bounty {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
-  buzzType: string | null;
   tags?: TagsOnBounty[];
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];

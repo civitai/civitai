@@ -47,8 +47,9 @@ vi.mock('~/server/email/templates', () => ({
 }));
 
 const { awardBountyEntry } = await import('~/server/services/bountyEntry.service');
-const { deleteBountyById, refundBounty, refundBountyBenefactorFunds, voidBountyForNsfw } =
-  await import('~/server/services/bounty.service');
+const { deleteBountyById, refundBounty, refundBountyBenefactorFunds } = await import(
+  '~/server/services/bounty.service'
+);
 
 type Benefactor = {
   userId: number;
@@ -66,10 +67,6 @@ type BountyRow = {
   refunded: boolean;
   poi: boolean;
   availability: string;
-  buzzType: string | null;
-  nsfw: boolean;
-  lockedProperties: string[];
-  moderatorNsfwLevel: number | null;
 };
 
 let bounty: BountyRow | null;
@@ -174,10 +171,6 @@ beforeEach(() => {
     refunded: false,
     poi: false,
     availability: 'Public',
-    buzzType: 'green',
-    nsfw: false,
-    lockedProperties: ['nsfw'],
-    moderatorNsfwLevel: null,
   };
   benefactors = [
     {
@@ -231,38 +224,40 @@ beforeEach(() => {
   buzz.createBuzzTransaction.mockImplementation(moved('buzz'));
   buzz.createBuzzTransactionMany.mockImplementation(moved('award'));
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
-    { accountType: 'green', amount: 100 },
+    { accountType: 'yellow', amount: 100 },
   ]);
 });
 
 const moved = (name: string) => events.filter((e) => e === name).length;
 
-describe('an award racing a green-bounty void', () => {
+describe('an award racing a refund', () => {
   // `headStart` ticks let the first path get that far before the second begins, so the
   // cases between them cover every point the two could interleave at.
-  const race = async (first: 'award' | 'void', headStart: number) => {
+  const race = async (first: 'award' | 'refund', headStart: number) => {
     const award = () => awardBountyEntry({ id: 10, userId: 5 });
-    const voidIt = () => voidBountyForNsfw(4);
-    const [a, b] = first === 'award' ? [award, voidIt] : [voidIt, award];
+    const refund = () => refundBounty({ id: 4, isModerator: true });
+    const [a, b] = first === 'award' ? [award, refund] : [refund, award];
     const pa = a();
     for (let i = 0; i < headStart; i++) await tick();
     const results = await Promise.allSettled([pa, b()]);
-    const [awardResult, voidResult] = first === 'award' ? results : [results[1], results[0]];
-    return { awardResult, voidResult, awarded: moved('award') > 0, refunded: moved('refund') > 0 };
+    const [awardResult, refundResult] = first === 'award' ? results : [results[1], results[0]];
+    return {
+      awardResult,
+      refundResult,
+      awarded: moved('award') > 0,
+      refunded: moved('refund') > 0,
+    };
   };
 
   it.each(
-    (['award', 'void'] as const).flatMap((first) =>
+    (['award', 'refund'] as const).flatMap((first) =>
       [0, 1, 2, 3, 4, 6].map((headStart) => [first, headStart] as const)
     )
   )('%s first, %i ticks ahead: exactly one of them moves Buzz', async (first, headStart) => {
-    const { awardResult, voidResult, awarded, refunded } = await race(first, headStart);
+    const { awardResult, refundResult, awarded, refunded } = await race(first, headStart);
     expect(awarded, 'exactly one path moves Buzz').not.toBe(refunded);
     if (awarded) {
-      expect(voidResult).toEqual({
-        status: 'fulfilled',
-        value: { voided: false, reason: 'in-payout' },
-      });
+      expect(refundResult.status).toBe('rejected');
       expect(bounty?.refunded).toBe(false);
     } else {
       expect(awardResult.status).toBe('rejected');
@@ -270,29 +265,9 @@ describe('an award racing a green-bounty void', () => {
     }
   });
 
-  it.each(['award', 'void'] as const)('%s wins with a clear head start', async (first) => {
+  it.each(['award', 'refund'] as const)('%s wins with a clear head start', async (first) => {
     const { awarded } = await race(first, 6);
     expect(awarded).toBe(first === 'award');
-  });
-});
-
-describe('voidBountyForNsfw', () => {
-  it('claims under the lock, commits, then refunds every benefactor', async () => {
-    expect(await voidBountyForNsfw(4)).toEqual({ voided: true, refundedUserIds: [5, 6] });
-    expect(bounty).toMatchObject({ complete: true, refunded: true });
-    expect(events).toEqual(['claim', 'commit', 'refund', 'refund']);
-  });
-
-  it('refunds nothing on a redelivery, while paying out, or without a creator benefactor', async () => {
-    bounty!.refunded = true;
-    expect(await voidBountyForNsfw(4)).toEqual({ voided: false, reason: 'already-refunded' });
-    bounty!.refunded = false;
-    bounty!.complete = true;
-    expect(await voidBountyForNsfw(4)).toEqual({ voided: false, reason: 'in-payout' });
-    bounty!.complete = false;
-    benefactors = benefactors.filter((b) => b.userId !== 5);
-    expect(await voidBountyForNsfw(4)).toEqual({ voided: false, reason: 'no-currency' });
-    expect(moved('refund')).toBe(0);
   });
 });
 
@@ -318,7 +293,7 @@ describe('deleteBountyById', () => {
     expect(events).toEqual(['claim', 'commit', 'refund']);
   });
 
-  it('refunds nothing when a void claimed the bounty first', async () => {
+  it('refunds nothing when a refund claimed the bounty first', async () => {
     bounty!.complete = true;
     bounty!.refunded = true;
     await deleteBountyById({ id: 4, isModerator: true });

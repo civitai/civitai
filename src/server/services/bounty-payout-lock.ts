@@ -9,10 +9,6 @@ export type BountyPayoutState = {
   availability: Availability;
   /** The bounty's `details` JSON. */
   meta: Prisma.JsonValue | null;
-  buzzType: string | null;
-  nsfw: boolean;
-  lockedProperties: string[];
-  moderatorNsfwLevel: number | null;
 };
 
 // Every path that moves Buzz for a bounty takes this row lock first, checks the state it
@@ -28,11 +24,7 @@ export async function lockBountyForPayout(
       refunded,
       poi,
       availability,
-      details AS meta,
-      "buzzType",
-      nsfw,
-      "lockedProperties",
-      "moderatorNsfwLevel"
+      details AS meta
     FROM "Bounty"
     WHERE id = ${bountyId}
     FOR UPDATE
