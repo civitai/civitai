@@ -1,9 +1,13 @@
 import pLimit from 'p-limit';
 import { logToAxiom } from '~/server/logging/client';
-import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 
 type ScanArgs = { entityType: TextScanEntityType; entityId: number };
+
+// Loaded on first use: hub services (user, comment) import this module, and a static edge would hand
+// every one of their importers the whole text-scan graph and a cycle risk through it.
+const scanEntity = async (args: ScanArgs) =>
+  (await import('~/server/services/text-scan/submit')).scanEntity(args);
 
 export function createScamScanQueue({
   concurrency,

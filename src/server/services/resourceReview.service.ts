@@ -47,6 +47,7 @@ import type {
   GetUserResourceReviewInput,
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
@@ -387,6 +388,7 @@ export const upsertResourceReview = async ({
       modelId: data.modelId,
       modelVersionId: data.modelVersionId,
     }).catch();
+    if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
     return ret;
   } else {
     const ret = await dbWrite.resourceReview.update({
@@ -398,6 +400,7 @@ export const upsertResourceReview = async ({
       modelId: ret.modelId,
       modelVersionId: ret.modelVersionId,
     }).catch();
+    if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
     return ret;
   }
 };
@@ -484,6 +487,7 @@ export const createResourceReview = async ({
     modelId: data.modelId,
     modelVersionId: data.modelVersionId,
   }).catch();
+  if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
   return ret;
 };
 
@@ -517,6 +521,7 @@ export const updateResourceReview = async ({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,
   }).catch();
+  if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
   return ret;
 };
 

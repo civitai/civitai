@@ -154,6 +154,7 @@ import {
   queueReplacedImageDeletion,
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export const getAllUsersHandler = async ({
   input,
@@ -489,6 +490,8 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
+        if (input.username && input.username !== current?.username)
+          queueScamScan({ entityType: 'User', entityId: id });
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
