@@ -424,7 +424,7 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
       expect(
         o.refetchOnWindowFocus!(asQuery()),
         `${label}: refetchOnWindowFocus must be the string 'always', not true — under the ` +
-          "repo-wide staleTime: Infinity, query-core gates `true` on isStale(), which is " +
+          'repo-wide staleTime: Infinity, query-core gates `true` on isStale(), which is ' +
           'never true for a query holding data, so `true` is INERT after the first load'
       ).toBe('always');
     }
