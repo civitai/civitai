@@ -173,9 +173,8 @@ const SCENARIOS: Scenario[] = [
     // Measured: 14 of 18 fail — the 13 rows that reach the block resolve, plus the negative
     // control. The 4 survivors are the three FREE-gate rows (`anonymous`, `banned viewer`,
     // `flag off`) AND the positive control, which reads the `SCENARIOS` table rather than
-    // the resolver and so cannot see any mutation of it. Naming the fourth matters: 18 − 14
-    // is 4, so "the only survivors are the three free-gate rows" does not reconcile, and a
-    // reader re-measuring cannot tell which half is wrong.
+    // the resolver and so cannot see any mutation of it. Naming the fourth matters because
+    // 18 − 14 is 4: a survivor list of three does not reconcile with the count.
     name: 'owner whose session carries an explicit bannedAt: null',
     viewer: { id: OWNER, bannedAt: null, deletedAt: null },
     expectAllowed: true,

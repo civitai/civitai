@@ -650,17 +650,21 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * subject and always carries a non-exempt scope — `user:read:self` is force-granted by the
  * clamp and is not consent-exempt, which alone is what makes this unconditional — so the
  * marker IS consulted for EVERY audience, editors included, keyed on the REVIEWER's id and
- * the app's real id. (Not `ai:write:budgeted`: the clamp only ever filters, so a non-editor
- * keeps the spend scope only when the approved snapshot declares it, and an app with
- * `approvedScopes: []` renders read-only for everyone.) The rows it reads are therefore whatever that person expressed as an ordinary
- * CONSUMER of that app, at some earlier point, on a surface unrelated to review.
+ * the app's real id. (Not `ai:write:budgeted`: that one the clamp can only ever STRIP —
+ * `user:read:self` is its single force-grant — so a non-editor keeps the spend scope only
+ * when the approved snapshot declares it, and an app with `approvedScopes: []` renders
+ * read-only for everyone.) The rows it reads are therefore whatever that person expressed
+ * as an ordinary CONSUMER of that app, at some earlier point, on a surface unrelated to
+ * review.
  *
  * It cannot WIDEN — all three `revokedScopesForToken` arms produce a set to STRIP and none
- * can grant — which is why it was allowed to stand rather than exempted. ⚠️ But "narrows" is
- * not the worst case: an UNREADABLE marker fails CLOSED, as a retryable 503 on the bridge
- * and at REST for a non-exempt `requiredScope`, so a cache incident makes a private run
- * refuse outright rather than run read-only. Do not read the heading as bounding the harm at
- * read-only. What is NOT settled is
+ * can grant — which is why it was allowed to stand rather than exempted. ⚠️ But "narrows"
+ * is not the worst case: an UNREADABLE marker fails CLOSED, as a retryable 503 on the
+ * bridge and at REST for a non-exempt `requiredScope`, so a cache incident makes a private
+ * run refuse outright rather than run read-only. Do not read the heading as bounding the
+ * harm at read-only.
+ *
+ * What is NOT settled is
  * what the reviewer sees: a moderator who once withdrew the spend scope on this app gets a
  * read-only private run and nothing on screen says why, and the audience for this surface
  * is exactly the population that files bugs about that. Deciding whether the chrome should
@@ -670,10 +674,9 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * Pinned behaviourally in
  * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
- * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that is
- * further from the person opening Flipt than either of the two places the paragraph above
- * already rules out, and it sat there — described as "recorded at the flag accessor" — while
- * this block did not yet exist.
+ * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that
+ * is further from the person opening Flipt than either of the two places the paragraph
+ * above already rules out.
  * ────────────────────────────────────────────────────────────────────────────────
  */
 export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
