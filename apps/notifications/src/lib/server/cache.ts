@@ -1,7 +1,8 @@
 // Per-user unread counter cache. Ported from the monolith's notification-cache.ts — keyed on the SAME
-// redis hash (`system:notification-counts:{userId}`, field = category) via @civitai/redis's REDIS_KEYS,
-// so the counts stay consistent now that this app (not the monolith) owns the read/count/mark path. A
-// missing redis client (unconfigured) no-ops the counter side; the base-row queries still work.
+// redis hash (`system:notification-counts:{userId}`, field = category, plus the `__complete` marker)
+// via @civitai/redis's REDIS_KEYS, so the counts stay consistent now that this app (not the monolith)
+// owns the read/count/mark path. A missing redis client (unconfigured) no-ops the counter side; the
+// base-row queries still work.
 
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { NotificationCategory } from '@civitai/notifications';
@@ -67,6 +68,9 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
 async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const redis = getRedis();
   if (!redis) return;
+  // Nothing unread stays uncached: fan-out skips an absent counter, so a notification committed during
+  // this recount would be missed, and a cached zero hides the badge entirely until the TTL runs out.
+  if (!counts.length) return;
   const fields = [
     COMPLETE_FIELD,
     '0',
@@ -77,8 +81,8 @@ async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   );
 }
 
-// HINCRBY on an absent key creates a hash holding only this category. getUser would refuse it, but
-// skipping it saves the round trips of writing and then busting it.
+// Skip an absent counter: HINCRBY would create a partial hash with no TTL, which getUser refuses and
+// nothing else ever deletes for a user who doesn't read.
 async function incrementUser(userId: number, category: NotificationCategory, by = 1) {
   const redis = getRedis();
   if (!redis) return;

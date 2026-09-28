@@ -7,6 +7,8 @@ const h = vi.hoisted(() => {
   const store = new Map<string, Entry>();
   const dbTruth: { rows: { category: string; count: number }[] } = { rows: [] };
   const dbQueries = { count: 0 };
+  // Runs after the recount has taken its snapshot and before it returns: a write that lands mid-query.
+  const hooks: { duringQuery?: () => Promise<void> } = {};
 
   const entry = (key: string, create = false) => {
     let e = store.get(key);
@@ -53,11 +55,19 @@ const h = vi.hoisted(() => {
   const readPool = {
     cancellableQuery: async () => {
       dbQueries.count++;
-      return { result: async () => dbTruth.rows.map((r) => ({ ...r })) };
+      const snapshot = dbTruth.rows.map((r) => ({ ...r }));
+      return {
+        result: async () => {
+          const during = hooks.duringQuery;
+          hooks.duringQuery = undefined;
+          await during?.();
+          return snapshot;
+        },
+      };
     },
   };
 
-  return { store, dbTruth, dbQueries, fakeRedis, readPool };
+  return { store, dbTruth, dbQueries, hooks, fakeRedis, readPool };
 });
 
 vi.mock('./clients/redis', () => ({ getRedis: () => h.fakeRedis }));
@@ -90,6 +100,7 @@ const badge = async () =>
 beforeEach(() => {
   h.store.clear();
   h.dbQueries.count = 0;
+  h.hooks.duringQuery = undefined;
   countInFlight.clear();
   h.dbTruth.rows = [
     { category: 'Update', count: 300 },
@@ -133,7 +144,9 @@ describe('unread counter cache: partial hashes', () => {
   it('serves a counter that carries the completeness marker without touching the DB', async () => {
     seed({ __complete: '0', Update: '8' }, 3600);
 
-    expect(await badge()).toBe(8);
+    expect(await countNotifications({ userId: USER, unread: true })).toEqual([
+      { category: 'Update', count: 8 },
+    ]);
     expect(h.dbQueries.count).toBe(0);
   });
 
@@ -145,12 +158,15 @@ describe('unread counter cache: partial hashes', () => {
     expect(await badge()).toBe(340);
   });
 
-  it('caches a user with nothing unread instead of recounting on every read', async () => {
+  it('shows a notification committed during a recount that found nothing unread', async () => {
     h.dbTruth.rows = [];
+    h.hooks.duringQuery = async () => {
+      h.dbTruth.rows = [{ category: 'Update', count: 1 }];
+      await notificationCache.incrementUser(USER, 'Update');
+    };
 
     expect(await badge()).toBe(0);
-    expect(await badge()).toBe(0);
-    expect(h.dbQueries.count).toBe(1);
+    expect(await badge()).toBe(1);
   });
 
   it('shows the full count after the counter expires and a notification arrives before the next read', async () => {
