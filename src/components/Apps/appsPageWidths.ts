@@ -442,21 +442,21 @@ export const APPS_FULL_MEASURE_PAGES = [
  * RETRACTED RATHER THAN DELETED, BECAUSE IT WAS TRUE WHILE IT STOOD. This comment
  * first asserted no width bound; it was then corrected to say the opposite, because
  * all three of these routes mount `PageBlockHost` and the host capped ITSELF at
- * `--app-page-max-width` (then `1600px`) and centred the app past that. That cap is
- * GONE: `--app-page-max-width` is declared `none` on `:root` in
- * `src/styles/globals.css`, the `var()` fallback in the host is `none` too, and the
- * `APP_PAGE_MAX_WIDTH_PX` constant this paragraph used to cite no longer exists. So a
- * run page really is unbounded once more, by an owner decision recorded on that
- * declaration.
+ * `--app-page-max-width` (then `1600px`) and centred the app past that. That whole
+ * mechanism is GONE — the constant, the custom property, the `var()` read, the auto
+ * margins and the per-app CSS ledger that could re-cap one app — so a run page really
+ * is unbounded once more, by an owner decision. The record is the tombstone above
+ * `PageBlockHostProps` in `~/components/AppBlocks/PageBlockHost`.
  *
- * What still holds, and is the reason not to collapse the two ideas: these are two
- * SEPARATE mechanisms, and only one of them moved. This module's container is 2560 and
- * applies to the apps CHROME; the host's own `max-width` applies to the third-party app
- * itself and is now `none`. A per-app platform rule in that same stylesheet could cap
- * ONE app again (the ledger there is deliberately empty), so "no container here" has
- * never meant "nothing anywhere can bound this app" — check that declaration rather
- * than inferring either answer from this list. Nothing about THIS module changes: these
- * routes still pass no `measure` and still render no `AppsPageLayout`.
+ * ⚠️ AND THE HEDGE THAT USED TO FOLLOW IS RETRACTED TOO, BECAUSE IT NAMED A LEVER THAT
+ * NO LONGER EXISTS. It said "a per-app platform rule in that same stylesheet could cap
+ * ONE app again (the ledger there is deliberately empty), so 'no container here' has
+ * never meant 'nothing anywhere can bound this app'". There is no such rule and no
+ * ledger to write one in: nothing on the civitai side bounds a full-page app. What DOES
+ * still hold is that these remain two separate concerns — this module's container is
+ * 2560 and applies to the apps CHROME, while the third-party app's own width is the
+ * app's business and is set inside its own iframe document. Nothing about THIS module
+ * changes: these routes still pass no `measure` and still render no `AppsPageLayout`.
  */
 export const APPS_FULL_BLEED_PAGES = [
   '/apps/run/[slug]/[[...path]]',

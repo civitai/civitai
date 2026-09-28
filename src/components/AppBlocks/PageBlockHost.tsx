@@ -316,32 +316,125 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * interface read "APP_PAGE_MAX_WIDTH_PX USED TO BE DECLARED HERE AND IS GONE". A tombstone
  * must document no symbol.
  *
- * 🔴 `APP_PAGE_MAX_WIDTH_PX` USED TO BE DECLARED HERE AND IS GONE — THE FULL-PAGE APP
- * SURFACE IS UNCAPPED. This note exists because the constant was cited by name from
- * four other files and its docblock was the recorded home of the arithmetic behind a
- * 1600px cap; a reader arriving from any of those citations needs to land somewhere
- * that says what happened rather than on an absence.
+ * 🔴 `APP_PAGE_MAX_WIDTH_PX` USED TO BE DECLARED HERE AND IS GONE — AND SO, NOW, IS THE
+ * WHOLE WIDTH MECHANISM IT BELONGED TO. THIS IS THE ONE PLACE THE RECORD LIVES. The
+ * constant was cited by name from four other files, and `src/styles/globals.css` now
+ * points here rather than the other way round, so a reader arriving from any of those
+ * citations needs to land somewhere that says what happened rather than on an absence.
  *
- * The platform no longer imposes a width on a full-page App Block. An app that wants
- * a centred column sets one in its own CSS, inside its own iframe document, which it
- * already fully controls. Direct instruction from the repo owner, and it is the change
- * the old opt-out ledger's own guidance named as the honest one once apps were being
- * exempted from the cap one at a time.
+ * THE CONTRACT, IN ONE SENTENCE: the app host box declares NO width bound, in any
+ * spelling, on either element. No `max-width`, no `max-inline-size`, no custom property,
+ * no `var()` read, no Mantine width style prop, no Tailwind utility, no per-app CSS rule
+ * and no ledger to add one to. An app that wants a centred column sets one in its own CSS
+ * inside its own iframe document, which it already fully controls. Direct instruction from
+ * the repo owner.
  *
- * The constant is removed rather than demoted because it had exactly one job — mirror
- * `--app-page-max-width` as the host's `var()` fallback, since CSS cannot import a TS
- * value — and there is no number left to mirror. A `1600` left standing under this name
- * would read as the cap to everyone who found it, which is the failure mode this file
- * documents everywhere else: a comment (or a constant name) is a claim.
+ * 🔴 THIS LANDED IN TWO STAGES AND THE SECOND IS THE ONE A READER WILL NOT EXPECT. Stage 1
+ * dropped the 1600px default: `--app-page-max-width` went to `none` while the MECHANISM was
+ * kept and re-pointed, so a per-app CSS rule that used to EXCUSE an app from the cap would
+ * instead CAP one app. Stage 2 — this commit — deletes that retained lever: the property,
+ * the `var()` read, the `margin-inline: auto` that centred a capped column, the ledger, its
+ * worked template, the publisher HOW-TO that taught it, and the guards over all of them.
  *
- * WHERE THE STORY LIVES NOW, all of it in one place: the `--app-page-max-width`
- * declaration on `:root` in `src/styles/globals.css`. That block carries the mechanism,
- * the reason the default is `none`, what the 1600 was and what it cost (kept as
- * history, marked as history), why this does not reverse PR #4812, and the empty
- * platform width-cap ledger that can still cap ONE app if that is ever wanted.
- * The measurement is
- * `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`; the source-side
- * single-source-of-truth guard is
+ * 🔴 WHY THE KEPT LEVER WENT TOO, RECORDED SO IT IS NOT RE-DERIVED AS AN OVERSIGHT. The
+ * owner's ask was "the platform imposes no width, each app controls its own". Nothing in it
+ * asked for a lever to cap ONE app, so the retained mechanism was an UNATTRIBUTED
+ * requirement — kept because it existed, not because anyone wanted it. Two things made that
+ * worse than merely unasked-for. (a) Stage 1 kept the mechanism while DELETING THE DECISION
+ * PROCEDURE that had governed it: the old opt-out ledger required an admission to name its
+ * decider, and the replacement prose named none, so the lever outlived the only thing that
+ * said who may pull it. (b) The POLARITY INVERTED. An opt-out is an escape an app asked
+ * for; a cap is an imposition the app cannot SEE — the cascade is cross-origin, so a guest
+ * has no way to observe a rule applied to its own host box — and cannot CONTEST, because
+ * `BLOCK_INIT.context` in `src/components/AppBlocks/types.ts` carries no width or measure
+ * field for it to read or answer. A lever with no requester, no decision procedure and no
+ * route for the affected party to object does not earn the guard surface it needs.
+ *
+ * ⚠️ RETRACTED WITH IT, listed so the sentences are not cited out of history as live: "the
+ * mechanism is kept, pointing the other way"; "a future cap is one reviewed rule rather
+ * than a re-derivation"; "an entry there now imposes a width on an app that did not ask for
+ * one"; and every claim that the `var()` read exists so a stylesheet rule stays effective.
+ * The host declares no `max-width` at all now, so an inline custom property could not
+ * defeat anything even if one were written — the guard that used to say otherwise is gone
+ * as a vacuous invariant, not as an accident.
+ *
+ * ⚠️ AND ONE GUARD DIED WITH A REAL BUG STILL INSIDE IT, WHICH IS A SCOPE REDUCTION RATHER
+ * THAN A FIX. `ledgerSelectorSurvivesProdStrip.test.ts` existed because a ledger rule once
+ * shipped keyed on `[data-testid='app-page-frame']` while `next.config.mjs` strips every
+ * `data-testid` from the production DOM, so the rule matched ZERO elements on civitai.com
+ * with every tier green. That hazard is generic to any stylesheet in this repo, not
+ * specific to a ledger, and it is now unguarded: the honest replacement is a repo-wide
+ * check over every stylesheet, not a ledger-shaped one. The prose warning survives on the
+ * tombstone in `src/styles/globals.css`.
+ *
+ * 🔴 WHAT THE 1600 WAS AND WHAT IT COST — KEPT, BECAUSE IT IS THE EVIDENCE THE UNCAP WAS
+ * MADE AGAINST AND EVERY SENTENCE OF IT IS NOW HISTORY. It was chosen to sit at-or-above
+ * every ordinary civitai content measure (Mantine `xl`, 1288 content px) and clear of the
+ * widest app-imposed well then measured (1100). ⚠️ ITS COST WAS UNDERSTATED TWICE AND BOTH
+ * CORRECTIONS ARE KEPT BECAUSE THE SECOND IS THE INSTRUCTIVE ONE. The original docblock
+ * said the cap bound "on NOTHING in the laptop classes (1280/1366/1440/1536)" — a
+ * four-point sample generalised into a class claim, when a `max-width: 1600px` binds at ANY
+ * viewport wider than 1600: 1680, 1728 (a MacBook Pro 16" at default scaling) and 1792 were
+ * all capped, by (w − 1600) / 2 a side. A review then found the correction had been written
+ * "40–64px", missing that 1792 is 96px — re-committing, one point further out, the exact sin
+ * it existed to retract. COMPUTE IT, DO NOT QUOTE IT. And ~1905 was an illustration of a
+ * maximised 1080p desktop, never a threshold; the boundary was always the cap value itself.
+ *
+ * ⚠️ THE ONE MEASURE IN THIS REPO A FUTURE CAP PROPOSAL WOULD COLLIDE WITH FIRST:
+ * `APPS_TWO_COLUMN_DETAIL_MEASURE` is a BAND, `{min: 1288, max: 1600}`, so on a wide screen
+ * the store-preview page an app is launched from reached exactly 1600 — the same width as
+ * the cap. "At-or-above every ordinary content measure" therefore held at PARITY, not with
+ * headroom. Read the band from `src/components/Apps/appsPageWidths.ts`, not from this
+ * sentence.
+ *
+ * 🔴 THIS DOES NOT REVERSE PR #4812, AND A LATER READER MUST NOT RECONSTRUCT ONE. #4812
+ * built a `page` MANIFEST FIELD as the EXEMPTION mechanism and was closed unmerged in
+ * favour of the CSS ledger — a decision about HOW AN APP ASKS TO BE EXEMPTED from a cap.
+ * With no cap and no ledger there are no exemptions, so the question it answered no longer
+ * arises: it is MOOTED, not overruled, and no manifest field is introduced or needed here.
+ * ⚠️ The technical argument that closure gave — that a manifest field "would be UNTYPED at
+ * exactly the point the host consumes it" because the host pins `@civitai/app-sdk@^0.14.0`
+ * — was MEASURED FALSE and is recorded retracted so it is not rediscovered: the host never
+ * reads a manifest through an SDK type at all. `block-manifest-validator.service.ts`
+ * imports nothing from `@civitai/app-sdk`, and `src/components/AppBlocks/types.ts`, which
+ * declares the host's own `BlockManifest`, has no imports. Never cite the SDK pin as a cost
+ * of a manifest field. ⚠️ The one MEASURED cost of that alternative is preserved because it
+ * was true and is still the record anyone re-opening #4812 would need — and it is a fact
+ * about the CLI, not about the cap: the released Go CLI 0.1.101 rejects an undeclared key
+ * under `page`, so `civitai app validate` exits 1 locally, before any network call. It is
+ * carried forward unre-measured (that CLI lives in `civitai/cli` and is not verifiable from
+ * this repo), so treat it as a claim about that release only. Scoped to the CLI deliberately
+ * — `@civitai/app-sdk` vendors a copy of the schema and nothing consumes it as a validator,
+ * so a "three mirrors must move together" cost must not be asserted from it. Re-measured
+ * 2026-09-27 against the installed `@civitai/app-sdk@0.14.0`: canonical
+ * `public/schemas/app-block/v1.json` has 23 top-level properties, the vendored copy 17, so
+ * SIX are missing (`auth`, `bootSkeleton`, `category`, `repository`, `scopeJustifications`,
+ * `tagline`) and the vendored copy DOES carry `page` — consistent with it gating nothing.
+ * 🔴 An earlier reading said FIVE and that is retracted.
+ *
+ * 🔴 THE TWO APPS THE OLD OPT-OUT LEDGER HELD, CONDENSED TO THE CONCLUSION EACH SUPPORTS.
+ * ⚠️ THEIR CROSS-REPO `file:line` CITATIONS ARE DELIBERATELY GONE RATHER THAN TRIMMED BY
+ * ACCIDENT: they were taken at refs the record itself marked unresolved (`sensei` at a
+ * BRANCH TIP, not a deployed ref), nothing in this repo can detect another repo's line
+ * numbers rotting, and a stale citation reads as stronger evidence than no citation at all.
+ * Re-read the apps, recording refs, if a cap is ever proposed again.
+ *   · `playable-collections` — a collection PLAYER, unbounded by its own design on every
+ *     open-collection surface; it needs nothing from the platform. (Its browse list caps
+ *     itself at 960 and is unaffected either way.)
+ *   · `sensei` — a two-pane chat shell with nothing of its own bounding its width; it needs
+ *     nothing from the platform either. ⚠️ ONE PART OF ITS RECORD IS KEPT BECAUSE IT IS NOT
+ *     MOOTED AND WOULD OTHERWISE HAVE VANISHED WITH THE ENTRY: the trade the owner accepted
+ *     was full bleed OVER an alternative that was on the table — pairing the exemption with
+ *     an internal measure on the transcript itself. That is an APP-SIDE measure, which is
+ *     exactly what `docs/features/app-blocks.md` now tells every app author to reach for, so
+ *     the rejected alternative still informs the advice. What the owner rejected was making
+ *     it a CONDITION of the exemption, not the technique.
+ *
+ * ⚠️ The census of first-party apps that reasoning rested on was a cross-repo reading at
+ * unrecorded refs, asserted by nothing, and is deliberately NOT restated here.
+ *
+ * THE MEASUREMENT is `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`; the
+ * source-side guard over the no-width-bound invariant is
  * `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts`.
  */
 
@@ -4262,11 +4355,11 @@ export function PageBlockHost({
         display: 'flex',
         flexDirection: 'column',
         // 🔴 THE ROOT IS FULL-BLEED, AND SO IS THE CONTENT WRAPPER BELOW IT — THE
-        // PLATFORM IMPOSES NO WIDTH ON A FULL-PAGE APP AT ALL. Read the
-        // `--app-page-max-width` block in `src/styles/globals.css` before
-        // "restoring" a cap on either element; the default there is `none` by an
-        // owner decision, and an app that wants a centred column sets one in its
-        // own CSS inside its own iframe document.
+        // PLATFORM IMPOSES NO WIDTH ON A FULL-PAGE APP AT ALL, IN ANY SPELLING, ON
+        // EITHER ELEMENT. Read the tombstone above `PageBlockHostProps` before
+        // "restoring" a cap on either one: it is an owner decision, and an app that
+        // wants a centred column sets one in its own CSS inside its own iframe
+        // document.
         //
         // HISTORY, kept because two placements were argued and both are cited from
         // elsewhere. A 1600px cap first lived on THIS element, so the trust chrome
@@ -4274,17 +4367,20 @@ export function PageBlockHost({
         // because stopping the chrome at 1600px made a full-page app look like a
         // boxed widget dropped into the page rather than a page of the site, and
         // every other site-level bar spans the viewport. That second decision is
-        // now moot rather than reversed: with no cap anywhere, the chrome and the
-        // app take the same measure again — the viewport — and the split between
-        // the two elements survives only as the place a per-app platform cap would
-        // still be read from.
+        // now MOOT rather than reversed: with no bound anywhere, the chrome and the
+        // app take the same measure again — the viewport.
         //
-        // What did NOT change when the default went to `none`: the `var()` read,
-        // the fallback (also `none`), and the `[data-app-page-frame][data-block-id]`
-        // rule shape — the custom property is still declared once in globals.css and
-        // can still be overridden per-app on THIS element, from which it INHERITS to
-        // the content wrapper. The direction reversed: such a rule now CAPS one app
-        // instead of excusing one. The ledger is empty; the mechanism is not.
+        // ⚠️ AND THE SPLIT BETWEEN THE TWO ELEMENTS NO LONGER CARRIES A WIDTH
+        // MECHANISM, WHICH AN EARLIER VERSION OF THIS COMMENT SAID IT DID. It said
+        // the split "survives only as the place a per-app platform cap would still
+        // be read from", and it described a `var()` read, a `none` fallback and a
+        // `[data-app-page-frame][data-block-id]` rule shape that "can still be
+        // overridden per-app on THIS element". All of that is DELETED — retracted
+        // here rather than quietly dropped, because those sentences are the reason
+        // someone would think the mechanism is merely dormant. It is not dormant;
+        // there is nothing to override. What the split still buys is structural: the
+        // chrome is outside the app's own column, so the two can be measured
+        // separately.
         width: '100%',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
@@ -4307,43 +4403,44 @@ export function PageBlockHost({
             }),
       }}
       data-testid="app-page-frame"
-      // 🔴 HALF OF THE PER-APP WIDTH RULE'S SELECTOR, AND IT EXISTS BECAUSE
-      // `data-testid` DOES NOT SHIP. `next.config.mjs` sets
-      // `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` under
-      // `NODE_ENV === 'production'`, so EVERY `data-testid` is compiled out of the
-      // production DOM. The ledger in globals.css used to be keyed on
-      // `[data-testid='app-page-frame'][data-block-id='…']`, which therefore
-      // matched nothing on the live site while passing in every test tier (they
-      // all run with `NODE_ENV !== 'production'`, where the testid is present) —
-      // measured on civitai.com/apps/run/playable-collections: the rule shipped
-      // verbatim in the CSS, 0 elements matched the compound selector, 1 matched
-      // `[data-block-id='playable-collections']`, and the app was letterboxed at
-      // the 1600px cap. This attribute is the production-surviving spelling of
-      // "this is the page host", the same way `data-app-footer` and
-      // `data-adhesive-ad` mark their elements for `globals.css` elsewhere.
+      // ⚠️ THIS WAS HALF OF THE PER-APP WIDTH RULE'S SELECTOR, AND THAT RULE NO
+      // LONGER EXISTS — SO THIS ATTRIBUTE NOW HAS NO CONSUMER ANYWHERE IN THE REPO.
+      // It is left in place as an inert, production-surviving presence marker
+      // ("this element is the page host"), the way `data-app-footer` and
+      // `data-adhesive-ad` mark theirs, and it is deliberately NOT deleted in the
+      // same change as the width mechanism: removing an attribute from the live DOM
+      // is a separate, independently-reviewable edit, and nothing here needs it to
+      // go. Treat it as a deletion candidate, not as a mechanism.
       //
-      // It carries no value on purpose: it is a presence marker, not data. Never
-      // re-key onto `data-testid` (stripped) and never delete this — both make any
-      // per-app width rule inert with nothing visibly wrong. ⚠️ THE LEDGER IS EMPTY
-      // TODAY, so there is no live rule for a deletion here to break; what it would
-      // break is the NEXT one, and the copyable template + the publisher HOW-TO that
-      // teach its shape. Still guarded by
-      // `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
-      // which reads the strip list out of `next.config.mjs` and the selectors out of
-      // globals.css AND `docs/features/app-blocks.md` and compares them, rather than
-      // restating either.
+      // 🔴 WHY IT WAS ADDED, KEPT BECAUSE THE LESSON OUTLIVES THE FEATURE. The
+      // ledger in globals.css was originally keyed on
+      // `[data-testid='app-page-frame'][data-block-id='…']`, and
+      // `next.config.mjs` sets
+      // `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` under
+      // `NODE_ENV === 'production'` — so EVERY `data-testid` is compiled out of the
+      // production DOM. Measured on civitai.com/apps/run/playable-collections: the
+      // rule shipped verbatim in the CSS, 0 elements matched the compound selector,
+      // 1 matched `[data-block-id='playable-collections']`, and the app was
+      // letterboxed at the 1600px cap while every test tier passed (they all run
+      // with `NODE_ENV !== 'production'`). Never key a CSS selector on a testid.
+      // ⚠️ The mechanical check that used to enforce that — a test reading the strip
+      // list out of `next.config.mjs` and the selectors out of globals.css and the
+      // publisher doc — was deleted with the ledger it was scoped to, so that is
+      // prose now. See the tombstone in `src/styles/globals.css`.
       data-app-page-frame=""
       // Observable sizing mode, so a regression test (and DevTools) can assert
       // WHICH branch a surface took rather than re-deriving it from computed
       // styles that jsdom does not resolve.
       data-fit={fit}
-      // 🔴 THE PER-APP WIDTH RULE'S ANCHOR, not decoration. The one documented way
-      // to give a single app a width — see `--app-page-max-width` in globals.css —
-      // is a CSS rule keyed on this attribute, so removing it does not merely lose
-      // an observability hook, it makes any such rule match nothing, silently.
-      // `blockId` (the app's slug, the same value that builds `<slug>.civit.ai`) is
-      // the identifier an app author knows themselves by; `data-block-instance-id`
-      // below is the per-install id and is NOT stable across surfaces.
+      // ⚠️ AN OBSERVABILITY ATTRIBUTE, AND NO LONGER AN ANCHOR FOR ANYTHING. This
+      // comment used to read "THE PER-APP WIDTH RULE'S ANCHOR, not decoration",
+      // because a CSS rule keyed on it was the one documented way to give a single
+      // app a width — retracted: that rule, and the ledger it lived in, are gone, so
+      // nothing in the cascade reads this. `blockId` (the app's slug, the same value
+      // that builds `<slug>.civit.ai`) is the identifier an app author knows
+      // themselves by, which is why this carries it rather than
+      // `data-block-instance-id` below — that one is per-install and is NOT stable
+      // across surfaces.
       data-block-id={blockId}
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
@@ -4442,40 +4539,41 @@ export function PageBlockHost({
           }}
         />
       ))}
-      {/* THE APP'S OWN COLUMN — the box a per-app platform width rule would apply to,
-          and nothing else. `AppBlockChrome` above is deliberately OUTSIDE it (see the
+      {/* THE APP'S OWN COLUMN. `AppBlockChrome` above is deliberately OUTSIDE it (see the
           root's note): the chrome spans the page like every other site-level bar.
 
-          🔴 UNCAPPED BY DEFAULT — `--app-page-max-width` is declared `none` on `:root`
-          in `src/styles/globals.css` and the `var()` fallback here is `none` too, so
-          this box is `width: 100%` at every viewport. That declaration block is the one
-          place the whole decision lives: why the default is `none`, what the former
-          1600px cap was and cost, and the (empty) platform width-cap ledger that could
-          still cap ONE app. There is no `APP_PAGE_MAX_WIDTH_PX` constant any more — see
-          the note where it used to be declared, above `PageBlockHostProps`.
+          🔴 NO WIDTH BOUND AT ALL — THAT IS THE WHOLE REQUIREMENT, AND IT IS WHY THIS
+          STYLE OBJECT DECLARES `width: '100%'` AND NOTHING ELSE ABOUT WIDTH. This box is
+          the app's measure at every viewport, from a phone to an ultrawide. The record —
+          the owner decision, the two stages it arrived in, and why the retained per-app
+          lever was deleted rather than kept — is the tombstone above `PageBlockHostProps`.
+          There is no `APP_PAGE_MAX_WIDTH_PX` constant and no `--app-page-max-width`
+          custom property any more.
 
-          🔴 BOTH DECLARATIONS ARE INERT AT `none`, WHICH IS THE REQUIREMENT — AND THE
-          TEST THAT MATTERS IS THE ONE AT 1620px. `max-width: none` clamps nothing, and
-          `margin-inline: auto` distributes LEFTOVER inline space, of which a box that
-          fills its parent has none, so both margins resolve to 0. The old cap was
-          `max-width: 1600px`, so it bound at ANY viewport wider than 1600 — measured
-          against the base revision, inert at exactly 1600 and binding by 10px a side at
-          1620. 1620 is therefore the tightest point that proves the uncap, and 1600 and
-          below never bound and must be byte-identical to before. Both are measured in
+          ⚠️ THREE PARAGRAPHS ARE RETRACTED FROM HERE RATHER THAN DELETED SILENTLY, because
+          each described a mechanism a reader could otherwise assume is merely dormant.
+          (a) "UNCAPPED BY DEFAULT — `--app-page-max-width` is declared `none` on `:root`
+          … and the `var()` fallback here is `none` too": there is no property and no
+          `var()` read; the box is unbounded because nothing declares a bound, not because
+          a default evaluates to `none`. (b) "BOTH DECLARATIONS ARE INERT AT `none`": there
+          are no longer two declarations — `max-width` and `margin-inline: auto` are both
+          gone, the latter because it existed only to centre a capped column. (c) "READ
+          THROUGH `var()` DELIBERATELY … an inline custom property here would win over any
+          stylesheet rule": true while a stylesheet rule existed, now vacuous, and the
+          guard that pinned it is gone as a vacuous invariant.
+
+          🔴 WHAT THE BROWSER SUITE STILL MEASURES, AND WHY 1620 IS THE ARM TO READ FIRST.
+          The former cap was `max-width: 1600px`, so it bound at ANY viewport wider than
+          1600 — measured against the base revision, inert at exactly 1600 and binding by
+          10px a side at 1620. 1620 is therefore the tightest point that proves the uncap,
+          and 390 through 1600 never bound and must be byte-identical to before. Both bands
+          are measured in
           `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`.
           ⚠️ THIS PARAGRAPH SAID "~1905px" AND CALLED IT THE BOUNDARY — retracted, because it
           was ~305px too high and was written into this file by the very change that
           retracts it elsewhere. 1905 is a maximised browser at 1080p, one real-world case
           above the threshold (gutter 152.5px a side), and it is still one of the arms; it
           was never the threshold.
-
-          🔴 READ THROUGH `var()` DELIBERATELY, EVEN THOUGH THE DEFAULT IS NOW `none`.
-          An inline custom property here (`'--app-page-max-width': …`) would win over any
-          stylesheet rule targeting the same element, which is precisely the rule shape a
-          platform cap uses — so writing the value inline would silently make that
-          mechanism inert while looking tidier. The property is set on the ROOT and
-          inherits down to here, so a `[data-app-page-frame][data-block-id='…']` rule
-          still reaches this box.
 
           🔴 IT REPRODUCES THE VERTICAL CHAIN IT WAS INSERTED INTO, which is the only
           way this can be a width-only change. It was previously the iframe wrapper's
@@ -4510,8 +4608,6 @@ export function PageBlockHost({
           flex: 1,
           minHeight: 0,
           width: '100%',
-          maxWidth: 'var(--app-page-max-width, none)',
-          marginInline: 'auto',
         }}
       >
         {showIframe ? (

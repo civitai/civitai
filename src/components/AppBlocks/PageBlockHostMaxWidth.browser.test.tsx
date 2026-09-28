@@ -1,16 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-// Raw text, NOT a stylesheet import — the ledger's REAL rules are parsed out of
-// this and injected. See `ledgerFromGlobals` for why that indirection exists.
-import globalsCss from '~/styles/globals.css?raw';
-// The ONE spelling of "which app does a `[data-block-id=…]` selector name", shared with
-// the node-tier membership enumeration. It lived here as a private helper and was the
-// only tolerant copy of four; promoting it is what closed a surviving mutant. See that
-// module for the measured table.
-import { blockIdsIn, TEMPLATE_RULE } from '../../../test/ledger-block-ids';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
 // @typescript-eslint/consistent-type-imports rejects.
@@ -19,20 +10,34 @@ import type * as TrpcMod from '~/utils/trpc';
 /**
  * THE FULL-PAGE APP BLOCK IS UNCAPPED — MEASURED, at named viewports.
  *
- * THE CONTRACT. `/apps/run/<slug>` hands the app the viewport. Nothing in the chain
+ * THE CONTRACT. `/apps/run/<slug>` hands the app the viewport. NOTHING in the chain
  * bounds it: the page wrapper is `width: '100%'`, the host root is `width: '100%'`, the
- * content wrapper is `width: '100%'` with `max-width: var(--app-page-max-width, none)`,
- * and the iframe is `width: '100%'`. An app that wants a centred column sets one in its
- * own CSS, inside its own iframe document.
+ * content wrapper is `width: '100%'` AND DECLARES NO `max-width` OF ANY KIND, and the
+ * iframe is `width: '100%'`. An app that wants a centred column sets one in its own CSS,
+ * inside its own iframe document.
  *
  * ⚠️ THIS FILE USED TO MEASURE THE OPPOSITE, AND THE INVERSION IS THE POINT. The host
  * capped a full-page app at 1600px and centred it past that, and these cases asserted
  * the cap bound at 2560 and 3440. The cap was dropped by an owner decision; the whole
- * record — including what the 1600 was worth and what it cost — lives on the
- * `--app-page-max-width` declaration in `src/styles/globals.css`. What is preserved here
- * is the SHAPE of the old suite, because it was the right shape: measure at named
+ * record — including what the 1600 was worth and what it cost — is the tombstone above
+ * `PageBlockHostProps` in `src/components/AppBlocks/PageBlockHost.tsx`. What is preserved
+ * here is the SHAPE of the old suite, because it was the right shape: measure at named
  * viewports, pair every claim with a control, and keep the below-threshold arm as the
  * reference it always was.
+ *
+ * ⚠️ AND IT MEASURED AN INTERMEDIATE CONTRACT TOO, WHICH IS NOW ALSO GONE — SAID PLAINLY
+ * BECAUSE THREE ARMS DISAPPEARED WITH IT AND A LATER READER WOULD OTHERWISE LOOK FOR ROT.
+ * Between the cap and now, `--app-page-max-width` survived at `none` with the per-app CSS
+ * mechanism kept and re-pointed, so a rule could CAP one app. Three arms here exercised
+ * that: "the width is read from `--app-page-max-width` — overriding it moves the rendered
+ * width", "a per-app platform rule CAN still cap one app — and only that app" (with its
+ * paired negative arm), and "every per-app rule in globals.css is REACHABLE by the CSSOM
+ * walk". The mechanism is deleted — property, `var()` read, `margin-inline: auto`, ledger,
+ * template, publisher HOW-TO — so all three had no subject left. Their helpers went with
+ * them (`ledgerRulesIn`, `ledgerFromGlobals`, `cssomWalkPositiveControl`,
+ * `templateCapPxFromGlobals`, `cssWithoutComments`, and the `?raw` import of `globals.css`
+ * every one of them read). What REMAINS is every arm that measures a WIDTH, which is the
+ * requirement; nothing that measured a LEVER.
  *
  * 🔴 THE BOUNDARY IS 1600, NOT 1905 — AND THE ~1905 READING IS RETRACTED HERE BECAUSE IT
  * SHIPPED IN THIS FILE'S FIRST DRAFT AND IN AN ASSERTION MESSAGE. A `max-width: 1600px`
@@ -68,34 +73,32 @@ import type * as TrpcMod from '~/utils/trpc';
  * at a boundary AND above it, with every number in the assertion message.
  *
  * 🔴 MUTATION CONTROL, RUN AGAINST THIS CONTRACT (recorded here because a mutation result
- * that lives only in a PR description is not evidence anyone can re-read). Re-introducing
- * `--app-page-max-width: 1600px` on `:root` in `globals.css` — the exact value the old cap
- * used — takes this file to **6 failed | 11 passed at 17 arms**, and the 1620/1905/2560/3440
- * arms fail with THIS suite's own message ("the app column is 1600px inside a 1620px parent
- * — it is being capped, with 10px of gutter on the left"). The node-tier guard fails
- * separately with its own "`--app-page-max-width` … is no longer `none`".
+ * that lives only in a PR description is not evidence anyone can re-read). Putting a bare
+ * `maxWidth: 1600` back on the content element in `PageBlockHost.tsx` — the value the old
+ * cap used — takes this file to **4 failed | 10 passed of 14 arms**, and the
+ * 1620/1905/2560/3440 arms fail with THIS suite's own message ("the app column is 1600px
+ * inside a 1620px parent — it is being capped, with 10px of gutter on the left"). A
+ * Tailwind `max-w-[1600px]` class is the mirror case and is INVISIBLE here — this harness
+ * loads no Tailwind — which is why the node tier pins the class route separately.
  *
- * ⚠️ QUOTE THAT FIGURE WITH ITS ARM COUNT, BECAUSE IT WENT STALE ONCE ALREADY AND THAT IS
- * THE WHOLE HAZARD OF RECORDING A COUNT. It first read "5 failed | 8 passed" — 13 arms,
- * i.e. the count BEFORE the review round that added 1620/390/1366/1600 — so the recorded
- * run could not have seen the 1620 arm it named, and the ordinal below pointed at the wrong
- * test. A count is only readable against the arm total it was taken at.
+ * ⚠️ QUOTE THAT FIGURE WITH ITS ARM COUNT, BECAUSE IT WENT STALE TWICE AND THAT IS THE
+ * WHOLE HAZARD OF RECORDING A COUNT. It first read "5 failed | 8 passed" (13 arms, i.e.
+ * before the round that added 1620/390/1366/1600, so the recorded run could not have seen
+ * the 1620 arm it named), then "6 failed | 11 passed at 17 arms" against a mutant
+ * (`--app-page-max-width: 1600px` on `:root`) that is no longer expressible, since the
+ * property does not exist. A count is only readable against the arm total AND the mutant it
+ * was taken at; re-run rather than quoting.
  *
- * ⚠️ THE SIXTH failure is the NEGATIVE arm of the per-app-cap test, and it dies for a
- * DIFFERENT reason than its headline message describes — its message now names that
- * alternative cause explicitly, because a mutant that dies with a misdirecting message
- * sends the reader at the wrong mechanism.
- *
- * 🔴 SECOND MUTANT, AND THE ONE THAT WAS ACTUALLY SURVIVING. A review found that
- * `[data-app-page-frame][data-block-id*='sensei'] { --app-page-max-width: 1100px; }` — and,
- * a round later, the `[data-block-id='sensei' i]` flag form — capped an app in production
- * with 17/17 here and 17/17 across the two node guard files (10 + 7 at the time of writing —
- * quote a count with its arm total; this pair read 16/16 for one commit after an `it` was
- * added, which is the third instance of that in this segment). Both now die against the membership
- * enumeration with its own message (`expected [ 'sensei' ] to deeply equal []`), because the
- * predicate moved to one shared `test/ledger-block-ids.ts`. Neither is a width mutant, so
- * NO arm in this file catches them — that is the node tier's job, and this note exists so
- * the split is not rediscovered.
+ * ⚠️ TWO RECORDED MUTANTS ARE RETIRED RATHER THAN CARRIED FORWARD, BECAUSE THEY ARE NO
+ * LONGER CONSTRUCTIBLE. Both were per-app ledger selectors —
+ * `[data-app-page-frame][data-block-id*='sensei']` and the `[data-block-id='sensei' i]`
+ * flag form — each of which capped an app in production while every tier was green, and
+ * both were killed by the ledger MEMBERSHIP enumeration in the node tier rather than by
+ * anything here. With no ledger there is no such rule to write, so the enumeration, the
+ * shared selector predicate it used and these two mutants all go together. The transferable
+ * half is the shape, not the instance: a route that never touches the host's own source is
+ * invisible to a source guard, and a route that never renders in this harness's cascade is
+ * invisible here.
  *
  * 🔴 THIS FILE IMPORTS NOTHING FROM THE HOST BUT THE COMPONENT, ON PURPOSE.
  *
@@ -135,24 +138,23 @@ import type * as TrpcMod from '~/utils/trpc';
  * the stylesheet pulls Tailwind preflight and Mantine layer ordering and changes the
  * rendered geometry of every existing test. So a plain `max-width` rule in `globals.css`,
  * e.g. `[data-app-page-frame] > div { max-width: 1600px; margin-inline: auto; }`, would
- * re-cap every full-page App Block in production and be invisible here (never injected)
- * AND invisible to the node guard (every pattern there greps `--app-page-max-width`; a bare
- * `max-width:` is not searched). That is pre-existing harness blindness, not something this
- * change introduced — but with the default at `none` the ONLY rendered evidence that no cap
- * exists comes from a cascade this suite builds itself, so the blind spot is now the
- * cheapest way to reintroduce a cap unnoticed.
+ * re-cap every full-page App Block in production and be invisible here — never injected —
+ * while also never appearing in the host's JSX, which is all the node tier reads. With no
+ * bound declared anywhere, the only rendered evidence that no cap exists comes from a
+ * cascade this suite builds itself, so that blind spot is the cheapest way to reintroduce
+ * one unnoticed.
  *
  * ⚠️ THE FIRST VERSION OF THIS NOTE JUSTIFIED LEAVING IT UNGATED WITH "zero instances in this
  * file's history", WHICH IS THE WRONG DENOMINATOR AND CONTRADICTED THE SENTENCE BEFORE IT: if
  * the uncap makes this the cheapest way to reintroduce a cap, the base rate just changed and
- * history cannot price it. The narrow half is now GATED in the node tier —
+ * history cannot price it. The narrow half is GATED in the node tier —
  * `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` has a
  * `no bare max-width rule targets the app host box` assertion that greps `globals.css` for a
- * `max-width` declaration under any selector naming the host's own markers, with a synthetic
- * positive control. What stays ungated is the WIDE half — a cap arriving from any other
- * stylesheet, or via the cascade this harness does not load — because closing that means
- * loading the real app cascade, which moves every other browser suite's geometry. Know that
- * before trusting a green run here.
+ * `max-width` declaration under any selector naming the host's own markers, with two
+ * synthetic positive controls. What stays ungated is the WIDE half — a cap arriving from any
+ * other stylesheet, or via the cascade this harness does not load — because closing that
+ * means loading the real app cascade, which moves every other browser suite's geometry. Know
+ * that before trusting a green run here.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -232,10 +234,13 @@ import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 
 /**
- * The app slug the fixture runs as — also the key a PER-APP PLATFORM rule is written against.
- * (It said "an opt-out rule" until a review enumerated the property's mentions: there are no
- * opt-outs, because there is no default to opt out of. A rule keyed on this now IMPOSES a
- * width.)
+ * The app slug the fixture runs as.
+ *
+ * ⚠️ IT USED TO BE MORE THAN A FIXTURE NAME: it was the key a per-app platform width rule was
+ * written against, and this comment has been corrected twice about which DIRECTION such a rule
+ * pointed in (an opt-out from a default cap, then an imposition against no default). Both
+ * readings are retired — there is no such rule and no ledger to write one in, so this is now
+ * an ordinary fixture slug with no cascade meaning at all.
  */
 const BLOCK_ID = 'max-width-app';
 
@@ -268,7 +273,9 @@ const baseProps = {
  *
  * Without the teardown a `:root` override written by one test survives into the
  * next one in this file (browser mode gives each FILE an iframe, not each test),
- * which would silently re-point the cap for every case after it.
+ * which would silently change the cascade for every case after it. Only one arm still
+ * injects anything — the safe-area invariant, which sets the display-cutout insets — but the
+ * teardown stays because a leak is silent and a second injecting arm costs nothing to add.
  */
 let injected: HTMLStyleElement | null = null;
 function injectCss(css: string) {
@@ -282,163 +289,6 @@ afterEach(() => {
 });
 
 /**
- * `globals.css` with its block comments removed.
- *
- * The ledger's own doc comment contains a TEMPLATE rule (`'my-canvas-app'`), and
- * the entries discuss their own selectors in prose, so an id count taken over the
- * raw file counts things that do not ship. Same strip, for the same reason, as
- * `code()` in `__tests__/pageBlockHostMaxWidth.test.ts`. Block comments only —
- * CSS has no `//` comment, and stripping one would eat the rest of any line
- * holding a `url(https://…)`.
- */
-function cssWithoutComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '');
-}
-
-/**
- * The REAL per-app width rules, parsed out of `globals.css` itself. There are none today
- * — the ledger is deliberately empty — so this returns `{css: '', ids: []}`, and the
- * caller's job is to say what that empty result is and is not evidence for.
- *
- * ⚠️ THIS USED TO BE NAMED FOR, AND DESCRIBED AS, THE "full-bleed opt-out" RULES. Those
- * were rules excusing an app from a 1600px default; with the default at `none` a rule here
- * would CAP one app instead. Same selector shape, same inheritance path, opposite
- * direction — and no live instances, so nothing below may presuppose one exists.
- *
- * 🔴 WHY THIS INDIRECTION EXISTS RATHER THAN JUST LOADING THE STYLESHEET. The
- * component harness deliberately does NOT load the app cascade — `component-
- * setup.tsx` extracts only the `:root` custom properties, because importing
- * `globals.css` pulls Tailwind preflight and Mantine layer ordering and changes
- * the rendered geometry of every existing test. So the ledger's rules are simply
- * ABSENT here by default, and a test that wrote its own copy of the rule would be
- * asserting against a fixture rather than against the ledger: deleting the real
- * entry, or mistyping its selector, would leave that test green.
- *
- * Taking the rules from the file and injecting ONLY those keeps the cascade the
- * suite has always had while making the assertions depend on the shipped text. ⚠️ With
- * the ledger empty that dependency is latent rather than active: there is no real entry to
- * delete or mistype today, so what this buys is that the FIRST entry anyone adds is
- * measured on the day its rule lands.
- *
- * 🔴 THE BROWSER PARSES IT, NOT A REGEX — the same decision, for the same reason,
- * that `component-setup.tsx` records at length: three successive regex extractors
- * there each shipped a defect (a comment glued to the next property, a `}` inside
- * a string truncating the capture), because several regexes cannot agree on where
- * a CSS block ends. `replaceSync` hands that to the engine that will evaluate it.
- *
- * ⚠️ WHAT THE WALK DOES NOT REACH, AND WHY THAT IS CHECKED RATHER THAN TRUSTED. It
- * descends through `@layer` blocks and nothing else — not `@media`, `@supports` or
- * `@container` — because a rule inside a conditional at-rule cannot be injected
- * unconditionally without changing what it means. That is a deliberate limit, and
- * it is also a HOLE: a member whose rule moves into such a block disappears from
- * `ids`, the derived green arm never measures it, and the test still passes on the
- * remaining members. So the caller asserts these `ids` EQUAL the ids in the raw
- * file text — see the assertion in the LEDGER case, which is the only thing
- * standing between that limit and a silently unmeasured member.
- */
-function ledgerRulesIn(source: string): { css: string; ids: string[] } {
-  const sheet = new CSSStyleSheet();
-  sheet.replaceSync(source);
-  const css: string[] = [];
-  const ids: string[] = [];
-  const walk = (rules: CSSRuleList) => {
-    for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule) {
-        if (!rule.selectorText.includes('data-block-id')) continue;
-        css.push(rule.cssText);
-        ids.push(...blockIdsIn(rule.selectorText));
-      } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
-        walk(rule.cssRules);
-      }
-    }
-  };
-  walk(sheet.cssRules);
-  return { css: css.join('\n'), ids };
-}
-
-/** `ledgerRulesIn` over the shipped stylesheet — the population under test. */
-function ledgerFromGlobals(): { css: string; ids: string[] } {
-  return ledgerRulesIn(globalsCss);
-}
-
-/**
- * 🔴 POSITIVE CONTROL ON THE CSSOM WALK — CAN IT SEE A RULE AT ALL?
- *
- * The shipped ledger is EMPTY, so `ledgerFromGlobals().ids` is legitimately `[]` and the
- * old `not.toHaveLength(0)` floor had to go. A `[]` from a walk that reaches nothing looks
- * identical, so the floor is replaced by this: feed the walk a rule it MUST find, and
- * report the pair — 1 on the control, 0 under test. Synthetic on purpose, so it cannot go
- * green for the same reason the population under test did.
- */
-function cssomWalkPositiveControl(): void {
-  const probe = ledgerRulesIn(
-    `@layer x { [data-app-page-frame][data-block-id='control-app'] { --app-page-max-width: 123px; } }`
-  );
-  expect(
-    probe.ids,
-    'POSITIVE CONTROL FAILED: the CSSOM walk did not find a synthetic, correctly-shaped per-app ' +
-      'rule (inside an `@layer`, which is the one at-rule it descends into). It can therefore see ' +
-      'nothing, and the empty result it reports for globals.css carries no information at all. ' +
-      'Fix the walk before reading any verdict below.'
-  ).toEqual(['control-app']);
-  expect(
-    probe.css,
-    'POSITIVE CONTROL FAILED: the CSSOM walk found the synthetic rule but returned no CSS text ' +
-      'for it, so the injected-cascade arm below would inject nothing.'
-  ).toContain('--app-page-max-width');
-}
-
-/**
- * The px value the "HOW TO ADD ONE" template in `globals.css` teaches, read out of that
- * file's COMMENTS.
- *
- * 🔴 DERIVED, NOT RESTATED, AND THE REASON IS A FALSE PREMISE THIS FILE SHIPPED. Two tests
- * below reason ABOUT the template's value — the per-app arm calls itself "the value the
- * template shows", and the safe-area invariant's failure message says *"Either the template
- * value in globals.css dropped below ~1000px"*. Both hardcoded `1100` and neither read the
- * template, so lowering the template to `900px` would leave both green while the sentence
- * explaining why they are green became false. The number also existed in four places
- * (the template, the publisher doc, and twice here) with nothing binding them.
- *
- * FAILS LOUD on a parse miss rather than defaulting: a silent fallback would restore exactly
- * the disconnect this replaces. The regex deliberately matches the template's SHAPE rather
- * than its placeholder slug, so renaming `my-canvas-app` does not break it.
- *
- * ⚠️ EXPECT THIS TO FAIL WHEN THIS FILE IS RUN AGAINST THE PRE-UNCAP IMPLEMENTATION, and read
- * that as correct rather than as a broken parse. On the base revision the template taught
- * `--app-page-max-width: none` — it was an opt-OUT recipe, not a cap recipe — so there is no
- * px value to derive and the two tests that call this are meaningless there. Only the
- * 1620/1905/2560/3440 arms and the chrome/app pair are the red-at-base evidence for the
- * uncap; these two are about the mechanism's SURVIVING direction, which exists only at HEAD.
- */
-function templateCapPxFromGlobals(): number {
-  // 🔴 COMMENT TEXT ONLY, AND THE DOCBLOCK USED TO CLAIM THIS WHILE THE CODE DID NOT. An
-  // earlier version `.exec`d the WHOLE raw stylesheet and took the FIRST match, which is the
-  // template only by accident of file ORDER. Measured: with a shipped rule at 800px above the
-  // template, it returned 800 — so on the first day the ledger gains an entry, the safe-area
-  // invariant would fail with "the template now teaches 800px" and blame the template for a
-  // shipped rule's value. That is the misattribution class this suite fixes twice elsewhere.
-  const comments = [...globalsCss.matchAll(/\/\*[\s\S]*?\*\//g)].map((m) => m[0]).join('\n');
-  // 🔴 EXACTLY ONE MATCH, NOT THE FIRST. `region()` in the node guard exists for precisely
-  // this ("more than one means the pin has become ambiguous and is grading an arbitrary
-  // occurrence") and its lesson had not crossed the tier boundary. A second worked example in
-  // the comments must be a deliberate edit here, not a silent re-point.
-  // `TEMPLATE_RULE` is deliberately NOT `/g` (so no caller inherits another's `lastIndex`),
-  // and `matchAll` requires a global regex — build one from its source, which is what the
-  // module's docblock tells callers that need every match to do.
-  const all = [...comments.matchAll(new RegExp(TEMPLATE_RULE.source, 'g'))];
-  expect(
-    all.length,
-    `expected exactly ONE worked per-app width template in the COMMENTS of src/styles/globals.css, found ${all.length}. ` +
-      'It is the shape a future platform cap gets copied from, and two tests below derive ' +
-      'their cap value from it so their stated reasoning is checkable. ZERO means the template ' +
-      'was removed or its formatting moved past this parse (re-point those tests deliberately); ' +
-      'MORE THAN ONE means this parse is grading an arbitrary occurrence.'
-  ).toBe(1);
-  return Number(all[0][1]);
-}
-
-/**
  * The production chain, reduced to what decides WIDTH.
  *
  * Mirrors `src/pages/apps/run/[slug]/[[...path]].tsx`: `AppLayout`'s no-scroll
@@ -446,11 +296,14 @@ function templateCapPxFromGlobals(): number {
  * are `width: 100%` with no bound of their own, and so is the host — the platform
  * imposes no width anywhere in this chain.
  *
- * ⚠️ THE PREVIOUS SENTENCE HERE SAID THIS WAS "the reason the cap has to be on the host",
- * which was a present-tense claim that a cap must exist. Retracted: it described the
- * reasoning behind a 1600px default that no longer ships. What the chain is still evidence
- * for is that NOTHING here would bound an app if the host did not — which is why a per-app
- * platform rule, if one is ever wanted, has to be read on the host and nowhere else.
+ * ⚠️ THIS DOCBLOCK HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH RETRACTIONS ARE
+ * KEPT. It first said the chain was "the reason the cap has to be on the host" — a
+ * present-tense claim that a cap must exist. It then said the chain shows nothing here would
+ * bound an app if the host did not, "which is why a per-app platform rule, if one is ever
+ * wanted, has to be read on the host and nowhere else" — true about the chain, but it named a
+ * lever that has since been deleted. The surviving claim is the first half alone: nothing in
+ * this chain bounds an app, and the host does not either, so the app's own document is the
+ * only place a measure can come from.
  */
 function renderInPageChain(props: Partial<typeof baseProps> = {}) {
   return renderWithProviders(
@@ -490,16 +343,17 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
   // elements:
   //   · `app-page-frame`   — the host root. Carries `AppBlockChrome`, and is FULL-BLEED
   //                          so the chrome spans the page like every other site bar.
-  //   · `app-page-content` — the app's own column (iframe or failure card). This is the
-  //                          box that READS `--app-page-max-width`, so it is the one a
-  //                          per-app platform rule would bound. Nothing bounds it today.
-  // `hostWidth` therefore reads the CONTENT box: every width claim below is about the app
-  // column, and pointing it at the frame would make them assert something else entirely.
-  // `frameWidth` is measured alongside so the full-bleed half can be asserted rather than
-  // assumed. ⚠️ This comment used to read "This is what the ultrawide cap binds" and
-  // "every capped/centred claim below" — both present tense, both false now that the
-  // default is `none`: exactly ONE arm below is a capped claim, and it injects the rule
-  // that makes it one.
+  //   · `app-page-content` — the app's own column (iframe or failure card). Its width IS
+  //                          the app's measure, so it is the box every claim below is about.
+  // `hostWidth` therefore reads the CONTENT box; pointing it at the frame would make those
+  // claims assert something else entirely. `frameWidth` is measured alongside so the
+  // full-bleed half can be asserted rather than assumed. ⚠️ THIS COMMENT HAS BEEN CORRECTED
+  // TWICE AND BOTH RETRACTIONS ARE KEPT: it read "This is what the ultrawide cap binds" and
+  // "every capped/centred claim below" while no cap existed, and was then corrected to
+  // "the box that READS `--app-page-max-width` … exactly ONE arm below is a capped claim,
+  // and it injects the rule that makes it one" — which described a mechanism and an arm that
+  // are both now deleted. NO arm below is a capped claim; every one asserts the app column
+  // equals its parent.
   const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
   const host = page.getByTestId('app-page-content').element() as HTMLElement;
   const parent = page.getByTestId('page-wrapper').element() as HTMLElement;
@@ -601,10 +455,12 @@ describe('PageBlockHost — the app takes the whole width, at every display size
     expect(
       hostWidth,
       `at 2560x1080 the app column is ${hostWidth}px inside a ${frameWidth}px frame, i.e. ` +
-        'something is capping the app. The platform imposes no width: `--app-page-max-width` is ' +
-        '`none` in globals.css and the host’s `var()` fallback is `none` too. Either that ' +
-        'default moved, or a per-app rule in the (meant-to-be-empty) width-cap ledger is matching ' +
-        `this fixture’s slug '${BLOCK_ID}'.`
+        'something is capping the app. The platform imposes no width on a full-page App Block: ' +
+        'the content wrapper in `PageBlockHost.tsx` declares `width: 100%` and no `max-width` of ' +
+        'any kind. So a bound has been added — in the inline style, as a Mantine `maw`/`w` style ' +
+        'prop, as a substituted root component that carries its own measure, or as a rule in a ' +
+        'stylesheet this harness does happen to load. The node-tier guard covers the first three; ' +
+        'read its output alongside this one.'
     ).toBe(frameWidth);
   });
 
@@ -665,9 +521,8 @@ describe('PageBlockHost — the app takes the whole width, at every display size
         `at a ${w}x${h} viewport the app column is ${hostWidth}px inside a ${parentWidth}px ` +
           `parent — it is being capped, with ${gutterLeft}px of gutter on the left and ` +
           `${gutterRight}px on the right. The platform is meant to impose no width at all on a ` +
-          'full-page App Block: `--app-page-max-width` is declared `none` on `:root` in ' +
-          'src/styles/globals.css and the host reads it as ' +
-          '`max-width: var(--app-page-max-width, none)`. READ THE ARM THAT FAILED: a bound ' +
+          "full-page App Block: the content wrapper declares `width: '100%'` and no `max-width` " +
+          'in any spelling. READ THE ARM THAT FAILED: a bound ' +
           'reintroduced at value V fails every arm whose viewport exceeds V and no arm below ' +
           'it, so the narrowest RED arm brackets V from above and the widest GREEN arm (see the ' +
           'unchanged-geometry arm, which runs up to 1600) brackets it from below. 1620 failing ' +
@@ -755,270 +610,84 @@ describe('PageBlockHost — the app takes the whole width, at every display size
   );
 
   /**
-   * 🔴 PROVE THE WIDTH COMES FROM THE CUSTOM PROPERTY, NOT FROM A LITERAL IN THE
-   * COMPONENT. The per-app mechanism rests entirely on the host reading
-   * `--app-page-max-width` through `var()` — if someone "simplified" it to an inline
-   * number, or wrote the property inline on the host (where it would beat every
-   * stylesheet rule), every arm above would still pass and the documented lever would be
-   * silently inert.
-   *
-   * ⚠️ AND WITH THE DEFAULT AT `none` THIS IS THE ONLY RENDERED TEST THAT CAN SEE THE
-   * MECHANISM AT ALL. An uncapped host renders identically whether the `var()` is read or
-   * deleted, so the arms above cannot distinguish "reads the property" from "has no
-   * max-width". This drives the property to a value no implementation would pick and
-   * checks the rendered width follows it exactly.
-   */
-  test('the width is read from `--app-page-max-width` — overriding it moves the rendered width', async () => {
-    injectCss(':root { --app-page-max-width: 900px; }');
-    const { hostWidth } = await mountAt(2560, 1080);
-    expect(
-      hostWidth,
-      'the host did not follow a `--app-page-max-width: 900px` override at 2560x1080 — the ' +
-        'width is not actually being read from the custom property, so no per-app rule can work ' +
-        'and the escape hatch documented in globals.css is inert'
-    ).toBe(900);
-  });
-
-  /**
-   * 🔴 THE MECHANISM STILL WORKS IN THE CAPPING DIRECTION — the arm that keeps the
-   * documented per-app lever honest now that nothing uses it.
-   *
-   * ⚠️ THIS IS THE INVERSE OF THE TEST IT REPLACED. That one injected
-   * `--app-page-max-width: none` for the fixture's slug and asserted the app went back to
-   * FULL width, escaping a 1600px default. With the default already `none` that assertion
-   * is vacuous — it would pass with the rule deleted, with the selector mistyped, and on
-   * the pre-cap base revision. So the rule injected here sets a px value and the assertion
-   * is that the app becomes a CAPPED, CENTRED column. Same selector shape, same
-   * inheritance path (property set on the frame, read on the content wrapper), opposite
-   * direction.
-   *
-   * PAIRED WITH A NEGATIVE ARM in the same cascade: a DIFFERENT slug, same injected rule,
-   * must stay full width. Without it, "the app is 1100px" is equally satisfied by a bound
-   * that applies to every app.
-   *
-   * 🔴 WHAT A GREEN RUN HERE IS **NOT** EVIDENCE FOR: that such a selector works on
-   * civitai.com. Vitest never runs with `NODE_ENV=production`, so the
-   * `reactRemoveProperties` strip in `next.config.mjs` never applies in this tier — which
-   * is exactly how the `data-testid` spelling shipped broken with this suite passing
-   * throughout. That claim is owned by
-   * `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which
-   * compares the two CONFIGURATIONS instead of rendering, and it cannot be moved here.
-   */
-  test('a per-app platform rule CAN still cap one app — and only that app', async () => {
-    // The value the "HOW TO ADD ONE" template in globals.css shows, READ FROM THAT FILE —
-    // so the number this test exercises is the number a maintainer would actually copy, and
-    // a change to the template cannot leave this test asserting a value nobody teaches.
-    const CAP = templateCapPxFromGlobals();
-    injectCss(
-      `[data-app-page-frame][data-block-id='${BLOCK_ID}'] { --app-page-max-width: ${CAP}px; }`
-    );
-
-    const capped = await mountAt(2560, 1080, { blockId: BLOCK_ID });
-    expect(
-      capped.hostWidth,
-      `at 2560x1080 the app '${BLOCK_ID}' did not take a ${CAP}px per-app cap written in the ` +
-        'shape the globals.css template teaches. Either `data-app-page-frame`/`data-block-id` are ' +
-        'no longer stamped together on the host root, or the width is no longer read through ' +
-        '`var()` on a descendant of that element — and the one documented way for the platform ' +
-        'to set a single app’s width is inert.'
-    ).toBe(CAP);
-    expect(
-      Math.abs(capped.gutterLeft - capped.gutterRight),
-      `at 2560x1080 the capped app is not centred: ${capped.gutterLeft}px left vs ` +
-        `${capped.gutterRight}px right. \`margin-inline: auto\` is missing or overridden — a cap ` +
-        'without it dumps the whole gutter on one side and reads as a rendering bug.'
-    ).toBeLessThanOrEqual(1);
-
-    // Each arm mounts its own tree, so the previous one has to go: two mounted
-    // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
-    // single-match rule.
-    await cleanup();
-
-    // NEGATIVE ARM — a different slug, the SAME cascade, still full width. This is what
-    // distinguishes "the per-app rule works" from "something caps every app".
-    const other = await mountAt(2560, 1080, { blockId: 'some-other-app' });
-    expect(
-      other.hostWidth,
-      `the app 'some-other-app' is ${other.hostWidth}px inside a ${other.parentWidth}px parent, ` +
-        'i.e. something capped an app this test injected NO rule for. TWO CAUSES, AND THIS ' +
-        'ASSERTION CANNOT TELL THEM APART — read both before concluding: (a) the per-app ' +
-        'selector is over-matching, i.e. it is keyed on something every host carries rather ' +
-        'than on `data-block-id`; or (b) THE `:root` DEFAULT IS NO LONGER `none`, in which ' +
-        'case nothing is wrong with the selector at all and the real failure is the platform ' +
-        'imposing a width again. (b) is not hypothetical: it is what the recorded mutation ' +
-        'control does, and this arm was the one failure in that run whose headline message ' +
-        'named the wrong mechanism. If the other arms in this file are also red, it is (b).'
-    ).toBe(other.parentWidth);
-  });
-
-  /**
-   * 🔴 THE SHIPPED LEDGER IS EMPTY, AND WHAT IS PINNED IS THE WALK'S REACH, NOT A COUNT.
-   *
-   * ⚠️ THIS TEST USED TO MOUNT EVERY LEDGER MEMBER. It derived its green arms from the
-   * rules parsed out of `globals.css` so a future entry would be covered the day its rule
-   * landed. There are no members now — the 1600px default they were excused from is gone —
-   * so the derived loop iterates nothing, and the test is kept for the one claim it can
-   * still make and no other tier can: that the CSSOM walk REACHES the same set of rules
-   * the file textually contains.
-   *
-   * WHY THAT RELATIONSHIP IS WORTH A TEST WITH AN EMPTY LEDGER. It is the only check in
-   * the repo that CAN tell a REACHABLE rule from a WRITTEN one — future tense, deliberately:
-   * over an empty ledger the equality is `[] === []` and constrains nothing, so the only
-   * LIVE claim in this test today is its positive control. It is kept for the day the first
-   * rule lands. Measured, before the
-   * uncap: wrapping the `sensei` rule in `@media (min-width: 3000px)` — a plausible "only
-   * above the cap" refinement with a wrong bound — left this file 11/11 and the two
-   * node-tier guard files 16/16 while sensei rendered capped at 1600 on a 2560 display.
-   * Neither node-tier guard can see it (both are text-based; the id is still present in
-   * the text). The same hole would swallow the FIRST rule anyone adds here, and this
-   * assertion is what catches it on day one rather than after a bug report.
-   *
-   * Both sides are derived from the same shipped file and no membership is restated, so
-   * this cannot rot into a stale list. The ENUMERATION that fails on growth and shrink
-   * lives in `__tests__/pageBlockHostMaxWidth.test.ts`; these are different claims and
-   * neither tier can make the other's.
-   */
-  test('every per-app rule in globals.css is REACHABLE by the CSSOM walk — none hidden in an at-rule', async () => {
-    // The pair, in this order: prove the walk can see a rule, then report what it sees in
-    // the shipped file. That is legitimately `[]` today, and a `[]` from a walk that
-    // reaches nothing would look identical.
-    cssomWalkPositiveControl();
-    const ledger = ledgerFromGlobals();
-
-    // 🔴 AND CONTROL THE OTHER OPERAND'S PIPELINE, NOT JUST THE WALK'S. The equality below
-    // compares the walk against `blockIdsIn(cssWithoutComments(globalsCss))`, and
-    // `cssWithoutComments` had no control at all: degrade it toward returning `''` and the
-    // right-hand side is `[]`, which with an empty ledger matches the left-hand side and the
-    // assertion holds. A control that skips a step IN the pipeline under test is not a
-    // control of that pipeline. So the same synthetic probe goes through the full
-    // right-hand-side path — including the stripper — and must survive it.
-    const rhsProbe = `[data-app-page-frame][data-block-id='control-app'] { --app-page-max-width: 123px; }`;
-    expect(
-      blockIdsIn(cssWithoutComments(rhsProbe)),
-      'POSITIVE CONTROL FAILED on the EXPECTED side of the equality below: ' +
-        '`blockIdsIn(cssWithoutComments(…))` did not survive a synthetic rule. Most likely ' +
-        '`cssWithoutComments` is over-stripping — which would make the expected side `[]`, ' +
-        'matching an empty walk, and the assertion would hold while measuring nothing.'
-    ).toEqual(['control-app']);
-    expect(
-      blockIdsIn(cssWithoutComments(`/* ${rhsProbe} */`)),
-      'POSITIVE CONTROL FAILED the other way: `cssWithoutComments` did not remove a rule that ' +
-        'was inside a comment, so the "HOW TO ADD ONE" template in globals.css would be counted ' +
-        'as a shipped member and this test would demand it render.'
-    ).toEqual([]);
-
-    expect(
-      [...ledger.ids].sort(),
-      'the CSSOM walk over src/styles/globals.css did not reach the same set of ' +
-        '`[data-block-id=…]` rules that the file textually contains. RECEIVED is what ' +
-        '`ledgerFromGlobals` could reach by walking the parsed stylesheet; EXPECTED is every id ' +
-        'in the file with comments stripped. An id MISSING from the walk means its rule now sits ' +
-        'inside an at-rule the walk does not descend into — `@media`, `@supports`, `@container`, ' +
-        'anything but `@layer` — so it is written but not unconditionally reachable, and the app ' +
-        'it names silently takes the default at every width the at-rule excludes. Fix it by ' +
-        'moving the rule back to the top level (or into a `@layer`), or by teaching ' +
-        '`ledgerRulesIn` to descend into that at-rule AND mounting a green arm at a viewport its ' +
-        'condition admits — not by relaxing this assertion. An EXTRA id in the walk is the ' +
-        'mirror case, and since BOTH sides now call the same shared `blockIdsIn` it can ' +
-        'no longer mean "the raw parse missed a spelling the engine accepts" (that wording was ' +
-        'true only while the two sides used different regexes): the remaining cause is ' +
-        '`cssWithoutComments` over-stripping and deleting a rule the CSSOM kept, which is what ' +
-        'the two controls above defend.'
-    ).toEqual(blockIdsIn(cssWithoutComments(globalsCss)));
-
-    // …and if a rule ever DOES ship, it must really render. Derived, so a future entry is
-    // covered the day its rule lands rather than the day somebody remembers this file.
-    // Iterates nothing today, which is why the assertion above is what this test is for.
-    if (ledger.ids.length > 0) {
-      injectCss(ledger.css);
-      for (const blockId of ledger.ids) {
-        const member = await mountAt(2560, 1080, { blockId });
-        expect(
-          member.hostWidth,
-          `at 2560x1080 the per-app rule for '${blockId}' in src/styles/globals.css changed ` +
-            'nothing about the rendered width. It is mistyped, or no longer overrides ' +
-            '`--app-page-max-width` — so a rule that was reviewed and merged is doing nothing, ' +
-            'with nothing about the page looking wrong.'
-        ).not.toBe(member.parentWidth);
-        await cleanup();
-      }
-    }
-  });
-
-  /**
    * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so it is never counted as proof
-   * that anything here works.
+   * that the uncap works. The arms that are red at base are the 1620/1905/2560/3440 ones.
    *
    * The claim it pins is about the SAFE-AREA insets, which went live with
    * `viewport-fit=cover`: in landscape on a notched device
    * `--safe-area-inset-left`/`-right` are ~47px, and the shell pays only the TOP inset
-   * globally (`#__next { padding-top: … }` in globals.css), so left/right are unpaid for
-   * in-flow page content. The question is whether a centring gutter can interact with
-   * them — i.e. whether a viewport can be BOTH narrower than a cap and carrying a
-   * non-zero inline inset.
+   * globally (`#__next { padding-top: … }` in globals.css), so left and right are
+   * deliberately unpaid for in-flow page content. The question is whether the app column
+   * stays flush with its parent at a viewport where those insets are non-zero — i.e.
+   * whether anything in the chain has started spending them as `padding-inline`,
+   * `margin-inline` or a bound, which would inset a third-party app by ~47px a side on a
+   * notched phone in landscape and nowhere else.
    *
-   * ⚠️ RE-POINTED, BECAUSE THE DEFAULT CAP THAT USED TO ANSWER IT IS GONE. It used to
-   * assert the 1600px DEFAULT was inert at 932x430, which with a default of `none` is
-   * trivially true and says nothing — it would be a guard that passes because its subject
-   * no longer exists. So it now injects a per-app cap at the value the globals.css template
-   * teaches ALONGSIDE the insets, and asserts that even THEN the app is flush: the widest
-   * notched device in landscape is ~1000 CSS px, below that value, so the two mechanisms
-   * still never meet. Pinned rather than asserted in prose because "no device does both" is
-   * exactly the kind of claim that goes stale silently.
+   * ⚠️ RE-POINTED TWICE, AND BOTH PREVIOUS SHAPES ARE RECORDED BECAUSE THIS ARM KEEPS
+   * BEING THE ONE WHOSE SUBJECT MOVES. (1) It originally asserted the 1600px DEFAULT cap
+   * was inert at 932x430 — which became trivially true, and therefore said nothing, the
+   * moment the default went to `none`. (2) It was then re-pointed to inject a PER-APP cap
+   * at the value the `globals.css` template taught, alongside the insets, and assert the app
+   * was flush even then — the argument being that the widest notched device in landscape is
+   * ~1000 CSS px, below that value, so a centring gutter and the insets could never meet.
+   * That mechanism is now deleted: there is no template, no per-app rule and no custom
+   * property to inject, so `templateCapPxFromGlobals` and the `CAP > 1000` assertion that
+   * guarded the margin between the two went with it.
    *
-   * 🔴 AND THE INJECTED RULE IS PROVEN LIVE BEFORE IT IS PROVEN INERT — otherwise this test
-   * cannot distinguish "the cap is inert at this width" from "the selector matched nothing",
-   * which a mistyped attribute, a renamed marker or a relocated `data-block-id` all produce.
-   * Both give `hostWidth === parentWidth`. The title claims a RELATIONSHIP ("even a per-app
-   * cap is inert"), so the body has to inspect both sides: the computed custom property on
-   * the content box shows the rule reached it, and the geometry shows it changed nothing.
+   * 🔴 SO THE CENTRING-GUTTER HALF OF THIS ARM IS GONE, AND THAT IS A NARROWING RATHER THAN
+   * A SIMPLIFICATION — SAY WHICH. With no platform bound there is no gutter for the insets
+   * to interact with, so the "two mechanisms never meet" claim has one mechanism left and
+   * cannot be made at all. What survives is the half that was always about the INSETS: they
+   * are non-zero here, and the app column must still be exactly its parent's width with
+   * zero gutter and zero resolved margin. If a platform width bound is ever proposed again,
+   * the interaction question comes back with it and this is the arm to extend.
    *
-   * ⚠️ THE MARGIN HERE IS NOW ~100px, NOT ~600. Under the old 1600px default the gap between
-   * the widest notched-landscape viewport (~1000) and the binding width was ~600px; against
-   * the template's value it is much tighter, so a template edit really can bring the two
-   * mechanisms into contact — which is precisely why the value is derived from the file
-   * rather than restated here, and why this test is the one that would notice.
+   * 🔴 THE INSETS ARE PROVEN LIVE BEFORE ANYTHING IS PROVEN INERT — otherwise this test
+   * cannot distinguish "the insets are not spent on the app column" from "the injected
+   * properties never reached the box", and both give `hostWidth === parentWidth`. That is
+   * the same vacuity the previous re-point was made to avoid, one mechanism over.
    */
-  // ⚠️ THE TITLE CARRIES NO NUMBER ON PURPOSE. It used to say "even a 1100px per-app cap",
-  // which re-created in the TITLE the exact restatement `templateCapPxFromGlobals` was written
-  // to remove — and the title is the string a reader sees in the run output and in a CI
-  // annotation, which for most readers is the only string they see. The derived value appears
-  // in the messages, where it is read from the file.
-  test('INVARIANT — at a notched phone landscape size (932x430) even the template’s per-app cap is inert, so it cannot fight the safe-area insets', async () => {
-    const CAP = templateCapPxFromGlobals();
-    expect(
-      CAP,
-      `the per-app width template in globals.css now teaches ${CAP}px, which is at or below the ` +
-        'widest notched device in landscape (~1000 CSS px). This test asserts that such a cap ' +
-        'is INERT where the display-cutout insets are non-zero, and at this value it would no ' +
-        'longer be — the gutter and the insets would have to be reasoned about together. That ' +
-        'is a real finding about the template, not a test to relax.'
-    ).toBeGreaterThan(1000);
-
-    injectCss(
-      ':root { --safe-area-inset-left: 47px; --safe-area-inset-right: 47px; }\n' +
-        `[data-app-page-frame][data-block-id='${BLOCK_ID}'] { --app-page-max-width: ${CAP}px; }`
-    );
+  test('INVARIANT — at a notched phone landscape size (932x430) the display-cutout insets are not spent on the app column', async () => {
+    injectCss(':root { --safe-area-inset-left: 47px; --safe-area-inset-right: 47px; }');
     const { host, hostWidth, parentWidth, gutterLeft, gutterRight } = await mountAt(932, 430);
 
-    // The rule REACHED the box — without this the assertions below are equally satisfied by
-    // a selector that matched nothing, which is the vacuity the re-point was made to avoid.
+    // POSITIVE CONTROL on the injection itself: a `[]`-shaped pass from properties that
+    // never arrived is indistinguishable from one where they arrived and were ignored.
     expect(
-      getComputedStyle(host).getPropertyValue('--app-page-max-width').trim(),
-      'the injected per-app rule did not reach `app-page-content` at 932x430, so the ' +
-        '"and it is inert" assertions below would pass for the wrong reason — a selector that ' +
-        'matches nothing is inert too. Check `data-app-page-frame` and `data-block-id` are ' +
-        'still stamped together on the host root.'
-    ).toBe(`${CAP}px`);
+      [
+        getComputedStyle(host).getPropertyValue('--safe-area-inset-left').trim(),
+        getComputedStyle(host).getPropertyValue('--safe-area-inset-right').trim(),
+      ],
+      'POSITIVE CONTROL FAILED: the injected display-cutout insets did not reach ' +
+        '`app-page-content` at 932x430, so every assertion below would pass for the wrong ' +
+        'reason — properties that never arrived cannot be spent either. Check `injectCss` and ' +
+        "the harness's own `:root` extraction before reading the verdict."
+    ).toEqual(['47px', '47px']);
+
     expect(
       hostWidth,
-      `at 932x430 the app column is ${hostWidth}px inside a ${parentWidth}px parent, i.e. the ` +
-        `template's ${CAP}px cap has started binding at a viewport where the display-cutout ` +
-        'insets are non-zero. The gutter and the insets would then have to be reasoned about ' +
-        'together. Since the value is read from globals.css and separately asserted above to ' +
-        'be >1000, reaching this line means the notched-landscape viewport class got wider ' +
-        'than this fixture assumes.'
+      `at 932x430 the app column is ${hostWidth}px inside a ${parentWidth}px parent while the ` +
+        'display-cutout insets are 47px a side. Something in the chain has started SPENDING ' +
+        'those insets on in-flow page content — a `padding-inline`, a `margin-inline` or a ' +
+        'bound derived from them. The shell pays the TOP inset only, on purpose: paying ' +
+        'left/right here would inset every full-page App Block by ~47px a side on a notched ' +
+        'phone in landscape and nowhere else, which is the worst possible shape for a bug ' +
+        'report. If that payment is deliberate, it belongs in the shell with its own test, not ' +
+        "as a side effect on a third-party app's column."
     ).toBe(parentWidth);
-    expect([gutterLeft, gutterRight], 'at 932x430 the host is no longer flush').toEqual([0, 0]);
+    expect(
+      [gutterLeft, gutterRight],
+      `at 932x430 the app column is not flush with its parent: ${gutterLeft}px left, ` +
+        `${gutterRight}px right. The width above can match while the box is SHIFTED, so both ` +
+        'are read.'
+    ).toEqual([0, 0]);
+
+    const cs = getComputedStyle(host);
+    expect(
+      [cs.marginLeft, cs.marginRight],
+      'at 932x430 the app column resolved a non-zero inline margin. Nothing declares one — ' +
+        'the `margin-inline: auto` that used to centre a capped column was deleted with the ' +
+        'cap — so a value here means it is coming from a stylesheet or a substituted component.'
+    ).toEqual(['0px', '0px']);
   });
 });
