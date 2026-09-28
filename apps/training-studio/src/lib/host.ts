@@ -63,6 +63,9 @@ export interface HostContext {
      *  explanation; absent = unknown (a host with no membership knowledge, e.g. the standalone
      *  shell) and the affordance behaves as before. */
     canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership — without one, Blue Buzz can't pay for a mature
+     *  dataset and the run is charged in full from the chosen account. Absent = unknown. */
+    isPaidMember?: boolean;
     /** The host's membership-plans page, linked from the explanation above (`hostLink` URL
      *  semantics). Absent => the explanation renders without a link. */
     pricingUrl?: string;

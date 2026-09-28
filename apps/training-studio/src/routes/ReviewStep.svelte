@@ -12,7 +12,7 @@
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
-  import { backend, portalProps } from '$lib/host';
+  import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -50,6 +50,7 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
+    datasetMature,
     onStart,
     onBack,
   }: {
@@ -60,6 +61,8 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
+    /** A trainable image's upload scan rated it mature (R and up). */
+    datasetMature: boolean;
     onStart: (
       launched: LaunchedRun[],
       prompts: string[],
@@ -78,6 +81,12 @@
   $effect(() => {
     if (!needsAttestation) attestSfw = false;
   });
+
+  // Blue can't pay for mature content without a paid membership: the orchestrator takes Blue, refunds
+  // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
+  // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
+  const membership = hostConfig().isPaidMember;
+  const blueExcluded = $derived(datasetMature && membership !== true);
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -226,7 +235,7 @@
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
     if (starting || total == null || (needsAttestation && !attestSfw)) return;
-    const spend = nonBlueSpend(total, buzzMode.value);
+    const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
     if (spend) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -256,6 +265,13 @@
 
   const multi = $derived(selection.runs.length > 1);
 </script>
+
+{#snippet membershipLink()}
+  {@const pricing = hostConfig().pricingUrl}
+  {#if pricing}
+    <a {...hostLink(pricing)} class="font-semibold text-primary hover:underline">View plans</a>
+  {/if}
+{/snippet}
 
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
@@ -481,7 +497,23 @@
       ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
     </div>
 
-    <BlueFirstNote class="mt-3" />
+    {#if blueExcluded}
+      <div
+        role="note"
+        class="mt-3 flex items-start gap-2 rounded-lg border border-buzz/30 bg-buzz/5 p-3 text-xs leading-snug text-dark-1"
+      >
+        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
+        <span>
+          Your dataset was rated <strong>mature</strong>.
+          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
+          membership, so {membership === undefined ? 'unless you have one, ' : ''}this
+          {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.
+          {@render membershipLink()}
+        </span>
+      </div>
+    {:else}
+      <BlueFirstNote class="mt-3" />
+    {/if}
 
     {#if needsAttestation}
       <div
@@ -531,7 +563,13 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if confirmSpend?.uncertain}
+        {#if blueExcluded}
+          Your dataset was rated mature, and
+          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
+          membership{membership === undefined ? ' — unless you have one, the' : '. The'} full
+          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your Yellow Buzz.
+          {@render membershipLink()}
+        {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

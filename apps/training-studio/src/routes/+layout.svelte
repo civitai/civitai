@@ -22,7 +22,9 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
-      // canGenerateUnpublished stays unset — the shell has no membership knowledge.
+      // canGenerateUnpublished stays unset: the standalone shell doesn't gate epoch generation.
+      // svelte-ignore state_referenced_locally — the session user's tier is fixed for the page's life
+      isPaidMember: data.isPaidMember,
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       pricingUrl: `${data.civitaiUrl}/pricing`,
     },

@@ -279,7 +279,13 @@
         remove(id);
         return;
       }
-      patch(id, { status: 'uploaded', progress: 1, blobId: blob.id, blobUrl: blob.url ?? undefined });
+      patch(id, {
+        status: 'uploaded',
+        progress: 1,
+        blobId: blob.id,
+        blobUrl: blob.url ?? undefined,
+        nsfwLevel: blob.nsfwLevel ?? undefined,
+      });
     } catch (err) {
       if (isAbort(err)) return;
       const permanent = err instanceof UploadError && err.permanent;
@@ -310,6 +316,7 @@
       url?: string;
       caption?: string;
       previewWorkflowId?: string;
+      nsfwLevel?: string;
     }[],
     { silent = false }: { silent?: boolean } = {}
   ) {
@@ -351,6 +358,7 @@
         progress: 1,
         blobId: item.blobId,
         blobUrl: item.url,
+        nsfwLevel: item.nsfwLevel,
         ...parseLabel(label, labelMode),
         // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
         sourceLabel: item.caption || undefined,
@@ -599,6 +607,7 @@
         blobId: blobAirFromUrl(i.url),
         url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
+        nsfwLevel: i.nsfwLevel,
       }))
     );
   }
