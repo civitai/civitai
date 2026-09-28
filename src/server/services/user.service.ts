@@ -121,6 +121,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { isUsernameBlocked } from '~/server/utils/username-blocklist';
 import { assertEmailAllowed, getBlocklistData } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -433,21 +434,13 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 };
 
 export const isUsernamePermitted = async (username: string): Promise<boolean> => {
-  const lower = username.toLowerCase();
+  if (isUsernameBlocked(username, blockedUsernames)) return false;
 
-  // Static JSON baseline (always enforced, can't be removed via UI)
-  const staticBlocked =
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x);
-  if (staticBlocked) return false;
-
-  // Dynamic blocklist from DB/Redis/in-memory cache
-  const [dynamicExact, dynamicPartial] = await Promise.all([
+  const [exact, partial] = await Promise.all([
     getBlocklistData(BlocklistType.UsernameExact),
     getBlocklistData(BlocklistType.UsernamePartial),
   ]);
-
-  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
+  return !isUsernameBlocked(username, { exact, partial });
 };
 
 /**

@@ -1,42 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { isUsernameBlocked } from '~/server/utils/username-blocklist';
 
-/**
- * Mirror of isUsernamePermitted from user.service.ts (static-only logic).
- * We test against the same JSON blocklist without importing user.service.ts
- * (which pulls in Prisma, Redis, Meilisearch, etc.).
- */
 function isUsernamePermitted(username: string): boolean {
-  const lower = username.toLowerCase();
-  return !(
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x)
-  );
+  return !isUsernameBlocked(username, blockedUsernames);
 }
 
-/**
- * Full async version matching user.service.ts logic, with injectable dynamic data.
- */
 async function isUsernamePermittedWithDynamic(
   username: string,
   getDynamic: (type: string) => Promise<string[]>
 ): Promise<boolean> {
-  const lower = username.toLowerCase();
-
-  const staticBlocked =
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x);
-  if (staticBlocked) return false;
-
-  const [dynamicExact, dynamicPartial] = await Promise.all([
+  if (isUsernameBlocked(username, blockedUsernames)) return false;
+  const [exact, partial] = await Promise.all([
     getDynamic('UsernameExact'),
     getDynamic('UsernamePartial'),
   ]);
-
-  return !(
-    dynamicExact.some((x) => lower === x) ||
-    dynamicPartial.some((x) => lower.includes(x))
-  );
+  return !isUsernameBlocked(username, { exact, partial });
 }
 
 describe('isUsernamePermitted', () => {
