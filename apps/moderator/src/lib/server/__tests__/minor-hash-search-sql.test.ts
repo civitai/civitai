@@ -41,3 +41,11 @@ describe('minor queue search', () => {
     expect(statement).not.toContain('"u"."username"');
   });
 });
+
+describe('seed predicate parity with the main app', () => {
+  it('excludes both machine sources from the seed set', async () => {
+    const statement = await compile(() => getMinorHashMatchesForReview({ limit: 50 }));
+    expect(statement).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(statement).toContain(`->>'source' IS DISTINCT FROM 'text-scan'`);
+  });
+});

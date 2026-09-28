@@ -28,12 +28,13 @@ const reviewWindowCutoff = sql`now() - make_interval(days => ${sql.raw(
   String(AUTO_FLAG_REVIEW_WINDOW_DAYS)
 )})`;
 
-/** A seed is a model a HUMAN flagged: `source = 'auto'` is excluded so the automation cannot feed
- *  itself. One definition, because the scan path and the queue had drifted copies. */
+/** A seed is a model a HUMAN flagged: `source = 'auto'` and the unreviewed `'text-scan'` are
+ *  excluded so automation cannot feed itself. One definition, because the scan path and the queue had drifted copies. */
 const moderatorMinorSeedPredicate = sql`
   m.minor
   AND 'minor' = ANY(m."lockedProperties")
   AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
 `;
 
 /** A rollback deletes the snapshot, so without this the model drops straight back into the candidate

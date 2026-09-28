@@ -171,6 +171,13 @@ describe('minor-hash CTE predicates', () => {
     expect(minorSrcCte.values).toContain('minorFlagSnapshot');
   });
 
+  // An unreviewed LLM verdict seeding the hash auto-flagger would flag other people's uploads
+  // from a decision no human made.
+  it('excludes text-scan flags from the seed set', () => {
+    expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'text-scan'`);
+  });
+
   // A moderator's own "Set as Minor" writes source='manual', so it must still
   // seed — only the machine's own output is excluded.
   it('keeps manual moderator flags eligible as seeds', () => {
@@ -1115,8 +1122,9 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(scopeText).toContain('"ModActivity" ma');
   });
 
-  // A blanket rollback must never revert a moderator's deliberate "Set as Minor".
-  it('scopes a bulk rollback to auto flags, excluding manual ones', async () => {
+  // A bulk rollback undoes the hash backfill. A text-scan flag is a different automation, and a
+  // manual one a moderator's decision; neither may be reverted as its collateral.
+  it('scopes a bulk rollback to auto flags only — never manual, never text-scan', async () => {
     mockRollbackQueries({ rows: [] });
 
     await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
@@ -1125,7 +1133,8 @@ describe('rollbackMinorHashAutoFlags', () => {
       .flatMap((call) => call.slice(1))
       .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
       .join('\n');
-    expect(rendered).toContain(`->>'source' IS DISTINCT FROM 'manual'`);
+    expect(rendered).toContain(`->>'source' = 'auto'`);
+    expect(rendered).not.toContain(`IS DISTINCT FROM 'manual'`);
   });
 
   it('targets exact modelIds regardless of source, bypassing the human-confirmation skip', async () => {

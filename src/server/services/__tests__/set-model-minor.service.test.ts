@@ -418,13 +418,32 @@ describe('setModelMinor — pre-state snapshot', () => {
     expect(values).toContain('auto');
   });
 
-  it('guards against overwriting an existing snapshot', async () => {
+  it('marks a text-scan flag as text-scan, not manual — it is not a human decision', async () => {
+    mockBefore({});
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorTextScan',
+    });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('text-scan');
+    expect(values).not.toContain('manual');
+    expect(values).not.toContain('auto');
+  });
+
+  // An unset leaves the snapshot behind. Keeping it on the next flag would record the new flag
+  // under the old one's source and roll it back to a pre-state from the earlier flag.
+  it('keeps the original snapshot only while the model is still minor', async () => {
     mockBefore({});
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
 
     const text = Array.from(snapshotCall()![0] as TemplateStringsArray).join('?');
     expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ?`);
+    expect(text).toContain('OR NOT m.minor');
     expect(text).toContain('"ModelVersion" mv');
     expect(text).toContain('i.minor');
   });

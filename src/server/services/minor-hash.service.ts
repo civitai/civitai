@@ -25,6 +25,7 @@ export const MINOR_HASH_FILE_TYPE = 'Model';
 //   - `minor AND 'minor' = ANY(lockedProperties)` keeps a creator from
 //     self-declaring their way into seeding other people's uploads, and
 //   - excluding source='auto' keeps the machine from seeding itself.
+//   - 'text-scan' is an unreviewed LLM verdict, excluded for the same reason.
 //
 // Without that second clause an auto-flagged model becomes a seed, contributing
 // EVERY hash on it — including ones no moderator ever tied to minor content — so
@@ -40,6 +41,7 @@ const moderatorMinorSeedPredicate = Prisma.sql`
   m.minor
   AND 'minor' = ANY(m."lockedProperties")
   AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'text-scan'
 `;
 
 export const MINOR_HASH_CLEARED_KEY = 'minorHashCleared';
@@ -773,12 +775,11 @@ const humanConfirmedPredicate = Prisma.sql`
   )
 `;
 
-// A blanket rollback undoes the automation's decisions only. Manual flags are
-// snapshotted too (so they CAN be undone), but only ever by an explicit
-// `modelIds` request — a moderator's deliberate call must never be reverted as
-// collateral of "undo the backfill".
+// A blanket rollback undoes the hash automation's decisions only. Manual flags are snapshotted too
+// (so they CAN be undone), and text-scan flags carry their own appeal path; both are only ever
+// reverted by an explicit `modelIds` request.
 const autoFlaggedPredicate = Prisma.sql`
-  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'manual'
+  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
 `;
 
 // Aging out of the review window is itself a decision that the flag stands, so a
