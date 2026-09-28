@@ -93,7 +93,9 @@ function productionFilesCalling(needle: string): string[] {
       if (!/\.tsx?$/.test(entry.name)) continue;
       if (/\.(test|spec|browser\.test)\.tsx?$/.test(entry.name)) continue;
       if (stripComments(readFileSync(abs, 'utf8')).includes(needle)) {
-        hits.push(path.relative(REPO_SRC, abs));
+        // Posix separators, or the ledgers below match only on a posix checkout and this guard reads
+        // as drifted on Windows while the call sites it pins are in fact correct.
+        hits.push(path.relative(REPO_SRC, abs).split(path.sep).join('/'));
       }
     }
   };
