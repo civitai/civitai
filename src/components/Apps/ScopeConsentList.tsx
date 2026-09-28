@@ -80,30 +80,40 @@ export function ScopeConsentList({
    * undefined on the drawer whenever `listMyScopeGrants` holds no row for the app being run, and
    * an early `return` above this line would make the hook call conditional — which React forbids
    * and which would crash the drawer on the very next render that DID find a row. There is no
-   * reachable control in that state (no rows means no `renderScopeAction` call), so the
-   * placeholders are never read.
+   * reachable control in that state, so the placeholders are never read.
+   *
+   * ⚠️ THE REASON FOR THAT IS NOT "no rows" ANY MORE, AND THE OLD WORDING SAID SO. With `grant`
+   * undefined the union can still make `rows` non-empty — a `justRevoked` entry survives the grant
+   * going away — so there ARE rows and `renderScopeAction` IS called. The conclusion holds for a
+   * different reason: every row reachable in that state is hard-coded `'revoked'` by
+   * `buildScopeConsentRows`' appended tail, and the `revoked` arm renders a marker and NO control, so
+   * nothing can reach `requestRevoke` with the placeholder `appBlockId`. Reported by the round-5 lane.
    */
   const { requestRevoke, pendingScope, failure, justRevoked } = useScopeRevoke({
     appBlockId: grant?.appBlockId ?? '',
     appName: grant?.name ?? 'This app',
+    // Read ONLY to latch pending local entries off once the server confirms them — see
+    // `justRevoked`. The row list is still built from `buildScopeConsentRows` below.
+    serverRevokedScopes: grant?.revokedScopes ?? [],
   });
 
   const rows = buildScopeConsentRows({
     scopes: grant?.scopes ?? [],
     /**
-     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED — AND THE UNION IS WHAT MAKES
-     * THE LOCAL CLAIM SELF-EXPIRING, WITH NO TIMER ANYWHERE. The refetch is deliberately not awaited
-     * (see `useScopeRevoke`), so between a successful revoke and the list arriving the server copy
-     * still omits the scope; without the union the row went straight back to offering a live "Remove"
-     * control for a permission already gone, and a confirm dialog promising to remove it again.
+     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED. The refetch is deliberately
+     * not awaited (see `useScopeRevoke`), so between a successful revoke and the list arriving the
+     * server copy still omits the scope; without the union the row went straight back to offering a
+     * live "Remove" control for a permission already gone, and a confirm dialog promising to remove
+     * it again. That is ALL the union does — it covers the gap; it does not end the local claim.
      *
-     * Once the server's payload DOES carry the scope, `new Set` makes the local entry contribute
-     * nothing — it goes inert on DATA rather than being cleared on a settle. That distinction is the
-     * whole round-4 fix: `listMyScopeGrants` reads the REPLICA while the revoke writes the PRIMARY, so
-     * "the refetch settled" does NOT imply "the revocation is in the payload", and clearing on the
-     * settle flipped the row back to a live control inside replication lag — permanently, because
-     * `staleTime: Infinity` means nothing reads again. Full reasoning and the one named residual are
-     * on `justRevoked`.
+     * ⚠️ THE UNION IS A MASK, NOT AN EXPIRY, AND AN EARLIER VERSION OF THIS BLOCK CLAIMED OTHERWISE.
+     * It said the union "is what makes the local claim SELF-EXPIRING" — that once the payload carried
+     * the scope, `new Set` made the entry "contribute nothing". It contributes nothing to THAT
+     * payload. This is recomputed every render, and `revokedScopes` is not monotonic (a re-grant is
+     * exactly the write that removes a scope from it), so the entry came back the moment a later
+     * payload dropped it. What actually retires an entry is the LATCH in `useScopeRevoke`, which drops
+     * it permanently the first time any payload confirms it. Read `justRevoked` for the full ladder —
+     * three shapes of this mechanism were wrong before this one, each for a different reason.
      */
     revokedScopes: [...new Set([...(grant?.revokedScopes ?? []), ...justRevoked])],
     // 🔴 NOT `?? []` — AND THE COALESCE WAS A REAL DEFECT, NOT A TIDINESS NIT. An absent

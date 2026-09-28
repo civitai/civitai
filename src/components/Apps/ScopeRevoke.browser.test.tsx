@@ -280,31 +280,39 @@ import { renderWithProviders } from '../../../test/component-setup';
  * below is therefore asserted on both mounts or on neither, and the surface name is in the failure
  * message so a one-sided regression says WHICH side.
  */
+/**
+ * 🔴 EACH SURFACE EXPOSES ITS ELEMENT AS WELL AS A `render()`, SO AN ARM CAN FORCE A GENUINE
+ * RE-RENDER WITH THE NEW FIXTURE. Nothing else in this file needed it, and its absence made one
+ * assertion VACUOUS: `ModalsProvider` receives `children` as a prop, so toggling a modal re-renders
+ * the provider but React bails out on the SAME child element and the permissions subtree never
+ * re-reads `listMyScopeGrants`. An arm that changed `m.grants` and then opened/cancelled a dialog to
+ * "force a render" therefore measured the PREVIOUS payload — and passed, because the local override
+ * happened to produce the same mark count. `rerender(element())` is the only thing here that really
+ * re-reads the query mock.
+ */
 const SURFACES = [
   {
     name: 'drawer',
-    render: () =>
-      renderWithProviders(
-        <ModalsProvider>
-          <AppPermissionsActivityDrawer
-            appBlockId={GRANT.appBlockId}
-            appName={GRANT.name}
-            opened
-            onClose={vi.fn()}
-          />
-        </ModalsProvider>
-      ),
+    element: () => (
+      <ModalsProvider>
+        <AppPermissionsActivityDrawer
+          appBlockId={GRANT.appBlockId}
+          appName={GRANT.name}
+          opened
+          onClose={vi.fn()}
+        />
+      </ModalsProvider>
+    ),
   },
   {
     name: 'activity page',
-    render: () =>
-      renderWithProviders(
-        <ModalsProvider>
-          <ScopeGrantsPanel />
-        </ModalsProvider>
-      ),
+    element: () => (
+      <ModalsProvider>
+        <ScopeGrantsPanel />
+      </ModalsProvider>
+    ),
   },
-] as const;
+].map((surface) => ({ ...surface, render: () => renderWithProviders(surface.element()) }));
 
 function revokeButtons(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="scope-revoke-button"]'));
@@ -326,7 +334,7 @@ beforeEach(() => {
   m.notify?.warning.mockClear();
 });
 
-describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
+describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }) => {
   test('a control is offered for EVERY revokable scope and for no other row', async () => {
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
@@ -689,7 +697,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     // is no window at all, and this arm would be measuring the wrong thing. Holding it open is the
     // world under test; releasing it, at the bottom, is the second half of the claim.
     m.invalidateGated = true;
-    render();
+    const view = await render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     const scope = revokableScopesOnScreen()[0];
     expect(scope, 'the fixture has no revokable scope').toBeTruthy();
@@ -744,25 +752,43 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
         'revocation — this is the replication-lag case, and the permission really is gone'
     ).not.toContain(scope);
 
-    // …and once the server's payload DOES carry it, the local entry is redundant rather than
-    // cleared: the row still reads "Removed", now on the server's authority, and exactly ONE mark
-    // exists for it rather than a duplicate.
+    // …and once the server's payload DOES carry it, the entry is LATCHED OFF permanently: the row
+    // still reads "Removed", now on the server's authority, with exactly ONE mark rather than a
+    // duplicate.
     // 🔴 A FRESH OBJECT, NEVER AN IN-PLACE WRITE. `m.grants[0] === GRANT` — the module-level fixture —
     // so mutating `.revokedScopes` here edited the shared constant and leaked into twelve other
     // tests in this file (measured: 13 failures, most of them unrelated arms reading a fixture that
     // had silently grown a second revoked scope). This is the aliasing the round-3 lane warned about
     // in the assertion three lines up, reproduced by the fix for it.
     m.grants = [{ ...GRANT, revokedScopes: [...GRANT.revokedScopes, scope] }];
-    m.invalidateSpy.mockClear();
-    await page.getByTestId('scope-revoke-button').first().click();
-    await page.getByRole('button', { name: 'Keep it' }).click();
+    await view.rerender(element());
     await vi.waitFor(() =>
       expect(
         document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
-        `${name}: the server-confirmed revocation did not render exactly one mark for ${scope}`
+        `${name}: the server-confirmed revocation did not render a mark for ${scope}`
       ).toBe(GRANT.revokedScopes.length + 1)
     );
     expect(revokableScopesOnScreen(), name).not.toContain(scope);
+
+    // 🔴 AND THE LATCH IS TERMINAL — THE ASSERTION ROUND 4's SHAPE COULD NOT MAKE. Feed a payload
+    // that DROPS the scope again, which is exactly what a re-grant does (`grantScopes` passes
+    // `clearRevocations: true`, and `revocationData` subtracts the incoming scopes from
+    // `revoked_scopes`). A masking union would resurrect the local entry here and paint "Removed"
+    // over a permission the server reports as live and withdrawable — round 3's defect at full
+    // width, with no replication lag involved. Latched, the entry is gone and the server wins.
+    m.grants = [{ ...GRANT, revokedScopes: [...GRANT.revokedScopes] }];
+    await view.rerender(element());
+    await vi.waitFor(() =>
+      expect(
+        revokableScopesOnScreen(),
+        `${name}: a re-granted ${scope} still reads "Removed" — the local claim was masked, not ` +
+          'retired, so a later payload resurrected it'
+      ).toContain(scope)
+    );
+    expect(
+      document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+      `${name}: the re-granted row kept its "Removed" marker`
+    ).toBe(GRANT.revokedScopes.length);
   });
 
   test('a SUCCESS announces removal exactly once, and not as a warning', async () => {

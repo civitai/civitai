@@ -1,6 +1,6 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
 import { fixedScopeNote } from '~/components/Apps/scopeConsentRows';
 import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
@@ -160,7 +160,19 @@ export type ScopeRevokeFailure = {
  * `status >= 500 && status !== 503`), so `error.message` IS the sentence the constant declares.
  * A client-side second copy would be the drift this arc keeps paying for.
  */
-export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; appName: string }) {
+export function useScopeRevoke({
+  appBlockId,
+  appName,
+  serverRevokedScopes,
+}: {
+  appBlockId: string;
+  appName: string;
+  /**
+   * The server's own `revokedScopes` for this app. Read ONLY to latch pending entries off — this
+   * hook never renders it, and the row list still comes from `buildScopeConsentRows`.
+   */
+  serverRevokedScopes: string[];
+}) {
   const utils = trpc.useUtils();
   const [pendingScope, setPendingScope] = useState<string | null>(null);
   const [failure, setFailure] = useState<ScopeRevokeFailure | null>(null);
@@ -216,21 +228,54 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
    * hole this gate exists to close … a viewer who … withdraws a permission moments later lands
    * inside replication lag"*. Same row, same actor, same timing. Found by the round-4 lane.
    *
-   * So there is no clearing step at all. `ScopeConsentList` DERIVES the live override as
-   * `justRevoked ∖ serverRevokedScopes`: while the replica lags, the entry stands and the row reads
-   * "Removed", which is TRUE; the moment the server's payload carries the revocation the entry is
-   * redundant and contributes nothing. No promise ordering, no clock comparison, no timer — which is
-   * the property that makes this the third and, I hope, last shape of this mechanism.
+   * 🔴 SO THE ENTRY IS **LATCHED OFF** THE FIRST TIME A PAYLOAD CONFIRMS IT — a terminal state, not a
+   * mask recomputed each render. `confirmRevokedByServer` below drops the scope permanently the
+   * moment any `listMyScopeGrants` payload carries it, and nothing can put it back.
    *
-   * ⚠️ ONE RESIDUAL, NAMED RATHER THAN HIDDEN: a viewer who RE-GRANTS the same scope strictly inside
-   * replication lag — before the replica ever reports the revocation — leaves an entry the server
-   * will never confirm, so that row reads "Removed" until this component unmounts. That is round 2's
-   * shape in a far narrower window. Closing it needs a signal separating "the replica has not caught
-   * up" from "the row was re-granted", and no field on `ScopeGrantSurface` provides one — both look
-   * identical (`revokedScopes` lacking the scope). A monotonic row version, or a primary-read variant
-   * of `listMyScopeGrants`, would settle it; both are server-side changes this phase is scoped out of.
+   * ⚠️ RETRACTED AGAIN, AND THIS IS THE DISTINCTION THAT COST TWO ROUNDS. Round 4 removed the
+   * clearing step and claimed the union alone made the entry "self-expiring" — *"the moment the
+   * server's payload carries the revocation the entry is redundant and contributes nothing"*. It is
+   * redundant IN THAT PAYLOAD ONLY. The union is recomputed on every render, so the entry was merely
+   * SHADOWED, and `revokedScopes` is not monotonic — a re-grant is precisely the write that removes a
+   * scope from it (`grantScopes` → `clearRevocations: true`). So the entry went live again on the next
+   * payload that dropped the scope, which re-shipped round 3's defect at FULL WIDTH rather than
+   * narrowing it to replication lag: revoke in the drawer, the block fires `REQUEST_CONSENT`, the
+   * viewer re-grants with a budget, then revokes anything else in the same drawer — and the spend row
+   * reads "Removed / You withdrew this" with no control while the budget editor renders live beside
+   * it. No replication lag anywhere in that sequence. Found by the round-5 lane.
+   *
+   * The correct reading of "expire on data" is to LATCH the observation, not to re-derive a mask: the
+   * client has already SEEN a payload carrying the revocation, and that observation is the
+   * confirmation. Once latched there is nothing left for a later payload to resurrect.
+   *
+   * ⚠️ ONE RESIDUAL, AND NOW GENUINELY BOUNDED: a viewer who re-grants the scope BEFORE any payload
+   * ever confirms the revocation leaves an entry that never latches, so that row reads "Removed"
+   * until this component unmounts. That case needs a signal separating "no payload has confirmed yet"
+   * from "the row was re-granted", and none exists — `scopesRevokedAt` is explicitly NON-monotonic (a
+   * clearing re-grant nulls it, and the whole-grant path writes `null` when the list empties), while
+   * `grantedScopes`, `spendScopeGranted`, `buzzBudgetPerDay`, `surfaces` and `origin` carry nothing
+   * version-like. A monotonic row version, or a primary-read variant of `listMyScopeGrants`, would
+   * settle it; both are server changes this phase is scoped out of.
    */
   const [justRevoked, setJustRevoked] = useState<string[]>([]);
+
+  /**
+   * THE LATCH. Drops any pending entry the server has now confirmed, permanently.
+   *
+   * 🔴 KEYED ON A JOINED STRING, NOT ON THE ARRAY. `serverRevokedScopes` comes off react-query and is
+   * a fresh array identity on every render, so using it directly as a dependency would re-run this on
+   * every render; and the `setJustRevoked` updater returns the PREVIOUS array unchanged when nothing
+   * was dropped, so a no-op cannot start a render loop. `\u0000` as the separator because it cannot
+   * occur in a scope id (the vocabulary is `[a-z:]`), so two different lists cannot join to one key.
+   */
+  const confirmedKey = serverRevokedScopes.join('\u0000');
+  useEffect(() => {
+    const confirmed = new Set(confirmedKey.length > 0 ? confirmedKey.split('\u0000') : []);
+    setJustRevoked((prev) => {
+      const next = prev.filter((s) => !confirmed.has(s));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [confirmedKey]);
 
   /**
    * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
