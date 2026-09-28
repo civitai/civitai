@@ -448,8 +448,12 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * (2) It reports the lever's shipped payload as "~3 lines", which is correct — but the
  * request it was executing said ~10, and the message did not flag that it was correcting
  * it. The three are `--app-page-max-width: none;`, `maxWidth: 'var(…)'` and
- * `marginInline: 'auto'`; counting the 4-line CSS comment template gets you 7, and nothing
- * gets you 10.
+ * `marginInline: 'auto'`. ⚠️ A THIRD FIGURE WAS WRONG IN THIS VERY PARAGRAPH and is
+ * corrected rather than quietly dropped, because it is the fourth count error in this arc:
+ * it said "counting the 4-line CSS comment template gets you 7". The template was THREE
+ * lines (`[data-app-page-frame][data-block-id='my-canvas-app'] {` / the declaration / `}`),
+ * so counting it gets you SIX. Nothing gets you 10. Re-derive from
+ * `git show 352a167ecb:src/styles/globals.css` rather than trusting any number here.
  *   · `playable-collections` — a collection PLAYER, unbounded by its own design on every
  *     open-collection surface; it needs nothing from the platform. (Its browse list caps
  *     itself at 960 and is unaffected either way.)
