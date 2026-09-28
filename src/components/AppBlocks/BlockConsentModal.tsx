@@ -19,6 +19,7 @@ import {
   BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  BLOCK_SPEND_SCOPE,
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
@@ -33,8 +34,18 @@ interface BlockConsentModalProps {
   onGranted: () => void;
 }
 
-/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
-const SPEND_SCOPE = 'ai:write:budgeted';
+/**
+ * The ONE scope in the vocabulary that can spend the viewer's Buzz — now the SHARED constant.
+ *
+ * ⚠️ THIS WAS A PRIVATE `const SPEND_SCOPE = 'ai:write:budgeted'` with a doc sentence
+ * BYTE-IDENTICAL to a second private copy in `src/pages/apps/activity.tsx`, and neither knew about
+ * the other. Phase 3 added a third in the revoke dialog, which is how the set was noticed at all.
+ * The consequence of them drifting is not cosmetic: this modal decides whether to OFFER a budget
+ * field, the editor on /apps/activity decides what to SEND, and the revoke dialog says that
+ * withdrawing this scope CLEARS the stored budget. If the grant modal is looking at a different
+ * string from the one the server caps against, a spend path stops being bounded.
+ */
+const SPEND_SCOPE = BLOCK_SPEND_SCOPE;
 
 /**
  * Lazy-consent surface (A6 / design-gaps C2). Opened on demand when a block

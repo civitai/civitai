@@ -13,11 +13,19 @@ import { describe, expect, test } from 'vitest';
  * the claim justifies, and the `ScopeGrantsPanel` the component tier does mount sits BELOW the
  * paragraph. The artifact under test is prose, so the guard pins prose.
  *
- * 🔴 IT PINS WHOLE NORMALISED SENTENCES, NOT KEYWORDS. A keyword guard on "not possible" is walked
- * by any reword that keeps the falsehood ("cannot be withdrawn today", "there is no way to remove
- * one yet"), so the forbidden set below is a list of normalised sentences AND the positive half
- * asserts the replacement sentence is actually present — a file that simply deleted the paragraph
- * would pass a negative-only guard while telling the viewer nothing at all.
+ * 🔴 WHAT THIS FILE IS: A LITERAL-REVERT TRIPWIRE PLUS A RETRACTION-MARKER LEDGER. IT IS NOT A
+ * REWORDING GUARD, AND AN EARLIER DOCBLOCK HERE CLAIMED IT WAS. That version said *"IT PINS WHOLE
+ * NORMALISED SENTENCES, NOT KEYWORDS"* — false as written: `RETRACTED_VIEWER_CLAIMS` holds ONE
+ * 35-character clause, matched case-sensitively, so "you cannot withdraw one yet", "withdrawal is
+ * not supported yet" and "removing a permission isn't available" all walk it, on any of the five
+ * surfaces. The positive half does not compensate either: it is a CONTAINMENT check on three
+ * fragments of `activity.tsx` alone, so it forbids no ADDITIONAL false sentence anywhere.
+ *
+ * What genuinely guards against rewording is the EXACT whole-string pin in
+ * `src/components/Apps/AppActivityPage.browser.test.tsx` (`PERMISSIONS_TAB_COPY`, `{ exact: true }`,
+ * asserted against the rendered DOM), which this file's sibling honestly calls a pin. That covers
+ * `activity.tsx`'s one `<Text>`; the DRAWER's copy has no exact pin at all, which is a real gap and
+ * is recorded here rather than papered over. Corrected by the test-review lane.
  *
  * 🔴 THIS IS THE ONE PHASE-3 GUARD WITH A TRUE PRE-CHANGE RED. Every other new test in this phase
  * reads a component, a prop or a testid that does not exist at `a5a34418b6`, so reverting the
@@ -34,6 +42,46 @@ const SURFACES = [
   'src/components/Apps/scopeRevoke.tsx',
   'src/components/Apps/scopeConsentRows.ts',
 ];
+
+/**
+ * Files carrying a COMMENT claim about revocation — wider than `SURFACES`, because the defect this
+ * set exists for was found OUTSIDE the two surfaces.
+ *
+ * 🔴 ADDED AFTER A REAL MISS, AND THE MISS IS THE ARGUMENT FOR THE SET'S SHAPE.
+ * `src/shared/constants/app-surface-provenance.ts` asserted *"with no remedy available, since
+ * nothing in the repo writes a non-null `revoked_at`"* — the same clause phase 3 retracted in three
+ * other places, in a module that BOTH permissions surfaces import and whose function is called
+ * from both. Phase 3's first pass grepped the surfaces and the components; this file is neither, so
+ * it survived. Worse, phase 2 had ALREADY retracted the identical clause in that module's own TEST
+ * file and left the source untouched — the guard was fixed and the guarded thing was not, with a
+ * green suite over it the whole time.
+ */
+const COMMENT_CLAIM_FILES = [
+  ...SURFACES,
+  'src/shared/constants/app-surface-provenance.ts',
+  'src/shared/constants/__tests__/app-surface-provenance.test.ts',
+  'src/components/Apps/AppActivityPage.browser.test.tsx',
+];
+
+/**
+ * Clauses that state, as a MECHANISM, that nothing can revoke. Each was true before phase 2.
+ *
+ * 🔴 THESE ARE NOT BANNED OUTRIGHT — THEY ARE REQUIRED TO CARRY A RETRACTION MARKER. That is the
+ * whole design, and the first version of this file got it wrong in both directions at once: it
+ * banned comment text outright, which forbade the very quoting this repo's retraction idiom
+ * REQUIRES (a superseded claim is quoted beside its correction so the next reader can see what
+ * changed), and it therefore could not distinguish a file that has corrected itself from one that
+ * never noticed. Requiring the marker separates exactly those two states, which is the thing that
+ * matters.
+ */
+const RETRACTED_MECHANISM_CLAUSES = [
+  'nothing writes a non-null `revoked_at`',
+  'nothing in the repo writes a non-null `revoked_at`',
+  'nothing ever writes a non-null `revoked_at`',
+];
+
+/** The markers this repo uses to mark a claim superseded. */
+const RETRACTION_MARKERS = ['RETRACTED', 'IS RETRACTED', 'WHAT IS RETRACTED', 'USED TO READ'];
 
 /** Collapse runs of whitespace so a JSX line wrap cannot hide a sentence from the match. */
 function normalised(relPath: string): string {
@@ -70,25 +118,82 @@ describe('the permissions copy no longer claims revocation is impossible', () =>
     }
   });
 
-  test('🔴 the tab copy states what the control does, rather than saying nothing', () => {
-    // The negative half above is satisfied by DELETING the paragraph. This is the half that is not.
-    const text = normalised('src/pages/apps/activity.tsx');
-    expect(text).toContain('Where a permission is yours to give, you can remove it here');
-    // "straight away" — phase 2 publishes a fail-closed Redis marker the middleware honours on
-    // tokens ALREADY minted, so the weaker "at the next token refresh" would understate it.
-    expect(text).toContain('the app stops being able to use it straight away');
-    // …and re-prompting is disclosed, so a viewer is not surprised by their own next click.
-    expect(text).toContain('may ask you for it again');
-  });
+  /**
+   * ⚠️ TWO ARMS WERE DELETED HERE RATHER THAN KEPT, and the deletion is the finding.
+   *
+   * They asserted that `src/pages/apps/activity.tsx` CONTAINS three fragments of the new tab copy
+   * ("Where a permission is yours to give…", "…straight away", "may ask you for it again") and the
+   * uninstall-distinction sentence. Every one of those strings is a strict SUBSTRING of
+   * `PERMISSIONS_TAB_COPY` in `src/components/Apps/AppActivityPage.browser.test.tsx`, which pins the
+   * WHOLE normalised paragraph with `{ exact: true }` against the RENDERED DOM — a strictly stronger
+   * claim, in the tier that can see what a viewer actually gets. So the same paragraph was pinned in
+   * two files at two strengths, and the weaker one was the newer one: it added no signal and added a
+   * second place to relax when the copy legitimately changes. Whoever satisfies the exact pin has
+   * satisfied these by construction. Reported by the reuse-review lane.
+   *
+   * The uninstall distinction is not left unguarded by the deletion — it is covered twice over:
+   * by that same exact pin, and by the `REVOKE_BY_UNINSTALL` absence regex in the same sibling file,
+   * which is the guard actually aimed at the instruction going false.
+   */
 
-  test('🔴 the uninstall-is-a-different-thing distinction SURVIVES — it is still true', () => {
-    // The half of the old sentence that phase 3 must NOT drop. Neither uninstall path touches
-    // `app_user_scope_grants`, so an uninstall still does not withdraw consent, and the copy that
-    // replaced the retracted claim has to keep saying so.
-    const text = normalised('src/pages/apps/activity.tsx');
-    expect(text).toContain(
-      'Removing an install on the Installs tab is a different thing and does not withdraw a permission'
-    );
+  /**
+   * 🔴 A KNOWN LIMITATION OF EVERY ARM IN THIS FILE, stated because the first version of it walked
+   * straight into the consequence. `normalised()` reads the WHOLE FILE and cannot tell a comment
+   * from JSX text. This repo's retraction idiom is to QUOTE a superseded claim beside its
+   * correction — so if someone writes a fuller retraction that quotes the old VIEWER-FACING clause
+   * verbatim, `RETRACTED_VIEWER_CLAIMS` reds against a strictly better fix. That is exactly the
+   * failure the first version produced when it also banned the two comment claims, and narrowing to
+   * viewer copy shrank the surface without removing the mechanism.
+   *
+   * ⚠️ IT IS NOT FIXED BY STRIPPING COMMENTS, and that was considered and rejected: this repo has a
+   * worked, expensive precedent for asking regexes to agree about where a syntactic construct ends
+   * (`test/component-setup.tsx` records three successive regex attempts at a CSS block, each of
+   * which shipped a defect, and the cure was to hand the problem to a real parser). A bad comment
+   * stripper here would silently stop checking part of a file, which is worse than this limitation.
+   *
+   * SO, IF YOU ARE HERE BECAUSE THIS WENT RED ON A RETRACTION YOU WROTE: paraphrase the old
+   * viewer-facing clause in the comment rather than quoting it, or move the clause into
+   * `RETRACTED_MECHANISM_CLAUSES` below, which requires a retraction MARKER instead of banning the
+   * words outright. Do not relax the assertion.
+   */
+
+  test.each(COMMENT_CLAIM_FILES)(
+    '🔴 %s: any "nothing writes revoked_at" clause carries a retraction marker',
+    (relPath) => {
+      const text = normalised(relPath);
+      expect(text.length, `${relPath} read as empty — this test checks nothing`).toBeGreaterThan(
+        200
+      );
+      const present = RETRACTED_MECHANISM_CLAUSES.filter((c) => text.includes(c));
+      if (present.length === 0) return; // the file makes no such claim — nothing to mark.
+      const marked = RETRACTION_MARKERS.some((mk) => text.includes(mk));
+      expect(
+        marked,
+        `${relPath} asserts ${JSON.stringify(present)} with NO retraction marker nearby. ` +
+          'That mechanism is false since phase 2: `revokeScopes` writes a non-null `revoked_at`. ' +
+          'Either delete the clause or mark it retracted and give the real reason.'
+      ).toBe(true);
+    }
+  );
+
+  /**
+   * 🔴 THE POSITIVE CONTROL ON THE GUARD ABOVE — without it, the whole `test.each` is satisfied by
+   * a clause list that matches nothing (the early `return` makes every file pass vacuously, which
+   * is the reassuring-zero shape). This asserts the clause set really does fire on the corpus: at
+   * least one file must contain one of these clauses, so the marker requirement is being exercised
+   * rather than skipped for every path.
+   */
+  test('🔴 POSITIVE CONTROL: the retracted-clause set actually matches somewhere', () => {
+    const hits = COMMENT_CLAIM_FILES.filter((p) => {
+      const text = normalised(p);
+      return RETRACTED_MECHANISM_CLAUSES.some((c) => text.includes(c));
+    });
+    expect(
+      hits,
+      'no file in the corpus contains any retracted-mechanism clause — the marker guard above ' +
+        'returned early for every path and asserted nothing. Either the clauses were reworded ' +
+        '(update the list) or the corpus is wrong.'
+    ).not.toEqual([]);
   });
 
   test('🔴 the retracted claims are MARKED as retracted, not silently vanished', () => {

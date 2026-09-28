@@ -3,6 +3,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
 import { fixedScopeNote } from '~/components/Apps/scopeConsentRows';
+import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -27,13 +28,20 @@ import { trpc } from '~/utils/trpc';
  */
 
 /**
- * The ONE scope in the vocabulary that can spend the viewer's Buzz.
+ * ⚠️ `SPEND_SCOPE` WAS DECLARED HERE AND HAS MOVED TO `~/shared/constants/block-scope.constants`
+ * AS `BLOCK_SPEND_SCOPE` — re-exported under the old name only for the two `Apps/` call sites.
  *
- * Lives here rather than as a second local const in `src/pages/apps/activity.tsx` (which is
- * where it used to be, and which now imports it) because BOTH the budget editor and the revoke
- * confirm copy need it: revoking it CLEARS the stored daily limit, which the dialog has to say.
+ * Phase 3 first moved the literal out of `src/pages/apps/activity.tsx` into this file, on the
+ * correct argument that the budget editor and the revoke dialog must agree about which scope they
+ * mean. The reuse-review lane pointed out two things that made this the wrong home: a THIRD copy
+ * already existed in `src/components/AppBlocks/BlockConsentModal.tsx` with a byte-identical name and
+ * doc sentence, so the move consolidated 2→1 while leaving 3 in the tree; and putting a scope id in
+ * a module that imports Mantine, `@mantine/modals`, `trpc` and `formatDate` inverts the dependency —
+ * the budget editor, which predates revoke, would import its spend-scope identity from the revoke
+ * feature. The shared constants module is client-safe, owns the scope vocabulary, and is already
+ * imported by all three surfaces. Full reasoning lives on `BLOCK_SPEND_SCOPE`.
  */
-export const SPEND_SCOPE = 'ai:write:budgeted';
+export const SPEND_SCOPE = BLOCK_SPEND_SCOPE;
 
 /**
  * What a revoke actually does, in the viewer's terms — the confirm step's body.
@@ -78,6 +86,22 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
           limit if you ever re-granted the permission.
         </Text>
       ) : null}
+      {/* 🔴 MORE HAPPENS THAN THE SENTENCES ABOVE PROMISE, AND IT HAS TO BE SAID. For an app whose
+          auth is mirrored into an `OauthConsent` row, `blocks.revokeScopes` runs
+          `revokeOauthConsentForBlock`, which `deleteMany`s EVERY `Access`/`Refresh` key for that
+          client and the whole consent row — not just the scope being withdrawn. So a viewer who
+          removes one permission can find the app fully signed out. Removing more than promised is
+          the safe direction, but being surprised by it is not, and the correctness-review lane was
+          right that the dialog said nothing about it.
+          ⚠️ HEDGED ON PURPOSE. The client is not told whether this app has an OAuth mirror —
+          `ScopeGrantSurface` carries no such field, and the server gates the teardown on a live
+          row it reads at mutation time. So the sentence is conditional rather than asserted; an
+          unconditional "this signs the app out" would be false for the majority of apps, which
+          have no mirror at all. */}
+      <Text size="sm" data-testid="scope-revoke-confirm-signout-note">
+        If this app signs you in with Civitai, removing a permission also signs it out — you may
+        need to sign in to it again.
+      </Text>
       <Text size="sm" c="dimmed">
         This does not uninstall the app or remove anything it has already saved — those are
         separate from the permission.
@@ -95,10 +119,16 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
  * half that governs every future mint was.
  */
 export type ScopeRevokeFailure = {
-  scope: string;
   message: string;
   degraded: boolean;
 };
+/**
+ * ⚠️ A `scope: string` FIELD WAS DROPPED FROM THIS TYPE — it was dead data. Nothing read it:
+ * `ScopeRevokeFailureNotice` renders app-level, not per-row, so the field was set on every failure
+ * and consumed by nothing, which also made `scope: variables.scopes[0] ?? ''` a mutation no test
+ * could ever kill. Carrying a value the UI does not branch on is the shape that later reads as a
+ * per-scope guarantee this surface does not make. Found by the test-review lane.
+ */
 
 /**
  * The revoke mutation plus its confirm gate, for ONE app.
@@ -137,30 +167,26 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
   const [pendingScope, setPendingScope] = useState<string | null>(null);
   const [failure, setFailure] = useState<ScopeRevokeFailure | null>(null);
 
-  const mutation = trpc.blocks.revokeScopes.useMutation({
-    onSuccess: async (_data, variables) => {
-      await utils.blocks.listMyScopeGrants.invalidate();
-      showSuccessNotification({
-        title: 'Permission removed',
-        message: `${appName} can no longer use ${variables.scopes.join(', ')}.`,
-      });
-    },
-    onError: async (error, variables) => {
-      const code = error.data?.code;
-      const degraded = code === 'SERVICE_UNAVAILABLE';
-      // See the docblock: 412 is the only outcome the server states left the row untouched.
-      if (code !== 'PRECONDITION_FAILED') await utils.blocks.listMyScopeGrants.invalidate();
-      setFailure({ scope: variables.scopes[0] ?? '', message: error.message, degraded });
-      if (degraded) {
-        // A WARNING, not an error: the permission is gone. The notification and the inline
-        // notice carry the same server sentence rather than two paraphrases of it.
-        showWarningNotification({ title: 'Permission removed', message: error.message });
-      }
-    },
-    // `onSettled` rather than clearing in each arm — a spinner that outlives its mutation is
-    // the failure mode a per-arm reset produces the first time a third arm is added.
-    onSettled: () => setPendingScope(null),
-  });
+  /**
+   * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
+   * CLOSURE, AND THAT IS A CORRECTNESS FIX RATHER THAN A STYLE CHOICE.
+   *
+   * `openConfirmModal` renders into the GLOBAL `CustomModalsProvider` (`src/pages/_app.tsx`), so
+   * the dialog outlives this component. If the tree holding the hook unmounts while the dialog is
+   * open — the run-frame drawer closing is the reachable shape — react-query unsubscribes this
+   * `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of the
+   * option callbacks ran: no cache invalidation, no success notification, and critically no 503
+   * warning and no inline failure notice. The permission changed and the viewer was told nothing,
+   * which is the exact outcome `ScopeRevokeFailureNotice`'s docblock calls the worst available on
+   * a consent surface. Found by the correctness-review lane.
+   *
+   * `mutateAsync` returns a promise from the Mutation itself, not from the observer, so the chain
+   * below runs whether or not this component is still mounted. `utils.*.invalidate` and the
+   * notification helpers are both global singletons, so the two things the viewer actually needs
+   * happen regardless; only the two `setState` calls are lifecycle-bound, and a `setState` on an
+   * unmounted component is a no-op in React 18 rather than a warning.
+   */
+  const mutation = trpc.blocks.revokeScopes.useMutation();
 
   const requestRevoke = (scope: string) => {
     openConfirmModal({
@@ -174,7 +200,58 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
         // fresh spinner.
         setFailure(null);
         setPendingScope(scope);
-        mutation.mutate({ appBlockId, scopes: [scope] });
+        mutation
+          .mutateAsync({ appBlockId, scopes: [scope] })
+          /**
+           * 🔴 TELL THE VIEWER FIRST, RECONCILE THE CACHE AFTER — AND THE `invalidate()` IS
+           * DELIBERATELY NOT AWAITED. `queryClient.invalidateQueries` returns
+           * `refetchQueries(...)`, so awaiting it waits for the whole `listMyScopeGrants` refetch,
+           * which is FOUR sequential DB round trips — and one of them,
+           * `blockScopeInvocation.groupBy`, has no time predicate and no LIMIT, so it scales with
+           * the viewer's lifetime App Block audit-row count (there is no pruning job for that
+           * table). Awaiting it put the spinner, the success toast, the 503 warning AND the inline
+           * failure notice behind that refetch.
+           *
+           * 🔴 THE 503 ARM IS WHY THIS IS A DEFECT AND NOT A PREFERENCE. That arm exists to say
+           * "the permission is gone but enforcement is lagging" — and Redis being unhealthy is
+           * exactly when the extra round trips are least likely to be quick. Awaiting delayed the
+           * one message whose whole value is arriving promptly, at the one moment it mattered.
+           * Measured by the perf-review lane against `@tanstack/query-core@5.101.0`.
+           *
+           * ⚠️ DECLINED, WITH REASONING: also patching the row via
+           * `utils.blocks.listMyScopeGrants.setData(...)` from the mutation's return payload. The
+           * server does return `revokedScopes`/`grantedScopes` for exactly that purpose, and 246
+           * call sites in this repo use `setData`. But the return does NOT carry
+           * `scopesRevokedAt`, which `ScopeConsentList` renders, so `setData` cannot replace the
+           * invalidate — it would only make the row correct a few hundred ms sooner while the same
+           * refetch still ran. Once the refetch is off the interactive path, that is polish rather
+           * than a fix, and it adds a second writer of this cache entry.
+           */
+          .then(() => {
+            showSuccessNotification({
+              title: 'Permission removed',
+              message: `${appName} can no longer use ${scope}.`,
+            });
+            void utils.blocks.listMyScopeGrants.invalidate();
+          })
+          .catch((error: { data?: { code?: string }; message?: string }) => {
+            const code = error?.data?.code;
+            const degraded = code === 'SERVICE_UNAVAILABLE';
+            const message = error?.message ?? 'The permission could not be removed just now.';
+            setFailure({ message, degraded });
+            if (degraded) {
+              // A WARNING, not an error: the permission IS gone. The notification and the inline
+              // notice carry the same server sentence rather than two paraphrases of it.
+              showWarningNotification({ title: 'Permission removed', message });
+            }
+            // See the hook docblock: 412 is the only outcome the server states left the row
+            // untouched, so it is the only one that buys nothing by re-reading. Un-awaited, and
+            // AFTER the viewer has been told — see the block above.
+            if (code !== 'PRECONDITION_FAILED') void utils.blocks.listMyScopeGrants.invalidate();
+          })
+          // `finally` rather than clearing in each arm — a spinner that outlives its mutation is
+          // the failure mode a per-arm reset produces the first time a third arm is added.
+          .finally(() => setPendingScope(null));
       },
     });
   };
@@ -222,6 +299,16 @@ export function ScopeConsentAction({
       </Text>
     );
   }
+  /**
+   * 🔴 `unknown` RENDERS NOTHING — NOT A NOTE, AND NOT A DISABLED CONTROL. The server did not tell
+   * us whether this scope is withdrawable (a pre-phase-2 payload during a rollout's mixed-version
+   * window), and every sentence available here would be a claim we cannot support. `fixed`'s note
+   * would assert the permission is platform-granted and permanent; a control would offer an action
+   * the server may refuse. Silence is the only honest option for this state specifically — which
+   * is the opposite of the `fixed` case, where silence would read as an oversight next to rows
+   * that have an affordance. See `ScopeConsentState` in `scopeConsentRows.ts`.
+   */
+  if (state === 'unknown') return null;
   return (
     <Group gap="xs" justify="flex-start">
       <Button

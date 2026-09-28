@@ -274,6 +274,37 @@ export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
 export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
 
 /**
+ * The ONE scope in the vocabulary that can spend the viewer's Buzz.
+ *
+ * 🔴 THE CLIENT-SIDE HOME, AND IT REPLACES THREE LOCAL CONSTS RATHER THAN ADDING A FOURTH. Before
+ * this, the literal `'ai:write:budgeted'` was declared privately in
+ * `src/pages/apps/activity.tsx` (the budget editor), `src/components/AppBlocks/BlockConsentModal.tsx`
+ * (the grant modal) and — added by phase 3 and then moved here —
+ * `src/components/Apps/scopeRevoke.tsx` (the revoke dialog). Two of those carried a BYTE-IDENTICAL
+ * name and doc sentence and neither knew about the other.
+ *
+ * 🔴 WHY HERE AND NOT `scope-grant.service.ts`, which already owns `CONSENT_SPEND_SCOPE` with a
+ * docblock making exactly this argument ("a string literal repeated at N sites is a predicate that
+ * will be wrong at N−1 of them the first time the vocabulary moves"). That module imports
+ * `dbRead`/`dbWrite`, so it is server-graph and no client surface can import it. This file is
+ * client-safe, already owns the scope vocabulary (`isKnownBlockScope`, `SENSITIVE_BLOCK_SCOPES`)
+ * AND already holds viewer-facing consent copy (`BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY`), so it is
+ * the one place both sides can reach.
+ *
+ * ⚠️ THE SERVER CONSTANT IS DELIBERATELY NOT COLLAPSED INTO THIS ONE. `CONSENT_SPEND_SCOPE` should
+ * become a re-export of this, which is one edit in `src/server/services/blocks/scope-grant.service.ts`
+ * — a file phase 3 was explicitly scoped out of. So the count is server 1 + client 1 = 2, down from
+ * server 1 + client 3 = 4. Whoever next touches that service should finish it; until then the two
+ * are asserted equal by `src/components/Apps/__tests__/scopeConsentRows.test.ts`.
+ *
+ * 🔴 THE THREE SURFACES MUST AGREE OR THE BUDGET SILENTLY DETACHES FROM THE SCOPE IT BOUNDS: the
+ * grant modal decides whether to offer a budget field, the budget editor decides what to send, and
+ * the revoke dialog has to say that withdrawing this scope CLEARS the stored budget. A disagreement
+ * is not a rendering bug, it is a spend path that stops being capped.
+ */
+export const BLOCK_SPEND_SCOPE = 'ai:write:budgeted';
+
+/**
  * Pre-filled suggestion when a user turns a limit ON (consent modal + the editor on
  * /apps/activity). Deliberately far below the platform ceiling: the default should be
  * a limit, not a formality.

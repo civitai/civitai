@@ -82,7 +82,13 @@ export function ScopeConsentList({
   const rows = buildScopeConsentRows({
     scopes: grant?.scopes ?? [],
     revokedScopes: grant?.revokedScopes ?? [],
-    revokableScopes: grant?.revokableScopes ?? [],
+    // 🔴 NOT `?? []` — AND THE COALESCE WAS A REAL DEFECT, NOT A TIDINESS NIT. An absent
+    // `revokableScopes` made every row `fixed`, so a genuinely withdrawable scope rendered
+    // "Can't be withdrawn … granted by platform policy": fail-closed for the action, fail-OPEN
+    // for the copy, i.e. a false statement about the viewer's own consent. Passed through as
+    // `undefined` so `buildScopeConsentRows` can answer `unknown` and render nothing. See that
+    // function's parameter docblock.
+    revokableScopes: grant?.revokableScopes,
   });
   const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
 
@@ -100,10 +106,12 @@ export function ScopeConsentList({
           renderScopeAction: (scope) => (
             <ScopeConsentAction
               scope={scope}
-              // `?? 'fixed'` can only be reached if `BlockScopeList` were handed a scope this
-              // component did not put in `rows`, which is impossible today — and `fixed` is the
-              // fail-closed answer if it ever becomes possible: a note, never a control.
-              state={stateByScope.get(scope) ?? 'fixed'}
+              // `?? 'unknown'` can only be reached if `BlockScopeList` were handed a scope this
+              // component did not put in `rows`, which is impossible today. `unknown` is the
+              // right fallback rather than `fixed`: both withhold the control, but `fixed`
+              // ASSERTS the permission is platform-granted and unwithdrawable, and we would have
+              // no basis for saying that about a row we cannot account for. Say nothing instead.
+              state={stateByScope.get(scope) ?? 'unknown'}
               pendingScope={pendingScope}
               onRevoke={requestRevoke}
             />

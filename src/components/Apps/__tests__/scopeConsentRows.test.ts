@@ -4,7 +4,11 @@ import {
   FIXED_SCOPE_NOTES,
   fixedScopeNote,
 } from '~/components/Apps/scopeConsentRows';
-import { consentExemptScopeList } from '~/server/services/blocks/scope-grant.service';
+import {
+  CONSENT_SPEND_SCOPE,
+  consentExemptScopeList,
+} from '~/server/services/blocks/scope-grant.service';
+import { BLOCK_SPEND_SCOPE, isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
  * PHASE 3 — the pure half: which rows exist and what state each is in.
@@ -94,6 +98,70 @@ describe('buildScopeConsentRows', () => {
       []
     );
   });
+
+  /**
+   * 🔴 `undefined` AND `[]` MUST NOT AGREE. This is the defect the correctness-review lane found:
+   * the caller coalesced a missing `revokableScopes` to `[]`, which made every row `fixed` — so a
+   * genuinely withdrawable scope rendered a sentence asserting it was granted by platform policy
+   * and could not be withdrawn. Fail-closed for the action, fail-OPEN for the copy.
+   *
+   * The pair is asserted TOGETHER in one test on purpose: the whole claim is that the two inputs
+   * produce DIFFERENT states, and two separate tests could both pass while the distinction was
+   * lost (each asserting its own expected value against a function that ignored the difference is
+   * impossible, but a later edit splitting them invites exactly that).
+   */
+  test('🔴 ABSENT revokableScopes yields `unknown`; EMPTY yields `fixed`', () => {
+    const scopes = ['ai:write:budgeted'];
+    expect(buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: undefined })).toEqual(
+      [{ scope: 'ai:write:budgeted', state: 'unknown' }]
+    );
+    expect(buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: [] })).toEqual([
+      { scope: 'ai:write:budgeted', state: 'fixed' },
+    ]);
+  });
+
+  test('🔴 a REVOKED scope stays `revoked` even on a payload with no revokableScopes', () => {
+    // The `unknown` test sits after the `revoked` test deliberately: a suppression the server DID
+    // report is a fact we can still state, and hiding a known withdrawal is the one regression this
+    // surface must never have. If the order flipped, a pre-phase-2 payload that still carried
+    // `revokedScopes` would silently stop marking them.
+    expect(
+      buildScopeConsentRows({
+        scopes: ['posts:write:self'],
+        revokedScopes: ['posts:write:self'],
+        revokableScopes: undefined,
+      })
+    ).toEqual([{ scope: 'posts:write:self', state: 'revoked' }]);
+  });
+});
+
+/**
+ * 🔴 THE CLIENT AND SERVER SPEND-SCOPE CONSTANTS MUST BE THE SAME STRING, AND THIS IS THE ONLY
+ * PLACE THAT CAN SAY SO. `BLOCK_SPEND_SCOPE` lives in client-safe shared constants;
+ * `CONSENT_SPEND_SCOPE` lives in `scope-grant.service.ts`, which imports Prisma and therefore
+ * cannot be reached from any browser module — so the two cannot be collapsed into one declaration
+ * from the client side, and phase 3 was scoped out of `src/server/**`. This node-tier test is the
+ * one context that imports BOTH.
+ *
+ * ⚠️ IT IS A SEAM GUARD, NOT COVERAGE OF EITHER CONSTANT. The remaining duplication is deliberate
+ * and recorded on `BLOCK_SPEND_SCOPE`: whoever next edits that service should make
+ * `CONSENT_SPEND_SCOPE` a re-export, at which point this test becomes trivially true and can go.
+ * Until then it is the only thing standing between a vocabulary rename and a spend path that
+ * silently stops being capped — the grant modal decides whether to OFFER a budget field, the editor
+ * decides what to SEND, and the revoke dialog claims withdrawing this scope CLEARS the budget.
+ */
+describe('the spend scope is one string on both sides of the client/server line', () => {
+  test('🔴 BLOCK_SPEND_SCOPE === CONSENT_SPEND_SCOPE', () => {
+    expect(BLOCK_SPEND_SCOPE).toBe(CONSENT_SPEND_SCOPE);
+  });
+
+  test('…and it is a real, consent-GATED scope — not exempt, not retired', () => {
+    // Three properties the whole budget/revoke story rests on. If the spend scope were exempt,
+    // `blocks.revokeScopes` would refuse it and the confirm dialog's budget sentence would describe
+    // an action that cannot happen; if it were unknown, the router would reject it outright.
+    expect(isKnownBlockScope(BLOCK_SPEND_SCOPE)).toBe(true);
+    expect(consentExemptScopeList()).not.toContain(BLOCK_SPEND_SCOPE);
+  });
 });
 
 describe('fixedScopeNote', () => {
@@ -118,14 +186,46 @@ describe('fixedScopeNote', () => {
     }
   });
 
-  test('🔴 an UNKNOWN scope gets the generic note, never `undefined`', () => {
-    // The `fixed` state's other population. A bare `FIXED_SCOPE_NOTES[scope]` read would render
-    // nothing here — a row with no control and no explanation, which is the silence this phase
-    // exists to remove.
-    const note = fixedScopeNote('some:future:scope');
+  /**
+   * 🔴 AN UNKNOWN SCOPE GETS ITS OWN SENTENCE, NOT THE EXEMPT ONE — and the first version of this
+   * test asserted the opposite, which is how the bug hid. It required the unknown note to match
+   * `/can't be withdrawn/i` like the exempt notes, i.e. it ASSERTED the shared generic that the
+   * correctness-review lane then showed was false: "granted by platform policy … bounded by
+   * server-side checks on every request" is a claim about a privilege the app HOLDS, and a scope
+   * retired from the registry is granted by nothing and enforced by nothing.
+   *
+   * `block:settings:read`/`write` and `media:read:owned` are the real population — retired from the
+   * registry yet still present in some apps' `manifest.scopes` AND `approved_scopes`, so they reach
+   * the rendered list. Using one of them rather than an invented id keeps this test pointed at the
+   * population that exists.
+   */
+  test('🔴 a RETIRED scope says it grants nothing — NOT the exempt "platform policy" note', () => {
+    const retired = 'block:settings:read';
+    // A precondition, not decoration: if this ever becomes a known scope the test below is about
+    // a different branch and must be re-pointed.
+    expect(isKnownBlockScope(retired), `${retired} is in the registry again`).toBe(false);
+    const note = fixedScopeNote(retired);
     expect(note).toBeTruthy();
-    expect(note).toMatch(/can't be withdrawn/i);
-    expect(note).not.toBe(FIXED_SCOPE_NOTES['apps:storage:read']);
+    // It must NOT claim the app holds a platform-granted privilege over the account.
+    expect(note).not.toMatch(/platform policy/i);
+    expect(note).not.toMatch(/server-side checks on every request/i);
+    // It must say the honest thing instead: there is nothing there.
+    expect(note).toMatch(/no longer in use/i);
+    expect(note).toMatch(/nothing to withdraw/i);
+    // …and it is not silently one of the exempt sentences.
+    for (const exemptNote of Object.values(FIXED_SCOPE_NOTES)) {
+      expect(note).not.toBe(exemptNote);
+    }
+  });
+
+  test('a KNOWN scope with no specific note still falls back to the exempt generic', () => {
+    // The third branch, and the drift direction that DOES degrade safely: the exempt set growing
+    // server-side without this map being updated. `isKnownBlockScope` must be true here or the
+    // test is measuring the retired branch above instead.
+    const known = 'posts:write:self';
+    expect(isKnownBlockScope(known)).toBe(true);
+    expect(FIXED_SCOPE_NOTES[known], 'this scope gained a specific note — pick another').toBeUndefined();
+    expect(fixedScopeNote(known)).toMatch(/granted by platform policy/i);
   });
 
   test('no note points the viewer at the Installs tab', () => {

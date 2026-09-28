@@ -1,3 +1,5 @@
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+
 /**
  * PHASE 3 — the pure half of the per-scope revoke UI: which rows a permissions surface
  * shows, what CONSENT STATE each one is in, and (for the ones a viewer cannot withdraw)
@@ -26,8 +28,18 @@
  * It is consulted ONLY for a scope the server has already excluded from `revokableScopes`. If
  * the exempt set ever shrinks, that scope appears in `revokableScopes`, gets a real control,
  * and this map is never reached for it; if the set ever GROWS, the new member correctly loses
- * its control and falls back to `fixedScopeNote`'s generic sentence. Both directions degrade to
- * "correct control, less specific prose" rather than to a lie.
+ * its control and falls back to `fixedScopeNote`'s generic sentence.
+ *
+ * ⚠️ THE NEXT SENTENCE USED TO CLAIM *"Both directions degrade to 'correct control, less specific
+ * prose' rather than to a lie."* THAT IS RETRACTED — the generic fallback WAS a lie for one of
+ * the two populations `fixed` covers. An UNKNOWN scope id is `fixed` too, and for it the generic
+ * sentence ("granted by platform policy … bounded by server-side checks on every request") is
+ * false in both halves: a retired id is granted by nothing and enforced by nothing. That is not
+ * hypothetical — `listMyScopeGrants` documents `block:settings:read`/`write` and
+ * `media:read:owned` as retired from the registry yet still present in some apps' `manifest.scopes`
+ * AND `approved_scopes`, so they reach the rendered list. `fixedScopeNote` now branches on
+ * `isKnownBlockScope` and says what is true of that arm instead. Found by the correctness-review
+ * lane; the CONTROL was always correct, only the prose was wrong.
  */
 
 /**
@@ -38,6 +50,21 @@
  *   - `fixed`     — it is signed without reference to the viewer's consent, so there is
  *                   nothing to withdraw. Rendered with an honest note, NOT a disabled
  *                   button and NOT silence.
+ *   - `unknown`   — THE SERVER DID NOT TELL US. Distinct from `fixed`, and conflating the two
+ *                   was a real defect: `revokableScopes` ABSENT is not `revokableScopes` EMPTY.
+ *                   Rendered with NO affordance and NO note, because the only honest thing to
+ *                   say is nothing.
+ *
+ * 🔴 WHY `unknown` EXISTS RATHER THAN `?? []`. `ScopeConsentList` used to coalesce a missing
+ * `revokableScopes` to `[]`, which made EVERY row `fixed` — so a genuinely withdrawable
+ * `ai:write:budgeted` rendered "Can't be withdrawn … granted by platform policy", a false claim
+ * about the viewer's own consent on the consent surface. It is fail-closed for the ACTION and
+ * fail-OPEN for the COPY, which is the combination that reads as correct while lying.
+ * ⚠️ AND THE TRIGGER IS NOT THE ONE FIRST WRITTEN DOWN. That comment blamed a tab held open
+ * across the deploy at `staleTime: Infinity`; the correctness-review lane pointed out an old tab
+ * runs the OLD BUNDLE, where this component does not exist, so that path cannot produce it. The
+ * reachable trigger is the MIXED-VERSION WINDOW during a rollout: a new bundle querying a pod
+ * still on pre-phase-2 server code gets rows without the three new fields.
  *
  * ⚠️ `fixed` IS NOT A SYNONYM FOR "CONSENT-EXEMPT", and naming it after the exempt set would
  * have made it one. It is the residual: a displayed scope that is neither revoked nor in the
@@ -46,7 +73,7 @@
  * `isKnownBlockScope`, and `blocks.revokeScopes` rejects an unknown string outright, so
  * offering a control for one would produce a `BAD_REQUEST` the viewer cannot act on.
  */
-export type ScopeConsentState = 'revokable' | 'revoked' | 'fixed';
+export type ScopeConsentState = 'revokable' | 'revoked' | 'fixed' | 'unknown';
 
 export type ScopeConsentRow = {
   scope: string;
@@ -87,12 +114,27 @@ export function buildScopeConsentRows({
 }: {
   scopes: string[];
   revokedScopes: string[];
-  revokableScopes: string[];
+  /**
+   * 🔴 `undefined` AND `[]` MEAN DIFFERENT THINGS AND THE TYPE SAYS SO. `undefined` = the server
+   * did not send the field (a pre-phase-2 payload); `[]` = it did, and nothing here is
+   * withdrawable. The first yields `unknown` (no affordance, no claim), the second `fixed` (an
+   * honest note). Coalescing them at the caller is the defect this signature exists to prevent.
+   */
+  revokableScopes: string[] | undefined;
 }): ScopeConsentRow[] {
   const revoked = new Set(revokedScopes);
-  const revokable = new Set(revokableScopes);
+  const revokable = revokableScopes === undefined ? undefined : new Set(revokableScopes);
   const state = (scope: string): ScopeConsentState =>
-    revoked.has(scope) ? 'revoked' : revokable.has(scope) ? 'revokable' : 'fixed';
+    revoked.has(scope)
+      ? 'revoked'
+      : // The `unknown` test sits AFTER `revoked`, deliberately: a suppression we were told about
+        // is a fact we can still state even on a payload missing `revokableScopes`, and hiding a
+        // known withdrawal would be the one regression this surface must never have.
+        revokable === undefined
+        ? 'unknown'
+        : revokable.has(scope)
+          ? 'revokable'
+          : 'fixed';
 
   const displayed = new Set(scopes);
   const rows: ScopeConsentRow[] = scopes.map((scope) => ({ scope, state: state(scope) }));
@@ -129,12 +171,31 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   'apps:storage:write':
     "Can't be withdrawn. It writes only to this app's own private store for your data, which " +
     'is bounded to that app rather than to anything else on your account.',
+  /**
+   * 🔴 READ AND WRITE GET DIFFERENT SENTENCES, AND SHARING ONE WAS A FALSE SAFETY CLAIM.
+   * Both used to read *"gated server-side on every request instead — a minimum account-trust
+   * check, content moderation, and rate limits."* That is true of the WRITE path and false of the
+   * READ path: in `src/server/routers/apps-shared.router.ts` the min-trust gate
+   * (`assertSharedWriteTrust`) sits inside `if (!READ_OPS.has(op))`, every rate limiter is on
+   * append/vote/withdraw/report, and `assertSharedTextSafe` is on the append. That router's own
+   * comment says every read op *"skips that block entirely and has no second belt"*, and
+   * `src/server/middleware/block-scope.middleware.ts` permits `apps:storage:shared:read` for an
+   * ANON subject because the shared list and counts are public within the app.
+   *
+   * ⚠️ THE SOURCE COMMENT CONTRADICTS ITSELF AND THE FIRST VERSION COPIED THE WRONG HALF. The
+   * `CONSENT_EXEMPT_SCOPES` declaration says the controls are enforced "at every read/write
+   * REGARDLESS of the token scope" and then, two paragraphs down, that `shared:read` is "reading
+   * PUBLIC community data (anon-safe — the router allows anon reads by design)". The second is the
+   * one the code implements. Naming a protection that governs a different operation is the worst
+   * direction for this note: the row a viewer is told they cannot withdraw is the one carrying the
+   * strongest reassurance.
+   */
   'apps:storage:shared:read':
-    "Can't be withdrawn. Cross-user app data is gated server-side on every request instead — a " +
-    'minimum account-trust check, content moderation, and rate limits.',
+    "Can't be withdrawn, and there is nothing of yours to withhold — it reads the app's SHARED " +
+    'data, which is public within the app rather than personal to you.',
   'apps:storage:shared:write':
-    "Can't be withdrawn. Cross-user app data is gated server-side on every request instead — a " +
-    'minimum account-trust check, content moderation, and rate limits.',
+    "Can't be withdrawn. What you contribute to an app's shared data is gated server-side on " +
+    'every write instead — a minimum account-trust check, content moderation, and rate limits.',
   'models:read:self':
     "Can't be withdrawn. It reads only the model on the page the app is mounted on, which is " +
     'the page you opened — the subject is fixed by where the app runs, not by a permission.',
@@ -150,17 +211,39 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
  * The note for a `fixed` row — a specific sentence where we have one, an honest generic
  * otherwise.
  *
- * 🔴 THE FALLBACK IS NOT DECORATION; IT IS THE ONLY BRANCH THAT CAN SERVE THE `fixed` STATE'S
- * OTHER POPULATION. An UNKNOWN scope id is `fixed` too (see `ScopeConsentState`), and it has no
- * entry here by definition — a `FIXED_SCOPE_NOTES[scope]` read with no fallback would render
- * `undefined`, i.e. an unexplained row with no control, which is the "silence" the brief for
- * this phase rules out. It also covers the exempt set GROWING server-side without this map
- * being updated, which is the drift direction that degrades safely.
+ * 🔴 THREE BRANCHES, BECAUSE `fixed` COVERS TWO POPULATIONS AND ONE GENERIC SENTENCE WAS FALSE
+ * FOR ONE OF THEM. See `ScopeConsentState`: a row is `fixed` when it is neither revoked nor in
+ * the server's `revokableScopes`, which happens for a CONSENT-EXEMPT scope (the dominant case)
+ * and for an UNKNOWN one. The exempt sentence — "granted by platform policy … bounded by
+ * server-side checks on every request" — is true of the first and FALSE OF THE SECOND in both
+ * halves: a scope retired from the registry is granted by nothing and enforced by nothing.
+ * `listMyScopeGrants` records that population as real and names it (`block:settings:read`/`write`,
+ * `media:read:owned` — retired, yet still in some apps' `manifest.scopes` and `approved_scopes`,
+ * so still rendered), and its own comment says such a scope is *"not mintable, grants nothing"*.
+ * Telling a viewer the app holds a platform-granted privilege over their account, when it holds
+ * nothing at all, is the wrong direction for a consent surface to be wrong in.
+ *
+ * 🔴 `isKnownBlockScope` IS THE DISCRIMINATOR AND IT COMES FROM THE SHARED REGISTRY, not from a
+ * copy. `~/shared/constants/block-scope.constants` is client-safe (that is already why
+ * `BlockScopeList` imports `isSensitiveBlockScope` from it) and it is the same predicate the
+ * SERVER's `revokableScopes` computation filters on, so the client cannot disagree with the
+ * server about which arm a row is in.
  */
 export function fixedScopeNote(scope: string): string {
+  const specific = FIXED_SCOPE_NOTES[scope];
+  if (specific) return specific;
+  if (!isKnownBlockScope(scope)) {
+    return (
+      'This permission is no longer in use. It cannot be withdrawn because there is nothing to ' +
+      'withdraw — the app cannot exercise it, and no token carries it.'
+    );
+  }
+  // A KNOWN scope the server did not list as revokable, with no entry above. Reachable when the
+  // exempt set GROWS without this map being updated — the drift direction that degrades to
+  // "correct control, less specific prose", which is the claim the module docblock now makes only
+  // about this branch.
   return (
-    FIXED_SCOPE_NOTES[scope] ??
     "Can't be withdrawn here. This permission is granted by platform policy rather than by " +
-      'your consent, and is bounded by server-side checks on every request instead.'
+    'your consent, and is bounded by server-side checks on every request instead.'
   );
 }

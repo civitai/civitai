@@ -1613,17 +1613,43 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // 🔴 AND THE GROUPING IS UNAMBIGUOUS: the gap from a description UP to its own id must be
     // smaller than the gap DOWN to the next scope's id. Two `Stack`s at 4/2 made that a 2px
     // differential on a list whose entire purpose is which description belongs to which id.
+    //
+    // 🔴 `inter` IS MEASURED FROM THE PREVIOUS ROW'S **LAST CHILD**, NOT FROM THE DESCRIPTION —
+    // AND READING IT FROM THE DESCRIPTION MADE THIS ARM VACUOUS THE MOMENT PHASE 3 LANDED.
+    // Until then the description WAS the row's last child, so `nextBadge.top − description.bottom`
+    // really did measure the outer `Stack gap`. Phase 3's `ScopeConsentList` adds a THIRD child to
+    // every row (the revoke control, or an exempt note), and for this fixture's described scope
+    // that child is a two-line note sitting INSIDE the span being measured. `inter` then became
+    // ≈40px dominated by the note's own height — a quantity independent of either `Stack` gap — so
+    // collapsing the outer gap back to `2`, or even to `0`, still satisfied `inter > intra * 2`
+    // with an order of magnitude to spare. The arm was passing over a list with NO grouping cue at
+    // all, which is the exact defect it was written to reject. Found by the test-review lane.
+    //
+    // Reading from the last child restores the property: the span contains nothing but the outer
+    // gap again, whatever children a row grows in future.
+    const prevRow = description.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
+    if (!prevRow) throw new Error('the description is not inside a scope row');
+    const prevRowLastChild = prevRow.lastElementChild;
+    if (!prevRowLastChild) throw new Error('the scope row has no children');
+    // A POSITIVE CONTROL ON THE FIX: phase 3 must really have added a third child, or this arm has
+    // silently gone back to measuring from the description and the paragraph above is stale.
+    expect(
+      prevRow.children.length,
+      'the scope row no longer has a consent child — re-read the comment above, this arm may be ' +
+        'measuring from the description again'
+    ).toBe(3);
+    expect(prevRowLastChild, 'the description is still the row\'s last child').not.toBe(description);
     const nextBadge = scopeBadge(fixture.longScope);
     const inter = px(
-      nextBadge.getBoundingClientRect().top - description.getBoundingClientRect().bottom
+      nextBadge.getBoundingClientRect().top - prevRowLastChild.getBoundingClientRect().bottom
     );
     // DOUBLE, not merely greater: the shape this rejects is the original 4/2 pair, where `inter`
     // WAS larger than `intra` and the cue was still a 2px differential on a block that grows to
     // ~36px as soon as an id wraps. A ratio is the weakest honest reading of "clearly nearer".
     expect(
       inter,
-      `a description sits ${intra}px from its own id and ${inter}px from the next one — a ` +
-        'differential under 2x is not a grouping cue, and the reader pairs it with either'
+      `a description sits ${intra}px from its own id and the row ends ${inter}px from the next ` +
+        "one — a differential under 2x is not a grouping cue, and the reader pairs it with either"
     ).toBeGreaterThan(intra * 2);
 
     // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE, and labelled as one: a single-line badge
@@ -1676,39 +1702,40 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     ).toHaveLength(1);
 
     // (b) IT IS NOT ON THE BADGE'S ROW. The structural half of the hazard, read off the DOM rather
-    // than off geometry, because it is the thing that would CAUSE the narrowing: the control's
-    // nearest scope-row ancestor must not be the `wrap="nowrap"` Group that holds the id.
+    // than off geometry, because it is the thing that would CAUSE the narrowing: the control must
+    // not sit inside the `wrap="nowrap"` Group that holds the id.
+    //
+    // 🔴 ASSERTED AS AN IDENTITY AGAINST THE ROW, NOT AS A `querySelector` OFF
+    // `parentElement.parentElement`. The walk-and-look-for-a-badge form encoded an UNCHECKED DOM
+    // DEPTH — it is correct only while exactly one wrapper sits between the button and the row
+    // (today `ScopeConsentAction`'s `<Group>`). Remove that wrapper as a pure refactor AND move the
+    // node into the nowrap Group and the walk lands on the row `Stack`, where the badge is not a
+    // direct child — so the old `toBeNull()` passed and the exact hazard shipped. Add a wrapper and
+    // it lands one level too shallow, same result. Comparing against `controlRow` (which the
+    // previous version computed and then threw away) pins the depth itself. Found by the
+    // test-review lane.
     const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
     if (!controlRow) throw new Error('the revoke control is not inside a scope row');
-    const badgeInSameGroup = control.parentElement?.parentElement?.querySelector(
-      ':scope > [data-testid="block-scope-id"]'
-    );
     expect(
-      badgeInSameGroup,
-      'the revoke control shares the badge\'s nowrap Group — it will take inline width from the id'
-    ).toBeNull();
+      control.parentElement?.parentElement,
+      'the revoke control is not one wrapper deep inside its scope row — this arm can no longer ' +
+        'tell whether it shares the badge\'s nowrap Group'
+    ).toBe(controlRow);
+    // …and, depth-independently, the badge's own parent must not contain it.
+    const badgeGroup = scopeBadge(fixture.revokableScope).parentElement;
+    expect(badgeGroup, 'the badge has no parent Group').not.toBeNull();
+    expect(
+      badgeGroup!.contains(control),
+      "the revoke control shares the badge's nowrap Group — it will take inline width from the id"
+    ).toBe(false);
 
-    // (c) AND THE OVER-LONG ID IS STILL RENDERED IN FULL, measured the same three ways the phase-1
-    // arm measures it, now with the consent layer in the tree. The direct ellipsis read first.
-    const label = scopeLabel(fixture.longScope);
-    expect(label.textContent).toBe(fixture.longScope);
-    expect(
-      label.scrollWidth,
-      `the scope id paints ${label.scrollWidth}px into ${label.clientWidth}px of label — the ` +
-        "consent layer narrowed it and Mantine's Badge is ellipsising it again"
-    ).toBeLessThanOrEqual(label.clientWidth + 0.5);
-    // The HEIGHT control, which is what stops the read above being vacuous: this id needs more
-    // than one line at 408px, so a fixture that stopped overshooting fails here with a legible
-    // message rather than making the ellipsis read meaningless.
-    expect(
-      px(label.getBoundingClientRect().height),
-      "the scope id fits on one line, which at this length means Mantine's Badge ellipsised it"
-    ).toBeGreaterThan(BADGE_LABEL_ONE_LINE * 1.5);
-    // …and it does not paint past the container.
-    expect(
-      px(label.getBoundingClientRect().right),
-      `the scope id paints past the drawer's ${px(drawerContent().right)} content edge`
-    ).toBeLessThanOrEqual(px(drawerContent().right) + 0.5);
+    // ⚠️ THE OVER-LONG ID'S THREE CLIPPING READS ARE DELIBERATELY *NOT* REPEATED HERE. An earlier
+    // revision of this arm re-measured `scrollWidth`/height/right edge with a paragraph claiming
+    // *"that one reads the same box on a tree with NO consent layer"* — and the second half of that
+    // sentence defeated the first: this change adds the consent fields to the SHARED `DATA` row, so
+    // the pre-existing clipping arm above now runs against the consent-bearing tree too and those
+    // three reads were straight re-runs of it. The real content of this arm is (a) (b) (d) (e).
+    // Found by the test-review lane.
 
     // (d) NOTHING IN THE CONSENT LAYER PAINTS OUTSIDE THE 408px CONTAINER. The affordances are new
     // boxes at this width — a button, and the generic note, which is the longest sentence the

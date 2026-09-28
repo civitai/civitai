@@ -9,6 +9,7 @@ import { cleanup } from 'vitest-browser-react';
 // Type-only namespace import, NOT `typeof import('...')` — the latter is rejected by
 // @typescript-eslint/consistent-type-imports.
 import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * PHASE 3 — the per-scope REVOKE control, on BOTH permissions surfaces, FROM ONE FIXTURE.
@@ -85,7 +86,39 @@ const m = vi.hoisted(() => ({
   /** Set to drive the error arms. `null` = the mutation succeeds. */
   revokeError: null as null | { code: string; message: string },
   invalidateSpy: undefined as unknown as ReturnType<typeof vi.fn>,
+  /**
+   * 🔴 HOLDS THE MUTATION OPEN so the PENDING state is observable. Without it the promise settles
+   * in the same microtask and the spinner/disabled window never exists to assert on — which is
+   * exactly why the whole pending path was unguarded: a mutant deleting the `finally` that clears
+   * `pendingScope`, or widening `loading` to every button, survived the entire suite.
+   * `gated = true` makes `mutateAsync` return a promise that settles only when `release()` is
+   * called; the default `false` settles in the same microtask, as every other arm expects.
+   */
+  gated: false,
+  release: null as null | (() => void),
+  notify: undefined as unknown as {
+    success: ReturnType<typeof vi.fn>;
+    warning: ReturnType<typeof vi.fn>;
+  },
 }));
+
+/**
+ * 🔴 THE NOTIFICATION HELPERS ARE SPIED, because the entire success path was otherwise unasserted:
+ * deleting `showSuccessNotification`, or swapping the degraded `showWarningNotification` for a
+ * SUCCESS one, survived every arm in this file. The second of those is the dangerous one — a 503
+ * means "removed, but an open session may keep it for a few minutes", and announcing that as an
+ * unqualified success is the misreport the whole degraded branch exists to prevent.
+ */
+vi.mock('~/utils/notifications', async (importOriginal) => {
+  const success = vi.fn();
+  const warning = vi.fn();
+  m.notify = { success, warning };
+  return {
+    ...(await importOriginal<typeof import('~/utils/notifications')>()),
+    showSuccessNotification: success,
+    showWarningNotification: warning,
+  };
+});
 
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -120,49 +153,51 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const invalidateSpy = vi.fn(async () => {});
   m.invalidateSpy = invalidateSpy;
   const grantsQuery = () => ({ data: m.grants, isLoading: false, isError: false });
-  const revokeMutation = (opts?: {
-    onSuccess?: (d: unknown, v: { appBlockId: string; scopes: string[] }) => unknown;
-    onError?: (e: unknown, v: { appBlockId: string; scopes: string[] }) => unknown;
-    onSettled?: () => unknown;
-  }) => ({
+  /**
+   * 🔴 `mutateAsync`, NOT `mutate` + OPTION CALLBACKS — AND THE SHAPE IS THE POINT.
+   * `useScopeRevoke` deliberately passes NO `onSuccess`/`onError`/`onSettled` options and handles
+   * the outcome in its own promise chain, because the confirm dialog renders into a global provider
+   * and can outlive the component: an unsubscribed observer would drop every callback and leave a
+   * changed permission unreported. So this mock resolves or REJECTS a promise, exactly as
+   * react-query's `mutateAsync` does, and asserts nothing about options. A mock that kept calling
+   * option callbacks would keep passing if the hook regressed to them.
+   */
+  const revokeMutation = () => ({
     isPending: false,
-    mutate: (vars: { appBlockId: string; scopes: string[] }) => {
+    mutateAsync: (vars: { appBlockId: string; scopes: string[] }) => {
       m.revokeCalls.push(vars);
-      const done = m.revokeError
-        ? opts?.onError?.(
-            { data: { code: m.revokeError.code }, message: m.revokeError.message },
-            vars
-          )
-        : opts?.onSuccess?.({ ok: true }, vars);
-      void Promise.resolve(done).then(() => opts?.onSettled?.());
+      const settle = () =>
+        m.revokeError
+          ? Promise.reject({ data: { code: m.revokeError.code }, message: m.revokeError.message })
+          : Promise.resolve({ ok: true });
+      // Gated: return a promise that does not settle until the arm calls `release()`, so the
+      // PENDING window is observable. See `m.gated`.
+      if (!m.gated) return settle();
+      return new Promise((resolve, reject) => {
+        m.release = () => settle().then(resolve, reject);
+      });
     },
   });
-  const inert = {
-    data: undefined,
-    isLoading: false,
-    isError: false,
-    hasNextPage: false,
-    isFetchingNextPage: false,
-    fetchNextPage: vi.fn(),
-  };
+  /**
+   * 🔴 A PROXY WITH TWO OVERRIDES — the six inert entries this file first hand-enumerated
+   * (`listMyAppActivity`, `listMyScopeInvocations`, `listMySubscriptions`, `grantScopes`,
+   * `modelVersion`, `useQueries`) were the same landmine the sibling chrome files just paid for,
+   * planted in the file that exists BECAUSE of it. Every one of them was there only to stop a
+   * neighbouring subtree crashing; none is measured here. See `test/trpcProxyStub.ts`.
+   *
+   * `useUtils` is overridden rather than defaulted because the 412-vs-503 arms assert on whether
+   * the grant list was re-read, so that spy is load-bearing.
+   */
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
-    trpc: {
-      useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: invalidateSpy } } }),
-      useQueries: () => [],
-      blocks: {
-        listMyScopeGrants: { useQuery: grantsQuery },
-        revokeScopes: { useMutation: revokeMutation },
-        // The activity panel the drawer also renders. Inert: this file measures the permissions
-        // half, and the activity half has its own seam test.
-        listMyAppActivity: { useInfiniteQuery: () => ({ ...inert, data: { pages: [] } }) },
-        listMyScopeInvocations: { useInfiniteQuery: () => ({ ...inert, data: { pages: [] } }) },
-        listMySubscriptions: { useQuery: () => inert },
-        grantScopes: { useMutation: () => ({ isPending: false, mutate: vi.fn() }) },
+    trpc: makeTrpcProxy(
+      {
+        'blocks.listMyScopeGrants': { useQuery: grantsQuery },
+        'blocks.revokeScopes': { useMutation: revokeMutation },
       },
-      modelVersion: { getVersionsByIds: { useQuery: () => inert } },
-    },
+      { useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: invalidateSpy } } }) }
+    ),
   };
 });
 
@@ -220,7 +255,11 @@ beforeEach(() => {
   m.grants = [GRANT];
   m.revokeCalls = [];
   m.revokeError = null;
+  m.gated = false;
+  m.release = null;
   m.invalidateSpy?.mockClear();
+  m.notify?.success.mockClear();
+  m.notify?.warning.mockClear();
 });
 
 describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
@@ -244,13 +283,32 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
         scope
       );
     }
-    // …and each one explains itself rather than sitting there silent or greyed out. The note text
-    // is derived from its owner, not retyped: a copied sentence keeps passing after the map changes.
-    const notes = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="scope-fixed-note"]')
-    ).map((el) => el.textContent);
+    // …and each one explains itself rather than sitting there silent or greyed out.
+    //
+    // 🔴 THE NOTE IS READ FROM ITS OWN ROW, NOT FROM A FLAT LIST OF EVERY NOTE ON SCREEN — and the
+    // flat-list version was walkable by a MUTANT THAT ROTATES `FIXED_SCOPE_NOTES`' VALUES. Collecting
+    // all notes and asserting set membership per scope only checks that the right SENTENCES appear
+    // somewhere; swap two values and the set is unchanged, so this arm passed, and so did every
+    // other guard in the segment (the unit test compares `fixedScopeNote(s)` against
+    // `FIXED_SCOPE_NOTES[s]` — both sides read the mutated map — and the seam ledger only compares
+    // the two surfaces against each other, so both were identically wrong). Nothing bound a note to
+    // a row. Live consequence: a viewer told that `collections:write:self` "reads only the model on
+    // the page the app is mounted on", i.e. exactly the mis-description the notes exist to prevent.
+    // Found by the test-review lane.
     for (const scope of EXEMPT_IN_FIXTURE) {
-      expect(notes, `${name}: no note rendered for ${scope}`).toContain(FIXED_SCOPE_NOTES[scope]);
+      const id = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
+      ).find((el) => el.textContent === scope);
+      expect(id, `${name}: no row rendered for ${scope}`).toBeTruthy();
+      const row = id!.closest('[data-testid="block-scope-list"] > *');
+      expect(row, `${name}: ${scope}'s id is not inside a scope row`).toBeTruthy();
+      const note = row!.querySelector('[data-testid="scope-fixed-note"]');
+      expect(note, `${name}: no note in ${scope}'s OWN row`).toBeTruthy();
+      expect(
+        note!.textContent,
+        `${name}: ${scope}'s row carries the WRONG note — a note describing a different scope's ` +
+          'server-side gate is the mis-description this map exists to prevent'
+      ).toBe(FIXED_SCOPE_NOTES[scope]);
     }
     // A DISABLED BUTTON IS THE OTHER REJECTED SHAPE — it says "you could do this if something
     // changed", and nothing the viewer can do will ever make an exempt scope withdrawable. So the
@@ -438,6 +496,109 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     await expect.element(body).toHaveTextContent(/does not uninstall the app/i);
   });
 
+  test('🔴 A THIRD ERROR CODE is NOT reported as removed — the degraded split is exclusive', async () => {
+    // 🔴 THE MUTANT THIS EXISTS FOR: `degraded = code === 'SERVICE_UNAVAILABLE'` widened to
+    // `code !== 'PRECONDITION_FAILED'`. The 412 arm still reads `false`, the 503 arm still reads
+    // `true`, so the split was pinned ONLY at its two named points and every other code fell into
+    // the degraded branch unguarded. Live consequence: a 500 / 400 / 429 renders the orange
+    // "The permission was removed and will not be granted again…" for a revoke that did NOT happen
+    // — a consent surface asserting a withdrawal that does not exist, which is the one direction it
+    // must never be wrong in. `BAD_REQUEST` is a real outcome here: the server refuses unknown and
+    // consent-exempt scopes with exactly that code.
+    m.revokeError = { code: 'BAD_REQUEST', message: 'cannot revoke apps:storage:read: …' };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    await expect.element(page.getByTestId('scope-revoke-failure')).toBeVisible();
+    expect(
+      document.querySelector('[data-testid="scope-revoke-failure"]')?.getAttribute('data-degraded'),
+      `${name}: a ${m.revokeError.code} was reported as a successful removal`
+    ).toBe('false');
+    // …and NO "Permission removed" notification of either kind. This is the half a `data-degraded`
+    // read alone cannot see: the warning toast asserts removal in its TITLE.
+    expect(m.notify.warning, `${name}: announced a removal that did not happen`).not.toHaveBeenCalled();
+    expect(m.notify.success, name).not.toHaveBeenCalled();
+    // The row keeps its control so the viewer can retry or read the reason.
+    expect(revokableScopesOnScreen(), name).toContain(GRANT.revokableScopes[0]);
+  });
+
+  test('🔴 the PENDING window: only THIS row spins, and it clears when the call settles', async () => {
+    // 🔴 THREE MUTANTS SURVIVED THE WHOLE SUITE BEFORE THIS ARM, because nothing anywhere asserted
+    // a spinner or a disabled state (`loading|disabled|aria-busy|pendingScope` matched zero times):
+    //   · delete the `.finally(() => setPendingScope(null))` — the row's button spins FOREVER and
+    //     every other Remove button on the app stays permanently disabled;
+    //   · `loading={pendingScope === scope}` → `pendingScope !== null` — every button on the card
+    //     spins at once, which is the failure the code comment names in prose and nothing checked;
+    //   · `disabled={pendingScope !== null && pendingScope !== scope}` → `false`.
+    m.gated = true;
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const [first, second] = revokeButtons();
+    expect(second, 'the fixture needs TWO revokable scopes to tell per-row from global').toBeTruthy();
+    const clicked = first.dataset.scope;
+    first.click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    // Mantine renders a Loader inside the button and sets `data-loading` on it.
+    await expect
+      .element(page.getByTestId('scope-revoke-button').first())
+      .toHaveAttribute('data-loading', 'true');
+    const others = revokeButtons().filter((b) => b.dataset.scope !== clicked);
+    for (const other of others) {
+      // 🔴 THE OTHER ROWS MUST NOT SPIN — this is what separates per-row keying from a shared
+      // boolean, and it is the assertion the prose comment stood in for.
+      expect(
+        other.getAttribute('data-loading'),
+        `${name}: ${other.dataset.scope} is spinning too — the spinner is keyed on the wrong thing`
+      ).not.toBe('true');
+      // …but they ARE disabled, so a viewer cannot start a second revoke mid-flight.
+      expect((other as HTMLButtonElement).disabled, `${name}: ${other.dataset.scope}`).toBe(true);
+    }
+    // Release the call and the pending state must clear — the `finally` mutant dies here.
+    m.release!();
+    await expect
+      .element(page.getByTestId('scope-revoke-button').first())
+      .not.toHaveAttribute('data-loading', 'true');
+    for (const other of revokeButtons().filter((b) => b.dataset.scope !== clicked)) {
+      expect(
+        (other as HTMLButtonElement).disabled,
+        `${name}: ${other.dataset.scope} is still disabled after the call settled`
+      ).toBe(false);
+    }
+  });
+
+  test('a SUCCESS announces removal exactly once, and not as a warning', async () => {
+    // The success notification path was entirely unasserted: deleting it, or swapping the degraded
+    // warning for a success, survived every arm.
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const scope = revokableScopesOnScreen()[0];
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    await vi.waitFor(() => expect(m.notify.success).toHaveBeenCalledTimes(1));
+    expect(m.notify.warning, `${name}: a clean success was announced as a warning`).not.toHaveBeenCalled();
+    // The message names the scope that was actually removed, not the app's whole set.
+    expect(String(m.notify.success.mock.calls[0][0].message), name).toContain(scope);
+    // …and no inline failure notice on a success.
+    expect(document.querySelector('[data-testid="scope-revoke-failure"]'), name).toBeNull();
+  });
+
+  test('🔴 the confirm copy discloses the OAuth sign-out, hedged', async () => {
+    // For an app with an `OauthConsent` mirror, `blocks.revokeScopes` runs
+    // `revokeOauthConsentForBlock`, which `deleteMany`s EVERY `Access`/`Refresh` key for that
+    // client plus the whole consent row — so removing ONE permission can sign the app out
+    // entirely. More removal than promised is the safe direction; a viewer being surprised by it
+    // is not. Hedged because `ScopeGrantSurface` carries no field saying whether this app has a
+    // mirror, so an unconditional claim would be false for the majority that have none.
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await expect.element(page.getByTestId('scope-revoke-confirm-signout-note')).toBeVisible();
+    await expect
+      .element(page.getByTestId('scope-revoke-confirm-signout-note'))
+      .toHaveTextContent(/signs you in with Civitai/i);
+  });
+
   test('a NON-spend scope omits the budget sentence', async () => {
     // The control on the budget note. Without it, "the budget sentence is present" is satisfied by
     // a dialog that always shows it — including for a scope that clears no budget.
@@ -454,16 +615,97 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
   });
 });
 
+describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) => {
+  /**
+   * 🔴 THE MIXED-VERSION WINDOW: a new client bundle querying a pod still on pre-phase-2 server
+   * code gets grant rows with NO `revokableScopes`/`revokedScopes`/`scopesRevokedAt`.
+   *
+   * 🔴 THIS ARM EXISTS BECAUSE THE FIRST IMPLEMENTATION COALESCED `revokableScopes ?? []`, WHICH
+   * TURNED "the server did not say" INTO "can't be withdrawn". Every row became `fixed`, so a
+   * genuinely withdrawable `ai:write:budgeted` rendered a sentence asserting it was granted by
+   * platform policy and permanent — fail-closed for the ACTION and fail-OPEN for the COPY, i.e.
+   * a false claim about the viewer's own consent on the consent surface. Found by the
+   * correctness-review lane.
+   */
+  /**
+   * The same app, with the three phase-2 fields STRIPPED — derived from `GRANT` by omission rather
+   * than retyped, so it cannot drift from the fixture the rest of the file uses.
+   */
+  const preMigrationRow = () => {
+    const {
+      revokableScopes: _rs,
+      revokedScopes: _rv,
+      scopesRevokedAt: _at,
+      ...rest
+    } = GRANT;
+    return rest;
+  };
+
+  beforeEach(() => {
+    m.grants = [preMigrationRow()];
+  });
+
+  test('🔴 renders the scopes but offers NO control and makes NO claim about them', async () => {
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    // The rows are still disclosed — the viewer must still see what the app may use.
+    const ids = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
+    ).map((el) => el.textContent);
+    expect(ids, name).toEqual(GRANT.scopes);
+    // No control — the server did not say any of these is withdrawable.
+    expect(revokeButtons(), `${name}: offered a control the server never authorised`).toHaveLength(
+      0
+    );
+    // 🔴 AND NO "can't be withdrawn" NOTE EITHER. This is the half the `?? []` bug got wrong, and
+    // it is the assertion that separates this arm from a plain "no button" check: withholding the
+    // control is correct, ASSERTING permanence is not.
+    expect(
+      document.querySelectorAll('[data-testid="scope-fixed-note"]'),
+      `${name}: claimed these permissions cannot be withdrawn, on a payload that never said so`
+    ).toHaveLength(0);
+    // No revoked marker and no timestamp line either — nothing was reported revoked.
+    expect(document.querySelectorAll('[data-testid="scope-revoked-mark"]'), name).toHaveLength(0);
+    expect(document.querySelectorAll('[data-testid="scope-revoked-at"]'), name).toHaveLength(0);
+  });
+
+  test('POSITIVE CONTROL: the SAME fixture WITH the field does offer controls', async () => {
+    // Without this, the arm above passes for a component that renders no control under any
+    // circumstances — the reassuring-zero shape. One field is the only difference.
+    m.grants = [{ ...preMigrationRow(), revokableScopes: GRANT.revokableScopes }];
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    expect(revokableScopesOnScreen().sort(), name).toEqual([...GRANT.revokableScopes].sort());
+    // …and the exempt rows DO get their note once the server has spoken.
+    expect(
+      document.querySelectorAll('[data-testid="scope-fixed-note"]').length,
+      name
+    ).toBeGreaterThan(0);
+  });
+});
+
 /**
- * 🔴 THE SEAM. Every arm above runs on both surfaces, which proves each one SEPARATELY correct —
- * and "verified in isolation" is exactly how a seam defect survives. This arm renders both mounts
- * from the one fixture in one test and compares the consent DOM they produce, so a divergence in
- * WHICH rows exist, WHICH have controls, or WHAT the notes say fails here even when both surfaces
- * pass every arm above.
+ * 🔴 THE SEAM — AND ITS SCOPE IS NARROWER THAN AN EARLIER DOCBLOCK HERE CLAIMED. That version said
+ * *"a divergence in WHICH rows exist, WHICH have controls, or WHAT the notes say fails here even
+ * when both surfaces pass every arm above."* THAT IS RETRACTED as an over-claim: it describes
+ * coverage the construction cannot provide. Both `SURFACES` entries resolve the SAME `GRANT` from
+ * the SAME mocked `listMyScopeGrants` and hand it to the SAME `ScopeConsentList`, so the ledger is a
+ * pure function of (component, grant) on both sides and equality is close to tautological.
  *
- * It pins a RELATIONSHIP rather than a component: the ledger below is an ordered list of
- * (scope, state) pairs, so it fails when the set GROWS or SHRINKS on either side, not merely when
- * a value changes.
+ * 🔴 WHAT IT ACTUALLY CATCHES — three shapes, and the third is why it is worth keeping:
+ *   1. one surface stops rendering the component at all (every other arm catches this too);
+ *   2. one surface passes a DERIVED grant rather than the row — e.g. `{...grant, revokableScopes: []}`
+ *      — which no per-surface arm would notice, since each would still be internally consistent;
+ *   3. a future author RE-IMPLEMENTS the permissions list on one surface instead of mounting the
+ *      shared component. That is the drift this whole change exists to prevent, and it is a
+ *      STRUCTURAL tripwire, not a behavioural one.
+ * "Both surfaces identically broken" remains fully satisfiable here. The behavioural claims live in
+ * the `describe.each` arms above, which is where they belong. Corrected by the test-review lane.
+ *
+ * ⚠️ TWO THINGS THIS FILE DOES NOT COVER, named rather than left to be discovered: `emptyLabel` is
+ * the one prop that genuinely differs per surface and is invisible with a 7-scope fixture (there is
+ * no empty-grant arm), and `ScopeConsentList`'s `grant === undefined` path — live on the drawer
+ * whenever `listMyScopeGrants` holds no row for the running app — is untested at this tier.
  */
 test('🔴 the drawer and the activity page render ONE consent ledger from one fixture', async () => {
   const ledger = (): string[] => {
