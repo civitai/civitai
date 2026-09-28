@@ -7,6 +7,7 @@ import {
   resolveOptimized,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import
@@ -33,8 +34,8 @@ export function useEdgeUrl(
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
-  if (!src || src.startsWith('http') || src.startsWith('blob'))
-    return { url: src, srcSet: undefined, type: inferredType };
+  // Same passthrough boundary as getEdgeUrl — one predicate, see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return { url: src, srcSet: undefined, type: inferredType };
 
   let { anim, transcode } = options ?? {};
 

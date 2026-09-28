@@ -289,6 +289,9 @@ vi.mock('~/server/prom/client', () => ({
   imageIngestCronCounter: promMetricStub(),
   imageIngestCronQueueDepth: promMetricStub(),
   imageScanWebhookCounter: promMetricStub(),
+  // ingestImage() submit outcome — reached by the ingestion URL-allowlist suites and any
+  // future suite that drives a scan submit through the service.
+  imageScanSubmittedCounter: promMetricStub(),
 }));
 
 // Mock logging.
