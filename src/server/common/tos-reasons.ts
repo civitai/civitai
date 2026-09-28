@@ -24,6 +24,10 @@ export const TOS_REASONS = [
   {
     label: 'NSFW Minor in School Environment',
     value: ViolationType.SchoolNsfw,
+    // The label reads as a finding that the subject is a minor; a school removal is a stricter
+    // standard applied to ambiguous-age content. No trailing period: the notification appends one.
+    userMessage:
+      'School settings are moderated more strictly, and this was removed under that stricter standard',
   },
   {
     label: 'Bestiality',
@@ -118,20 +122,11 @@ export function mapToViolationType(
   return ViolationType.Other;
 }
 
-// Labels that would misstate the removal if shown to its owner. A school removal is a stricter
-// standard applied to ambiguous-age content, not a finding that the subject is a minor.
-// No trailing period: the notification template appends one.
-const USER_FACING_REASONS: Partial<Record<ViolationType, string>> = {
-  [ViolationType.SchoolNsfw]:
-    'School settings are moderated more strictly, and this was removed under that stricter standard',
-};
-
 /** The wording for a violation shown back to the person it happened to. Falls back to the raw enum
  *  rather than throwing — a notification is not worth losing over an unmapped value. */
 export function tosReasonUserMessage(violationType: ViolationType | string): string {
-  return (
-    USER_FACING_REASONS[violationType as ViolationType] ??
-    TOS_REASONS.find((r) => r.value === violationType)?.label ??
-    String(violationType)
+  const reason: { label: string; userMessage?: string } | undefined = TOS_REASONS.find(
+    (r) => r.value === violationType
   );
+  return reason?.userMessage ?? reason?.label ?? String(violationType);
 }
