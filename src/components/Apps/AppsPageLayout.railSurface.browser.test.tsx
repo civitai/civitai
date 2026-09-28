@@ -36,6 +36,18 @@
  * transparent and the guard would be a permanent red against correct code. The surface is
  * declared in the module stylesheet so that the thing production paints is the thing a
  * test can see.
+ *
+ * 🔴 THIS FILE IS A LOCAL INSTRUMENT, NOT AN ENFORCED GATE — RUN IT YOURSELF. It is a
+ * `*.browser.test.tsx`, so `vitest.config.mts` collects it into the `component` project,
+ * and no selector in `.github/workflows/lint.yml` names that project: the workflow runs
+ * `--project 'unit*'`, `--project geometry` and the workspace `packages`/`apps` configs,
+ * none of which can claim this glob. Its only CI home is the preview pipeline's
+ * `preview / component-tests` status, which is report-only and non-blocking. So the
+ * sentences above describing what this file "catches" are about what it catches FOR A
+ * PERSON WHO RUNS IT — nothing here blocks a merge. Widening the component tier into a
+ * blocking job is a real change with its own cost argument and belongs in its own PR — do
+ * not bolt it on here. Run it with:
+ *   pnpm exec vitest run --project component src/components/Apps/AppsPageLayout.railSurface.browser.test.tsx
  */
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -62,7 +74,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppsPageLayout } = await import('./AppsPageLayout');
-const { AppsRailProvider, APPS_RAIL_COLLAPSED_WIDTH } = await import('./appsRailState');
+const { AppsRailProvider, APPS_RAIL_WIDTH, APPS_RAIL_COLLAPSED_WIDTH } = await import(
+  './appsRailState'
+);
 
 /** `rgb(…)` / `rgba(…)` → its channels. A computed background is always one of those. */
 function channelsOf(color: string): number[] {
@@ -226,23 +240,23 @@ describe('the rail surface is PAINTED, and only the rail is', () => {
     expect(parseFloat(style.borderTopLeftRadius)).toBeGreaterThan(0);
   });
 
-  test('the panel is painted in the COLLAPSED state too', async () => {
-    // The state where the panel is 72px wide and overhangs 8px of the 16px gutter. The
-    // tint is state-independent by construction, but the rail's own width is not, and a
-    // rule scoped to something only the open rail renders would be invisible here.
-    const { surface, bodyColumn, aside } = await renderRail(true);
-    // 🔴 FIRST, PROVE THE RAIL IS ACTUALLY COLLAPSED. Without this the test asserts the
-    // open rail's colours under a collapsed name: if `AppsRailProvider`'s value ever stops
-    // driving `collapsed`, every colour assertion below still passes and the only thing
-    // that was wrong is the sentence in the test title.
-    expect(
-      aside.offsetWidth,
-      'the rail did not collapse — this test is measuring the open one'
-    ).toBe(APPS_RAIL_COLLAPSED_WIDTH);
-    expect(alphaOf(getComputedStyle(surface).backgroundColor)).toBeGreaterThan(0);
-    expect(alphaOf(getComputedStyle(bodyColumn).backgroundColor)).toBe(0);
-  });
-
+  /**
+   * ⚠️ A `'the panel is painted in the COLLAPSED state too'` TEST WAS DELETED FROM HERE,
+   * AND THE DELETION IS DELIBERATE. `.railSurface` applies its fill, ring and radius
+   * UNCONDITIONALLY — nothing in the stylesheet or the layout branches on the collapse
+   * state, and the collapse is expressed purely as an inline `width` on the `<aside>`. So
+   * that test re-asserted the open-rail test's own two assertions against a rail whose
+   * width differs, which no mutation of the paint can fail while the open-rail test passes.
+   * Its stated justification — "a rule scoped to something only the open rail renders would
+   * be invisible here" — describes a rule that does not exist and could not be written
+   * against this stylesheet.
+   *
+   * The collapsed state IS still covered where it genuinely differs: the bled-rect test
+   * below runs in both states, because the bleed is applied to the aside's width and that
+   * width is exactly what the collapse changes. The ONE assertion worth keeping from the
+   * deleted test — that the rail really is in the state its label claims — moved there
+   * rather than being dropped with it.
+   */
   test.each([
     { label: 'open', collapsed: false },
     { label: 'collapsed', collapsed: true },
@@ -263,7 +277,18 @@ describe('the rail surface is PAINTED, and only the rail is', () => {
     //
     // Asserted in both rail states because the aside's width differs between them and
     // the bleed is applied to whatever that width is.
-    const { surface, bodyColumn } = await renderRail(collapsed);
+    const { surface, bodyColumn, aside } = await renderRail(collapsed);
+
+    // 🔴 FIRST, PROVE THE RAIL IS ACTUALLY IN THE STATE THIS ROW NAMES. Without it, if
+    // `AppsRailProvider`'s value ever stops driving `collapsed`, the collapsed row silently
+    // measures the OPEN rail — it still passes, and the only thing that was wrong is the
+    // sentence in the test title. Both rows then assert the same thing twice.
+    expect(
+      aside.offsetWidth,
+      `the rail is not in its ${collapsed ? 'collapsed' : 'open'} state — this row is ` +
+        'measuring the other one'
+    ).toBe(collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH);
+
     const surfaceRect = surface.getBoundingClientRect();
     const bodyRect = bodyColumn.getBoundingClientRect();
 

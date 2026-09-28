@@ -23,6 +23,17 @@
  * no-wholesale-module-mock`); `~/server/utils/server-side-helpers` is stubbed because the
  * unit under test lives in the page module, which declares `getServerSideProps` and would
  * otherwise drag the tRPC SERVER graph into a browser bundle. Neither stub is under test.
+ *
+ * 🔴 THIS FILE IS A LOCAL INSTRUMENT, NOT AN ENFORCED GATE — RUN IT YOURSELF. It is a
+ * `*.browser.test.tsx`, so `vitest.config.mts` collects it into the `component` project,
+ * and no selector in `.github/workflows/lint.yml` names that project: the workflow runs
+ * `--project 'unit*'`, `--project geometry` and the workspace `packages`/`apps` configs,
+ * none of which can claim this glob. Its only CI home is the preview pipeline's
+ * `preview / component-tests` status, which is report-only and non-blocking. So nothing
+ * here will stop a regression reaching `main` on its own; it catches things for whoever
+ * runs it. Widening the component tier into a blocking job is a real change with its own
+ * cost argument and belongs in its own PR — do not bolt it on here. Run it with:
+ *   pnpm exec vitest run --project component src/tests/pages/apps/review/review-queue-poll.browser.test.tsx
  */
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -38,16 +49,23 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as IsClientMod from '~/providers/IsClientProvider';
 import type * as CurrentUserMod from '~/hooks/useCurrentUser';
 
-/** The shape the page hands `useQuery` — only the two fields this file is about. */
+/** The shape the page hands `useQuery` — only the field this file is about. */
 type FakeQuery = { state: { error: unknown } };
 type QueryOpts = {
-  refetchInterval?: (query: FakeQuery) => number | false;
+  /**
+   * 🔴 A VALUE, NOT A CALLBACK, AND THE TYPE IS THE ASSERTION. The interval used to be
+   * `(query) => …` so it could read that query's own error and park on it; dropping the
+   * error gate left nothing per-query for it to read, so it is now a plain number. A
+   * mutation that restores the callback form fails to type-check here before any assertion
+   * runs.
+   */
+  refetchInterval?: number | false;
   refetchOnWindowFocus?: (query: FakeQuery) => boolean | 'always';
   placeholderData?: unknown;
 };
 
 /** The two pending queries' results, mutated by each test before a forced re-render. */
-const { queryState, invalidated, capturedOpts, capturedInput } = vi.hoisted(() => ({
+const { queryState, capturedOpts, capturedInput } = vi.hoisted(() => ({
   queryState: {
     onsite: {
       // `as string | null` on BOTH sources: the inverted-fixture arm exhausts the on-site
@@ -65,26 +83,12 @@ const { queryState, invalidated, capturedOpts, capturedInput } = vi.hoisted(() =
     },
   },
   /**
-   * The `invalidate()` calls Refresh makes. `resolvers` holds each returned promise's
-   * resolve fn so a test can hold the refetch OPEN and observe the button mid-flight — a
-   * promise that resolves immediately is indistinguishable from one that was never
-   * awaited, which is exactly the bug this file has to be able to see.
-   */
-  invalidated: {
-    // 🔴 COUNTED PER SOURCE. One shared counter cannot tell `blocks` from `appListings`,
-    // so a copy-paste mutation calling `blocks.invalidate()` TWICE and never touching
-    // `appListings` still reads 2 — Refresh silently half-works and the suite is green.
-    blocks: 0,
-    appListings: 0,
-    resolvers: [] as (() => void)[],
-  },
-  /**
    * The OPTIONS object each query was handed. The whole feature is options — a
    * `refetchInterval` and a `refetchOnWindowFocus` — and a mock that drops the second
    * argument can see none of it: delete both from the source and every behavioural test
-   * here still passes over a queue that never polls. Capturing them, then CALLING the
-   * captured callbacks, is what makes the wiring observable. Same shape as
-   * `AgentReviewPanel.browser.test.tsx`, which captures `mocks.lastAgentOpts`.
+   * here still passes over a queue that never polls. Capturing them, then reading the
+   * value / CALLING the captured callback, is what makes the wiring observable. Same shape
+   * as `AgentReviewPanel.browser.test.tsx`, which captures `mocks.lastAgentOpts`.
    */
   capturedOpts: {
     onsite: null as QueryOpts | null,
@@ -124,16 +128,6 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
-    useUtils: () => {
-      const invalidate = (source: 'blocks' | 'appListings') => () => {
-        invalidated[source] += 1;
-        return new Promise<void>((resolve) => invalidated.resolvers.push(resolve));
-      };
-      return {
-        blocks: { listPendingRequests: { invalidate: invalidate('blocks') } },
-        appListings: { listPendingRequests: { invalidate: invalidate('appListings') } },
-      };
-    },
     blocks: {
       listPendingRequests: {
         useQuery: (input: { limit: number; cursor?: string }, opts: QueryOpts) => {
@@ -157,7 +151,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { UnifiedPendingTab } = await import('~/pages/apps/review');
 
-/** Lets a test mutate `queryState` and then make the component read it again. */
+/**
+ * Lets a test mutate `queryState` and then make the component read it again.
+ *
+ * The tab is wrapped in a `tab-under-test` element so the zero-extra-chrome test can scope
+ * its "what does this tab render" questions to the unit and exclude the harness's own
+ * force-rerender button — which is a control the tab did NOT render, and would otherwise
+ * make that assertion permanently red.
+ */
 function Harness() {
   const [, force] = useState(0);
   return (
@@ -165,11 +166,13 @@ function Harness() {
       <button type="button" data-testid="force-rerender" onClick={() => force((n) => n + 1)}>
         force
       </button>
-      <UnifiedPendingTab
-        openOnsiteReview={() => undefined}
-        openOffsiteReview={() => undefined}
-        openCombinedReview={() => undefined}
-      />
+      <div data-testid="tab-under-test">
+        <UnifiedPendingTab
+          openOnsiteReview={() => undefined}
+          openOffsiteReview={() => undefined}
+          openCombinedReview={() => undefined}
+        />
+      </div>
     </>
   );
 }
@@ -188,10 +191,7 @@ async function settle() {
   await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
 }
 
-const refresh = () =>
-  document.querySelector('[data-testid="apps-review-refresh"]') as HTMLButtonElement;
-
-/** A stand-in for the `Query` react-query hands a `refetchInterval` / focus callback. */
+/** A stand-in for the `Query` react-query hands the focus callback. */
 const asQuery = (error: unknown = null): FakeQuery => ({ state: { error } });
 
 /** The options object each query was handed, or a loud failure if the mock is not wired. */
@@ -214,17 +214,16 @@ function inputs() {
   return { onsite: capturedInput.onsite, offsite: capturedInput.offsite };
 }
 
-const statusText = () =>
-  (document.querySelector('[data-testid="apps-review-poll-status"]') as HTMLElement).textContent;
-
 const forceRerender = () =>
   (document.querySelector('[data-testid="force-rerender"]') as HTMLButtonElement).click();
 
-function refreshIsSpinning() {
-  const el = refresh();
-  if (!el) throw new Error('the Refresh control is not rendered');
-  return { dataLoading: el.getAttribute('data-loading'), disabled: el.disabled };
-}
+/**
+ * The tab's own render anchor. It used to be the status row, which rendered
+ * unconditionally; with that row deleted the list's count line is the thing that does —
+ * it is `UnifiedReviewList`'s FIRST child and is emitted in every state (loading, empty,
+ * errored, populated).
+ */
+const COUNT_TESTID = 'apps-unified-review-count';
 
 beforeEach(() => {
   queryState.onsite.isFetching = false;
@@ -233,15 +232,10 @@ beforeEach(() => {
   queryState.offsite.isFetching = false;
   queryState.offsite.error = null;
   queryState.offsite.data = { items: [], nextCursor: null };
-  invalidated.blocks = 0;
-  invalidated.appListings = 0;
   capturedOpts.onsite = null;
   capturedOpts.offsite = null;
   capturedInput.onsite = null;
   capturedInput.offsite = null;
-  // Release anything a previous test left open, so a held promise cannot leak a spinner
-  // into the next render tree.
-  invalidated.resolvers.splice(0).forEach((r) => r());
 });
 
 describe('🔴 the poll is WIRED — not merely decided correctly somewhere', () => {
@@ -249,31 +243,52 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
    * 🔴 THE GAP THIS CLOSES, AND WHY IT IS THE MOST IMPORTANT SUITE IN THIS FILE.
    * `appsReviewQueuePoll.test.ts` pins the DECISION; every other test here pins what the
    * component does with a fetch that is already happening. Neither can see whether the
-   * decision is ever CONSULTED. Delete both `refetchInterval` blocks and both
+   * decision is ever CONSULTED. Delete both `refetchInterval` lines and both
    * `refetchOnWindowFocus` blocks from the page and every one of those tests stays green
-   * — over a queue that never polls, under a status row still reading
-   * "Auto-refreshing every 15s". The suite would assert a falsehood, fully green.
+   * — over a queue that never polls. The suite would assert a falsehood, fully green.
    *
-   * So these read the options object each query was actually handed and CALL the
-   * callbacks, with a fake query standing in for the one react-query would pass.
+   * So these read the options object each query was actually handed.
    */
-  test('both queries receive a refetchInterval that returns the cadence when idle', async () => {
+  test('both queries receive the cadence as their refetchInterval', async () => {
     renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
+    await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
     const { APPS_REVIEW_POLL_MS } = await import('~/pages/apps/review');
 
     for (const [label, o] of Object.entries(opts())) {
-      expect(typeof o.refetchInterval, `${label} got no refetchInterval`).toBe('function');
-      expect(o.refetchInterval!(asQuery()), label).toBe(APPS_REVIEW_POLL_MS);
+      expect(o.refetchInterval, label).toBe(APPS_REVIEW_POLL_MS);
     }
   });
 
-  test('🔴 the wired interval PARKS on that query`s own error', async () => {
+  test('🔴 THE POLL KEEPS TICKING THROUGH AN ERROR — the queue self-heals', async () => {
+    /**
+     * 🔴 THE INVERSE OF A GUARD THIS FILE USED TO CARRY, AND THE BEHAVIOURAL CLAIM THE
+     * WHOLE STRIP-BACK RESTS ON. An earlier revision parked the interval on the query's own
+     * error. Under the repo-wide `staleTime: Infinity` that park was PERMANENT — the timer
+     * is cleared, `refetchOnReconnect` resolves through `isStale()` which is never true for
+     * a query holding data, `shouldLoadOnMount` needs `data === undefined` so a remount does
+     * nothing, and `state.error` is only cleared by a successful fetch. A one-off 502 froze
+     * the queue until a full page reload, and a status row plus a Refresh button existed
+     * only to hand that recovery back.
+     *
+     * With no error gate, a transient failure costs one tick: the interval still names the
+     * cadence, so the timer fires again 15s later and the next successful response clears
+     * the error on its own. The mutant this kills is the restoration of that gate in either
+     * shape — a `(query) => query.state.error ? false : MS` callback, or an `hasError` input
+     * re-added to the helper. The error fixture is set on BOTH sources, because the gate it
+     * guards against was per-query.
+     */
+    queryState.onsite.error = { message: 'INTERNAL_SERVER_ERROR' };
+    queryState.offsite.error = { message: 'INTERNAL_SERVER_ERROR' };
+
     renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
+    await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
+    const { APPS_REVIEW_POLL_MS } = await import('~/pages/apps/review');
 
     for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval!(asQuery({ message: 'UNAUTHORIZED' })), label).toBe(false);
+      expect(
+        o.refetchInterval,
+        `${label} parked on an error — the queue can never recover on its own`
+      ).toBe(APPS_REVIEW_POLL_MS);
     }
   });
 
@@ -283,7 +298,7 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     // observes a consequence. Here the cursor is moved by a real click on Load more.
     renderWithProviders(<Harness />);
     await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
-    expect(opts().onsite.refetchInterval!(asQuery())).not.toBe(false);
+    expect(opts().onsite.refetchInterval).not.toBe(false);
 
     queryState.onsite.isFetching = true;
     loadMore().click();
@@ -293,14 +308,8 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     // frozen the moment EITHER source is paged, so a per-source gate here would leave the
     // un-paged source polling live rows in beside frozen ones.
     for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval!(asQuery()), `${label} kept polling while the queue was paged`).toBe(
-        false
-      );
+      expect(o.refetchInterval, `${label} kept polling while the queue was paged`).toBe(false);
     }
-    // …and the row says so.
-    expect(
-      (document.querySelector('[data-testid="apps-review-poll-status"]') as HTMLElement).textContent
-    ).toBe('Auto-refresh paused — use Refresh.');
   });
 
   test('🔴 OFF-SITE ALONE STILL PAGES AND STILL PARKS — the inverted fixture', async () => {
@@ -321,8 +330,8 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
      *   • `hasMore={onsiteNext != null}`             — an off-site-only remainder unmounts
      *     the control and the rest of the queue becomes unreachable.
      *
-     * ⚠️ IT AWAITS THE STATUS ROW, NOT THE LOAD-MORE CONTROL, AND THAT IS DELIBERATE. The
-     * status row renders unconditionally; the Load-more button does not. Awaiting the
+     * ⚠️ IT AWAITS THE COUNT LINE, NOT THE LOAD-MORE CONTROL, AND THAT IS DELIBERATE. The
+     * count line renders unconditionally; the Load-more button does not. Awaiting the
      * button would make the `hasMore` mutant fail by matcher TIMEOUT rather than by a named
      * assertion, which is a much worse diagnosis. The synchronous `loadMore()` helper
      * throws with the sentence you actually want.
@@ -331,8 +340,10 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     queryState.offsite.data = { items: [], nextCursor: 'offsite-cursor-2' };
 
     renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
-    expect(statusText()).toBe('Auto-refreshing every 15s');
+    await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
+    expect(opts().offsite.refetchInterval, 'the queue was not polling to begin with').not.toBe(
+      false
+    );
 
     // An off-site-only remainder must still offer the control.
     expect(loadMore(), 'no Load more for an off-site-only remainder').toBeTruthy();
@@ -347,11 +358,8 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     expect(inputs().onsite.cursor, 'the on-site cursor moved without a next page').toBe(undefined);
 
     // …and paging ONE source parks the whole merged list, which is the global gate.
-    expect(statusText()).toBe('Auto-refresh paused — use Refresh.');
     for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval!(asQuery()), `${label} kept polling on an off-site page`).toBe(
-        false
-      );
+      expect(o.refetchInterval, `${label} kept polling on an off-site page`).toBe(false);
     }
   });
 
@@ -383,12 +391,29 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     }
   });
 
-  test('🔴 refetchOnWindowFocus is `always` — it takes the CURSOR gate, not the error one', async () => {
-    // `'always'` is required because the repo-wide `staleTime: Infinity` makes a plain
-    // `true` inert (query-core gates `true` on staleness, and a query holding data is never
-    // stale under that setting). But `'always'` short-circuits the refusals too, so it is
-    // handed out by a callback rather than set bare — and the callback applies EXACTLY ONE
-    // of the two, which is the claim this test exists to pin.
+  test('🔴 refetchOnWindowFocus is `always`, NOT `true` — `true` would be silently inert', async () => {
+    /**
+     * 🔴 THE HALF OF THIS CLAIM THAT SURVIVED THE STRIP-BACK, AND IT IS THE LOAD-BEARING
+     * HALF. This test used to also pin that the focus trigger ignores the error gate; there
+     * is no error gate any more, so that arm went with it. What remains is the option's
+     * VALUE, and it is worth more than it looks.
+     *
+     * `src/utils/trpc.ts` sets `staleTime: Infinity` repo-wide. query-core 5.101.0 resolves
+     * this option in `shouldFetchOn` (`queryObserver.js:453`) as
+     *
+     *     value === 'always' || (value !== false && isStale(query, options))
+     *
+     * and `isStale` is `query.isStaleByTime(Infinity)`, which is `false` for any query
+     * holding data that has not been invalidated. So a plain `true` never reaches a fetch
+     * after the first successful load — it is INERT in exactly the state it was added for,
+     * and nothing about the spelling `refetchOnWindowFocus: true` says so. Only `'always'`
+     * short-circuits ahead of that staleness check.
+     *
+     * That is why the failure message below names `true` explicitly: a reviewer "tidying"
+     * the callback down to a bare `true` is the realistic mutation, it looks strictly
+     * simpler, and without this test the only symptom is a queue that quietly stops
+     * refreshing on tab reveal.
+     */
     renderWithProviders(<Harness />);
     await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
 
@@ -396,26 +421,18 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
       expect(typeof o.refetchOnWindowFocus, `${label} got no refetchOnWindowFocus`).toBe(
         'function'
       );
-      expect(o.refetchOnWindowFocus!(asQuery()), label).toBe('always');
-
-      // 🔴 AN ERRORED QUERY STILL REFETCHES ON REVEAL, AND THAT IS THE FIX, NOT A LEAK.
-      // Applying the error gate here too — the obvious symmetry — closed the last
-      // automatic route back: the interval is cleared, `refetchOnReconnect` resolves
-      // through `isStale()`, which is never true under `staleTime: Infinity`, and
-      // `shouldLoadOnMount` needs `data === undefined` so remounting the tab does nothing
-      // either. A query that hit a one-off 502 was then parked until someone pressed
-      // Refresh or reloaded the page. The error gate's own justification is about a TIMER
-      // firing thousands of times a day; a reveal is bounded by the rate a human reveals
-      // the tab, and `retry: false`
-      // keeps it to one attempt.
       expect(
-        o.refetchOnWindowFocus!(asQuery({ message: 'UNAUTHORIZED' })),
-        `${label} refuses to retry an errored query on reveal — it can never recover`
+        o.refetchOnWindowFocus!(asQuery()),
+        `${label}: refetchOnWindowFocus must be the string 'always', not true — under the ` +
+          "repo-wide staleTime: Infinity, query-core gates `true` on isStale(), which is " +
+          'never true for a query holding data, so `true` is INERT after the first load'
       ).toBe('always');
     }
 
     // …but PAGED still parks the focus trigger, because refreshing only the last-loaded
-    // page is the half-frozen list the cursor gate refuses, on any trigger.
+    // page is the half-frozen list the cursor gate refuses, on any trigger. This is why the
+    // option is a callback rather than the bare string: `'always'` short-circuits the cursor
+    // gate too, so the gate has to be applied before the value is chosen.
     queryState.onsite.isFetching = true;
     loadMore().click();
     await settle();
@@ -424,16 +441,65 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
         o.refetchOnWindowFocus!(asQuery()),
         `${label} would refetch a paged queue on focus`
       ).toBe(false);
-      // ⚠️ AND ERRORED-AND-PAGED IS STILL PARKED. This does NOT demonstrate that the
-      // callback reads its argument — it deliberately does not: `focusDecision` is nullary
-      // and the wiring is `() => focusDecision()`, so `hasError` is hardcoded `false` and
-      // no assertion here could discriminate on the query passed in. What this line kills
-      // is the mutant that RESTORES the symmetry — `(query) =>
-      // computeReviewQueuePollInterval({ hasError: !!query.state.error, hasCursor:
-      // hasAnyCursor })` — by pinning `'always'` on the errored-unpaged arm above, and the
-      // mutant that lets an error short-circuit AHEAD of the cursor gate, here.
-      expect(o.refetchOnWindowFocus!(asQuery({ message: 'UNAUTHORIZED' })), label).toBe(false);
     }
+  });
+
+  test('🔴 the Pending tab contributes NO controls of its own — zero extra chrome', async () => {
+    /**
+     * 🔴 THIS REPLACES EIGHT TESTS, AND IT PINS A DECISION RATHER THAN A MECHANISM. The
+     * chosen refresh UX is "the table repaints itself" — no status line, no Refresh button,
+     * no "N new" pill. A previous revision shipped a three-state status row and a Refresh
+     * control; both existed only to explain and undo an error gate that has since been
+     * deleted, and eight tests here pinned their wording. Deleting the gate made all of them
+     * describe UI that should not exist, so they went and this took their place.
+     *
+     * 🔴 IT IS A RELATIONSHIP, NOT A SPELLING. Asserting `queryByText('Refresh')` is null
+     * would be walked past by relabelling the button "Reload", and asserting on the old
+     * `apps-review-refresh` testid by any new testid at all. What is asserted instead is
+     * ownership: every control in this tab belongs to `UnifiedReviewList`, and nothing
+     * renders above the list's own first element. A status line has no button and would slip
+     * the first assertion; a Refresh control under any label or testid slips the second.
+     * Together they say "the tab renders the list and nothing else" in a form a reword
+     * cannot satisfy.
+     */
+    renderWithProviders(<Harness />);
+    await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
+
+    const tab = document.querySelector('[data-testid="tab-under-test"]') as HTMLElement;
+
+    // (1) Every button here is one the review LIST rendered. The harness's own
+    // force-rerender button is outside `tab`, so it is not in scope.
+    const strangers = [...tab.querySelectorAll('button')]
+      .map((b) => b.getAttribute('data-testid') ?? '(no data-testid)')
+      .filter((id) => !id.startsWith('apps-unified-review-'));
+    expect(
+      strangers,
+      `the Pending tab rendered ${strangers.length} control(s) of its own (${strangers.join(
+        ', '
+      )}) — the chosen design is zero extra UI, so a Refresh-style button must not come back`
+    ).toEqual([]);
+
+    // (2) Nothing renders ABOVE the list. The count line is `UnifiedReviewList`'s FIRST
+    // child, so walking from it up to the tab root, no level may have a preceding sibling —
+    // any chrome the tab added before the list (a status row, a toolbar) would be exactly
+    // that. Expressed as a walk rather than a child count so it does not also pin how many
+    // wrapper elements Mantine's `<Stack>` happens to emit. This is what catches text-only
+    // chrome, which assertion (1) cannot see.
+    const count = tab.querySelector(`[data-testid="${COUNT_TESTID}"]`) as HTMLElement | null;
+    expect(count, `the ${COUNT_TESTID} anchor is not rendered`).not.toBeNull();
+    const preceding: string[] = [];
+    for (let node = count as HTMLElement; node !== tab; node = node.parentElement as HTMLElement) {
+      let sibling = node.previousElementSibling;
+      while (sibling) {
+        preceding.push(`<${sibling.tagName.toLowerCase()}>${sibling.textContent ?? ''}`);
+        sibling = sibling.previousElementSibling;
+      }
+    }
+    expect(
+      preceding,
+      `${preceding.length} element(s) render above the review list (${preceding.join(' | ')}) ` +
+        '— the Pending tab must render the list and nothing else'
+    ).toEqual([]);
   });
 });
 
@@ -454,17 +520,6 @@ describe('Load more vs the 15s background poll', () => {
     expect(
       loadMoreIsSpinning(),
       'a background poll put Load more into its loading state — this is the `isFetching` bug'
-    ).toEqual({ dataLoading: null, disabled: false });
-
-    // 🔴 AND THE SAME CLAIM FOR REFRESH, which had the assertion its own comment promised
-    // and no test: `loading={pendingAction === 'refresh' || anyFetching}` passed everything
-    // else in this file, because the only two tests that read the Refresh button run with
-    // nothing fetching. It matters MORE here than for Load more — Refresh is the resume
-    // path out of the parked state, so a mod who clicks during a poll cycle would find the
-    // recovery control itself dead. The positive control is 'Refresh SHOWS PROGRESS' below.
-    expect(
-      refreshIsSpinning(),
-      'a background poll put Refresh into its loading state — the resume control would be dead'
     ).toEqual({ dataLoading: null, disabled: false });
   });
 
@@ -584,7 +639,7 @@ describe('Load more APPENDS — the accumulators, which every other fixture here
     queryState.offsite.data = { items: [offsiteRow('off-1')], nextCursor: 'offsite-cursor-2' };
 
     renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
+    await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
     // One row per source, and `+` because both have a next page.
     expect(countText(), 'the fixture did not render its rows').toBe('2+ shown.');
 
@@ -634,235 +689,5 @@ describe('Load more APPENDS — the accumulators, which every other fixture here
     expect(countText(), 'page 1 was dropped — the accumulator holds only the last page').toBe(
       '6 shown.'
     );
-  });
-});
-
-describe('the status row tells the truth about whether the poll is running', () => {
-  test('the default live view names the real cadence', async () => {
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
-    // The number is read off the same constant the queries use, so a cadence change cannot
-    // leave the copy behind.
-    const { APPS_REVIEW_POLL_MS } = await import('~/pages/apps/review');
-    expect(statusText()).toBe(`Auto-refreshing every ${APPS_REVIEW_POLL_MS / 1000}s`);
-  });
-
-  /**
-   * 🔴 THE ROW HAS THREE STATES AND ALL THREE ARE PINNED, because the two-state version of
-   * this row was wrong in a state a moderator reaches. Rows here are whole-row-clickable
-   * (`~/components/Apps/UnifiedReviewList`), and the repaint-under-the-cursor risk was
-   * accepted on the basis that the row TELLS the mod repaints are happening. A flat
-   * "paused" over a list that is still half-repainting silently withdraws that warning
-   * while the hazard continues — so "one source is down" may not be reported as "stopped".
-   */
-  test('🔴 ONE source erroring reports PARTIAL — never "paused", never the full cadence', async () => {
-    // OFFSITE is the errored one deliberately: an earlier revision derived the row from
-    // `onsiteQuery.error || offsiteQuery.error`, which reads onsite first, so an
-    // onsite-only fixture cannot tell a real per-source derivation from that aggregate.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
-    expect(statusText()).toBe('Auto-refreshing every 15s');
-
-    queryState.offsite.error = { message: 'INTERNAL_SERVER_ERROR' };
-    forceRerender();
-    await settle();
-
-    // Not the cadence (the list is NOT fully live) and not "paused" (on-site rows are
-    // still repainting under the cursor every 15s).
-    expect(statusText()).toBe('Auto-refreshing part of the queue — use Refresh.');
-  });
-
-  test('🔴 BOTH sources erroring is the only thing that reports fully PAUSED', async () => {
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-poll-status')).toBeInTheDocument();
-
-    queryState.onsite.error = { message: 'UNAUTHORIZED' };
-    queryState.offsite.error = { message: 'UNAUTHORIZED' };
-    forceRerender();
-    await settle();
-
-    expect(statusText()).toBe('Auto-refresh paused — use Refresh.');
-  });
-
-  test('🔴 PAGING pauses the WHOLE row, from one click, with neither source errored', async () => {
-    // The cursor gate is global, so this is the other route to a fully-paused row — and it
-    // is the one that proves the gate is not per-source: only the on-site cursor moves
-    // here (the off-site fixture has `nextCursor: null`), and the row still reports the
-    // whole queue as paused because the off-site query parked too.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
-    expect(statusText()).toBe('Auto-refreshing every 15s');
-
-    queryState.onsite.isFetching = true;
-    loadMore().click();
-    await settle();
-
-    expect(statusText()).toBe('Auto-refresh paused — use Refresh.');
-  });
-
-  test('🔴 REFRESH INVALIDATES — `resetPaging()` alone would be a no-op on page 1', async () => {
-    // In the default view every cursor is already `undefined`, so the paging reset changes
-    // no state and nothing refetches. The invalidate is what makes the button do anything
-    // at all, and it is also the resume path out of the parked state above.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-refresh')).toBeInTheDocument();
-    expect({ blocks: invalidated.blocks, appListings: invalidated.appListings }).toEqual({
-      blocks: 0,
-      appListings: 0,
-    });
-
-    refresh().click();
-    await settle();
-
-    // 🔴 ONE EACH, COUNTED SEPARATELY. A single shared counter reading 2 is also what a
-    // copy-paste mutation produces — `blocks.invalidate()` called twice and `appListings`
-    // never — which leaves the off-site half of the queue silently un-refreshed.
-    expect({ blocks: invalidated.blocks, appListings: invalidated.appListings }).toEqual({
-      blocks: 1,
-      appListings: 1,
-    });
-
-    // 🔴 AND IT IS NOT A ONE-SHOT. `setRefreshNonce(1)` instead of `(n) => n + 1` survives a
-    // single click perfectly: the second click writes the same value, React bails out of the
-    // re-render, the effect never re-runs, and the button silently stops working forever
-    // after its first use.
-    //
-    // ⚠️ THE FIRST REFRESH MUST BE LET FINISH FIRST, and that is a real property rather
-    // than test bookkeeping: while its invalidates are in flight `pendingAction` is
-    // `'refresh'`, so the button is `disabled` and a second click is correctly swallowed.
-    // Resolving the held promises is what a completed refetch looks like.
-    invalidated.resolvers.splice(0).forEach((r) => r());
-    await settle();
-    expect(refreshIsSpinning()).toEqual({ dataLoading: null, disabled: false });
-
-    refresh().click();
-    await settle();
-    expect({ blocks: invalidated.blocks, appListings: invalidated.appListings }).toEqual({
-      blocks: 2,
-      appListings: 2,
-    });
-  });
-
-  test('🔴 REFRESH REACHES AN ERRORED QUERY — the other half of the resume claim', async () => {
-    // Two docblocks assert this in prose ("The Refresh control is the resume path",
-    // "…the resume path for a query the poll has parked on an error") and nothing checked
-    // it: the only invalidate test ran with both queries healthy. It is the entire
-    // justification for the error gate being acceptable — a poll that parks forever with
-    // no way back is a worse bug than one that re-fires a dead request.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-refresh')).toBeInTheDocument();
-
-    queryState.onsite.error = { message: 'UNAUTHORIZED' };
-    queryState.offsite.error = { message: 'UNAUTHORIZED' };
-    forceRerender();
-    await settle();
-    expect(statusText()).toBe('Auto-refresh paused — use Refresh.');
-
-    refresh().click();
-    await settle();
-
-    // Both sources are invalidated even though both are in an error state — an
-    // `enabled`-style guard that skipped errored queries would strand them here.
-    expect({ blocks: invalidated.blocks, appListings: invalidated.appListings }).toEqual({
-      blocks: 1,
-      appListings: 1,
-    });
-  });
-
-  test('🔴 REFRESH IS THE RESUME PATH — it un-parks a queue that Load more parked', async () => {
-    // 🔴 THE STATE THE WHOLE FEATURE RESTS ON, AND IT WAS UNTESTED. Three separate
-    // docblocks promise this in prose — "Refresh resets back to page 1", "this is the
-    // resume path for a query the poll has parked" — and nothing checked it, because both
-    // Refresh tests ran in the default view, which is the one state where `resetPaging()`
-    // provably does nothing. Deleting `resetPaging()` from `onRefresh` left every other
-    // test in this file green.
-    //
-    // It is not a cosmetic gap. The cursor gate is GLOBAL, so one Load more parks BOTH
-    // queries; without the reset, Refresh invalidates and leaves the cursors set, so the
-    // poll stays parked and the row still reads "paused" — with no route back to a live
-    // queue short of a full page reload. That is the resume path failing exactly when it
-    // is the only thing left.
-    //
-    // 🔴 BOTH SOURCES MUST HAVE A NEXT PAGE, AND THE DEFAULT FIXTURE DOES NOT GIVE THE
-    // OFF-SITE ONE. Every other test in this file leaves `offsite.nextCursor` null, so
-    // `onLoadMore`'s off-site branch never executes and `offsiteCursor` is `undefined`
-    // throughout — which made `setOffsiteCursor(undefined)` deletable from `resetPaging()`
-    // with the whole suite still green, including this test. In production both pending
-    // procs return a cursor, so one Load more sets BOTH, and a half-reset is permanent
-    // parking behind a Refresh button that looks like it worked. Giving the off-site source
-    // a page is what lets this test see the half it is named for.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
-    const { APPS_REVIEW_POLL_MS } = await import('~/pages/apps/review');
-
-    // Page the queue — BOTH cursors advance — which parks both sources.
-    queryState.offsite.data = { items: [], nextCursor: 'offsite-cursor-2' };
-    queryState.onsite.isFetching = true;
-    forceRerender();
-    await settle();
-    loadMore().click();
-    await settle();
-    expect(statusText()).toBe('Auto-refresh paused — use Refresh.');
-    expect(opts().onsite.refetchInterval!(asQuery())).toBe(false);
-    // 🔴 THE COMMENT ABOVE CLAIMS BOTH CURSORS ADVANCE, SO BOTH ARE CHECKED. Reading the
-    // query keys directly is what makes this test's own premise evidence rather than
-    // narration — without it the off-site half of `resetPaging()` is being "pinned"
-    // against a cursor that was never set.
-    expect({ onsite: inputs().onsite.cursor, offsite: inputs().offsite.cursor }).toEqual({
-      onsite: 'onsite-cursor-2',
-      offsite: 'offsite-cursor-2',
-    });
-
-    // The page lands; the foreground flag clears.
-    queryState.onsite.isFetching = false;
-    forceRerender();
-    await settle();
-
-    refresh().click();
-    await settle();
-
-    // 🔴 THE ASSERTION THAT PINS THE RESUME, and the one a per-source or missing reset
-    // cannot satisfy: the poll decision itself is live again. Reading the row alone would
-    // be weaker — the row is derived from the same inputs, so this checks the thing the
-    // queries actually consult.
-    for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval!(asQuery()), `${label} stayed parked`).toBe(APPS_REVIEW_POLL_MS);
-    }
-    expect(statusText()).toBe(`Auto-refreshing every ${APPS_REVIEW_POLL_MS / 1000}s`);
-    // BOTH query keys are back on page 1 — the direct form of "Refresh resets paging".
-    expect({ onsite: inputs().onsite.cursor, offsite: inputs().offsite.cursor }).toEqual({
-      onsite: undefined,
-      offsite: undefined,
-    });
-  });
-
-  test('🔴 Refresh SHOWS PROGRESS while its refetch is in flight, and clears after', async () => {
-    // 🔴 THE DEFECT THIS PINS, AND WHY IT IS NOT THE SAME TEST AS THE LOAD-MORE ONE.
-    // Load-more moves a CURSOR, which is part of the query key, so its fetch is already
-    // in flight on the very next render and a `!isFetching` settle rule works. Refresh's
-    // fetch starts ASYNCHRONOUSLY inside `invalidate()`, so on the render right after the
-    // click nothing is fetching yet — a shared `!isFetching` rule cleared the flag
-    // immediately and this button's loading state was unreachable in every real state.
-    // Holding the invalidate promises open is the only way to observe that: a promise
-    // that resolves on the next microtask is indistinguishable from one nobody awaited.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-review-refresh')).toBeInTheDocument();
-    expect(refreshIsSpinning()).toEqual({ dataLoading: null, disabled: false });
-
-    refresh().click();
-    await settle();
-    expect(invalidated.resolvers).toHaveLength(2);
-    expect(
-      refreshIsSpinning(),
-      'Refresh cleared before its own refetch finished — its loading state is unreachable'
-    ).toEqual({ dataLoading: 'true', disabled: true });
-
-    // …and the load-more control is NOT dragged into Refresh's loading state.
-    expect(loadMoreIsSpinning()).toEqual({ dataLoading: null, disabled: false });
-
-    // The refetch lands.
-    invalidated.resolvers.splice(0).forEach((r) => r());
-    await settle();
-    expect(refreshIsSpinning()).toEqual({ dataLoading: null, disabled: false });
   });
 });

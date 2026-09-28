@@ -79,14 +79,15 @@
    opens the drawer. This paragraph is the only thing standing between that and a
    reviewer, which is why it is here rather than in a test's docstring.
 
-   🔴 EVERY DECLARATION HERE IS CONSTRAINED BY A RENDERED-PIXEL LEDGER. DO NOT "TIDY" THE
-   NEGATIVE MARGIN INTO A PLAIN `padding`, AND DO NOT TURN THE INSET SHADOW INTO A `border`.
+   🔴 A RENDERED-PIXEL LEDGER FORBIDS TWO OF THESE DECLARATIONS' ALTERNATIVES. DO NOT TURN
+   THE INSET SHADOW INTO A `border`, AND DO NOT ADD ORDINARY PADDING.
    `AppsPageLayout.chromeAlignment.browser.test.tsx` measures
    `nav[aria-label="App sections"]` across 12 routes x 3 viewports x 2 rail states and
-   asserts `navWidth === APPS_RAIL_WIDTH` (260), `navLeft === containerLeft` (16) and
-   `bodyLeft - navLeft === appsRailChromeWidth(false)` (276). The aside's width is an
-   INLINE `width` under `box-sizing: border-box`, so anything that consumes the aside's
-   content box shrinks the nav inside it and moves its left edge:
+   asserts `navWidth === APPS_RAIL_WIDTH` (260), `navLeft === containerLeft` (16),
+   `bodyLeft - navLeft === appsRailChromeWidth(false)` (276) and
+   `bodyWidth === contentWidth - railChrome`. The aside's width is an INLINE `width` under
+   `box-sizing: border-box`, so anything that consumes the aside's content box shrinks the
+   nav inside it and moves its left edge:
 
      • `border: 1px`      -> nav 259 wide (and 258 with both sides)
      • `padding: 8px`     -> nav 244 wide, left 24
@@ -96,14 +97,29 @@
    against 260 (38 against 56 collapsed). That is the guard doing its job, not a stale
    expectation to update.
 
-   WHAT MAKES THIS FORM FREE:
+   🔴 BUT THE LEDGER DOES NOT FORCE THE `margin`/`padding` PAIR, AND AN EARLIER VERSION OF
+   THIS COMMENT CLAIMED IT DID. All four ledger assertions are RECT GEOMETRY. `background`,
+   `box-shadow: inset` and `border-radius` move none of them, so a flush three-declaration
+   panel — fill, inset ring, radius, with no margin and no padding — satisfies the ledger
+   perfectly. The negative margin is a DESIGN CHOICE, not a constraint discharge:
+
      • `margin: -8px` + `padding: 8px` cancel EXACTLY in both axes, so the wrapper's
        CONTENT box — and therefore the nav's rect — is byte-identical to no surface at all.
        The paint simply bleeds 8px past the aside's box, into the 16px `.railRow` gap and
-       the Container's 16px gutter.
-     • `box-shadow: inset` draws the hairline at ZERO layout cost. A `border` or an
-       `outline` cannot: the first takes layout, the second paints OUTSIDE the box and
+       the Container's 16px gutter. That buys 8px of VISUAL INSET at zero layout cost.
+     • The measured reason to want it: both forms were rendered and compared, and flush puts
+       the active-row highlight hard against the ring with no breathing space between them.
+       The bleed is what separates them. Keep it for that reason — not because the tests
+       demand it.
+     • `box-shadow: inset` IS forced, and that half of the old claim stands. A `border`
+       takes layout and trips the ledger above; an `outline` paints OUTSIDE the box and
        would sit 8px further out than the fill it is meant to trace.
+
+   ⚠️ The bleed has BOUNDS, and they are not stylistic — `AppsPageLayout.railSurface.browser
+   .test.tsx` asserts the margins are symmetric and that the bleed stays inside BOTH the
+   16px `.railRow` gap and the 16px sticky offset. Past the first, the panel overlaps the
+   body column and swallows clicks meant for the page; past the second, a stuck rail
+   overlaps the global subnav and swallows clicks in it.
 
    The tint + ring colour pair follows the repo's existing tinted-panel convention —
    `light-dark()` as in `src/components/Collections/CollectionsLayout.module.scss`, and the

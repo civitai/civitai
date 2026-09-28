@@ -4,15 +4,17 @@ import { describe, expect, test, vi } from 'vitest';
  * `/apps/review` PENDING QUEUE — the pure poll-interval decision.
  *
  * The Pending tab auto-refreshes so a moderator sees new submissions without reloading
- * the page. That poll has to stop dead in two states, and both refusals are behavioural
- * rather than defensive:
+ * the page. That poll has to stop dead in exactly ONE state: a CURSOR means the mod has
+ * paged past page 1, at which point the page-1 query is unmounted and its accumulated rows
+ * are frozen React state — a poll would refresh only the last-loaded page and leave the
+ * rest silently stale, which looks live and is not.
  *
- *  • an ERRORED query is not retried (`retry: false` on both procs), so a fixed interval
- *    would re-fire a guaranteed-dead request every 15s forever;
- *  • a CURSOR means the mod has paged past page 1, at which point the page-1 query is
- *    unmounted and its accumulated rows are frozen React state — a poll would refresh
- *    only the last-loaded page and leave the rest silently stale, which looks live and is
- *    not.
+ * ⚠️ AN `hasError` INPUT WAS DELETED FROM THIS PREDICATE, AND THE DELETION IS THE POINT.
+ * It parked the poll on any query error, which under the repo-wide `staleTime: Infinity`
+ * was a PERMANENT park with no automatic route back — so the page grew a status row and a
+ * Refresh button purely to undo it. Dropping the input restores self-healing (the next tick
+ * retries) and took the whole cascade with it. Do not reintroduce it; the page-level
+ * consequence is pinned in `src/tests/pages/apps/review/review-queue-poll.browser.test.tsx`.
  *
  * The decision is exported as a pure function for exactly this reason: the house pattern
  * set by `computeAgentReviewPollInterval` + `agentReviewPoll.test.ts`, one directory over.
@@ -32,42 +34,34 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 const { APPS_REVIEW_POLL_MS, computeReviewQueuePollInterval } = await import('~/pages/apps/review');
 
 describe('computeReviewQueuePollInterval', () => {
-  test('no error and no cursor (the default live view) → polls at APPS_REVIEW_POLL_MS', () => {
-    expect(computeReviewQueuePollInterval({ hasError: false, hasCursor: false })).toBe(
-      APPS_REVIEW_POLL_MS
-    );
-  });
-
-  test('🔴 the cadence is 15s — the same number as the other moderator queue that polls', () => {
-    // `QUEUE_POLL_MS` in `src/pages/moderator/resource-load.tsx`. Pinned as a LITERAL, not
-    // derived from the export, or this asserts `x === x`.
-    expect(APPS_REVIEW_POLL_MS).toBe(15_000);
-  });
-
-  test('an ERROR parks the poll → false', () => {
-    expect(computeReviewQueuePollInterval({ hasError: true, hasCursor: false })).toBe(false);
+  test('no cursor (the default live view) → polls at APPS_REVIEW_POLL_MS', () => {
+    expect(computeReviewQueuePollInterval({ hasCursor: false })).toBe(APPS_REVIEW_POLL_MS);
   });
 
   test('a CURSOR parks the poll → false', () => {
-    expect(computeReviewQueuePollInterval({ hasError: false, hasCursor: true })).toBe(false);
-  });
-
-  test('both at once still parks it → false', () => {
-    expect(computeReviewQueuePollInterval({ hasError: true, hasCursor: true })).toBe(false);
+    expect(computeReviewQueuePollInterval({ hasCursor: true })).toBe(false);
   });
 
   /**
-   * ⚠️ TWO MORE TESTS WERE DELETED FROM HERE RATHER THAN KEPT, AND THE DELETIONS ARE THE
-   * POINT — this file's domain is two booleans, and the four tests above pin all four of
+   * ⚠️ SEVERAL MORE TESTS WERE DELETED FROM HERE RATHER THAN KEPT, AND THE DELETIONS ARE
+   * THE POINT — this file's domain is now ONE boolean, and the two tests above pin both of
    * its points to an exact value with `toBe`, so a great many plausible-looking extra
    * assertions cannot fail while those pass.
    *
-   * The first asserted `typeof got === 'number'` and `got > 0` on the polling branch. The
-   * second looped the three parked inputs re-asserting `toBe(false)` plus `typeof ===
-   * 'boolean'` — a strict duplicate of tests 3, 4 and 5, with an inner assertion that
-   * could not fail while the `toBe(false)` on the line above it passed. Its title claimed
-   * it was defending against a falsy `0`, and `toBe` is `Object.is`, so every one of those
-   * three tests already rejects `0`.
+   * Three went with the `hasError` input itself (error-parks, and the two combinations
+   * involving it). A fourth asserted `APPS_REVIEW_POLL_MS` equalled the literal `15_000`
+   * while its title claimed a coupling to `QUEUE_POLL_MS` in
+   * `src/pages/moderator/resource-load.tsx` — a coupling the constant's own docblock
+   * explicitly disclaims as unenforceable (that constant is module-local and unexported).
+   * Stripped of the false claim it was a literal asserted against a literal in the same
+   * module, which no mutation of the production code can fail.
+   *
+   * Two older ones were deleted before that. The first asserted `typeof got === 'number'`
+   * and `got > 0` on the polling branch. The second looped the parked inputs re-asserting
+   * `toBe(false)` plus `typeof === 'boolean'` — a strict duplicate, with an inner assertion
+   * that could not fail while the `toBe(false)` on the line above it passed. Its title
+   * claimed it was defending against a falsy `0`, and `toBe` is `Object.is`, so the
+   * surviving tests already reject `0`.
    *
    * ⚠️ That title also stated a mechanism that is simply not true of the installed
    * version: `0` does NOT mean "as fast as possible". `#updateRefetchInterval`
