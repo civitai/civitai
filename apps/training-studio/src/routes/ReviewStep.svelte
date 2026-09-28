@@ -88,23 +88,27 @@
   let presetType = $state(untrack(() => selection.loraType));
   // Seed each run's advanced params from the CHOSEN MODEL's defaults (mirrored per-model from the main app's
   // trainer), not flat constants — a multi-run sweep can mix models, so seed per run.
+  type AdvancedParams = Omit<RunParams, 'steps' | 'epochs'>;
+  function advancedDefaults(run: Run): AdvancedParams {
+    const d = paramsForVersion(runCard(run), run.versionKey);
+    return {
+      unetLr: String(d.unetLr),
+      textEncoderLr: String(d.textEncoderLr),
+      networkDim: String(d.networkDim),
+      networkAlpha: String(d.networkAlpha),
+      lrScheduler: d.lrScheduler,
+      optimizer: d.optimizer,
+      resolution: String(d.resolution),
+      batchSize: String(d.batchSize),
+    };
+  }
   let params = $state<RunParams[]>(
     untrack(() =>
-      selection.runs.map((run) => {
-        const d = paramsForVersion(runCard(run), run.versionKey);
-        return {
-          steps: defaultStepsForRun(run),
-          epochs: d.epochs,
-          unetLr: String(d.unetLr),
-          textEncoderLr: String(d.textEncoderLr),
-          networkDim: String(d.networkDim),
-          networkAlpha: String(d.networkAlpha),
-          lrScheduler: d.lrScheduler,
-          optimizer: d.optimizer,
-          resolution: String(d.resolution),
-          batchSize: String(d.batchSize),
-        };
-      }),
+      selection.runs.map((run) => ({
+        steps: defaultStepsForRun(run),
+        epochs: paramsForVersion(runCard(run), run.versionKey).epochs,
+        ...advancedDefaults(run),
+      })),
     ),
   );
   // Seed the sample prompts from the dataset itself — 3 random image labels (joined tags or the caption) —
@@ -123,6 +127,16 @@
   let prompts = $state(initialPrompts);
   let promptSeq = initialPrompts.length;
   let openAdv = $state(-1);
+  // Keyed per run so each run is acknowledged on its own, as the in-app trainer does. Support
+  // declines refunds on poor results once this was ticked, so the fields it gates must stay locked
+  // without it.
+  let acknowledgedAdvanced = $state<Record<number, boolean>>({});
+  // Unticking restores the model defaults, so a locked field never submits a value the user edited.
+  function setAcknowledgedAdvanced(i: number, value: boolean) {
+    const run = selection.runs[i]!;
+    acknowledgedAdvanced[run.id] = value;
+    if (!value) Object.assign(params[i]!, advancedDefaults(run));
+  }
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
 
@@ -264,7 +278,11 @@
     startError = '';
     try {
       await onStart(
-        selection.runs.map((run, i) => ({ run, params: params[i]! })),
+        selection.runs.map((run, i) => ({
+          run,
+          params: params[i]!,
+          advancedAcknowledged: !!acknowledgedAdvanced[run.id],
+        })),
         prompts.map((p) => p.text),
         name,
         buzzMode.currencies
@@ -373,9 +391,32 @@
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const b = boundsFor(i)}
             {@const teLocked = TE_TRAINING_UNSUPPORTED.has(selection.runs[i]!.versionKey)}
+            {@const locked = !acknowledgedAdvanced[run.id]}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
               <div class="mb-2 flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-primary">
                 <IconSettings size={12} stroke={2} />Advanced training settings
+              </div>
+              <div class="mb-3 flex items-start gap-2.5 rounded-lg border border-buzz/30 bg-buzz/5 p-3">
+                <IconAlertTriangle size={18} stroke={2} class="mt-0.5 shrink-0 text-buzz" />
+                <div class="flex flex-col gap-1.5">
+                  <div class="text-sm font-semibold text-dark-0">
+                    Editing advanced parameters forfeits your refund
+                  </div>
+                  <p class="m-0 text-xs text-dark-2">
+                    These defaults are tuned for your selected model. If you change them and the
+                    result is poor, the training is non-refundable. Steps and Checkpoints are not
+                    affected.
+                  </p>
+                  <div class="flex items-center gap-2 text-xs text-dark-1">
+                    <Checkbox
+                      id="ack-advanced-{run.id}"
+                      bind:checked={() => !locked, (v) => setAcknowledgedAdvanced(i, v)}
+                    />
+                    <label for="ack-advanced-{run.id}" class="cursor-pointer">
+                      I understand and want to edit the advanced parameters
+                    </label>
+                  </div>
+                </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
@@ -384,11 +425,11 @@
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Batch size</span>
-                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[i]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} class="h-7 font-mono" />
+                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[i]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} disabled={locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">UNet LR</span>
-                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[i]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
+                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[i]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} disabled={locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">
@@ -401,23 +442,23 @@
                         </Tooltip.Root>
                       </Tooltip.Provider>{/if}
                   </span>
-                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked} class="h-7 font-mono" />
+                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked || locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network dim</span>
-                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[i]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[i]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} disabled={locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network alpha</span>
-                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[i]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[i]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} disabled={locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Resolution</span>
-                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[i]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} class="h-7 font-mono" />
+                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[i]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} disabled={locked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">LR scheduler</span>
-                  <Select.Root type="single" bind:value={params[i]!.lrScheduler}>
+                  <Select.Root type="single" bind:value={params[i]!.lrScheduler} disabled={locked}>
                     <Select.Trigger class="h-7 font-mono">{params[i]!.lrScheduler}</Select.Trigger>
                     <Select.Content portalProps={portalProps()}>
                       {#each LR_SCHEDULERS as s (s)}
@@ -428,7 +469,7 @@
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm">
                   <span class="text-dark-2">Optimizer</span>
-                  <Select.Root type="single" bind:value={params[i]!.optimizer}>
+                  <Select.Root type="single" bind:value={params[i]!.optimizer} disabled={locked}>
                     <Select.Trigger class="h-7 font-mono">{params[i]!.optimizer}</Select.Trigger>
                     <Select.Content portalProps={portalProps()}>
                       {#each OPTIMIZERS as o (o)}

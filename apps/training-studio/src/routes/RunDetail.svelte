@@ -637,6 +637,12 @@
           </dd>
         </div>
       {/if}
+      {#if d.advancedAcknowledged}
+        <div class="flex items-center gap-1.5">
+          <dt class="text-dark-2">Advanced settings</dt>
+          <dd class="m-0 text-buzz">unlocked · refund forfeited</dd>
+        </div>
+      {/if}
       <div class="flex items-center gap-1.5">
         <dt class="text-dark-2">Workflow</dt>
         <dd class="m-0 flex items-center gap-1.5 text-dark-0">

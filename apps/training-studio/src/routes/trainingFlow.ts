@@ -200,6 +200,7 @@ export interface RunParams {
 export interface LaunchedRun {
   run: Run;
   params: RunParams;
+  advancedAcknowledged: boolean;
 }
 
 // Pony / Illustrious are SDXL-ecosystem checkpoints split into their own cards; they train at the same cost,
@@ -297,7 +298,7 @@ export function buildTrainingRuns(
     .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
   const t = trigger.trim();
 
-  return launched.map(({ run, params }) => {
+  return launched.map(({ run, params, advancedAcknowledged }) => {
     const version = runVersion(run);
     return {
       ecosystem: version.ecosystem,
@@ -332,6 +333,7 @@ export function buildTrainingRuns(
         versionKey: run.versionKey,
         imageCount: items.length,
         trigger: t,
+        ...(advancedAcknowledged ? { advancedAcknowledged: true } : {}),
       },
     };
   });

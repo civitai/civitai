@@ -16,6 +16,8 @@ export const CIVITAI_TAG = 'civitai';
 /** Marks a free auto-label workflow. These share the training tags but are NOT trainings — the list and
  *  detail mappers drop them so they don't show up as runs. */
 export const AUTO_LABEL_TAG = 'auto-label';
+/** Mirrors `TrainingStudioMeta.advancedAcknowledged` as a tag, so support can find these runs by tag. */
+export const ADVANCED_ACK_TAG = 'advanced-ack';
 
 /** Version stamped into `Workflow.metadata` by the write path and read back here. Bump when the
  * `TrainingStudioMeta` shape changes incompatibly; the reader degrades field-by-field regardless. */
@@ -100,6 +102,9 @@ export interface TrainingStudioMeta {
    *  before lineage shipped. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  /** The user ticked "Editing advanced parameters forfeits your refund" before Start. Client-reported:
+   *  its absence does not prove the params are the model defaults — compare the training step's input. */
+  advancedAcknowledged?: boolean;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
@@ -394,6 +399,7 @@ export interface TrainingDetail {
   /** "Train further" lineage (see TrainingStudioMeta): the run this one continued from, when known. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  advancedAcknowledged?: boolean;
   /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
    *  model-page link. */
   modelId?: number;
@@ -472,6 +478,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
         ? meta.sourceWorkflowId
         : undefined,
     sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
+    advancedAcknowledged: meta.advancedAcknowledged === true || undefined,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
   };
 }

@@ -19,6 +19,7 @@ import {
 } from '@civitai/shared/training-custom-model';
 import { describeSubmitError, isFlux2, type OrchestratorClient } from './orchestrator-core';
 import {
+  ADVANCED_ACK_TAG,
   CIVITAI_TAG,
   epochModelKey,
   META_VERSION,
@@ -155,6 +156,15 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
 // (for finding it). This prefix is the one place the tag shape is written and matched.
 const NAME_TAG_PREFIX = 'name:';
 
+function workflowTags(slug: string, meta: TrainingStudioMeta): string[] {
+  return [
+    CIVITAI_TAG,
+    TRAINING_TAG,
+    ...(slug ? [`${NAME_TAG_PREFIX}${slug}`] : []),
+    ...(meta.advancedAcknowledged ? [ADVANCED_ACK_TAG] : []),
+  ];
+}
+
 /** A short tag-safe slug of the run name, so a training can be found by name later. */
 function nameSlug(name: string): string {
   return name
@@ -176,9 +186,7 @@ export async function submitTraining(
   const { data, error } = await submitWorkflow({
     client,
     body: {
-      tags: slug
-        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
-        : [CIVITAI_TAG, TRAINING_TAG],
+      tags: workflowTags(slug, metadata),
       metadata: metadata as Record<string, unknown>,
       steps: [buildStep(run, traceMode)],
       currencies: resolveCurrencies(run.currencies),
@@ -262,6 +270,11 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
   if (run.meta.name !== undefined && !isString(run.meta.name))
     fail(`${field}.meta.name`, 'must be a string.');
+  if (
+    run.meta.advancedAcknowledged !== undefined &&
+    typeof run.meta.advancedAcknowledged !== 'boolean'
+  )
+    fail(`${field}.meta.advancedAcknowledged`, 'must be a boolean.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -424,9 +437,7 @@ async function buildContinuation(
 
   return {
     body: {
-      tags: slug
-        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
-        : [CIVITAI_TAG, TRAINING_TAG],
+      tags: workflowTags(slug, metadata),
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
       currencies: resolveCurrencies(opts.currencies),
