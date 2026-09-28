@@ -9652,6 +9652,127 @@ describe('blocks — #3520 model substitution observability', () => {
     });
   });
 
+  /**
+   * 🔴 THE FOURTH CAP-BREACH ARM — private run. [INV] on the wording, [REG] on nothing:
+   * this surface did not exist before this PR, so none of these rows can be watched to
+   * fail at `f7f5eb4996`. They are INVARIANT pins, not regression coverage, and are
+   * labelled as such deliberately.
+   *
+   * Why they are worth having anyway: the `else` arm they displace describes the WRONG
+   * CEILING in a message that a moderator reads while blocked. It says "already spent
+   * today across your installed apps … daily cap is 50000" for a reservation that is
+   * actually per-(viewer, app) on a rolling ~25h key with a cap three orders of
+   * magnitude smaller. A viewer who trips it and reads that sentence has been told to
+   * look at a counter that is nowhere near its limit.
+   *
+   * The ternary is the mutable thing here — three arms selected by two booleans — so
+   * each row pins one arm AND asserts it is not any of the others, which is what makes
+   * an arm-swap mutant visible rather than merely possible.
+   */
+  describe('🔴 the PRIVATE-RUN Buzz cap reply names the right window and scope [INV]', () => {
+    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}) {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({
+          buzzBudget: 1000,
+          privateRun: true,
+          privateRunAudience: 'moderator',
+          ...extra,
+        })
+      );
+      happyVersionLookup();
+      happyUser();
+      // Every OTHER cap driver neutralised, so the only reachable exit is the
+      // cumulative one. Without this the test could pass off the per-app cap's
+      // message and never evaluate the ternary at all.
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: true,
+        dailyTotal: 0,
+        velocityCount: 1,
+        dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+      });
+      mockGetActiveDevTunnel.mockResolvedValue(null);
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+    }
+
+    it('quotes the per-app private-run cap, NOT the daily one', async () => {
+      reachesTheCapAsPrivateRun();
+      // 2515 > PRIVATE_RUN_BUZZ_CAP (2500) but FAR below the 50,000 daily cap — so a
+      // reply mentioning the daily cap here is not merely worded badly, it is a reply
+      // from a branch that read the wrong ceiling. This value is the discriminator.
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/private-run Buzz cap reached/);
+      expect(result.snapshot.error).toMatch(/cap is 2500 per app/);
+      // 🔴 THE ARM-EXCLUSION HALF. Pinning the right substring does not exclude the
+      // wrong branch having run; these do.
+      expect(result.snapshot.error).not.toMatch(/daily/);
+      expect(result.snapshot.error).not.toMatch(/installed apps/);
+      expect(result.snapshot.error).not.toMatch(/review session/);
+      expect(result.snapshot.error).not.toMatch(/50000/);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+    });
+
+    it('🔴 POSITIVE CONTROL: the SAME 2515 total on a PLAIN token is UNDER the cap', async () => {
+      // This is what proves the row above is reading the private-run ceiling rather
+      // than any ceiling at all. Same driver, same number, no private-run claim: the
+      // 50,000 daily cap is not reached, so the request runs to completion. If this
+      // ever starts returning a cap-breach, the discriminator above has gone blunt.
+      reachesTheCapAsPrivateRun({ privateRun: undefined, privateRunAudience: undefined });
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toBeUndefined();
+      expect(result.snapshot.status).not.toBe('failed');
+    });
+
+    it('🔴 NEGATIVE CONTROL: a plain token DOES still get the daily arm when IT breaches', async () => {
+      // The mirror of the row above, and the thing that keeps the arm-exclusion
+      // assertions honest: the `else` branch is still reachable and still says what it
+      // always said, so the new arm narrowed the ternary rather than swallowing it.
+      reachesTheCapAsPrivateRun({ privateRun: undefined, privateRunAudience: undefined });
+      mockSysRedis.incrBy.mockResolvedValue(50015);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect(result.snapshot.error).not.toMatch(/private-run/);
+    });
+
+    it('the breached total is reported NET of this generation, like every other arm', async () => {
+      // `total - Math.ceil(cost)` — the number a viewer can reconcile against what they
+      // have already spent, not the post-reservation figure. Pinned because the three
+      // arms each recompute it and a copy-paste that dropped the subtraction in one of
+      // them would read as plausible.
+      reachesTheCapAsPrivateRun();
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/2490 already spent/); // 2515 - 25
+      expect(result.snapshot.error).toMatch(/on this app's private run/);
+    });
+  });
+
   describe('estimateWorkflow', () => {
     it('reports the substitutions on the estimate reply (nothing is persisted there)', async () => {
       // A whatIf creates no persisted workflow, so the reply is the ONLY place

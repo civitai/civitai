@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { PRIVATE_RUN_REFUSAL_REASONS } from '~/server/services/blocks/private-run-access.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbWrite = dbMock.dbWrite;
@@ -109,7 +110,18 @@ vi.mock('~/server/utils/server-domain', () => ({
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 vi.mock('~/server/services/app-blocks-flag', () => mockAppBlocksFlag);
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => mockDevTunnelService);
-vi.mock('~/server/services/blocks/private-run-access.service', () => mockPrivateRunAccess);
+// 🔴 A PARTIAL MOCK, NOT A WHOLESALE ONE, AND THE DIFFERENCE IS LOAD-BEARING HERE.
+// This file now imports `PRIVATE_RUN_REFUSAL_REASONS` from the same module so its
+// refusal lists are DERIVED rather than hand-copied. A wholesale factory returning only
+// `resolvePrivateRunAccess` would make that tuple `undefined` at import time — the
+// one-key-factory staleness shape this repo has a guard for — and the two loops over it
+// would silently iterate nothing, i.e. the no-existence-oracle test would pass having
+// compared zero refusals. Spreading the original keeps the real tuple and overrides only
+// the function under mock.
+vi.mock('~/server/services/blocks/private-run-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/blocks/private-run-access.service')>()),
+  resolvePrivateRunAccess: mockPrivateRunAccess.resolvePrivateRunAccess,
+}));
 vi.mock('~/server/logging/mint-audit-stdout', () => mockStdoutAudit);
 
 function makeReq(body: unknown): NextApiRequest & { log?: any } {
@@ -393,22 +405,28 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
    * what is new is that a whole family of private-run refusals now routes into it. The
    * SSR half of this property is [REG] and lives in the page test.
    */
-  const refusals: Array<{ name: string; verdict: Record<string, unknown> }> = [
-    { name: 'flag off', verdict: { allowed: false, reason: 'flag-off' } },
-    {
-      name: 'anon / banned / deleted viewer',
-      verdict: { allowed: false, reason: 'viewer-ineligible' },
-    },
-    {
-      name: 'approved app (the public path owns it)',
-      verdict: { allowed: false, reason: 'approved' },
-    },
-    { name: 'not a page app', verdict: { allowed: false, reason: 'not-a-page' } },
-    { name: 'unrelated viewer', verdict: { allowed: false, reason: 'no-role' } },
-    { name: 'pending seat holder', verdict: { allowed: false, reason: 'no-role' } },
-    { name: 'banned owner', verdict: { allowed: false, reason: 'owner-banned' } },
-    { name: 'undeployed app', verdict: { allowed: false, reason: 'not-deployed' } },
-  ];
+  /**
+   * 🔴 DERIVED FROM THE EXPORTED TUPLE, NOT HAND-WRITTEN. The first version listed eight
+   * reasons by hand and OMITTED `no-iframe-src` — the reason added by the very change
+   * that introduced this list — so the byte-identical-404 invariant went unasserted for
+   * the new refusal. That is the exact staleness `PRIVATE_RUN_REFUSAL_REASONS` was
+   * exported to prevent, reproduced one file over.
+   *
+   * `no-app` is the BASELINE every other reason is compared against, so it is excluded
+   * here rather than listed as one of the compared refusals.
+   */
+  const refusals = PRIVATE_RUN_REFUSAL_REASONS.filter((r) => r !== 'no-app');
+
+  it('POSITIVE CONTROL: the derived refusal list is non-empty and covers the tuple', () => {
+    // 🔴 DERIVING A LIST TRADES STALENESS FOR A NEW FAILURE MODE: an empty derived list
+    // makes every loop below iterate nothing and pass. (An UNDEFINED tuple would throw
+    // at `.filter`, so that half is self-announcing; an empty one is not.) Bound it, and
+    // pin that exactly one reason was excluded.
+    expect(refusals.length).toBeGreaterThan(6);
+    expect(refusals.length).toBe(PRIVATE_RUN_REFUSAL_REASONS.length - 1);
+    expect(refusals).not.toContain('no-app');
+    expect(refusals).toContain('no-iframe-src');
+  });
 
   it('the missing-app baseline, and EVERY refusal, produce the IDENTICAL response', async () => {
     // BASELINE: a nonexistent app. `resolvePageBlock` misses, PHASE 2 misses, and the
@@ -421,15 +439,15 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
     expect(baseline.status).toBe(404);
     expect(baseline.body).toEqual({ error: 'Page app not found' });
 
-    for (const { name, verdict } of refusals) {
-      mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue(verdict);
+    for (const reason of refusals) {
+      mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason });
       const got = shape(await invoke(BODY()));
       // 🔴 DEEP EQUALITY on status + body + EVERY header, not `expect(404)`. The
       // headers matter as much as the body: the success path sets
       // `Cache-Control: no-store`, and a refusal that set a DIFFERENT caching signal —
       // or set one at all — would be distinguishable from a missing app even with an
       // identical body.
-      expect(got, `refusal "${name}" must be indistinguishable from a missing app`).toEqual(
+      expect(got, `refusal "${reason}" must be indistinguishable from a missing app`).toEqual(
         baseline
       );
     }
@@ -454,7 +472,9 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
   it('every OTHER refusal reason IS audited — the control on the row above', async () => {
     // Without this, the `flag-off` assertion passes against a branch that audits
     // nothing at all, which would lose the whole forensic trail the feature depends on.
-    for (const reason of ['no-role', 'owner-banned', 'not-deployed', 'no-iframe-src']) {
+    // Derived too — every reason EXCEPT the one deliberately not audited. A ninth reason
+    // added with a broken audit branch is then visible instead of silently uncovered.
+    for (const reason of PRIVATE_RUN_REFUSAL_REASONS.filter((r) => r !== 'flag-off')) {
       mockStdoutAudit.emitMintAuditToStdout.mockClear();
       mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason });
       await invoke(BODY());

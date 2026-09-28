@@ -217,9 +217,23 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
       expect(code, `${f} must CALL the flag accessor, not merely import it`).toContain(
         'isAppBlocksPrivateRunEnabled('
       );
-      // And it must reach the predicate as a value derived from that call, not a literal.
-      expect(code, `${f} must not hardcode the flag`).not.toContain('privateRunEnabled: true');
-      expect(code, `${f} must not hardcode the flag`).not.toContain('privateRunEnabled: false');
+      // And it must reach the predicate as a value DERIVED from that call, not a literal.
+      //
+      // ⚠️ THE FORBIDDEN SPELLINGS ARE THE ASSIGNMENT FORMS, AND THAT CORRECTION IS THE
+      // POINT. This used to forbid `privateRunEnabled: true` / `false` — a spelling
+      // NEITHER call site uses, since both pass the value by shorthand
+      // (`privateRunEnabled,`). So that half could never fire. The realistic mutation is
+      // `const privateRunEnabled = true;`, which contains neither forbidden string; it is
+      // caught today only because it also orphans the call, so keeping the call for
+      // logging would have walked the guard.
+      for (const bad of [
+        'privateRunEnabled = true',
+        'privateRunEnabled = false',
+        'privateRunEnabled: true',
+        'privateRunEnabled: false',
+      ]) {
+        expect(code, `${f} must not hardcode the flag (${bad})`).not.toContain(bad);
+      }
     }
   });
 });

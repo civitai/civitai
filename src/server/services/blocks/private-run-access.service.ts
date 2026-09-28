@@ -122,8 +122,12 @@ export type PrivateRunAccess =
  *  1. `flag-off` — the kill-switch, before ANY database read. This is what makes
  *     "turn the flag off" a complete rollback: nothing is resolved, so there is no
  *     state to unwind and the pre-feature behaviour returns exactly.
- *  2. `viewer-ineligible` — anonymous, banned or soft-deleted VIEWER. Before the app
- *     read so a signed-out prober cannot consume a query per slug.
+ *  2. `viewer-ineligible` (SESSION) — anonymous, or a session that already says banned
+ *     or soft-deleted. FREE, and before the app read so a signed-out prober cannot
+ *     consume a query per slug.
+ *  3.5 `viewer-ineligible` (AUTHORITATIVE) — the same reason, re-checked against the
+ *     PRIMARY because the session is not authoritative for `deletedAt`. Deliberately
+ *     AFTER the block resolve so an enumerable `no-app` probe does not pay for it.
  *  3. `no-app` / `approved` / `not-a-page` — the block resolve (one query).
  *     `approved` is tested BEFORE the role resolve so the approved case costs no
  *     second query, and because the public path owns it unconditionally: no role can
@@ -210,25 +214,6 @@ export async function resolvePrivateRunAccess(args: {
   if (viewer.bannedAt || viewer.deletedAt) {
     return { allowed: false, reason: 'viewer-ineligible' };
   }
-  // 🔴 AND AN AUTHORITATIVE RE-READ, BECAUSE THE SESSION IS NOT AUTHORITATIVE FOR
-  // `deletedAt`. A `SessionUser` may or may not carry it depending on the auth path, so
-  // the session check above is a cheap pre-filter, not the decision.
-  //
-  // ⚠️ IT LIVES HERE RATHER THAN IN THE MINT, AND THAT PLACEMENT IS THE FIX FOR AN
-  // SSR↔MINT ASYMMETRY — in the one feature built to prevent those. The mint performed
-  // this read and the SSR route did not, so a soft-deleted viewer whose session lacked
-  // `deletedAt` got a FULL RENDER of a delisted app (its name, page title, iframe origin
-  // and declared scopes) and only then failed at the mint. No token, so the app could not
-  // boot — but the single place the two callers disagreed produced a DISCLOSURE rather
-  // than a refusal, which is exactly the class this predicate exists to make impossible.
-  // Moving it in also removes one of four near-identical copies of this read.
-  const viewerRow = await db.user.findUnique({
-    where: { id: viewer.id },
-    select: { deletedAt: true, bannedAt: true },
-  });
-  if (!viewerRow || viewerRow.deletedAt || viewerRow.bannedAt) {
-    return { allowed: false, reason: 'viewer-ineligible' };
-  }
 
   // (3) THE BLOCK. Three named refusals (see the resolver's docblock for why these are
   // not one bare null).
@@ -239,15 +224,60 @@ export async function resolvePrivateRunAccess(args: {
   // SEPARATE round trip: this resolve is THREE (the block row, its `app` for the owner
   // id, its `appListing` for the audit-only status). `resolveAppAccess` below re-reads
   // the same block with the same two relations, and the owner-ban read is a fourth
-  // statement — so a full owner resolve is ~7 round trips, not 3. All are single-row
-  // index lookups (`blockId` is unique, `id` is the pk), so the cost is round-trip
-  // COUNT, not plan quality, and at this surface's volume it is accepted rather than
-  // optimised. `block-approval.service.ts` deliberately avoids the same mechanism ten
+  // statement.
+  //
+  // ⚠️ THE WHOLE-RESOLVE FIGURE THIS COMMENT FIRST GAVE — "~7" — WAS ALSO WRONG, and
+  // recording that matters because it was itself the correction to an earlier wrong
+  // number and it forgot the viewer read added in the same change. Counted statement by
+  // statement:
+  //     moderator  4  = block 3 + viewer 1
+  //     owner      8  = block 3 + viewer 1 + resolveAppAccess 3 + owner-ban 1
+  //     editor     9  = the owner path + `hasAcceptedSeat` 1
+  // All are single-row index lookups (`blockId` is unique, `id` is the pk), so the cost
+  // is round-trip COUNT, not plan quality, and at this surface's volume — moderators and
+  // owners of a handful of delisted apps — it is accepted rather than optimised. Dropping
+  // the audit-only `appListing` relation is the cheapest single win (−1 per resolve). `block-approval.service.ts` deliberately avoids the same mechanism ten
   // lines from a near-identical select; if this surface ever gets real traffic, that is
   // the pattern to copy.
   const resolved = await BlockRegistry.resolvePrivateRunPageBlock(by, { db: pool });
   if (!resolved.ok) return { allowed: false, reason: resolved.reason };
   const block = resolved.block;
+
+  // (3.5) THE AUTHORITATIVE VIEWER RE-READ. The session check at (2) is a cheap
+  // pre-filter, not the decision: a `SessionUser` may or may not carry `deletedAt`
+  // depending on the auth path.
+  //
+  // ⚠️ IT LIVES IN THE PREDICATE RATHER THAN THE MINT, AND THAT IS THE FIX FOR AN
+  // SSR↔MINT ASYMMETRY — in the one feature built to prevent those. The mint performed
+  // this read and the SSR route did not, so a soft-deleted viewer whose session lacked
+  // `deletedAt` got a FULL RENDER of a delisted app (name, page title, iframe origin,
+  // declared scopes) and only then failed at the mint. No token, so the app could not
+  // boot — but the single place the two callers disagreed produced a DISCLOSURE rather
+  // than a refusal. Moving it in also removed one of four near-identical copies.
+  //
+  // 🔴 PLACED AFTER THE BLOCK RESOLVE, NOT BEFORE IT, AND THAT ORDER IS A COST DECISION.
+  // It sat before it first, which DOUBLED the round trips on the `no-app` refusal — the
+  // one refusal whose input space is UNBOUNDED and enumerable (any `page_<garbage>` id),
+  // and therefore the one a prober drives. Nothing is emitted before either return, so
+  // the ordering is unobservable to a caller; and the property the docblock claims for
+  // gate (2) — "a signed-out prober cannot consume a query per slug" — is bought by the
+  // FREE session pre-filter above, not by this read.
+  //
+  // 🔴 AND IT READS THE PRIMARY UNCONDITIONALLY, ignoring the caller's pool. This is a
+  // SECURITY gate on a fact that changes the instant an account is banned or deleted, so
+  // the replica's lag window is exactly the interval in which the answer matters most: a
+  // just-banned viewer retrying. The SSR caller passes `db: 'read'` because its OTHER
+  // reads are a render projection where lag is harmless; this one is not, so it opts out.
+  // Without this the paragraph above would be FALSE on the very surface the move was for
+  // — which review caught, and which is why the word "authoritative" now costs a
+  // deliberate divergence from the caller's pool rather than being a claim about nothing.
+  const viewerRow = await dbWrite.user.findUnique({
+    where: { id: viewer.id },
+    select: { deletedAt: true, bannedAt: true },
+  });
+  if (!viewerRow || viewerRow.deletedAt || viewerRow.bannedAt) {
+    return { allowed: false, reason: 'viewer-ineligible' };
+  }
 
   // (4) ROLE. A MODERATOR short-circuits the role resolve: `isModerator` is the
   // server-stamped session flag (the same authority the page mint's own moderator

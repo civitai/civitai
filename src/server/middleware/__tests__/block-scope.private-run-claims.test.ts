@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { blockPerCallBudget } from '~/server/middleware/block-scope.middleware';
 import {
   isPrivateRunAudience,
+  PRIVATE_RUN_AUDIENCE_WITNESS,
   PRIVATE_RUN_AUDIENCES,
 } from '~/shared/constants/block-scope.constants';
 
@@ -114,6 +115,26 @@ describe('isPrivateRunAudience — the closed-set claim test [REG]', () => {
   it('accepts exactly the three audiences and nothing else', () => {
     for (const a of PRIVATE_RUN_AUDIENCES) expect(isPrivateRunAudience(a)).toBe(true);
     expect(PRIVATE_RUN_AUDIENCES).toEqual(['owner', 'editor', 'moderator']);
+  });
+
+  it('🔴 the TUPLE and the TYPE are in lockstep — the runtime half', () => {
+    // The compile-time half is `PRIVATE_RUN_AUDIENCE_WITNESS` in the constants module: a
+    // `Record<PrivateRunAudience, true>` literal, so the TYPE growing is a type error
+    // there. This is the other direction, which is the UNSAFE one: the TUPLE growing
+    // without the type makes `isPrivateRunAudience` admit a value the type says cannot
+    // exist, the verifier lets it through, and the read-only belt's `=== 'editor'`
+    // treats it as an owner.
+    //
+    // Compared against the WITNESS's keys rather than a hand-written list, because a
+    // hand-copied expectation is exactly how the matrix's own completeness check went
+    // stale before it was derived.
+    expect([...PRIVATE_RUN_AUDIENCES].sort()).toEqual(
+      Object.keys(PRIVATE_RUN_AUDIENCE_WITNESS).sort()
+    );
+    // And the predicate agrees with both, so all three artefacts describe one set.
+    for (const a of Object.keys(PRIVATE_RUN_AUDIENCE_WITNESS)) {
+      expect(isPrivateRunAudience(a), `${a} is in the type but rejected at runtime`).toBe(true);
+    }
   });
 
   it('🔴 rejects the near-misses that would otherwise be treated as an owner', () => {

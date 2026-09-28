@@ -197,6 +197,26 @@ const SCENARIOS: Scenario[] = [
     block: blockRow({ status: 'pending' }),
     expectAllowed: true,
   },
+  {
+    // 🔴 THE GATE THIS CHANGE MOVED, AND IT HAD NO ROW HERE. `no-iframe-src` was applied
+    // by the SSR route AFTER the predicate while the mint applied no equivalent — a live
+    // SSR↔mint disagreement — and moving it into the predicate is the fix. This seam
+    // test is the ONLY artifact that can prove the two no longer disagree, and the
+    // private route's own comment cites it as the reason its remaining narrowing check is
+    // "not counted as a gate". Without this row that citation was false, and re-adding an
+    // iframeSrc check to one caller only would have kept the seam green.
+    name: 'no iframe.src (the gate this change moved into the predicate)',
+    viewer: { id: OWNER },
+    block: blockRow({
+      manifest: {
+        name: 'Seam Fixture',
+        scopes: ['models:read:self'],
+        page: { path: '/', title: 'Seam' },
+        iframe: { sandbox: 'allow-scripts' },
+      },
+    }),
+    expectAllowed: false,
+  },
 ];
 
 describe('SSR and the mint cannot disagree [REG]', () => {
@@ -243,15 +263,31 @@ describe('SSR and the mint cannot disagree [REG]', () => {
       // reasons unrelated to the code. The first draft of this file made exactly that
       // mistake and the assertion failed with "expected vi.fn() to be called at least
       // once" — a test that was measuring its own scaffolding.
-      // 🔴 DERIVED FROM THE RESULT, NOT RE-DERIVED FROM THE FIXTURE. The gates that
-      // refuse BEFORE the block read are exactly those whose reason is `flag-off` or
-      // `viewer-ineligible` — and that set grew when the authoritative viewer re-read
-      // moved into the predicate, which immediately broke a hand-derived version of this
-      // condition (a banned OWNER now refuses at the viewer gate, so no pool is read,
-      // while the fixture-based predicate still said "reaches the resolve"). Reading the
-      // reason keeps this control correct as the gate order changes.
-      const preBlockReasons = ['flag-off', 'viewer-ineligible'];
-      const reachesTheResolve = ssr.allowed || !preBlockReasons.includes(ssr.reason);
+      // 🔴 THIS CONTROL HAS NOW BEEN WRONG TWICE, IN OPPOSITE WAYS, AND BOTH FAILURES
+      // ARE WORTH KEEPING ON THE RECORD — because each was caused by a change to the
+      // gate order, which is precisely what a seam test must survive.
+      //
+      //   v1 derived it from the FIXTURE (`flag on && viewer && !viewer.bannedAt`). That
+      //      broke when the authoritative viewer re-read was added BEFORE the block
+      //      resolve: a banned owner then refused without reading any pool, while the
+      //      fixture said it would.
+      //   v2 derived it from the RESULT (`reason not in ['flag-off','viewer-ineligible']`).
+      //      That broke when the same read MOVED to after the block resolve: a
+      //      DB-detected `viewer-ineligible` now does read the block first, so the reason
+      //      alone stopped distinguishing the two viewer gates.
+      //
+      // The durable form is neither: it asks the only question that actually decides the
+      // matter — CAN ANY GATE REFUSE BEFORE THE BLOCK READ? Today exactly two can, and
+      // both are FREE (no query): the flag, and the SESSION pre-filter. Every DB-backed
+      // gate, including the authoritative viewer re-read, necessarily runs after. So this
+      // is derived from the two fixture facts those two gates read, and nothing else.
+      const sessionViewer = s.viewer as { bannedAt?: Date; deletedAt?: Date } | undefined;
+      const refusedByAFreeGate =
+        (s.flag ?? true) === false ||
+        sessionViewer == null ||
+        sessionViewer.bannedAt !== undefined ||
+        sessionViewer.deletedAt !== undefined;
+      const reachesTheResolve = !refusedByAFreeGate;
       if (reachesTheResolve) {
         expect(mockDb.appBlock.findFirst, 'the SSR call must read the REPLICA').toHaveBeenCalled();
         expect(

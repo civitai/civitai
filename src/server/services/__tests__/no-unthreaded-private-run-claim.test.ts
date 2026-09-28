@@ -345,7 +345,14 @@ describe('the private-run claim is threaded to every money call site', () => {
     }
 
     const keyBuilder = region('function privateRunBuzzCapKey');
-    expect(keyBuilder).toContain('REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP');
+    // 🔴 THE *RETURN EXPRESSION*, NOT JUST THE REGION. The region slice begins after the
+    // function name and therefore includes the RETURN-TYPE ANNOTATION, which itself
+    // names the constant — so a bare `toContain` on the region was satisfied by the
+    // annotation rather than by the key actually built. A mutant pointing the key at a
+    // third namespace passed it. Pinning the template literal is what closes that.
+    expect(keyBuilder).toContain(
+      '`${REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP}:${userId}:${appBlockId}`'
+    );
     // 🔴 And NOT the review cap's namespace — the discriminating half.
     expect(keyBuilder).not.toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
 
@@ -378,25 +385,39 @@ describe('the private-run claim is threaded to every money call site', () => {
   it('[REG] a signed private-run token EXPIRES on the 900s default, not the dev 4h', async () => {
     // The behavioural half, and the one the vacuous version was pretending to be. Signs
     // a real token through the real signer and reads the returned `expiresAt`.
-    const before = Date.now();
-    const res = await BlockTokenService.sign({
-      userId: 991,
-      blockId: 'lifetime-fixture',
-      appId: 'appblk-lifetime-fixture',
-      appBlockId: 'apb_lifetime',
-      blockInstanceId: 'page_apb_lifetime',
-      scopes: ['user:read:self'],
-      ctx: { slotId: 'app.page', entityType: 'none' },
-      privateRun: true,
-      privateRunAudience: 'moderator',
-    });
-    const ttlSeconds = Math.round((new Date(res.expiresAt).getTime() - before) / 1000);
-    // Allow a couple of seconds of clock/IO slack, and bound it on BOTH sides — an
-    // upper bound alone would pass for a 5s token, a lower bound alone for the dev 4h.
-    expect(ttlSeconds).toBeGreaterThanOrEqual(895);
-    expect(ttlSeconds).toBeLessThanOrEqual(905);
-    // 🔴 THE DISCRIMINATING ASSERTION: nowhere near the dev lifetime.
-    expect(ttlSeconds).toBeLessThan(BLOCK_TOKEN_LIFETIMES_SECONDS.dev);
+    // 🔴 ALL THREE AUDIENCES, because the lifetime selector could branch on ONE of them.
+    // The first version signed `'moderator'` only, so a mutant reading
+    // `privateRunAudience === 'owner' ? dev : default` would have survived — the
+    // structural guard this replaced made a claim about the WHOLE claim, so the
+    // behavioural replacement has to cover every value it can take.
+    for (const audience of ['owner', 'editor', 'moderator'] as const) {
+      const res = await BlockTokenService.sign({
+        userId: 991,
+        blockId: 'lifetime-fixture',
+        appId: 'appblk-lifetime-fixture',
+        appBlockId: 'apb_lifetime',
+        blockInstanceId: 'page_apb_lifetime',
+        scopes: ['user:read:self'],
+        ctx: { slotId: 'app.page', entityType: 'none' },
+        privateRun: true,
+        privateRunAudience: audience,
+      });
+      // 🔴 `exp - iat` FROM THE TOKEN, NOT wall-clock against `Date.now()`. The first
+      // version measured `expiresAt - before` and bounded it to [895, 905] — ~5s of
+      // slack on a pool whose own config documents 9–16s cold transforms under
+      // contention, i.e. a flake waiting to happen that bought nothing the
+      // discriminating assertion below does not already buy. The two claims in the
+      // token are exact.
+      const [, payload] = res.token.split('.');
+      const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+        iat: number;
+        exp: number;
+      };
+      const ttlSeconds = claims.exp - claims.iat;
+      expect(ttlSeconds, `audience=${audience}`).toBe(BLOCK_TOKEN_LIFETIMES_SECONDS.default);
+      // THE DISCRIMINATING ASSERTION: nowhere near the dev lifetime.
+      expect(ttlSeconds).toBeLessThan(BLOCK_TOKEN_LIFETIMES_SECONDS.dev);
+    }
   });
 
   it('[REG] the router threads the claim exactly as many times as there are governed call sites', () => {

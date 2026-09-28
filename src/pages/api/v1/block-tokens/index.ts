@@ -906,10 +906,13 @@ async function tryPrivateRunMint(args: {
   // relisted or freshly-seated row cannot be read through a replication-lag window in
   // either direction; the whole mint reads the primary for this reason.
   //
-  // 🔴 SOFT-DELETE / BAN ARE RE-READ FROM THE DATABASE INSIDE THE PREDICATE'S VIEWER
-  // LEG ONLY AS FAR AS THE SESSION CARRIES THEM, so the explicit `dbWrite` re-read
-  // PHASE 2 performs is kept here too, below, for M1 parity — a session that survived
-  // a soft-delete must not mint.
+  // 🔴 SOFT-DELETE / BAN ARE RE-READ FROM THE PRIMARY *INSIDE* THE PREDICATE, and this
+  // branch therefore performs NO copy of its own — see the note where PHASE 2's copy
+  // used to be, below. (This comment said the re-read was "kept here too, below" for one
+  // commit after the read had moved; two comments in one function then gave opposite
+  // instructions, and the stale one was the first a reader hit while looking for the
+  // check. Corrected rather than deleted, because the property it describes — a session
+  // that survived a soft-delete must not mint — is still the requirement.)
   const { resolvePrivateRunAccess } = await import(
     '~/server/services/blocks/private-run-access.service'
   );
@@ -941,8 +944,17 @@ async function tryPrivateRunMint(args: {
     // exactly this reason, and the two surfaces taking opposite decisions on the same
     // enumerable input is what review caught.
     //
-    // Every OTHER reason is logged, because each of them means a real app was resolved
-    // and a real gate refused a real viewer — which is the abuse-investigation question.
+    // Every OTHER reason is logged. ⚠️ AND THE JUSTIFICATION FOR THAT IS NARROWER THAN
+    // THIS COMMENT FIRST CLAIMED — it said "each of them means a real app was resolved
+    // and a real gate refused a real viewer", which is FALSE for `no-app`, `approved`
+    // and `not-a-page`: `no-app` is produced for any `page_<garbage>` id and is
+    // therefore the highest-volume enumerable reason after `flag-off`.
+    //
+    // It is still the right call, for a different reason: `no-app` at volume is exactly
+    // how you would DETECT enumeration, so it earns its lines in a way `flag-off` never
+    // did. The bound is the per-IP limit (the per-(subject,instance) bucket keys on the
+    // instance id, so a prober rotating ids never exhausts it). If that volume ever
+    // matters, SAMPLE `no-app` rather than dropping it — dropping it removes the signal.
     //
     // 🔴 A SEPARATE EVENT NAME FROM THE GRANT, NOT `outcome` ON ONE NAME. Two reasons,
     // and the second is the one that decided it. (a) A log store can then count

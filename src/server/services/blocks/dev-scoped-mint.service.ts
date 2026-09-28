@@ -485,11 +485,10 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * publishing a real, feed-visible, reward-earning Post under the REVIEWING MODERATOR'S
  * byline.
  *
- * 🔴 THE CEILING IS THEREFORE DERIVED FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`,
- * NOT INVENTED. That set is the repo's already-reviewed answer to the structurally
- * identical question — a non-owner running someone else's non-approved app against
- * their own session — and its written reasoning transfers verbatim, in particular for
- * the scope this feature most needed excluded:
+ * 🔴 THE CEILING IS DERIVED FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`, NOT
+ * INVENTED — that set is the repo's already-reviewed answer to the structurally
+ * identical question, a non-owner running someone else's non-approved app against their
+ * own session. Its reasoning is what excludes the scope this feature most needed gone:
  *
  *   `posts:write:self` — "PUBLIC, feed-visible, reward-earning content published under
  *   the REVIEWING MOD'S name. The run-for-real gate consents the mod to SPEND their own
@@ -498,18 +497,49 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  *
  * A private run is that case on an app already taken down, i.e. strictly stronger
  * grounds. Deriving rather than copying means a future tightening of the review set
- * tightens this one too, and a `satisfies` check below pins the containment so the two
- * cannot drift apart silently.
+ * tightens this one too; the containment is pinned by a runtime assertion in
+ * `__tests__/private-run-scope-clamp.test.ts` (there is no `satisfies` check — an
+ * earlier version of this paragraph claimed one, which would have sent a reader looking
+ * for a compile-time guard that does not exist and away from the test that IS the guard).
  *
- * ── THE TWO DELIBERATE SUBTRACTIONS ─────────────────────────────────────────────
- * `apps:storage:read` and `apps:storage:write` are in the review set and are REMOVED
- * here. They function under run-for-real ONLY because `resolveStorageContext` resolves a
- * disposable, per-publish-request `apprev_<pubreq>` schema for a token carrying the
- * signed `reviewRunForReal` claim. It grants no such exemption for `privateRun`, so on
- * this surface a storage call would resolve against the REAL app schema or refuse
- * outright — and granting a scope whose proc then refuses it is worse than not granting
- * it, because the block's UI offers a control that cannot work. (Net effect is unchanged
- * from the tunnel ceiling, which also excludes both.)
+ * ⚠️ AND THE REASONING DOES **NOT** TRANSFER WHOLESALE — this paragraph used to say
+ * "transfers verbatim", which was the wrong claim and the one a future reader would have
+ * relied on. `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` is selected ONLY when a
+ * moderator explicitly OPTS IN per preview (`runForReal === true`), behind a loud
+ * consent dialog; its default sibling `REVIEW_MINT_SCOPE_ALLOWLIST` is narrower. This
+ * surface has NO opt-in — the banner is a notice, not a gate, and the mint replies
+ * `needsConsent: false`. So each member has to be justified on ITS OWN terms, and two
+ * of them are not justified by the review set at all:
+ *
+ *   - `ai:write:budgeted` is kept because an OPERATOR DECISION grants moderators "full
+ *     parity including capped spend" so they can reproduce generation-path abuse on a
+ *     takedown. That is a ratified decision, not an inherited one, and it is bounded by
+ *     a self-bound `sub`, the per-call `DEV_BUZZ_BUDGET_CAP` and the per-(viewer, app)
+ *     `PRIVATE_RUN_BUZZ_CAP`. Editors are stripped of it at step 3.
+ *   - `buzz:read:self` is NOT kept — see the subtractions below.
+ *
+ * ── THE THREE DELIBERATE SUBTRACTIONS ───────────────────────────────────────────
+ * `apps:storage:read` / `apps:storage:write` function under run-for-real ONLY because
+ * `resolveStorageContext` resolves a disposable, per-publish-request `apprev_<pubreq>`
+ * schema for a token carrying the signed `reviewRunForReal` claim. It grants no such
+ * exemption for `privateRun`, so here a storage call would resolve against the REAL app
+ * schema or refuse outright — and granting a scope whose proc then refuses it is worse
+ * than not granting it, because the block's UI offers a control that cannot work. (Net
+ * effect unchanged from the tunnel ceiling, which also excludes both.)
+ *
+ * 🔴 `buzz:read:self` IS SUBTRACTED TOO, AND THIS ONE IS A REVIEW FINDING RATHER THAN A
+ * MECHANICAL CARRY-OVER. It is a consent-gated SENSITIVE scope on the public path, and
+ * the DEFAULT review allowlist withholds it in this repo's own words: "Deliberately
+ * WITHHELD from the mod-review sandbox (a mod previewing another author's app must not
+ * leak the mod's own balance)." That sentence describes this surface exactly. The
+ * run-for-real set re-adds it only alongside the opt-in that makes spending explicit,
+ * and there is no opt-in here — so a taken-down app would read the reviewer's own
+ * balance and ledger for the price of a page load.
+ *
+ * The cost of subtracting it is a block whose generation UI cannot display a balance.
+ * That failure is VISIBLE and reportable ("it can't show my Buzz"), which is the same
+ * reason the editor read-only decision was judged safe to take first — and re-adding a
+ * read scope later is one line, while un-granting one after it has shipped is not.
  *
  * ── ONE AUDIENCE-BLIND SET, NOT THREE ───────────────────────────────────────────
  * The OWNER gets this same narrow ceiling, even though the dev-tunnel precedent would
@@ -520,10 +550,17 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  * most likely to be got wrong later. The only audience-conditional rule on this surface
  * is the single `ai:write:budgeted` strip for an editor, in `clampPrivateRunScopes`.
  */
+const PRIVATE_RUN_SUBTRACTED_SCOPES: ReadonlySet<string> = new Set([
+  // Only usable under the review sandbox's disposable preview schema.
+  'apps:storage:read',
+  'apps:storage:write',
+  // Consent-gated, and withheld by the DEFAULT review allowlist for a reason that
+  // describes this surface verbatim. See the docblock above.
+  'buzz:read:self',
+]);
+
 export const PRIVATE_RUN_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set(
-  [...REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST].filter(
-    (s) => s !== 'apps:storage:read' && s !== 'apps:storage:write'
-  )
+  [...REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST].filter((s) => !PRIVATE_RUN_SUBTRACTED_SCOPES.has(s))
 );
 
 /**

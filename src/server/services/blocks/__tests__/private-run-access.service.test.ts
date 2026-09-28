@@ -85,13 +85,20 @@ function blockRow(over: Record<string, unknown> = {}) {
     status: 'suspended',
     // 🔴 A REAL `page.path`. `manifestDeclaresPage` requires a non-empty string path,
     // so `page: {}` would refuse for a reason this fixture does not intend to test.
+    // 🔴 `manifest.scopes` AND `approvedScopes` ARE DELIBERATELY DIFFERENT. They were
+    // identical, which made this fixture unable to see the single most important mutant
+    // on this surface: sourcing the clamp from the re-published MANIFEST instead of the
+    // moderator-approved SNAPSHOT. With both arrays equal that swap produces the same
+    // output and survives. The manifest here asks for MORE — the spend scope and a
+    // private read — than the snapshot grants, which is exactly the shape of a suspended
+    // publisher editing their manifest to widen their own private-run token.
     manifest: {
       name: 'Seed Explorer',
-      scopes: ['apps:storage:read'],
+      scopes: ['ai:write:budgeted', 'collections:read:private', 'models:read:self'],
       page: { path: '/', title: 'Seed' },
       iframe: { src: 'https://seed-explorer-fixture.civit.ai', sandbox: 'allow-scripts' },
     },
-    approvedScopes: ['apps:storage:read'],
+    approvedScopes: ['models:read:self'],
     trustTier: 'unverified',
     contentRating: 'g',
     currentVersionDeployedAt: new Date('2026-09-01'),
@@ -102,7 +109,27 @@ function blockRow(over: Record<string, unknown> = {}) {
 }
 
 /** Wire the block resolve + the seat resolve + the owner-ban read on BOTH pools. */
-function wire(opts: { block?: unknown; seatFor?: number | null; ownerBannedAt?: Date | null }) {
+function wire(opts: {
+  block?: unknown;
+  seatFor?: number | null;
+  /**
+   * The seat row's STORED status. Defaults to `'accepted'`.
+   *
+   * ⚠️ THIS FIELD WAS READ AND PASSED WITHOUT BEING DECLARED, AND IT SHIPPED GREEN.
+   * `tsconfig.json` excludes `src/**` `__tests__` directories, so `pnpm typecheck` is
+   * structurally blind to this file, and vitest strips types rather than checking them.
+   * `tsc --strict` on the same shape reports TS2339 on the read and TS2353 on the call
+   * site.
+   *
+   * It is not cosmetic. `seatStatus` is the field that makes the PENDING and REJECTED
+   * rows non-vacuous — a typo (`seatStaus`) silently restores `stored = 'accepted'` for
+   * both, and they then pass against a clamp with the `status: ACCEPTED` filter deleted,
+   * which is exactly the state that fix was made to leave behind. An undeclared field is
+   * a typo with no detector.
+   */
+  seatStatus?: string;
+  ownerBannedAt?: Date | null;
+}) {
   for (const db of [mockDb, mockWriteDb]) {
     db.appBlock.findFirst.mockResolvedValue(opts.block === undefined ? blockRow() : opts.block);
     // `resolveAppAccess` reads the block by id, then the seat.

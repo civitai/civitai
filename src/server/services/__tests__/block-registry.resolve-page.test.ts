@@ -380,6 +380,12 @@ describe('BlockRegistry.resolvePrivateRunPageBlock — the projection [REG]', ()
     expect(call?.select?.approvedScopes).toBe(true);
     expect(call?.select?.status).toBe(true);
     expect(call?.select?.app).toBeTruthy();
+    // The last two, because the title says EVERY column and it previously checked six.
+    expect(call?.select?.manifest).toBe(true);
+    expect(call?.select?.appListing).toBeTruthy();
+    // Positive control on the assertion shape: a column the surface does NOT gate on is
+    // absent, so `toBeTruthy()` above is not passing on an all-true object.
+    expect(call?.select?.deletedAt).toBeUndefined();
   });
 
   it('projects the manifest fields the host needs, with the strict bootSkeleton rule', async () => {
@@ -431,6 +437,63 @@ describe('BlockRegistry.resolvePrivateRunPageBlock — the projection [REG]', ()
     // A dangling owner becomes `null`, which the predicate can only pair with `no-role`.
     expect(res.block.ownerUserId).toBeNull();
     expect(res.block.listingStatus).toBeNull();
+  });
+
+  it('🔴 projects the sandbox from the MANIFEST, at a value the fixture default cannot be', async () => {
+    // ⚠️ THE ONLY SANDBOX ASSERTION IN THIS DESCRIBE USED TO BE THE FIXTURE'S OWN
+    // DEFAULT, so a mutant hardcoding that exact string in the resolver survived — the
+    // fixture could not produce a value the constant cannot equal. `sandbox` is the
+    // iframe's actual containment attribute, so it deserves the two-sided treatment
+    // `trustTier` already gets. This row feeds a DISTINCT value and watches it through.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          iframe: { src: 'https://x.civit.ai', sandbox: 'allow-scripts' },
+        },
+      })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok && res.block.sandbox).toBe('allow-scripts');
+    // A second, different value — so the assertion cannot be satisfied by any constant.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          iframe: { src: 'https://x.civit.ai', sandbox: 'allow-scripts allow-popups' },
+        },
+      })
+    );
+    const res2 = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res2.ok && res2.block.sandbox).toBe('allow-scripts allow-popups');
+  });
+
+  it('projects name, pageTitle and the DECLARED manifest scopes', async () => {
+    // Also previously unasserted. `scopes` is the interesting one: it is the manifest's
+    // DECLARED set, which is deliberately NOT the clamp's source — so the resolver must
+    // surface it for the host's BLOCK_INIT while the token comes from `approvedScopes`.
+    // Feeding the two differently is what makes that distinction visible here.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          name: 'Private Fixture',
+          scopes: ['ai:write:budgeted', 'models:read:self'],
+          page: { path: '/', title: 'Diagnostics' },
+        },
+        approvedScopes: ['models:read:self'],
+      })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.block.name).toBe('Private Fixture');
+    expect(res.block.pageTitle).toBe('Diagnostics');
+    expect(res.block.scopes).toEqual(['ai:write:budgeted', 'models:read:self']);
+    // 🔴 AND THE TWO ARE DISTINCT — the snapshot is narrower than the declaration, so a
+    // resolver that returned one where the other belongs is visible.
+    expect(res.block.approvedScopes).toEqual(['models:read:self']);
+    expect(res.block.scopes).not.toEqual(res.block.approvedScopes);
   });
 
   it('extracts sandbox independently of iframe.src being a string (#7 parity)', async () => {

@@ -62,7 +62,15 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
     // The fixture now FEEDS each scope in and watches it be dropped, which is the only
     // form of this assertion that can fail. Per audience, because the hazard is
     // audience-shaped.
+    // 🔴 THE LIST COVERS *BOTH* DIFFERENCES, AND THE SECOND HALF WAS MISSING.
+    // The first seven are `TUNNEL \ PRIVATE_RUN` — the scopes the original bug leaked.
+    // But the most plausible single-token regression is not re-adding the tunnel
+    // ceiling; it is swapping the allowlist argument to the set this one is DERIVED
+    // from. That mutant survived the whole file, because none of those seven is in the
+    // REVIEW set either. The last three are `REVIEW \ PRIVATE_RUN` — the deliberate
+    // subtractions — and they are what makes the derivation itself testable.
     const hostile = [
+      // TUNNEL \ PRIVATE_RUN — the original leak.
       'posts:write:self',
       'collections:write:self',
       'collections:read:private',
@@ -70,6 +78,13 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
       'goods:purchase:self',
       'apps:storage:shared:read',
       'apps:storage:shared:write',
+      // REVIEW \ PRIVATE_RUN — the three subtractions. Storage functions only under the
+      // review sandbox's disposable schema, and `buzz:read:self` is consent-gated and
+      // withheld by the DEFAULT review allowlist for a reason that names this surface.
+      'apps:storage:read',
+      'apps:storage:write',
+      'buzz:read:self',
+      // The survivor, i.e. the positive control.
       'models:read:self',
     ];
     for (const audience of ['owner', 'editor', 'moderator'] as const) {
@@ -103,6 +118,28 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
     expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('apps:storage:read')).toBe(true);
     // Non-empty, or every assertion above is vacuous.
     expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.size).toBeGreaterThan(2);
+  });
+
+  it('🔴 [REG] swapping the allowlist to the set it DERIVES from is caught', () => {
+    // The one-token regression the first version of this file could not see: change
+    // `allowlist: PRIVATE_RUN_MINT_SCOPE_ALLOWLIST` to
+    // `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` and every earlier assertion still
+    // passed, because they only tested the TUNNEL difference. These three are the
+    // subtractions, so they are the only scopes that can distinguish the derived set
+    // from its source — which makes them the whole value of the derivation.
+    for (const audience of ['owner', 'editor', 'moderator'] as const) {
+      const granted = clampPrivateRunScopes(
+        ['apps:storage:read', 'apps:storage:write', 'buzz:read:self'],
+        audience
+      );
+      expect(granted, `audience=${audience}`).toEqual(['user:read:self']);
+    }
+    // …and the REVIEW set really does grant them, so the row above is a real difference
+    // rather than two empty sets agreeing.
+    for (const s of ['apps:storage:read', 'apps:storage:write', 'buzz:read:self']) {
+      expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(true);
+      expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has(s), s).toBe(false);
+    }
   });
 
   it('🔴 [REG] it is NOT the author-facing tunnel ceiling — the two must differ', () => {

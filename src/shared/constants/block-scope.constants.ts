@@ -306,7 +306,66 @@ export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
  * leave unnoticed). `PRIVATE_RUN_AUDIENCES` stays the runtime membership source, and the
  * lockstep test below pins the two against each other so they cannot drift.
  */
-export type PrivateRunAudience = AppRole | 'moderator';
+export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
+
+/**
+ * 🔴 `AppRole` MUST REMAIN A SUBSET OF `PrivateRunAudience`, ASSERTED AT COMPILE TIME.
+ *
+ * ⚠️ THE TYPE WAS BRIEFLY DECLARED AS `AppRole | 'moderator'` INSTEAD, AND THAT WAS
+ * UNSOUND IN THE DANGEROUS DIRECTION — review caught it. Decoupling the type from the
+ * tuple bought a compile error when `AppRole` GREW, and paid for it by making
+ * `isPrivateRunAudience`'s `value is PrivateRunAudience` predicate a LIE: it tests
+ * membership of the tuple, so adding a fourth member to the TUPLE alone made the guard
+ * admit a value the type says cannot exist. Nothing type-errored — the narrowing at the
+ * verifier laundered it — and downstream `=== 'editor'` is false for the new value, so
+ * it would have received owner/moderator power with full spend. That is verbatim the
+ * failure the decoupling was introduced to prevent, one direction over.
+ *
+ * So the type is DERIVED from the tuple again (the predicate is sound by construction),
+ * and the `AppRole`-growth property is bought separately by this assignability
+ * assertion, which costs one unused type and no runtime bytes. Both directions are now
+ * compile-time:
+ *   - `AppRole` grows  → this line errors (the new role is not in the tuple).
+ *   - the tuple grows  → `PRIVATE_RUN_AUDIENCE_WITNESS` below errors, and the runtime
+ *     lockstep test compares the two.
+ */
+type _AppRoleIsAPrivateRunAudience = AppRole extends PrivateRunAudience ? true : never;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _appRoleSubsetWitness: _AppRoleIsAPrivateRunAudience = true;
+
+/**
+ * The BIDIRECTIONAL LOCKSTEP between the type and the tuple.
+ *
+ * ⚠️ THE DOCBLOCK ABOVE CLAIMED "the lockstep test below pins the two against each
+ * other" BEFORE THIS EXISTED. That was a comment asserting a guarantee nothing provided
+ * — the one class of defect this feature's review found most of — so it is made true
+ * here rather than softened. It matters because the two can drift in BOTH directions and
+ * only one of them is loud:
+ *
+ *   - `AppRole` grows (it gains a third role): the tuple no longer covers it, so
+ *     `isPrivateRunAudience` would REJECT a legitimate audience. Caught by
+ *     `_appRoleSubsetWitness` above, not by this literal — since the type is derived from
+ *     the tuple, this literal's keys move with the tuple and cannot see that case.
+ *   - The TUPLE grows without the type: `isPrivateRunAudience` starts ADMITTING a value
+ *     the type says cannot exist, which is the unsafe direction — the verifier lets it
+ *     through and the read-only belt's `=== 'editor'` silently treats it as an owner.
+ *     Caught by the runtime assertion in `block-scope.private-run-claims.test.ts`, which
+ *     compares the tuple against these keys.
+ *
+ * 🔴 IT LIVES IN PRODUCTION CODE, NOT IN A TEST, AND THAT PLACEMENT IS THE POINT.
+ * `tsconfig.json` EXCLUDES `src/**` `__tests__` directories, so a compile-time
+ * exhaustiveness witness written in the sibling test file would never be typechecked and
+ * would provide exactly nothing. Here it is checked by `pnpm typecheck` on every run.
+ *
+ * Exported so the test can compare against it rather than hand-copying the members —
+ * a hand-copied expectation is how the first version of the matrix's completeness check
+ * went stale.
+ */
+export const PRIVATE_RUN_AUDIENCE_WITNESS: Record<PrivateRunAudience, true> = {
+  owner: true,
+  editor: true,
+  moderator: true,
+};
 
 /**
  * Membership test for the `privateRunAudience` token claim.

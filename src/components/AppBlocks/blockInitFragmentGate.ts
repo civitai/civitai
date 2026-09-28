@@ -103,6 +103,16 @@ export type BlockHostSurface =
  * this change must not alter it; naming it is what makes it fixable. `null` is reserved
  * for a surface that should drop the navigation instead, which is probably what the dev
  * tunnel and the review preview both want.
+ *
+ * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
+ * assumed, because the ternary this replaced gave every non-private surface
+ * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
+ * production: its three production mounts are the public run route, the private run
+ * route and `/apps/dev/<blockId>`. The model slot is `IframeHost`, a SEPARATE component
+ * with its own message handlers, which uses the string only to call
+ * `blockInitFragmentEnabled` directly. So this entry is unreachable today, and `null` is
+ * the honest value — a model slot has no page route to deep-link into, so inheriting the
+ * public run base would have been meaningless rather than merely unused.
  */
 export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> = {
   'model-slot': null,
