@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import type { TextScanFlags } from '~/server/services/text-scan/flag-snapshot';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
@@ -308,8 +309,8 @@ export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boole
 
 export type MinorFlagSnapshot = {
   at: string;
-  source: 'auto' | 'manual';
-  confirmedFrom?: 'auto' | 'manual';
+  source: 'auto' | 'manual' | 'text-scan';
+  confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
   prevNsfw?: boolean;
@@ -364,6 +365,7 @@ export type ModelMeta = Partial<{
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  textScanFlags: TextScanFlags;
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean | null;
