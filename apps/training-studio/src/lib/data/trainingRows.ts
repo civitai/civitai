@@ -1,8 +1,11 @@
 import type { Workflow, WorkflowStatus } from '@civitai/client';
 import {
+  cardByAirEcosystem,
   cardByEcosystem,
   cardByType,
   findByAir,
+  isMedia,
+  mediaCount,
   versionSuffix,
   type Media,
 } from './trainingModels';
@@ -55,6 +58,7 @@ export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot
 export interface TrainingRow {
   /** Orchestrator workflow id — the handle for reconnect/open. Absent only for sample rows. */
   workflowId?: string;
+  createdAt?: string;
   name: string;
   base: string;
   code: string;
@@ -216,7 +220,8 @@ function resolveWorkflow(w: Workflow) {
   const card =
     byAir?.card ??
     (meta.cardType ? cardByType(meta.cardType) : undefined) ??
-    (input.ecosystem ? cardByEcosystem(input.ecosystem) : undefined);
+    (input.ecosystem ? cardByEcosystem(input.ecosystem) : undefined) ??
+    (input.model ? cardByAirEcosystem(input.model) : undefined);
   const version = byAir?.version ?? card?.versions.find((v) => v.key === meta.versionKey);
 
   return {
@@ -227,7 +232,9 @@ function resolveWorkflow(w: Workflow) {
     progress,
     startedAt: (step as { startedAt?: string | null } | undefined)?.startedAt ?? undefined,
     completedAt: (step as { completedAt?: string | null } | undefined)?.completedAt ?? undefined,
-    media: card?.media ?? 'image',
+    // The studio stamps the chosen media, so it wins over the card; the 'image' default is only for a
+    // foreign run no catalog lookup could place.
+    media: isMedia(meta.media) ? meta.media : card?.media ?? 'image',
     base: card
       ? `${card.name}${
           versionSuffix(card.name, version?.label)
@@ -290,7 +297,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
 
   const epochCount = output.epochs?.length ?? input.epochs;
   const parts: string[] = [];
-  if (typeof meta.imageCount === 'number') parts.push(`${meta.imageCount} images`);
+  if (typeof meta.imageCount === 'number') parts.push(mediaCount(meta.imageCount, media));
   if (epochCount) parts.push(`${epochCount} epochs`);
   if (meta.loraType) parts.push(meta.loraType);
 
@@ -309,6 +316,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
 
   return {
     workflowId: w.id,
+    createdAt: w.createdAt,
     name,
     base,
     code,
@@ -483,7 +491,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     base: 'Flux · Dev',
     code: 'FL',
     state: 'ready',
-    sub: '12 images · character',
+    sub: `${mediaCount(12, 'image')} · character`,
     progressPct: 0,
     progress: '',
     sampleUrls: [],
@@ -495,7 +503,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     base: 'SDXL · Standard',
     code: 'XL',
     state: 'training',
-    sub: '28 images · style',
+    sub: `${mediaCount(28, 'image')} · style`,
     progressPct: 62,
     progress: 'step 5,120 / 8,400 · checkpoint 6/10',
     sampleUrls: [],
@@ -507,7 +515,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     base: 'SDXL · Pony',
     code: 'XL',
     state: 'published',
-    sub: '40 images · 1.2k downloads',
+    sub: `${mediaCount(40, 'image')} · 1.2k downloads`,
     progressPct: 0,
     progress: '',
     sampleUrls: [],
