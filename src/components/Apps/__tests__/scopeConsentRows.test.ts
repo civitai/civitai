@@ -298,6 +298,123 @@ describe('buildScopeConsentRows', () => {
   });
 
   /**
+   * 🔴 THE REAL PRODUCTION SHAPE, AND THE SENTENCE IT USED TO PRODUCE WAS FALSE ABOUT 10 REAL
+   * USERS. Measured on the production primary 2026-09-28: `revoked_scopes` and
+   * `revoked_scopes_at` do NOT exist in the `civitai` database, and **21 of 41** grant rows
+   * (51%, across 10 users and 11 apps, every one stamped 2026-09-17) carry
+   * `revoked_at IS NOT NULL AND array_length(granted_scopes,1) > 0` — the
+   * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` shape, whose `UPDATE` sets
+   * `revoked_at = now()` and deliberately leaves `granted_scopes` intact to keep the audit trail.
+   *
+   * So the surface reports `grantedScopes: []` (`liveGrantedScopes` collapses on `revoked_at`)
+   * while `revokableScopes` is the app's full consent-gated set, and `revokedScopes` is `[]`
+   * because the column cannot be read. Every gated row therefore landed in `not-granted` and
+   * rendered "Not granted yet — the app will ask if it needs this." for permissions those viewers
+   * DID grant. The control was right and the sentence was a lie.
+   *
+   * 🔴 `withheld` IS A DISTINCT STATE, NOT A REUSE, because none of the four existing ones is
+   * true here: `revokable` would offer a control the server refuses; `revoked` says the viewer
+   * withdrew it (an operator did); `fixed` says the platform granted it and enforces it
+   * server-side; `not-granted` says they never gave it. `unknown` would be silence about a fact
+   * we know.
+   *
+   * MUTATION THAT MUST KILL IT: drop the `withheld` arm from `buildScopeConsentRows`' ladder, or
+   * stop threading `grantWithheldAt`.
+   */
+  test('🔴 PRODUCTION SHAPE: a withheld whole grant is `withheld`, not `not-granted`', () => {
+    const rows = buildScopeConsentRows({
+      // An app declaring three gated scopes…
+      scopes: ['ai:write:budgeted', 'posts:write:self'],
+      // …no per-scope suppression readable, because the column does not exist…
+      revokedScopes: [],
+      revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
+      // …an EMPTY live granted set, because `revoked_at` collapses it…
+      grantedScopes: [],
+      // …and the whole-grant flag, which IS on the production schema today.
+      grantWithheldAt: new Date('2026-09-17T12:00:00Z'),
+    });
+    expect(
+      rows,
+      'a withheld whole grant rendered as never-granted. 21 of 41 production grant rows are this ' +
+        'shape, across 10 users: the viewer DID grant these and an operator reset them, so ' +
+        '"Not granted yet" is false about their own consent history.'
+    ).toEqual([
+      { scope: 'ai:write:budgeted', state: 'withheld' },
+      { scope: 'posts:write:self', state: 'withheld' },
+    ]);
+  });
+
+  /**
+   * 🔴 `fixed` STILL WINS OVER `withheld`, AND THIS IS THE ORDERING THE NEW STATE COULD BREAK.
+   * `revoked_at` does NOT withhold a `CONSENT_EXEMPT_SCOPES` member: `partitionByConsent` signs an
+   * exempt scope on the exempt test ALONE, before it ever consults the grant, so such a scope is
+   * still live on a withheld row and its own server-side gates are still what govern it. Labelling
+   * it `withheld` would tell the viewer a permission is on hold when the app can use it right now —
+   * false in the dangerous direction on a consent surface.
+   *
+   * MUTATION THAT MUST KILL IT: move the `withheld` test above the `!revokable.has(scope)` test.
+   */
+  test('🔴 an EXEMPT scope on a withheld row stays `fixed` — exemption survives revoked_at', () => {
+    const rows = buildScopeConsentRows({
+      scopes: ['models:read:self', 'ai:write:budgeted'],
+      revokedScopes: [],
+      // Exempt scopes are excluded from `revokableScopes` server-side; the gated one is not.
+      revokableScopes: ['ai:write:budgeted'],
+      grantedScopes: [],
+      grantWithheldAt: new Date('2026-09-17T12:00:00Z'),
+    });
+    expect(
+      rows,
+      'an exempt scope was reported as on hold. `revoked_at` cannot withhold it — the mint signs ' +
+        'it on the exempt test alone — so the app can still use it and the note would be false.'
+    ).toEqual([
+      { scope: 'models:read:self', state: 'fixed' },
+      { scope: 'ai:write:budgeted', state: 'withheld' },
+    ]);
+  });
+
+  /**
+   * 🔴 `revoked` STILL WINS OVER `withheld`. On a MIGRATED database a viewer's own whole-grant
+   * revoke sets BOTH `revoked_at` and `revoked_scopes` (`revokeScopes`' `fullyRevoked` branch), so
+   * these two facts co-occur — and "You withdrew this" is the more specific and more useful of the
+   * two. Only a scope NOT in `revoked_scopes` is the reset shape.
+   *
+   * MUTATION THAT MUST KILL IT: move the `withheld` test above the `revoked.has(scope)` test.
+   */
+  test('🔴 a scope the viewer revoked stays `revoked` even on a withheld grant', () => {
+    const rows = buildScopeConsentRows({
+      scopes: ['ai:write:budgeted', 'posts:write:self'],
+      revokedScopes: ['posts:write:self'],
+      revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
+      grantedScopes: [],
+      grantWithheldAt: new Date('2026-09-17T12:00:00Z'),
+    });
+    expect(
+      rows,
+      'a permission the viewer withdrew was relabelled "on hold", which drops the only marker ' +
+        'that records their own action'
+    ).toEqual([
+      { scope: 'ai:write:budgeted', state: 'withheld' },
+      { scope: 'posts:write:self', state: 'revoked' },
+    ]);
+  });
+
+  /**
+   * THE CONTROL: the SAME fixture with the flag null is `not-granted`, which is what makes the
+   * arms above measure the flag rather than anything else about the shape.
+   */
+  test('CONTROL: without the withheld flag the same shape is `not-granted`', () => {
+    const rows = buildScopeConsentRows({
+      scopes: ['ai:write:budgeted'],
+      revokedScopes: [],
+      revokableScopes: ['ai:write:budgeted'],
+      grantedScopes: [],
+      grantWithheldAt: null,
+    });
+    expect(rows).toEqual([{ scope: 'ai:write:budgeted', state: 'not-granted' }]);
+  });
+
+  /**
    * 🔴 AN ABSENT `grantedScopes` IS `unknown`, NOT "granted nothing". The three viewer-side fields
    * arrive together or not at all (a pre-phase-2 pod during a rollout's mixed-version window sends
    * none of them), so coalescing a missing granted set to `[]` would turn every row of such a

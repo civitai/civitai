@@ -277,7 +277,11 @@ import { AppPermissionsActivityDrawer } from '~/components/AppBlocks/AppPermissi
 // eslint-disable-next-line import/first
 import { ScopeGrantsPanel } from '~/pages/apps/activity';
 // eslint-disable-next-line import/first
-import { FIXED_SCOPE_NOTES, SCOPE_NOT_GRANTED_NOTE } from '~/components/Apps/scopeConsentRows';
+import {
+  FIXED_SCOPE_NOTES,
+  SCOPE_NOT_GRANTED_NOTE,
+  SCOPE_WITHHELD_NOTE,
+} from '~/components/Apps/scopeConsentRows';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -1211,6 +1215,122 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
     ).toBe(SCOPE_NOT_GRANTED_NOTE);
   });
 });
+
+describe.each(SURFACES)(
+  'a WITHHELD whole grant — the production shape — $name',
+  ({ name, render }) => {
+    /**
+     * 🔴 THE 21-ROW SHAPE, RENDERED. Measured on the production primary 2026-09-28:
+     * `revoked_scopes` and `revoked_scopes_at` do not exist in the `civitai` database, and 21 of 41
+     * grant rows (51%, 10 users, 11 apps, all stamped 2026-09-17) carry `revoked_at` with
+     * `granted_scopes` intact — `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql`, which
+     * withholds the whole grant to force a fresh consent after `ai:write:budgeted`'s description
+     * widened.
+     *
+     * The surface reports `grantedScopes: []` (`liveGrantedScopes` collapses on `revoked_at`),
+     * `revokedScopes: []` (unreadable column) and the full gated set in `revokableScopes`. Before
+     * `grantWithheldAt` every gated row therefore rendered "Not granted yet — the app will ask if
+     * it needs this." for permissions those viewers DID grant.
+     */
+    const heldSince = '2026-09-17T18:12:00Z';
+    const withheldGrant = () => ({
+      ...GRANT,
+      grantedScopes: [],
+      revokedScopes: [],
+      scopesRevokedAt: null,
+      grantWithheldAt: heldSince,
+    });
+
+    beforeEach(() => {
+      m.grants = [withheldGrant()];
+    });
+
+    test('🔴 says ON HOLD, not "Not granted yet", and offers no control', async () => {
+      render();
+      await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+      const notes = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="scope-withheld-note"]')
+      );
+      expect(
+        notes.length,
+        `${name}: no row reported the hold — the viewer is told nothing about why their granted ` +
+          'permissions are inactive'
+      ).toBe(GRANT.revokableScopes.length);
+      // 🔴 THE WHOLE NORMALISED STRING, not a word in it — a guard on words is walkable by
+      // rewording, and this arc already shipped that mistake once this round.
+      for (const note of notes) {
+        expect((note.textContent ?? '').trim(), name).toBe(SCOPE_WITHHELD_NOTE);
+      }
+      // 🔴 AND THE FALSE SENTENCE IS GONE. This is the assertion the whole fix exists for.
+      expect(
+        document.body.textContent ?? '',
+        `${name}: still claims the viewer never granted these — the defect this state removes`
+      ).not.toContain(SCOPE_NOT_GRANTED_NOTE);
+      expect(
+        document.querySelectorAll('[data-testid="scope-not-granted-note"]'),
+        name
+      ).toHaveLength(0);
+      // No control: `getGrantedScopes` returns empty for a non-null `revoked_at`, so the server
+      // would refuse every one of them.
+      expect(
+        revokeButtons(),
+        `${name}: offered a Remove control on a withheld grant, which the server refuses`
+      ).toHaveLength(0);
+      // …and no "Removed" badge, which would assert the VIEWER withdrew them.
+      expect(
+        document.querySelectorAll('[data-testid="scope-revoked-mark"]'),
+        `${name}: claimed the viewer withdrew these — revoked_at has two writers and the client ` +
+          'cannot tell which stamped it'
+      ).toHaveLength(0);
+    });
+
+    test('🔴 carries the app-level hold line, DATED from revoked_at', async () => {
+      render();
+      await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+      const line = document.querySelector('[data-testid="scope-grant-withheld"]');
+      expect(
+        line,
+        `${name}: no app-level explanation for why every row says "on hold"`
+      ).not.toBeNull();
+      expect(line?.textContent ?? '', name).toContain('2026-09-17');
+      expect(line?.textContent ?? '', name).toContain('on hold');
+      // The withdrawal line must NOT appear: `revoked_scopes_at` is null on this shape, so claiming
+      // the viewer last removed something would be false.
+      expect(
+        document.querySelectorAll('[data-testid="scope-revoked-at"]'),
+        `${name}: printed a "you last removed a permission" line for a hold they did not cause`
+      ).toHaveLength(0);
+    });
+
+    test('🔴 the EXEMPT rows are untouched — exemption survives revoked_at', async () => {
+      render();
+      await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+      // `revoked_at` cannot withhold an exempt scope — the mint signs it on the exempt test alone —
+      // so those rows keep their own notes and must NOT be relabelled "on hold".
+      expect(
+        document.querySelectorAll('[data-testid="scope-fixed-note"]').length,
+        `${name}: the exempt rows lost their specific notes on a withheld grant`
+      ).toBe(EXEMPT_IN_FIXTURE.length);
+    });
+
+    test('CONTROL: the SAME fixture without the flag renders the not-granted sentence', async () => {
+      // Without this the arms above pass for a component that never renders `not-granted` at all —
+      // the reassuring-zero shape. One field is the only difference.
+      m.grants = [{ ...withheldGrant(), grantWithheldAt: null }];
+      render();
+      await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+      expect(document.querySelectorAll('[data-testid="scope-withheld-note"]'), name).toHaveLength(
+        0
+      );
+      expect(document.querySelectorAll('[data-testid="scope-not-granted-note"]').length, name).toBe(
+        GRANT.revokableScopes.length
+      );
+      expect(document.querySelectorAll('[data-testid="scope-grant-withheld"]'), name).toHaveLength(
+        0
+      );
+    });
+  }
+);
 
 /**
  * 🔴 THE SEAM — AND ITS SCOPE IS NARROWER THAN AN EARLIER DOCBLOCK HERE CLAIMED. That version said

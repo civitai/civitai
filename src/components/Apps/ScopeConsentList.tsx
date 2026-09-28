@@ -4,6 +4,7 @@ import { buildScopeConsentRows } from '~/components/Apps/scopeConsentRows';
 import {
   ScopeConsentAction,
   ScopeRevokeFailureNotice,
+  ScopeGrantWithheldLine,
   ScopeRevokedAtLine,
   useScopeRevoke,
 } from '~/components/Apps/scopeRevoke';
@@ -74,6 +75,13 @@ export type ScopeConsentGrant = {
    */
   grantedScopes?: string[];
   scopesRevokedAt?: Date | string | null;
+  /**
+   * `revoked_at` — the WHOLE-GRANT hold, a DIFFERENT column from `scopesRevokedAt`. Optional
+   * because a pre-4990 server does not send it, and absent is correctly read as "not on hold"
+   * rather than as `unknown`; see `buildScopeConsentRows`' parameter docblock for why this field
+   * degrades differently from the two above it.
+   */
+  grantWithheldAt?: Date | string | null;
 };
 
 export function ScopeConsentList({
@@ -138,6 +146,11 @@ export function ScopeConsentList({
     // every row of a pre-phase-2 payload into a false statement about their own consent instead
     // of the `unknown` silence. Passed through, exactly like `revokableScopes`.
     grantedScopes: grant?.grantedScopes,
+    // 🔴 THE ONLY THING THAT SEPARATES "you granted this and it is on hold" FROM "you never granted
+    // this" — both report `grantedScopes: []`. Without it this list printed "Not granted yet" over
+    // 21 production rows across 10 users. Unlike the two fields above, absent means "not on hold",
+    // not `unknown`.
+    grantWithheldAt: grant?.grantWithheldAt,
   });
   const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
 
@@ -167,6 +180,10 @@ export function ScopeConsentList({
           ),
         }}
       />
+      {/* 🔴 BEFORE the revoked-at line, deliberately: the hold governs EVERY row on the card while
+          `scopesRevokedAt` is about one past action, and on a migrated database both can be true at
+          once. See `ScopeGrantWithheldLine`. */}
+      <ScopeGrantWithheldLine grantWithheldAt={grant?.grantWithheldAt ?? null} />
       {/* App-level, once — NOT per row. `scopesRevokedAt` is one timestamp for the whole (user,
           app) pair, so printing it beside an individual scope would be wrong for every revoke but
           the latest. The rule and its reasoning live on `ScopeRevokedAtLine`. */}

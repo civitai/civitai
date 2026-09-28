@@ -2,7 +2,11 @@ import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
-import { fixedScopeNote, SCOPE_NOT_GRANTED_NOTE } from '~/components/Apps/scopeConsentRows';
+import {
+  fixedScopeNote,
+  SCOPE_NOT_GRANTED_NOTE,
+  SCOPE_WITHHELD_NOTE,
+} from '~/components/Apps/scopeConsentRows';
 import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
@@ -499,6 +503,29 @@ export function ScopeConsentAction({
    * rather than a word in it — see its docblock for why, and for the cross-reference its second
    * clause depends on.
    */
+  /**
+   * 🔴 ON HOLD — A NOTE AND NO CONTROL, AND IT IS NOT `not-granted`'S NOTE. The viewer's whole
+   * grant carries `revoked_at`, so this permission conveys nothing until they confirm the app's
+   * permissions again — but they DID grant it, which is why "Not granted yet" was false here. It
+   * printed over 21 real production rows across 10 users before `grantWithheldAt` existed; see
+   * `SCOPE_WITHHELD_NOTE` for every constraint on the sentence and for the one limit it does not
+   * claim.
+   *
+   * NO CONTROL, for the same reason `not-granted` has none: `blocks.revokeScopes` reads
+   * `getGrantedScopes`, which returns an empty set for a non-null `revoked_at`, so every scope on a
+   * withheld grant would be refused. A Remove button here is an action the server rejects.
+   *
+   * ⚠️ AND NO "Removed" BADGE. That marker records the VIEWER's own withdrawal, and `revoked_at` has
+   * two writers — the client cannot tell which one stamped it. The `revoked` state is tested first
+   * so a scope that really is in `revoked_scopes` keeps its badge; this arm is the residual.
+   */
+  if (state === 'withheld') {
+    return (
+      <Text size="xs" c="dimmed" fs="italic" data-testid="scope-withheld-note">
+        {SCOPE_WITHHELD_NOTE}
+      </Text>
+    );
+  }
   if (state === 'not-granted') {
     return (
       // `fs="italic"` to match the `fixed` note directly above and `BlockScopeList`'s own
@@ -535,6 +562,50 @@ export function ScopeConsentAction({
         Remove
       </Button>
     </Group>
+  );
+}
+
+/**
+ * The app-level "your permissions for this app are on hold" line, dated from `revoked_at`.
+ *
+ * 🔴 APP-LEVEL AND NOT PER-ROW, for the same reason `ScopeRevokedAtLine` is: `grantWithheldAt` is
+ * ONE value per (user, app) — `revoked_at` is a single column on the grant row — so printing it
+ * beside an individual scope would assert a per-scope fact the schema cannot carry.
+ *
+ * 🔴 IT IS ALSO WHERE THE PER-ROW NOTE'S MISSING HALF LIVES. `SCOPE_WITHHELD_NOTE` deliberately
+ * does not claim the viewer previously granted THAT scope (on a withheld row the surface reports
+ * `grantedScopes: []`, so granted-then-withheld and never-granted are indistinguishable per row).
+ * This line carries the app-level fact that IS knowable — the grant exists and is on hold, since
+ * <date> — so a reader can tell a withheld card from a card of never-granted rows even though a
+ * single row cannot.
+ *
+ * ⚠️ IT NAMES NO ACTOR AND NO CAUSE. `revoked_at` is written by `revokeScopes`' `fullyRevoked`
+ * branch AND by hand (`scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql`), so "you put
+ * these on hold" and "we put these on hold" are both unsupported. See `grantWithheldAt` on
+ * `ScopeGrantSurface`.
+ *
+ * ⚠️ IT CAN RENDER ALONGSIDE `ScopeRevokedAtLine`, and both are true when it happens: a viewer who
+ * withdrew their last permission on a migrated database sets both columns. Ordered first because
+ * the hold is the larger fact — it governs every scope on the card, not one of them.
+ */
+export function ScopeGrantWithheldLine({
+  grantWithheldAt,
+}: {
+  grantWithheldAt: Date | string | null | undefined;
+}) {
+  if (!grantWithheldAt) return null;
+  const when = new Date(grantWithheldAt);
+  // A malformed value renders the SENTENCE WITHOUT THE DATE rather than nothing — the hold is the
+  // fact and the date is decoration, so dropping the whole line on a bad timestamp would hide the
+  // only app-level explanation for why every row says "on hold". `ScopeRevokedAtLine` returns null
+  // in the same case because THERE the date IS the whole claim.
+  const dated = Number.isNaN(when.getTime()) ? null : formatDate(when, 'YYYY-MM-DD');
+  return (
+    <Text size="xs" c="dimmed" data-testid="scope-grant-withheld">
+      {dated
+        ? `Your permissions for this app were put on hold on ${dated}. They will not be used until you confirm them again.`
+        : 'Your permissions for this app are on hold. They will not be used until you confirm them again.'}
+    </Text>
   );
 }
 

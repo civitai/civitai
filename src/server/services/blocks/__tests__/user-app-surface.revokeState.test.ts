@@ -473,6 +473,125 @@ describe('a database mid-migration', () => {
     expect(retrySelect).toHaveProperty('buzzBudgetPerDay', true);
   });
 
+  /**
+   * 🔴 THE EXACT PRODUCTION SHAPE, BUILT THROUGH THE REAL DEGRADE RATHER THAN HAND-FAKED. Measured
+   * on the primary 2026-09-28: the `civitai` database has no `revoked_scopes` / `revoked_scopes_at`
+   * column, and **21 of 41** grant rows (51%, 10 users, 11 apps, all stamped 2026-09-17) carry
+   * `revoked_at IS NOT NULL` with `granted_scopes` non-empty — `scripts/oneoffs/`'s
+   * `2026-09-16-reconsent-ai-write-budgeted.sql`, whose `UPDATE` leaves the array intact.
+   *
+   * ⚠️ IT DRIVES THE STAGE-1 P2022 RETRY INSTEAD OF PASSING A ROW WITH THE KEYS OMITTED, and the
+   * difference is the point: production reaches this state because the COLUMNS ARE ABSENT, so the
+   * fixture has to come out of the narrow re-select. A hand-written row with `revokedScopes`
+   * deleted would test the same projection while skipping the mechanism that produces it.
+   *
+   * 🔴 `grantWithheldAt` MUST SURVIVE THAT DEGRADE. `revoked_at` is named by BOTH selects; if it
+   * were ever dropped from the narrow one this field would be `null` for exactly the population it
+   * exists for, and the page would go back to printing "Not granted yet" over those 21 rows with
+   * every test still green.
+   *
+   * MUTATION THAT KILLS IT (measured): seed `withheldAtByAppBlock` from `g.revokedScopesAt` instead
+   * of `g.revokedAt` — the field then reads `null` on this shape, because the column it would come
+   * from does not exist.
+   *
+   * ⚠️ AND ONE THAT DOES **NOT**, RECORDED BECAUSE THIS DOCBLOCK FIRST CLAIMED IT WOULD: dropping
+   * `revokedAt` from the stage-1 retry's SELECT is measured SURVIVING the whole file. `findMany` is
+   * mocked by what the arm RESOLVES, not by the columns the caller asks for, so no fixture-driven
+   * assertion here can observe the select's contents — the resolved object carries `revokedAt`
+   * whether or not the query requested it. That is the same blind spot the pre-migration 412 arm in
+   * `blocks.router.revokeScopes.test.ts` records, and it is why the STRUCTURAL assertion below
+   * exists: the select has to be read off the recorded CALL. Without it this arm's headline claim —
+   * that the field survives the degrade — rested on a fixture that could not have failed.
+   */
+  it('PRODUCTION SHAPE: revoked_at survives the degrade and reports the hold', async () => {
+    const heldSince = new Date('2026-09-17T18:12:00Z');
+    read.blockUserSubscription.findMany.mockResolvedValue([]);
+    read.appUserScopeGrant.findMany
+      .mockRejectedValueOnce(missingColumnError())
+      .mockResolvedValueOnce([
+        // The pre-migration row shape — no revocation columns at all — carrying the oneoff's stamp
+        // and a MULTI-scope granted array, which 8 of the 21 real rows have.
+        {
+          appBlockId: APP,
+          buzzBudgetPerDay: 1200,
+          revokedAt: heldSince,
+          grantedScopes: [SPEND, POSTS],
+          appBlock: appBlock(),
+        },
+      ]);
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    const rows = await listMyScopeGrants(USER);
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
+    // 🔴 THE FIELD THE WHOLE FIX TURNS ON, from the column that DOES exist in production.
+    expect(
+      row.grantWithheldAt,
+      'the whole-grant hold did not survive the pre-migration degrade, so the page cannot tell ' +
+        '"you granted this and it is on hold" from "you never granted this" — which is what ' +
+        'printed "Not granted yet" over 21 real rows'
+    ).toEqual(heldSince);
+    // …and it is NOT the same value as `scopesRevokedAt`, which reads the column that is absent.
+    expect(
+      row.scopesRevokedAt,
+      'scopesRevokedAt was fed from revoked_at — the two are different columns and conflating them ' +
+        'would claim the viewer withdrew something'
+    ).toBeNull();
+    // The rest of the production shape, so the arm cannot pass on a half-built fixture.
+    expect(row.grantedScopes).toEqual([]);
+    expect(row.revokedScopes).toEqual([]);
+    expect(row.origin).toBe('consent');
+    expect(row.revokableScopes).toEqual([SPEND, POSTS]);
+    // No spend affordance on a withheld grant, stored ceiling or not.
+    expect(row.spendScopeGranted).toBe(false);
+    expect(row.buzzBudgetPerDay).toBeNull();
+    /**
+     * 🔴 THE STRUCTURAL HALF, READ OFF THE RECORDED CALL RATHER THAN INFERRED FROM THE RESULT. The
+     * behavioural assertions above cannot see the select — see this arm's docblock — so the one
+     * property that makes the withheld state reachable on the current production schema is asserted
+     * directly: the NARROW retry must still request `revoked_at`. Drop it and every one of those 21
+     * rows reports `grantWithheldAt: null`, the page goes back to "Not granted yet", and nothing
+     * else in this file notices. Same technique as the sibling budget arm, which reads
+     * `calls[1][0].select` for the mirror-image reason.
+     */
+    const retrySelect = read.appUserScopeGrant.findMany.mock.calls[1][0].select;
+    expect(
+      retrySelect,
+      'the stage-1 retry stopped selecting `revoked_at`, so the whole-grant hold is invisible on ' +
+        'exactly the pre-migration databases it was added for'
+    ).toHaveProperty('revokedAt', true);
+    // The precondition for the arm being about the RETRY at all, not the wide read.
+    expect(
+      retrySelect,
+      'this is not the narrow retry — the arm is measuring the wrong call'
+    ).not.toHaveProperty('revokedScopes');
+  });
+
+  /**
+   * 🔴 AND IT REPORTS THE HOLD FOR AN **INSTALL**-ORIGIN ROW TOO. The maps are seeded before the
+   * `has()` precedence check, so a withheld grant on an app the viewer ALSO subscribed to keeps its
+   * `origin: 'install'` entry and still carries the flag. Without this the withheld note would
+   * silently not render for exactly the apps a viewer is most engaged with.
+   *
+   * MUTATION THAT MUST KILL IT: move the `withheldAtByAppBlock.set(...)` inside the
+   * `if (!byAppBlock.has(...))` block.
+   */
+  it('reports the hold on an install-origin row as well', async () => {
+    const heldSince = new Date('2026-09-17T18:12:00Z');
+    read.appUserScopeGrant.findMany.mockResolvedValue([
+      grant({ grantedScopes: [SPEND, POSTS], revokedAt: heldSince }),
+    ]);
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    const [row] = await listMyScopeGrants(USER);
+    expect(row.origin, 'the subscription leg stopped winning — this arm no longer tests it').toBe(
+      'install'
+    );
+    expect(
+      row.grantWithheldAt,
+      'an install-backed app dropped its withheld flag, so its rows would claim the viewer never ' +
+        'granted permissions they did grant'
+    ).toEqual(heldSince);
+  });
+
   /** Both columns missing ⇒ the pre-existing behaviour: no grants, every app reports null. */
   it('without either column: no grant rows, every app reports null', async () => {
     read.appUserScopeGrant.findMany

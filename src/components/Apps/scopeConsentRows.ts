@@ -47,6 +47,11 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
  *
  *   - `revokable`   — the viewer may withdraw it, and a control is offered.
  *   - `revoked`     — the viewer HAS withdrawn it. Still rendered, marked, never dropped.
+ *   - `withheld`    — the viewer DID agree to it and the whole grant is on hold (`revoked_at`),
+ *                     so it conveys nothing until they confirm the app's permissions again.
+ *                     Distinct from all four below it: `revoked` says the VIEWER withdrew it,
+ *                     `not-granted` says they never gave it, `fixed` says the platform granted it
+ *                     and enforces it server-side, and `unknown` is silence about a fact we know.
  *   - `not-granted` — the APP declares it and the viewer never agreed to it, so there is
  *                     nothing to withdraw YET. A control here would offer an action the server
  *                     now refuses.
@@ -86,7 +91,13 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
  * `isKnownBlockScope`, and `blocks.revokeScopes` rejects an unknown string outright, so
  * offering a control for one would produce a `BAD_REQUEST` the viewer cannot act on.
  */
-export type ScopeConsentState = 'revokable' | 'revoked' | 'not-granted' | 'fixed' | 'unknown';
+export type ScopeConsentState =
+  | 'revokable'
+  | 'revoked'
+  | 'withheld'
+  | 'not-granted'
+  | 'fixed'
+  | 'unknown';
 
 export type ScopeConsentRow = {
   scope: string;
@@ -124,6 +135,18 @@ export type ScopeConsentRow = {
  *   - `unknown` AFTER `revoked`: a suppression we were told about is a fact we can still state
  *     even on a payload missing the other fields, and hiding a known withdrawal is the one
  *     regression this surface must never have.
+ *   - 🔴 `fixed` BEFORE `withheld`: `revoked_at` does NOT withhold a `CONSENT_EXEMPT_SCOPES`
+ *     member. `partitionByConsent` signs an exempt scope on the exempt test ALONE, before it ever
+ *     consults the grant, so such a scope is still LIVE on a withheld row and its own server-side
+ *     gates are still what govern it. Calling it "on hold" would tell the viewer a permission is
+ *     suspended while the app is using it — false in the dangerous direction.
+ *   - 🔴 `revoked` BEFORE `withheld`: on a MIGRATED database a viewer's own whole-grant revoke
+ *     writes BOTH `revoked_at` and `revoked_scopes` (`revokeScopes`' `fullyRevoked` branch), so the
+ *     two co-occur. "You withdrew this" is the more specific fact and the only one that records the
+ *     viewer's own action; `withheld` names no actor because the column cannot carry one.
+ *   - 🔴 `withheld` BEFORE the granted-set split: a withheld grant reports `grantedScopes: []`, so
+ *     without this every gated row on it would fall through to `not-granted` — which is what
+ *     printed "Not granted yet" over 21 real production rows.
  *   - 🔴 `fixed` BEFORE `not-granted`, AND THIS IS THE ONE THAT PRESERVES THE EXEMPT COPY. A
  *     `CONSENT_EXEMPT_SCOPES` member is NEVER in the granted set — `partitionByConsent` signs it
  *     on the exempt test alone, before it looks at the grant, so no grant is ever recorded for one
@@ -137,6 +160,7 @@ export function buildScopeConsentRows({
   revokedScopes,
   revokableScopes,
   grantedScopes,
+  grantWithheldAt,
 }: {
   scopes: string[];
   revokedScopes: string[];
@@ -164,10 +188,31 @@ export function buildScopeConsentRows({
    * own consent that we have no basis for.
    */
   grantedScopes: string[] | undefined;
+  /**
+   * `ScopeGrantSurface.grantWithheldAt` — when the viewer's WHOLE grant was put on hold
+   * (`revoked_at`), or `null`/`undefined` if it was not.
+   *
+   * 🔴 NOT THE SAME COLUMN AS `scopesRevokedAt`, and it is the only thing that separates "you
+   * granted this and it is on hold" from "you never granted this": both report
+   * `grantedScopes: []`. Read that field's docblock on the server type before changing this — in
+   * particular that it names no ACTOR and no CAUSE, because `revoked_at` has two writers.
+   *
+   * ⚠️ `undefined` IS TREATED AS `null`, NOT AS `unknown`, AND THAT IS DELIBERATE — unlike the two
+   * fields above. A pre-4990 payload carries `revokableScopes`/`grantedScopes` but not this one,
+   * and for such a payload the right answer is the one the page already gave: no withheld claim.
+   * Coalescing to `unknown` instead would blank every row of a merely-slightly-older server, which
+   * is a regression for a rollout window rather than a protection.
+   */
+  grantWithheldAt?: Date | string | null;
 }): ScopeConsentRow[] {
   const revoked = new Set(revokedScopes);
   const revokable = revokableScopes === undefined ? undefined : new Set(revokableScopes);
   const granted = grantedScopes === undefined ? undefined : new Set(grantedScopes);
+  // 🔴 A PRESENCE TEST, NOT A DATE PARSE. An unparseable value still means "on hold" — the hold is
+  // the fact, the date is decoration — so the row state must not depend on the timestamp being
+  // readable. `ScopeGrantWithheldLine` owns the parse and renders nothing on a bad value, which is
+  // the same split `ScopeRevokedAtLine` already makes.
+  const withheld = grantWithheldAt != null;
   const state = (scope: string): ScopeConsentState =>
     revoked.has(scope)
       ? 'revoked'
@@ -181,6 +226,10 @@ export function buildScopeConsentRows({
       // what survives is split by whether the viewer actually agreed to it.
       !revokable.has(scope)
       ? 'fixed'
+      : // 🔴 THE WHOLE-GRANT HOLD, TESTED AFTER `fixed` AND BEFORE THE GRANTED-SET SPLIT — see the
+      // ordering rules above; every neighbour of this line is load-bearing in a measured way.
+      withheld
+      ? 'withheld'
       : granted.has(scope)
       ? 'revokable'
       : 'not-granted';
@@ -313,6 +362,39 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
  * prompt. If that path ever stops asking, this sentence becomes false and nothing here would know.
  */
 export const SCOPE_NOT_GRANTED_NOTE = 'Not granted yet — the app will ask if it needs this.';
+
+/**
+ * The sentence a `withheld` row carries.
+ *
+ * 🔴 EVERY CLAUSE IS CONSTRAINED, AND THE OPERATOR'S SUGGESTED WORDING FAILED ONE OF ITS OWN
+ * CONSTRAINTS. The brief proposed *"Withheld pending your confirmation — this permission's
+ * description changed, so we're asking again"*, with the constraint that the copy be true of all 21
+ * production rows. The second clause is not: measured on the primary 2026-09-28, **8 of the 21**
+ * rows hold MORE THAN ONE granted scope (up to 3), and the oneoff's `UPDATE` withholds the WHOLE
+ * grant — `revoked_at` collapses `liveGrantedScopes` to `[]` — while only `ai:write:budgeted`'s
+ * description changed. On those 8 rows a `posts:write:self` row would be told its own description
+ * changed, which is false. So the per-scope CAUSE is dropped and the sentence states the EFFECT,
+ * which is true of every scope on every one of the 21.
+ *
+ * 🔴 IT NAMES NO ACTOR EITHER, for the reason `grantWithheldAt`'s server-side docblock gives:
+ * `revoked_at` has two writers (the viewer's own last-permission revoke, and the hand-applied
+ * oneoff) and the column cannot tell them apart. "You withdrew this" belongs to the `revoked`
+ * state, which is tested first precisely so the viewer's own action keeps its own marker.
+ *
+ * ⚠️ AND IT DOES NOT CLAIM THE VIEWER PREVIOUSLY GRANTED **THIS** SCOPE, which is a limit worth
+ * knowing rather than a slip. On a withheld row the surface reports `grantedScopes: []`, so a
+ * declared-but-never-granted scope is indistinguishable from a granted-then-withheld one — the
+ * stored `granted_scopes` column would separate them and `ScopeGrantSurface` deliberately does not
+ * expose it (its own docblock argues the post-subtraction view is the only one that agrees with
+ * enforcement). "not in use until you confirm this app's permissions again" is true of both: a
+ * never-granted scope is not in use either, and confirming the app's permissions is what would
+ * bring it into use. The distinction is carried at CARD level by `ScopeGrantWithheldLine`, not
+ * per-row.
+ *
+ * Do not add "again" to the first clause: a row is not necessarily on hold for a second time.
+ */
+export const SCOPE_WITHHELD_NOTE =
+  "On hold — not in use until you confirm this app's permissions again.";
 
 export function fixedScopeNote(scope: string): string {
   /**

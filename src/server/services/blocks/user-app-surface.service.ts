@@ -190,6 +190,39 @@ export type ScopeGrantSurface = {
    */
   scopesRevokedAt: Date | null;
   /**
+   * When the viewer's WHOLE grant for this app was put on hold (`revoked_at`), or `null`.
+   *
+   * 🔴 A DIFFERENT COLUMN FROM `scopesRevokedAt`, AND THE DISTINCTION IS THE WHOLE POINT OF THE
+   * FIELD. `scopesRevokedAt` is `revoked_scopes_at` — the per-app "you last withdrew something"
+   * stamp, written only by `revokeScopes`. THIS is `revoked_at`, the WHOLE-GRANT flag that
+   * `liveGrantedScopes` collapses the granted set to `[]` on. They are written by different
+   * things, they can be non-null independently, and only this one explains why a viewer who
+   * granted permissions sees an empty `grantedScopes`.
+   *
+   * 🔴 IT IS DERIVABLE ON THE CURRENT PRODUCTION SCHEMA, WHICH IS WHY THIS FIELD EXISTS RATHER
+   * THAN A RICHER ONE. Measured on the primary 2026-09-28: the `civitai` database's
+   * `app_user_scope_grants` columns are exactly `id, user_id, app_block_id, version,
+   * granted_scopes, granted_at, revoked_at, buzz_budget_per_day` — `revoked_scopes` and
+   * `revoked_scopes_at` do NOT exist, and **21 of 41** rows (51%, 10 users, 11 apps, all stamped
+   * 2026-09-17) carry `revoked_at IS NOT NULL` with `granted_scopes` non-empty. `revoked_at` is
+   * selected by BOTH the wide read and the stage-1 P2022 retry below, so this field survives the
+   * pre-migration degrade. A field keyed on the new columns would have been `null` for exactly
+   * the population it was added for.
+   *
+   * 🔴 WHAT IT IS FOR: without it the client cannot tell "you never granted this" from "you
+   * granted this and it is on hold", because both report `grantedScopes: []`. That made the
+   * permissions page print "Not granted yet" over 21 real rows. See `ScopeConsentState`'s
+   * `withheld` arm in `src/components/Apps/scopeConsentRows.ts`.
+   *
+   * ⚠️ IT NAMES NO ACTOR AND NO CAUSE, because the column cannot carry either. `revoked_at` is
+   * written by `revokeScopes`' `fullyRevoked` branch (the viewer withdrew their last permission)
+   * AND by hand — `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` sets it for every
+   * grant holding `ai:write:budgeted`, to force a fresh consent after that scope's description
+   * widened. One flag, two writers, and a UI must not assert which. The viewer's own withdrawals
+   * are distinguishable by `revokedScopes` instead, which is why the client tests `revoked` first.
+   */
+  grantWithheldAt: Date | null;
+  /**
    * The subset of `scopes` that is CONSENT-GATED at all — a necessary condition for offering a
    * revoke control, and since 4990 no longer a sufficient one.
    *
@@ -509,6 +542,10 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   const grantedScopesByAppBlock = new Map<string, string[]>();
   const revokedScopesByAppBlock = new Map<string, string[]>();
   const revokedAtByAppBlock = new Map<string, Date | null>();
+  // 🔴 `revoked_at`, NOT `revoked_scopes_at` — two different columns, see `grantWithheldAt`. This
+  // one survives the stage-1 P2022 retry (both selects name it), which is what makes the withheld
+  // state reachable on the current production schema.
+  const withheldAtByAppBlock = new Map<string, Date | null>();
   {
     type GrantRow = {
       appBlockId: string;
@@ -632,6 +669,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       grantedScopesByAppBlock.set(g.appBlockId, [...liveGranted].sort());
       revokedScopesByAppBlock.set(g.appBlockId, [...(g.revokedScopes ?? [])].sort());
       revokedAtByAppBlock.set(g.appBlockId, g.revokedScopesAt ?? null);
+      // 🔴 SEEDED BEFORE THE `has()` PRECEDENCE CHECK BELOW, like every other map here, so a
+      // withheld grant on an app that ALSO has a subscription still reports it. That row's
+      // `origin` is `'install'` and the subscription leg owns its entry, but the grant is just as
+      // withheld and its rows must say so.
+      withheldAtByAppBlock.set(g.appBlockId, g.revokedAt ?? null);
       if (liveGranted.includes(CONSENT_SPEND_SCOPE)) {
         spendGrantedByAppBlock.add(g.appBlockId);
       }
@@ -910,6 +952,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       grantedScopes: grantedScopesByAppBlock.get(appBlockId) ?? [],
       revokedScopes: revokedScopesByAppBlock.get(appBlockId) ?? [],
       scopesRevokedAt: revokedAtByAppBlock.get(appBlockId) ?? null,
+      grantWithheldAt: withheldAtByAppBlock.get(appBlockId) ?? null,
       revokableScopes,
       surfaces: {
         modelInstallCount: entry.modelInstallCount,

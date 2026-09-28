@@ -500,6 +500,22 @@ describe('listMyScopeGrants — precedence', () => {
     expect(result[0].buzzBudgetPerDay).toBeNull();
     expect(result[0].spendScopeGranted).toBe(false);
     expect(result[0].grantedScopes).toEqual([]);
+    /**
+     * 🔴 AND THIS IS WHY THE `'consent'` LABEL IS A PRECONDITION FOR THE WITHHELD NOTE, NOT JUST A
+     * copy preference. An `'activity'` row emits `scopes: []` by construction, so it renders NO
+     * permission rows at all — the hold would have been completely invisible on every app the
+     * viewer has also invoked, which is the normal shape for an app they used. The row has to be
+     * `'consent'` for `grantWithheldAt` to reach a row that can display it.
+     */
+    expect(
+      result[0].grantWithheldAt,
+      'the withheld flag did not reach an app that also has invocation rows — with `activity` ' +
+        'origin this row emits `scopes: []` and the hold would be invisible'
+    ).toEqual(new Date('2026-01-01T00:00:00Z'));
+    expect(
+      result[0].scopes.length,
+      'an activity row emits [] — the hold would have no row to sit on'
+    ).toBeGreaterThan(0);
   });
 
   /**
