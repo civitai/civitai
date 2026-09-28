@@ -28,14 +28,33 @@ export type BlockGoodRateLimitResult =
   | { allowed: false; retryAfterSeconds: number };
 
 /**
- * Records one purchase attempt against `blockInstanceId`'s window and reports
- * whether it is within the per-instance ceiling. FAIL-CLOSED on any redis error
- * — a money-moving endpoint must not become unbounded when its limiter is down.
+ * Records one purchase attempt against this VIEWER's window on this block
+ * instance and reports whether it is within the ceiling. FAIL-CLOSED on any
+ * redis error — a money-moving endpoint must not become unbounded when its
+ * limiter is down.
+ *
+ * 🔴 THE BUYER IS PART OF THE KEY, AND THAT IS THE WHOLE POINT. Keyed on
+ * `blockInstanceId` ALONE this limiter is not per-viewer at all for a PAGE app:
+ * a page block has no per-viewer instance row, so its `blockInstanceId` is the
+ * SYNTHETIC, SHARED `page_<appBlockId>` (see the page-token mint). Every viewer
+ * of a page app therefore incremented ONE bucket, making the ceiling
+ * `BLOCK_GOOD_RATE_LIMIT_MAX` purchases per minute for the ENTIRE PLATFORM on
+ * that app — and because the limiter fails CLOSED, the seventh buyer in a
+ * minute is refused rather than merely slowed. An iframe block, which does get
+ * a real per-viewer instance id, was unaffected, which is exactly why this
+ * reads as correct until a page app tries to sell something.
+ *
+ * Keeping `blockInstanceId` in the key as well as the buyer is deliberate: it
+ * preserves the per-app granularity the ceiling was chosen for, so one app
+ * misbehaving cannot spend another app's budget for the same viewer.
  */
-export async function checkBlockGoodRateLimit(
-  blockInstanceId: string
-): Promise<BlockGoodRateLimitResult> {
-  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods:${blockInstanceId}` as const;
+export async function checkBlockGoodRateLimit(args: {
+  buyerUserId: number;
+  blockInstanceId: string;
+}): Promise<BlockGoodRateLimitResult> {
+  const { buyerUserId, blockInstanceId } = args;
+  const key =
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods:${blockInstanceId}:${buyerUserId}` as const;
   try {
     const count = await redis.incrBy(key as never, 1);
     if (count === 1) {
