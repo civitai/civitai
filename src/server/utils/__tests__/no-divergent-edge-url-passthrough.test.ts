@@ -37,7 +37,10 @@ import { describe, expect, it } from 'vitest';
  * leading-whitespace, `SCHEME_PREFIX` and the leading-`//` test on the relative branch, and
  * `parsed.protocol` on the passthrough branch — so a `getEdgeUrl` widened to forward some new
  * scheme cannot admit it. Gross divergence is caught behaviourally: forcing the predicate to
- * `return false` reddens 7 of the allowlist's rows, and to `return true` reddens 3. This
+ * `return false` reddens 7 rows of `image-scan-url-allowlist.test.ts`, and to `return true`
+ * reddens 4 — both counts measured with vitest and both INCLUDING the row that exercises the
+ * predicate directly, since mixing that row in on one side and out on the other is how this
+ * sentence came to read 7/3. This
  * guard's remaining job is the cheap, high-frequency case — someone copy-pasting the old
  * one-liner back in — plus recording, in the growth test, that three `apps/` spokes carry
  * ported copies that structurally cannot import this module. It is not, and must not be read
