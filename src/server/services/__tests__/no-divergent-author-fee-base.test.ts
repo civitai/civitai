@@ -1340,10 +1340,22 @@ describe('author fee — the viewer-charge seam', () => {
  * ever replaces characters with spaces, so the raw slice is a superset and
  * `not.toContain` / `not.toMatch` on it is the strictly stronger claim.
  *
- * Scoped to the identifier `site`, which is what every slice loop in this file binds.
- * The extractor positive controls bind `s` and use `s.includes(...)` deliberately —
- * they assert the EXTRACTOR found real argument objects, not that any field is wired,
- * so depth is irrelevant to them.
+ * 🔴 IT IS SPELLED, NOT STRUCTURAL — AND THAT LIMIT IS NAMED RATHER THAN HIDDEN.
+ * It keys on the identifier `site`, so `for (const charge of charges)
+ * expect(charge).toMatch(...)` would walk straight past it. A review round measured
+ * exactly that: renaming the loop variable plus a real nested router field left the
+ * suite 35/35 green. The second test below therefore makes `site` an ENFORCED
+ * convention rather than a coincidence, which is what makes the keying sound.
+ *
+ * Residual holes, stated so nobody reads this as total: `expect(site).toEqual(...)`
+ * and a positive `site.includes(...)` are covered by the pattern below, but a local
+ * alias (`const sl = site; expect(sl).toContain(...)`) is not. The fully structural fix
+ * is to iterate `charges.map(ownProps)` so no raw slice is ever in scope for positive
+ * work; that is a larger refactor of a live money ledger and is not done here.
+ *
+ * The extractor positive controls bind `s` and `c` and use `.includes(...)`
+ * deliberately — they assert the EXTRACTOR found real argument objects, not that any
+ * field is wired, so depth is irrelevant to them.
  */
 describe('this file filters by depth wherever it matters', () => {
   /**
@@ -1357,6 +1369,21 @@ describe('this file filters by depth wherever it matters', () => {
    * Sliced at the SENTINEL below rather than at a line number, so inserting a test above
    * cannot silently move the boundary.
    */
+  /**
+   * 🔴 THE PATTERNS ARE DEFINED ONCE AND USED BY BOTH THE SCAN AND ITS CONTROL.
+   *
+   * The first attempt at that control wrote its own literal copies, which reproduced the
+   * very defect it was added for: typo the SCAN's pattern to `sitee`, add a real
+   * offender, nest a real router field — and the control, testing its untouched copy,
+   * still passed. Measured 37/37 green with two real defects present.
+   *
+   * Sharing the SOURCE STRING is what makes the control load-bearing: a typo now breaks
+   * the scan and its control together, so the control goes red. Built into a fresh
+   * RegExp per use because a `/g` regex is stateful across `.test()` calls.
+   */
+  const OFFENDER_SRC = String.raw`expect\(site\)\.(?!not\.)(toContain|toMatch|toEqual)\(`;
+  const HELPER_SRC = String.raw`containsExpression\(site,`;
+  const INCLUDES_SRC = String.raw`expect\(site\.includes\(`;
   const SENTINEL = 'this file filters by depth wherever it matters';
   const FULL = readFileSync(
     path.join(process.cwd(), 'src/server/services/__tests__/no-divergent-author-fee-base.test.ts'),
@@ -1375,8 +1402,11 @@ describe('this file filters by depth wherever it matters', () => {
     // three spellings this file uses. The negative forms carry `.not.` and are excluded
     // by the pattern itself rather than by an allowlist.
     const offenders = [
-      ...SELF.matchAll(/expect\(site\)\.(?!not\.)(toContain|toMatch)\(/g),
-      ...SELF.matchAll(/containsExpression\(site,/g),
+      ...SELF.matchAll(new RegExp(OFFENDER_SRC, 'g')),
+      ...SELF.matchAll(new RegExp(HELPER_SRC, 'g')),
+      // a positive `expect(site.includes(x)).toBe(true)` is the same hazard wearing a
+      // different shape; the extractor controls use `s`/`c`, never `site`.
+      ...SELF.matchAll(new RegExp(INCLUDES_SRC, 'g')),
     ].map((m) => {
       const line = SELF.slice(0, m.index).split('\n').length;
       return `${line}: ${m[0]}`;
@@ -1389,15 +1419,82 @@ describe('this file filters by depth wherever it matters', () => {
     ).toEqual([]);
   });
 
+  it('🔴 POSITIVE CONTROL: the OFFENDER pattern itself can match, and skips `.not.`', () => {
+    // 🔴 WITHOUT THIS THE GUARD'S ZERO IS UNFALSIFIABLE, and a review round proved it by
+    // measurement rather than argument: typo the offender patterns to `sitee`, un-route a
+    // real assertion AND nest a real router field, and the suite reports 35/35 GREEN —
+    // a real offender, a real nested field, and a guard reporting nothing wrong.
+    //
+    // The two controls below it were counting DIFFERENT regexes (the routed forms and the
+    // negative forms), so neither could ever observe the pattern under test. This asserts
+    // the pattern against synthetic literals: it must match the forbidden spellings and
+    // must NOT match their negative counterparts.
+    // 🔴 THE SAME SOURCES THE SCAN USES — not copies. That is the whole point.
+    const offenderRe = new RegExp(OFFENDER_SRC);
+    const helperRe = new RegExp(HELPER_SRC);
+    const includesRe = new RegExp(INCLUDES_SRC);
+
+    // must MATCH — these are the shapes the scan exists to find
+    expect(offenderRe.test('expect(site).toContain(')).toBe(true);
+    expect(offenderRe.test('expect(site).toMatch(')).toBe(true);
+    expect(offenderRe.test('expect(site).toEqual(')).toBe(true);
+    expect(helperRe.test('containsExpression(site, x)')).toBe(true);
+    expect(includesRe.test('expect(site.includes(x))')).toBe(true);
+
+    // must NOT match — negatives are exempt by construction, and the routed form is correct
+    expect(offenderRe.test('expect(site).not.toContain(')).toBe(false);
+    expect(offenderRe.test('expect(site).not.toMatch(')).toBe(false);
+    expect(offenderRe.test('expect(ownProps(site)).toContain(')).toBe(false);
+    expect(helperRe.test('containsExpression(ownProps(site), x)')).toBe(false);
+  });
+
+  it('🔴 every slice loop binds the name the scan keys on', () => {
+    // WITHOUT THIS THE SCAN IS ONLY AS GOOD AS AN UNCHECKED CONVENTION. It matches
+    // `expect(site)` / `containsExpression(site,`, so a loop written
+    // `for (const charge of charges)` carries raw positive assertions straight past it —
+    // measured green by a review round. Enumerated over the slice SOURCES this file
+    // iterates, so a NEW source is covered only if it is added here. Said plainly rather
+    // than implied.
+    const loops = [
+      ...SELF.matchAll(
+        /for \(const (\{[^}]*\}|\w+) of (sites|charges|quotes|quoteOwners|callSites\()/g
+      ),
+    ];
+    // Positive control: the loop pattern must actually find this file's loops.
+    expect(
+      loops.length,
+      'the loop scan found nothing — the pattern is wrong'
+    ).toBeGreaterThanOrEqual(10);
+    const wrong = loops
+      .map((m) => ({ bound: m[1], line: SELF.slice(0, m.index).split('\n').length }))
+      // A destructured binding is fine as long as it destructures `site` out.
+      .filter(({ bound }) => (bound.startsWith('{') ? !/\bsite\b/.test(bound) : bound !== 'site'))
+      .map(({ bound, line }) => `${line}: binds \`${bound}\`, not \`site\``);
+    expect(
+      wrong,
+      'the raw-slice scan keys on the identifier `site`. A loop binding another name can ' +
+        'carry raw positive assertions past it. Bind `site`.'
+    ).toEqual([]);
+  });
+
   it('POSITIVE CONTROL: the self-exclusion sentinel is found', () => {
     // If the describe name is ever changed without updating SENTINEL, `cut` is -1 and the
     // scan silently widens to the whole file — which would flag this guard's own prose and
     // read as a real regression. Assert the bound was actually applied.
     expect(FULL.indexOf(`describe('${SENTINEL}'`)).toBeGreaterThan(0);
-    // `blankComments` preserves length (it writes spaces), so SELF is shorter than FULL
-    // by exactly the excluded tail — which must be this block and nothing more.
     expect(FULL.length - SELF.length).toBeGreaterThan(0);
-    expect(FULL.length - SELF.length).toBeLessThan(4000);
+
+    // 🔴 AND THE EXCLUDED TAIL MUST BE THIS BLOCK AND NOTHING AFTER IT — the real
+    // property, and it closes a hole a byte bound cannot: a `describe` added BELOW this
+    // one falls inside the excluded region and could carry raw positive assertions the
+    // scan never sees. (An earlier version WAS a `< 4000` byte bound; it failed the moment
+    // this block itself grew, and bumping the number would have been the wrong fix — a
+    // magic number that needs bumping is not a property.)
+    const tail = blankComments(FULL.slice(cut));
+    expect(
+      [...tail.matchAll(/^describe\(/gm)].length,
+      'a describe below this block would be excluded from the raw-slice scan. Move it ABOVE.'
+    ).toBe(1);
   });
 
   it('POSITIVE CONTROL: the scan can find the depth-filtered forms it expects', () => {
