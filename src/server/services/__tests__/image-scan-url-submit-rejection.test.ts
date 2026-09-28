@@ -20,6 +20,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { imageScanSubmittedCounter } from '~/server/prom/client';
 import { createImage, enqueueImageIngestion, ingestImage } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 
@@ -54,6 +55,7 @@ beforeEach(() => {
   allowSubmitByDefault();
   dbMock.dbWrite.$executeRaw.mockClear();
   loggingMock.logToAxiom.mockClear();
+  vi.mocked(imageScanSubmittedCounter.inc).mockClear();
 });
 
 describe('ingestImage URL allowlist (submit seam)', () => {
@@ -83,6 +85,15 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'url-not-allowed', imageId: 4242, type: 'error' })
     );
+    // The `rejected` label is a documented alerting contract (its help text advertises it),
+    // so pin it. `lane: 'unknown'` is deliberate — the real lane comes from a Flipt read this
+    // rejection returns before, so attributing it to a concrete lane would skew a per-lane
+    // rejection rate. toHaveBeenCalledTimes(1) matters: a doubled inc is otherwise invisible.
+    expect(imageScanSubmittedCounter.inc).toHaveBeenCalledTimes(1);
+    expect(imageScanSubmittedCounter.inc).toHaveBeenCalledWith({
+      lane: 'unknown',
+      result: 'rejected',
+    });
   });
 
   it('rejects a blob: url the same way — the failed-submit fold-in', async () => {

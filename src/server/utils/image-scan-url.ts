@@ -1,4 +1,5 @@
 import { isValidCivitaiImageUrl } from '~/utils/article-helpers';
+import { hasUrlAmbiguousBytes } from '~/server/schema/blocks/civitai-image-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 
 /**
@@ -24,12 +25,33 @@ import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
  *    `…/avatars/../attachments/x` passes it and resolves elsewhere. The same prefix list
  *    guards avatar updates in user.controller — keep the two identical.
  *
- * ⚠ KNOWN RESIDUAL, deliberately not closed here: `isValidCivitaiImageUrl` matches
- * `wasabisys.com` as a bare SUFFIX, and `<bucket>.s3.wasabisys.com` is a self-service
- * global namespace — so an allowlisted hostname is third-party registerable, which also
- * means an attacker-controlled redirect sits on an allowlisted host. That only becomes a
- * full bypass if the orchestrator's fetch FOLLOWS redirects, which cannot be settled from
- * this repo. Narrowing to the exact legacy bucket hosts is the fix if it does.
+ * 🔴 KNOWN RESIDUAL, inherited from `isValidCivitaiImageUrl` and NOT closed here. It is
+ * wider than a redirect problem, and the obvious narrowing does NOT fix it:
+ *
+ *  - `wasabisys.com` matches as a bare SUFFIX, and Wasabi bucket names are a self-service
+ *    GLOBAL namespace, so `https://<attacker-bucket>.s3.wasabisys.com/evil.png` is admitted
+ *    outright — attacker-chosen content straight to the scanner, NO redirect required.
+ *    (A redirect leg on an allowlisted host is an additional, separate hazard, and whether
+ *    it is reachable depends on the orchestrator following redirects, which cannot be
+ *    settled from this repo.)
+ *  - 🔴 Pinning "the exact legacy bucket hosts" is NOT sufficient, because our legacy form
+ *    is PATH-style (`https://s3.us-west-1.wasabisys.com/civitai-prod/images/…`, see
+ *    packages/civitai-db-schema/prisma/seed.ts and the `images.remotePatterns` list in
+ *    next.config.mjs). Pinning that host still admits
+ *    `https://s3.us-west-1.wasabisys.com/<attacker-bucket>/evil.png`. It needs HOST + PATH
+ *    PREFIX — exactly the rule derived above for `cdn.discordapp.com`. The asymmetry is the
+ *    bug: the multi-tenant-CDN rule was not applied to a multi-tenant OBJECT STORE.
+ *  - `civitai.com` is likewise admitted with no path, PORT or scheme restriction, so every
+ *    existing `*.civitai.com` name on ANY port with ANY path is an allowlist entry —
+ *    including any subdomain ever CNAMEd to a third-party SaaS, and any internal service
+ *    reachable on a non-standard port. An attacker cannot mint such a name, so this is a
+ *    constrained rather than open SSRF, but it is the same class as the suffix issue above.
+ *
+ * Why it is not fixed in this change: `isValidCivitaiImageUrl` is SHARED with article
+ * validation, so tightening it there changes unrelated behaviour, and a wrong rejection
+ * HERE is permanent — `markImageScanSubmitFailure` at status 400 stamps `ingestion=Error`
+ * with a retry ceiling of 1. Narrowing safely needs the real distribution of
+ * `Image.url` wasabi shapes first.
  *
  * `blob:` is rejected outright: it is never fetchable server-side, so a blob URL can
  * only produce a guaranteed-failed workflow (this is what the failed submits that
@@ -75,7 +97,39 @@ const SCHEME_PREFIX = /^[a-z][a-z0-9+.-]*:/i;
  * Rejecting these is what makes the host we validated the host that gets fetched.
  */
 function hasAmbiguousAuthority(parsed: URL, raw: string): boolean {
-  return raw.includes('\\') || !!parsed.username || !!parsed.password;
+  // `hasUrlAmbiguousBytes` is this repo's existing, tested spelling of the raw-string half,
+  // and it is strictly WIDER than a backslash test: it refuses every C0 control and DEL too,
+  // which covers the TAB/CR/LF-deletion variant of the same differential. Reused rather than
+  // re-derived — that module's docblock records the same measurement as this one.
+  return hasUrlAmbiguousBytes(raw) || !!parsed.username || !!parsed.password;
+}
+
+/**
+ * Is this an allowed AVATAR url?
+ *
+ * 🔴 Exported so `verifyAvatar` (user.controller) and the ingestion allowlist share the
+ * PREDICATE, not merely the list. Sharing only `AVATAR_URL_PREFIXES` was not enough: each
+ * side open-coded the test that applies it, so when this side hardened to the normalized
+ * href, `verifyAvatar` stayed on the raw string and `…/avatars/../attachments/x` was refused
+ * here while still being ACCEPTED there — the arbitrary-upload surface the prefix list
+ * exists to exclude, reachable through the avatar path.
+ */
+export function isAllowedAvatarUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (hasAmbiguousAuthority(parsed, url)) return false;
+  // 🔴 An ENCODED separator does not collapse during href normalization, so
+  // `…/avatars/..%2fattachments/x` keeps the allowed prefix while a fetcher or CDN that
+  // decodes `%2F` before resolving the path escapes it. Whether any given client does that
+  // cannot be settled from this repo, so refuse the shape rather than depend on the answer —
+  // a real avatar path never carries an encoded slash or backslash.
+  if (/%2f|%5c/i.test(parsed.pathname)) return false;
+  return AVATAR_URL_PREFIXES.some((prefix) => parsed.href.startsWith(prefix));
 }
 
 /**
@@ -94,9 +148,18 @@ export function normalizeImageScanUrl(url: string): string {
 
 export function isAllowedImageScanUrl(url: string): boolean {
   if (!url) return false;
-  // Never fetchable server-side, so only ever a guaranteed-failed workflow. Checked
-  // case-insensitively — strictly stronger than the passthrough test below.
-  if (/^blob:/i.test(url)) return false;
+  // NOTE: no explicit `blob:` check. Lowercase `blob:` IS passthrough and is refused by the
+  // protocol test below; any other casing is not passthrough and is refused by
+  // `SCHEME_PREFIX` on the relative branch. A dedicated check would reject nothing a later
+  // one does not — the same reasoning that removed the old `startsWith('blob')` branch, and
+  // it is applied here rather than left as dead cover claiming strength it no longer has.
+  //
+  // 🔴 Applied to BOTH branches, before the split. Hardening only the absolute branch left
+  // the module inconsistent about the very character the differential is about: `\\evil.com/x`,
+  // `\/evil.com/x` and `/\evil.com/x` carry no scheme and no leading `//`, so they were taken
+  // as relative keys — and a WHATWG parser given a base resolves all three to host
+  // `evil.com`. No legitimate CF key contains a backslash or a control byte.
+  if (hasUrlAmbiguousBytes(url)) return false;
 
   // 🔴 The set to gate is exactly what `getEdgeUrl` forwards UNMODIFIED — hence the shared
   // predicate rather than a second spelling of it here.
@@ -129,9 +192,7 @@ export function isAllowedImageScanUrl(url: string): boolean {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   if (hasAmbiguousAuthority(parsed, url)) return false;
 
-  // 🔴 Prefixes are tested against the NORMALIZED href, never the raw string:
-  // `…/avatars/../attachments/x` passes a raw `startsWith` and resolves to
-  // `/attachments/x` — the arbitrary-upload surface these prefixes exist to exclude.
-  if (AVATAR_URL_PREFIXES.some((prefix) => parsed.href.startsWith(prefix))) return true;
+  // One predicate for the avatar rule, shared with `verifyAvatar` — see isAllowedAvatarUrl.
+  if (isAllowedAvatarUrl(url)) return true;
   return isValidCivitaiImageUrl(parsed.href);
 }

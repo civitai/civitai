@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ImageIngestionUrlBlockedError,
+  isAllowedAvatarUrl,
   isAllowedImageScanUrl,
   normalizeImageScanUrl,
 } from '~/server/utils/image-scan-url';
@@ -101,7 +102,10 @@ describe('isAllowedImageScanUrl', () => {
     ['http:\\\\evil.com/a.png'],
     // Starts with `http`, so forwarded unmodified, but is not an http(s) URL at all.
     ['httpx://evil.com/a.png'],
-  ])('rejects %s — forwarded unmodified by getEdgeUrl but lacking the // separator', (url) => {
+    // Name deliberately does NOT say "lacking the // separator" — the last row has one. What
+    // every row shares is that getEdgeUrl forwards it unmodified while it is not a fetchable
+    // http(s) URL on an allowed host.
+  ])('rejects %s — forwarded unmodified by getEdgeUrl but not an allowed http(s) URL', (url) => {
     expect(isAllowedImageScanUrl(url)).toBe(false);
   });
 
@@ -119,11 +123,35 @@ describe('isAllowedImageScanUrl', () => {
    * (edge-url.ts), so with it empty a scheme- or authority-bearing string is emitted
    * essentially verbatim. Reject those on their shape instead of trusting the env.
    */
-  it('rejects a scheme or an authority masquerading as a relative key', () => {
-    expect(isAllowedImageScanUrl('file:///etc/passwd')).toBe(false);
-    expect(isAllowedImageScanUrl('//evil.com/a.png')).toBe(false);
-    expect(isAllowedImageScanUrl('ftp://evil.com/a.png')).toBe(false);
-    expect(isAllowedImageScanUrl('data:text/html,<script>')).toBe(false);
+  // One row per shape: packed into a single `it`, a regression reports "1 test red" naming
+  // only the first, and cannot say whether the others are also open.
+  it.each([
+    ['file:///etc/passwd'],
+    ['//evil.com/a.png'],
+    ['ftp://evil.com/a.png'],
+    ['data:text/html,<script>'],
+  ])('rejects %s — a scheme or authority masquerading as a relative key', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
+  });
+
+  /**
+   * 🔴 Pins `SCHEME_PREFIX`'s `/i` INDEPENDENTLY of the blob rule.
+   *
+   * `isEdgeUrlPassthrough` is case-SENSITIVE, so an upper/mixed-case scheme is not
+   * passthrough and lands on the relative-key branch where `SCHEME_PREFIX` is the only thing
+   * standing. Dropping its `/i` therefore admits `Http:/127.0.0.1:6379/` — the exact shape
+   * this module exists to reject, with one letter capitalised — and before these rows that
+   * mutation passed the entire suite. The `BLOB:` row elsewhere could not catch it: the two
+   * case-insensitive flags shadowed each other, so each looked covered while neither was.
+   */
+  it.each([
+    ['Http:/127.0.0.1:6379/'],
+    ['HTTP:/169.254.169.254/latest/'],
+    ['FILE:///etc/passwd'],
+    ['DATA:text/html,x'],
+    ['FTP://evil.com/a'],
+  ])('rejects %s — an upper-case scheme is still a scheme', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
   });
 
   it('still allows a real relative CF key, colons in the filename included', () => {
@@ -141,15 +169,13 @@ describe('isAllowedImageScanUrl', () => {
    * — Node reports hostname `image.civitai.com`, Python `urlsplit` reports `127.0.0.1:6379`,
    * and `curl` connects to 127.0.0.1. Explicit userinfo is the same hazard spelled openly.
    */
-  it('rejects a parser-ambiguous authority — backslash or userinfo before the host', () => {
-    expect(isAllowedImageScanUrl(String.raw`https://image.civitai.com\@127.0.0.1:6379/x`)).toBe(
-      false
-    );
-    expect(isAllowedImageScanUrl(String.raw`https://civitai.com\@169.254.169.254/latest/`)).toBe(
-      false
-    );
-    expect(isAllowedImageScanUrl('https://image.civitai.com@127.0.0.1:6379/x')).toBe(false);
-    expect(isAllowedImageScanUrl('https://user:pw@image.civitai.com/a.png')).toBe(false);
+  it.each([
+    [String.raw`https://image.civitai.com\@127.0.0.1:6379/x`],
+    [String.raw`https://civitai.com\@169.254.169.254/latest/`],
+    ['https://image.civitai.com@127.0.0.1:6379/x'],
+    ['https://user:pw@image.civitai.com/a.png'],
+  ])('rejects %s — a parser-ambiguous authority', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
   });
 
   /**
@@ -158,16 +184,56 @@ describe('isAllowedImageScanUrl', () => {
    * deliver that: `…/avatars/../attachments/x` passes `startsWith` and resolves to
    * `/attachments/x`.
    */
-  it('rejects path traversal that escapes an allowed avatar prefix', () => {
+  /**
+   * The absolute branch refused a backslash from the start; the relative branch did not, and
+   * these three carry no scheme and no leading `//`, so they were taken as relative keys.
+   * A WHATWG parser given a base resolves all three to host `evil.com`.
+   */
+  it.each([['\\\\evil.com/x.png'], ['\\/evil.com/x.png'], ['/\\evil.com/x.png']])(
+    'rejects %s — a backslash authority masquerading as a relative key',
+    (url) => {
+      expect(isAllowedImageScanUrl(url)).toBe(false);
+    }
+  );
+
+  it('rejects an ENCODED separator inside an avatar path', () => {
+    // `%2f` does not collapse during href normalization, so the prefix still matches while a
+    // client that decodes it before resolving the path escapes into /attachments/.
     expect(
-      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/../attachments/1/2/e.png')
+      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/..%2fattachments/1/2/e.png')
     ).toBe(false);
     expect(
-      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/%2e%2e/attachments/1/2/e.png')
+      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/%2e%2e%2fattachments/e.png')
     ).toBe(false);
-    expect(isAllowedImageScanUrl('https://avatars.githubusercontent.com/u/../../x/y.png')).toBe(
-      false
-    );
+  });
+
+  it.each([
+    ['https://cdn.discordapp.com/avatars/../attachments/1/2/e.png'],
+    ['https://cdn.discordapp.com/avatars/%2e%2e/attachments/1/2/e.png'],
+    ['https://avatars.githubusercontent.com/u/../../x/y.png'],
+  ])('rejects %s — traversal escaping an allowed avatar prefix', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
+  });
+
+  /**
+   * `verifyAvatar` (user.controller) consumes the SAME predicate, so the traversal that is
+   * refused at ingestion must be refused there too. Before that consolidation the list was
+   * shared while the test applying it was not, and these exact values were accepted on the
+   * avatar path — with a comment on each side asserting the two could not drift.
+   */
+  it.each([
+    ['https://cdn.discordapp.com/avatars/../attachments/1/2/e.png'],
+    ['https://cdn.discordapp.com/avatars/..%2fattachments/1/2/e.png'],
+    [String.raw`https://cdn.discordapp.com/avatars\@127.0.0.1/x.png`],
+  ])('isAllowedAvatarUrl rejects %s', (url) => {
+    expect(isAllowedAvatarUrl(url)).toBe(false);
+  });
+
+  it('isAllowedAvatarUrl allows the real avatar shapes', () => {
+    expect(isAllowedAvatarUrl('https://cdn.discordapp.com/avatars/123/abc.png')).toBe(true);
+    expect(isAllowedAvatarUrl('https://lh3.googleusercontent.com/a/AAcHTtf=s96-c')).toBe(true);
+    // Not an avatar host at all, even though it is one of our storage hosts.
+    expect(isAllowedAvatarUrl('https://image.civitai.com/x/y.png')).toBe(false);
   });
 
   it('normalizes an absolute url so the guard and the fetcher cannot disagree', () => {

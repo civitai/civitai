@@ -38,8 +38,22 @@ import {
 const EVIL_URL = 'https://evil.com/scan-me.png';
 const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png';
 
+/**
+ * 🔴 A DEFAULT resolution, not a bare `mockReset()`. This suite holds the ONLY assertion
+ * guarding the funnel's backstop throw, and with no default the mock returns `undefined`, so
+ * removing that throw made the test die on `Cannot destructure property 'data'` — the
+ * assertion after it (`mockIsFlipt` must not have been called, i.e. the rejection is not
+ * ordered behind the Flipt read) never ran, and the printed cause pointed at a broken mock.
+ */
+const allowSubmitByDefault = () =>
+  mockSubmitWorkflowWithRetry.mockReset().mockResolvedValue({
+    data: { id: 'must-not-happen' },
+    response: undefined,
+    attempts: 1,
+  });
+
 beforeEach(() => {
-  mockSubmitWorkflowWithRetry.mockReset();
+  allowSubmitByDefault();
   mockIsFlipt.mockReset();
   mockSubmitWorkflow.mockReset();
 });

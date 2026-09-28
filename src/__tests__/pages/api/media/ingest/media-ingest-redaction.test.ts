@@ -143,6 +143,67 @@ describe('GET /api/media/ingest/[mediaId]', () => {
     expect(JSON.stringify(res._json())).toContain('not on the ingestion allowlist');
   });
 
+  /**
+   * 🔴 These four pin the WIRING, not the helper. The helper was rewritten to take a needle
+   * LIST specifically so the callback actually in use is redacted — production's callback is
+   * `IMAGE_SCANNING_CALLBACK`, not the `WEBHOOK_TOKEN`-bearing default — and none of that was
+   * observable while this suite's harness set a SECRET-FREE override. Verified by mutation:
+   * before these rows, dropping `callbackUrl` from the needle list, reverting the 500 branch
+   * to un-redacted, redacting only `body` instead of the whole response, and reversing the
+   * longest-first sort ALL passed the suite.
+   */
+  it('redacts a secret carried by the OVERRIDE callback url, not just WEBHOOK_TOKEN', async () => {
+    const override = 'https://scan.example/cb?key=OVERRIDE_SECRET_VALUE';
+    setEnv({ WEBHOOK_TOKEN: TOKEN, IMAGE_SCANNING_CALLBACK: override });
+    mockIngest.mockResolvedValue({
+      data: undefined,
+      error: 'Ingestion request failed',
+      status: 502,
+      body: { callbacks: [{ url: override }], externalId: 'wf-ovr' },
+    });
+
+    const { req, res } = harness({ id: 4242, url: 'a/b.png', type: 'image' });
+    await handler(req, res);
+
+    expect(res._status()).toBe(502);
+    const echoed = JSON.stringify(res._json());
+    expect(echoed).not.toContain('OVERRIDE_SECRET_VALUE');
+    expect(echoed).toContain('wf-ovr');
+  });
+
+  it('redacts the ERROR field too, not only body', async () => {
+    mockIngest.mockResolvedValue({
+      data: undefined,
+      // The orchestrator's own error payload can echo the submitted callback back at us.
+      error: `validation failed for ${CALLBACK}`,
+      status: 502,
+      body: { externalId: 'wf-err' },
+    });
+
+    const { req, res } = harness({ id: 4242, url: 'a/b.png', type: 'image' });
+    await handler(req, res);
+
+    expect(JSON.stringify(res._json())).not.toContain(TOKEN);
+  });
+
+  it('redacts the 500 branch as well', async () => {
+    mockIngest.mockRejectedValue(new Error(`boom while posting to ${CALLBACK}`));
+
+    const { req, res } = harness({ id: 4242, url: 'a/b.png', type: 'image' });
+    await handler(req, res);
+
+    expect(res._status()).toBe(500);
+    expect(JSON.stringify(res._json())).not.toContain(TOKEN);
+  });
+
+  it('removes a token-bearing url as ONE redaction, longest needle first', () => {
+    // Ascending order would strip the inner token first and leave a mangled URL still
+    // carrying its surrounding structure; longest-first collapses the whole thing once.
+    const out = JSON.stringify(redactSecrets({ u: CALLBACK }, [CALLBACK, TOKEN]));
+    expect(out).not.toContain(TOKEN);
+    expect(out).toBe(JSON.stringify({ u: '<redacted>' }));
+  });
+
   it('answers 404 for an unknown media id without touching the orchestrator', async () => {
     const { req, res } = harness(null);
     await handler(req, res);
