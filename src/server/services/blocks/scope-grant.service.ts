@@ -1106,7 +1106,7 @@ export type RevokeScopesResult = {
  * 🔴 CONSENT-GATED SCOPES ONLY — THE CALLER MUST REFUSE AN EXEMPT ONE FIRST. This
  * function does not filter: it records whatever it is told. But `partitionByConsent`
  * signs a `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it ever looks
- * at the grant, so a suppression entry for one of the seven exempt scopes would be
+ * at the grant, so a suppression entry for any exempt scope would be
  * accepted, stored, and enforce NOTHING. `blocks.revokeScopes` rejects them with a
  * specific error for exactly that reason — see `isConsentExemptScope`. Making revocation
  * override exemption is explicitly NOT the design: those exemptions have their own
@@ -1454,7 +1454,7 @@ function rethrowMissingRevokedScopesColumn(err: unknown, site: string): unknown 
  * LIE. `partitionByConsent` below signs on `CONSENT_EXEMPT_SCOPES.has(scope) ||
  * grantedScopes.has(scope)` — the exempt test comes FIRST and never consults the grant —
  * so a suppression entry for a member of this set would be stored and enforce NOTHING.
- * `blocks.revokeScopes` therefore REFUSES these seven with a specific error rather than
+ * `blocks.revokeScopes` therefore REFUSES every member of this set with a specific error rather than
  * accepting and silently doing nothing, and phase 3's UI must not offer a control for
  * them. Making revocation override exemption is deliberately NOT the design: each
  * exemption above rests on its own server-side gate (min-trust, moderation,
@@ -1520,7 +1520,7 @@ export function consentGatedScopes(scopes: string[]): string[] {
  *
  * 🔴 ONE PREDICATE, THREE CONSUMERS, AND THAT IS WHY IT IS EXPORTED RATHER THAN
  * OPEN-CODED. `consentGatedScopes` (the install/anon-strip filter), `partitionByConsent`
- * (the mint) and `blocks.revokeScopes`'s refusal all have to agree about the same seven
+ * (the mint) and `blocks.revokeScopes`'s refusal all have to agree about the same set
  * strings. Open-coded at the router it would drift from the set the mint actually
  * consults, and the drift is silent in the dangerous direction: a scope the router
  * thought was revokable gets a suppression entry that `partitionByConsent` never reads,

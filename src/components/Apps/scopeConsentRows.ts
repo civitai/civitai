@@ -86,7 +86,7 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
  *
  * ⚠️ `fixed` IS NOT A SYNONYM FOR "CONSENT-EXEMPT", and naming it after the exempt set would
  * have made it one. It is the residual: a displayed scope that is neither revoked nor in the
- * server's `revokableScopes`. The seven `CONSENT_EXEMPT_SCOPES` members are the dominant
+ * server's `revokableScopes`. The `CONSENT_EXEMPT_SCOPES` members are the dominant
  * population, but an UNKNOWN scope id reaches it too — `revokableScopes` filters on
  * `isKnownBlockScope`, and `blocks.revokeScopes` rejects an unknown string outright, so
  * offering a control for one would produce a `BAD_REQUEST` the viewer cannot act on.
@@ -150,7 +150,7 @@ export type ScopeConsentRow = {
  *   - 🔴 `fixed` BEFORE `not-granted`, AND THIS IS THE ONE THAT PRESERVES THE EXEMPT COPY. A
  *     `CONSENT_EXEMPT_SCOPES` member is NEVER in the granted set — `partitionByConsent` signs it
  *     on the exempt test alone, before it looks at the grant, so no grant is ever recorded for one
- *     — so testing `not-granted` first would relabel all seven and throw away their specific
+ *     — so testing `not-granted` first would relabel every one of them and throw away their specific
  *     `FIXED_SCOPE_NOTES` sentences, which are the only place a viewer learns what governs those
  *     permissions instead of their consent. Membership of `revokableScopes` is therefore decided
  *     first, and the granted set only splits what survives it.
@@ -303,6 +303,23 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   'collections:write:self':
     "Can't be withdrawn. The action is bound server-side to your own account as the subject, " +
     'so it can only bookmark on your behalf and cannot reach anyone else.',
+  /**
+   * 🔴 WORDING DERIVED FROM UPSTREAM'S OWN DESCRIPTION OF THE SCOPE, NOT INVENTED HERE. The
+   * digital-goods rail is not this branch's feature, so the claim this note makes is taken from the
+   * three places that already describe it: `server/services/blocks/scope-descriptions.constants.ts`
+   * ("See which of this app's items you already own"), `shared/constants/block-action-detail.ts`
+   * ("Read what you own from this app"), and the exemption's own stated basis in
+   * `server/services/blocks/scope-grant.service.ts` — *"the app's OWN sales ledger, filtered to this
+   * viewer … scoped to `claims.appBlockId` in the query, so it can only ever return what the calling
+   * app itself sold; there is no third-party data to consent to."*
+   *
+   * That is the same shape of justification as `collections:read:self` above (a server-side check on
+   * the subject, not a permission the viewer holds open), so it gets the same register: name the gate
+   * that replaces consent, and do not imply an uninstall ends it.
+   */
+  'goods:read:self':
+    "Can't be withdrawn. It reads only what this app itself has sold you — the query is bound " +
+    'server-side to this app, so it cannot see anything you own from anywhere else.',
 };
 
 /**

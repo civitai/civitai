@@ -304,7 +304,16 @@ export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
 export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
 
 /**
- * The ONE scope in the vocabulary that can spend the viewer's Buzz.
+ * The scope the per-app daily Buzz budget governs.
+ *
+ * ⚠️ IT IS NOT THE ONLY SCOPE THAT CAN SPEND THE VIEWER'S BUZZ, AND THIS LINE SAID IT WAS. The
+ * digital-goods rail added `goods:purchase:self`, which also debits the viewer's balance — so a
+ * superlative here is simply false, and replacing it with a narrower superlative would be the same
+ * mistake one step along. The honest distinction is not "the only spender" but WHICH rail the
+ * per-app budget bounds: this scope's spend is reserved against the budget the viewer sets per app,
+ * while a goods purchase is bounded by its own per-USER daily cap and a per-purchase price ceiling
+ * and never consults that budget. Both are consent-gated and both are revokable; only this one is
+ * budgeted, which is exactly what the three surfaces below coordinate on.
  *
  * 🔴 THE CLIENT-SIDE HOME, AND IT REPLACES THREE LOCAL CONSTS RATHER THAN ADDING A FOURTH. Before
  * this, the literal `'ai:write:budgeted'` was declared privately in

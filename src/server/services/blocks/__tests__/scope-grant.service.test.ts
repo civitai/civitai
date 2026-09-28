@@ -1395,7 +1395,17 @@ describe('scope-grant.service', () => {
     // control may be offered on, and the set is also what `partitionByConsent` signs
     // without a grant — so a silent addition would BOTH mint a scope consent-free and make
     // it un-revokable. An exact-array assertion is what makes either change visible.
-    it('is exactly the seven documented exempt scopes', async () => {
+    //
+    // 🔴 THE LITERAL IS DELIBERATE HERE, AND IT IS THE ONE PLACE THAT CARRIES ONE. Deriving the
+    // expected value from the source would make this assertion unfailable, which is the opposite
+    // of its purpose: this is a tripwire on a security-relevant set, so adding a scope is MEANT to
+    // red it and force a reviewer to confirm the exemption was intended. Bump it consciously.
+    // Every OTHER site that used to retype a count against this set now derives it instead — see
+    // `components/Apps/__tests__/scopeConsentRows.test.ts`, which cross-checks the note map's keys
+    // against this list rather than pinning a number of its own. (A count in a TITLE is pure rot
+    // with no tripwire value, which is why this one names the property instead of a number: the
+    // title said "seven" while the array said eight after upstream added `goods:read:self`.)
+    it('is exactly the documented exempt set — bump this literal deliberately', async () => {
       const { consentExemptScopeList } = await import('../scope-grant.service');
       expect(consentExemptScopeList()).toEqual([
         'apps:storage:read',
@@ -1404,6 +1414,11 @@ describe('scope-grant.service', () => {
         'apps:storage:write',
         'collections:read:self',
         'collections:write:self',
+        // Added by the digital-goods rail: the app's own sales ledger, filtered to this viewer and
+        // scoped to `claims.appBlockId` server-side. Its sibling `goods:purchase:self` is
+        // deliberately NOT here — money out of the viewer's balance needs an explicit grant, which
+        // is also what keeps it REVOKABLE.
+        'goods:read:self',
         'models:read:self',
       ]);
     });

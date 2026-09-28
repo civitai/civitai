@@ -14,7 +14,7 @@ import { BLOCK_SPEND_SCOPE, isKnownBlockScope } from '~/shared/constants/block-s
  * PHASE 3 — the pure half: which rows exist and what state each is in.
  *
  * Node tier deliberately. Every claim here is about a function with no DOM, and the one guard that
- * matters most — that all seven consent-exempt scopes carry a specific note — needs the SERVER's
+ * matters most — that EVERY consent-exempt scope carries a specific note — needs the SERVER's
  * exempt list to be the population, which a browser-tier file cannot import.
  */
 describe('buildScopeConsentRows', () => {
@@ -192,7 +192,7 @@ describe('buildScopeConsentRows', () => {
    * INPUT THAT MAKES "revokable-membership is tested FIRST" OBSERVABLE.
    *
    * ⚠️ IT EXISTS BECAUSE THE ARM BELOW CANNOT SEE THAT ORDERING, MEASURED. The reorder has TWO
-   * natural spellings and the seven-way exempt arm kills only one of them:
+   * natural spellings and the per-exempt-scope arm kills only one of them:
    *   - spelling B, `!granted.has(scope) ? 'not-granted' : …` — dies on every exempt fixture.
    *   - spelling A, `granted.has(scope) ? 'revokable' : !revokable.has(scope) ? 'fixed' : …` —
    *     measured **SURVIVING the whole segment**: 40 unit + 91 component + 85 geometry, all green.
@@ -238,7 +238,7 @@ describe('buildScopeConsentRows', () => {
   /**
    * 🔴 THE EXEMPT SCOPES KEEP `fixed`. No grant is ever recorded for a `CONSENT_EXEMPT_SCOPES`
    * member — `partitionByConsent` signs it on the exempt test alone, before it looks at the grant —
-   * so all seven are ALWAYS outside `grantedScopes`. Relabelling them `not-granted` would drop
+   * so every member is ALWAYS outside `grantedScopes`. Relabelling them `not-granted` would drop
    * their specific `FIXED_SCOPE_NOTES` sentences, the only place a viewer is told what governs the
    * permission instead of their consent.
    *
@@ -246,14 +246,14 @@ describe('buildScopeConsentRows', () => {
    * CORRECTED RATHER THAN THE ARM. It said "this is the ordering the new state could have broken",
    * and it cannot see that: the ladder reaches `fixed` at `!revokable.has(scope)` and never consults
    * `granted`, so `grantedScopes: []` here is INERT to the verdict — measured, setting it to
-   * `[scope]` (which contradicts this arm's own message) leaves all seven green. The ordering claim
-   * belongs to the retired-scope arm above. What these seven pin is that a scope in NEITHER server
+   * `[scope]` (which contradicts this arm's own message) leaves every case green. The ordering claim
+   * belongs to the retired-scope arm above. What these cases pin is that a scope in NEITHER server
    * set is `fixed`, for the real exempt population.
    *
-   * ⚠️ AND THE SEVEN ADD NO MUTANT KILLS OVER ONE ARM: `buildScopeConsentRows` cannot tell the
+   * ⚠️ AND THE ENUMERATION ADDS NO MUTANT KILLS OVER ONE ARM: `buildScopeConsentRows` cannot tell the
    * scopes apart — it branches only on set membership and row order. The enumeration is kept
    * because it is the real server list and would go red if the exempt set were emptied, not because
-   * seven inputs cover more than one. (The per-scope NOTES genuinely differ, and that is what the
+   * N inputs cover more than one. (The per-scope NOTES genuinely differ, and that is what the
    * `fixedScopeNote` describe below enumerates for.)
    */
   test.each(consentExemptScopeList())('🔴 %s is in neither server set, so `fixed`', (scope) => {
@@ -472,21 +472,51 @@ describe('the spend scope is one string on both sides of the client/server line'
 
 describe('fixedScopeNote', () => {
   /**
-   * 🔴 THE POPULATION IS THE SERVER'S EXEMPT LIST, NOT A LITERAL SEVEN RETYPED HERE. A retyped
+   * 🔴 ITS OWN TEST, BECAUSE AS ONE TEST THE COVERAGE ASSERTION WAS UNREACHABLE. This used to be the
+   * first line of the test below, as `expect(exempt.length, …).toBe(7)`. When upstream added an
+   * eighth exempt scope (`goods:read:self`) that line failed FIRST, so the `missing` assertion on the
+   * next line — the one that actually checks every exempt scope has a note — never executed, and the
+   * gap it exists to report was invisible behind a red count. A guard an earlier assertion in the
+   * same test always short-circuits is not a weak guard, it is a DEAD one, and it stayed dead through
+   * a full green suite because the count only started failing at the moment the coverage broke.
+   *
+   * So: the non-emptiness control lives here, the coverage check lives below, and neither can mask
+   * the other. Both are cheap; independence is the point.
+   *
+   * 🔴 AND IT IS NO LONGER A COUNT. The property this arm needs is "the population is not empty" —
+   * `toBeGreaterThan(0)` says exactly that and cannot rot. The EXACT set is pinned once, deliberately,
+   * in `server/services/blocks/__tests__/scope-grant.service.test.ts`; retyping a number here only
+   * duplicated that tripwire in a file that does not own it, and broke a merge for no added coverage.
+   */
+  test('🔴 the exempt population is non-empty, and the note map covers exactly it', () => {
+    const exempt = consentExemptScopeList();
+    expect(exempt.length, 'the exempt list is empty — this test checks nothing').toBeGreaterThan(0);
+    // 🔴 DERIVED ON BOTH SIDES, so it catches BOTH drift directions with no literal to bump: an
+    // exemption added server-side without a note here (the viewer silently drops to the generic
+    // sentence), and a note added here for a scope that is not exempt (dead copy that no row can
+    // ever render). Sorted because neither source promises an order.
+    expect(
+      [...exempt].sort(),
+      'FIXED_SCOPE_NOTES keys and the server exempt set have diverged'
+    ).toEqual(Object.keys(FIXED_SCOPE_NOTES).sort());
+  });
+
+  /**
+   * 🔴 THE POPULATION IS THE SERVER'S EXEMPT LIST, NOT A LITERAL LIST RETYPED HERE. A retyped
    * list passes forever after the real set changes, which is the exact drift this whole arc keeps
    * paying for. `consentExemptScopeList()` is a COPY of the set `partitionByConsent` consults.
    */
   test('every consent-exempt scope has a SPECIFIC note, not the generic fallback', () => {
     const exempt = consentExemptScopeList();
-    // A positive control on the import: an empty population would make the loop below vacuous
-    // and it would report success having checked nothing.
-    expect(exempt.length, 'the exempt list is empty — this test checks nothing').toBe(7);
+    // Non-emptiness is asserted independently above; repeated here only so this loop cannot be
+    // vacuous if this test is ever run in isolation. NOT a count — see the docblock above.
+    expect(exempt.length, 'the exempt list is empty — this test checks nothing').toBeGreaterThan(0);
     const missing = exempt.filter((scope) => !(scope in FIXED_SCOPE_NOTES));
     expect(missing, 'exempt scopes with no specific note').toEqual([]);
     for (const scope of exempt) {
       expect(fixedScopeNote(scope), scope).toBe(FIXED_SCOPE_NOTES[scope]);
       // Each note has to say the thing the row exists to say. Asserted as a property of the
-      // string rather than by pinning seven sentences: this is a "does it answer the question"
+      // string rather than by pinning each sentence: this is a "does it answer the question"
       // check, and the wording is reviewed prose.
       expect(fixedScopeNote(scope), scope).toMatch(/can't be withdrawn/i);
     }

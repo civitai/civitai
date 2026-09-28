@@ -42,7 +42,7 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
  *     `revokableScopes` and they get a real control. `ai:write:budgeted` is also the SPEND scope,
  *     which is what makes the confirm dialog's budget sentence reachable.
  *   - `apps:storage:read`, `apps:storage:shared:write`, `collections:read:self`, `models:read:self`
- *     → four of the seven `CONSENT_EXEMPT_SCOPES`. Present in `scopes` (an app really does declare
+ *     → four of the `CONSENT_EXEMPT_SCOPES`. Present in `scopes` (an app really does declare
  *     them) and ABSENT from `revokableScopes`, which is exactly the shape the server produces.
  *   - `collections:read:private` → already withdrawn, and deliberately NOT in `scopes`: it tests
  *     the row surviving the publisher dropping it from the manifest.
@@ -997,8 +997,8 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
 describe('the exempt-note fragments are a usable discriminator', () => {
   /**
    * 🔴 THE KEY SETS MUST BE TIED TOGETHER OR THIS GUARD SILENTLY BECOMES A 4-OF-N SAMPLE.
-   * `FIXED_SCOPE_NOTES` has seven entries; the fixture declares four of them, so a swap between two
-   * of the three UNFRAGMENTED scopes is invisible here. That is an accepted limit — the fixture
+   * The fixture declares four of `FIXED_SCOPE_NOTES`' entries, so a swap between two of the
+   * UNFRAGMENTED scopes is invisible here. That is an accepted limit — the fixture
    * cannot render every scope at a legible drawer width — but it must be an ACCEPTED one rather than
    * a drifting one: without this arm, adding an eighth note leaves the coverage ratio quietly worse
    * and nothing says so. The unfragmented set is therefore enumerated explicitly, and gaining a
@@ -1008,6 +1008,16 @@ describe('the exempt-note fragments are a usable discriminator', () => {
     'apps:storage:write',
     'apps:storage:shared:read',
     'collections:write:self',
+    // 🔴 THE EIGHTH NOTE THIS DOCBLOCK PREDICTED, LISTED RATHER THAN FRAGMENTED — DELIBERATELY.
+    // `goods:read:self` gained a note when upstream's digital-goods rail made it consent-exempt.
+    // The alternative is a fragment in `EXEMPT_NOTE_MUST_MENTION`, which the arm below then requires
+    // to be IN the fixture (`GRANT.scopes`) — i.e. a fifth exempt row in a drawer the docblock above
+    // says cannot render every scope at a legible width. Taking the accepted-limit route keeps this
+    // guard honest about its own coverage (now 4 of 8) instead of quietly widening the fixture, and
+    // this list is exactly the mechanism provided for that. A swap involving this note is therefore
+    // invisible HERE — but not unguarded: the note map's keys are pinned against the server's exempt
+    // set in `components/Apps/__tests__/scopeConsentRows.test.ts`.
+    'goods:read:self',
   ];
 
   test('🔴 every FIXED_SCOPE_NOTES key is either fragmented or knowingly listed as not', () => {
@@ -1043,10 +1053,18 @@ describe('the exempt-note fragments are a usable discriminator', () => {
     // 🔴 THE POPULATION IS EVERY ENTRY IN `FIXED_SCOPE_NOTES`, NOT THE FOUR THE FIXTURE RENDERS.
     // Scoping it to the fixture is what let the `apps:storage:read` ↔ `apps:storage:write` swap
     // survive: `apps:storage:write` is not in the fixture, so `/private store/i` looked unique among
-    // the four while being ambiguous among the seven — and a swap only needs the OTHER entry to
+    // the four while being ambiguous across the whole map — and a swap only needs the OTHER entry to
     // exist, not to be rendered.
     const notes = Object.entries(FIXED_SCOPE_NOTES).map(([scope, text]) => ({ scope, text }));
-    expect(notes.length, 'FIXED_SCOPE_NOTES is empty — this control checks nothing').toBe(7);
+    // NOT a count. This control's own message names the hazard it guards — an EMPTY map making the
+    // loop below vacuous — and `toBeGreaterThan(0)` is that property exactly. A literal here was a
+    // second, unowned copy of the exact-set tripwire and it broke on upstream's eighth exempt scope;
+    // the set itself is pinned in `scopeConsentRows.test.ts` (keys === server exempt list) and in
+    // `scope-grant.service.test.ts` (the exempt list itself).
+    expect(
+      notes.length,
+      'FIXED_SCOPE_NOTES is empty — this control checks nothing'
+    ).toBeGreaterThan(0);
     for (const [scope, re] of Object.entries(EXEMPT_NOTE_MUST_MENTION)) {
       const hits = notes.filter((n) => re.test(n.text)).map((n) => n.scope);
       expect(
