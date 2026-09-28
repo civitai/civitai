@@ -274,14 +274,27 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  *     AFTER our terminator. The single-transaction endpoint the payout legs use
  *     matches `ExternalTransactionId` exactly and appends nothing, so a BUY leg
  *     is stored suffixed and a SELL leg verbatim.
- *     ⚠ THE SUFFIX IS A C# ENUM NAME, NOT OUR LOWERCASE WIRE VALUE — an earlier
- *     draft of this paragraph said `-blue` / `-yellow` and that was wrong.
+ *     ⚠ THE SUFFIX IS A C# ENUM NAME, NOT OUR LOWERCASE WIRE VALUE, AND FOR
+ *     THIS RAIL IT IS DETERMINATE: `-Generation` and `-User`.
  *     `AccountType` (`Civitai.Buzz.Infrastructure/Entities/AccountType.cs`)
  *     declares `User = 0` / `Yellow = 0` and `Generation = 3` / `Blue = 3` as
- *     duplicate-valued ALIASES, so `ToString()` renders whichever name the
- *     runtime resolves for that value: the live ledger carries `-Yellow`,
- *     `-Blue`, `-User` AND `-Generation`. We do not control which. What matters
- *     here is only that every one of them begins `-`.
+ *     duplicate-valued ALIASES; `ToString()` on a duplicate value renders the
+ *     FIRST-DECLARED name, so 0 renders `User` and 3 renders `Generation`. We
+ *     send `payWith: ['blue', 'yellow']` and the client passes the PLURAL
+ *     `fromAccountTypes` through unmapped (`toApiTransaction` maps only the
+ *     singular from/to types), so Buzz's `JsonStringEnumConverter` resolves
+ *     them to 3 and 0 — hence exactly those two suffixes.
+ *     🔴 TWO EARLIER DRAFTS OF THIS SENTENCE WERE WRONG AND ARE RECORDED SO
+ *     NOBODY DERIVES A THIRD: (1) `-blue` / `-yellow`, i.e. our lowercase wire
+ *     values, which the enum never renders; (2) "whichever name the runtime
+ *     resolves … the live ledger carries `-Yellow`, `-Blue`, `-User` AND
+ *     `-Generation`. We do not control which." That second one rested on a
+ *     ledger-wide substring count, which mixes producers: the `-Yellow` /
+ *     `-Blue` rows are built by `src/server/jobs/deliver-creator-compensation.ts`
+ *     from PascalCase ClickHouse account types, not by this endpoint. An
+ *     ungrouped aggregate over a table with more than one writer is not
+ *     evidence about one writer.
+ *     What the safety argument needs is only that every suffix begins `-`.
  *   - on `POST /multi-transactions/refund`, it selects the half-open range
  *     `id >= prefix AND id < prefix + "ZZZZZZZZZZZZZ"` (a 13-`Z` sentinel),
  *     excluding rows already of type Refund.
