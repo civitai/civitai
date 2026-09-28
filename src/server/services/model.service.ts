@@ -2756,6 +2756,11 @@ export const upsertModel = async (
                   }
                 : undefined,
             userId,
+            // Official by definition. `isOfficial` is otherwise only reachable through
+            // `model.setOfficial`, a separate call nobody makes — which is how 14 models went
+            // unflagged, and why anything keyed on the flag (attribution, the official-models cache)
+            // silently excluded the newest official releases.
+            ...(userId === constants.system.officialUserId ? { isOfficial: true } : {}),
             tagsOnModels: tagsOnModels
               ? {
                   create: tagsOnModels.map((tag) => {
@@ -5451,10 +5456,16 @@ export async function transferModelOwnership({
     : [];
   const affectedImageIds = affectedImages.map((i) => i.id);
 
+  // A model becomes official by arriving at the official account — which is how every mirrored
+  // model gets there, since `model.upsert` makes the caller the owner and the transfer follows.
+  // Not cleared on a transfer AWAY: `isOfficial` is also set on partner-hosted models that have
+  // never belonged to this account, so unsetting it here would revoke a claim it didn't grant.
+  const becomesOfficial = targetUserId === constants.system.officialUserId;
+
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
-      data: { userId: targetUserId },
+      data: { userId: targetUserId, ...(becomesOfficial ? { isOfficial: true } : {}) },
     }),
     // PaidAccess.ownerId is a denormalised copy of the model owner, and it is what decides who
     // generates free from a gated version and whose scheduled sales may reprice it. Left behind, the
@@ -5560,6 +5571,14 @@ export async function transferModelOwnership({
   await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
 
   await Promise.all([
+    ...(becomesOfficial
+      ? [
+          invalidation(
+            'bustOfficialModels',
+            bustFetchThroughCache(REDIS_KEYS.CACHES.OFFICIAL_MODELS)
+          ),
+        ]
+      : []),
     // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it
     // holds Model.userId for a DAY, and hasEntityAccess grants "owners always have access" from it, so
     // without this the previous owner keeps reaching a gated version the UPDATE above just moved.
