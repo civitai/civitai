@@ -1842,7 +1842,11 @@ describe('scope-grant.service', () => {
      * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
      * reverted to draft 1 or draft 3, a matcher matching everything or nothing, dropping the walk's
      * is-this-a-call guard, and any ONE-PLACE substitution or relabel inside the probe set all go
-     * red — on this arm, on the scan, or on both. ⚠️ That said "any substitution or relabel", flat,
+     * red — on this arm, on the scan, or on both. ⚠️ "Any ONE-PLACE substitution" was itself still
+     * too wide: swapping a wide probe for the LITERAL text `<WIDE>` is one place and normalises to
+     * the same ledger key, which survived until the pre-normalisation assertion beside the content
+     * pin was added. Three successive drafts of this sentence over-claimed; read the assertions,
+     * not the sentence. ⚠️ That said "any substitution or relabel", flat,
      * and round-17 review measured it false: a COORDINATED substitution of the wide entries in both
      * `cases` and `LEDGER` survived, with the window reinstated, which is the round-14 attack in
      * coordinated form. The content pin beside the ledger closes that route; see it.
@@ -1879,7 +1883,11 @@ describe('scope-grant.service', () => {
        * for the 40 window (32 does not) and **4089** for the 4096 one (4088 does not).
        *
        * ⚠️ AN EARLIER DRAFT CALLED THAT A "ONE-CHARACTER MARGIN", WHICH WAS BOTH THE WRONG NUMBER
-       * AND THE WRONG QUANTITY — it is seven characters past the slice at a run of exactly `W`, and
+       * AND THE WRONG QUANTITY — the tail is `.catch(` (7) + the run + `)`, so at a run of exactly
+       * `W` the `)` is the **eighth** character dropped, not the first and not the seventh (an
+       * intermediate draft said seven, off by one, in the paragraph whose whole subject is a
+       * previously-wrong figure — derived for both windows: run 40 → tail 48, run 4096 → tail 4104,
+       * 8 beyond either way). And
        * "one character" is a fact about the FLOOR: `> max` admits 4097 as its smallest legal value.
        * Adopted from a review report without re-deriving it, which is the class this file keeps
        * correcting. Measurements that DO hold: floor relaxed to `>=`, a run of exactly 4096 plus the
@@ -1948,10 +1956,13 @@ describe('scope-grant.service', () => {
       // ⚠️ THE TOKEN COLLIDES, HARMLESSLY, AND THE DIAGNOSTIC NOW PRINTS BOTH FAILURES ALIKE. A tail
       // containing the LITERAL text `<WIDE>` normalises to the same ledger key as a real wide run,
       // and since the loop's diagnostic uses the same token it reports both the same way. Not
-      // exploitable: a literal-text tail passes the matcher while labelled HAZARD, so the LOOP
-      // catches it — not the ledger, which sees no difference. Recorded because the older
-      // `<5000 spaces>` token made the collision more contrived, so this is a real, if tiny, loss
-      // that came with removing a stated figure.
+      // exploitable FOR THE HAZARD ENTRIES: a literal-text tail passes the matcher while labelled
+      // HAZARD, so the LOOP catches it — not the ledger, which sees no difference. ⚠️ THAT REASONING
+      // DOES NOT TRANSFER TO THE **SAFE** ENTRY, and an earlier draft of this note concluded "not
+      // exploitable" flat: handler-shaped plus labelled SAFE means nothing fires at all. The
+      // pre-normalisation assertion after the content pin is what closes that; see it. Recorded
+      // because the older `<5000 spaces>` token made the collision more contrived, so this is a
+      // real loss that came with removing a stated figure.
       const LEDGER = [
         'HAZARD ""',
         'HAZARD ".catch()"',
@@ -2019,6 +2030,31 @@ describe('scope-grant.service', () => {
           'SAFE ".catch(<WIDE>() => {})"',
         ].sort()
       );
+      // 🔴 AND `cases` IS CHECKED **PRE-NORMALISATION**, BECAUSE EVERYTHING ABOVE IS BLIND BY
+      // CONSTRUCTION. `.replace(WIDE, '<WIDE>')` is a NO-OP on a tail that already contains the
+      // literal text `<WIDE>`, so swapping a wide probe for that literal — ONE place, `cases` only —
+      // normalises to the very same ledger key. Set equality holds, distinctness holds, the
+      // `WIDE.length` floor holds, and the content pin holds because `LEDGER` was never touched.
+      //
+      // For the HAZARD entries the loop catches it (literal text is handler-shaped while labelled
+      // HAZARD). For the SAFE entry that SAME property is the exploit: handler-shaped and labelled
+      // SAFE, so nothing fires — measured SURVIVING, and surviving with `WIDE` then prefixed by
+      // `undefined`, i.e. the composition coverage is gone. ⚠️ PRE-EXISTING, not introduced by the
+      // pin; what was new was the prose asserting it shut ("any ONE-PLACE substitution … all go
+      // red", and "not exploitable … the LOOP catches it", whose reasoning covers only the HAZARD
+      // case). Round-18 review. A comment that stops the next person looking is the shape this file
+      // keeps producing, and this is its fifth instance.
+      //
+      // This assertion is the only one in the arm that reads the tails BEFORE the run is erased,
+      // which is precisely why it can see what the other three cannot.
+      expect(
+        cases
+          .filter(([, t]) => t.includes(WIDE))
+          .map(([k]) => k)
+          .sort(),
+        'a wide probe no longer contains the actual run — the normalisation erases the run, so the ' +
+          'ledger and its content pin cannot tell a real wide tail from literal `<WIDE>` text'
+      ).toEqual(['HAZARD', 'HAZARD', 'SAFE']);
 
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
