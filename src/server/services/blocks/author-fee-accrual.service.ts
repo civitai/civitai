@@ -256,14 +256,26 @@ export async function resolveBlockAuthorFeePayee(args: {
   // to charge on the author's behalf.
   //
   // 🔴 ITS ONLY LIVE CONSUMER IS A MODERATOR RUN, WHICH IS WHY THIS ARM EXISTS AT
-  // ALL. The owner is already refused one branch below (`self-dealing`), and
-  // collaborators are read-only on this surface by decision — `ai:write:budgeted`
-  // is stripped from an editor's clamp, so an editor cannot reach a generation and
-  // cannot reach this. That leaves the moderator, who IS a third party: without
-  // this branch, reviewing a takedown debits the MODERATOR and credits the
-  // SUSPENDED PUBLISHER the same Buzz, because the platform takes no cut on this
-  // rail. That is a straight transfer from the person reviewing the takedown to the
-  // author who was taken down.
+  // ALL. The owner is already refused one branch below (`self-dealing`). That
+  // leaves the moderator, who IS a third party: without this branch, reviewing a
+  // takedown debits the MODERATOR and credits the SUSPENDED PUBLISHER the same
+  // Buzz, because the platform takes no cut on this rail. That is a straight
+  // transfer from the person reviewing the takedown to the author who was taken
+  // down.
+  //
+  // ⚠️ COLLABORATORS (EDITORS) ARE A DECISION, NOT YET A MECHANISM — AND THE
+  // PRESENT TENSE HERE WOULD BE A LIE. The operator's decision is that an editor is
+  // READ-ONLY on the private-run surface, to be delivered by stripping
+  // `ai:write:budgeted` in the private-run scope clamp. That clamp DOES NOT EXIST
+  // YET; it arrives with the mint. So do not read this as "an editor cannot reach a
+  // generation" — nothing enforces that today, and if the clamp strip is forgotten,
+  // an editor reaches a generation and is refused HERE, by this arm, rather than
+  // upstream.
+  //
+  // That is why the arm is written audience-BLIND: it keys on the CLAIM, never on a
+  // role, so it holds for whichever audiences the clamp ends up admitting. An
+  // earlier draft of this comment asserted the clamp in the present tense, which
+  // would have made a missing clamp look handled — a review lane caught it.
   //
   // Placed FIRST, before the owner lookup, for three reasons: the refusal needs no
   // owner, so it costs no query; a private run must be refused even if the app row

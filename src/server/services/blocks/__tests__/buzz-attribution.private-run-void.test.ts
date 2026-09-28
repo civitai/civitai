@@ -260,6 +260,27 @@ describe('arm A — privateRun voids the spend-attribution row', () => {
     expect(withFalse.voidedReason ?? null).toBeNull();
   });
 
+  it('[REG] a TRUTHY NON-BOOLEAN does not void — the arm tests `=== true`, not truthiness', async () => {
+    // 🔴 THIS TEST EXISTS BECAUSE A MUTANT SURVIVED. Loosening the arm from
+    // `privateRun === true` back to a bare truthiness check was undetectable: every
+    // other fixture here passes a real boolean, for which the two forms are
+    // identical, so the mutant was EQUIVALENT against the suite and scored SURVIVED.
+    //
+    // The tightening is not cosmetic. `recordSpendAttribution` is exported and its
+    // input is a plain object, so a future caller — or a caller that forwards a
+    // half-parsed value — can hand it a truthy non-boolean that TypeScript never
+    // saw. Under truthiness that silently voids the row and, on the fee rail's
+    // equivalent, silently suppresses a live charge. The cast below is how a real
+    // caller reaches this state; it is deliberate, not a test smell.
+    await recordSpendAttribution(
+      fakeInput({ privateRun: 'yes' as unknown as boolean })
+    );
+
+    const data = writtenRow();
+    expect(data.status).toBe('tracked');
+    expect(data.voidedReason ?? null).toBeNull();
+  });
+
   it('[INV] an ordinary OWNER run is still self_spend — the pre-existing arm is untouched', async () => {
     // Proves the private-run branch did not swallow the self-spend branch. With
     // the branches reordered but both present this stays green; it goes red only

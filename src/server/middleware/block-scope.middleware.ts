@@ -132,6 +132,32 @@ export interface BlockTokenClaims {
    * 🔴 ABSENT MUST MEAN "CHARGE NORMALLY", NOT "SUPPRESS". Both arms test
    * `=== true`, so a missing or garbage claim fails toward the pre-existing
    * behaviour rather than silently disabling a live money rail for every token.
+   * ⚠️ What actually makes that safe is the TOKEN BOUNDARY, not the comparison:
+   * the guard below rejects any non-boolean outright, so neither arm can be
+   * reached with a truthy non-boolean in the first place. A third arm added later
+   * must not rely on truthiness on the strength of this paragraph.
+   *
+   * 🔴 TWO MONEY ARMS READ IT TODAY, BUT THAT IS NOT THE CLOSED SET OF READERS A
+   * PRIVATE RUN NEEDS, AND READING IT AS ONE IS THE EXPENSIVE MISTAKE. A private
+   * run serves a DELISTED / SUSPENDED app's bundle, so it must also pass
+   * `resolveAppBlockApprovalVerdict` (`blocks/block-approval.service.ts`) — the
+   * ONE place that decides which signed claim exempts a token from the
+   * approved-status decision, today only the `dev && reviewRunForReal` PAIR. The
+   * arm for a private run belongs THERE, keyed the same paired way, not
+   * open-coded as a status bypass in a new mint branch: that predicate is
+   * ledgered by `services/__tests__/no-unguarded-block-rest-token.test.ts`, and a
+   * second spelling of it is exactly what that ledger exists to prevent.
+   *
+   * 🔴 AND IT IS NOT THE CLOSED SET OF MONEY RAILS EITHER. `social:tip:self`
+   * (`pages/api/v1/blocks/tip.ts`) moves IRREVERSIBLE Buzz from the viewer to any
+   * `toUserId` the block's own code names, has no status check of its own, and is
+   * not in `PAGE_FORBIDDEN_SCOPES` — so it is refused on a delisted app ONLY by
+   * the approval verdict above. Widening that verdict for a private run admits
+   * this route in the same move. The sibling owner-crediting rail
+   * `goods:purchase:self` is already closed (it requires an approved block).
+   * Whoever adds the mint MUST either strip `social:tip:self` in the private-run
+   * scope clamp or add a third arm; neither is done here, and this PR's "two
+   * money arms" is a statement about the author-fee and attribution rails only.
    */
   privateRun?: boolean;
 }

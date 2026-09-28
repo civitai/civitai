@@ -679,6 +679,15 @@ async function chargeBlockAuthorFeeUncounted(
       // so this accrual cannot be reached with `privateRun: true` today. Forwarded
       // anyway so the write-side belt is not silently weaker than the read-side
       // one if the ordering above ever changes.
+      //
+      // 🔴 THIS LINE IS AN UNKILLABLE MUTANT, AND THAT IS RECORDED RATHER THAN
+      // HIDDEN. Deleting it changes nothing any test can observe — reaching it
+      // requires first breaking the quote refusal, which is a DIFFERENT mutation
+      // with its own killing tests. So it survived the sweep by construction, not
+      // for lack of coverage, and "zero mutants survived" would be a false claim
+      // about this rail. Do not try to write a test for it: the only way to make it
+      // observable is to remove the guard that makes it unreachable, which would be
+      // testing for a state the code is designed never to be in.
       privateRun: args.privateRun,
     });
   } catch (error) {

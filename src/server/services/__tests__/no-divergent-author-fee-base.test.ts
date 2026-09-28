@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   blankComments,
+  callSites,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
@@ -245,28 +246,14 @@ const QUOTE_SITE_LEDGER: Record<
 };
 
 /** Every `<fn>({ … })` argument object in the router source, braces balanced. */
-function callSites(source: string, opener: string): string[] {
-  const sites: string[] = [];
-  let from = 0;
-  for (;;) {
-    const start = source.indexOf(opener, from);
-    if (start === -1) break;
-    // Walk braces from the argument object's `{` to its match so a nested object
-    // literal (every call site has several) cannot end the slice early.
-    let depth = 0;
-    let i = start + opener.length - 1;
-    for (; i < source.length; i++) {
-      if (source[i] === '{') depth++;
-      else if (source[i] === '}') {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-    sites.push(source.slice(start, i + 1));
-    from = i + 1;
-  }
-  return sites;
-}
+// `callSites` now lives in `~/test-utils/routerSourceRegions` — imported above.
+// 🔴 IT MOVED BECAUSE A SECOND MONEY LEDGER STARTED USING IT.
+// `no-unthreaded-private-run-claim.test.ts` decides what counts as a
+// `recordSpendAttribution` call site with the SAME walk, so while each file kept
+// its own copy a fix to one left the other silently mis-counting the same
+// population, with both green — the identical failure that module's header
+// records for `enclosingDecl`. Behaviour is unchanged: the moved function is this
+// one verbatim.
 
 describe('author fee — the spend-attribution seam', () => {
   const source = blankComments(readFileSync(ROUTER, 'utf8'));

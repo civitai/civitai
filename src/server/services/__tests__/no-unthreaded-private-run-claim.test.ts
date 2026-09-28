@@ -1,7 +1,12 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { blankComments, enclosingDecl } from '~/test-utils/routerSourceRegions';
+import {
+  blankComments,
+  callSites,
+  enclosingDecl,
+  topLevelPropertyText,
+} from '~/test-utils/routerSourceRegions';
 
 /**
  * THE SEAM GUARD FOR THE PRIVATE-RUN MONEY ARMS — and the only guard in this
@@ -47,42 +52,26 @@ import { blankComments, enclosingDecl } from '~/test-utils/routerSourceRegions';
  * module it protects is invisible to that ratchet and would surface only in a full
  * unit run, minutes later, in a file nobody was looking at.
  *
- * ── RED AT BASE ─────────────────────────────────────────────────────────────
- * At the base ref the router contains ZERO `privateRun:` arguments, so every
- * `toBe(...)` below fails with `0`. Reported in the PR body as the red/green
- * matrix.
+ * ── RED AT BASE — AND EXACTLY WHICH PARTS ───────────────────────────────────
+ * At the base ref the router contains ZERO `privateRun:` arguments, so the four
+ * THREADING assertions (three per-population + the total) are red there. The three
+ * COUNT assertions are NOT: the populations are 4 / 4 / 2 at the base ref too, so
+ * those are `[INV]` and are labelled as such. An earlier revision of this paragraph
+ * claimed "every `toBe(...)` below fails with 0", which was false and is exactly the
+ * kind of sentence that launders an invariant into regression coverage.
+ *
+ * ── WHAT THIS LEDGER DOES *NOT* CLOSE ───────────────────────────────────────
+ * It closes each of the three populations against growth and shrinkage, but it does
+ * NOT close the SET OF POPULATIONS. Its cited precedent
+ * (`no-divergent-author-fee-base.test.ts`) derives its money population from
+ * `MONEY_IDENTIFIER` and forces every match to be classified; neither
+ * `recordSpendAttribution` nor `quoteBlockAuthorFee` matches that regex, so a future
+ * `recordPrivateSpendEvent({ … })` that needs the claim is invisible to BOTH files
+ * until someone adds it to `LEDGER` by hand. It also reads `blocks.router.ts` only.
+ * Stated because the table below otherwise reads as if the population were closed.
  */
 
 const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
-
-/**
- * Every `<fn>({ … })` argument object in the router source, brace-matched from the
- * argument object's `{` to its match so a nested object literal cannot end the
- * slice early. Lifted from `no-divergent-author-fee-base.test.ts` deliberately
- * rather than imported: that file's copy is load-bearing for a different ledger,
- * and a shared helper whose semantics one of the two needed to change would
- * silently weaken the other.
- */
-function callSites(source: string, opener: string): string[] {
-  const sites: string[] = [];
-  let from = 0;
-  for (;;) {
-    const start = source.indexOf(opener, from);
-    if (start === -1) break;
-    let depth = 0;
-    let i = start + opener.length - 1;
-    for (; i < source.length; i++) {
-      if (source[i] === '{') depth++;
-      else if (source[i] === '}') {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-    sites.push(source.slice(start, i + 1));
-    from = i + 1;
-  }
-  return sites;
-}
 
 /**
  * The exact threading expression. 🔴 PINNED AS A WHOLE STRING, NOT AS THE FIELD
@@ -163,26 +152,101 @@ describe('the private-run claim is threaded to every money call site', () => {
       // `control` field proves the slices are real argument objects rather than
       // stray text that happened to match.
       expect(sites.length).toBeGreaterThan(0);
-      expect(sites[0]).toContain(control);
+      // EVERY slice, not just the first: an extractor that matched one real site plus
+      // garbage would pass a `sites[0]` check while polluting the count.
+      expect(
+        sites.filter((s) => !s.includes(control)),
+        `every ${opener} slice must look like a real argument object (containing \`${control}\`)`
+      ).toEqual([]);
     });
 
-    it(`[REG] there are exactly ${count} call sites — fails if the set GROWS or SHRINKS`, () => {
+    it(`[INV] there are exactly ${count} call sites — fails if the set GROWS or SHRINKS`, () => {
+      // 🔴 [INV], NOT [REG], AND THE CORRECTION IS THE INTERESTING PART. This was
+      // labelled [REG] until a test-review lane ran the guard's own extractor against
+      // the base ref and got 4 / 4 / 2 — exactly these numbers. The POPULATIONS predate
+      // this change; only the THREADING is new. So this assertion is green at base and
+      // is a ledger invariant, not regression coverage.
+      //
+      // It survived a methodology that demoted three other labels by measurement
+      // because the base-ref run measures whole FILES: the file was red overall (the
+      // threading tests failed), so a green assertion inside it was not separately
+      // visible. The reported red-at-base total DEPENDS on these three being green —
+      // it is 22, and would be 25 if they were red.
       expect(sites, why).toHaveLength(count);
     });
 
     it('[REG] every call site threads the VERIFIED claim, not a literal', () => {
+      // 🔴 CHECKED AT THE ARGUMENT OBJECT'S OWN DEPTH, NOT ANYWHERE IN THE SLICE.
+      // A `callSites` slice contains the nested objects and nested calls too, so a
+      // bare `slice.includes(THREADED)` is satisfied by a match at ANY depth —
+      // e.g. `recordSpendAttribution({ …, opts: build({ privateRun: claims.privateRun
+      // === true }), … })`, which has no top-level field at all and would have passed.
+      // That is the field-exists-but-nothing-branches-on-it failure this guard
+      // exists to prevent, one nesting level down. A reuse review found it.
       const unthreaded = sites
-        .map((site, i) => ({ i, site }))
-        .filter(({ site }) => !site.includes(THREADED))
-        .map(({ site }) => enclosingDecl(source, source.indexOf(site)));
+        .filter((site) => !topLevelPropertyText(site).includes(THREADED))
+        .map((site) => enclosingDecl(source, source.indexOf(site)));
 
       expect(
         unthreaded,
-        `these ${opener} call sites do not pass \`${THREADED}\`. ` +
+        `these ${opener} call sites do not pass \`${THREADED}\` ` +
+          'as a TOP-LEVEL property of the argument object. ' +
           'Thread the claim rather than exempting the path: ' +
           why
       ).toEqual([]);
     });
+
+    it('[INV] the depth filter is real — a NESTED match does not satisfy the check', () => {
+      // 🔴 THE NEGATIVE CONTROL FOR THE CHECK ABOVE, because "I added a depth filter"
+      // and "the depth filter works" are different claims.
+      //
+      // ⚠️ THE FIXTURE IS SYNTHETIC ON PURPOSE, and an earlier draft got this wrong by
+      // building it from `sites[0]` — mutating a REAL site's threaded text. That made
+      // the test depend on the threading already existing, so it went red at the base
+      // ref for a mechanical reason (nothing to replace) and was mislabelled `[INV]`
+      // while behaving like a `[REG]`. A base-ref run caught it. Built from a literal,
+      // the test says what it means: given this shape, the check rejects it — a
+      // property of the filter, true at any ref.
+      const flat = `${opener} a: 1, ${THREADED}, z: 2 }`;
+      const nested = `${opener} a: 1, opts: build({ ${THREADED} }), z: 2 }`;
+
+      // A naive slice-wide grep is satisfied by BOTH…
+      expect(flat).toContain(THREADED);
+      expect(nested).toContain(THREADED);
+      // …the depth check accepts only the one where the field is on the object itself.
+      expect(topLevelPropertyText(flat)).toContain(THREADED);
+      expect(topLevelPropertyText(nested)).not.toContain(THREADED);
+    });
+  });
+
+  it('[INV] the CAP SELECTOR does not read the claim — privateRun changes no cap', () => {
+    // 🔴 THE OTHER HALF OF A CLAIM THE SIGNER MAKES, AND IT WAS PINNED NOWHERE.
+    // `block-token.service.ts`'s docblock asserts that `privateRun` "changes no
+    // lifetime and no cap selection". The LIFETIME half is pinned twice (in the
+    // signer's and the verifier's suites). The CAP half was prose — a review lane
+    // pointed out that nothing checked it.
+    //
+    // Asserted structurally because `reserveBlockBuzzSpendForClaims` cannot be
+    // invoked without Redis and the whole auth stack. The property is narrow and
+    // exact: that function selects between the review-run-for-real ceiling, the dev
+    // bypass and the ordinary daily + consent legs by reading `claims.reviewRunForReal`
+    // and `claims.dev`. If `privateRun` ever appears inside it, the claim has started
+    // selecting a cap and the signer's docblock is false — which is the dangerous
+    // direction, because the `dev` branch SKIPS the per-app reservation entirely.
+    const start = source.indexOf('async function reserveBlockBuzzSpendForClaims');
+    expect(start, 'the cap selector must still exist under this name').toBeGreaterThan(0);
+    // Bound the region at the next top-level declaration so this reads the function
+    // body rather than the rest of the file.
+    const after = source.slice(start);
+    const end = after.indexOf('\nasync function ', 1);
+    const body = end === -1 ? after : after.slice(0, end);
+
+    // Positive control: the region really is the selector, not an empty slice.
+    expect(body).toContain('claims.reviewRunForReal');
+    expect(body).toContain('claims.dev');
+    expect(body, 'privateRun must not select a cap — see block-token.service.ts').not.toContain(
+      'privateRun'
+    );
   });
 
   it('[REG] the router threads the claim exactly as many times as there are governed call sites', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blankComments,
+  callSites,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
@@ -8,6 +9,7 @@ import {
   moneyMarkersIn,
   sourceDecls,
   structuralQuoteRole,
+  topLevelPropertyText,
 } from '../routerSourceRegions';
 
 /**
@@ -187,5 +189,92 @@ describe('money classification', () => {
         `${marker} is not matched by the pattern`
       ).toEqual([marker.slice(0, -1)]);
     }
+  });
+});
+
+/**
+ * `callSites` + `topLevelPropertyText` — THE BRACE WALK, EXERCISED DIRECTLY.
+ *
+ * 🔴 THIS BLOCK EXISTS BECAUSE A MUTATION SWEEP FOUND THE WALK UNCOVERED, AND THE
+ * WAY IT FOUND IT IS THE POINT. Breaking `callSites` so it stops at the FIRST `}`
+ * instead of the matching one — destroying the entire reason the function walks
+ * braces at all — left **both** consuming money ledgers green across 46 tests.
+ *
+ * The cause is corpus shape, not a weak assertion: 6 of the 10 governed argument
+ * objects in the router are flat, and in the 2 nested ones the nested object closes
+ * AFTER the field the ledgers look for, so a truncated slice happened to still
+ * contain it. The walk's whole purpose was therefore unexercised by either
+ * consumer, and would have stayed that way until someone added a call site whose
+ * nested object came first — at which point the guard silently under-counts.
+ *
+ * A guard over a real corpus cannot be relied on to exercise its own instrument:
+ * it covers the shapes that corpus happens to contain. These fixtures are
+ * synthetic on purpose, and they contain the shapes the router currently does not.
+ */
+describe('callSites — brace-matched extraction', () => {
+  it('🔴 does not end a slice at a NESTED closing brace', () => {
+    // The case a break-on-first-`}` mutant gets wrong, and which no real call site
+    // currently expresses: the nested object closes BEFORE the trailing field.
+    const src = 'fn({ a: 1, nested: { b: 2 }, tail: 3 });';
+    const [site] = callSites(src, 'fn({');
+    expect(site).toBe('fn({ a: 1, nested: { b: 2 }, tail: 3 }');
+    expect(site, 'the slice must reach past the nested close').toContain('tail: 3');
+  });
+
+  it('handles several levels of nesting', () => {
+    const src = 'fn({ a: { b: { c: 1 } }, tail: 2 });';
+    expect(callSites(src, 'fn({')[0]).toContain('tail: 2');
+  });
+
+  it('finds every occurrence, and does not re-find inside a slice it already took', () => {
+    const src = 'fn({ a: 1 }); fn({ b: { c: 2 } }); fn({ d: 3 });';
+    const sites = callSites(src, 'fn({');
+    expect(sites).toHaveLength(3);
+    expect(sites[1]).toContain('c: 2');
+  });
+
+  it('returns [] for an opener that does not occur — the vacuous-green trap', () => {
+    // Documented rather than merely true: every consumer must assert a positive
+    // control, because `[].every(…)` is `true` and a misspelled opener would make a
+    // whole guard pass while covering nothing.
+    expect(callSites('fn({ a: 1 });', 'nope({')).toEqual([]);
+  });
+});
+
+describe('topLevelPropertyText — depth filtering', () => {
+  const site = callSites('fn({ a: 1, opts: build({ hidden: true }), tail: 2 });', 'fn({')[0];
+
+  it('🔴 a field nested inside another call does NOT count as present', () => {
+    // The walk-past shape: the field is in the slice, but not on the argument
+    // object. A guard greping the raw slice is satisfied; this must not be.
+    expect(site, 'the raw slice does contain it').toContain('hidden: true');
+    expect(topLevelPropertyText(site)).not.toContain('hidden: true');
+  });
+
+  it('keeps the argument object own properties', () => {
+    const text = topLevelPropertyText(site);
+    expect(text).toContain('a: 1');
+    expect(text).toContain('tail: 2');
+    expect(text).toContain('opts:');
+  });
+
+  it('preserves length and newlines so offsets still line up', () => {
+    const multi = callSites('fn({\n  a: 1,\n  o: g({\n    z: 9,\n  }),\n});', 'fn({')[0];
+    const text = topLevelPropertyText(multi);
+    expect(text).toHaveLength(multi.length);
+    expect(text.split('\n')).toHaveLength(multi.split('\n').length);
+    expect(text).not.toContain('z: 9');
+  });
+
+  it('blanks a nested ARRAY and a nested plain object, not just a nested call', () => {
+    const arr = callSites('fn({ a: [ { q: 1 } ], b: { r: 2 }, c: 3 });', 'fn({')[0];
+    const text = topLevelPropertyText(arr);
+    expect(text).not.toContain('q: 1');
+    expect(text).not.toContain('r: 2');
+    expect(text).toContain('c: 3');
+  });
+
+  it('returns empty for a slice with no object at all', () => {
+    expect(topLevelPropertyText('fn(')).toBe('');
   });
 });

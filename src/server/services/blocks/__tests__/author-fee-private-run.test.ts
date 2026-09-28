@@ -53,6 +53,20 @@ const { mockLog, mockCreateMany, mockFlag, mockQuoted, mockCharged } = vi.hoiste
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => mockCreateMany(...args),
 }));
+// ⚠️ A PARTIAL, 2-KEY MOCK OF A MODULE THIS GRAPH IMPORTS FIVE NAMES FROM, AND THE
+// CAVEAT IS NOT OPTIONAL — the sibling `author-fee-charge.service.test.ts` carries it
+// and the first draft of this file dropped it. Two consequences:
+//   1. it cannot see a MISSPELLED LABEL NAME (the real `registerCounterWithLabels`
+//      rejects a label outside `labelNames`; these stubs accept anything), so the
+//      assertions below pin label VALUES and call COUNTS only;
+//   2. `author-fee.ts` also imports `blockAuthorFeeBaseBuzzCounter`,
+//      `blockAuthorFeeBuzzCounter` and `blockAuthorFeeObservedCounter`, which are
+//      `undefined` here. Unexercised today — but every `inc` in that file is wrapped
+//      in `try { … } catch {}`, so if a future revision incs one from a path this
+//      suite drives, the TypeError is SWALLOWED: the counter silently stops working
+//      and nothing goes red. If that happens, widen this to the `importOriginal`
+//      spread (`docs/testing/shared-module-mocks.md`), which is what arm A's suite
+//      uses for the Flipt evaluator.
 vi.mock('~/server/prom/client', () => ({
   blockAuthorFeeQuotedCounter: { inc: mockQuoted },
   blockAuthorFeeChargedCounter: { inc: mockCharged },
@@ -86,8 +100,13 @@ loggingMock.logToAxiom.mockImplementation((...args: unknown[]) => {
  * reservation figure used below. A mutant reaching for a constant cannot land on
  * it, and a mutant that swapped the legs would produce 1 rather than 33.
  *
- * 🔴 660 IS DELIBERATELY NOT A ROUND MULTIPLE OF THE 5% STEP'S GRANULARITY, so the
- * computed fee overshoots any boundary a mutant could sit exactly on.
+ * 🔴 THE RESERVATION IS SEPARATE FROM THE FEE, AND AN EARLIER DRAFT GOT THIS WRONG.
+ * This header used to claim the fixtures "overshoot any boundary a mutant could sit
+ * exactly on", while `reservedAuthorFeeBuzz` was set to `EXPECTED_FEE` itself — both
+ * operands of `Math.min(reserved, quote.feeBuzz)` equal, so the clamp branch never
+ * executed and a `min → max` mutation was invisible here. A review lane caught it.
+ * `RESERVED_BUZZ = 41` is strictly above the fee, so the clamp runs and still
+ * resolves to 33.
  */
 const APP_ID = 'app_pr_fee';
 const APP_BLOCK_ID = 'apb_pr_fee';
@@ -96,6 +115,8 @@ const MODERATOR_ID = 1907;
 const WORKFLOW_ID = 'wf_pr_fee_01';
 const BASE_BUZZ = 660;
 const EXPECTED_FEE = 33;
+/** Strictly ABOVE the fee, so the `min(reserved, fee)` clamp actually runs. See `chargeArgs`. */
+const RESERVED_BUZZ = 41;
 
 function resetOnceQueues() {
   mockCreateMany.mockReset();
@@ -134,7 +155,13 @@ function chargeArgs(over: Record<string, unknown> = {}) {
     baseGenerationBuzz: BASE_BUZZ,
     priceIsCap: false,
     generationType: 'textToImage:txt2img',
-    reservedAuthorFeeBuzz: EXPECTED_FEE,
+    // 🔴 DELIBERATELY ABOVE THE FEE, NOT EQUAL TO IT. With `reserved === feeBuzz`
+    // the clamp `Math.min(reserved, quote.feeBuzz)` has both operands equal, so the
+    // branch never executes and a `min → max` mutation is invisible from this file.
+    // A review lane caught that the header's own "overshoots any boundary" claim was
+    // false for exactly this fixture. 41 is above 33, is not a multiple of it, and
+    // shares no value with any id, the base, the flat leg or the percentage scale.
+    reservedAuthorFeeBuzz: RESERVED_BUZZ,
     ...over,
   };
 }
@@ -348,7 +375,11 @@ describe('chargeBlockAuthorFee — refused BEFORE the debit', () => {
       feeBuzz: EXPECTED_FEE,
       accrualId: expect.any(String),
     });
-    expect(mockCreateMany).toHaveBeenCalled();
+    // 🔴 EXACTLY ONCE, not merely "called". This is the file's only assertion that
+    // the debit happened at all, and a bare `toHaveBeenCalled()` is satisfied by a
+    // DOUBLED debit — i.e. double-charging the viewer — which on this rail is the
+    // worse failure than not charging. The accrual beside it was already counted.
+    expect(mockCreateMany).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.blockAuthorFeeAccrual.create).toHaveBeenCalledTimes(1);
   });
 

@@ -286,3 +286,102 @@ export function blankComments(source: string): string {
   }
   return out.join('');
 }
+
+/**
+ * Every `<opener>` … `}` argument object in a router source, brace-matched from the
+ * argument object's `{` to its match so a nested object literal — and every call
+ * site here has several — cannot end the slice early. `opener` is the call text up
+ * to and including that `{`, e.g. `'recordSpendAttribution({'`.
+ *
+ * 🔴 IT LIVES HERE BECAUSE TWO MONEY LEDGERS DEPEND ON IT, WHICH IS THIS MODULE'S
+ * WHOLE THESIS. `no-divergent-author-fee-base.test.ts` and
+ * `no-unthreaded-private-run-claim.test.ts` both decide *what counts as a call
+ * site* on the `recordSpendAttribution` population with this walk. While each kept
+ * its own copy, a fix to one — handling `await fn(\n  {`, or a template literal
+ * containing `{` — left the other silently mis-counting, and BOTH stayed green.
+ * That is the identical failure the header above records for `enclosingDecl`.
+ *
+ * The second guard was authored with a local copy and the stated reason that "a
+ * shared helper whose semantics one of the two needed to change would silently
+ * weaken the other". That is backwards, and the header above is the refutation: a
+ * divergent need is a SECOND EXPORTED FUNCTION, not a pre-emptive fork. This walk
+ * carries no ledger-specific semantics at all — no money list, no role
+ * discriminator — so it is the most reusable thing in either file.
+ *
+ * 🔴 IT IS A LEXER, NOT A PARSER, AND CALLERS MUST NOT READ ITS SLICES AS
+ * STRUCTURE. A returned slice contains the argument object's nested objects and
+ * nested calls too, so a bare `slice.includes('field: value')` is satisfied by a
+ * match at ANY depth — including inside a nested call's own argument object, which
+ * is a real way to walk past a wiring guard. A caller asserting that a field is
+ * present *on the argument object itself* must filter by depth; see
+ * `topLevelPropertyText`.
+ *
+ * 🔴 CALLERS MUST ASSERT A POSITIVE CONTROL. A misspelled `opener` returns `[]`,
+ * and every `every(...)` over an empty array is vacuously true — a fully green
+ * guard covering nothing.
+ */
+export function callSites(source: string, opener: string): string[] {
+  const sites: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf(opener, from);
+    if (start === -1) break;
+    let depth = 0;
+    let i = start + opener.length - 1;
+    for (; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    sites.push(source.slice(start, i + 1));
+    from = i + 1;
+  }
+  return sites;
+}
+
+/**
+ * The text of a `callSites` slice that sits at the argument object's OWN depth,
+ * with every nested object and nested call's contents blanked out.
+ *
+ * 🔴 THIS IS THE DIFFERENCE BETWEEN "THE FIELD IS WIRED" AND "THE FIELD APPEARS
+ * SOMEWHERE IN THIS CALL". Without it, a wiring guard that greps a slice for
+ * `foo: claims.foo === true` is satisfied by
+ * `recordSpendAttribution({ …, opts: build({ foo: claims.foo === true }), … })`
+ * — the top-level field absent, the guard green. That is the
+ * field-exists-but-nothing-branches-on-it failure these guards exist to prevent,
+ * one nesting level down.
+ *
+ * Nested spans are replaced with spaces rather than removed so that offsets into
+ * the returned string still line up with the input slice.
+ *
+ * Pass a slice from `callSites`, i.e. starting at the call text and containing the
+ * matching `}`. Feed it comment-blanked source (`blankComments`) first, or a brace
+ * inside a comment will desync the depth count.
+ */
+export function topLevelPropertyText(site: string): string {
+  const open = site.indexOf('{');
+  if (open === -1) return '';
+  const out = site.split('');
+  let depth = 0;
+  for (let i = open; i < site.length; i += 1) {
+    const c = site[i];
+    if (c === '{' || c === '(' || c === '[') {
+      depth += 1;
+      // The argument object's own braces stay; everything deeper is blanked. No
+      // `!== '\n'` guard on these two branches — a bracket character cannot be a
+      // newline, and `tsc` rejects the comparison as provably false. (`src/test-utils`
+      // is NOT under `__tests__`, so it IS typechecked; that is what caught it.)
+      if (depth > 1) out[i] = ' ';
+      continue;
+    }
+    if (c === '}' || c === ')' || c === ']') {
+      if (depth > 1) out[i] = ' ';
+      depth -= 1;
+      continue;
+    }
+    if (depth > 1 && out[i] !== '\n') out[i] = ' ';
+  }
+  return out.join('');
+}

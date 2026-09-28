@@ -5498,8 +5498,6 @@ export const blocksRouter = router({
         appId: claims.appId,
         viewerUserId: userId,
         workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
-        // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-        // `private-run`, so no author fee is quoted to a reviewer.
         privateRun: claims.privateRun === true,
         // Unbounded surface — see the flag's own note. The skip lines it silences
         // are re-derived at the submit, once per real generation.
@@ -5944,8 +5942,6 @@ export const blocksRouter = router({
         appId: claims.appId,
         viewerUserId: userId,
         workflowLabel: blockExternalId,
-        // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-        // `private-run`, so no author fee is reserved.
         privateRun: claims.privateRun === true,
       });
       const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
@@ -6575,8 +6571,6 @@ export const blocksRouter = router({
           priceIsCap: realizedPriceIsCap,
           generationType: blockGenerationType,
           reservedAuthorFeeBuzz,
-          // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-          // `private-run`, so no author fee is debited.
           privateRun: claims.privateRun === true,
         });
 
@@ -6654,9 +6648,6 @@ export const blocksRouter = router({
             appId: claims.appId,
             appBlockId: claims.appBlockId,
             blockInstanceId: claims.blockInstanceId,
-            // PRIVATE RUN of a delisted app -> the attribution row is written `voided`
-            // instead of `tracked`, so a review generation cannot inflate a suspended
-            // app's owner-visible run count or Buzz total.
             privateRun: claims.privateRun === true,
             modelId: resolved.modelId,
             // GENERIC published-content-author basis: the opaque shared-storage
@@ -8950,9 +8941,6 @@ async function submitCustomComfyWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
-        // PRIVATE RUN of a delisted app -> the attribution row is written `voided`
-        // instead of `tracked`, so a review generation cannot inflate a suspended
-        // app's owner-visible run count or Buzz total.
         privateRun: claims.privateRun === true,
         // customComfy is recipe-based (no single user-picked model to attribute).
         modelId: null,
@@ -9473,8 +9461,6 @@ async function estimateStepWorkflow(opts: {
     appId: claims.appId,
     viewerUserId: userId,
     workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
-    // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-    // `private-run`, so no author fee is quoted to a reviewer.
     privateRun: claims.privateRun === true,
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
     suppressQuoteLogs: true,
@@ -9772,8 +9758,6 @@ async function submitStepWorkflow(opts: {
     appId: claims.appId,
     viewerUserId: userId,
     workflowLabel: blockExternalId,
-    // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-    // `private-run`, so no author fee is reserved.
     privateRun: claims.privateRun === true,
   });
   const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
@@ -10316,8 +10300,6 @@ async function submitStepWorkflow(opts: {
       priceIsCap: realizedPriceIsCap,
       generationType: step.id,
       reservedAuthorFeeBuzz,
-      // PRIVATE RUN of a delisted app -> the payee resolve refuses with
-      // `private-run`, so no author fee is debited.
       privateRun: claims.privateRun === true,
     });
 
@@ -10334,9 +10316,6 @@ async function submitStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
-        // PRIVATE RUN of a delisted app -> the attribution row is written `voided`
-        // instead of `tracked`, so a review generation cannot inflate a suspended
-        // app's owner-visible run count or Buzz total.
         privateRun: claims.privateRun === true,
         // A registry step is not model-based (no user-picked model to attribute).
         modelId: null,
@@ -10957,9 +10936,6 @@ async function submitPassThroughStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
-        // PRIVATE RUN of a delisted app -> the attribution row is written `voided`
-        // instead of `tracked`, so a review generation cannot inflate a suspended
-        // app's owner-visible run count or Buzz total.
         privateRun: claims.privateRun === true,
         // A pass-through step carries no model binding and no sharedContentKey
         // (its `.strict()` wire shape has neither).

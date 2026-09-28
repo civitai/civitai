@@ -156,7 +156,31 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(withPayload.buzzBudget).toBe(137);
   });
 
-  it('[INV] privateRun does not change the token lifetime (the 4h cap is `dev`-only)', async () => {
+  it('[REG] REFUSES privateRun combined with dev — the cap-skip combination', async () => {
+    // 🔴 THE RULE WAS PROSE ONLY UNTIL A REVIEW LANE SAID SO. `claims.dev === true`
+    // skips the per-app velocity reservation, so a `dev` private-run token is an
+    // uncapped per-app spend surface on a taken-down app. The docblock declared it a
+    // MUST-NEVER; nothing enforced it, and `sign` stamped both happily.
+    const { BlockTokenService } = await import('../block-token.service');
+    await expect(
+      BlockTokenService.sign({
+        userId: 1,
+        blockId: 'b',
+        appId: 'a',
+        appBlockId: 'apb_a',
+        blockInstanceId: 'bki',
+        scopes: ['ai:write:budgeted'],
+        ctx: {},
+        buzzBudget: 137,
+        privateRun: true,
+        dev: true,
+      })
+    ).rejects.toThrow(/privateRun and dev must not be combined/);
+  });
+
+  it('[INV] each flag ALONE still signs — the refusal is the combination, not either flag', async () => {
+    // The negative control for the guard above. Without it, a mutant that refused
+    // every `privateRun` token, or every `dev` token, would pass that test.
     const { BlockTokenService } = await import('../block-token.service');
     const base = {
       userId: 1,
@@ -164,9 +188,29 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
       appId: 'a',
       appBlockId: 'apb_a',
       blockInstanceId: 'bki',
-      scopes: ['user:read:self'],
+      scopes: ['ai:write:budgeted'] as string[],
       ctx: {},
-    } as const;
+      buzzBudget: 137,
+    };
+    await expect(BlockTokenService.sign({ ...base, privateRun: true })).resolves.toBeTruthy();
+    await expect(BlockTokenService.sign({ ...base, dev: true })).resolves.toBeTruthy();
+  });
+
+  it('[INV] privateRun does not change the token lifetime (the 4h cap is `dev`-only)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    // 🔴 NOT `as const`. It makes `scopes` a `readonly ['user:read:self']`, which is
+    // not assignable to `SignBlockTokenInput.scopes: string[]` — two TS2345s that
+    // `pnpm typecheck` CANNOT SEE, because `tsconfig` excludes `src/**/__tests__/**`.
+    // A test-review lane found them by running the compiler over these files directly.
+    const base = {
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['user:read:self'] as string[],
+      ctx: {},
+    };
     const plain = await BlockTokenService.sign({ ...base });
     const privateRun = await BlockTokenService.sign({ ...base, privateRun: true });
     // Compare the LIFETIME, not the absolute instant — the two signs happen

@@ -391,6 +391,22 @@ export type RecordSpendAttributionInput = {
    * void-vs-tracked moves no Buzz either way — what it protects is the RUN
    * COUNT and BUZZ SUM a suspended app's owner can see.
    *
+   * 🔴 THE VOID ALONE DOES NOT YET DELIVER THE PROTECTION, AND THIS IS THE ONE
+   * PLACE THAT SAYS SO. Both owner-visible reads of this table --
+   * `app-analytics.service.ts`'s `aggregate` and its raw per-bucket series --
+   * carry NO `status` predicate, so a voided row is still counted as a run and
+   * its Buzz still sums into the owner's dashboard. The two PRE-EXISTING voids
+   * (`self_spend`, `internal_owner`) are already counted that way, which is the
+   * evidence that this marker currently has no reader.
+   *
+   * The `status <> 'voided'` filter is therefore HELD, not forgotten: it would
+   * drop the large majority of existing rows and Buzz from every owner's
+   * analytics at once, and a second consumer of this table lives outside this
+   * repo, so it is a product decision rather than a detail of this arm. It must
+   * land before the private-run surface is ENABLED -- which is safe, because
+   * until a mint exists no private-run row can be written. Do not read the void
+   * as coverage until that filter is in.
+   *
    * Absent/false → byte-identical to the pre-feature behaviour.
    */
   privateRun?: boolean | null;
@@ -638,7 +654,7 @@ export async function recordSpendAttribution(
   // distinguishable from an operator-voided row *in this column* — accepted,
   // because nothing pays out of this table and the mint audit line carries the
   // discriminating fields anyway.
-  const voidedReason = privateRun
+  const voidedReason = privateRun === true
     ? 'manual_review'
     : isSelfSpend
     ? 'self_spend'
@@ -752,6 +768,26 @@ export async function recordSpendAttribution(
     // `flag-disabled` and never `base-unavailable`", and went stale the moment
     // `price-is-cap` was added — it would now be the FOURTH, and the "never"
     // list had a hole in it exactly where the newest reason sat.
+    // 🔴 `privateRun` IS DELIBERATELY *NOT* THREADED INTO THE OBSERVATION, AND THIS
+    // IS THE ONLY REMAINING ASYMMETRY IN THE FEE FAMILY. A review lane raised it;
+    // the decision is to leave it and record why, because both the size and the
+    // shape of the right fix depend on something that cannot exist yet.
+    //
+    // WHAT THE ASYMMETRY IS: the CHARGE and QUOTE counters exclude a private run
+    // (their payee resolve refuses with `private-run`), so this observation would
+    // count private-run volume that they do not — biasing the observed-vs-quoted
+    // ratio a later pricing decision reads.
+    //
+    // WHY NOT NOW: the bias is EXACTLY ZERO today, not merely small. No mint can
+    // produce the claim, so no private run can reach this line. And the fix is not
+    // free to do correctly — the note above is explicit that a new case here needs a
+    // NEW skip reason of its own and must never be folded into an existing member of
+    // `BlockAuthorFeeSkipReason`, because every reason in that union is a live
+    // population the sizing read divides by. Adding a reason for a population of
+    // zero is how a denominator acquires an empty category nobody can interpret.
+    //
+    // WHEN: with the mint, in the PR that makes a private run possible — at which
+    // point the volume is measurable and the new reason has something to count.
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,

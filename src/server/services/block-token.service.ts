@@ -322,6 +322,26 @@ export class BlockTokenService {
     if (input.reviewRunForReal === true) {
       claims.reviewRunForReal = true;
     }
+    // 🔴 THE `privateRun` + `dev` COMBINATION IS REFUSED AT THE SIGNER, NOT WARNED
+    // ABOUT IN A COMMENT. The input docblock declares this a MUST-NEVER because
+    // `claims.dev === true` SKIPS the per-app velocity reservation in
+    // `reserveBlockBuzzSpendForClaims` — so a `dev` private-run token would hand a
+    // non-owner an UNCAPPED per-app spend surface on an app the platform has taken
+    // down. A review lane pointed out that the rule existed only as prose, and prose
+    // in a docblock cannot stop a mint that reaches for `dev: true` to get past a
+    // status gate. `resolveAppBlockApprovalVerdict` records the same hazard from the
+    // other side: the run-for-real exemption had to be keyed on the dev+flag PAIR.
+    //
+    // Throwing is safe to add now precisely because it is UNREACHABLE now — nothing
+    // sets `privateRun`, so no existing caller can trip it. It becomes load-bearing
+    // the moment the mint exists, which is when it would otherwise be discovered by
+    // a cap that silently stopped applying.
+    if (input.privateRun === true && input.dev === true) {
+      throw new Error(
+        'block token: privateRun and dev must not be combined — `dev` skips the per-app ' +
+          'spend reservation, which would leave a private run uncapped per app'
+      );
+    }
     // PRIVATE-RUN marker — stamped ONLY for a private run of a delisted/suspended
     // app. Read (after signature validation) by the two money arms: the spend
     // attribution void and the author-fee refusal. Stamped only when explicitly

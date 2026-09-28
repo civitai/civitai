@@ -435,12 +435,19 @@ async function hasAcceptedSeat(
  * FOR ONE MORE. Read that function's note first: an EDITOR never takes the owner
  * short-circuit, so the seat lookup is the one path that always reaches the
  * database, and resolving it off a lagging replica turns replication lag into a
- * spurious "you are not a collaborator". The additional reason here is FRESHNESS OF
- * STATUS rather than of seats: a caller that gates on a block's CURRENT state —
- * a moderator resolving a just-suspended app, say — must not read a replica that
- * still shows the pre-flip row, which is exactly why the token mint reads `dbWrite`
- * throughout ("so a freshly-suspended block can't be installed through a
+ * spurious "you are not a collaborator". The additional reason here is that this
+ * resolver is BLOCK-keyed, so its FIRST read is the `AppBlock` row itself: a caller
+ * that must not miss a recently-written block or listing needs that read on the
+ * primary too, not only the seat lookup. The token mint reads `dbWrite` throughout
+ * for the same reason ("so a freshly-suspended block can't be installed through a
  * replication-lag window").
+ *
+ * ⚠️ TO BE PRECISE ABOUT WHAT THIS BUYS — an earlier draft of this paragraph said
+ * "freshness of STATUS", and that overstated it. The override affects only whether
+ * these two rows are found and how fresh they are. It does NOT make this function
+ * status-aware: the select below reads `id`, `app.userId` and `appListing.id`, and
+ * the role returned is `owner` / `editor` / `null`. A caller that needs a block's
+ * status must read it itself.
  *
  * Threaded all the way down to the seat lookup, not just to the block lookup —
  * `hasAcceptedSeat` already accepts the override, and passing it to only one of the
