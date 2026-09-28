@@ -9,6 +9,10 @@ import { getRedis } from './clients/redis';
 import { redisErrorsTotal } from './metrics';
 
 const NOTIFICATION_CACHE_TIME = 60 * 60 * 24 * 7; // one week
+// Written only by setUser, in the same EVAL as the counts. A hash without it was assembled by increments
+// (or by a build before this field existed) and is not the user's whole count. Its value is "0" so a build
+// that doesn't know the field reads it as an empty category rather than adding to the badge.
+const COMPLETE_FIELD = '__complete';
 
 export type NotificationCategoryCount = { category: NotificationCategory; count: number };
 
@@ -30,13 +34,10 @@ async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): 
   }
 }
 
-// XX: never give a TTL to a hash that has none, or getUser would start trusting a partial count.
 async function slideExpiration(userId: number) {
   const redis = getRedis();
   if (!redis) return;
-  await withRedisErrorCount('set', () =>
-    redis.expire(userKey(userId), NOTIFICATION_CACHE_TIME, 'XX')
-  );
+  await withRedisErrorCount('set', () => redis.expire(userKey(userId), NOTIFICATION_CACHE_TIME));
 }
 
 async function hasUser(userId: number) {
@@ -48,14 +49,13 @@ async function hasUser(userId: number) {
 async function getUser(userId: number): Promise<NotificationCategoryCount[] | undefined> {
   const redis = getRedis();
   if (!redis) return undefined;
-  const key = userKey(userId);
-  const [counts, ttl] = await withRedisErrorCount('get', () =>
-    Promise.all([redis.hGetAll(key), redis.ttl(key)])
+  const { [COMPLETE_FIELD]: complete, ...counts } = await withRedisErrorCount('get', () =>
+    redis.hGetAll(userKey(userId))
   );
-  if (!Object.keys(counts).length) return undefined;
-  // Every complete write sets a TTL, so a hash without one holds only what was incremented into it.
-  if (ttl === -1) {
-    await bustUser(userId);
+  if (complete === undefined) {
+    // Bust rather than overwrite: setUser merges, so a stale category the recount no longer returns would
+    // otherwise survive under the new marker.
+    if (Object.keys(counts).length) await bustUser(userId);
     return undefined;
   }
   return Object.entries(counts).map(([category, count]) => {
@@ -67,14 +67,18 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
 async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const redis = getRedis();
   if (!redis) return;
-  const fields = counts.flatMap(({ category, count }) => [category, count.toString()]);
+  const fields = [
+    COMPLETE_FIELD,
+    '0',
+    ...counts.flatMap(({ category, count }) => [category, count.toString()]),
+  ];
   await withRedisErrorCount('set', () =>
     redis.hSetMultiWithExpire(userKey(userId), fields, NOTIFICATION_CACHE_TIME)
   );
 }
 
-// Only adjusts a counter that exists: HINCRBY on an absent key would create a hash holding just this
-// category, which getUser would then serve as the user's whole count.
+// HINCRBY on an absent key creates a hash holding only this category. getUser would refuse it, but
+// skipping it saves the round trips of writing and then busting it.
 async function incrementUser(userId: number, category: NotificationCategory, by = 1) {
   const redis = getRedis();
   if (!redis) return;

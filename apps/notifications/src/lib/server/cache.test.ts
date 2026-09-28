@@ -6,7 +6,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const { fakeRedis } = vi.hoisted(() => {
   const fakeRedis = {
     hGetAll: vi.fn(),
-    ttl: vi.fn(),
     expire: vi.fn(),
     exists: vi.fn(),
     hSet: vi.fn(),

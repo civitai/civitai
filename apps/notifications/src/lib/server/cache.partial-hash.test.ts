@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The unread-count cache against a stateful redis fake that keeps real TTL semantics, so a hash's
-// provenance (written by setUser with a TTL, or conjured by HINCRBY with none) is observable. The DB is
-// a fake read pool whose GROUP BY answer is the ground truth the badge must match.
+// The unread-count cache against a stateful redis fake, so a hash's provenance (a complete write by
+// setUser, or one assembled by HINCRBY) is observable across calls.
 const h = vi.hoisted(() => {
   type Entry = { hash: Map<string, string>; ttl: number };
   const store = new Map<string, Entry>();
@@ -17,11 +16,10 @@ const h = vi.hoisted(() => {
 
   const fakeRedis = {
     hGetAll: async (key: string) => Object.fromEntries(entry(key)?.hash ?? []),
-    ttl: async (key: string) => (store.has(key) ? store.get(key)!.ttl : -2),
     exists: async (key: string) => (store.has(key) ? 1 : 0),
-    expire: async (key: string, seconds: number, mode?: 'XX') => {
+    expire: async (key: string, seconds: number) => {
       const e = entry(key);
-      if (!e || (mode === 'XX' && e.ttl === -1)) return false;
+      if (!e) return false;
       e.ttl = seconds;
       return true;
     },
@@ -75,7 +73,10 @@ import { countInFlight, countNotifications } from './operations';
 
 const USER = 7;
 const KEY = `system:notification-counts:${USER}`;
+const WEEK = 60 * 60 * 24 * 7;
 
+const seed = (fields: Record<string, string>, ttl: number) =>
+  h.store.set(KEY, { hash: new Map(Object.entries(fields)), ttl });
 const snapshot = () => {
   const e = h.store.get(KEY);
   return e ? { fields: Object.fromEntries(e.hash), ttl: e.ttl } : undefined;
@@ -108,30 +109,48 @@ describe('unread counter cache: partial hashes', () => {
 
     await notificationCache.incrementUser(USER, 'Update');
 
-    expect(snapshot()?.fields).toEqual({ Update: '301', Comment: '40' });
+    expect(snapshot()?.fields).toEqual({ __complete: '0', Update: '301', Comment: '40' });
   });
 
-  it('recounts from the DB a counter that has no TTL, and caches the result with one', async () => {
-    h.store.set(KEY, { hash: new Map([['Update', '8']]), ttl: -1 });
+  // Prod held both shapes: no TTL from a bare HINCRBY, and a TTL added later by a mark-read's EXPIRE.
+  it.each([
+    ['no TTL', -1],
+    ['a TTL', 3600],
+  ])(
+    'recounts a counter with %s that lacks the completeness marker, dropping its stale fields',
+    async (_label, ttl) => {
+      seed({ Update: '8', Like: '5' }, ttl);
 
-    expect(await badge()).toBe(340);
-    expect(snapshot()).toEqual({ fields: { Update: '300', Comment: '40' }, ttl: 60 * 60 * 24 * 7 });
+      expect(await badge()).toBe(340);
+      expect(snapshot()).toEqual({
+        fields: { __complete: '0', Update: '300', Comment: '40' },
+        ttl: WEEK,
+      });
+    }
+  );
+
+  // Control for the case above: the fake does serve a hit, so a recount there is the marker rule acting.
+  it('serves a counter that carries the completeness marker without touching the DB', async () => {
+    seed({ __complete: '0', Update: '8' }, 3600);
+
+    expect(await badge()).toBe(8);
+    expect(h.dbQueries.count).toBe(0);
   });
 
-  it('a mark-read on a counter with no TTL does not make it trusted', async () => {
-    h.store.set(KEY, { hash: new Map([['Update', '8']]), ttl: -1 });
+  it('a mark-read on a partial counter does not make it trusted', async () => {
+    seed({ Update: '8' }, -1);
 
     await notificationCache.decrementUser(USER, 'Update');
 
     expect(await badge()).toBe(340);
   });
 
-  // Control for the case above: the fake does serve a hit, so a recount there is the TTL rule acting.
-  it('serves a counter that has a TTL without touching the DB', async () => {
-    h.store.set(KEY, { hash: new Map([['Update', '8']]), ttl: 3600 });
+  it('caches a user with nothing unread instead of recounting on every read', async () => {
+    h.dbTruth.rows = [];
 
-    expect(await badge()).toBe(8);
-    expect(h.dbQueries.count).toBe(0);
+    expect(await badge()).toBe(0);
+    expect(await badge()).toBe(0);
+    expect(h.dbQueries.count).toBe(1);
   });
 
   it('shows the full count after the counter expires and a notification arrives before the next read', async () => {
