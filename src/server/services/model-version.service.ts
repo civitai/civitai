@@ -121,6 +121,7 @@ import {
 } from '~/server/services/donation-goal.service';
 import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
@@ -789,6 +790,7 @@ export const upsertModelVersion = async ({
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
+    if (!isModerator) scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
     return version;
   } else {
     const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -1021,6 +1023,11 @@ export const upsertModelVersion = async ({
         context: { modelId: version.modelId },
       });
 
+    if (
+      !isModerator &&
+      (data.name !== undefined || data.description !== undefined || data.trainedWords !== undefined)
+    )
+      scanEntityInBackground({ entityType: 'Model', entityId: version.modelId });
     return version;
   }
 };
@@ -1089,6 +1096,8 @@ export async function applyModelVersionContentChange({
   // The public GET /api/v1/models/[id] body carries the version rows, so all of these serve the
   // pre-rewrite text until they are dropped.
   await bustModelLevelVersionCaches(modelId);
+  // With a context, the caller is upsertModelVersion, which starts its own scan.
+  if (!context) scanEntityInBackground({ entityType: 'Model', entityId: modelId });
 
   return true;
 }
@@ -3524,6 +3533,7 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
 
   // Post-commit S3 cleanup for any stragglers the move missed.
   if (sourceFileUrls.length > 0) {

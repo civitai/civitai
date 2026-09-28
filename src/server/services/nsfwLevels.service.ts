@@ -11,6 +11,10 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import {
+  articleModerationFloorSql,
+  ratedEntityDerivedNsfwLevelSql,
+} from '~/server/services/text-scan/scan-floor';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
@@ -317,17 +321,18 @@ export async function updateNsfwLevels({
 export async function updatePostNsfwLevels(postIds: number[]) {
   if (!postIds.length) return;
   await dbWrite.$queryRaw(Prisma.sql`
-    WITH level AS (
-      SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
+    WITH next AS (
+      SELECT
+        p.id,
+        COALESCE(p."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('Post', 'p')}) "nsfwLevel"
       FROM "Post" p
-      JOIN "Image" i ON i."postId" = p.id
       WHERE p.id IN (${Prisma.join(postIds)})
-      GROUP BY p.id
+        AND EXISTS (SELECT 1 FROM "Image" i WHERE i."postId" = p.id)
     )
     UPDATE "Post" p
-    SET "nsfwLevel" = level."nsfwLevel"
-    FROM level
-    WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel";
+    SET "nsfwLevel" = next."nsfwLevel"
+    FROM next
+    WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel";
   `);
 }
 
@@ -376,33 +381,10 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         WHERE a.id IN (${Prisma.join(articleIds)})
         GROUP BY a.id
       ),
-      -- Durable moderation floor: R whenever a Successful text-moderation
-      -- record flagged the article as NSFW (via triggeredLabels or blocked),
-      -- OR an Actioned NSFW user report exists. Computed fresh on every
-      -- recompute so the floor survives image rescans / userNsfwLevel edits
-      -- without needing a persisted flag on the Article row. When those
-      -- records disappear (e.g. a mod Unactions the report), the floor drops
-      -- on the next recompute and the article's level re-derives from
-      -- user + image ground truth.
+      -- R for a flagged XGuard row or an Actioned NSFW report; the detected level for a
+      -- text-scan verdict. Recomputed every time, so it drops when its source does.
       moderation_floor AS (
-        SELECT
-          a.id,
-          CASE
-            WHEN EXISTS (
-              SELECT 1 FROM "EntityModeration" em
-              WHERE em."entityType" = 'Article'
-                AND em."entityId" = a.id
-                AND em.status = 'Succeeded'::"EntityModerationStatus"
-                AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))
-            ) OR EXISTS (
-              SELECT 1 FROM "ArticleReport" ar
-              JOIN "Report" r ON r.id = ar."reportId"
-              WHERE ar."articleId" = a.id
-                AND r.reason = 'NSFW'::"ReportReason"
-                AND r.status = 'Actioned'::"ReportStatus"
-            ) THEN 4 -- NsfwLevel.R
-            ELSE 0
-          END AS "floor"
+        SELECT a.id, ${articleModerationFloorSql('a.id')} AS "floor"
         FROM "Article" a
         WHERE a.id IN (${Prisma.join(articleIds)})
       )
@@ -435,26 +417,23 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
   if (!bountyIds.length) return;
   const bounties = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-      WITH level AS (
-        SELECT DISTINCT ON ("entityId")
-          "entityId",
-          bit_or(i."nsfwLevel") "nsfwLevel"
-        FROM "ImageConnection" ic
-        JOIN "Image" i ON i.id = ic."imageId"
-        JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
-        WHERE ic."entityType" = 'Bounty' AND ic."entityId" IN (${Prisma.join(bountyIds)})
-        GROUP BY 1
-      )
-      UPDATE "Bounty" b SET "nsfwLevel" = (
-        CASE
-          WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-          ELSE level."nsfwLevel"
-        END
-      )
-      FROM level
-      WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
-      RETURNING b.id;
-    `);
+    WITH next AS (
+      SELECT
+        b.id,
+        COALESCE(b."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql(
+          'Bounty',
+          'b'
+        )}) "nsfwLevel"
+      FROM "Bounty" b
+      WHERE b.id IN (${Prisma.join(bountyIds)})
+        AND EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'Bounty' AND ic."entityId" = b.id)
+    )
+    UPDATE "Bounty" b
+    SET "nsfwLevel" = next."nsfwLevel"
+    FROM next
+    WHERE next.id = b.id AND next."nsfwLevel" != b."nsfwLevel"
+    RETURNING b.id;
+  `);
   await bountiesSearchIndex.queueUpdate(
     bounties.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -463,20 +442,22 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
 export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
   if (!bountyEntryIds.length) return;
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    WITH level AS (
-      SELECT DISTINCT ON ("entityId")
-        "entityId",
-        bit_or(i."nsfwLevel") "nsfwLevel"
-      FROM "ImageConnection" ic
-      JOIN "Image" i ON i.id = ic."imageId"
-      JOIN "BountyEntry" b on b.id = "entityId" AND ic."entityType" = 'BountyEntry'
-      WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" IN (${Prisma.join(bountyEntryIds)})
-      GROUP BY 1
+    WITH next AS (
+      SELECT
+        be.id,
+        COALESCE(be."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql(
+          'BountyEntry',
+          'be'
+        )}) "nsfwLevel"
+      FROM "BountyEntry" be
+      WHERE be.id IN (${Prisma.join(bountyEntryIds)})
+        AND EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" = be.id)
     )
-    UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"
-    FROM level
-    WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
-    RETURNING b.id;
+    UPDATE "BountyEntry" be
+    SET "nsfwLevel" = next."nsfwLevel"
+    FROM next
+    WHERE next.id = be.id AND next."nsfwLevel" != be."nsfwLevel"
+    RETURNING be.id;
   `);
 }
 

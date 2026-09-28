@@ -34,6 +34,7 @@ import { systemNotifications } from '~/server/notifications/system.notifications
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
 import { referralNotifications } from '~/server/notifications/referral.notifications';
+import { textScanNotifications } from '~/server/notifications/text-scan.notifications';
 
 export const notificationProcessors = {
   ...creatorAnnouncementNotifications,
@@ -71,6 +72,7 @@ export const notificationProcessors = {
   ...strikeNotifications,
   ...referralNotifications,
   ...membershipGiftNotifications,
+  ...textScanNotifications,
 };
 
 // Sort notifications by priority and group them by priority

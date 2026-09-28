@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as AdaptersModule from '~/server/services/moderation-adapters';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -12,6 +13,10 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
+  ...(await importOriginal<typeof AdaptersModule>()),
+  getModerationAdapter: vi.fn(),
+}));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
   getActiveTextScanPrompts: vi.fn(),
@@ -21,6 +26,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 const { scanEntity, textScanExternalId } = await import('~/server/services/text-scan/submit');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
+const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(
   '~/server/services/text-scan/prompt'
@@ -137,6 +143,60 @@ describe('scanEntity', () => {
     expect(em.upsert).not.toHaveBeenCalled();
     expect(getActiveTextScanPrompts).not.toHaveBeenCalled();
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  describe('when the text is removed below minChars', () => {
+    const applyTextScan = vi.fn();
+    const verdict = (over: Record<string, unknown> = {}) => ({
+      workflowId: 'wf-9',
+      status: 'Succeeded',
+      nsfwLevel: 16,
+      triggeredLabels: ['nsfw'],
+      result: { version: 1 },
+      ...over,
+    });
+    beforeEach(() => {
+      load.mockResolvedValue(
+        new Map([[7, { fields: [{ heading: 'Detail', text: '' }], declared: { nsfwLevel: 1 } }]])
+      );
+      vi.mocked(getModerationAdapter).mockReturnValue({ applyTextScan } as any);
+    });
+
+    it('replaces an active raising verdict with a clean one and re-applies it', async () => {
+      vi.mocked(getTextScanMode).mockResolvedValue('active');
+      em.findUnique.mockResolvedValue(verdict() as any);
+      expect(await scanEntity({ entityType: 'Post', entityId: 7 })).toEqual({
+        status: 'skipped',
+        reason: 'too-short',
+      });
+      const { where, data } = vi.mocked(em.updateMany).mock.calls[0][0] as any;
+      expect(where).toMatchObject({ entityType: 'Post', entityId: 7 });
+      expect(data).toMatchObject({ status: 'Succeeded', triggeredLabels: [] });
+      expect(data.nsfwLevel ?? 1).toBeLessThanOrEqual(1);
+      expect(applyTextScan).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: 7, workflowId: 'wf-9' })
+      );
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('clears the shadow row without applying anything', async () => {
+      em.findUnique.mockResolvedValue(verdict() as any);
+      await scanEntity({ entityType: 'Post', entityId: 7 });
+      expect((vi.mocked(em.updateMany).mock.calls[0][0] as any).where).toMatchObject({
+        entityType: 'Post:shadow',
+      });
+      expect(applyTextScan).not.toHaveBeenCalled();
+    });
+
+    it('leaves a clean verdict and a non-text-scan row untouched', async () => {
+      vi.mocked(getTextScanMode).mockResolvedValue('active');
+      em.findUnique.mockResolvedValue(verdict({ nsfwLevel: 1, triggeredLabels: [] }) as any);
+      await scanEntity({ entityType: 'Post', entityId: 7 });
+      em.findUnique.mockResolvedValue(verdict({ result: { labels: ['nsfw'] } }) as any);
+      await scanEntity({ entityType: 'Post', entityId: 7 });
+      expect(em.updateMany).not.toHaveBeenCalled();
+      expect(applyTextScan).not.toHaveBeenCalled();
+    });
   });
 
   it('scans text exactly at minChars', async () => {

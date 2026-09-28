@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
+// Pinned off so this suite stays about the XGuard path, not about what Flipt answers here.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+// Hand-listed, as in challenge-moderation-adapter.test.ts: the text-scan notify path imports it.
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),

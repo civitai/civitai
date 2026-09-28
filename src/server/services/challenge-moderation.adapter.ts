@@ -3,6 +3,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { applyChallengeTextScan } from '~/server/services/text-scan/actions/challenge';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   CHALLENGE_MODERATION_LABELS,
@@ -44,12 +46,17 @@ export const challengeModerationAdapter: ModerationAdapter = {
   },
 
   submit: ({ entityId, content }) =>
-    submitTextModeration({
+    submitTextModerationOrScan({
       entityType: 'Challenge',
       entityId,
-      content,
-      labels: [...CHALLENGE_MODERATION_LABELS],
-      priority: 'low',
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Challenge',
+          entityId,
+          content,
+          labels: [...CHALLENGE_MODERATION_LABELS],
+          priority: 'low',
+        }),
     }),
 
   applyResult: async ({ entityId, blocked, triggeredLabels, output }) => {
@@ -136,4 +143,6 @@ export const challengeModerationAdapter: ModerationAdapter = {
       recordChallengeScanResult({ source: challenge?.source, result: 'error' });
     }
   },
+
+  applyTextScan: applyChallengeTextScan,
 };

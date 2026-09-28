@@ -28,7 +28,10 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction: vi.fn(),
   refundTransaction: vi.fn(),
 }));
-vi.mock('~/server/services/bounty.service', () => ({ isBountyTransactionPrefix: () => false }));
+vi.mock('~/server/services/bounty.service', () => ({
+  isBountyTransactionPrefix: () => false,
+  refundBountyBenefactorFunds: vi.fn(async () => []),
+}));
 vi.mock('~/server/search-index', () => ({
   bountiesSearchIndex: { queueUpdate: mockQueueUpdate },
 }));
@@ -51,9 +54,7 @@ dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
   executedStatements.push(sql);
   return 1;
 });
-dbMock.dbWrite.$transaction.mockImplementation((operations: Promise<unknown>[]) =>
-  Promise.all(operations)
-);
+const lockedBounty = { complete: false, refunded: false };
 
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;
@@ -81,8 +82,11 @@ describe('prepare-bounties auto-award', () => {
       ])
       .mockResolvedValue([]);
 
+    lockedBounty.complete = false;
+    lockedBounty.refunded = false;
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');
+      if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
       if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
       if (sql.includes('FROM "BountyEntry" be'))
         return [{ id: WINNER_ENTRY_ID, userId: 7, awardedUnitAmount: 0 }];
@@ -112,5 +116,30 @@ describe('prepare-bounties auto-award', () => {
     expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
       expect.objectContaining({ toAccountId: 7, amount: 500 }),
     ]);
+  });
+
+  it('writes the award under the payout lock, before any Buzz moves', async () => {
+    const order: string[] = [];
+    mockDbWrite.$transaction.mockImplementationOnce(async (cb: (tx: unknown) => unknown) => {
+      const result = await cb(mockDbWrite);
+      order.push('commit');
+      return result;
+    });
+    mockCreateBuzzTransactionMany.mockImplementationOnce(async () => order.push('award'));
+
+    await runPrepareBounties();
+
+    const lockCall = mockDbWrite.$queryRaw.mock.calls.findIndex((c: unknown[]) =>
+      (c[0] as readonly string[]).join('').includes('FOR UPDATE')
+    );
+    expect(lockCall).toBe(0);
+    expect(order).toEqual(['commit', 'award']);
+  });
+
+  it('skips a bounty another path already claimed, moving no Buzz', async () => {
+    lockedBounty.complete = true;
+    await runPrepareBounties();
+    expect(executedStatements).toEqual([]);
+    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
   });
 });
