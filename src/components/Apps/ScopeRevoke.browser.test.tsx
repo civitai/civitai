@@ -9,6 +9,10 @@ import { cleanup } from 'vitest-browser-react';
 // Type-only namespace import, NOT `typeof import('...')` — the latter is rejected by
 // @typescript-eslint/consistent-type-imports.
 import type * as TrpcMod from '~/utils/trpc';
+// Type-only NAMESPACE import, not `typeof import('...')` — `@typescript-eslint/`
+// `consistent-type-imports` forbids the inline form, and CI lints changed files. Same reason the
+// sibling drawer test imports `TrpcMod` this way.
+import type * as NotificationsMod from '~/utils/notifications';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
@@ -152,7 +156,7 @@ vi.mock('~/utils/notifications', async (importOriginal) => {
   const warning = vi.fn();
   m.notify = { success, warning };
   return {
-    ...(await importOriginal<typeof import('~/utils/notifications')>()),
+    ...(await importOriginal<typeof NotificationsMod>()),
     showSuccessNotification: success,
     showWarningNotification: warning,
   };
