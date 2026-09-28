@@ -99,13 +99,15 @@
           "collections:read:self",
           "collections:write:self",
           "collections:read:private",
-          "posts:write:self"
+          "posts:write:self",
+          "goods:read:self",
+          "goods:purchase:self"
         ]
       }
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `posts:write:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `goods:purchase:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`, `posts:write:self`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -218,6 +220,51 @@
           "type": "integer",
           "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with a 10 Buzz default, which is below almost any real generation. Server-clamped to the platform per-gen cap (1000 today), so a generous value is safe. This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
           "exclusiveMinimum": 0
+        }
+      }
+    },
+    "goods": {
+      "type": "array",
+      "description": "Optional DIGITAL GOODS catalog — entitlements the platform sells to a viewer on your app's behalf, for Buzz. Manifest-governed and REVIEW-GATED: the catalog a moderator approves is the catalog that can be sold, and changing a price means shipping a new version and being re-reviewed. The platform owns the ledger (who bought what, when, at what price, and its refund state); the good's MEANING is your app's business — read the viewer's entitlements from GET /api/v1/blocks/entitlements and keep the semantics in your own app storage. Declaring goods does not by itself let you sell: the app must also declare the `goods:purchase:self` scope (and `goods:read:self` to read entitlements back), and the viewer must consent. Sales split platform 30% / app owner 70%, paid immediately. Kept in lockstep with the bounds in src/shared/constants/block-goods.constants.ts (a drift-guard test enforces equality); the imperative validator in that same module is authoritative.",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "priceBuzz"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier for this good, unique within the manifest. This is what a purchase and an entitlement are keyed by, so changing it in a later version orphans every entitlement already granted under the old id. Lowercase letters, digits, - and _, starting with a letter or digit.",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "title": {
+            "type": "string",
+            "description": "Human-readable name shown to the viewer at purchase. Non-empty; the server measures the TRIMMED length, so this maxLength is never more permissive than the server.",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional one-paragraph explanation of what the viewer gets.",
+            "maxLength": 500
+          },
+          "priceBuzz": {
+            "type": "integer",
+            "description": "Price in whole Buzz. Buzz has no sub-unit, so this must be a whole number, and the minimum is 2 rather than 1 because the app owner's 70% share is floored — a 1 Buzz item would earn its owner nothing, permanently. Capped so a single purchase can never drain an account; a viewer also has a daily ceiling across every app they have installed, so a purchase can be refused with a clean 4xx even at a legal price. Both bounds are kept in lockstep with BLOCK_GOOD_MIN_PRICE_BUZZ / BLOCK_GOOD_MAX_PRICE_BUZZ in src/shared/constants/block-goods.constants.ts by a drift-guard test.",
+            "minimum": 2,
+            "maximum": 50000
+          },
+          "kind": {
+            "type": "string",
+            "description": "What the entitlement grants, from the platform's point of view. \"good\" (the default) is an ordinary in-app purchase the platform records and does not interpret. \"app_unlock\" marks a one-time unlock of the app itself; it is RECORDED IDENTICALLY today and the platform does NOT yet act on it — the paid-app access gate is a later change that reads this value. Declaring it now buys nothing, so leave it unset unless you intend that later behaviour.",
+            "enum": ["good", "app_unlock"]
+          },
+          "payload": {
+            "type": "object",
+            "description": "Optional OPAQUE payload copied verbatim onto the entitlement at purchase and handed back to your app unchanged. The platform never reads or interprets it. It is manifest-sourced rather than client-supplied precisely so that what an entitlement carries is something a moderator saw. Must serialize to at most 2048 bytes."
+          }
         }
       }
     },

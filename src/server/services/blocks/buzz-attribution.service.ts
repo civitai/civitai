@@ -376,6 +376,40 @@ export type RecordSpendAttributionInput = {
    * final. Never persisted.
    */
   generationPriceIsCap?: boolean | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. When true the row is written `voided` instead of
+   * `tracked`.
+   *
+   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
+   * a non-resolving synthetic `appId`, which is how the mod review sandbox
+   * excludes both money rails — would also break per-app storage namespacing,
+   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
+   * metric label. So the real ids are kept and the rail is closed explicitly
+   * here. A voided row preserves the audit trail at zero money cost:
+   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
+   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
+   * COUNT and BUZZ SUM a suspended app's owner can see.
+   *
+   * 🔴 THE VOID ALONE DOES NOT YET DELIVER THE PROTECTION, AND THIS IS THE ONE
+   * PLACE THAT SAYS SO. Both owner-visible reads of this table --
+   * `app-analytics.service.ts`'s `aggregate` and its raw per-bucket series --
+   * carry NO `status` predicate, so a voided row is still counted as a run and
+   * its Buzz still sums into the owner's dashboard. The two PRE-EXISTING voids
+   * (`self_spend`, `internal_owner`) are already counted that way, which is the
+   * evidence that this marker currently has no reader.
+   *
+   * The `status <> 'voided'` filter is therefore HELD, not forgotten: it would
+   * drop the large majority of existing rows and Buzz from every owner's
+   * analytics at once, and a second consumer of this table lives outside this
+   * repo, so it is a product decision rather than a detail of this arm. It must
+   * land before the private-run surface is ENABLED -- which is safe, because
+   * until a mint exists no private-run row can be written. Do not read the void
+   * as coverage until that filter is in.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -514,6 +548,7 @@ export async function recordSpendAttribution(
     blockInstanceId,
     modelId = null,
     sharedContentKey = null,
+    privateRun = false,
   } = input;
 
   // APP-FACING generation type (`textToImage:txt2img`, `customComfy:inline`, a
@@ -595,13 +630,38 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
-  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
-  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
-  // spend row stays. The void/track distinction is kept because it is the
-  // self-spend / internal-owner marker the analytics reader and any future rail
-  // would both need, and voiding costs nothing.
-  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
+  // Void rows that are zero because of WHO spent/owns, or because the run was not
+  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
+  // "share-pending awaiting a payout-time backpay" — that was the removed spend
+  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
+  // void/track distinction is kept because it is the self-spend / internal-owner /
+  // private-run marker the analytics reader and any future rail would both need,
+  // and voiding costs nothing.
+  //
+  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
+  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
+  // the share columns are already 0), so ordering cannot change what anyone is paid.
+  // What it changes is the LABEL on an owner's own private run, where both this arm
+  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
+  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
+  // moderator — is deliberately NOT on this row; it rides the mint's audit line
+  // instead, so a money/audit table gains no new column and no new enum value.
+  //
+  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
+  // (operator decision, 2026-09-27). It is already legal under
+  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
+  // and no per-environment hand-apply. The cost is that a private run is not
+  // distinguishable from an operator-voided row *in this column* — accepted,
+  // because nothing pays out of this table and the mint audit line carries the
+  // discriminating fields anyway.
+  const voidedReason =
+    privateRun === true
+      ? 'manual_review'
+      : isSelfSpend
+      ? 'self_spend'
+      : isInternal
+      ? 'internal_owner'
+      : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
@@ -709,6 +769,26 @@ export async function recordSpendAttribution(
     // `flag-disabled` and never `base-unavailable`", and went stale the moment
     // `price-is-cap` was added — it would now be the FOURTH, and the "never"
     // list had a hole in it exactly where the newest reason sat.
+    // 🔴 `privateRun` IS DELIBERATELY *NOT* THREADED INTO THE OBSERVATION, AND THIS
+    // IS THE ONLY REMAINING ASYMMETRY IN THE FEE FAMILY. A review lane raised it;
+    // the decision is to leave it and record why, because both the size and the
+    // shape of the right fix depend on something that cannot exist yet.
+    //
+    // WHAT THE ASYMMETRY IS: the CHARGE and QUOTE counters exclude a private run
+    // (their payee resolve refuses with `private-run`), so this observation would
+    // count private-run volume that they do not — biasing the observed-vs-quoted
+    // ratio a later pricing decision reads.
+    //
+    // WHY NOT NOW: the bias is EXACTLY ZERO today, not merely small. No mint can
+    // produce the claim, so no private run can reach this line. And the fix is not
+    // free to do correctly — the note above is explicit that a new case here needs a
+    // NEW skip reason of its own and must never be folded into an existing member of
+    // `BlockAuthorFeeSkipReason`, because every reason in that union is a live
+    // population the sizing read divides by. Adding a reason for a population of
+    // zero is how a denominator acquires an empty category nobody can interpret.
+    //
+    // WHEN: with the mint, in the PR that makes a private run possible — at which
+    // point the volume is measurable and the new reason has something to count.
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,

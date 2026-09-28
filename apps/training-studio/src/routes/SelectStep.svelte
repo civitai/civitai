@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { pickModel } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
@@ -425,26 +426,30 @@
               {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
             <div class="flex items-center gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
+              <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
+                {card.name}
               </div>
-              {#if card.flag}
-                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
-                </span>
-              {/if}
               {#if selected}
                 <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
                   <IconCheck size={11} stroke={3} />
                 </span>
               {/if}
             </div>
+            <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
+                 the model name to "MiniMax …". -->
+            {#if card.flag}
+              <div class="mt-1">
+                <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                </span>
+              </div>
+            {/if}
             <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
                  and letting the height follow the text made the price rows sit at different heights. -->
             <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
               {card.description}
             </div>
-            <div class="mt-2 flex items-center gap-2">
+            <div class="mt-auto flex items-center gap-2 pt-2">
               {#if cardPrice != null}
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
@@ -491,6 +496,8 @@
           {/if}
         </button>
       {/if}
+
+      <BlueFirstNote class="mt-2" />
 
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
@@ -564,9 +571,19 @@
             {@const card = runCard(r)}
             {@const focusedRow = ri === focus}
             {@const runPrice = price(r.cardType)}
+            <!-- Whole-card pointer target: anywhere on the row focuses the run (inner controls keep
+                 their own behavior and bubble here, which also focuses — intended; the remove X is
+                 the exception, since its run is gone and removeRun already re-aims focus). Keyboard
+                 focus stays on the title button below, the semantic control — so no role/tabindex
+                 here. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
-              class="rounded-md border p-3 transition
-                {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}"
+              onclick={() => (focus = ri)}
+              class="cursor-pointer rounded-md border p-3 transition
+                {focusedRow
+                ? 'border-primary ring-2 ring-primary/30'
+                : 'border-dark-4 bg-dark-6 hover:border-dark-3'}"
             >
               <div class="flex items-center gap-3">
                 <button
@@ -590,7 +607,10 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
-                    onclick={() => removeRun(ri)}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      removeRun(ri);
+                    }}
                     class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
                   >
                     <IconX size={14} stroke={2} />

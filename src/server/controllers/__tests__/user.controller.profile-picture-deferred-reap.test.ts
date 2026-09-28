@@ -26,13 +26,13 @@ import type * as UserService from '~/server/services/user.service';
 const {
   mockUpdateUserById,
   mockGetUserById,
-  mockIngestImage,
+  mockIngestImageById,
   mockDeleteImageById,
   mockDeleteImages,
 } = vi.hoisted(() => ({
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
-  mockIngestImage: vi.fn(),
+  mockIngestImageById: vi.fn(),
   mockDeleteImageById: vi.fn(),
   mockDeleteImages: vi.fn(),
 }));
@@ -58,7 +58,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 // the real implementation, running against the canonical db mock.
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  ingestImage: mockIngestImage,
+  ingestImageById: mockIngestImageById,
   deleteImageById: mockDeleteImageById,
   deleteImages: mockDeleteImages,
 }));
@@ -101,9 +101,12 @@ const replacePicture = (pictureId = NEW_PICTURE_ID) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUserById.mockResolvedValue({ profilePictureId: OLD_PICTURE_ID });
+  mockGetUserById.mockResolvedValue({
+    profilePictureId: OLD_PICTURE_ID,
+    profilePicture: { userId: USER_ID },
+  });
   mockUpdateUserById.mockResolvedValue({ id: USER_ID, profilePictureId: NEW_PICTURE_ID });
-  mockIngestImage.mockResolvedValue(undefined);
+  mockIngestImageById.mockResolvedValue(true);
 });
 
 describe('profile picture replacement (#4272)', () => {
@@ -153,14 +156,17 @@ describe('profile picture replacement (#4272)', () => {
     // Deferral must not be visible on the happy path: the user's new avatar takes effect on
     // save, exactly as before.
     const data = mockUpdateUserById.mock.calls[0][0].data;
-    expect(data.profilePicture.connectOrCreate.where).toEqual({ id: NEW_PICTURE_ID });
-    expect(mockIngestImage).toHaveBeenCalled();
+    expect(data.profilePicture.create).toMatchObject({ url: NEW_AVATAR, userId: USER_ID });
+    expect(mockIngestImageById).toHaveBeenCalledWith({ id: NEW_PICTURE_ID });
   });
 
   it('queues nothing when the picture is unchanged', async () => {
     // Re-saving the same picture is not a replacement. Queuing here would schedule the
     // CURRENT avatar for deletion.
-    mockGetUserById.mockResolvedValue({ profilePictureId: NEW_PICTURE_ID });
+    mockGetUserById.mockResolvedValue({
+      profilePictureId: NEW_PICTURE_ID,
+      profilePicture: { userId: USER_ID },
+    });
 
     await replacePicture(NEW_PICTURE_ID);
 
@@ -169,7 +175,7 @@ describe('profile picture replacement (#4272)', () => {
   });
 
   it('queues nothing when the user had no previous picture', async () => {
-    mockGetUserById.mockResolvedValue({ profilePictureId: null });
+    mockGetUserById.mockResolvedValue({ profilePictureId: null, profilePicture: null });
 
     await replacePicture();
 

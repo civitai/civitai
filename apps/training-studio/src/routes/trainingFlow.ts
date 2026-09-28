@@ -3,6 +3,7 @@ import {
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
   cardByType,
+  paramsForVersion,
   cardsForMedia,
   versionStepDefault,
   versionSuffix,
@@ -241,6 +242,43 @@ export function selectionFromTotal(prices: Record<string, number>, runs: Run[]):
  *  per-image "seen" rather than inflating steps (and price). */
 export function defaultStepsForRun(run: Run): number {
   return versionStepDefault(runVersion(run).key);
+}
+
+/** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
+export function defaultRunParams(run: Run): RunParams {
+  const d = paramsForVersion(runCard(run), run.versionKey);
+  return {
+    steps: defaultStepsForRun(run),
+    epochs: d.epochs,
+    unetLr: String(d.unetLr),
+    textEncoderLr: String(d.textEncoderLr),
+    networkDim: String(d.networkDim),
+    networkAlpha: String(d.networkAlpha),
+    lrScheduler: d.lrScheduler,
+    optimizer: d.optimizer,
+    resolution: String(d.resolution),
+    batchSize: String(d.batchSize),
+  };
+}
+
+/** Identity of a run's Review params: a run whose base or version changed on Select gets fresh model
+ *  defaults instead of carrying another model's numbers. */
+export const runParamsKey = (run: Run): string => `${run.id}:${run.cardType}:${run.versionKey}`;
+
+export interface SamplePrompt {
+  id: number;
+  text: string;
+}
+
+/** Sample prompts seeded from the dataset itself — 3 random labels — so the test images generated during
+ *  training reflect what the model is learning. A generic prompt when the dataset carries no labels. */
+export function seedPrompts(labels: string[]): SamplePrompt[] {
+  const pool = labels.map((l) => l.trim()).filter((l) => l.length > 0);
+  const picks: string[] = [];
+  while (picks.length < 3 && pool.length > 0) {
+    picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!);
+  }
+  return (picks.length > 0 ? picks : ['a photo']).map((text, id) => ({ id, text }));
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption

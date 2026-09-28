@@ -134,6 +134,25 @@ export function clearAnnouncements(
   dismiss.creator(creatorIds);
 }
 
+// A floor is a lower bound from a recount that stopped at its row limit, hence the "+".
+export function formatUnreadCount(count: number, isFloor: boolean): string {
+  if (count >= 1000) return '1k+';
+  return isFloor ? `${count}+` : `${count}`;
+}
+
+export function formatBellCount(counts: { all: number; unreadCountsAreFloors?: number }): string {
+  if (counts.all > 99) return '99+';
+  return counts.unreadCountsAreFloors ? `${counts.all}+` : `${counts.all}`;
+}
+
+// Announcements are counted client-side and exactly; only the server's notification counts can be floors.
+export function formatTabCount(tab: string, counts: Record<string, number>): string {
+  return formatUnreadCount(
+    counts[tab.toLowerCase()] ?? 0,
+    tab !== 'announcements' && !!counts.unreadCountsAreFloors
+  );
+}
+
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -167,6 +186,7 @@ export const useQueryNotificationsCount = () => {
         system: 0,
         buzz: 0,
         announcements: 0,
+        unreadCountsAreFloors: 0,
         // Queues waiting on this user, for the user-menu badges. Carried on
         // this query rather than its own, and kept out of `all` — `all` is the
         // bell, and a pending placement is not an unread notification.
@@ -186,13 +206,17 @@ export const useQueryNotificationsCount = () => {
  * Keys on the `checkNotifications` payload that are NOT notification category
  * counts, and must survive "mark all as read".
  *
+ * `unreadCountsAreFloors` is the one non-category key deliberately NOT listed:
+ * mark-all-read zeroes every count, a zero is exact, so the flag must be wiped
+ * with them.
+ *
  * 🔴 This set is load-bearing, and the reason is not obvious from the code it
  * guards. The two branches that key off a category name are safe only because
- * they test `category.toLowerCase() in counts` and this key is camelCase —
- * `'pendingplacements'` matches nothing. That is a casing accident, not a
- * design. Rename this field to lowercase, or add a NotificationCategory that
- * lowercases into it, and the category branch would start subtracting a
- * placement count out of the bell's total.
+ * they test `category.toLowerCase() in counts` and every key here (and
+ * `unreadCountsAreFloors`) is camelCase — `'pendingplacements'` matches
+ * nothing. That is a casing accident, not a design. Rename one of these keys
+ * to lowercase, or add a NotificationCategory that lowercases into one, and
+ * the category branch would start subtracting it out of the bell's total.
  *
  * The blanket branch has no such accident protecting it: it iterates every key,
  * so a non-category count added to this payload is zeroed by one click on "mark

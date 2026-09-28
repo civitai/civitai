@@ -35,6 +35,18 @@
 export type LabelType = 'tag' | 'caption';
 export type Media = 'image' | 'video' | 'audio';
 
+const MEDIA_ITEM_NOUN: Record<Media, [singular: string, plural: string]> = {
+  image: ['image', 'images'],
+  video: ['video', 'videos'],
+  audio: ['audio clip', 'audio clips'],
+};
+
+/** "58 videos", "1 audio clip". */
+export function mediaCount(count: number, media: Media): string {
+  const [one, many] = MEDIA_ITEM_NOUN[media];
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}
+
 /** One selectable base-model version (a flat `trainingModelInfo` entry). */
 export interface ModelVersionInfo {
   /** The `trainingModelInfo` key in the source (e.g. `flux_dev`, `pony`). */
@@ -603,6 +615,9 @@ export const MEDIA_OPTIONS: { id: Media; name: string; icon: string }[] = [
   { id: 'audio', name: 'Audio', icon: '🎵' },
 ];
 
+export const isMedia = (value: unknown): value is Media =>
+  MEDIA_OPTIONS.some((m) => m.id === value);
+
 /** LoRA "type" (Character/Style/Concept/Effect) → per-media recommended card + step tuning. */
 export interface LoraType {
   id: string;
@@ -750,6 +765,18 @@ export const findByAir = (
 /** First card in an ecosystem (e.g. `sdxl`) — a coarser fallback when the exact `air` isn't in the catalog. */
 export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
+
+const airEcosystem = (air: string): string | undefined => /^urn:air:([^:]+):/.exec(air)?.[1];
+
+/** First card whose catalog AIRs share this AIR's ecosystem segment (`urn:air:<eco>:…`). For runs whose
+ *  step carries no `ecosystem` field and trained on an AIR outside the catalog — the main app's legacy
+ *  `imageResourceTraining` runs (e.g. a `wanvideo` checkpoint the studio doesn't list). */
+export const cardByAirEcosystem = (air: string): ModelCard | undefined => {
+  const eco = airEcosystem(air);
+  return eco
+    ? MODEL_CARDS.find((c) => c.versions.some((v) => airEcosystem(v.air) === eco))
+    : undefined;
+};
 
 // ---- Advanced training parameters (AI-Toolkit) ----
 // VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
@@ -1176,6 +1203,10 @@ export interface ParamBound {
   max: number;
   step: number;
 }
+
+/** Steps bounds — VENDORED from the main app's `targetSteps` field (`min: 1, max: 10000`) in
+ *  src/components/Training/Form/TrainingParams.tsx. Re-mirror by hand when the trainer's cap changes. */
+export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies ParamBound;
 
 /**
  * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with

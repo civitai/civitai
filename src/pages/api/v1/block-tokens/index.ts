@@ -439,13 +439,20 @@ async function mintOauthAppToken(args: {
  *     `status:'ephemeral'` (a just-approved app self-corrects on client reload via
  *     the prod path).
  *   - SPEND CONTAINMENT: the token is self-bound (`sub` = the session user), so at
- *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
- *     `assertViewerIsAppDeveloper(sub)` + the per-call (DEV_BUZZ_BUDGET_CAP) /
- *     per-session / per-day caps. There is NO bearer credential here, so the
- *     dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true` (and
- *     `spendRequested: true`, since this path has no request body — the declaring
- *     manifest IS the request); the runtime author-flag re-check is the substitute
- *     spend gate.
+ *     RUNTIME `submitWorkflow` spends the AUTHOR's OWN Buzz, bounded by the per-call
+ *     `buzzBudget` claim (DEV_BUZZ_BUDGET_CAP) and the aggregate per-user / per-app
+ *     caps in `reserveBlockBuzzSpendForClaims`. There is NO bearer credential here,
+ *     so the dev-token 7f AIServicesWrite ceiling doesn't map → `spendEntitled: true`
+ *     (and `spendRequested: true`, since this path has no request body — the
+ *     declaring manifest IS the request); the SELF-BOUND `sub` plus those caps are
+ *     the substitute for the missing bearer ceiling.
+ *     🔴 CORRECTED 2026-09-27: this bullet used to name `assertViewerIsAppDeveloper(sub)`
+ *     as the gate and "the runtime author-flag re-check" as the substitute. Neither
+ *     exists on the submit path — the two same-named helpers are module-private to
+ *     `blocks/user-settings.service.ts` and `apps/app-storage.service.ts`, and their
+ *     only call sites are a viewer SETTINGS write and the mod review STORAGE branch.
+ *     `blocks.router.ts`'s header records that the gate left the runtime procedures
+ *     deliberately. Do not widen a gate that is not there.
  *   - SCOPE SOURCE (the resolver is the single authority — `app.scopes`): the
  *     caller's OWN pending submission's SERVER-READ `manifest.scopes` (pending), else
  *     the AUTHENTICATED CLI's dev-tunnel SESSION `grantedScopes` (brand-new — NEVER a
@@ -643,9 +650,15 @@ async function tryDevTunnelScopedMint(args: {
  *      the caller. Any off → 404. (No `unsubmitted-spend` flag: unlike a never-reviewed
  *      ephemeral app, this app's scopes ARE a prior moderator-approved snapshot.)
  *   4. SELF-BOUND — the token `sub` is the caller (the owner), so at RUNTIME it spends
- *      the caller's OWN Buzz under `assertViewerIsAppDeveloper(sub)` + the per-call /
- *      per-session / per-day caps. Budget = the manifest `page.buzzBudgetPerGen` clamped
- *      to the dev cap (default as the ephemeral path), forced-SFW.
+ *      the caller's OWN Buzz, bounded by the per-call `buzzBudget` claim and the
+ *      aggregate per-user / per-app caps in `reserveBlockBuzzSpendForClaims`. Budget =
+ *      the manifest `page.buzzBudgetPerGen` clamped to the dev cap (default as the
+ *      ephemeral path), forced-SFW.
+ *      🔴 CORRECTED 2026-09-27: this invariant used to read "under
+ *      `assertViewerIsAppDeveloper(sub)`", naming a call that is not on the submit
+ *      path (see the Phase 2 branch's docblock above for the full correction). The
+ *      SELF-BOUND `sub` in this invariant's own title is what does the work here —
+ *      the token cannot spend anyone else's Buzz — not an author-flag re-check.
  *   5. SCOPES — sourced from the app's APPROVED SNAPSHOT (`approvedScopes`), NEVER the
  *      raw/re-published manifest, then run through the SAME `clampTunnelDeclaredScopes`
  *      belt (TUNNEL allowlist, no widening). No scope escalation.

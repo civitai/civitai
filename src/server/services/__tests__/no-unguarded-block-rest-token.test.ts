@@ -238,6 +238,14 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
   },
+  'src/pages/api/v1/blocks/entitlements.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Lists the DIGITAL GOODS the viewer owns from THIS app — the goodId, the manifest-sourced payload and the grant time of every entitlement the app has sold them. Scoped to claims.appBlockId in the query, so it discloses nothing about what the viewer bought elsewhere, which is why it is not a broader read; but a suspended app left reachable here keeps reading a signed-in user’s purchase history with this app after the takedown, and the payload is whatever that app chose to put on the entitlement.',
+  },
+  'src/pages/api/v1/blocks/goods/purchase.ts': {
+    exposure: 'SPEND',
+    why: 'Debits the viewer’s Buzz for a manifest-declared good and pays the app owner 70% immediately. The third SPEND route this table carries, and the only one whose counterparty is the app’s own owner: a suspended app left reachable here would keep selling its catalog to signed-in users and keep paying its own owner out of their balances, which is precisely the revenue a takedown exists to stop. The charge is bounded per purchase and per viewer per day, but neither bound is a substitute for refusing a suspended app.',
+  },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
@@ -1326,6 +1334,13 @@ describe('no unguarded block-REST token verification', () => {
     // unreachable — so a suspended app left serving it keeps delivering its
     // users' generated images after the takedown.
     'src/pages/api/v1/blocks/gated-images.ts',
+    // The DIGITAL GOODS pair. `goods/purchase.ts` is the third SPEND route this
+    // table has ever carried and `entitlements.ts` reads the viewer's purchase
+    // history with the app. Neither may opt out: a suspended app reaching the
+    // first keeps charging signed-in viewers and paying its own owner, and one
+    // reaching the second keeps reading what it sold them.
+    'src/pages/api/v1/blocks/entitlements.ts',
+    'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',

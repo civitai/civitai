@@ -32,12 +32,29 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  *                                            `spendRequested: true` because there is
  *                                            no bearer ceiling and no request body
  *                                            (the declaring manifest IS the
- *                                            request); SPEND is
- *                                            instead gated at RUNTIME by
- *                                            `assertViewerIsAppDeveloper(sub)` on
- *                                            the token subject (blocks.router
- *                                            submitWorkflow) plus the per-call /
- *                                            per-session / per-day Buzz caps.
+ *                                            request); SPEND is instead bounded at
+ *                                            RUNTIME by the SELF-BOUND `sub`, the
+ *                                            per-call `buzzBudget` claim and the
+ *                                            aggregate per-user / per-app caps in
+ *                                            `reserveBlockBuzzSpendForClaims`.
+ *
+ * 🔴 CORRECTION (2026-09-27): the four lines above used to name
+ * `assertViewerIsAppDeveloper(sub)` as the runtime spend gate. THAT CALL DOES NOT
+ * HAPPEN, and it has not for some time. There are two independent, module-PRIVATE
+ * helpers of that name — `blocks/user-settings.service.ts` and
+ * `apps/app-storage.service.ts` — with two call sites between them: a viewer
+ * SETTINGS write, and the mod review "run for real" STORAGE branch. Neither is on
+ * the workflow-submit or spend path, and `blocks.router.ts`'s own header records
+ * that the settings write "was its LAST call site in this router" — the gate was
+ * deliberately removed from the runtime procedures because an AUTHORING capability
+ * blocked the entire non-author cohort from USING an app.
+ *
+ * 🔴 WHY THE STALE SENTENCE WAS DANGEROUS RATHER THAN MERELY WRONG. It reads as
+ * "a non-author cannot spend here", so a reviewer asked to widen a mint to a
+ * non-author would reasonably ask for that gate to be widened too — widening a
+ * gate that does not exist, on a path where the real bound is the self-bound
+ * `sub`. Anyone reasoning about who may spend on this path must read
+ * `reserveBlockBuzzSpendForClaims`, not this comment's former claim.
  *
  * Every hard cap is IDENTICAL across both callers: forced-SFW ceiling, self-bound
  * `sub`, `dev:true` short (4h) TTL, DEV_BUZZ_BUDGET_CAP per-call budget, page ctx.
@@ -120,6 +137,16 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // ownership, the host confirm, the dedicated Flipt flag) still applies to
   // every dev-token call.
   'posts:write:self',
+  // goods:read:self — INCLUDED in BOTH dev allowlists (this bearer path and the
+  // tunnel path below). A pure self-bound read of what the DEV owns from THIS
+  // app; a pre-approval app has no rows, so it simply answers empty rather than
+  // 403-ing a UI the developer is trying to build.
+  //
+  // 🔴 `goods:purchase:self` is DELIBERATELY EXCLUDED FROM ALL FOUR allowlists,
+  // like `social:tip:self` — no real money OUT in dev. It would also be inert:
+  // the purchase path refuses a buyer who owns the app, and a pre-approval app
+  // has no AppBlock row to resolve a catalog from at all.
+  'goods:read:self',
 ]);
 
 /**
@@ -155,6 +182,10 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // WITHHELD from BOTH mod-review allowlists below — a mod previewing another
   // author's unapproved app must never publish under the MOD'S name.
   'posts:write:self',
+  // goods:read:self — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST
+  // rationale): self-bound, read-only, and empty for a pre-approval app.
+  // `goods:purchase:self` stays excluded everywhere.
+  'goods:read:self',
 ]);
 
 /**
@@ -176,6 +207,8 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
  *   - `collections:write:self`    a write surface
  *   - `social:tip:self`           real money OUT
+ *   - `goods:purchase:self`       real money OUT (an app's own paid catalog)
+ *   - `goods:read:self`           not needed to RENDER; answers empty pre-approval
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
  *   - `posts:write:self`          PUBLIC content published under the MOD'S name
  *
@@ -213,6 +246,15 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * declares — the clamp keeps only scopes IN this set, so a malicious manifest
  * declaring extra scopes gets NONE of these):
  *   - `social:tip:self`               real money OUT — NEVER granted (invariant #4)
+ *   - `goods:purchase:self`           real money OUT — same invariant. A mod
+ *                                     evaluating an app must never be charged for
+ *                                     that app's catalog, and the purchase path
+ *                                     has no pre-approval AppBlock row to price
+ *                                     against anyway.
+ *   - `goods:read:self`               nothing to read pre-approval (no entitlement
+ *                                     rows exist for a synthetic appBlockId), so
+ *                                     granting it would widen the token for no
+ *                                     evaluable behaviour.
  *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
  *   - `collections:read:private`      third-party-reachable private data
  *   - `collections:write:self`        write surface not needed to evaluate a page app
@@ -324,7 +366,9 @@ export function clampDevScopes(opts: {
   // every non-skip scope).
   if (oauthAllowed !== null) {
     const ceiling = oauthAllowed;
-    granted = granted.filter((s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid);
+    granted = granted.filter(
+      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
+    );
   }
 
   // Body narrowing — the caller may request a subset of the above.
@@ -370,9 +414,15 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
     oauthAllowed: null,
     // 🔴 PERMANENTLY true/true — do NOT wire either of these to a request field.
     //
-    // `spendEntitled: true` — the tunnel has no bearer ceiling; spend is gated at
-    // RUNTIME by `assertViewerIsAppDeveloper(sub)` (the author-flag re-check) plus
-    // the per-call / per-session / per-day Buzz caps.
+    // `spendEntitled: true` — the tunnel has no bearer ceiling; spend is bounded at
+    // RUNTIME by the SELF-BOUND `sub` (a tunnel token can only ever spend its own
+    // author's Buzz), the per-call `buzzBudget` claim, and the aggregate per-user /
+    // per-app caps in `reserveBlockBuzzSpendForClaims`.
+    //
+    // 🔴 CORRECTED 2026-09-27 — this line used to name `assertViewerIsAppDeveloper(sub)`
+    // as "the author-flag re-check" bounding spend here. No such call is on the
+    // submit path; see the module header for the full correction. Do not restore it,
+    // and do not treat it as an existing gate that a new mint path could widen.
     //
     // `spendRequested: true` — this path has NO request body to carry a per-mint
     // request. Starting a dev tunnel with a manifest that DECLARES

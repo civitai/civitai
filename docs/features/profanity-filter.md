@@ -1,7 +1,7 @@
 # Profanity Filter
 
 Profanity detection system built on Obscenity, with the blocked-word list from
-`~/utils/metadata/lists/blocked-words.json`.
+`@civitai/mod-utils/profanity/lists` (`blocked-words.json`).
 
 ## Usage
 
@@ -51,7 +51,7 @@ Automatically integrated in:
 ## Word Lists and Pattern Matching
 
 ### Blocked Words List
-- **Location**: `~/utils/metadata/lists/blocked-words.json`
+- **Location**: `packages/civitai-mod-utils/src/profanity/lists/blocked-words.json`, imported as `@civitai/mod-utils/profanity/lists`
 - **Content**: Comprehensive list of inappropriate terms, slurs, and NSFW content
 - **Format**: JSON array of strings, supports [obscenity patterns](https://github.com/jo3-l/obscenity/blob/main/docs/guide/patterns.md) like `|word` for word boundaries
 - **Processing**: Words are cleaned (regex quantifiers stripped, pipe boundaries preserved), lowercased, deduplicated, sorted, and cached.
@@ -60,14 +60,17 @@ Automatically integrated in:
 
 Three sources feed the whitelist, and they do not combine the same way:
 
-- **`~/utils/metadata/lists/whitelist-words.json`** (424 entries) — legitimate words containing a
+- **`whitelist-words.json`** in `@civitai/mod-utils/profanity/lists` (430 entries) — legitimate words containing a
   profane substring ("analysis" contains "anal"). The static default.
 - **`BlocklistType.ProfanityBenignWord`** — the moderator-editable list at `/moderator/blocklists`,
   passed in as `moderatorWhitelist`. It **REPLACES** the JSON file rather than adding to it, so a
   moderator removing a shipped entry really removes it; `null` (no row) falls back to the JSON, `[]`
   is honoured as an empty whitelist. It reaches search, chat and `BlurText` via `useCheckProfanity`.
   `auditPromptEnriched` builds its filter with no moderator list, so the generation and trainer
-  gates still see the JSON.
+  gates still see the JSON. **Consequence: the two drift.** The row was seeded verbatim from the JSON
+  as it stood on 2026-08-19; every entry added to the JSON since reaches the generation/trainer gates
+  only, and reaches search/chat/`BlurText` in an environment with that row only if a moderator also
+  adds it there. Adding a benign word is therefore two edits, not one.
 - **`LIBRARY_OVERMATCH_TOKENS`** (`src/libs/profanity-simple/index.ts`) — tokens obscenity's own
   dataset matches more broadly than the word they stand for. Always unioned in and not
   moderator-editable, because it corrects an upstream pattern rather than curating a benign word.

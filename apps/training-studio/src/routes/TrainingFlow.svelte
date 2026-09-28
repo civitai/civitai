@@ -8,12 +8,17 @@
   import ReviewStep from './ReviewStep.svelte';
   import {
     buildTrainingRuns,
+    defaultRunParams,
     isTrainable,
     labelOptions,
     labelString,
     runCard,
+    runParamsKey,
+    seedPrompts,
     type Img,
     type LaunchedRun,
+    type RunParams,
+    type SamplePrompt,
     type Selection,
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
@@ -43,6 +48,15 @@
   // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
   let autoLabel = $state<'auto' | 'manual'>('auto');
   let excludeTags = $state<string[]>([]);
+  // Review-step fields, owned here for the same reason. Name and prompts remember what they were seeded
+  // from: while unedited they follow a changed trigger / dataset, once edited they're kept. Empty
+  // `samplePrompts` means unseeded — Review never lets the list reach zero.
+  let reviewName = $state('');
+  let reviewNameSeed: string | null = null;
+  let samplePrompts = $state<SamplePrompt[]>([]);
+  let promptsSeed: { labels: string; prompts: string } | null = null;
+  let runParams = $state<Record<string, RunParams>>({});
+  let presetType = $state('');
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
@@ -83,6 +97,28 @@
 
   function jump(n: number) {
     if (n <= step) step = n;
+  }
+
+  function enterReview() {
+    if (!selection) return;
+    const t = trigger.trim();
+    if (reviewNameSeed === null || reviewName === reviewNameSeed) {
+      reviewName = t;
+      reviewNameSeed = t;
+    }
+    const labels = JSON.stringify(datasetLabels);
+    const untouched = promptsSeed !== null && JSON.stringify(samplePrompts) === promptsSeed.prompts;
+    if (samplePrompts.length === 0 || (untouched && labels !== promptsSeed!.labels)) {
+      samplePrompts = seedPrompts(datasetLabels);
+      promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
+    }
+    runParams = Object.fromEntries(
+      selection.runs.map((run) => {
+        const key = runParamsKey(run);
+        return [key, runParams[key] ?? defaultRunParams(run)];
+      })
+    );
+    step = 3;
   }
 
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
@@ -157,6 +193,8 @@
       {enabledModelFlags}
       initial={selection}
       onContinue={(sel) => {
+        if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
+          presetType = sel.loraType;
         selection = sel;
         // Reset the label mode to the model's default only when the current choice isn't valid for it —
         // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
@@ -176,15 +214,17 @@
       bind:labelMode
       bind:autoLabel
       bind:excludeTags
-      onContinue={() => (step = 3)}
+      onContinue={enterReview}
       onBack={() => (step = 1)}
     />
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {trigger}
+      bind:name={reviewName}
+      bind:prompts={samplePrompts}
+      bind:params={runParams}
+      bind:presetType
       imageCount={trainableCount}
-      labels={datasetLabels}
       onStart={start}
       onBack={() => (step = 2)}
     />
