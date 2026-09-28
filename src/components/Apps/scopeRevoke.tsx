@@ -248,8 +248,14 @@ export function useScopeRevoke({
    * client has already SEEN a payload carrying the revocation, and that observation is the
    * confirmation. Once latched there is nothing left for a later payload to resurrect.
    *
-   * ⚠️ ONE RESIDUAL, AND NOW GENUINELY BOUNDED: a viewer who re-grants the scope BEFORE any payload
-   * ever confirms the revocation leaves an entry that never latches, so that row reads "Removed"
+   * ⚠️ ONE RESIDUAL, AND NOW GENUINELY BOUNDED: an entry never latches when NO CONFIRMING PAYLOAD
+   * ARRIVES AFTER IT IS ADDED, and a later re-grant then leaves that row reading "Removed" until
+   * unmount. ⚠️ The precondition is that, not the narrower "re-grants before any payload ever
+   * confirms" an earlier wording used: a payload that carries the scope BEFORE the `.then` adds it
+   * leaves `confirmedKey` unchanged, so the effect never re-fires. Reaching that needs a competing
+   * `listMyScopeGrants` refetch to complete inside the post-write tail of this mutation — the inverse
+   * of the replication-lag ordering rounds 3-5 were about. Same class, same trigger, wider
+   * precondition. Round-6 lane, so that row reads "Removed"
    * until this component unmounts. That case needs a signal separating "no payload has confirmed yet"
    * from "the row was re-granted", and none exists — `scopesRevokedAt` is explicitly NON-monotonic (a
    * clearing re-grant nulls it, and the whole-grant path writes `null` when the list empties), while
@@ -262,11 +268,25 @@ export function useScopeRevoke({
   /**
    * THE LATCH. Drops any pending entry the server has now confirmed, permanently.
    *
-   * 🔴 KEYED ON A JOINED STRING, NOT ON THE ARRAY. `serverRevokedScopes` comes off react-query and is
-   * a fresh array identity on every render, so using it directly as a dependency would re-run this on
-   * every render; and the `setJustRevoked` updater returns the PREVIOUS array unchanged when nothing
-   * was dropped, so a no-op cannot start a render loop. `\u0000` as the separator because it cannot
-   * occur in a scope id (the vocabulary is `[a-z:]`), so two different lists cannot join to one key.
+   * 🔴 KEYED ON A JOINED STRING — A CONTENT KEY, NOT AN IDENTITY ONE. The updater also returns the
+   * PREVIOUS array unchanged when nothing was dropped, so React bails out by `Object.is` and a no-op
+   * cannot start a render loop. `\u0000` is the separator because it cannot occur in a scope id
+   * (every key of `BLOCK_SCOPE_TO_OAUTH_BIT` is `[a-z:]+`, and Postgres `text[]` cannot hold a NUL
+   * at all), so two different lists cannot join to one key.
+   *
+   * ⚠️ THE REASON GIVEN HERE FOR THE STRING DEP WAS FALSE AND IS RETRACTED. It read: *"`serverRevokedScopes`
+   * comes off react-query and is a fresh array identity on every render, so using it directly as a
+   * dependency would re-run this on every render."* react-query's `data` — and the nested array inside
+   * it — is identity-STABLE across renders; with `staleTime: Infinity` and default structural sharing
+   * it changes only when the CONTENT changes. The only per-render fresh array is the `?? []` coalesce
+   * at the call site in `ScopeConsentList`, reachable when the drawer holds no grant row or a
+   * pre-phase-2 payload omits the field — and in exactly that state the array is always EMPTY, so a
+   * raw-array dep would have cost one extra no-op effect per render, never a loop.
+   *
+   * The string dep is still the right choice, for a different reason: a content key is correct under
+   * BOTH identity behaviours, so it does not depend on a library detail at all. But this file already
+   * carries a retraction saying a comment asserting a library behaviour that does not exist is worse
+   * than no comment, and this was another one. Found by the round-6 lane.
    */
   const confirmedKey = serverRevokedScopes.join('\u0000');
   useEffect(() => {
