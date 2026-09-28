@@ -4,8 +4,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import '~/pages/apps/private-run/[slug]/[[...path]]';
 
 /**
- * THE PRIVATE-RUN SSR ROUTE — `/apps/private-run/<slug>`. All [REG]: the route does not
- * exist at `f7f5eb4996`.
+ * THE PRIVATE-RUN SSR ROUTE — `/apps/private-run/<slug>`.
+ *
+ * [REG] in the literal sense only, and the distinction matters enough to spell out: the
+ * route does not exist at `f7f5eb4996`, so every row here is red there because the module
+ * cannot be imported. That proves the feature was ADDED. It is NOT the same evidence as a
+ * row watched red against a PRESENT-but-wrong implementation, and it must not be counted as
+ * if it were — read "51 [REG] across the branch" as "51 rows red at the base", never as
+ * "51 regressions pinned". The rows in this branch that carry the stronger form are the ones
+ * that caught the scope-ceiling defect: those were watched red against the implementation
+ * at `6f041babc2`/`a6576fbc83`, which existed and was wrong. What proves each individual
+ * guard here does the work its name claims is the MUTATION matrix, not the label.
  *
  * NOTE: this test lives under `src/tests/` (NOT co-located under `src/pages/`). Next
  * treats every file under `pages/` as a route needing a default export, so a `*.test.ts`
