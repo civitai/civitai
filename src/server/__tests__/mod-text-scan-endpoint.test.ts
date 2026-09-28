@@ -1,0 +1,136 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as ClickhouseModule from '~/server/clickhouse/client';
+import type * as HarnessModule from '~/server/services/text-scan/harness';
+
+const { session, mockAudit } = vi.hoisted(() => ({
+  session: { current: null as null | { user: Record<string, unknown> } },
+  mockAudit: vi.fn(),
+}));
+
+vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: vi.fn() }));
+vi.mock('~/server/auth/get-server-auth-session', () => ({
+  getServerAuthSession: vi.fn(async () => session.current),
+}));
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseModule>()),
+  Tracker: class {
+    retoolAudit = mockAudit;
+  },
+}));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
+vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
+  ...(await importOriginal<typeof HarnessModule>()),
+  runTextScanHarnessAction: vi.fn(async () => ({ kind: 'json', body: { ok: true } })),
+}));
+
+const handler = (await import('~/pages/api/mod/text-scan')).default;
+const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
+
+function call(body: unknown, query: Record<string, string> = {}) {
+  const req = { method: 'POST', headers: {}, query, body } as never;
+  let statusCode = 200;
+  let payload: unknown;
+  const res = {
+    status(c: number) {
+      statusCode = c;
+      return res;
+    },
+    json(b: unknown) {
+      payload = b;
+      return res;
+    },
+    setHeader: vi.fn(),
+    end: () => res,
+  };
+  return Promise.resolve(handler(req, res as never)).then(() => ({
+    status: statusCode,
+    body: payload,
+  }));
+}
+
+const MOD = 990000123;
+beforeEach(() => {
+  vi.clearAllMocks();
+  session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+  redisMock.sysRedis.multi.mockImplementation(() => ({
+    set: vi.fn().mockReturnThis(),
+    incr: vi.fn().mockReturnThis(),
+    exec: vi.fn().mockResolvedValue(['OK', 1]),
+  }));
+  redisMock.sysRedis.ttl.mockResolvedValue(60);
+});
+
+describe('mod/text-scan', () => {
+  it('refuses a caller with no session, and a signed-in non-moderator, without reaching the harness', async () => {
+    session.current = null;
+    expect((await call({ action: 'getPrompts' })).status).toBe(401);
+    session.current = { user: { id: 5, isModerator: false, bannedAt: null } };
+    expect((await call({ action: 'getPrompts' })).status).toBe(403);
+    expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('is not opened by the webhook token', async () => {
+    session.current = null;
+    expect((await call({ action: 'getPrompts' }, { token: 'test-webhook-token' })).status).toBe(
+      401
+    );
+    expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('writes a prompt as the signed-in moderator, whatever id the body names', async () => {
+    await call({
+      action: 'putPrompt',
+      key: 'base',
+      content: 'BASE PROMPT',
+      note: 'n',
+      createdById: 1,
+    });
+    expect(runTextScanHarnessAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'putPrompt', createdById: 1 }),
+      { moderatorId: MOD }
+    );
+  });
+
+  it('writes config as the signed-in moderator', async () => {
+    await call({ action: 'putConfig', moderatorId: 1, config: { thinking: true } });
+    expect(runTextScanHarnessAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'putConfig' }),
+      { moderatorId: MOD }
+    );
+  });
+
+  it('keeps prompt text out of the audit row, including prompt overrides', async () => {
+    await call({ action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' });
+    await call({
+      action: 'scanEntity',
+      entityType: 'Post',
+      entityId: 1,
+      promptOverrides: { 'label:nsfw': 'CANDIDATE PROMPT' },
+    });
+    expect(mockAudit).toHaveBeenCalledTimes(2);
+    const [first, second] = mockAudit.mock.calls.map(
+      (c) => c[0].payload as Record<string, unknown>
+    );
+    expect(first).toMatchObject({ action: 'putPrompt', key: 'base', note: 'n' });
+    expect(JSON.stringify(first)).not.toContain('BASE PROMPT');
+    expect(second).toMatchObject({ action: 'scanEntity', entityId: 1 });
+    expect(JSON.stringify(second)).not.toContain('CANDIDATE PROMPT');
+  });
+
+  it.each(['scan', 'batch', 'whatif', 'fetch', 'constructor', undefined])(
+    'refuses %s with a 400',
+    async (action) => {
+      expect((await call({ action })).status).toBe(400);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('returns a CSV result as { csv }', async () => {
+    vi.mocked(runTextScanHarnessAction).mockResolvedValueOnce({ kind: 'csv', body: '"a","b"' });
+    expect(
+      (await call({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw', format: 'csv' }))
+        .body
+    ).toEqual({ csv: '"a","b"' });
+  });
+});

@@ -2,6 +2,7 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
+  '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
   '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
   '/api/mod/bounty/repay-award': () => import('~/pages/api/mod/bounty/repay-award'),
@@ -32,6 +33,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/strike/create': () => import('~/pages/api/mod/strike/create'),
   '/api/mod/strike/get-user-strikes': () => import('~/pages/api/mod/strike/get-user-strikes'),
   '/api/mod/strike/void': () => import('~/pages/api/mod/strike/void'),
+  '/api/mod/text-scan': () => import('~/pages/api/mod/text-scan'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/clear-profile': () => import('~/pages/api/mod/user/clear-profile'),
   '/api/mod/user/delete': () => import('~/pages/api/mod/user/delete'),
