@@ -202,6 +202,7 @@ export default defineNextConfig(
       '@civitai/auth',
       '@civitai/notifications',
       '@civitai/moderation',
+      '@civitai/mod-utils',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

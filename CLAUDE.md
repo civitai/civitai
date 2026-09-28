@@ -31,7 +31,7 @@ Why: a complete sweep of this org's open GitHub objects found that agent-filed *
 ### Monorepo Layout
 This is a pnpm workspace, not just the Next.js app:
 - `src/` — the main civitai.com app (everything below unless stated otherwise)
-- `apps/` — sibling apps: `auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`, `orchestrator-gateway`, `storage`. Each has its own `dev`/`release` script (`pnpm dev:auth`, `pnpm release:moderator`, …).
+- `apps/` — sibling apps: `auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`, `orchestrator-gateway`, `storage`, `training-studio`. Each has its own `dev`/`release` script (`pnpm dev:auth`, `pnpm release:moderator`, …).
 - `packages/civitai-*` — shared workspace packages consumed as `workspace:*` (`civitai-auth`, `civitai-db`, `civitai-db-schema`, `civitai-redis`, `civitai-ui`, `civitai-shared`, …).
 - `event-engine-common/` — a git **submodule**. It doesn't come with a fresh worktree; see Git Worktrees below.
 
