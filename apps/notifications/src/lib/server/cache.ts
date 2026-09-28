@@ -30,10 +30,13 @@ async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): 
   }
 }
 
+// XX: never give a TTL to a hash that has none, or getUser would start trusting a partial count.
 async function slideExpiration(userId: number) {
   const redis = getRedis();
   if (!redis) return;
-  await withRedisErrorCount('set', () => redis.expire(userKey(userId), NOTIFICATION_CACHE_TIME));
+  await withRedisErrorCount('set', () =>
+    redis.expire(userKey(userId), NOTIFICATION_CACHE_TIME, 'XX')
+  );
 }
 
 async function hasUser(userId: number) {
@@ -45,8 +48,16 @@ async function hasUser(userId: number) {
 async function getUser(userId: number): Promise<NotificationCategoryCount[] | undefined> {
   const redis = getRedis();
   if (!redis) return undefined;
-  const counts = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
+  const key = userKey(userId);
+  const [counts, ttl] = await withRedisErrorCount('get', () =>
+    Promise.all([redis.hGetAll(key), redis.ttl(key)])
+  );
   if (!Object.keys(counts).length) return undefined;
+  // Every complete write sets a TTL, so a hash without one holds only what was incremented into it.
+  if (ttl === -1) {
+    await bustUser(userId);
+    return undefined;
+  }
   return Object.entries(counts).map(([category, count]) => {
     const casted = Number(count);
     return { category: category as NotificationCategory, count: casted > 0 ? casted : 0 };
@@ -56,16 +67,18 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
 async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const redis = getRedis();
   if (!redis) return;
-  const key = userKey(userId);
-  await withRedisErrorCount('set', async () => {
-    for (const { category, count } of counts) await redis.hSet(key, category, count.toString());
-  });
-  await slideExpiration(userId);
+  const fields = counts.flatMap(({ category, count }) => [category, count.toString()]);
+  await withRedisErrorCount('set', () =>
+    redis.hSetMultiWithExpire(userKey(userId), fields, NOTIFICATION_CACHE_TIME)
+  );
 }
 
+// Only adjusts a counter that exists: HINCRBY on an absent key would create a hash holding just this
+// category, which getUser would then serve as the user's whole count.
 async function incrementUser(userId: number, category: NotificationCategory, by = 1) {
   const redis = getRedis();
   if (!redis) return;
+  if (!(await hasUser(userId))) return;
   const key = userKey(userId);
   await withRedisErrorCount('increment', async () => {
     await redis.hIncrBy(key, category, by);
@@ -77,7 +90,6 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
 }
 
 async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
-  if (!(await hasUser(userId))) return;
   await incrementUser(userId, category, -by);
   await slideExpiration(userId);
 }
