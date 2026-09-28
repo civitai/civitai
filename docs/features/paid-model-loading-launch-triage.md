@@ -59,8 +59,10 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
   floor still settles. Checkpoint-sized transfers keep the thresholds they had; only the small end
   moves.
 - B1 is largely downstream of this — an inflated ETA is what made the boost look worth offering.
-- **Closes when:** a small resource's quoted ETA is observed holding steady in production and the
-  reporters confirm.
+- ⚠️ The fix corrects the NUMBER, not a real wait. The same reporter later described waiting two hours
+  for a ~30 MB LoRA, which no display fix addresses — see B12.
+- **Closes when:** a small resource's quoted ETA is observed holding steady in production AND a small
+  LoRA is observed loading in minutes rather than hours.
 
 ### B4a — Is a queue position comparable across resource types?
 - [ ] `summarizeDownloads` collapses every downloading resource into a single `queuePosition`, and the
@@ -111,6 +113,35 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
   the uploader's own file. Supplied orchestrator blobs are now filtered out of `normalizePreparation`,
   which every consumer goes through; a training epoch's weights are a blob too and are kept, being a
   real download worth boosting.
+
+### B11 — "Potentially slow generation" blamed downloads for a busy queue — **fixed**
+- [x] The alert claimed "we need to download additional resources" whenever the whatIf came back
+  not-ready with nothing to download. `ready` is derived from `queuePosition.support` — a `JobSupport`
+  of available / unavailable / unsupported, describing worker capacity — so it carries no claim about
+  resources, and users whose models were all resident were told otherwise. The alert still shows; only
+  the invented cause is gone.
+- [ ] `unavailable` and `unsupported` still collapse into one boolean on the wire, so the copy cannot
+  separate "no worker free" from "this cannot run here".
+- **Closes when:** either the whatIf carries the reason, or that limitation is accepted in writing.
+
+### B12 — A resource loads, generates once, then needs loading again
+- [ ] Reported against one video ecosystem after a long wait. Two candidates, not yet separated:
+  genuine eviction churn — the expansion made ~900k versions loadable into a finite cache, so anything
+  not in constant use is evicted quickly — or residency going stale.
+- Production currently reports 59,459 resident versions (1,075 checkpoints, 58,384 everything else),
+  which does not look obviously wrong, so churn is the stronger candidate. If it is churn, this is
+  B2's consequence rather than a defect.
+- **Closes when:** one resource is watched across a load → generate → re-check cycle and the two
+  candidates are told apart.
+
+### B13 — Free users wait for loads the members gate was supposed to spare them
+- [ ] The gate only applies to checkpoints: `coveredForUser` returns the ungated answer whenever
+  `!audience.isCheckpoint`. Every other resource type loads on demand for everyone, so a free user
+  gets the waiting without the feature that was announced as members-only — which is how it is being
+  read in the thread.
+- Non-checkpoints are ~96% of covered versions, so this is most of what a free user actually meets.
+- **Closes when:** a decision on whether non-checkpoint loading is gated too, or the announcement says
+  it is not.
 
 ## Decisions and official answers needed
 
@@ -166,8 +197,17 @@ Feature docs: [paid-model-loading.md](paid-model-loading.md).
 - **P3** At least one bidder said they would end standing auction bids because of this release — a
   behavioural signal that the auction's value changed on release day.
 
+## Not this feature
+
+- Noise artifacts reported on every generation from one video ref-to-video model. A generation-quality
+  report that arrived in this thread because the thread was busy; nothing to do with loading.
+
 ## Sentiment
 
 Broadly positive, with explicit wariness. Several users referenced the previous checkpoint-coverage
 rollback unprompted and are watching for a repeat; others called the design reasonable and
 congratulated the team. The tone is "this looks right, prove it holds".
+
+As the evening went on it soured where waits were involved — a free user objecting to waiting at all,
+and a returning question about whether the capacity exists this time, both referencing the earlier
+rollback. The complaints cluster on waiting, not on the pricing or the concept.
