@@ -7,6 +7,7 @@ import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as PromClient from '~/server/prom/client';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as PromptAuditing from '~/server/services/orchestrator/promptAuditing';
+import type * as ScamCleanup from '~/server/services/scam-cleanup.service';
 
 type UserRow = {
   id: number;
@@ -42,6 +43,7 @@ const {
   userUpdateCounterInc,
   refreshSession,
   createNotification,
+  restoreScamCase,
 } = vi.hoisted(() => {
   const store = {
     users: new Map<number, UserRow>(),
@@ -84,9 +86,25 @@ const {
         }
       ),
       findFirst: vi.fn(
-        async ({ where }: { where: { userId: number; type: string; status: string } }) => {
+        async ({
+          where,
+        }: {
+          where: {
+            userId: number;
+            type?: string | { not: string };
+            status: string;
+            id?: { not: number };
+          };
+        }) => {
+          const typeMatches = (type: string) =>
+            where.type === undefined ||
+            (typeof where.type === 'string' ? type === where.type : type !== where.type.not);
           const row = findRestriction(
-            (r) => r.userId === where.userId && r.type === where.type && r.status === where.status
+            (r) =>
+              r.userId === where.userId &&
+              typeMatches(r.type) &&
+              r.status === where.status &&
+              r.id !== where.id?.not
           );
           return row ? { id: row.id } : null;
         }
@@ -147,6 +165,7 @@ const {
     userUpdateCounterInc: vi.fn(),
     refreshSession: vi.fn(async () => undefined),
     createNotification: vi.fn(async () => undefined),
+    restoreScamCase: vi.fn(async () => ({ restored: 0 })),
   };
 });
 
@@ -178,6 +197,10 @@ vi.mock('~/server/services/orchestrator/promptAuditing', async (importOriginal) 
   ...(await importOriginal<typeof PromptAuditing>()),
   resetProhibitedRequestCount,
 }));
+vi.mock('~/server/services/scam-cleanup.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ScamCleanup>()),
+  restoreScamCase,
+}));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     userActivity = trackUserActivity;
@@ -202,6 +225,7 @@ import {
 import {
   overturnPendingReviewMute,
   resolveUserRestriction,
+  RULING_EFFECTS,
 } from '~/server/services/user-restriction-resolve.service';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
@@ -944,11 +968,183 @@ describe('resolveUserRestriction — ruling scope', () => {
       for (const type of RULINGS_WIRED_FOR) expect(USER_RESTRICTION_TYPES).toContain(type);
     });
 
-    it('names generation and refuses everything else', () => {
-      expect([...RULINGS_WIRED_FOR]).toEqual(['generation']);
-      expect(unwiredRulingReason('generation')).toBeNull();
+    it('names generation and scam and refuses everything else', () => {
+      expect([...RULINGS_WIRED_FOR]).toEqual(['generation', 'scam']);
+      for (const type of RULINGS_WIRED_FOR) expect(unwiredRulingReason(type)).toBeNull();
       for (const type of USER_RESTRICTION_TYPES.filter((t) => !RULINGS_WIRED_FOR.includes(t)))
         expect(unwiredRulingReason(type)).toContain(`"${type}"`);
+    });
+
+    it('defines verdict effects for exactly the wired-for types', () => {
+      expect(Object.keys(RULING_EFFECTS).sort()).toEqual([...RULINGS_WIRED_FOR].sort());
+    });
+  });
+});
+
+describe('resolveUserRestriction — scam rulings', () => {
+  beforeEach(seed);
+
+  const fileCase = (id: number, type: string) => {
+    store.restrictions.push({
+      id,
+      userId: USER_ID,
+      type,
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(Date.now() - id * 1000),
+    });
+    return id;
+  };
+  const fileScam = () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+    return fileCase(1, 'scam');
+  };
+
+  it('overturning unmutes, restores the cleaned content and sends the scam notice', async () => {
+    const id = fileScam();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Overturned,
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.restrictions[0]).toMatchObject({ status: 'Overturned', resolvedBy: MOD_ID });
+    expect(store.users.get(USER_ID)?.muted).toBe(false);
+    expect(restoreScamCase).toHaveBeenCalledWith(id);
+    expect(resetProhibitedRequestCount).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'scam-restriction-overturned',
+        key: `scam-restriction-overturned:${USER_ID}:${id}`,
+      })
+    );
+  });
+
+  it('upholding sets mutedAt and sends the scam notice', async () => {
+    const id = fileScam();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
+    expect(restoreScamCase).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'scam-restriction-upheld' })
+    );
+  });
+
+  it('a failed restore does not fail the ruling', async () => {
+    const id = fileScam();
+    restoreScamCase.mockRejectedValueOnce(new Error('db down'));
+    await expect(
+      resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      })
+    ).resolves.toEqual({ userId: USER_ID });
+    expect(store.restrictions[0].status).toBe('Overturned');
+  });
+
+  it('files a scam case with the scam notice', async () => {
+    const result = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 'test',
+      type: 'scam',
+    });
+    expect(result).toMatchObject({ muted: true, deduped: false });
+    expect(PENDING_REVIEW_MUTE_NOTIFICATION.scam).toBe('scam-muted');
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'scam-muted' })
+    );
+  });
+
+  it('a repeat finding against the open case neither re-notifies nor refreshes the session', async () => {
+    await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 't',
+      type: 'scam',
+    });
+    const again = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 't',
+      type: 'scam',
+    });
+
+    expect(again).toMatchObject({ muted: true, deduped: true });
+    expect(createNotification).toHaveBeenCalledOnce();
+    expect(refreshSession).toHaveBeenCalledOnce();
+  });
+
+  describe('another open case keeps the account muted', () => {
+    it('overturning a scam case leaves the mute while a generation case is open', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.restrictions.find((r) => r.id === id)?.status).toBe('Overturned');
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+      expect(reinstateSubscription).not.toHaveBeenCalled();
+      expect(restoreScamCase).toHaveBeenCalledWith(id);
+    });
+
+    it('overturning a generation case leaves the mute while a scam case is open', async () => {
+      fileScam();
+      const id = fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+      expect(resetProhibitedRequestCount).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('an already-ruled case does not count as open', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      store.restrictions[1].status = 'Overturned';
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.users.get(USER_ID)?.muted).toBe(false);
+    });
+
+    it('overturnPendingReviewMute skips while a case of another type is open', async () => {
+      fileScam();
+      const generationId = fileCase(2, 'generation');
+
+      const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: -1 });
+
+      expect(result).toEqual({ unmuted: false, skipped: 'other-pending-restriction' });
+      expect(store.restrictions.find((r) => r.id === generationId)?.status).toBe('Pending');
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+    });
+
+    it('overturnPendingReviewMute still overturns when only its own case is open', async () => {
+      store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+      fileCase(2, 'generation');
+
+      const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: -1 });
+
+      expect(result).toEqual({ unmuted: true, userRestrictionId: 2 });
+      expect(store.users.get(USER_ID)?.muted).toBe(false);
     });
   });
 });

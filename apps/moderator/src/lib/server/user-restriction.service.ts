@@ -30,6 +30,11 @@ export type RestrictionTrigger = {
   inputImages?: string[];
   inputVideo?: string;
   time?: string;
+  reason?: string;
+  text?: string;
+  entityType?: string;
+  entityId?: number;
+  cleanup?: { kind: string; count: number; truncated: boolean; ids?: number[] } | null;
 };
 
 export type RestrictionTriggerView = RestrictionTrigger & { key: string };
@@ -81,10 +86,12 @@ const asTriggerArray = (value: unknown): RestrictionTrigger[] => {
  * user actually typed. Highlighting happens in the component against the recorded `matchedWord` by
  * literal search; the stored `matchedRegex` is attacker-influenced text and is never executed.
  */
-const toView = (trigger: RestrictionTrigger, key: string): RestrictionTriggerView => ({
-  ...trigger,
-  key,
-});
+const toView = (trigger: RestrictionTrigger, key: string): RestrictionTriggerView => {
+  // A scam cleanup records up to thousands of ids for the restore; the page needs only the count.
+  if (!trigger.cleanup) return { ...trigger, key };
+  const { ids: _ids, ...cleanup } = trigger.cleanup;
+  return { ...trigger, cleanup, key };
+};
 
 export async function getGenerationRestrictions(query: RestrictionQuery): Promise<{
   items: RestrictionRow[];

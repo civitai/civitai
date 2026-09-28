@@ -26,7 +26,7 @@ export const PROTECTED_USER_IDS = new Set<number>([
  * Mirrored for the moderator app in `apps/moderator/src/lib/server/user-restriction.service.ts`; the
  * two lists are pinned to each other by `src/server/services/__tests__/restriction-type-seam.test.ts`.
  */
-export const USER_RESTRICTION_TYPES = ['generation', 'bot-account'] as const;
+export const USER_RESTRICTION_TYPES = ['generation', 'bot-account', 'scam'] as const;
 export type UserRestrictionType = (typeof USER_RESTRICTION_TYPES)[number];
 
 export const DEFAULT_USER_RESTRICTION_TYPE: UserRestrictionType = 'generation';
@@ -54,22 +54,17 @@ export const DEFAULT_USER_RESTRICTION_TYPE: UserRestrictionType = 'generation';
 export const PENDING_REVIEW_MUTE_NOTIFICATION: Record<UserRestrictionType, string | null> = {
   generation: 'generation-muted',
   'bot-account': null,
+  scam: 'scam-muted',
 };
 
 /**
  * The restriction types a moderator's verdict can actually be applied to.
  *
- * 🔴 Deliberately NARROWER than `USER_RESTRICTION_TYPES`: a type can be *filed and reviewed* long
- * before anyone builds a verdict path for it. `resolveUserRestriction` is still generation-shaped —
- * it hardcodes the `generation-restriction-upheld` / `-overturned` notification types, a
- * `moderator:generationRestriction*` update source and a generation-worded email, and on an overturn
- * it calls `resetProhibitedRequestCount`, which wipes the account's *prompt*-violation counter. Run
- * that against a bot-account row and the user is told their generation access was restored over
- * something that has nothing to do with generation, and a real counter is cleared with it.
- *
- * Adding a type here means parameterising that verdict path first.
+ * 🔴 Deliberately NARROWER than `USER_RESTRICTION_TYPES`: a type can be filed and reviewed long before
+ * anyone builds a verdict path for it. A type belongs here only once `RULING_EFFECTS` in
+ * `user-restriction-resolve.service.ts` defines its notices, update sources and overturn effect.
  */
-export const RULINGS_WIRED_FOR: readonly UserRestrictionType[] = ['generation'];
+export const RULINGS_WIRED_FOR: readonly UserRestrictionType[] = ['generation', 'scam'];
 
 /**
  * Why a verdict may not be handed to a row of this type, or `null` when it may.
@@ -85,7 +80,7 @@ export const RULINGS_WIRED_FOR: readonly UserRestrictionType[] = ['generation'];
 export function unwiredRulingReason(type: string): string | null {
   return (RULINGS_WIRED_FOR as readonly string[]).includes(type)
     ? null
-    : `Rulings are not yet available for "${type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+    : `Rulings are not yet available for "${type}" restrictions — no verdict effects are defined for this type. This restriction was NOT resolved.`;
 }
 
 export type PendingReviewMuteResult =
@@ -196,6 +191,10 @@ export async function applyPendingReviewMute({
   }
 
   userUpdateCounter?.inc({ location: `user-restriction.service:${updateSource}` });
+
+  // Another finding against an open case on a muted account changes nothing the session or the user
+  // needs to hear about; the case's notice already went out when it was filed.
+  if (deduped && user.muted) return { muted: true, userRestrictionId, deduped };
 
   await bestEffort('pending-review-mute-refresh-session-failed', userId, () =>
     refreshSession(userId, { caller: 'moderation' })

@@ -8,7 +8,7 @@
   import RestrictionDetail from './RestrictionDetail.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import Pager from '$lib/components/Pager.svelte';
-  import { RESTRICTION_TYPE, RESTRICTION_TYPE_LABELS } from '$lib/restriction-types';
+  import { RESTRICTION_TYPE, RESTRICTION_TYPE_LABELS, RULINGS_WIRED_FOR } from '$lib/restriction-types';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -38,10 +38,12 @@
   <h1>Generator Restrictions</h1>
   {#if data.type === RESTRICTION_TYPE}
     <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
+  {:else if RULINGS_WIRED_FOR.includes(data.type)}
+    <p>{RESTRICTION_TYPE_LABELS[data.type]} restrictions, and the rulings on them.</p>
   {:else}
-    <!-- Named rather than described: the verdict path still sends generation-specific notices, so the
-         resolve and ban actions refuse these rows server-side. Saying so here is what stops a
-         moderator reading that refusal as a bug. -->
+    <!-- Named rather than described: no verdict effects exist for this type, so the resolve and ban
+         actions refuse these rows server-side. Saying so here is what stops a moderator reading that
+         refusal as a bug. -->
     <p>
       {RESTRICTION_TYPE_LABELS[data.type]} restrictions. Review only — rulings are not yet wired for this
       type.

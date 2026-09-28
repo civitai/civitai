@@ -21,6 +21,7 @@ import { featuredNotifications } from '~/server/notifications/featured.notificat
 import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
+import { scamMuteNotifications } from '~/server/notifications/scam-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
@@ -66,6 +67,7 @@ export const notificationProcessors = {
   ...creatorsProgramNotifications,
   ...followNotifications,
   ...generationMuteNotifications,
+  ...scamMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
   ...auctionNotifications,

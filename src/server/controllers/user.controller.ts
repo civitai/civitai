@@ -131,6 +131,8 @@ import {
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -1216,20 +1218,20 @@ export const toggleMuteHandler = async ({
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
   const { id } = input;
-  const user = await getUserById({ id, select: { muted: true } });
+  const user = await getUserById({ id, select: { muted: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
-
-  const date = new Date();
 
   const updatedUser = await updateUserById({
     id,
-    data: {
-      muted: !user.muted,
-      mutedAt: !user.muted ? date : undefined,
-    },
+    data: user.muted ? clearedMuteFields(user.meta) : { muted: true, mutedAt: new Date() },
     updateSource: 'toggleMute',
   });
   await invalidateSession(id, 'moderation');
+  await trackModActivity(ctx.user.id, {
+    entityType: 'user',
+    entityId: id,
+    activity: user.muted ? 'unmute' : 'mute',
+  });
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',
