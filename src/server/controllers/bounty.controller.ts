@@ -36,6 +36,7 @@ import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { canViewBounty } from '~/server/services/bounty-visibility';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -51,6 +52,7 @@ export const getInfiniteBountiesHandler = async ({
   try {
     const items = await getAllBounties({
       input: { ...input, limit, userId },
+      viewer: user,
       select: {
         id: true,
         name: true,
@@ -145,6 +147,8 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       },
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+    if (!canViewBounty({ availability: bounty.availability, userId: bounty.user?.id ?? null }, user))
+      throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({

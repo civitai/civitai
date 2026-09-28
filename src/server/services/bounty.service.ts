@@ -19,6 +19,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   createEntityImages,
   updateEntityImages,
@@ -92,11 +93,13 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     excludedUserIds,
   },
   select,
+  viewer,
 }: {
   input: GetInfiniteBountySchema;
   select: TSelect;
+  viewer?: BountyViewer;
 }) => {
-  const AND: Prisma.Enumerable<Prisma.BountyWhereInput> = [];
+  const AND: Prisma.Enumerable<Prisma.BountyWhereInput> = [bountyVisibilityWhere(viewer)];
 
   if (userId && engagement) {
     if (engagement === 'favorite')
