@@ -270,25 +270,43 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  * rounds; the Buzz service (`civitai-buzz`, `src/Civitai.Buzz.Api/Program.cs`)
  * actually does:
  *   - on `POST /multi-transactions`, it STORES
- *     `$"{ExternalTransactionIdPrefix}-{accountType}"` — appending `-blue` /
- *     `-yellow` AFTER our terminator. The single-transaction endpoint the payout
- *     legs use matches `ExternalTransactionId` exactly and appends nothing, so a
- *     BUY leg is stored suffixed and a SELL leg verbatim.
+ *     `$"{ExternalTransactionIdPrefix}-{accountType}"` — appending a suffix
+ *     AFTER our terminator. The single-transaction endpoint the payout legs use
+ *     matches `ExternalTransactionId` exactly and appends nothing, so a BUY leg
+ *     is stored suffixed and a SELL leg verbatim.
+ *     ⚠ THE SUFFIX IS A C# ENUM NAME, NOT OUR LOWERCASE WIRE VALUE — an earlier
+ *     draft of this paragraph said `-blue` / `-yellow` and that was wrong.
+ *     `AccountType` (`Civitai.Buzz.Infrastructure/Entities/AccountType.cs`)
+ *     declares `User = 0` / `Yellow = 0` and `Generation = 3` / `Blue = 3` as
+ *     duplicate-valued ALIASES, so `ToString()` renders whichever name the
+ *     runtime resolves for that value: the live ledger carries `-Yellow`,
+ *     `-Blue`, `-User` AND `-Generation`. We do not control which. What matters
+ *     here is only that every one of them begins `-`.
  *   - on `POST /multi-transactions/refund`, it selects the half-open range
  *     `id >= prefix AND id < prefix + "ZZZZZZZZZZZZZ"` (a 13-`Z` sentinel),
  *     excluding rows already of type Refund.
- * Prefix-freedom is SUFFICIENT for that range to behave, so the argument below
- * still holds and nothing here changes — but it is not a model of the matcher,
- * and two consequences only the range makes visible are now pinned by guards in
- * `block-goods.service.test.ts` ("the refund range, over the ids the ledger
- * actually STORES"): a continuation that sorts ABOVE the sentinel would be
- * silently left unrefunded (ours begin `-` or `:`, both below `Z`; a separator
- * like `_good` would not be), and the buyer's refund must not reach the payout
- * legs. 🔴 Residual, NOT closed here: the comparison runs under the Buzz
- * database's own collation, and `>=`/`<` being ASCII-ordinal is an assumption
- * about that collation this repo cannot see. Under a collation that orders
- * punctuation differently the sentinel bound could move. Ask the Buzz service
- * owner before relying on the ordering for anything new.
+ * Prefix-freedom is SUFFICIENT for that range to behave — the range is a prefix
+ * match minus continuations that sort at or above the sentinel — so the argument
+ * below still holds and nothing here changes. It is simply not a model of the
+ * matcher, which is why it was worth writing down.
+ *
+ * 🔴 TWO RESIDUALS, NEITHER PINNED BY ANY GUARD IN THIS REPO, AND AN EARLIER
+ * DRAFT CLAIMED ONE OF THEM WAS. The property that matters is that a stored
+ * continuation sorts BELOW the sentinel; every one observed does, because they
+ * all begin `-`. But NOTHING IN THIS REPO DETERMINES THAT CHARACTER — the
+ * separator and the enum rendering are both chosen inside the Buzz service — so
+ * no test here can fail from any change made here, and a guard asserting it was
+ * deleted for being vacuous rather than kept for looking reassuring. (It was
+ * worse than vacuous: it built its input as `prefix + '-' + c` and then sliced
+ * `prefix` back off, so it re-derived its own expectation and passed for a
+ * totally rewritten key shape.) The second residual: the comparison runs under
+ * the Buzz database's own collation, and `>=`/`<` being ASCII-ordinal is an
+ * assumption about that collation this repo cannot see. Both are questions for
+ * the Buzz service owner, not properties this codebase can assert.
+ *
+ * What IS pinned here, and was already, is prefix-freedom over the ids we
+ * BUILD: see the `prefixPairs` guards and the on-the-wire payout-separation
+ * case in `block-goods.service.test.ts`.
  *
  * THE ARGUMENT, so a later edit can be checked against it rather than guessed
  * at. Every id is a `:`-separated token list:

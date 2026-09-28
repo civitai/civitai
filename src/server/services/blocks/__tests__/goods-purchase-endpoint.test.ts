@@ -210,13 +210,19 @@ describe('FIN-1 — no client value reaches a money decision', () => {
     );
   });
 
-  it('rate-limits on the token\u2019s own instance id, not a shared constant', async () => {
+  it('rate-limits on the token\u2019s own instance id AND the token subject, not a shared constant', async () => {
     // A constant key would make the 6-per-60s bucket GLOBAL across every viewer
     // and every app, so the first six purchases anywhere in the minute would 429
     // everyone else.
+    //
+    // The BUYER is asserted here too, and it is the half that is easy to lose:
+    // the instance id alone is NOT per-viewer for a page app, whose synthetic
+    // `page_<appBlockId>` is shared by every concurrent viewer \u2014 so an
+    // instance-only key is the "shared constant" this test's title warns about,
+    // wearing a different name. Both arguments, so dropping either is red.
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);
-    expect(mockRateLimit).toHaveBeenCalledWith('bki_1');
+    expect(mockRateLimit).toHaveBeenCalledWith('bki_1', BUYER);
   });
 
   it('binds the BUYER to the token subject, ignoring a body userId', async () => {
