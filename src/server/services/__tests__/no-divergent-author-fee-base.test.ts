@@ -103,11 +103,25 @@ const pathRegions = declRegions;
  * it a longer identifier or member access. The `(` case is deliberately NOT
  * excluded — `suppressQuoteLogs: true` and friends legitimately abut `,`/`)`.
  */
+function containsExpression(haystack: string, needle: string): boolean {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escaped}(?![\\w.])`).test(haystack);
+}
+
 /**
  * The argument object's OWN properties, with every nested object/call blanked.
  *
- * 🔴 EVERY FIELD ASSERTION IN THIS FILE GOES THROUGH IT, AND THAT IS A FIX, NOT A
- * TIDY-UP. A `callSites` slice contains the nested objects and nested calls too, so a
+ * 🔴 EVERY POSITIVE FIELD ASSERTION IN THIS FILE GOES THROUGH IT, AND THAT IS A FIX,
+ * NOT A TIDY-UP.
+ *
+ * ⚠️ THAT SENTENCE WAS FALSE WHEN FIRST WRITTEN, AND A REVIEW ROUND PROVED IT WITH
+ * MUTANTS RATHER THAN BY READING. Five assertions were left on the raw slice —
+ * `suppressQuoteLogs`, the reversal's `workflowId`, and the three ledgered
+ * `baseExpr`/`capExpr`/`typeExpr` — and three of them had surviving nested mutants,
+ * including `typeExpr`, the fee's own lookup key, which this file records as having
+ * once survived 821/821. So the comment read as coverage while providing none on
+ * exactly the assertions it named. All five are routed through it now. If you add a
+ * positive field assertion here, route it too, or this sentence goes false again. A `callSites` slice contains the nested objects and nested calls too, so a
  * bare `slice.toContain('baseGenerationBuzz: realizedBaseCost')` is satisfied by
  * `recordSpendAttribution({ …, opts: build({ baseGenerationBuzz: realizedBaseCost }) })`
  * — with NO top-level field, i.e. the author fee priced off `undefined`, and this
@@ -123,11 +137,6 @@ const pathRegions = declRegions;
  */
 function ownProps(site: string): string {
   return topLevelPropertyText(site);
-}
-
-function containsExpression(haystack: string, needle: string): boolean {
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`${escaped}(?![\\w.])`).test(haystack);
 }
 
 /**
@@ -807,11 +816,11 @@ describe('author fee — the viewer-charge seam', () => {
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
       expect(
-        containsExpression(site, ledgered.baseExpr),
+        containsExpression(ownProps(site), ledgered.baseExpr),
         `${owner}: baseExpr is not the ledgered '${ledgered.baseExpr}' (as a complete expression)`
       ).toBe(true);
       expect(
-        containsExpression(site, ledgered.capExpr),
+        containsExpression(ownProps(site), ledgered.capExpr),
         `${owner}: capExpr is not the ledgered '${ledgered.capExpr}' (as a complete expression)`
       ).toBe(true);
       expect(site).not.toContain('snapshot');
@@ -836,7 +845,7 @@ describe('author fee — the viewer-charge seam', () => {
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
       expect(
-        containsExpression(site, ledgered.typeExpr),
+        containsExpression(ownProps(site), ledgered.typeExpr),
         `${owner}: generationType is not the ledgered '${ledgered.typeExpr}' — this is the fee's ` +
           'lookup key, so a changed spelling prices a different override than the ledger claims. ' +
           'Matched as a COMPLETE expression: a bare substring test passes for ' +
@@ -1110,7 +1119,7 @@ describe('author fee — the viewer-charge seam', () => {
     // has to cover for the sentence above to be true.
     for (const { path: owner, site } of quoteOwners) {
       expect(
-        containsExpression(site, 'suppressQuoteLogs: true'),
+        containsExpression(ownProps(site), 'suppressQuoteLogs: true'),
         `${owner} is ledgered '${QUOTE_SITE_LEDGER[owner].role}' — its suppressQuoteLogs is wrong`
       ).toBe(QUOTE_SITE_LEDGER[owner].role === 'disclosing');
     }
@@ -1273,7 +1282,7 @@ describe('author fee — the viewer-charge seam', () => {
     // and `cancelWorkflow` read `snapshot.status`, `cancelAppWorkflow` reads its
     // projection's.)
     for (const site of callSites(source, 'reverseBlockAuthorFee({')) {
-      expect(site).toContain('workflowId: input.workflowId');
+      expect(ownProps(site)).toContain('workflowId: input.workflowId');
       expect(site).toMatch(/terminalStatus: \w+\.status,/);
     }
   });

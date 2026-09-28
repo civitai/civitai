@@ -191,6 +191,11 @@ describe('the private-run claim is threaded to every money call site', () => {
         `${opener.slice(0, -1)} occurs ${bare} times but only ${sites.length} are written ` +
           `as \`${opener}\`. A call reformatted to put its argument object on the next ` +
           'line is invisible to every other assertion in this file.'
+        // ⚠️ NARROWER THAN IT SOUNDS: both counts key on the literal function NAME, so a
+        // call reached through an ALIASED import (`fn as g`) or written with an explicit
+        // type argument (`fn<T>({`) is invisible to the bare count AND the site count
+        // alike, and this equality still holds. No instance today; it is not a guard
+        // against renaming the call, only against reformatting it.
       ).toBe(sites.length);
     });
 
