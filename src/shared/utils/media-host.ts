@@ -14,7 +14,7 @@
  */
 
 const ORCHESTRATION_HOST_RE = /^orchestration[a-z0-9-]*\.civitai\.com$/i;
-const LOCALHOST_HOST_RE = /^localhost(:\d+)?$/;
+const LOCALHOST_HOST_RE = /^(localhost|\[::1\])(:\d+)?$/;
 
 function hostOf(url: unknown): { host: string; protocol: string } | undefined {
   if (typeof url !== 'string') return undefined;
@@ -29,28 +29,46 @@ function hostOf(url: unknown): { host: string; protocol: string } | undefined {
 }
 
 /**
+ * Strip a default port (:443 for https, :80 for http) so an image location
+ * configured with an explicit default port does not invalidate every CDN URL
+ * built without one (and vice versa). Non-default ports are kept — a matching
+ * name on an attacker-chosen port stays untrusted.
+ */
+function normalizeDefaultPort(host: string, protocol: string): string {
+  if (protocol === 'https:' && host.endsWith(':443')) return host.slice(0, -4);
+  if (protocol === 'http:' && host.endsWith(':80')) return host.slice(0, -3);
+  return host;
+}
+
+/**
  * Whether a stored meta URL may be handed to the generator form.
  *
  * `https`-only, with one carve-out: in development the image location is an
- * `http://localhost[:port]` origin, so localhost URLs (any port) are accepted
- * only when the configuration itself points at localhost — a stored
+ * `http://localhost[:port]` (or loopback IPv6) origin, so loopback URLs are
+ * accepted only when the configuration itself points at loopback — a stored
  * `localhost` URL in production names the *viewer's* machine and gains
- * nothing from the exception.
+ * nothing from the exception. The carve-out is http-only: an https://localhost
+ * URL against an http dev config is still rejected.
  */
 export function isMediaHost(url: unknown, imageLocation: string | undefined): boolean {
   const parsed = hostOf(url);
   if (!parsed) return false;
-  const { host, protocol } = parsed;
-  if (ORCHESTRATION_HOST_RE.test(host) && protocol === 'https:') return true;
+  if (parsed.protocol === 'https:' && ORCHESTRATION_HOST_RE.test(parsed.host)) return true;
 
-  let imageLocationHost: string | undefined;
-  try {
-    imageLocationHost = imageLocation ? new URL(imageLocation).host.toLowerCase() : undefined;
-  } catch {
-    imageLocationHost = undefined;
+  const loc = imageLocation ? hostOf(imageLocation) : undefined;
+  if (!loc) return false;
+
+  if (
+    parsed.protocol === 'https:' &&
+    normalizeDefaultPort(parsed.host, parsed.protocol) ===
+      normalizeDefaultPort(loc.host, loc.protocol)
+  ) {
+    return true;
   }
-  if (!imageLocationHost) return false;
-
-  if (protocol === 'https:' && host === imageLocationHost) return true;
-  return LOCALHOST_HOST_RE.test(imageLocationHost) && LOCALHOST_HOST_RE.test(host);
+  return (
+    parsed.protocol === 'http:' &&
+    loc.protocol === 'http:' &&
+    LOCALHOST_HOST_RE.test(loc.host) &&
+    LOCALHOST_HOST_RE.test(parsed.host)
+  );
 }

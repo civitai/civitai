@@ -22,6 +22,24 @@ describe('isMediaHost', () => {
     expect(isMediaHost(`${IMAGE_LOCATION}/00000-1/x.png`, IMAGE_LOCATION)).toBe(true);
   });
 
+  it('accepts the image CDN host regardless of explicit default port on either side', () => {
+    expect(
+      isMediaHost('https://image.civitai.com:443/xG1nkqKTMzGDvpLrqFT7WA/x.png', IMAGE_LOCATION)
+    ).toBe(true);
+    expect(
+      isMediaHost(
+        'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/x.png',
+        'https://image.civitai.com:443/xG1nkqKTMzGDvpLrqFT7WA'
+      )
+    ).toBe(true);
+  });
+
+  it('rejects the image CDN host on a non-default port', () => {
+    expect(
+      isMediaHost('https://image.civitai.com:8443/xG1nkqKTMzGDvpLrqFT7WA/x.png', IMAGE_LOCATION)
+    ).toBe(false);
+  });
+
   it('rejects app-origin and foreign URLs', () => {
     expect(isMediaHost('https://civitai.com/private-endpoint.png', IMAGE_LOCATION)).toBe(false);
     expect(isMediaHost('https://evil.example/a.png', IMAGE_LOCATION)).toBe(false);
@@ -43,13 +61,23 @@ describe('isMediaHost', () => {
 
   it('allows localhost only when the configured image location is itself localhost (dev)', () => {
     expect(isMediaHost('http://localhost:3000/img.png', 'http://localhost:3000')).toBe(true);
+    expect(isMediaHost('http://[::1]:3000/img.png', 'http://[::1]:3000')).toBe(true);
     expect(isMediaHost('https://localhost/img.png', IMAGE_LOCATION)).toBe(false);
   });
 
-  it('fails closed when no image location is configured', () => {
+  it('rejects https loopback URLs even against an http loopback dev config', () => {
+    expect(isMediaHost('https://localhost:4000/img.png', 'http://localhost:3000')).toBe(false);
+    expect(isMediaHost('http://localhost:4000/img.png', IMAGE_LOCATION)).toBe(false);
+  });
+
+  it('fails closed for CDN hosts when no image location is configured', () => {
     expect(isMediaHost('https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/x.png', undefined)).toBe(
       false
     );
+  });
+
+  it('accepts orchestration hosts regardless of the image location config', () => {
     expect(isMediaHost('https://orchestration.civitai.com/x', '')).toBe(true);
+    expect(isMediaHost('https://orchestration.civitai.com/x', undefined)).toBe(true);
   });
 });
