@@ -22,7 +22,26 @@ import {
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
+// The registry predicate, used to keep a RETIRED scope out of the revokable list — see the
+// `revokableScopes` computation for why an unknown string there broke revoke for the whole app.
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import type { ScopeGrantOrigin } from '~/shared/constants/app-surface-provenance';
+// STATIC, unlike the `isMissingColumnError` import inside the catch below — these two are a
+// constant and a pure predicate, and this surface MUST agree with the module that decides
+// what the mint does. A hand-typed `'ai:write:budgeted'` here (what this file had until the
+// revoke landed) and a hand-rolled exempt list are the two ways a permissions page comes to
+// disagree with enforcement: one offers a budget editor for an app that cannot spend, the
+// other offers a revoke button that records a preference nothing reads. The module's own
+// import graph is a subset of this one's, so this costs nothing at load time.
+import {
+  CONSENT_SPEND_SCOPE,
+  consentGatedScopes,
+  isMissingColumnError,
+  liveGrantedScopes,
+  logMissingBudgetColumn,
+  logMissingRevokedScopesColumn,
+  usableConsentBudget,
+} from '~/server/services/blocks/scope-grant.service';
 
 /**
  * The SYNTHETIC (non-FK-resolving) `appBlockId` claim namespaces a PRE-APPROVAL
@@ -81,9 +100,14 @@ export type ScopeGrantSurface = {
    *
    * A REVOKED grant reports `null`, matching `getConsentBuzzBudget`: a revoked
    * grant carries no spend scope, so there is no spend for a budget to bound.
-   * ⚠️ That branch is an INVARIANT guard over a state nothing in this codebase can
-   * produce — no code path ever writes a non-null `revoked_at` — see
-   * `getConsentBuzzBudget`.
+   * ⚠️ THAT BRANCH IS REACHABLE AS OF THE PER-SCOPE REVOKE, AND THIS LINE USED TO SAY
+   * OTHERWISE. It described the branch as *"an INVARIANT guard over a state nothing in
+   * this codebase can produce — no code path ever writes a non-null `revoked_at`"*, which
+   * was true when written. `revokeScopes` (`scope-grant.service.ts`) now writes one
+   * whenever a viewer's revoke empties their granted set, and the same path also nulls
+   * this column outright when `ai:write:budgeted` is the scope being revoked. Do not
+   * re-label either branch as an invariant guard, and do not count a test of it as
+   * anything other than live coverage.
    */
   buzzBudgetPerDay: number | null;
   /**
@@ -98,6 +122,135 @@ export type ScopeGrantSurface = {
    * control off an app-side set would render a field whose value the server silently drops.
    */
   spendScopeGranted: boolean;
+  /**
+   * The scopes the VIEWER currently grants this app — `granted_scopes ∖ revoked_scopes`,
+   * empty for a revoked grant or no grant row at all. Sorted.
+   *
+   * 🔴 THIS SETTLES A DECISION THE DRAWER'S OWN DOCBLOCK RECORDED AS DELIBERATELY OPEN
+   * (`AppPermissionsActivityDrawer.tsx`), AND IT DOES NOT REPLACE `scopes` ABOVE. The two
+   * answer different questions and the page needs both:
+   *   - `scopes`       = the APP-SIDE set, `manifest.scopes ∩ approved_scopes` — what this
+   *                      app may be granted and exercised with. It is the ROW LIST.
+   *   - `grantedScopes` = the USER-SIDE set — what this viewer has actually agreed to.
+   *
+   * Everything the existing docblock on `scopes` argues about why the EFFECTIVE set is
+   * displayed rather than `granted_scopes` still stands and is preserved there: the
+   * effective set is the only one correct in both divergence directions, and
+   * `granted_scopes` alone UNDER-reports because it omits every `CONSENT_EXEMPT_SCOPES`
+   * entry a token really carries. This field is additive for the one thing the effective
+   * set cannot express — per-row consent STATE — which is precisely what a revoke control
+   * has to key off. A control offered on the app-side set alone would render a "remove"
+   * button for a permission the viewer never granted.
+   *
+   * 🔴 IT IS NOT A SUBSET OF `scopes`, AND A UI MUST NOT ASSUME IT IS. `manifest` can be
+   * replaced by a publisher push without re-approval, so a scope the viewer really granted
+   * last month can sit outside today's intersection. Render the intersection as rows and
+   * treat a granted-but-not-displayed scope as still granted — `blocks.revokeScopes`
+   * deliberately applies no manifest ceiling for the same reason.
+   *
+   * 🔴 AND IT IS NOT DERIVABLE FROM `spendScopeGranted`'S ABSENCE, NOR THE REVERSE — BUT THE TWO
+   * ARE ONE FACT. `spendScopeGranted` is exactly `grantedScopes.includes(CONSENT_SPEND_SCOPE)`:
+   * both are written from one `liveGranted` value inside one loop iteration, so they cannot
+   * disagree, and the older field's docblock justifying itself as "NOT derivable" means not
+   * derivable from `scopes` (the app-side set) — which is still true, and was the only set that
+   * existed when it was written. Now that the client reads `grantedScopes` too, the boolean is a
+   * redundant wire field rather than a second derivation; a deletion candidate on a later pass, not
+   * a drift risk. Reported by the reuse lane.
+   *
+   * 🔴 IT IS NOW LOAD-BEARING FOR THE CONTROL, NOT ONLY FOR DISPLAY. `blocks.revokeScopes` refuses
+   * a scope outside the viewer's live granted set, so `buildScopeConsentRows` intersects this with
+   * `revokableScopes` to decide which rows get a Remove button — see that field's docblock for why
+   * the intersection is NOT performed here. A client that stops reading this field goes back to
+   * offering a control the server rejects.
+   */
+  grantedScopes: string[];
+  /**
+   * The viewer's per-scope SUPPRESSION list for this app (`revoked_scopes`), sorted.
+   *
+   * Disjoint from `grantedScopes` by construction. A scope can appear here while ALSO
+   * appearing in the raw `granted_scopes` column — an install after a revoke unions it
+   * back — which is exactly why the suppression list exists and why `getGrantedScopes`
+   * subtracts it. What reaches this field is the post-subtraction view, so the two arrays
+   * here never overlap.
+   *
+   * `[]` on a database that has not had migration
+   * `20260927120000_app_user_scope_grant_revoked_scopes` applied — the only state such a
+   * database can be in, not a degraded guess.
+   */
+  revokedScopes: string[];
+  /**
+   * When the MOST RECENT revoke happened for this (user, app), or `null` if none has.
+   *
+   * ⚠️ NOT A PER-SCOPE TIMESTAMP, AND A UI MUST NOT RENDER IT AS ONE. `revoked_scopes` is
+   * a TEXT[] with nowhere to put per-entry times, and per-scope times would need a child
+   * table — deliberately not built. Two revokes a week apart leave ONE value here, the
+   * later. So it is honest as an app-level "permissions last changed <when>" and it is a
+   * LIE printed next to an individual scope row. If phase 3 needs true per-scope times,
+   * that is a schema change, not a display change.
+   */
+  scopesRevokedAt: Date | null;
+  /**
+   * When the viewer's WHOLE grant for this app was put on hold (`revoked_at`), or `null`.
+   *
+   * 🔴 A DIFFERENT COLUMN FROM `scopesRevokedAt`, AND THE DISTINCTION IS THE WHOLE POINT OF THE
+   * FIELD. `scopesRevokedAt` is `revoked_scopes_at` — the per-app "you last withdrew something"
+   * stamp, written only by `revokeScopes`. THIS is `revoked_at`, the WHOLE-GRANT flag that
+   * `liveGrantedScopes` collapses the granted set to `[]` on. They are written by different
+   * things, they can be non-null independently, and only this one explains why a viewer who
+   * granted permissions sees an empty `grantedScopes`.
+   *
+   * 🔴 IT IS DERIVABLE ON THE CURRENT PRODUCTION SCHEMA, WHICH IS WHY THIS FIELD EXISTS RATHER
+   * THAN A RICHER ONE. Measured on the primary 2026-09-28: the `civitai` database's
+   * `app_user_scope_grants` columns are exactly `id, user_id, app_block_id, version,
+   * granted_scopes, granted_at, revoked_at, buzz_budget_per_day` — `revoked_scopes` and
+   * `revoked_scopes_at` do NOT exist, and **21 of 41** rows (51%, 10 users, 11 apps, all stamped
+   * 2026-09-17) carry `revoked_at IS NOT NULL` with `granted_scopes` non-empty. `revoked_at` is
+   * selected by BOTH the wide read and the stage-1 P2022 retry below, so this field survives the
+   * pre-migration degrade. A field keyed on the new columns would have been `null` for exactly
+   * the population it was added for.
+   *
+   * 🔴 WHAT IT IS FOR: without it the client cannot tell "you never granted this" from "you
+   * granted this and it is on hold", because both report `grantedScopes: []`. That made the
+   * permissions page print "Not granted yet" over 21 real rows. See `ScopeConsentState`'s
+   * `withheld` arm in `src/components/Apps/scopeConsentRows.ts`.
+   *
+   * ⚠️ IT NAMES NO ACTOR AND NO CAUSE, because the column cannot carry either. `revoked_at` is
+   * written by `revokeScopes`' `fullyRevoked` branch (the viewer withdrew their last permission)
+   * AND by hand — `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` sets it for every
+   * grant holding `ai:write:budgeted`, to force a fresh consent after that scope's description
+   * widened. One flag, two writers, and a UI must not assert which. The viewer's own withdrawals
+   * are distinguishable by `revokedScopes` instead, which is why the client tests `revoked` first.
+   */
+  grantWithheldAt: Date | null;
+  /**
+   * The subset of `scopes` that is CONSENT-GATED at all — a necessary condition for offering a
+   * revoke control, and since 4990 no longer a sufficient one.
+   *
+   * 🔴 A CONTROL NEEDS THIS **AND** `grantedScopes`. ⚠️ THIS LINE USED TO READ *"The subset of
+   * `scopes` a revoke control may be offered on"*, full stop, and that was the defect: this field
+   * is computed from the APP-SIDE set with no reference to what the viewer agreed to, so a
+   * declared-but-never-granted scope rendered a live Remove button whose click wrote a durable
+   * suppression for a permission never given. `blocks.revokeScopes` now refuses a scope outside the
+   * viewer's live granted set, and `buildScopeConsentRows`
+   * (`src/components/Apps/scopeConsentRows.ts`) intersects the two, rendering the difference in its
+   * own `not-granted` state. 🔴 THE INTERSECTION IS DELIBERATELY NOT DONE HERE: collapsing the two
+   * sets server-side makes a never-granted scope indistinguishable from a consent-EXEMPT one on the
+   * client, which then prints the exempt note — "granted by platform policy … bounded by
+   * server-side checks on every request" — about something nothing granted and nothing enforces.
+   *
+   * 🔴 THE SEVEN `CONSENT_EXEMPT_SCOPES` MEMBERS ARE UN-REVOKABLE AND A CONTROL ON THEM
+   * WOULD BE A LIE. `partitionByConsent` signs an exempt scope on the exempt test ALONE,
+   * before it consults the grant, so a suppression entry for one would be stored and
+   * enforce nothing — the button would report success and the app would keep the
+   * permission. `blocks.revokeScopes` refuses them with a specific error; this field is
+   * how the UI avoids offering the button in the first place, so the refusal is a backstop
+   * rather than the normal experience.
+   *
+   * Computed server-side on purpose: the exempt set lives in `scope-grant.service.ts` and
+   * is the same list the MINT consults. A client-side copy would drift from the thing that
+   * actually decides, silently, in the direction that offers a control that does nothing.
+   */
+  revokableScopes: string[];
   /**
    * WHY this row exists — `'install'` | `'consent'` | `'activity'`, in precedence order.
    *
@@ -270,8 +423,9 @@ async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>
  * Same app counted across multiple installs + subscriptions collapses to a single row with
  * denormalised counts.
  *
- * 🔴 THREE SOURCES, IN STRICT PRECEDENCE: subscription (`'install'`) > live consent grant
- * (`'consent'`) > activity alone (`'activity'`). Each later leg guards on
+ * 🔴 THREE SOURCES, IN STRICT PRECEDENCE: subscription (`'install'`) > consent grant
+ * (`'consent'`, WHETHER OR NOT IT IS STILL LIVE — see the grant leg's condition) > activity alone
+ * (`'activity'`). Each later leg guards on
  * `!byAppBlock.has(...)`, so an app that satisfies several keeps the RICHEST row — the one
  * carrying its real install counts, subscription scopes and budget. `origin` reports which.
  *
@@ -295,7 +449,12 @@ async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>
  *
  * A grant-only app is therefore a first-class row with `modelInstallCount: 0` and no
  * subscription scopes. It is NOT synthesised from the manifest: it exists only when the
- * viewer has a live (non-revoked) grant row, which is their own recorded consent.
+ * viewer has a grant row, which is their own recorded consent.
+ *
+ * ⚠️ "a LIVE (non-revoked) grant row" IS RETRACTED — 4990 removed the `!g.revokedAt` skip, because
+ * on a grant-only app that leg is the only one that can carry the card, so a viewer who withdrew
+ * their last permission lost the app from the page entirely. A fully-revoked grant now gets a row
+ * too. The condition's own comment carries the measurement.
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
   // Post kill_per_model_installs: every install — blanket OR per-model-
@@ -380,14 +539,29 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   // into `byAppBlock` below.
   const budgetByAppBlock = new Map<string, number | null>();
   const spendGrantedByAppBlock = new Set<string>();
+  const grantedScopesByAppBlock = new Map<string, string[]>();
+  const revokedScopesByAppBlock = new Map<string, string[]>();
+  const revokedAtByAppBlock = new Map<string, Date | null>();
+  // 🔴 `revoked_at`, NOT `revoked_scopes_at` — two different columns, see `grantWithheldAt`. This
+  // one survives the stage-1 P2022 retry (both selects name it), which is what makes the withheld
+  // state reachable on the current production schema.
+  const withheldAtByAppBlock = new Map<string, Date | null>();
   {
     type GrantRow = {
       appBlockId: string;
       buzzBudgetPerDay: number | null;
       revokedAt: Date | null;
       grantedScopes: string[];
+      revokedScopes?: string[];
+      revokedScopesAt?: Date | null;
       appBlock: AppBlockRow | null;
     };
+    // Needed only for the grant-only apps below — a subscription-backed app already
+    // carries its AppBlock from the `subs` read. Selected here rather than fetched per-app
+    // so the grant leg stays a single query.
+    const appBlockSelect = {
+      select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+    } as const;
     let grants: GrantRow[] = [];
     try {
       grants = (await dbRead.appUserScopeGrant.findMany({
@@ -397,32 +571,71 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
           buzzBudgetPerDay: true,
           revokedAt: true,
           grantedScopes: true,
-          // Needed only for the grant-only apps below — a subscription-backed app
-          // already carries its AppBlock from the `subs` read. Selected here rather
-          // than fetched per-app so the grant leg stays a single query.
-          appBlock: {
-            select: {
-              id: true,
-              blockId: true,
-              manifest: true,
-              approvedScopes: true,
-            },
-          },
+          revokedScopes: true,
+          revokedScopesAt: true,
+          appBlock: appBlockSelect,
         },
       })) as GrantRow[];
     } catch (err) {
-      // 🔴 P2022 ONLY — the deploy is running ahead of its migration and
-      // `buzz_budget_per_day` does not exist yet. See `isMissingColumnError`. With no
-      // column there is no budget any user could have set, so an empty map is the TRUE
-      // state and every app reports `null` (= "platform cap only"), which is exactly
-      // what the spend path enforces in that same database. Any other error still
-      // throws: a permissions page that quietly renders "no limits" because the DB is
-      // unreachable would be a lie about the user's own settings.
-      const { isMissingColumnError, logMissingBudgetColumn } = await import(
-        '~/server/services/blocks/scope-grant.service'
-      );
+      // 🔴 P2022 ONLY, AND IT IS NOW A TWO-STAGE DEGRADE BECAUSE TWO DIFFERENT MIGRATIONS
+      // CAN BE OUTSTANDING. See `isMissingColumnError`. Any other error still throws: a
+      // permissions page that quietly renders "no limits" because the DB is unreachable
+      // would be a lie about the user's own settings.
+      // 🔴 STATIC IMPORTS, not a dynamic one. The `await import(...)` that used to sit here
+      // was justified by keeping this module off the load graph, and that justification died
+      // the moment this file began importing the same module statically for
+      // `liveGrantedScopes` / `consentGatedScopes` — leaving a dynamic import that read as a
+      // deliberate deferral and was not one.
       if (!isMissingColumnError(err)) throw err;
-      logMissingBudgetColumn('listMyScopeGrants', err);
+      // STAGE 1 — retry WITHOUT the revocation columns
+      // (`20260927120000_app_user_scope_grant_revoked_scopes`). Revocations then read as
+      // "none recorded", which is the only state a database that cannot store one can be
+      // in, while the BUDGET half keeps working.
+      //
+      // 🔴 THE RETRY EXISTS SO THE NEWER MIGRATION CANNOT BLANK THE OLDER FEATURE. Folded
+      // into one catch — the shape this was before the revocation columns landed — a
+      // missing `revoked_scopes` would have emptied `grants` wholesale and silently
+      // regressed every budget display and every grant-only row on a database that has
+      // `buzz_budget_per_day` perfectly well.
+      //
+      // 🔴 NOTHING IS LOGGED YET, AND THAT ORDERING IS THE FIX FOR A MISLEADING LINE. The
+      // first version called `logMissingRevokedScopesColumn` HERE, before knowing which
+      // column was missing — so on a database missing only `buzz_budget_per_day` the
+      // once-per-process error line named the WRONG migration, and an operator would have
+      // applied a migration that was already applied. The retry's OUTCOME is what
+      // discriminates: it succeeding means the revocation columns were the missing ones; it
+      // raising P2022 again means the budget column is missing too.
+      try {
+        grants = (await dbRead.appUserScopeGrant.findMany({
+          where: { userId },
+          select: {
+            appBlockId: true,
+            buzzBudgetPerDay: true,
+            revokedAt: true,
+            grantedScopes: true,
+            appBlock: appBlockSelect,
+          },
+        })) as GrantRow[];
+        // The narrow select succeeded, so `revoked_scopes` really was the absent column.
+        // NOW it is safe to name that migration.
+        logMissingRevokedScopesColumn('listMyScopeGrants', err);
+      } catch (retryErr) {
+        // STAGE 2 — `buzz_budget_per_day` is missing too
+        // (`20260910120000_app_user_scope_grant_buzz_budget`). This is the pre-existing
+        // behaviour and its argument is unchanged: with no column there is no budget any
+        // user could have set, so an empty map is the TRUE state and every app reports
+        // `null` (= "platform cap only"), exactly what the spend path enforces in that
+        // same database.
+        if (!isMissingColumnError(retryErr)) throw retryErr;
+        // 🔴 BOTH MIGRATIONS ARE NAMED HERE, AND THE REORDER HAD SILENTLY DROPPED ONE. Moving
+        // the revocation log after the retry fixed the wrong-migration line (it used to fire
+        // before anything knew which column was missing) and created a new silent case: a
+        // database missing BOTH columns reaches this arm, so the revocation migration was never
+        // named at all. An operator would have applied one and still been broken.
+        logMissingRevokedScopesColumn('listMyScopeGrants', retryErr);
+        logMissingBudgetColumn('listMyScopeGrants', retryErr);
+        grants = [];
+      }
     }
     for (const g of grants) {
       // ⚠️ `g.appBlock` IS REQUIRED ON ALL THREE WRITES, NOT JUST THE ROW CREATION BELOW. An
@@ -434,27 +647,72 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // Postgres enforces the FK), and aligned anyway: one predicate, applied once, is what
       // stops the three writes disagreeing.
       if (!g.appBlock) continue;
-      // Mirror getConsentBuzzBudget's guards EXACTLY — revoked → null, and a
-      // non-positive stored value → null — so this display can never disagree with
-      // what the spend path enforces.
-      const usable =
-        !g.revokedAt && typeof g.buzzBudgetPerDay === 'number' && g.buzzBudgetPerDay > 0
-          ? Math.floor(g.buzzBudgetPerDay)
-          : null;
+      // 🔴 THE SHARED PROJECTION, NOT A MIRROR OF IT — and the mirror it replaces had ALREADY
+      // DRIFTED. This read "Mirror getConsentBuzzBudget's guards EXACTLY" while omitting
+      // `Number.isFinite`, so display and enforcement disagreed for a non-finite stored value.
+      // Inert (the column is an `Int?`, so `Infinity` cannot be stored and `NaN > 0` is false so
+      // NaN agrees) — but a comment asserting exactness beside an inexact copy reads as coverage.
+      // `usableConsentBudget` is now the single statement, exactly as `liveGrantedScopes` is for
+      // the scope rule two lines below.
+      const usable = usableConsentBudget(g);
       budgetByAppBlock.set(g.appBlockId, usable);
-      // Mirror `getGrantedScopes`: a revoked row grants nothing.
-      if (!g.revokedAt && (g.grantedScopes ?? []).includes('ai:write:budgeted')) {
+      // 🔴 THE SHARED PROJECTION, NOT A MIRROR OF IT. This used to open
+      // "MIRROR `getGrantedScopes` EXACTLY, SUBTRACTION INCLUDED" and re-implement the
+      // subtraction — and a comment telling you to mirror something exactly is the reliable
+      // tell that a rule has two homes. Review found a THIRD home
+      // (`oauth-consent-sync.service.ts`) that had it wrong, and the mirror two lines below
+      // this one (for the budget guards) had already drifted. `liveGrantedScopes` is now the
+      // single statement; getting this wrong in either direction is a display that disagrees
+      // with enforcement — too wide offers a budget editor for an app that cannot spend, too
+      // narrow hides a permission the app really holds.
+      const liveGranted = liveGrantedScopes(g);
+      grantedScopesByAppBlock.set(g.appBlockId, [...liveGranted].sort());
+      revokedScopesByAppBlock.set(g.appBlockId, [...(g.revokedScopes ?? [])].sort());
+      revokedAtByAppBlock.set(g.appBlockId, g.revokedScopesAt ?? null);
+      // 🔴 SEEDED BEFORE THE `has()` PRECEDENCE CHECK BELOW, like every other map here, so a
+      // withheld grant on an app that ALSO has a subscription still reports it. That row's
+      // `origin` is `'install'` and the subscription leg owns its entry, but the grant is just as
+      // withheld and its rows must say so.
+      withheldAtByAppBlock.set(g.appBlockId, g.revokedAt ?? null);
+      if (liveGranted.includes(CONSENT_SPEND_SCOPE)) {
         spendGrantedByAppBlock.add(g.appBlockId);
       }
 
-      // A live grant for an app with no install/subscription is still a thing the
-      // viewer consented to and can spend through, so it gets its own row.
+      // A grant for an app with no install/subscription is still a thing the viewer
+      // consented to, so it gets its own row — INCLUDING after they have withdrawn all of it.
       //
-      // 🔴 REVOKED ROWS ARE SKIPPED, matching `getGrantedScopes`/`getConsentBuzzBudget`:
-      // a revoked grant conveys nothing, so surfacing it would offer a budget control
-      // for an app that cannot spend. (Nothing in the repo writes a non-null
-      // `revoked_at` today, so this is an invariant guard, not a reachable branch —
-      // labelled as such rather than counted as coverage.)
+      // 🔴 A FULLY-REVOKED GRANT STILL GETS A CARD, AND SKIPPING IT DELETED THE APP FROM THE
+      // PERMISSIONS SURFACE. ⚠️ THIS CONDITION USED TO READ `if (!g.revokedAt && !byAppBlock.has(…))`,
+      // justified as *"such a grant conveys nothing, so surfacing it would offer a budget control
+      // for an app that cannot spend"*. The premise is true and the conclusion did not follow: the
+      // budget control is gated on `spendScopeGranted`, which is seeded from `liveGrantedScopes` and
+      // is therefore ALREADY false on such a row, and `budgetByAppBlock` gets
+      // `usableConsentBudget`, which returns `null` for a non-null `revoked_at`. So nothing was
+      // bought, and what it cost was the whole card: a consent-modal grant on a page mint needs no
+      // install, no subscription and no `block_scope_invocation` row (those come only from the REST
+      // `withBlockScope` middleware and the bridge procedures), so the grant leg is the ONLY leg
+      // that can carry such an app. A viewer who pressed Remove on their one permission lost the
+      // app from `/apps/activity` entirely — with it the "Removed / you withdrew this" marker, the
+      // `scopesRevokedAt` line, and every remaining row's control. Measured with an isolating
+      // control: `(grantedScopes:[], revokedScopes:[spend,posts], revokedAt:now)` returned 0 rows
+      // while the same fixture with `revokedAt:null` returned 1. The in-session `justRevoked` latch
+      // masked it until unmount, so it presented on reload.
+      //
+      // 🔴 `buildScopeConsentRows`' OWN PRINCIPLE, APPLIED AT CARD LEVEL: *"a permissions page that
+      // forgets what you withdrew is worse than one that never had the control"* — which is why
+      // that function keeps a revoked scope as a ROW after the publisher drops it from the
+      // manifest. A card is the same claim one level up.
+      //
+      // The narrower alternative — skip only when no other leg has a card — was considered and
+      // rejected: it leaves two conditions that have to agree about the same thing, and it still
+      // hides the withdrawal on exactly the population this feature exists for.
+      //
+      // ⚠️ THE `revokedScopes` DISTINCTION THAT USED TO LIVE HERE IS NOW MOOT AND IS RECORDED SO
+      // NOBODY RE-INTRODUCES IT THE OTHER WAY. `revoked_at` is the whole-grant flag and
+      // `revoked_scopes` is the per-scope suppression list; when this condition gated on the
+      // former, keying it on "has any revocation" instead would have made a viewer's FIRST partial
+      // revoke delete the card. Neither flag gates the card any more, so both shapes keep it — but
+      // do not re-add a skip on either one.
       //
       // ⚠️ `g.appBlock` IS NOT RE-CHECKED HERE — the loop's own `if (!g.appBlock) continue`
       // above owns it, for all three writes. It is an invariant guard either way, not a
@@ -473,7 +731,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       // The `has` check keeps the subscription leg authoritative for apps that have
       // BOTH: that entry already carries real `modelInstallCount`/`subscriptionScopes`,
       // and overwriting it here would zero them.
-      if (!g.revokedAt && !byAppBlock.has(g.appBlockId)) {
+      if (!byAppBlock.has(g.appBlockId)) {
         byAppBlock.set(g.appBlockId, {
           appBlock: g.appBlock,
           modelInstallCount: 0,
@@ -503,8 +761,14 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   // which `scope-grant.service.ts` documents as needing no prompt precisely because read:self
   // covers public data — "nothing sensitive to consent to". A row asserting the viewer "never
   // consented" would therefore be alleging a failure that did not occur, with no remedy to
-  // offer (nothing in the repo writes a non-null `revoked_at`). The copy lives in
-  // `scopeGrantEmptyScopeLabel` / `buildScopeGrantSurfaceLine`.
+  // offer. ⚠️ THE PARENTHETICAL HERE USED TO JUSTIFY "no remedy" WITH *"nothing in the repo
+  // writes a non-null `revoked_at`"*, AND THAT HALF IS RETRACTED — `revokeScopes` writes one.
+  // The conclusion survives on the OTHER half, which is the one that was always doing the
+  // work: every scope in this population is CONSENT-EXEMPT, so `blocks.revokeScopes` refuses
+  // it by design and a revoke control here would record a preference nothing enforces. The
+  // remedy an activity-only row can offer is still nothing; the reason is exemption, not the
+  // absence of a writer. The copy lives in `scopeGrantEmptyScopeLabel` /
+  // `buildScopeGrantSurfaceLine`.
   //
   // 🔴 THE `has()` GUARD IS THE PRECEDENCE RULE, NOT A MICRO-OPTIMISATION. An installed or
   // consented app that has ALSO acted is the NORMAL shape, not a corner: overwriting its entry
@@ -653,6 +917,33 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
             entry.appBlock.approvedScopes
           );
 
+    // ── THE VIEWER-SIDE CONSENT STATE phase 3's revoke control keys off. Derived from the
+    // grant maps, NOT from `displayedScopes`: see `grantedScopes` on `ScopeGrantSurface`
+    // for why the app-side and user-side sets are different questions and neither is a
+    // subset of the other.
+    //
+    // 🔴 `revokableScopes` IS INTERSECTED WITH `displayedScopes`, so an activity-only row
+    // (which emits `scopes: []` by construction) offers no revoke control at all. That is
+    // correct rather than incidental: such a row records that an app acted on the viewer
+    // with no install and no consent, entirely through `CONSENT_EXEMPT_SCOPES` — there is
+    // nothing consent-gated to withdraw, and a button there would be the same lie the
+    // exempt refusal in `blocks.revokeScopes` exists to prevent.
+    // `consentGatedScopes`, not a re-spelling of its filter. It is the same predicate the
+    // MINT consults, so a local copy would drift from the thing that actually decides — and
+    // silently, in the direction that offers a control which records a preference nothing
+    // reads.
+    // 🔴 FILTERED TO THE KNOWN VOCABULARY TOO, AND ITS ABSENCE WOULD HAVE BROKEN REVOKE
+    // ENTIRELY FOR SOME APPS. `effectiveBlockScopes` is deliberately NOT registry-filtered (its
+    // own docblock says so — the mint applies that filter), and `consentGatedScopes` only
+    // subtracts the exempt set. So a scope RETIRED from the registry but still present in an
+    // app's `manifest.scopes` AND `approved_scopes` — `block:settings:read`/`write`,
+    // `media:read:owned` — reached this list. `blocks.revokeScopes` refuses unknown strings
+    // all-or-nothing, so a withdraw-all built on this field would have failed the whole call and
+    // the viewer could not revoke `posts:write:self` or `ai:write:budgeted` on that app either.
+    // The individual retired scope is harmless (not mintable, grants nothing); the blast radius
+    // was the other scopes it took down with it.
+    const revokableScopes = consentGatedScopes(displayedScopes).filter((s) => isKnownBlockScope(s));
+
     result.push({
       appBlockId,
       slug: entry.appBlock.blockId,
@@ -662,6 +953,11 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       origin: entry.origin,
       buzzBudgetPerDay: budgetByAppBlock.get(appBlockId) ?? null,
       spendScopeGranted: spendGrantedByAppBlock.has(appBlockId),
+      grantedScopes: grantedScopesByAppBlock.get(appBlockId) ?? [],
+      revokedScopes: revokedScopesByAppBlock.get(appBlockId) ?? [],
+      scopesRevokedAt: revokedAtByAppBlock.get(appBlockId) ?? null,
+      grantWithheldAt: withheldAtByAppBlock.get(appBlockId) ?? null,
+      revokableScopes,
       surfaces: {
         modelInstallCount: entry.modelInstallCount,
         subscriptionScopes: Array.from(entry.subscriptionScopes).sort(),

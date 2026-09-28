@@ -588,6 +588,33 @@ export type AppUserScopeGrant = {
   granted_at: Generated<Timestamp>;
   revoked_at: Timestamp | null;
   /**
+   * PER-SCOPE REVOCATION — the SUPPRESSION LIST, not the absence of a grant.
+   *
+   * 🔴 A REVOKE CANNOT BE MODELLED AS REMOVAL FROM `granted_scopes`, AND THAT IS
+   * THE WHOLE REASON THIS COLUMN EXISTS. `BlockRegistry.recordInstallConsent`
+   * passes the app's ENTIRE consent-gated effective set into `recordScopeGrant`,
+   * which UNIONS it into `granted_scopes` — so a revoke expressed only as removal
+   * is silently undone by the user's next install or subscribe of that app, with
+   * no consent prompt anywhere. A scope listed here is subtracted at every read
+   * (`getGrantedScopes`), so a union that puts it back grants nothing.
+   *
+   * Cleared ONLY by an explicit prompted re-consent (`blocks.grantScopes` →
+   * `recordScopeGrant({ clearRevocations: true })`), and then only for the scopes
+   * that consent actually covered — never wholesale, or re-consenting to scope A
+   * would resurrect a revoked scope B.
+   */
+  revoked_scopes: Generated<string[]>;
+  /**
+   * When the MOST RECENT per-scope revoke happened for this (user, app).
+   *
+   * ⚠️ NOT A PER-SCOPE TIMESTAMP, and deliberately not: `revoked_scopes` is a
+   * TEXT[] with no room for one, and a per-scope time would need a child table.
+   * Two revokes a week apart leave ONE value here — the later. So it is honest as
+   * an APP-LEVEL "permissions last changed", and a UI must not render it beside an
+   * individual scope as though it dated that scope's revoke.
+   */
+  revoked_scopes_at: Timestamp | null;
+  /**
    * The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
    * NULL = the user set no budget, and the app spends under the platform's own
    * per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is

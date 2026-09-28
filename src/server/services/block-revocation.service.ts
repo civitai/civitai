@@ -113,6 +113,21 @@ export { subjectForUserId } from '~/server/services/block-token-subject';
  * This is a deliberately coarse-grained revocation primitive (per-instance,
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1
  * volumes — the same outcome at lower cost.
+ *
+ * 🔴 THERE IS NOW A THIRD KEYSPACE THAT THIS CLASS CANNOT REACH, AND ITS ERROR POSTURE IS
+ * THE OPPOSITE OF THIS ONE'S. `ConsentRevocation`
+ * (`blocks/consent-revocation.service.ts`) marks PER-SCOPE consent revocation, keyed on
+ * `(userId, appBlockId)` rather than on a `blockInstanceId`, and the block-scope
+ * middleware checks it immediately after `isRevoked`.
+ *
+ * Every method here FAILS OPEN — a Redis incident must never be able to block an
+ * uninstall, a toggle-off or a ban, and the exposure those markers close is already
+ * bounded by the token lifetime. `ConsentRevocation` FAILS CLOSED, because its marker
+ * exists only because a USER asked for one permission to stop being granted, and "the
+ * cache was down so we kept granting it" is that promise not being kept rather than a
+ * degradation of it. Do NOT align the two — neither direction is a bug, and a shared
+ * `mGet` across the keyspaces is impossible for the same reason (one call, one `catch`,
+ * two opposite requirements). Read that module before changing either.
  */
 export class BlockRevocation {
   /**

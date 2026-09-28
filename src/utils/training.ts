@@ -18,6 +18,14 @@ export function canGenerateWithEpochs(
   return !!(user?.isMember || user?.isModerator);
 }
 
+/** The Training Studio embed's `isPaidMember` host config. `undefined` = no session to read, which the
+ *  element words as "unless you have a membership" rather than asserting either way. */
+export function paidMemberHostFlag(
+  user: { isPaidMember?: boolean } | null | undefined
+): boolean | undefined {
+  return user ? !!user.isPaidMember : undefined;
+}
+
 export const trainingBaseModelTypesImage = [
   'sd15',
   'sdxl',

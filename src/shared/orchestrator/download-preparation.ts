@@ -121,23 +121,49 @@ export function summarizePreparation(
 }
 
 /**
+ * An AIR's segments, or undefined for anything that is not one.
+ *
+ * Read here rather than through `~/shared/utils/air`: that module reaches `@civitai/client` and the
+ * ecosystem constants, and this one runs for every step of every workflow in a queue listing.
+ */
+function airSegments(resource: string) {
+  const parts = resource.split(':');
+  if (parts[0] !== 'urn' || parts[1] !== 'air') return undefined;
+  return { ecosystem: parts[2], type: parts[3], source: parts[4], id: parts[5] };
+}
+
+/**
  * An orchestrator blob the user supplied rather than a model the generator must fetch — the source
  * image of an i2v request arrives in `preparation` exactly like a checkpoint does.
  *
  * A training epoch's weights are also a blob (`…:lora:orchestrator:blob@<key>`, see
- * `parseRawAirResourceUrn`) but are a real download worth showing and worth boosting, so only
- * non-`lora` blobs are dropped.
- *
- * Parsed here by segment rather than through `~/shared/utils/air`: that module reaches
- * `@civitai/client` and the ecosystem constants, and this one runs for every step of every workflow
- * in a queue listing.
+ * `parseRawAirResourceUrn`) but are a real download worth showing, so only non-`lora` blobs are
+ * dropped.
  */
 function isSuppliedBlob(resource: string) {
-  const [urn, air, , type, source, id] = resource.split(':');
-  if (urn !== 'urn' || air !== 'air') return false;
-  if (source !== 'orchestrator' || !id?.startsWith('blob@')) return false;
-  return type !== 'lora';
+  const air = airSegments(resource);
+  if (!air) return false;
+  if (air.source !== 'orchestrator' || !air.id?.startsWith('blob@')) return false;
+  return air.type !== 'lora';
 }
+
+/**
+ * `ModelType.Checkpoint`, compared as a literal so this module stays free of the enums package — it
+ * runs for every step of every workflow in a queue listing.
+ */
+const BASE_WEIGHTS_MODEL_TYPE = 'Checkpoint';
+
+/**
+ * Whether a resource's model type is base-model weights, which is what a boost's flat per-workflow
+ * fee is sized against.
+ *
+ * Takes the REAL type rather than reading the AIR. An AIR cannot answer this: a Checkpoint whose
+ * primary file is a standalone denoiser advertises `diffusionmodel` or `unet` instead
+ * (`stringifyAIR`'s `fileTypeUrnMap`), which is every Flux / Wan / ZImage / Anima / Boogu base
+ * model, and `unet` is separately reachable from `ModelType.UNet`.
+ */
+export const isBaseWeightsType = (modelType?: string | null) =>
+  modelType === BASE_WEIGHTS_MODEL_TYPE;
 
 /** For `preparation` straight off the orchestrator; anything that is not the resource list reads as nothing to download. */
 export function normalizePreparation(raw: unknown): DownloadPreparation | undefined {

@@ -32,6 +32,7 @@ export interface GenerationItem {
   url: string;
   /** Resized preview for the grid thumbnail; falls back to `url`. */
   previewUrl: string;
+  nsfwLevel?: string;
 }
 
 /** A run's coarse lifecycle as shown on the My-trainings list. `published` is an app-level

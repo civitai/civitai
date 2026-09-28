@@ -36,6 +36,10 @@
 // enumerated (see AppBlockEndpoint / normalizeSlotId / *Result below) so they
 // can never blow up cardinality regardless of client input.
 import client, { type Counter, type Histogram, type Registry } from 'prom-client';
+// The block-scope VOCABULARY, imported only to CLAMP a label. A pure constants module — no
+// server graph — so it costs this metrics module nothing at load time, and it is what keeps
+// `scope` a bounded label rather than a bounded-by-convention one.
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
@@ -670,6 +674,8 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
+  consentRevocationRefusalsTotal: Counter<string>;
+  consentMarkerUnavailableTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
@@ -1055,6 +1061,50 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface', 'namespace']
   );
 
+  // ── PER-SCOPE CONSENT-REVOCATION REFUSALS ────────────────────────────────────
+  // 🔴 A SEPARATE SERIES FROM THE ONE ABOVE, BECAUSE IT FAILS IN THE OPPOSITE DIRECTION
+  // AND THAT CHANGES WHAT A NUMBER MEANS. `BlockRevocation.isRevoked` fails OPEN, so its
+  // counter can never see a refusal a Redis incident suppressed; `ConsentRevocation`
+  // (`blocks/consent-revocation.service.ts`) fails CLOSED, so THIS counter spikes during
+  // a Redis incident with refusals that are infra rather than consent. Folding them onto
+  // one series would make both readings ambiguous.
+  //
+  // 🔴 NO `app_block_id` AND NO `user_id`, for the standard reason on this file: the
+  // marker is keyed on exactly that pair, so either label would be an unbounded vector
+  // retained in the Node heap forever across ~130 pods. `scope` IS a label — it is a
+  // member of the code-owned block-scope vocabulary (~20 strings, and only the
+  // consent-GATED subset can ever appear here), server-chosen from `opts.requiredScope`
+  // rather than from request input, so a hostile block cannot inflate it. It is the label
+  // worth having: "which permission are people actually withdrawing" is the product
+  // question this whole feature exists to answer.
+  const consentRevocationRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_consent_revocation_refusals_total',
+    'Block-token scopes withdrawn from an in-flight token because the viewer REVOKED them for that app (per-(user, app) Redis marker, blocks/consent-revocation.service.ts). ONE increment per scope removed from THAT request\'s token, on either surface — NOT one per refusal: on rest a request whose own requiredScope was revoked is refused 403 with body code "consent_revoked" AND may contribute further increments for other revoked scopes it carried, and a request that is SERVED still increments for every scope stripped from it (that is the collections:read:private case the strip exists for). bridge = authorizeBlockBridgeToken stripped them from the claims it returned, so the proc refuses with its own "block lacks <scope> scope". `scope` comes from the token\'s own mint-signed claims and is clamped to the known vocabulary (unknown -> "other"). 🔴 READ THIS AGAINST REDIS HEALTH BEFORE TREATING IT AS PRODUCT SIGNAL, AND NOTE THE TWO SURFACES BEHAVE OPPOSITELY DURING A CACHE INCIDENT: rest SPLITS — a route whose own requiredScope is revokable is refused 503 with nothing attributed, while a route whose requiredScope is consent-EXEMPT is SERVED with every revokable scope in the token treated as revoked and therefore stripped, so rest both spikes AND loses refusals at once; bridge refuses the whole request with a retryable 503 before any scope is attributed, so it goes FLAT while every bridge call fails — see civitai_app_block_consent_marker_unavailable_total for that half. Sibling: civitai_app_block_revocation_refusals_total fails OPEN and therefore undercounts during the same incident. A flat zero on rest means no viewer has revoked a scope an in-flight token still carried, which on a pre-GA moderator-gated feature is the expected steady state',
+    ['surface', 'scope']
+  );
+
+  // ── CONSENT-MARKER UNAVAILABILITY ────────────────────────────────────────────
+  // 🔴 THE FAIL-CLOSED ARM NEEDS ITS OWN SERIES, BECAUSE THE TWO SEAMS MAKE IT INVISIBLE IN
+  // OPPOSITE WAYS. On rest an unreadable marker 503s before any scope is attributed — but ONLY
+  // on a route whose own `requiredScope` is revokable; an exempt-scope route is served with the
+  // gated scopes stripped, so it increments the per-scope counter and never reaches this one.
+  // On the bridge it 503s at the seam before `recordConsentStrip` runs. So during a cache incident the
+  // per-scope counter goes FLAT on bridge and loses the rest refusals too — while that counter's
+  // help text tells the operator to expect a spike. Without this series, "the marker is
+  // unreadable and every gated request is being refused" and "nothing is happening" are the same
+  // observation, which is the exact failure the revocation counters were added to end.
+  //
+  // ONE label, `surface`, over a 2-value code-owned union. No app/user/scope: this fires per
+  // REQUEST during an incident, at full rate, and an unbounded label retained in the Node heap
+  // across ~130 pods is the cost this file refuses everywhere else.
+  const consentMarkerUnavailableTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_consent_marker_unavailable_total',
+    'Block-token requests REFUSED because the per-scope consent marker could not be read (Redis error, or a marker whose value did not parse) — the FAIL-CLOSED arm of blocks/consent-revocation.service.ts. Both surfaces answer 503 with a retryable message rather than a consent-shaped 403, so this is infra, never product signal: a non-zero value means the cache is unhealthy and gated App Blocks traffic is being refused, NOT that viewers are withdrawing permissions. Read it as the denominator that explains a FLAT civitai_app_block_consent_revocation_refusals_total during an incident — on bridge the refusal happens at the seam before any scope is attributed, so that counter cannot see it at all. A flat zero here is the expected steady state',
+    ['surface']
+  );
+
   // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
   // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
   // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
@@ -1285,6 +1335,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
+    consentRevocationRefusalsTotal,
+    consentMarkerUnavailableTotal,
     bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
@@ -1532,6 +1584,84 @@ export function recordBlockRevocationRefusal(
     });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * Fail-soft emit of ONE per-scope consent-revocation refusal.
+ *
+ * Distinct from {@link recordBlockRevocationRefusal} because the two guards fail in
+ * OPPOSITE directions — see the counter's own comment.
+ *
+ * ⚠️ `scope` IS NO LONGER "the route's server-declared `requiredScope`" — that was true of the
+ * first cut and is not now. It is a member of the token's own `claims.scopes`, which the mint
+ * filters through `isKnownBlockScope`, so it is still server-chosen and still bounded; but the
+ * provenance sentence mattered because it was the stated reason the label is safe, and it moved.
+ * The clamp below is what actually enforces the bound.
+ *
+ * 🔴 TOTAL, like every emitter here: the 403 has already been decided, and a metrics
+ * error must not convert it into an uncaught 500.
+ */
+export function recordBlockConsentRevocationRefusal(
+  surface: AppBlockRevocationSurface,
+  scope: string
+): void {
+  try {
+    const { consentRevocationRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    // 🔴 CLAMPED, like `revocationNamespaceLabel` on the counter above — the bound must be
+    // ENFORCED here, not left to callers. The parameter is a bare `string` and
+    // `WithBlockScopeOpts.requiredScope` is `string` too, so neither the type system nor a
+    // review catches a caller that derives this value; an unbounded label set is retained
+    // in the Node heap forever, per pod, across ~130 pods.
+    consentRevocationRefusalsTotal.inc({
+      surface,
+      scope: isKnownBlockScope(scope) ? scope : 'other',
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * Fail-soft emit of ONE consent-marker-unavailable refusal.
+ *
+ * 🔴 TOTAL, like every emitter here: the 503 has already been decided, and a metrics error must
+ * not convert it into an uncaught 500.
+ */
+export function recordBlockConsentMarkerUnavailable(surface: AppBlockRevocationSurface): void {
+  try {
+    const { consentMarkerUnavailableTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    consentMarkerUnavailableTotal.inc({ surface });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * Emits one counter per scope a request actually LOST, on either seam.
+ *
+ * 🔴 SHARED BECAUSE THE TWO SEAMS HAD ALREADY DIVERGED, and it lives HERE — beside the HELP text
+ * that describes the emission rule and the clamp that bounds its label — because the previous
+ * home put the rule one module away from both. That separation is what let the help text keep
+ * saying "refused the route's required scope" after the rule became "one per scope stripped".
+ *
+ * The divergence it replaced: rest emitted exactly one increment, for `opts.requiredScope`, only
+ * on refusal; bridge emitted one per stripped scope. `sum by(scope)` therefore mixed "requests
+ * refused" with "scopes stripped", and the case the whole mechanism was built for — a
+ * `collections:read:private` strip that refuses no route — emitted nothing at all.
+ *
+ * INTERSECTS with the token rather than iterating the marker: a marker carries the viewer's whole
+ * suppression list for the app, while a token is minted with whatever one page declared, so
+ * iterating the marker would attribute scopes this request never carried.
+ */
+export function recordConsentStrip(
+  surface: AppBlockRevocationSurface,
+  tokenScopes: readonly string[],
+  revoked: Set<string>
+): void {
+  if (revoked.size === 0) return;
+  for (const scope of tokenScopes) {
+    if (revoked.has(scope)) recordBlockConsentRevocationRefusal(surface, scope);
   }
 }
 

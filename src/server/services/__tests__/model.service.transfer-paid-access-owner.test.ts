@@ -109,6 +109,7 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import { transferModelOwnership } from '~/server/services/model.service';
+import { constants } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 /** The operations handed to the ONE $transaction call, in order. */
@@ -430,5 +431,51 @@ describe('transferModelOwnership moves the PaidAccess owner', () => {
     );
     expect(result.postsUpdated).toBe(1000 + postsPos);
     expect(result.imagesUpdated).toBe(1000 + imagesPos);
+  });
+});
+
+/**
+ * The same transaction's Model row also carries `isOfficial`. It is here rather than in its own file
+ * because the scaffold above is what makes `transferModelOwnership` callable at all.
+ *
+ * `isOfficial` gates the official-models cache and is the signal resource attribution is meant to key
+ * on. Nothing but `model.setOfficial` used to write it, so 14 official releases shipped unflagged
+ * between 2026-07-27 and 2026-09-28 with nothing on the model page to show it. A revert drops the
+ * field from the update args, which the first assertion names.
+ */
+describe('transferModelOwnership marks a model official on arrival', () => {
+  const OFFICIAL_USER_ID = constants.system.officialUserId;
+
+  const modelUpdateArgs = () =>
+    (transactionOps as { __op?: string; args?: { data?: Record<string, unknown> } }[]).find(
+      (op) => op?.__op === 'model'
+    )?.args;
+
+  it('sets isOfficial when the target is the official account', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: OFFICIAL_USER_ID });
+
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: OFFICIAL_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const args = modelUpdateArgs();
+    expect(args, 'no Model update in the transfer transaction').toBeDefined();
+    expect(args?.data).toMatchObject({ userId: OFFICIAL_USER_ID, isOfficial: true });
+  });
+
+  // Not merely "isOfficial !== true": the flag is also set on partner-hosted models that never
+  // belonged to this account, so writing `false` here would revoke a claim this code never granted.
+  it('leaves isOfficial untouched when the target is anyone else', async () => {
+    await transferModelOwnership({
+      modelIds: MODEL_IDS,
+      targetUserId: TARGET_USER_ID,
+      modUserId: MOD_USER_ID,
+    });
+
+    const args = modelUpdateArgs();
+    expect(args?.data).toEqual({ userId: TARGET_USER_ID });
+    expect(args?.data).not.toHaveProperty('isOfficial');
   });
 });

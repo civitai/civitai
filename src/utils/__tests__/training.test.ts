@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { isValidRapid, isInvalidRapid, isInvalidAiToolkit } from '~/utils/training';
+import {
+  isValidRapid,
+  isInvalidRapid,
+  isInvalidAiToolkit,
+  paidMemberHostFlag,
+} from '~/utils/training';
 
 /**
  * Unit coverage for the training engine/base-model compatibility guards.
@@ -76,5 +81,21 @@ describe('isInvalidAiToolkit', () => {
   it('never flags when the engine is not ai-toolkit', () => {
     expect(isInvalidAiToolkit('flux2', 'rapid')).toBe(false);
     expect(isInvalidAiToolkit('sdxl', 'kohya')).toBe(false);
+  });
+});
+
+describe('paidMemberHostFlag', () => {
+  it('is true only for a paid member', () => {
+    expect(paidMemberHostFlag({ isPaidMember: true })).toBe(true);
+  });
+
+  it('is false for a signed-in user without a paid membership', () => {
+    expect(paidMemberHostFlag({ isPaidMember: false })).toBe(false);
+    expect(paidMemberHostFlag({})).toBe(false);
+  });
+
+  it('is undefined (unknown) with no user, never a definite false', () => {
+    expect(paidMemberHostFlag(null)).toBeUndefined();
+    expect(paidMemberHostFlag(undefined)).toBeUndefined();
   });
 });

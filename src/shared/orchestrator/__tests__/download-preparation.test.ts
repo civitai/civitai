@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isBaseWeightsType,
   attachEstimatedPreparation,
   ETA_WARMUP_PROGRESS,
   isEtaSettled,
@@ -298,5 +299,28 @@ describe('supplied blobs', () => {
     ]);
 
     expect(result?.resource).toBe(trainingEpoch);
+  });
+});
+
+describe('isBaseWeightsType', () => {
+  // Takes the REAL model type, because an AIR cannot answer this: a Checkpoint whose primary file is
+  // a standalone denoiser advertises `diffusionmodel` or `unet` instead, which is every
+  // Flux / Wan / ZImage / Anima / Boogu base model. Reading the AIR would refuse a boost on the
+  // largest downloads there are.
+  it('accepts a checkpoint whatever its AIR would have said', () => {
+    expect(isBaseWeightsType('Checkpoint')).toBe(true);
+  });
+
+  it.each(['LORA', 'LoCon', 'DoRA', 'TextualInversion', 'VAE', 'Upscaler'])(
+    'rejects %s',
+    (modelType) => {
+      expect(isBaseWeightsType(modelType)).toBe(false);
+    }
+  );
+
+  it('rejects an unresolved type rather than guessing', () => {
+    expect(isBaseWeightsType(undefined)).toBe(false);
+    expect(isBaseWeightsType(null)).toBe(false);
+    expect(isBaseWeightsType('')).toBe(false);
   });
 });

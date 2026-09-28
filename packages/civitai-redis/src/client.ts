@@ -2357,6 +2357,30 @@ const REDIS_KEYS_UNPREFIXED = {
     // unrepresentable — the install path cannot address this key at all.
     // Same TTL, same semantics, checked together by BlockRevocation.isRevoked.
     REVOKED_INSTANCE_BAN: 'blocks:revoked-instance-ban',
+    // 🔴 A THIRD KEYSPACE, FOR PER-SCOPE CONSENT REVOCATION, AND IT IS KEYED ON A
+    // DIFFERENT THING ENTIRELY: `<prefix>:<userId>:<appBlockId>`, not a blockInstanceId.
+    // The value is a JSON array of the scopes that (user, app) pair has revoked, so the
+    // guard can refuse the ONE route whose required scope was withdrawn instead of the
+    // app's whole surface.
+    //
+    // WHY NOT REUSE EITHER KEY ABOVE. Same argument as the install/ban split, one step
+    // out: those two are per-INSTANCE and are written by an owner/moderator action, this
+    // one is per-(user, app) and is written by the VIEWER. A shared key would let one
+    // population's write clear another's marker, which is exactly the downgrade the
+    // install/ban split was introduced to make unrepresentable.
+    //
+    // 🔴 AND ITS READ FAILS **CLOSED**, unlike `BlockRevocation.isRevoked`, which
+    // deliberately fails open. That asymmetry is why the two cannot share one `mGet`
+    // either: one call has one catch, and these two need opposite ones. See
+    // `src/server/services/blocks/consent-revocation.service.ts`.
+    //
+    // Same TTL relationship as the two above: it must OUTLIVE the longest token it
+    // refuses. Deliberately NOT restated as a number — the constant lives in the Next
+    // app's `src/server/services/block-token-lifetimes.ts`
+    // (`MAX_BLOCK_TOKEN_LIFETIME_SECONDS`), a different workspace package that cannot be
+    // imported from here, and a hardcoded figure is exactly what let `REVOKED_INSTANCE`'s
+    // comment claim 15min while dev tokens lived 4h.
+    CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
