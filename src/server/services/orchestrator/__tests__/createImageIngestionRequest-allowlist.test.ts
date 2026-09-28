@@ -14,6 +14,15 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
 }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
+// 🔴 Pin the edge host. `@prisma/client`'s runtime dotenv-loads `<repo>/.env` into
+// process.env at import, so without this the expected `mediaUrl` below depends on whether
+// the checkout happens to have a `.env`: empty here (a fresh worktree) but set in any
+// standard dev tree, and `.env-example` tells developers to use `http://localhost:3000`.
+// MEASURED: forcing the var red-lines the literal at :72. Siblings stub it the same way
+// (remix-provenance.test.ts, announcement-media-check.test.ts, cf-images-utils.test.ts).
+vi.mock('~/env/client', () => ({
+  env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.test' },
+}));
 // Surface enums consumed at module-load time (mirrors createModelFileScanRequest.test).
 vi.mock('@civitai/client', () => ({
   submitWorkflow: mockSubmitWorkflow,
@@ -63,10 +72,28 @@ describe('createImageIngestionRequest URL allowlist (orchestrator funnel)', () =
     expect(mockSubmitWorkflowWithRetry).toHaveBeenCalledTimes(1);
     const body = mockSubmitWorkflowWithRetry.mock.calls[0][0].body;
     // getEdgeUrl with no name passes the src itself as `name`, re-extending it — so the
-    // src appears twice. Pinned to the literal getEdgeUrl emits.
+    // src appears twice. Pinned to the literal getEdgeUrl emits, against the mocked host.
     expect(body.arguments.mediaUrl).toBe(
-      'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png/original=true/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.jpeg'
+      'https://image.test/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png/original=true/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.jpeg'
     );
+  });
+
+  it('submits the NORMALIZED absolute url, so the fetcher resolves the host we validated', async () => {
+    mockSubmitWorkflowWithRetry.mockResolvedValue({
+      data: { id: 'wf-3' },
+      response: undefined,
+      attempts: 1,
+    });
+
+    await createImageIngestionRequest({
+      imageId: 4242,
+      url: 'http:/image.civitai.com/a/b.png',
+      type: 'image',
+    });
+
+    const body = mockSubmitWorkflowWithRetry.mock.calls[0][0].body;
+    // Not the caller's slash-light spelling — the parsed href.
+    expect(body.arguments.mediaUrl).toBe('http://image.civitai.com/a/b.png');
   });
 
   it('submits an allowed avatar url (the only external host class)', async () => {

@@ -17,7 +17,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ImageIngestionUrlBlockedError } from '~/server/utils/image-scan-url';
-import handler, { redactWebhookToken } from '~/pages/api/media/ingest/[mediaId]';
+import handler, { redactSecrets } from '~/pages/api/media/ingest/[mediaId]';
 
 /**
  * Tests live outside the pages tree: every .ts/.tsx under src/pages/** is enumerated by
@@ -71,22 +71,42 @@ afterEach(() => {
   resetEnv();
 });
 
-describe('redactWebhookToken', () => {
+describe('redactSecrets', () => {
   it('strips the token everywhere in a nested body, preserving the rest', () => {
     const body = {
       callbacks: [{ url: CALLBACK, type: 'workflow:failed' }],
       nested: { deep: [`still ${TOKEN}`] },
     };
-    const redacted = redactWebhookToken(body, TOKEN) as typeof body;
+    const redacted = redactSecrets(body, [TOKEN]) as typeof body;
     expect(JSON.stringify(redacted)).not.toContain(TOKEN);
     expect(JSON.stringify(redacted)).toContain('<redacted>');
     expect(redacted.callbacks[0].type).toBe('workflow:failed');
   });
 
-  it('is a passthrough when there is no token to strip', () => {
+  it('is a passthrough when there is no secret to strip', () => {
     const body = { callbacks: [{ url: 'https://cb' }] };
-    expect(redactWebhookToken(body, undefined)).toEqual(body);
-    expect(redactWebhookToken(null, TOKEN)).toBeNull();
+    expect(redactSecrets(body, [undefined])).toEqual(body);
+    expect(redactSecrets(body, [])).toEqual(body);
+    expect(redactSecrets(null, [TOKEN])).toBeNull();
+  });
+
+  /**
+   * The callback is `env.IMAGE_SCANNING_CALLBACK` whenever set (production takes that
+   * branch), so a secret living in THAT url is not removed by splitting on WEBHOOK_TOKEN.
+   */
+  it('strips a secret carried by the override callback url, not just WEBHOOK_TOKEN', () => {
+    const override = 'https://scan.example/cb?key=OVERRIDE_SECRET_VALUE';
+    const body = { callbacks: [{ url: override }] };
+    const redacted = redactSecrets(body, [override, TOKEN]);
+    expect(JSON.stringify(redacted)).not.toContain('OVERRIDE_SECRET_VALUE');
+  });
+
+  /** A secret containing a JSON-escaped character never appears raw in the serialization. */
+  it('strips a secret whose characters JSON escapes', () => {
+    const secret = 'tok"en\\with';
+    const redacted = redactSecrets({ deep: { s: `x ${secret} y` } }, [secret]);
+    expect(JSON.stringify(redacted)).not.toContain('tok\\"en');
+    expect(JSON.stringify(redacted)).toContain('<redacted>');
   });
 });
 

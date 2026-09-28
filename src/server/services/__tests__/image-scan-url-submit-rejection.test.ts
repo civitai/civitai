@@ -20,7 +20,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import { createImage, ingestImage } from '~/server/services/image.service';
+import { createImage, enqueueImageIngestion, ingestImage } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 
 const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png';
@@ -34,8 +34,24 @@ const image = (url: string, id = 4242): IngestImageInput => ({
   height: 100,
 });
 
+/**
+ * 🔴 A DEFAULT resolution, not a bare `mockReset()`. With no default the mocked funnel
+ * returns `undefined`, and `ingestImage` destructures it — so deleting the guard under test
+ * makes these tests die on `TypeError: Cannot destructure property 'data'` BEFORE any
+ * assertion runs. They then go red for the wrong reason, printing nothing about an
+ * allowlist, and a maintainer reads it as a broken mock. The id is deliberately
+ * accusatory: if it ever appears, the guard let a submit through.
+ */
+const allowSubmitByDefault = () =>
+  mockCreateImageIngestionRequest.mockReset().mockResolvedValue({
+    data: { id: 'must-not-happen' },
+    error: undefined,
+    status: 200,
+    useImageScanning: false,
+  });
+
 beforeEach(() => {
-  mockCreateImageIngestionRequest.mockReset();
+  allowSubmitByDefault();
   dbMock.dbWrite.$executeRaw.mockClear();
   loggingMock.logToAxiom.mockClear();
 });
@@ -117,11 +133,61 @@ describe('ingestImage URL allowlist (submit seam)', () => {
   });
 });
 
-describe('createImage funnel — the comics/article/model3d-seed write path', () => {
+/**
+ * 🔴 The ARTICLE content-media-node path does NOT go through `createImage` — it writes via
+ * `tx.image.createManyAndReturn` and ingests via `enqueueImageIngestion`
+ * (article.service.ts:1837, `name: 'article-image-ingest'`). So the `createImage` block
+ * below cannot stand in for it, and a test that only drove `createImage` would leave the
+ * article path's wiring unpinned while reading as coverage for it.
+ */
+describe('enqueueImageIngestion funnel — the article content-media-node path', () => {
+  beforeEach(() => {
+    allowSubmitByDefault();
+    dbMock.dbWrite.$executeRaw.mockClear();
+  });
+
+  it('submits nothing to the orchestrator for an off-allowlist article media node', async () => {
+    enqueueImageIngestion({
+      images: [image(EVIL_URL, 5150)],
+      name: 'article-image-ingest',
+      userId: 7,
+      lowPriority: true,
+    });
+    // enqueueImageIngestion is fire-and-forget; let its ingest promises settle.
+    await vi.waitFor(() => expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalled());
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    const stamps = dbMock.dbWrite.$executeRaw.mock.calls.map((c) => JSON.stringify(c));
+    expect(stamps.some((s) => s.includes('not on the ingestion allowlist'))).toBe(true);
+  });
+
+  it('submits a relative storage key from the same funnel', async () => {
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: { id: 'wf-art' },
+      error: undefined,
+      status: 200,
+      useImageScanning: false,
+    });
+
+    enqueueImageIngestion({
+      images: [image(STORAGE_KEY, 5151)],
+      name: 'article-image-ingest',
+      userId: 7,
+      lowPriority: true,
+    });
+    await vi.waitFor(() => expect(mockCreateImageIngestionRequest).toHaveBeenCalledTimes(1));
+
+    expect(mockCreateImageIngestionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ url: STORAGE_KEY })
+    );
+  });
+});
+
+describe('createImage funnel — the comics and model3d-seed write path', () => {
   beforeEach(() => {
     probeMock.mockReset().mockResolvedValue('present');
     dbMock.dbWrite.image.create.mockReset().mockResolvedValue({ id: 90210 } as never);
-    mockCreateImageIngestionRequest.mockReset();
+    allowSubmitByDefault();
     dbMock.dbWrite.$executeRaw.mockClear();
   });
 

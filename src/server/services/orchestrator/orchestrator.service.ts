@@ -31,6 +31,7 @@ import {
 import {
   ImageIngestionUrlBlockedError,
   isAllowedImageScanUrl,
+  normalizeImageScanUrl,
 } from '~/server/utils/image-scan-url';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
@@ -126,16 +127,24 @@ export async function createImageIngestionRequest({
   priority?: Priority;
   type?: MediaType;
 }) {
-  // 🔴 This is the ONE funnel through which the orchestrator is handed a media URL to
-  // fetch from inside the cluster. `getEdgeUrl` forwards absolute http(s)/blob: URLs
-  // through unmodified, so without this guard every path that reaches `Image.url` from
-  // caller input (comics procs, article content media nodes, …) is an SSRF primitive.
-  // `ingestImage` pre-checks the same predicate so it can route the rejection through
-  // the submit-failure machinery; this throw is the backstop for direct callers.
+  // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
+  // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
+  // reaches `Image.url` from caller input (comics procs, article content media nodes, …)
+  // is an SSRF primitive. `ingestImage` pre-checks the same predicate so it can route the
+  // rejection through the submit-failure machinery; this throw is the backstop for direct
+  // callers.
+  //
+  // ⚠ It is NOT the only place this service hands the orchestrator a fetchable media URL —
+  // `getPerceptualHash` below and `resizeBadgeImage` in product-badge.service.ts each
+  // build one the same way (`url.startsWith('http') ? url : getEdgeUrl(url, …)`) and are
+  // NOT gated by this allowlist. Those are pre-existing surfaces, out of scope here; do
+  // not read this guard as covering them.
   if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
 
   const metadata = { imageId };
-  const edgeUrl = getEdgeUrl(url, { type });
+  // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
+  // this guard validated is the host a downstream RFC-3986 client resolves.
+  const edgeUrl = getEdgeUrl(normalizeImageScanUrl(url), { type });
   // Idempotency key: if a submit returns 500 but actually created the workflow
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).

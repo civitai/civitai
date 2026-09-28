@@ -1282,7 +1282,11 @@ export const ingestImage = async ({
       status: 400,
       error: blocked,
     });
-    imageScanSubmittedCounter.inc({ lane: 'new', result: 'rejected' });
+    // `lane` is unknown here by construction: it comes from a Flipt read inside
+    // `createImageIngestionRequest`, which this rejection returns before. Attributing it to
+    // a concrete lane would make a per-lane rejection rate wrong, so it is reported as
+    // `unknown` rather than guessed.
+    imageScanSubmittedCounter.inc({ lane: 'unknown', result: 'rejected' });
     logToAxiom({
       name: imageIngestionLogName(false),
       type: 'error',

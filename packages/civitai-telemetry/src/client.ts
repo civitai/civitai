@@ -729,7 +729,7 @@ export const imageScanWebhookCounter = registerCounterWithLabels({
 
 export const imageScanSubmittedCounter = registerCounterWithLabels({
   name: 'image_scan_submitted_total',
-  help: 'ingestImage() scan submissions by lane (new = wdTagging+mediaRating | imageScanning) and result (success|failed|rejected = url off the ingestion allowlist, never submitted)',
+  help: 'ingestImage() scan submissions by lane (new = wdTagging+mediaRating | imageScanning | unknown = rejected before the lane was resolved) and result (success|failed|rejected = url off the ingestion allowlist, never submitted)',
   labelNames: ['lane', 'result'] as const,
 });
 
