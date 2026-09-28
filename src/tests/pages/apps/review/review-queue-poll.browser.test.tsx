@@ -51,11 +51,20 @@ import type * as CurrentUserMod from '~/hooks/useCurrentUser';
 
 type QueryOpts = {
   /**
-   * 🔴 A VALUE, NOT A CALLBACK, AND THE TYPE IS THE ASSERTION. The interval used to be
-   * `(query) => …` so it could read that query's own error and park on it; dropping the
-   * error gate left nothing per-query for it to read, so it is now a plain number. A
-   * mutation that restores the callback form fails to type-check here before any assertion
-   * runs.
+   * 🔴 A VALUE, NOT A CALLBACK. The interval used to be `(query) => …` so it could read
+   * that query's own error and park on it; dropping the error gate left nothing per-query
+   * for it to read, so it is now a plain number.
+   *
+   * ⚠️ AN EARLIER DRAFT ENDED "and the type is the assertion — a mutation that restores
+   * the callback form fails to type-check here before any assertion runs". IT DOES NOT,
+   * for the reason given on the sibling option below: `vi.mock`'s string-path overload
+   * types its factory as `Partial<unknown>`, so this local `QueryOpts` never constrains
+   * the page at all. Measured: `refetchInterval: () => APPS_REVIEW_POLL_MS` on both
+   * queries type-checks CLEAN, and is caught instead by the runtime assertions — 3 of
+   * these tests go red. The coverage is real; the mechanism was misdescribed. (The
+   * sibling below was corrected first and this one was left standing, which is the
+   * sweep-every-site lesson: a retraction is a sweep, not an edit at the site you were
+   * looking at.)
    */
   refetchInterval?: number | false;
   /**

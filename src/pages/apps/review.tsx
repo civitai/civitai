@@ -143,11 +143,20 @@ export const APPS_REVIEW_POLL_MS = 15_000;
  *
  * MEASURED against production 2026-09-28, because the paged branch is the one every
  * argument here is about: a cursor exists only past PAGE_LIMIT (50) pending rows in ONE
- * source, and the historical peak is 9 on each — on-site is additionally capped at one
- * pending row per slug by the `…_one_pending_per_slug` partial unique index. So no mod
- * has ever reached this branch. The reasoning above is about correctness, not about an
- * observed state, and the figures are a snapshot: re-derive them rather than trusting
- * this line.
+ * source, and the peak CONCURRENTLY pending was 9 on each — on-site is additionally
+ * capped at one pending row per slug by the `…_one_pending_per_slug` partial unique
+ * index. So no mod has ever reached this branch.
+ *
+ * The figures are a snapshot and nothing asserts on them, so re-derive rather than trust.
+ * The method, since a figure without one cannot be checked: sweep `submitted_at` as +1
+ * against `reviewed_at` (falling back to `updated_at`, and to `now()` only for rows still
+ * `pending`) as −1, and take the running maximum, over `app_block_publish_requests` and
+ * `app_listing_publish_requests`. 🔴 `COALESCE(reviewed_at, now())` is the trap: every
+ * `withdrawn` row has a NULL `reviewed_at`, so that form counts all of them as still
+ * pending forever and returned 64 — which is just (pending + withdrawn), not a peak.
+ * Two conservative notes: the off-site proc additionally filters `kind` to the reviewable
+ * set, so the figure above is an upper bound on what that queue can page through; and a
+ * peak is not a ceiling — the ceiling is how many apps can hold a pending row at once.
  *
  * 🔴 NO ERROR GATE — BECAUSE THIS TAB CARRIES ZERO EXTRA UI, NOT BECAUSE SUCH A PARK
  * WOULD BE UNRECOVERABLE. ⚠️ An earlier revision of this paragraph claimed the latter and
@@ -158,20 +167,32 @@ export const APPS_REVIEW_POLL_MS = 15_000;
  * in-source comment "flag existing data as invalidated if we get a background error"),
  * and `isStaleByTime` returns `true` for an invalidated query whatever the `staleTime`
  * (`query.js:134`). Remounting recovers it too — and with `Tabs keepMounted={false}` on
- * this page a remount is one click, to Approved and back. The repo also ships a live
- * counter-example ON THIS PAGE: `~/components/Apps/ActivePreviewsPanel` line 57 runs
- * exactly that gate (`refetchInterval: (q) => (q.state.error ? false : 30000)`) with no
- * status row and no Refresh control.
+ * this page a remount is one click, to Approved and back.
  *
- * ⚠️ THAT COUNTER-EXAMPLE ALSO SINKS THE REPLACEMENT REASON A PREVIOUS DRAFT GAVE, which
- * was "the chosen design for this tab is zero extra chrome". If a gate needs no chrome in
- * `ActivePreviewsPanel`, chrome cannot be why it is absent here. The honest position is
- * narrower than either draft: NOTHING REQUIRES THE GATE'S ABSENCE. An unconditional
- * cadence is simply the smaller thing, and the UI the gate had acquired here — a status
- * row and a Refresh control — was removed by an explicit design decision, so the gate
- * lost the only thing it was buying. A future reader who wants the gate back does not
- * have to defeat an argument; they have to accept one more branch. Do not restate the
- * recoverability claim, and do not reach for a third justification in its place.
+ * ⚠️ TWO EARLIER DRAFTS REACHED FOR A REASON AND BOTH WERE WRONG; THE THIRD IS BELOW AND
+ * IS A PROPERTY OF THE QUERIES, NOT A PREFERENCE. Draft two said the gate is absent
+ * because "the chosen design for this tab is zero extra chrome". Draft three said
+ * `~/components/Apps/ActivePreviewsPanel` runs that gate "with no status row and no
+ * Refresh control", and concluded that nothing requires the gate's absence. THAT IS
+ * FALSE: on a non-authz error that panel renders `ModQueryError` with an `onRetry` that
+ * refetches — an alert AND a retry control — in exactly the state its gate creates.
+ *
+ * The real distinction is the one that panel states in its own comment: its query has a
+ * PERMANENTLY-DEAD state. With `appBlocks` on but the review-sandbox flag off the server
+ * throws UNAUTHORIZED for good, so a fixed interval would re-fire a guaranteed-dead
+ * request forever — that is what its gate exists to stop, and why it also needs a manual
+ * retry to escape.
+ *
+ * These two queries have no such state. The page's own gate is `isAppReviewer` (=
+ * `!!user.isModerator`, `~/shared/utils/app-blocks-access`) plus `features.appBlocks`,
+ * and the procs require exactly the same pair (`moderatorProcedure` + the app-blocks flag
+ * middleware). A viewer who got this page rendered therefore cannot hold a standing
+ * authorization failure on them: an error here is TRANSIENT by construction, and a
+ * transient error is cleared by the very next tick. The gate would have nothing to stop.
+ *
+ * So: a reader who wants the gate back has to show a durable error state these queries
+ * can actually reach — not defeat a design preference. Do not restate the recoverability
+ * claim, and do not restate the no-chrome claim.
  * (The contradiction surfaced because the `refetchOnWindowFocus` note below already
  * stated the `isInvalidated` carve-out correctly while this paragraph denied it.)
  */
