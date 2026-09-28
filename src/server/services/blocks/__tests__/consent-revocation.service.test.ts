@@ -300,13 +300,32 @@ describe('applyRevocations', () => {
   });
 
   /**
-   * Returns the SAME OBJECT when nothing changed, which both callers use as the cheap
-   * "did this request lose a scope" test — the bridge emits its counter off exactly that.
+   * Returns the SAME OBJECT when nothing changed. ⚠️ THIS SAID "both callers use [it] as the cheap
+   * 'did this request lose a scope' test" AND THAT IS ONE CALLER TOO MANY — the REST seam
+   * (`block-scope.middleware.ts:1503`) assigns `claims = applyRevocations(claims, revoked)`
+   * unconditionally and reads no identity. The BRIDGE is the consumer:
+   * `block-bridge-auth.service.ts` gates `recordConsentStrip('bridge', …)` on
+   * `narrowed !== claims`, so a fresh object makes that counter fire on every consulted request
+   * instead of on a real strip — inflating the series whose help text tells the operator that a
+   * non-zero value means viewers are withdrawing permissions. Miscounting the consumers is how
+   * `applyRevocations`' own docblock came to license returning a clone; it is corrected there too.
+   *
+   * BOTH early returns are covered, on purpose: the `new Set()` case exercises
+   * `revoked.size === 0`, the `new Set(['zzz'])` case exercises
+   * `kept.length === claims.scopes.length`. A single arm would leave one of the two mutants alive.
    */
   it('returns the same object identity when nothing is revoked', () => {
     const claims = { scopes: ['a', 'b'] };
-    expect(applyRevocations(claims, new Set())).toBe(claims);
-    expect(applyRevocations(claims, new Set(['zzz']))).toBe(claims);
+    expect(
+      applyRevocations(claims, new Set()),
+      'the `revoked.size === 0` early return stopped returning the same object; the bridge reads ' +
+        'identity to decide whether this request lost a scope'
+    ).toBe(claims);
+    expect(
+      applyRevocations(claims, new Set(['zzz'])),
+      'the `kept.length === claims.scopes.length` early return stopped returning the same object; ' +
+        'the bridge would then record a consent strip on every consulted request'
+    ).toBe(claims);
   });
 
   it('can empty the scope list entirely', () => {

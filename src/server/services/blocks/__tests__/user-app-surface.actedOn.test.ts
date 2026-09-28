@@ -459,15 +459,23 @@ describe('listMyScopeGrants — precedence', () => {
   });
 
   /**
-   * A REVOKED grant does not claim `'consent'`, and the app is not thereby hidden either: the
-   * activity leg picks it up and reports the honest `'activity'`. ⚠️ THE "INVARIANT GUARD"
-   * LABEL IS RETRACTED. It read *"nothing in this repo writes a non-null `revoked_at`"*, true
-   * when written and false since `revokeScopes` (`scope-grant.service.ts`) shipped — a viewer
-   * revoking their last granted scope produces exactly this row, so this is live coverage.
-   * What it pins is unchanged: the two guards COMPOSE — the grant leg's `!g.revokedAt` must
-   * not leave the app invisible now that a third leg exists.
+   * A REVOKED GRANT CLAIMS `'consent'`, AND THE ACTIVITY LEG MUST NOT TAKE IT.
+   *
+   * ⚠️ THIS ARM USED TO ASSERT THE OPPOSITE (`origin: 'activity'`, `scopes: []`) and it is
+   * INVERTED deliberately, not adjusted. Two labels have already been retracted on it: first
+   * "invariant guard" (*"nothing in this repo writes a non-null `revoked_at`"*, false since
+   * `revokeScopes` shipped), then the behaviour itself — the grant leg's `!g.revokedAt` skip is
+   * gone, because on a grant-only app it deleted the card outright (see the condition's own
+   * comment in `user-app-surface.service.ts`). With the skip gone the grant leg claims the app
+   * first and the `has()` precedence rule keeps the activity leg off it.
+   *
+   * 🔴 `'consent'` IS THE HONEST LABEL AND `'activity'` WAS A FALSE ONE FOR THIS ROW.
+   * `scopeGrantEmptyScopeLabel` / `buildScopeGrantSurfaceLine` render an `'activity'` row as an
+   * app that reached the viewer with NEITHER an install nor a consent — which is exactly wrong
+   * about somebody who consented and then withdrew. It also emits `scopes: []`, so the withdrawn
+   * permissions would have had no rows to be marked "Removed" on.
    */
-  it('a revoked grant plus invocations yields an ACTIVITY row, not a consent row', async () => {
+  it('a revoked grant plus invocations is a CONSENT row, not an activity row', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
       {
@@ -482,9 +490,16 @@ describe('listMyScopeGrants — precedence', () => {
     mockDbRead.appBlock.findMany.mockResolvedValue([appBlockRow()]);
     const result = await listMyScopeGrants(VIEWER);
     expect(result).toHaveLength(1);
-    expect(result[0].origin).toBe('activity');
-    expect(result[0].scopes).toEqual([]);
+    expect(result[0].origin).toBe('consent');
+    // The app-side row list, not `[]` — this is a consent row, so the page says what the app may
+    // be exercised with and each row carries its own state.
+    expect(result[0].scopes).toEqual(appBlockRow().manifest.scopes);
+    // 🔴 AND STILL NO SPEND CEILING. `usableConsentBudget` returns null for a non-null
+    // `revoked_at`, so the stored 1200 is not offered — which was the whole stated reason the row
+    // used to be skipped, and it holds without the skip.
     expect(result[0].buzzBudgetPerDay).toBeNull();
+    expect(result[0].spendScopeGranted).toBe(false);
+    expect(result[0].grantedScopes).toEqual([]);
   });
 
   /**

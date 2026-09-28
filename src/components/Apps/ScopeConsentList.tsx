@@ -65,6 +65,12 @@ export type ScopeConsentGrant = {
    */
   revokedScopes?: string[];
   revokableScopes?: string[];
+  /**
+   * The viewer's LIVE granted set. Absent together with the two above on a pre-phase-2 payload;
+   * `buildScopeConsentRows` answers `unknown` for that rather than reading a missing set as
+   * "granted nothing". See its parameter docblock.
+   */
+  grantedScopes?: string[];
   scopesRevokedAt?: Date | string | null;
 };
 
@@ -123,6 +129,13 @@ export function ScopeConsentList({
     // `undefined` so `buildScopeConsentRows` can answer `unknown` and render nothing. See that
     // function's parameter docblock.
     revokableScopes: grant?.revokableScopes,
+    // 🔴 ALSO NOT `?? []`, AND FOR THE MIRROR-IMAGE REASON. `revokableScopes` is the app's
+    // consent-gated set; this is what the VIEWER agreed to, and `blocks.revokeScopes` refuses a
+    // scope outside it — so without it the row offers a Remove button the server rejects. But
+    // coalescing an ABSENT set to `[]` would claim the viewer granted nothing at all, turning
+    // every row of a pre-phase-2 payload into a false statement about their own consent instead
+    // of the `unknown` silence. Passed through, exactly like `revokableScopes`.
+    grantedScopes: grant?.grantedScopes,
   });
   const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
 

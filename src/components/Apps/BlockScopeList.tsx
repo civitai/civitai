@@ -17,7 +17,9 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  * 🔴 AND IT CARRIES NO DECISION — ONLY DATA AND A RENDER PROP. This component does not know what
  * a revoke is, which scopes are withdrawable, or what the server said; it strikes through the ids
  * it is told are removed and puts the caller's node in the row. The revokability decision belongs
- * to the server (`ScopeGrantSurface.revokableScopes`) and is applied in
+ * to the server — `ScopeGrantSurface.revokableScopes` (which scopes are consent-gated at all) and
+ * `ScopeGrantSurface.grantedScopes` (which of them this viewer actually agreed to; the server
+ * refuses a revoke outside it) — and both are applied in
  * `src/components/Apps/scopeConsentRows.ts`. A predicate here would be a third place that has to
  * agree with `CONSENT_EXEMPT_SCOPES`, and it would be the one nobody re-checks.
  */

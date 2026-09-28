@@ -69,6 +69,15 @@ const GRANT = {
     'models:read:self',
   ],
   revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
+  /**
+   * 🔴 EQUAL TO `revokableScopes` HERE, DELIBERATELY, SO THE ARMS BELOW STAY ABOUT WHAT THEY SAY
+   * THEY ARE ABOUT. `revokableScopes` is the APP's consent-gated set and this is the VIEWER's —
+   * a row needs to be in BOTH to get a control, since `blocks.revokeScopes` refuses a scope the
+   * viewer never granted. Making them equal keeps every `revokeButtons().toHaveLength(
+   * GRANT.revokableScopes.length)` assertion in this file measuring the control, not the split.
+   * The split itself has its own `describe.each` block near the bottom, on a DERIVED grant.
+   */
+  grantedScopes: ['ai:write:budgeted', 'posts:write:self'],
   revokedScopes: ['collections:read:private'],
   scopesRevokedAt: new Date('2026-09-14T11:30:00Z'),
   buzzBudgetPerDay: null,
@@ -546,6 +555,68 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     ).toHaveBeenCalled();
   });
 
+  test('🔴 a 503 ALSO latches the row as revoked — no live control beside "Permission removed"', async () => {
+    /**
+     * 🔴 THE ONLY UNGUARDED LINE IN THIS FEATURE. The degraded arm's own
+     * `setJustRevoked(...)` — `scopeRevoke.tsx`, inside `if (degraded)` — carried a 🔴 comment
+     * stating exactly what it prevents and had NO test: measured, deleting that one line left
+     * 625 unit + 91 component + 46 geometry tests green. It was the sole survivor, of 40 mutants,
+     * that carried a claim.
+     *
+     * What it prevents: on a 503 Postgres was written and only the in-flight-token marker failed,
+     * so the permission really is withdrawn and the viewer has just been told "Permission
+     * removed". Leaving a live Remove button beside that toast is the same misreport the SUCCESS
+     * path's latch exists to stop, in the arm that is already telling the viewer it is gone — and
+     * pressing it again yields a confirm dialog promising to remove something already removed.
+     *
+     * 🔴 AND IT IS NOT SELF-HEALING, WHICH IS WHY THE LATCH RATHER THAN THE REFETCH HAS TO DO IT.
+     * `listMyScopeGrants` reads the REPLICA while `revokeScopes` writes the PRIMARY, and
+     * `src/utils/trpc.ts` sets `staleTime: Infinity` with `refetchOnWindowFocus: false` — so the
+     * re-read this arm's sibling asserts can come back WITHOUT the revocation and nothing fetches
+     * again. The fixture models exactly that: `m.grants` is never updated, so the only thing that
+     * can suppress the control is local state.
+     *
+     * MUTATION THAT MUST KILL IT: delete the `setJustRevoked` call from the `if (degraded)` block.
+     */
+    m.revokeError = {
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'removed, but an open session may keep using it briefly',
+    };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const scope = revokableScopesOnScreen()[0];
+    expect(scope, 'the fixture has no revokable scope').toBeTruthy();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    // Wait on the mark COUNT going 1 -> 2, not on `.first()` being visible: the fixture already
+    // renders one revoked row (`collections:read:private`), so `.first()` would resolve off that
+    // pre-existing mark and the await would observe nothing. Same trap the sibling arm records.
+    await vi.waitFor(() =>
+      expect(
+        document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+        `${name}: a 503 left ${scope} unmarked — the viewer is told "Permission removed" while the ` +
+          'row still says they have it'
+      ).toBe(GRANT.revokedScopes.length + 1)
+    );
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: a 503 left a live Remove control on ${scope} beside a "Permission removed" ` +
+        'warning — pressing it again offers to remove a permission that is already gone'
+    ).not.toContain(scope);
+    // 🔴 THE OTHER ROW KEEPS ITS CONTROL. Without this the arm is satisfied by a 503 that
+    // suppressed the whole feature, which is a different defect reported as this fix.
+    for (const other of GRANT.revokableScopes.filter((s) => s !== scope)) {
+      expect(revokableScopesOnScreen(), `${name}: ${other} lost its control too`).toContain(other);
+    }
+    // 🔴 THE SERVER PAYLOAD REALLY DID NOT MOVE, so the suppression is local and not a fixture
+    // artefact. Compared against a LITERAL, not against `GRANT.revokedScopes` — `m.grants[0]` IS
+    // `GRANT`, so comparing that field to itself cannot see an in-place mutation.
+    expect(
+      (m.grants[0] as { revokedScopes: string[] }).revokedScopes,
+      'the fixture mutated — this arm no longer proves the latch did the work'
+    ).toEqual(['collections:read:private']);
+  });
+
   test('🔴 a SUSPENDED app can still be revoked from — there is no status gate in the UI either', async () => {
     // `blocks.revokeScopes` deliberately has no `status === 'approved'` gate: withdrawing consent
     // from a suspended or deprecated app is the case that matters most, and `listMyScopeGrants`
@@ -988,7 +1059,9 @@ describe('the exempt-note fragments are a usable discriminator', () => {
 describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) => {
   /**
    * 🔴 THE MIXED-VERSION WINDOW: a new client bundle querying a pod still on pre-phase-2 server
-   * code gets grant rows with NO `revokableScopes`/`revokedScopes`/`scopesRevokedAt`.
+   * code gets grant rows with NO `revokableScopes`/`revokedScopes`/`scopesRevokedAt`/`grantedScopes`
+   * — `listMyScopeGrants` gained all four in one change and emits them together, so
+   * "some present, some absent" is not a state the current server can produce.
    *
    * 🔴 THIS ARM EXISTS BECAUSE THE FIRST IMPLEMENTATION COALESCED `revokableScopes ?? []`, WHICH
    * TURNED "the server did not say" INTO "can't be withdrawn". Every row became `fixed`, so a
@@ -1002,7 +1075,13 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
    * than retyped, so it cannot drift from the fixture the rest of the file uses.
    */
   const preMigrationRow = () => {
-    const { revokableScopes: _rs, revokedScopes: _rv, scopesRevokedAt: _at, ...rest } = GRANT;
+    const {
+      revokableScopes: _rs,
+      revokedScopes: _rv,
+      scopesRevokedAt: _at,
+      grantedScopes: _gs,
+      ...rest
+    } = GRANT;
     return rest;
   };
 
@@ -1036,8 +1115,18 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
 
   test('POSITIVE CONTROL: the SAME fixture WITH the field does offer controls', async () => {
     // Without this, the arm above passes for a component that renders no control under any
-    // circumstances — the reassuring-zero shape. One field is the only difference.
-    m.grants = [{ ...preMigrationRow(), revokableScopes: GRANT.revokableScopes }];
+    // circumstances — the reassuring-zero shape. The phase-2 viewer-side fields are the only
+    // difference. ⚠️ BOTH `revokableScopes` AND `grantedScopes` are restored, not just the first:
+    // a control needs the app's consent-gated set AND the viewer's own grant, so restoring one
+    // leaves every row `unknown` and this control would report the same zero as the arm it is
+    // meant to discriminate against — a control that shares the step it is testing.
+    m.grants = [
+      {
+        ...preMigrationRow(),
+        revokableScopes: GRANT.revokableScopes,
+        grantedScopes: GRANT.grantedScopes,
+      },
+    ];
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     expect(revokableScopesOnScreen().sort(), name).toEqual([...GRANT.revokableScopes].sort());
@@ -1046,6 +1135,72 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
       document.querySelectorAll('[data-testid="scope-fixed-note"]').length,
       name
     ).toBeGreaterThan(0);
+  });
+});
+
+describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', ({ name, render }) => {
+  /**
+   * 🔴 THE DEFECT: A LIVE "REMOVE" BUTTON ON A PERMISSION NEVER GIVEN, WHOSE CLICK WAS DURABLE.
+   * `revokableScopes` is computed server-side from the APP-SIDE set
+   * (`consentGatedScopes(displayedScopes).filter(isKnownBlockScope)`) with no reference to the
+   * viewer's grant, and `buildScopeConsentRows` took no granted set at all — so an app declaring
+   * `posts:write:self` rendered a control for a viewer who never consented to it. The write was
+   * not a harmless no-op: a `revoked_scopes` entry survives every later install, so it silently
+   * made a FUTURE consent prompt's grant inert. `blocks.revokeScopes` now refuses that call, which
+   * is what makes leaving the button a BROKEN control rather than just a confusing one.
+   *
+   * ⚠️ DERIVED FROM `GRANT` BY NARROWING `grantedScopes` ONLY — `revokableScopes` is left alone,
+   * because the whole point is that the app's set and the viewer's set differ. Narrowing
+   * `revokableScopes` instead is how the server-side variant of this fix would have been spelled,
+   * and it is exactly what must NOT happen: the row would land in `fixed`, whose note asserts the
+   * permission is granted by platform policy and bounded by server-side checks — false in both
+   * halves for something nobody granted.
+   */
+  const UNGRANTED = 'posts:write:self';
+  const STILL_GRANTED = 'ai:write:budgeted';
+
+  beforeEach(() => {
+    m.grants = [{ ...GRANT, grantedScopes: [STILL_GRANTED] }];
+  });
+
+  test('🔴 offers NO control for it, and still offers one for the granted sibling', async () => {
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    // The row is still DISCLOSED — the app really does declare this permission.
+    const ids = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
+    ).map((el) => el.textContent);
+    expect(ids, name).toContain(UNGRANTED);
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: offered a Remove control for ${UNGRANTED}, which the viewer never granted and ` +
+        'which `blocks.revokeScopes` now refuses'
+    ).not.toContain(UNGRANTED);
+    // 🔴 THE POSITIVE CONTROL, IN THE SAME RENDER: the granted sibling keeps its control, so this
+    // is not a component that has stopped offering controls at all.
+    expect(revokableScopesOnScreen(), name).toEqual([STILL_GRANTED]);
+  });
+
+  test('🔴 says so, and does NOT use the "granted by platform policy" note', async () => {
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]'))
+      .find((el) => el.textContent === UNGRANTED)
+      ?.closest('[data-testid="block-scope-list"] > *');
+    if (!row) throw new Error(`${name}: no row for ${UNGRANTED}`);
+    // Silence is the rejected option: a row with no affordance and no explanation, next to rows
+    // that have one, reads as an oversight rather than as a statement.
+    const said = row.querySelector('[data-testid="scope-not-granted-note"]');
+    expect(
+      said,
+      `${name}: rendered nothing at all for a declared-but-ungranted permission`
+    ).not.toBeNull();
+    // 🔴 AND IT IS NOT `fixed`'s SENTENCE. The literal fragment is quoted rather than derived, so a
+    // future edit that routes this state through `fixedScopeNote` fails here instead of silently
+    // asserting the permission is platform-granted and permanent.
+    expect(row.querySelector('[data-testid="scope-fixed-note"]'), name).toBeNull();
+    expect(said?.textContent ?? '', name).not.toContain('granted by platform policy');
+    expect(said?.textContent ?? '', name).toMatch(/not granted/i);
   });
 });
 
@@ -1083,10 +1238,23 @@ test('🔴 the drawer and the activity page render ONE consent ledger from one f
         const control = row.querySelector('[data-testid="scope-revoke-button"]');
         const note = row.querySelector('[data-testid="scope-fixed-note"]');
         const mark = row.querySelector('[data-testid="scope-revoked-mark"]');
-        const state = control ? 'revokable' : mark ? 'revoked' : note ? 'fixed' : 'NOTHING';
+        // `not-granted` is enumerated here rather than collapsing into `NOTHING`: the positive
+        // control below asserts NO row is in the `NOTHING` state, and that assertion is only about
+        // "no affordance and no explanation" if every state that DOES carry an explanation is
+        // named. A not-granted row carries one.
+        const notGranted = row.querySelector('[data-testid="scope-not-granted-note"]');
+        const state = control
+          ? 'revokable'
+          : mark
+          ? 'revoked'
+          : note
+          ? 'fixed'
+          : notGranted
+          ? 'not-granted'
+          : 'NOTHING';
         // The note text is part of the pair, so a surface rendering the right STATE with the wrong
         // sentence is still a divergence.
-        return `${id.textContent}|${state}|${note?.textContent ?? ''}`;
+        return `${id.textContent}|${state}|${(note ?? notGranted)?.textContent ?? ''}`;
       }
     );
   };

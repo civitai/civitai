@@ -481,6 +481,32 @@ export function ScopeConsentAction({
     );
   }
   /**
+   * 🔴 A SHORT LABEL AND NO CONTROL — NOT SILENCE, AND NOT `fixed`'s NOTE.
+   *
+   * The app declares this permission and the viewer has never agreed to it, so
+   * `blocks.revokeScopes` refuses it: *"you have not granted that permission to this app, so
+   * there is nothing to withdraw."* Offering a Remove button here — which this surface did until
+   * the granted set was threaded in — meant a live control on a permission never given, whose
+   * click wrote a durable suppression that then made a FUTURE consent prompt's grant inert.
+   *
+   * Silence was rejected for the same reason it is rejected for `fixed`: a row with no affordance
+   * and no explanation, sitting next to rows that have one, reads as an oversight rather than as a
+   * statement. `fixed`'s note was rejected because it is FALSE here — it asserts the permission is
+   * granted by platform policy and bounded by server-side checks, and for a scope nobody granted
+   * neither half holds. See `ScopeConsentState` in `scopeConsentRows.ts`.
+   *
+   * ⚠️ IT SAYS "not yet", DELIBERATELY. This state is not permanent: the app can ask for the
+   * permission at the point of use and the consent modal will grant it, at which point the same
+   * row becomes `revokable`. A flat "you have not granted this" reads as a refusal.
+   */
+  if (state === 'not-granted') {
+    return (
+      <Text size="xs" c="dimmed" data-testid="scope-not-granted-note">
+        Not granted yet — the app will ask if it needs this.
+      </Text>
+    );
+  }
+  /**
    * 🔴 `unknown` RENDERS NOTHING — NOT A NOTE, AND NOT A DISABLED CONTROL. The server did not tell
    * us whether this scope is withdrawable (a pre-phase-2 payload during a rollout's mixed-version
    * window), and every sentence available here would be a claim we cannot support. `fixed`'s note

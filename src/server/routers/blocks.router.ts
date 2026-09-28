@@ -3293,9 +3293,35 @@ export const blocksRouter = router({
    * scope. (The fix is NOT to make revocation override exemption: those seven have their
    * own server-side gates and the exemption is the #3090 page-token fix.)
    *
-   * A scope the viewer does not currently hold is ACCEPTED, not refused: recording a
-   * suppression for a permission they have never been asked about is a legitimate
-   * pre-emptive "no", and it is fail-closed — the next install cannot union it in.
+   * 🔴 REFUSES A SCOPE THE VIEWER DOES NOT CURRENTLY HOLD. ⚠️ THIS USED TO READ *"A scope the
+   * viewer does not currently hold is ACCEPTED, not refused: recording a suppression for a
+   * permission they have never been asked about is a legitimate pre-emptive 'no', and it is
+   * fail-closed — the next install cannot union it in."* RETRACTED. The requirement was
+   * unattributed — it appears in no ask and no review round's subject — and the pre-emptive-no
+   * story is not what the surface in front of it does. `revokableScopes` is computed from the
+   * APP-SIDE set (`consentGatedScopes(displayedScopes).filter(isKnownBlockScope)`) with no
+   * reference to what the viewer granted, so an app could declare `posts:write:self`, the viewer
+   * never consent, and the row still render a live Remove button whose click wrote a durable
+   * suppression for a permission never given. "Fail-closed" is the wrong frame for that: a
+   * suppression is not a neutral no-op, it survives every later install, so a mis-click
+   * silently makes a future consent prompt's grant inert. Withdrawing is now exactly the
+   * inverse of granting — it needs something to withdraw.
+   *
+   * 🔴 THE ORDER OF THE THREE REFUSALS IS LOAD-BEARING: unknown → exempt → not-held. An exempt
+   * scope is never in the granted set (`partitionByConsent` signs it without ever recording a
+   * grant), so testing not-held first would answer every exempt request with the generic "you
+   * have not granted this" instead of the specific sentence naming what governs it — which is
+   * the one place the viewer learns why that row has no control.
+   *
+   * 🔴 AND THE UI HALF IS NOT OPTIONAL — tightening the server alone converts a confusing
+   * button into a broken one. `buildScopeConsentRows` (`src/components/Apps/scopeConsentRows.ts`)
+   * takes the viewer's `grantedScopes` and renders a declared-but-not-granted scope in its own
+   * `not-granted` state, with no control. Deliberately NOT done by narrowing `revokableScopes`
+   * server-side to the granted set: that collapses "not granted" into the client's `fixed` state,
+   * whose note asserts the permission is granted by platform policy and bounded by server-side
+   * checks — false for a scope the viewer simply never agreed to, and the exact
+   * true-control/false-copy combination `ScopeConsentState`'s docblock records as the defect
+   * `unknown` was introduced to avoid.
    */
   revokeScopes: protectedProcedure
     .use(enforceAppBlocksFlag)
@@ -3333,9 +3359,11 @@ export const blocksRouter = router({
       });
       if (!block) throw throwNotFoundError('App block not found');
 
-      const { revokeScopes: revokeScopesForUser, isConsentExemptScope } = await import(
-        '~/server/services/blocks/scope-grant.service'
-      );
+      const {
+        revokeScopes: revokeScopesForUser,
+        isConsentExemptScope,
+        getGrantedScopes: getLiveGrantedScopes,
+      } = await import('~/server/services/blocks/scope-grant.service');
 
       // 🔴 KNOWN SCOPES ONLY, AND THIS IS A HOT-PATH BOUND RATHER THAN TIDINESS. Whatever
       // lands in `revoked_scopes` is what `ConsentRevocation.publish` writes into the marker,
@@ -3364,6 +3392,42 @@ export const blocksRouter = router({
             `request instead. Revoking ${
               exempt.length === 1 ? 'it' : 'them'
             } would record a preference that nothing enforces.`,
+        });
+      }
+
+      // 🔴 THE VIEWER MUST CURRENTLY HOLD EVERY SCOPE THEY ARE WITHDRAWING — see the docblock for
+      // why accepting a non-held one was retracted, and for why this test comes THIRD.
+      //
+      // 🔴 `db: 'write'` — THE PRIMARY, for the same reason `grantScopes`' `alreadyGrantsSpend`
+      // check reads it: the write below goes to the primary, so deciding off the replica puts a
+      // viewer who consents and then immediately withdraws inside the replication window, where
+      // this check answers "you never granted that" about a scope they granted seconds ago.
+      //
+      // `getGrantedScopes` is the SHARED projection (`granted_scopes ∖ revoked_scopes`, empty for
+      // a non-null `revoked_at`), not a re-spelling of it — the same function the mint, the
+      // permissions surface and the OAuth mirror all read, so this refusal cannot disagree with
+      // what the page showed. A scope already in `revoked_scopes` is therefore not held, and
+      // re-revoking it is refused rather than being a silent no-op write.
+      //
+      // ⚠️ IT IS A SNAPSHOT, AND THE SERVICE RE-READS THE ROW. Another write by the same viewer
+      // between the two reads can make this decision stale — but only by one of their own
+      // actions, and the WRITE is still computed from the service's own fresher read, so the
+      // ledger cannot end up wrong. Not worth a transaction on a user-initiated mutation.
+      const held = await getLiveGrantedScopes({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        db: 'write',
+      });
+      const notHeld = input.scopes.filter((s) => !held.has(s));
+      if (notHeld.length > 0) {
+        // ALL-OR-NOTHING, like the unknown and exempt refusals above: a partial write would
+        // leave the caller unable to say which half landed.
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            `cannot revoke ${notHeld.join(', ')}: you have not granted ` +
+            `${notHeld.length === 1 ? 'that permission' : 'those permissions'} to this app, so ` +
+            `there is nothing to withdraw.`,
         });
       }
 

@@ -1798,9 +1798,23 @@ describe('scope-grant.service', () => {
      *
      * 🔴 WHAT IT CANNOT SEE: any mutation of its own scaffolding — the probe list edited, the loop
      * bounds narrowed, the verdict hardcoded. A guard cannot guard its own assertion, and the
-     * layers of ledger, floor and content pins that once sat here only raised the cost of such an
-     * edit from two places to four. Every one of them is conspicuous in a diff, and a diff is
-     * where this is meant to be caught. Do not re-add them.
+     * layers of LEDGER set-equality, distinctness and content pins that once sat here only raised
+     * the cost of such an edit from two coordinated places to four. Every one of them is
+     * conspicuous in a diff, and a diff is where this is meant to be caught. Do not re-add THOSE.
+     *
+     * ⚠️ THAT PARAGRAPH USED TO SAY "the layers of ledger, FLOOR and content pins … Do not re-add
+     * them", AND THE FLOOR WAS BUNDLED INTO AN ARGUMENT WRITTEN ABOUT A DIFFERENT GUARD SHAPE. The
+     * two-places-to-four accounting is true of the three LEDGER pins: each guards the probe ARRAY,
+     * a second structure, so walking one needs a coordinated edit in both — which is why each of
+     * them in turn was found walkable by the NEXT round of the same ladder. The `WIDE.length` floor
+     * is not that shape. It is a one-place guard against a one-place edit: shrinking `WIDE` makes
+     * the three wide probes stop exceeding any scan window, so they assert nothing, and **nothing
+     * else in the file can see it** — measured, `' '.repeat(5)` SURVIVES the whole suite without
+     * the floor and goes RED with it. So it is reinstated as the ASSERTION ONLY, with the window
+     * history inlined as a literal rather than as a separate `HISTORICAL_SCAN_WINDOWS` array: that
+     * array was the second place the original floor could be walked from (shortening it only
+     * loosened the floor, measured SURVIVING), and it is exactly what made the round-15 version
+     * fail its own test. One expression, no ledger, ~40 lines of prose not restored.
      *
      * Also not covered, because the component is INERT rather than unguarded: `stripComments` is
      * provably the identity for every probe below (the line-comment replace is line-start-anchored
@@ -1812,6 +1826,15 @@ describe('scope-grant.service', () => {
       // point of the three `WIDE` probes, so do not shrink it. A truncated tail makes the negative
       // lookahead succeed, which turns a hazard into a pass at whatever width is chosen.
       const WIDE = ' '.repeat(5000);
+      // 🔴 THE FLOOR, NOT THE COMMENT ABOVE IT. The sentence above says "do not shrink it"; this
+      // makes it a machine-readable claim. `4096` is the largest scan window this guard has ever
+      // had (40, then 4096) and is written as a literal on purpose — a separate history ARRAY is a
+      // second place the floor can be loosened from, which is what killed the previous version.
+      expect(
+        WIDE.length,
+        'the wide-whitespace probes no longer exceed every scan window this ' +
+          'guard has had, so they assert nothing'
+      ).toBeGreaterThan(4096);
       const cases: Array<[kind: 'HAZARD' | 'SAFE', tail: string]> = [
         // Pass-throughs: the rejection stays unhandled. Each passed at least one earlier draft.
         ['HAZARD', ''],

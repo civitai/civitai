@@ -23,6 +23,7 @@ describe('buildScopeConsentRows', () => {
       scopes: ['ai:write:budgeted', 'apps:storage:read'],
       revokedScopes: [],
       revokableScopes: ['ai:write:budgeted'],
+      grantedScopes: ['ai:write:budgeted'],
     });
     expect(rows).toEqual([
       { scope: 'ai:write:budgeted', state: 'revokable' },
@@ -40,6 +41,7 @@ describe('buildScopeConsentRows', () => {
       scopes: ['posts:write:self'],
       revokedScopes: ['posts:write:self'],
       revokableScopes: ['posts:write:self'],
+      grantedScopes: [],
     });
     expect(rows).toEqual([{ scope: 'posts:write:self', state: 'revoked' }]);
   });
@@ -52,6 +54,7 @@ describe('buildScopeConsentRows', () => {
       scopes: ['ai:write:budgeted'],
       revokedScopes: ['collections:read:private'],
       revokableScopes: ['ai:write:budgeted'],
+      grantedScopes: ['ai:write:budgeted'],
     });
     expect(rows).toEqual([
       { scope: 'ai:write:budgeted', state: 'revokable' },
@@ -67,6 +70,7 @@ describe('buildScopeConsentRows', () => {
       scopes: ['zzz:read:self', 'aaa:read:self'],
       revokedScopes: ['zeta:write:self', 'alpha:write:self'],
       revokableScopes: ['zzz:read:self', 'aaa:read:self'],
+      grantedScopes: ['zzz:read:self', 'aaa:read:self'],
     });
     expect(rows.map((r) => r.scope)).toEqual([
       'zzz:read:self',
@@ -81,6 +85,7 @@ describe('buildScopeConsentRows', () => {
       scopes: ['posts:write:self'],
       revokedScopes: ['posts:write:self'],
       revokableScopes: [],
+      grantedScopes: [],
     });
     expect(rows).toHaveLength(1);
   });
@@ -89,14 +94,19 @@ describe('buildScopeConsentRows', () => {
     // `revokedScopes` comes straight off react-query's cache; an in-place `.sort()` would reorder
     // a shared array under every other reader of that query.
     const revokedScopes = ['zeta:write:self', 'alpha:write:self'];
-    buildScopeConsentRows({ scopes: [], revokedScopes, revokableScopes: [] });
+    buildScopeConsentRows({ scopes: [], revokedScopes, revokableScopes: [], grantedScopes: [] });
     expect(revokedScopes).toEqual(['zeta:write:self', 'alpha:write:self']);
   });
 
   test('an empty grant produces no rows', () => {
-    expect(buildScopeConsentRows({ scopes: [], revokedScopes: [], revokableScopes: [] })).toEqual(
-      []
-    );
+    expect(
+      buildScopeConsentRows({
+        scopes: [],
+        revokedScopes: [],
+        revokableScopes: [],
+        grantedScopes: [],
+      })
+    ).toEqual([]);
   });
 
   /**
@@ -113,11 +123,21 @@ describe('buildScopeConsentRows', () => {
   test('🔴 ABSENT revokableScopes yields `unknown`; EMPTY yields `fixed`', () => {
     const scopes = ['ai:write:budgeted'];
     expect(
-      buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: undefined })
+      buildScopeConsentRows({
+        scopes,
+        revokedScopes: [],
+        revokableScopes: undefined,
+        grantedScopes: undefined,
+      })
     ).toEqual([{ scope: 'ai:write:budgeted', state: 'unknown' }]);
-    expect(buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: [] })).toEqual([
-      { scope: 'ai:write:budgeted', state: 'fixed' },
-    ]);
+    expect(
+      buildScopeConsentRows({
+        scopes,
+        revokedScopes: [],
+        revokableScopes: [],
+        grantedScopes: [],
+      })
+    ).toEqual([{ scope: 'ai:write:budgeted', state: 'fixed' }]);
   });
 
   test('🔴 a REVOKED scope stays `revoked` even on a payload with no revokableScopes', () => {
@@ -130,8 +150,122 @@ describe('buildScopeConsentRows', () => {
         scopes: ['posts:write:self'],
         revokedScopes: ['posts:write:self'],
         revokableScopes: undefined,
+        grantedScopes: undefined,
       })
     ).toEqual([{ scope: 'posts:write:self', state: 'revoked' }]);
+  });
+
+  /**
+   * 🔴 A DECLARED-BUT-NEVER-GRANTED SCOPE IS `not-granted`, NOT `revokable`, AND THAT WAS A LIVE
+   * BUTTON ON A PERMISSION NEVER GIVEN. `revokableScopes` is computed server-side from the
+   * APP-SIDE set — `consentGatedScopes(displayedScopes).filter(isKnownBlockScope)` — with no
+   * reference to what the viewer granted, and this function took no granted set at all. So an app
+   * declaring `posts:write:self` rendered a Remove control for a viewer who never consented, and
+   * the click wrote a durable suppression: not a no-op, because `revoked_scopes` survives every
+   * later install and therefore makes a FUTURE consent prompt's grant inert.
+   * `blocks.revokeScopes` now refuses that call, so the control would be broken rather than merely
+   * confusing.
+   *
+   * MUTATION THAT MUST KILL IT: return `'revokable'` for the `!granted.has(scope)` arm (i.e. drop
+   * the granted-set split).
+   */
+  test('🔴 a declared scope the viewer never granted is `not-granted`, not `revokable`', () => {
+    const rows = buildScopeConsentRows({
+      scopes: ['ai:write:budgeted', 'posts:write:self'],
+      revokedScopes: [],
+      // The server offers BOTH as consent-gated — that is the app's set, not the viewer's.
+      revokableScopes: ['ai:write:budgeted', 'posts:write:self'],
+      // …and the viewer only ever agreed to one of them.
+      grantedScopes: ['ai:write:budgeted'],
+    });
+    expect(
+      rows,
+      'a permission the viewer never granted was offered a Remove control the server now refuses'
+    ).toEqual([
+      { scope: 'ai:write:budgeted', state: 'revokable' },
+      { scope: 'posts:write:self', state: 'not-granted' },
+    ]);
+  });
+
+  /**
+   * 🔴 THE EXEMPT SCOPES KEEP `fixed`, AND THIS IS THE ORDERING THE NEW STATE COULD HAVE BROKEN.
+   * No grant is ever recorded for a `CONSENT_EXEMPT_SCOPES` member — `partitionByConsent` signs it
+   * on the exempt test alone, before it looks at the grant — so all seven are ALWAYS outside
+   * `grantedScopes`. If the granted-set test ran before the `revokableScopes` test, every one of
+   * them would relabel to `not-granted` and lose its specific `FIXED_SCOPE_NOTES` sentence, which
+   * is the only place a viewer is told what governs the permission instead of their consent.
+   *
+   * Enumerated over the SERVER's list rather than a sample, for the same reason the note test below
+   * is: membership decides both what mints consent-free and what is un-revokable.
+   *
+   * MUTATION THAT MUST KILL IT: move the `granted.has(scope)` test above the `revokable.has(scope)`
+   * test.
+   */
+  test.each(consentExemptScopeList())('🔴 %s stays `fixed`, never `not-granted`', (scope) => {
+    const rows = buildScopeConsentRows({
+      scopes: [scope],
+      revokedScopes: [],
+      // What the server really sends for an exempt scope: excluded from `revokableScopes`…
+      revokableScopes: [],
+      // …and absent from the granted set, because none was ever recorded.
+      grantedScopes: [],
+    });
+    expect(
+      rows,
+      `${scope} is consent-exempt and therefore never in the granted set; labelling it ` +
+        '`not-granted` would drop its FIXED_SCOPE_NOTES sentence, the only place the viewer ' +
+        'learns what governs it instead of their consent'
+    ).toEqual([{ scope, state: 'fixed' }]);
+  });
+
+  /**
+   * 🔴 `revoked` STILL BEATS `not-granted`. After a successful revoke the scope leaves
+   * `grantedScopes` (the server subtracts `revoked_scopes`) while STAYING in `revokableScopes`. If
+   * the granted-set test ran before the revoked test, every withdrawn permission would render
+   * "Not granted yet" instead of the "Removed / you withdrew this" marker — the surface forgetting
+   * what the viewer withdrew, which is the one regression it must never have.
+   *
+   * MUTATION THAT MUST KILL IT: move the `granted.has(scope)` split above the `revoked.has(scope)`
+   * test.
+   */
+  test('🔴 a revoked scope is `revoked`, not `not-granted`, once it leaves the granted set', () => {
+    const rows = buildScopeConsentRows({
+      scopes: ['posts:write:self'],
+      revokedScopes: ['posts:write:self'],
+      revokableScopes: ['posts:write:self'],
+      // Exactly what the server sends after the revoke: subtracted out of the live granted set.
+      grantedScopes: [],
+    });
+    expect(
+      rows,
+      'a withdrawn permission rendered as never-granted, so the page forgot the withdrawal'
+    ).toEqual([{ scope: 'posts:write:self', state: 'revoked' }]);
+  });
+
+  /**
+   * 🔴 AN ABSENT `grantedScopes` IS `unknown`, NOT "granted nothing". The three viewer-side fields
+   * arrive together or not at all (a pre-phase-2 pod during a rollout's mixed-version window sends
+   * none of them), so coalescing a missing granted set to `[]` would turn every row of such a
+   * payload into a `not-granted` claim about the viewer's own consent that nothing supports.
+   *
+   * The pair is asserted TOGETHER for the same reason the `revokableScopes` pair above is: the
+   * claim IS that the two inputs produce different states.
+   *
+   * MUTATION THAT MUST KILL IT: `grantedScopes ?? []` in `buildScopeConsentRows`, or dropping
+   * `granted === undefined` from the `unknown` test.
+   */
+  test('🔴 ABSENT grantedScopes yields `unknown`; EMPTY yields `not-granted`', () => {
+    const shared = {
+      scopes: ['ai:write:budgeted'],
+      revokedScopes: [],
+      revokableScopes: ['ai:write:budgeted'],
+    };
+    expect(buildScopeConsentRows({ ...shared, grantedScopes: undefined })).toEqual([
+      { scope: 'ai:write:budgeted', state: 'unknown' },
+    ]);
+    expect(buildScopeConsentRows({ ...shared, grantedScopes: [] })).toEqual([
+      { scope: 'ai:write:budgeted', state: 'not-granted' },
+    ]);
   });
 });
 

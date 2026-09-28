@@ -193,15 +193,83 @@ describe('grantedScopes / revokedScopes on ScopeGrantSurface', () => {
    * A FULLY revoked grant conveys nothing, so the granted set is empty — matching
    * `getGrantedScopes`, which returns an empty set for a non-null `revoked_at` regardless of
    * what the array holds.
+   *
+   * 🔴 THE SUBSCRIPTION LEG IS CLEARED, AND WITHOUT THAT LINE THIS ARM WAS VACUOUS. `beforeEach`
+   * leaves a blanket subscription mocked, so the row this assertion read was minted by the
+   * SUBSCRIPTION leg and the grant leg's own handling of `revoked_at` was never exercised — the
+   * grant-only shape the arm's title claims to cover was never built. Measured: with the
+   * subscription in place the arm passed both before and after the grant leg started emitting a
+   * card for a fully-revoked row, i.e. it could not see the defect in either direction. The
+   * sibling arm below (the PARTIAL revoke) clears it and always did; this one did not.
    */
   it('a whole-grant revoke reports an empty granted set whatever the array holds', async () => {
+    read.blockUserSubscription.findMany.mockResolvedValue([]);
     read.appUserScopeGrant.findMany.mockResolvedValue([
       grant({ grantedScopes: [SPEND, POSTS], revokedAt: new Date(), revokedScopes: [POSTS] }),
     ]);
     const { listMyScopeGrants } = await import('../user-app-surface.service');
-    const [row] = await listMyScopeGrants(USER);
+    const rows = await listMyScopeGrants(USER);
+    // 🔴 THE CARD SURVIVES. A grant-only app — no install, no subscription, no recorded
+    // activity — has the grant leg as its ONLY source of a row, so skipping a fully-revoked
+    // grant deleted the app from the permissions surface entirely.
+    expect(
+      rows,
+      'a fully-revoked grant-only app vanished from the permissions surface, taking the ' +
+        '"Removed / you withdrew this" row and the revocation timestamp with it'
+    ).toHaveLength(1);
+    const [row] = rows;
+    expect(row.origin).toBe('consent');
     expect(row.grantedScopes).toEqual([]);
     expect(row.revokedScopes).toEqual([POSTS]);
+  });
+
+  /**
+   * 🔴 THE PRODUCTION SHAPE, AS `revokeScopes` ACTUALLY WRITES IT. The arm above varies
+   * `granted_scopes` to pin the subtraction rule; this one is the row a real
+   * withdraw-your-last-permission leaves behind — `granted_scopes` emptied,
+   * `revoked_scopes` holding everything, `revoked_at` and `revoked_scopes_at` stamped
+   * (`scope-grant.service.ts`' `fullyRevoked` branch).
+   *
+   * It is reachable WITHOUT an install or any activity: a consent-modal grant on a page mint
+   * needs neither, and `block_scope_invocation` rows come only from the REST `withBlockScope`
+   * middleware and the bridge procedures. So the grant leg is the only leg that can carry this
+   * app, and the whole revoke UI — the "Removed" marker, `scopesRevokedAt`, and every remaining
+   * row — hangs off the card existing.
+   */
+  it('a viewer who withdrew their ONLY permission still sees the app, and when', async () => {
+    const when = new Date('2026-09-27T09:00:00Z');
+    read.blockUserSubscription.findMany.mockResolvedValue([]);
+    read.appUserScopeGrant.findMany.mockResolvedValue([
+      grant({
+        grantedScopes: [],
+        revokedScopes: [SPEND, POSTS],
+        revokedAt: when,
+        revokedScopesAt: when,
+        // Non-null on purpose: a stored ceiling is what makes the `buzzBudgetPerDay` assertion
+        // below a real check of `usableConsentBudget` rather than a restatement of the fixture
+        // default. `revokeScopes` NULLs the column when the spend scope is among the revoked,
+        // but a row written before that rule — or revoked via a different scope first — can
+        // still carry one.
+        buzzBudgetPerDay: 500,
+      }),
+    ]);
+    const { listMyScopeGrants } = await import('../user-app-surface.service');
+    const rows = await listMyScopeGrants(USER);
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
+    expect(row.origin).toBe('consent');
+    expect(row.grantedScopes).toEqual([]);
+    expect(row.revokedScopes).toEqual([POSTS, SPEND].sort());
+    // The timestamp the drawer renders as "you last removed a permission on <date>".
+    expect(row.scopesRevokedAt).toEqual(when);
+    // The app-side row list is untouched — the page still says what the app may be exercised
+    // with, and each of those rows now reports its own consent state.
+    expect(row.scopes).toEqual([SPEND, POSTS, EXEMPT]);
+    // 🔴 AND NO BUDGET CONTROL. `usableConsentBudget` returns null on a revoked grant and
+    // `liveGrantedScopes` returns [], so the card cannot offer a spend ceiling for an app that
+    // can no longer spend — which was the stated reason the row used to be skipped outright.
+    expect(row.spendScopeGranted).toBe(false);
+    expect(row.buzzBudgetPerDay).toBeNull();
   });
 
   /**

@@ -460,16 +460,131 @@ describe('no manifest ceiling is applied', () => {
   });
 
   /**
-   * A PRE-EMPTIVE "no" for a scope the viewer has never been asked about is accepted, and it
-   * creates the row. If this no-op'd, the next install would union the scope in with no
-   * prompt — the resurrection hazard in the shape with nothing on screen to reveal it.
+   * 🔴 A CEILING ON THE **VIEWER'S** SET *IS* APPLIED, AND THAT IS NOT IN TENSION WITH THE ARM
+   * ABOVE. The manifest ceiling is the APP's declaration and it moves without the viewer's
+   * involvement, so it must not gate a withdrawal. `granted_scopes` is the viewer's OWN record of
+   * what they agreed to, and withdrawing requires something to withdraw.
+   *
+   * ⚠️ THIS ARM IS INVERTED. It read *"A PRE-EMPTIVE 'no' for a scope the viewer has never been
+   * asked about is accepted, and it creates the row. If this no-op'd, the next install would union
+   * the scope in with no prompt."* The premise is the part that failed: nothing no-op'd, because
+   * the viewer cannot reach this call for a scope they were never asked about except through a
+   * Remove button that should not have been rendered. `revokableScopes` is computed from the app's
+   * declared set alone, so a declared-but-never-granted scope rendered a live control whose click
+   * wrote a permanent suppression — and a suppression is not neutral: it survives every later
+   * install, so it makes a FUTURE consent prompt's grant inert. See the procedure's docblock.
+   *
+   * MUTATION THAT MUST KILL IT: drop the `notHeld` refusal from `blocks.revokeScopes`.
    */
-  it('records a suppression for a scope the viewer holds no grant for', async () => {
+  it('refuses a scope the viewer holds no grant for, storing nothing', async () => {
     grantMock.findUnique.mockResolvedValue(null);
-    const out = await caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] });
-    expect(grantMock.create).toHaveBeenCalledTimes(1);
-    expect(grantMock.create.mock.calls[0][0].data.revokedScopes).toEqual([SPEND]);
-    expect(out.fullyRevoked).toBe(true);
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] })).rejects.toThrow(
+      /have not granted/
+    );
+    expect(grantMock.create).not.toHaveBeenCalled();
+    expect(grantMock.update).not.toHaveBeenCalled();
+    // Nothing reached Redis either — the marker must not claim a suppression Postgres refused.
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  /**
+   * …AND THE SAME REFUSAL FOR A ROW THAT EXISTS BUT DOES NOT CONVEY THE SCOPE. The arm above
+   * varies "no row at all"; this one is the commoner shape — a live grant for something else.
+   * Both must refuse, or the fix covers only the case where the whole row is missing.
+   */
+  it('refuses a scope the grant row does not convey, naming it', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [POSTS],
+      revokedScopes: [],
+    });
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] })).rejects.toThrow(
+      new RegExp(SPEND)
+    );
+    expect(grantMock.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 ALREADY-REVOKED COUNTS AS NOT HELD, so pressing Remove twice is refused rather than
+   * re-writing the same suppression and refreshing `revoked_scopes_at` — which would move the
+   * "you last removed a permission on <date>" line for a call that changed nothing.
+   * `getGrantedScopes` subtracts `revoked_scopes`, which is what makes this fall out of the one
+   * check rather than needing a second.
+   */
+  it('refuses a scope that is already revoked', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [POSTS, SPEND],
+      revokedScopes: [SPEND],
+    });
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] })).rejects.toThrow(
+      /have not granted/
+    );
+    expect(grantMock.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 AND THE WHOLE CALL GOES, not the held half of it — matching the unknown and exempt
+   * refusals. A partial write would leave the caller unable to say which half landed.
+   */
+  it('refuses the WHOLE call when one scope of several is not held', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [POSTS],
+      revokedScopes: [],
+    });
+    await expect(
+      caller().revokeScopes({ appBlockId: APP, scopes: [POSTS, SPEND] })
+    ).rejects.toThrow(/have not granted/);
+    expect(grantMock.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE REFUSAL ORDER: an EXEMPT scope gets the exempt sentence, never the not-held one.
+   * An exempt scope is never in `granted_scopes` — `partitionByConsent` signs it on the exempt
+   * test alone, without recording a grant — so a not-held test placed FIRST would answer every
+   * exempt request with the generic "you have not granted that", losing the only sentence that
+   * tells the viewer what governs the permission instead of their consent.
+   *
+   * MUTATION THAT MUST KILL IT: move the `notHeld` block above the `exempt` block.
+   */
+  it('a consent-EXEMPT scope still gets the exempt sentence, not the not-held one', async () => {
+    grantMock.findUnique.mockResolvedValue({
+      id: 'augr_1',
+      grantedScopes: [POSTS],
+      revokedScopes: [],
+    });
+    await expect(
+      caller().revokeScopes({ appBlockId: APP, scopes: ['models:read:self'] })
+    ).rejects.toThrow(/granted by platform policy/);
+  });
+
+  /**
+   * 🔴 THE PRIMARY, NOT THE REPLICA. The write goes to the primary, so deciding this off the
+   * replica puts a viewer who consents and then immediately withdraws inside the replication
+   * window — the check answers "you never granted that" about a scope granted seconds ago. The
+   * same reasoning `grantScopes`' `alreadyGrantsSpend` check is already built on.
+   *
+   * MUTATION THAT MUST KILL IT: drop `db: 'write'` from the `getGrantedScopes` call (its default
+   * is the replica).
+   */
+  it('reads the granted set from the PRIMARY', async () => {
+    dbMock.dbRead.appUserScopeGrant.findUnique.mockReset();
+    // 🔴 THE OUTCOME IS SWALLOWED ON PURPOSE, so this arm fails on its OWN assertion. Off the
+    // replica the vivified `dbRead` node resolves `undefined`, `getGrantedScopes` therefore
+    // returns an empty set, and the procedure REFUSES — so an un-caught call would go red on the
+    // rejection rather than on the claim in the message below, i.e. red for the wrong reason.
+    // `dbRead` and `dbWrite` are distinct nodes in `db.mock`, which is what makes the negative
+    // assertion mean anything.
+    await caller()
+      .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+      .catch(() => undefined);
+    expect(
+      dbMock.dbRead.appUserScopeGrant.findUnique,
+      'the granted-set check read the REPLICA, so a viewer who consents and immediately withdraws ' +
+        'is told they never granted the scope'
+    ).not.toHaveBeenCalled();
+    expect(grantMock.findUnique).toHaveBeenCalled();
   });
 });
 

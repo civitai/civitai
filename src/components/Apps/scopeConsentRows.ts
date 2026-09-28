@@ -45,15 +45,28 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 /**
  * The consent state of one displayed scope row.
  *
- *   - `revokable` — the viewer may withdraw it, and a control is offered.
- *   - `revoked`   — the viewer HAS withdrawn it. Still rendered, marked, never dropped.
- *   - `fixed`     — it is signed without reference to the viewer's consent, so there is
- *                   nothing to withdraw. Rendered with an honest note, NOT a disabled
- *                   button and NOT silence.
- *   - `unknown`   — THE SERVER DID NOT TELL US. Distinct from `fixed`, and conflating the two
- *                   was a real defect: `revokableScopes` ABSENT is not `revokableScopes` EMPTY.
- *                   Rendered with NO affordance and NO note, because the only honest thing to
- *                   say is nothing.
+ *   - `revokable`   — the viewer may withdraw it, and a control is offered.
+ *   - `revoked`     — the viewer HAS withdrawn it. Still rendered, marked, never dropped.
+ *   - `not-granted` — the APP declares it and the viewer never agreed to it, so there is
+ *                     nothing to withdraw YET. A control here would offer an action the server
+ *                     now refuses.
+ *   - `fixed`       — it is signed without reference to the viewer's consent, so there is
+ *                     nothing to withdraw. Rendered with an honest note, NOT a disabled
+ *                     button and NOT silence.
+ *   - `unknown`     — THE SERVER DID NOT TELL US. Distinct from `fixed`, and conflating the two
+ *                     was a real defect: `revokableScopes` ABSENT is not `revokableScopes` EMPTY.
+ *                     Rendered with NO affordance and NO note, because the only honest thing to
+ *                     say is nothing.
+ *
+ * 🔴 WHY `not-granted` IS ITS OWN STATE RATHER THAN A NARROWER `revokableScopes`. The obvious
+ * spelling is to intersect `revokableScopes` with the granted set server-side, and it is wrong:
+ * a scope that fell out of `revokableScopes` lands in `fixed`, whose note says the permission is
+ * *"granted by platform policy rather than by your consent, and is bounded by server-side checks
+ * on every request instead"*. For a scope the viewer simply never agreed to, both halves are
+ * false — nothing granted it and nothing is enforcing it — and it is the same
+ * correct-control/false-copy combination this type's `unknown` state was introduced to stop.
+ * So the server keeps reporting the CONSENT-GATED set and the viewer's granted set separately,
+ * and the split happens here where both are in hand.
  *
  * 🔴 WHY `unknown` EXISTS RATHER THAN `?? []`. `ScopeConsentList` used to coalesce a missing
  * `revokableScopes` to `[]`, which made EVERY row `fixed` — so a genuinely withdrawable
@@ -73,7 +86,7 @@ import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
  * `isKnownBlockScope`, and `blocks.revokeScopes` rejects an unknown string outright, so
  * offering a control for one would produce a `BAD_REQUEST` the viewer cannot act on.
  */
-export type ScopeConsentState = 'revokable' | 'revoked' | 'fixed' | 'unknown';
+export type ScopeConsentState = 'revokable' | 'revoked' | 'not-granted' | 'fixed' | 'unknown';
 
 export type ScopeConsentRow = {
   scope: string;
@@ -99,18 +112,31 @@ export type ScopeConsentRow = {
  * geometry arms — which read the gap from the FIRST fixture scope's description down to the
  * SECOND's id — are measuring the same two rows they were written against.
  *
- * 🔴 THE STATE TESTS ARE ORDERED `revoked` → `revokable` → `fixed`, AND THE FIRST TWO CANNOT
- * BE SWAPPED. `revokedScopes` and `revokableScopes` OVERLAP by construction: `revokableScopes`
- * is computed from `displayedScopes` with no reference to what has been withdrawn, so a scope
- * the viewer just revoked is still in it — that is correct for the server (re-consent then
- * re-revoke must both be possible) and wrong for a row, which has one state. Testing
- * `revokable` first would render a live "Remove" button on a permission already gone and never
- * show the revoked marker at all.
+ * 🔴 THE STATE TESTS ARE ORDERED `revoked` → `unknown` → `fixed` → (`revokable` | `not-granted`),
+ * AND NO ADJACENT PAIR MAY BE SWAPPED.
+ *
+ *   - `revoked` BEFORE `revokable`: `revokedScopes` and `revokableScopes` OVERLAP by
+ *     construction — `revokableScopes` is computed from `displayedScopes` with no reference to
+ *     what has been withdrawn, so a scope the viewer just revoked is still in it. That is correct
+ *     for the server (re-consent then re-revoke must both be possible) and wrong for a row, which
+ *     has one state. Testing `revokable` first would render a live "Remove" button on a permission
+ *     already gone and never show the revoked marker at all.
+ *   - `unknown` AFTER `revoked`: a suppression we were told about is a fact we can still state
+ *     even on a payload missing the other fields, and hiding a known withdrawal is the one
+ *     regression this surface must never have.
+ *   - 🔴 `fixed` BEFORE `not-granted`, AND THIS IS THE ONE THAT PRESERVES THE EXEMPT COPY. A
+ *     `CONSENT_EXEMPT_SCOPES` member is NEVER in the granted set — `partitionByConsent` signs it
+ *     on the exempt test alone, before it looks at the grant, so no grant is ever recorded for one
+ *     — so testing `not-granted` first would relabel all seven and throw away their specific
+ *     `FIXED_SCOPE_NOTES` sentences, which are the only place a viewer learns what governs those
+ *     permissions instead of their consent. Membership of `revokableScopes` is therefore decided
+ *     first, and the granted set only splits what survives it.
  */
 export function buildScopeConsentRows({
   scopes,
   revokedScopes,
   revokableScopes,
+  grantedScopes,
 }: {
   scopes: string[];
   revokedScopes: string[];
@@ -121,20 +147,43 @@ export function buildScopeConsentRows({
    * honest note). Coalescing them at the caller is the defect this signature exists to prevent.
    */
   revokableScopes: string[] | undefined;
+  /**
+   * The viewer's LIVE granted set for this app — `ScopeGrantSurface.grantedScopes`, i.e.
+   * `granted_scopes ∖ revoked_scopes`, already empty for a whole-grant revoke.
+   *
+   * 🔴 IT IS DATA, NOT A SECOND COPY OF A DECISION, which is what makes reading it here safe
+   * while re-deriving the exempt set here would not be. The exempt set is POLICY that lives in
+   * `scope-grant.service.ts`; this is per-viewer state the server already sends verbatim on the
+   * same row. `blocks.revokeScopes` refuses a scope outside it, so a control offered on a scope
+   * missing from it is a button the server will reject.
+   *
+   * ⚠️ `undefined` MEANS THE SAME THING IT MEANS FOR `revokableScopes` — the server did not tell
+   * us — and yields `unknown`, not "granted nothing". The two are absent together (a pre-phase-2
+   * pod during a rollout's mixed-version window sends neither), so treating a missing granted set
+   * as empty would turn every row of such a payload into a `not-granted` claim about the viewer's
+   * own consent that we have no basis for.
+   */
+  grantedScopes: string[] | undefined;
 }): ScopeConsentRow[] {
   const revoked = new Set(revokedScopes);
   const revokable = revokableScopes === undefined ? undefined : new Set(revokableScopes);
+  const granted = grantedScopes === undefined ? undefined : new Set(grantedScopes);
   const state = (scope: string): ScopeConsentState =>
     revoked.has(scope)
       ? 'revoked'
       : // The `unknown` test sits AFTER `revoked`, deliberately: a suppression we were told about
-      // is a fact we can still state even on a payload missing `revokableScopes`, and hiding a
+      // is a fact we can still state even on a payload missing the other fields, and hiding a
       // known withdrawal would be the one regression this surface must never have.
-      revokable === undefined
+      revokable === undefined || granted === undefined
       ? 'unknown'
-      : revokable.has(scope)
+      : // 🔴 `revokableScopes` MEMBERSHIP IS TESTED BEFORE THE GRANTED SET — see the ordering
+      // rules above. Every consent-EXEMPT scope falls out here, keeping its own note, and only
+      // what survives is split by whether the viewer actually agreed to it.
+      !revokable.has(scope)
+      ? 'fixed'
+      : granted.has(scope)
       ? 'revokable'
-      : 'fixed';
+      : 'not-granted';
 
   const displayed = new Set(scopes);
   const rows: ScopeConsentRow[] = scopes.map((scope) => ({ scope, state: state(scope) }));

@@ -300,6 +300,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         //   - `revokableScope` (`ai:write:budgeted`) is consent-gated and known, so it is the one
         //     row carrying a real "Remove" button at this width.
         revokableScopes: [fixture.revokableScope],
+        // 🔴 AND THE VIEWER-SIDE SET, WHICH THE CONTROL ALSO DEPENDS ON. A row needs to be in the
+        // app's consent-gated set AND in the viewer's granted set to get a "Remove" button —
+        // `blocks.revokeScopes` refuses a scope the viewer never granted, so a control offered
+        // without this would be one the server rejects. Omitting the field is NOT neutral: it means
+        // "the server did not say", which renders every row in the `unknown` state with NO
+        // affordance at all — measured, that is exactly what took the consent child out of the two
+        // drawer arms below and made them measure a box no viewer gets. Same reason
+        // `revokableScopes` is here.
+        grantedScopes: [fixture.revokableScope],
         // BY REFERENCE — see `fixture.drawerRevoked`. Empty for every arm but the strike-through
         // one, which fills it in place and empties it again in a `finally`.
         revokedScopes: fixture.drawerRevoked,
@@ -1642,7 +1651,7 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
       'the scope row has no consent child — re-read the comment above, this arm may be measuring ' +
         'from the description again'
     ).toBeGreaterThanOrEqual(3);
-    expect(prevRowLastChild, 'the description is still the row\'s last child').not.toBe(description);
+    expect(prevRowLastChild, "the description is still the row's last child").not.toBe(description);
     const nextBadge = scopeBadge(fixture.longScope);
     const inter = px(
       nextBadge.getBoundingClientRect().top - prevRowLastChild.getBoundingClientRect().bottom
@@ -1653,7 +1662,7 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     expect(
       inter,
       `a description sits ${intra}px from its own id and the row ends ${inter}px from the next ` +
-        "one — a differential under 2x is not a grouping cue, and the reader pairs it with either"
+        'one — a differential under 2x is not a grouping cue, and the reader pairs it with either'
     ).toBeGreaterThan(intra * 2);
 
     // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE, and labelled as one: a single-line badge
@@ -1781,9 +1790,10 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
             '[data-testid="scope-revoked-row"]'
         )
     );
-    expect(silent.map((r) => r.textContent?.slice(0, 40)), 'rows with no consent affordance').toEqual(
-      []
-    );
+    expect(
+      silent.map((r) => r.textContent?.slice(0, 40)),
+      'rows with no consent affordance'
+    ).toEqual([]);
     await cleanup();
   });
 

@@ -741,8 +741,12 @@ export async function recordScopeGrant(opts: {
     //       mutation's own docblock argues narrowing is always safe and the ceiling MOVES (a
     //       publisher push replaces `manifest` without re-approval), so filtering would refuse to
     //       revoke exactly the scopes a viewer granted last month. `revokableScopes` is what the
-    //       UI OFFERS, which is not an enforcement boundary — a client may send any known
-    //       non-exempt scope. And revoking the stale scope WOULD empty the residual, via (a).
+    //       UI OFFERS, which is not an enforcement boundary. ⚠️ THE NEXT CLAUSE READ *"a client may
+    //       send any known non-exempt scope"* AND IS RETRACTED: `blocks.revokeScopes` now also
+    //       refuses a scope outside the viewer's LIVE granted set (`getGrantedScopes`, primary
+    //       read), so the reachable set is narrower than the vocabulary — but still not the
+    //       manifest ceiling, which is the only thing this bullet turns on. And revoking the stale
+    //       scope WOULD empty the residual, via (a).
     //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. It has
     //       no early return before its read; that read selects `revokedScopes` and has no narrow
     //       fallback, so the P2022 is rethrown as `PRECONDITION_FAILED` — and the WRITE path
@@ -1115,12 +1119,18 @@ export type RevokeScopesResult = {
  *                         later re-consent restored the scope — a number the user set in
  *                         a dialog they have since walked back.
  *
- * 🔴 CREATES A ROW IF NONE EXISTS, rather than no-op'ing. A viewer can reach a revoke
- * control for an app they hold no grant row for (an app whose scopes are all exempt, an
- * activity-only row, a grant that was never written because the flow short-circuited). If
- * the answer there were "nothing to do", the NEXT install would grant the scope with no
- * prompt — the resurrection hazard again, in the shape where it is hardest to see. A row
- * with `granted_scopes: []` and the suppression set is fail-closed and durable.
+ * 🔴 CREATES A ROW IF NONE EXISTS, rather than no-op'ing — kept as a property of the SERVICE, and
+ * ⚠️ NO LONGER REACHABLE THROUGH ITS ONLY CALLER. The paragraph here used to justify it with *"a
+ * viewer can reach a revoke control for an app they hold no grant row for (an app whose scopes are
+ * all exempt, an activity-only row, a grant that was never written because the flow
+ * short-circuited)"*, and that reachability is GONE: `blocks.revokeScopes` now refuses any scope
+ * outside the viewer's live granted set, and no grant row means an empty granted set, so the
+ * refusal fires before this function is called. (The three cases named were themselves the defect —
+ * a control on a permission never given — not a requirement.) The create branch stays because this
+ * function's contract is "records whatever it is told" and a future caller may legitimately need
+ * it: a row with `granted_scopes: []` and the suppression set is fail-closed and durable, which is
+ * the right shape if a pre-emptive suppression is ever wanted deliberately. It is an invariant
+ * guard today, not a live branch, and its tests should be read as such.
  *
  * 🔴 PRIMARY, NOT REPLICA, on both the read and the write — this is a read-modify-write
  * of a consent ledger. Off the replica a revoke issued moments after a consent would
