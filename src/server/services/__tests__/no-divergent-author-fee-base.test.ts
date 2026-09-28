@@ -1480,10 +1480,22 @@ describe('this file filters by depth wherever it matters', () => {
     // measured green by a review round. Enumerated over the slice SOURCES this file
     // iterates, so a NEW source is covered only if it is added here. Said plainly rather
     // than implied.
+    // 🔴 THE BINDING IS CAPTURE GROUP 1 IN BOTH ALTERNATIVES, and the slice source is a
+    // NON-capturing group in both. An earlier revision captured the source too and read
+    // `m[1] ?? m[2]`, which silently read a source NAME as a binding whenever group 1 did
+    // not participate — a shape that reports "binds `charges`" and is meaningless.
+    //
+    // `.forEach((x) =>` is recognised as well as `for…of`, and an ARRAY pattern as well as
+    // an object one: `sites.forEach((charge) => …)` and
+    // `for (const [, charge] of sites.entries())` are ordinary rewrites of a one-line
+    // `for…of` and both walked past the first version of this guard. `quotes` is NOT
+    // enumerated — no loop uses it, and listing a source that cannot match inflates the
+    // apparent reach of this scan.
+    const BIND = String.raw`(\{[^}]*\}|\[[^\]]*\]|\w+)`;
+    const SRC = String.raw`(?:sites|charges|quoteOwners|callSites\()`;
     const loops = [
-      ...SELF.matchAll(
-        /for \(const (\{[^}]*\}|\w+) of (sites|charges|quotes|quoteOwners|callSites\()/g
-      ),
+      ...SELF.matchAll(new RegExp(String.raw`for \(const ${BIND} of ` + SRC, 'g')),
+      ...SELF.matchAll(new RegExp(SRC + String.raw`\.forEach\(\(?${BIND}`, 'g')),
     ];
     // Positive control: the loop pattern must actually find this file's loops.
     expect(
@@ -1502,9 +1514,10 @@ describe('this file filters by depth wherever it matters', () => {
       // only looks wrong if you count with a tool that has neither.
     ).toBeGreaterThanOrEqual(11);
     const wrong = loops
-      // `for…of` captures the binding in group 1, `.forEach` in group 2.
+      // Group 1 in BOTH alternatives — see the note above. A match with no group 1 would be
+      // a pattern bug, so surface it rather than coercing it away.
       .map((m) => ({
-        bound: m[1] ?? m[2],
+        bound: m[1] ?? '<no binding captured — the loop pattern is wrong>',
         line: SELF.slice(0, m.index).split('\n').length,
       }))
       // An object OR array pattern is fine as long as it destructures `site` out.
