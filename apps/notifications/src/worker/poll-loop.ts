@@ -277,7 +277,8 @@ export const run = async () => {
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
       for (const { userId, id, createdAt } of affectBatches[i]!) {
-        await notificationCache.incrementUser(userId, row.category);
+        // A failed counter bump must not cost the remaining recipients their signals.
+        await notificationCache.incrementUser(userId, row.category).catch(() => null);
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
         // outcome counting — non-2xx AND network/throw both count as `failure` (the old server silently
         // POSTed to a non-existent endpoint; that drop is now scrapeable).

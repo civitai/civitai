@@ -20,8 +20,8 @@ One process owns the whole notification write side:
   `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
 - **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
-  and POSTs a realtime `notification:new` signal per affected user while bumping the redis unread
-  counter.
+  and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
+  counter only if one is already cached (an uncached user is recounted from the DB on the next read).
 - **Ops routes** — `GET /health` (no-dep liveness), `GET /pool-stats` (notif pool snapshots),
   `GET /metrics` (Prometheus, private-by-XFF).
 

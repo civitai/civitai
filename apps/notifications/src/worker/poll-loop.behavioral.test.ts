@@ -450,6 +450,33 @@ describe('run (poll pass)', () => {
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
   });
 
+  it('still bumps and signals the remaining recipients when one counter bump fails', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      userInsert: {
+        rows: [
+          { id: 9, userId: 11, createdAt: 'q' },
+          { id: 10, userId: 12, createdAt: 'q' },
+        ],
+      },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, users: [11, 12], debounceSeconds: null }];
+    vi.mocked(notificationCache.incrementUser).mockRejectedValueOnce(new Error('CLUSTERDOWN'));
+
+    await run();
+
+    expect(vi.mocked(notificationCache.incrementUser).mock.calls).toEqual([
+      [11, 'Comment'],
+      [12, 'Comment'],
+    ]);
+    const signalled = (globalThis.fetch as any).mock.calls.map(([url]: [string]) => url);
+    expect(signalled).toEqual([
+      expect.stringContaining('/users/11/signals/'),
+      expect.stringContaining('/users/12/signals/'),
+    ]);
+  });
+
   it('does no work when there are no pending rows', async () => {
     h.state.pendingRows = [];
     await run();
