@@ -101,6 +101,7 @@
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
+    "test:text-scan": "cross-env NODE_ENV=development npx playwright test -c playwright.text-scan.config.ts",
     "test:reset": "make bootstrap-db",
     "test:unit": "vitest --project 'unit*'",
     "test:unit:run": "node scripts/test-unit-run.mjs",
