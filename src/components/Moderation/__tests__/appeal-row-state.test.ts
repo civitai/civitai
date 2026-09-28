@@ -17,13 +17,21 @@ describe('appealRowState', () => {
     expect(appealRowState(row({ minor: true, flagSource: 'manual' })).showHashMatch).toBe(true);
     expect(appealRowState(row({ minor: true, flagSource: 'text-scan' })).showHashMatch).toBe(false);
     expect(
-      appealRowState(row({ minor: true, flagSource: 'manual', flagConfirmedFrom: 'text-scan' })).showHashMatch
+      appealRowState(row({ minor: true, flagSource: 'manual', flagConfirmedFrom: 'text-scan' }))
+        .showHashMatch
     ).toBe(false);
-    expect(appealRowState(row({ poi: true, textScanFlags: { poi: verdict } })).showHashMatch).toBe(false);
+    expect(appealRowState(row({ poi: true, textScanFlags: { poi: verdict } })).showHashMatch).toBe(
+      false
+    );
   });
 
   it('offers a split decision only while both labels are open', () => {
-    const both = row({ minor: true, poi: true, flagSource: 'text-scan', textScanFlags: { poi: verdict, minor: verdict } });
+    const both = row({
+      minor: true,
+      poi: true,
+      flagSource: 'text-scan',
+      textScanFlags: { poi: verdict, minor: verdict },
+    });
     expect(appealRowState(both).bothFlagged).toBe(true);
     const granted = row({
       minor: true,
@@ -37,11 +45,15 @@ describe('appealRowState', () => {
     const stubbed = row({
       minor: true,
       flagSource: 'auto',
-      textScanFlags: { minor: { appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'moderator' } } },
+      textScanFlags: {
+        minor: { appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'moderator' } },
+      },
     });
     expect(appealRowState(stubbed).verdictLabels).toEqual([]);
     expect(appealRowState(stubbed).sourceLabel).toBe('Auto');
-    expect(appealRowState(row({ poi: true, textScanFlags: { poi: verdict } })).sourceLabel).toBe('Text scan');
+    expect(appealRowState(row({ poi: true, textScanFlags: { poi: verdict } })).sourceLabel).toBe(
+      'Text scan'
+    );
     expect(appealRowState(row()).sourceLabel).toBe('Reverted');
   });
 });

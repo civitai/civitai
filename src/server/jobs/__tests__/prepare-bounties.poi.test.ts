@@ -88,7 +88,16 @@ beforeEach(() => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) {
         const id = values[0] as number;
-        return [{ complete: false, refunded: false, poi: false, availability: 'Public', meta: null, ...locked[id] }];
+        return [
+          {
+            complete: false,
+            refunded: false,
+            poi: false,
+            availability: 'Public',
+            meta: null,
+            ...locked[id],
+          },
+        ];
       }
       if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
       if (sql.includes('FROM "BountyEntry" be')) return [{ id: 99, userId: 7 }];
@@ -106,7 +115,9 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
 
     expect(executedStatements.some((sql) => sql.includes('UPDATE "BountyBenefactor"'))).toBe(false);
     expect(
-      executedStatements.some((sql) => /"complete" = true, "refunded" = true WHERE b.id = 7/.test(sql))
+      executedStatements.some((sql) =>
+        /"complete" = true, "refunded" = true WHERE b.id = 7/.test(sql)
+      )
     ).toBe(true);
     // A supporter who already awarded an entry keeps that award; only the rest is returned.
     expect(mockRefund).toHaveBeenCalledWith(
@@ -134,11 +145,16 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
         poi: false,
         availability: 'Public',
         meta: {
-          textScanFlags: { poi: { ...OPEN_POI.textScanFlags.poi, appealGranted: { at: 'x', by: 1 } } },
+          textScanFlags: {
+            poi: { ...OPEN_POI.textScanFlags.poi, appealGranted: { at: 'x', by: 1 } },
+          },
         },
       },
     ],
-    ['a moderator-set private bounty with no text-scan flag', { poi: true, availability: 'Private' }],
+    [
+      'a moderator-set private bounty with no text-scan flag',
+      { poi: true, availability: 'Private' },
+    ],
   ])('pays out as before for %s', async (_label, state) => {
     locked[7] = state;
     sweep([7]);

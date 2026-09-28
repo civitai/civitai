@@ -1544,7 +1544,12 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
-  const poiEntry = { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', textHash: 'h-text' };
+  const poiEntry = {
+    at: 'x',
+    workflowId: 'wf-1',
+    reason: 'Names a real actor.',
+    textHash: 'h-text',
+  };
 
   it('overturns a text-scan poi flag without touching the minor-hash rollback', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
@@ -1588,9 +1593,10 @@ describe('resolveMinorFlagAppeal', () => {
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
-    const rollbackOrder = mockTrackModActivity.mock.invocationCallOrder[
-      mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
-    ];
+    const rollbackOrder =
+      mockTrackModActivity.mock.invocationCallOrder[
+        mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
+      ];
     expect(rollbackOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
     expect(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]).toBeLessThan(
       mockStampModelTextScanAppeal.mock.invocationCallOrder[0]
@@ -1621,7 +1627,10 @@ describe('resolveMinorFlagAppeal', () => {
       labels: { minor: 'uphold', poi: 'overturn' },
     });
 
-    expect(mockTrackModActivity).toHaveBeenCalledWith(7, expect.objectContaining({ activity: 'setMinor' }));
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'setMinor' })
+    );
     expect(mockTrackModActivity).not.toHaveBeenCalledWith(
       7,
       expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
@@ -1743,7 +1752,9 @@ describe('resolveMinorFlagAppeal', () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: false,
       poi: true,
-      meta: { textScanFlags: { poi: { ...poiEntry, appealGranted: { at: 'x', by: 1, textHash: 'h' } } } },
+      meta: {
+        textScanFlags: { poi: { ...poiEntry, appealGranted: { at: 'x', by: 1, textHash: 'h' } } },
+      },
     });
 
     await expect(
@@ -1775,7 +1786,9 @@ describe('resolveMinorFlagAppeal', () => {
       mockTrackModActivity.mock.invocationCallOrder[
         mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
       ];
-    expect(rollbackOrder).toBeLessThan(mockReassertModelPoiRestrictions.mock.invocationCallOrder[0]);
+    expect(rollbackOrder).toBeLessThan(
+      mockReassertModelPoiRestrictions.mock.invocationCallOrder[0]
+    );
     expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(42);
     expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
   });

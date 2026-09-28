@@ -8,7 +8,10 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 
 const subject = (text: string, declared = {}) => ({
-  fields: [{ heading: 'Name', text }, { heading: 'Description', text: 'x'.repeat(50_000) }],
+  fields: [
+    { heading: 'Name', text },
+    { heading: 'Description', text: 'x'.repeat(50_000) },
+  ],
   declared,
 });
 
@@ -16,13 +19,18 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('textScanTextHash', () => {
   it('depends on the text only, not on declared flags', () => {
-    expect(textScanTextHash(subject('A', { poi: true }))).toBe(textScanTextHash(subject('A', { poi: false })));
+    expect(textScanTextHash(subject('A', { poi: true }))).toBe(
+      textScanTextHash(subject('A', { poi: false }))
+    );
   });
 
   it('changes when the text changes, including past any maxInputChars cap', () => {
     expect(textScanTextHash(subject('A'))).not.toBe(textScanTextHash(subject('B')));
     const long = subject('A');
-    const edited = { ...long, fields: [long.fields[0], { heading: 'Description', text: `${'x'.repeat(50_000)}y` }] };
+    const edited = {
+      ...long,
+      fields: [long.fields[0], { heading: 'Description', text: `${'x'.repeat(50_000)}y` }],
+    };
     expect(textScanTextHash(long)).not.toBe(textScanTextHash(edited));
   });
 });
@@ -53,11 +61,22 @@ describe('loadTextScanTextHash', () => {
 describe('stampModeratorTextScanRuling', () => {
   it('writes a moderator ruling on the current text for the label', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([
-      { id: 7, userId: 5, name: 'M', description: null, nsfw: false, poi: false, minor: true, modelVersions: [] },
+      {
+        id: 7,
+        userId: 5,
+        name: 'M',
+        description: null,
+        nsfw: false,
+        poi: false,
+        minor: true,
+        modelVersions: [],
+      },
     ]);
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 
-    expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(true);
+    expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(
+      true
+    );
 
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = Array.from(call[0] as TemplateStringsArray).join('?');
@@ -68,7 +87,9 @@ describe('stampModeratorTextScanRuling', () => {
 
   it('writes nothing and reports false when the text cannot be read', async () => {
     dbMock.dbWrite.model.findMany.mockResolvedValue([]);
-    expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(false);
+    expect(await stampModeratorTextScanRuling({ modelId: 7, userId: 3, label: 'minor' })).toBe(
+      false
+    );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

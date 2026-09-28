@@ -643,7 +643,10 @@ export async function revertMinorHashAutoFlag({
   recordTextScanRuling?: boolean;
 }) {
   // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
-  if (recordTextScanRuling && !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' })))
+  if (
+    recordTextScanRuling &&
+    !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' }))
+  )
     logToAxiom({
       type: 'error',
       name: 'text-scan',

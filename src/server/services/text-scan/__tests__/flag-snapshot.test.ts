@@ -75,7 +75,11 @@ describe('appealGrantCoversText', () => {
 describe('hasTextScanVerdict', () => {
   it('is true for a scan verdict and false for a ruling stub', () => {
     expect(hasTextScanVerdict({ textScanFlags: { minor: entry() } }, 'minor')).toBe(true);
-    const stub = { textScanFlags: { minor: { appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'moderator' } } } };
+    const stub = {
+      textScanFlags: {
+        minor: { appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'moderator' } },
+      },
+    };
     expect(hasTextScanVerdict(stub, 'minor')).toBe(false);
     expect(hasOpenTextScanFlag(stub, 'minor')).toBe(false);
   });
@@ -114,7 +118,11 @@ describe('isModelFlagAppealable', () => {
   // Snapshot capture is best-effort, so a text-scan minor flag must stay appealable without it.
   it('accepts a minor flag with an open text-scan minor verdict and no snapshot', () => {
     expect(
-      isModelFlagAppealable({ minor: true, poi: false, meta: { textScanFlags: { minor: entry() } } })
+      isModelFlagAppealable({
+        minor: true,
+        poi: false,
+        meta: { textScanFlags: { minor: entry() } },
+      })
     ).toBe(true);
   });
 
@@ -148,9 +156,13 @@ describe('isModelFlagAppealable', () => {
 
 describe('isBountyFlagAppealable', () => {
   it('needs poi AND an open text-scan entry', () => {
-    expect(isBountyFlagAppealable({ poi: true, meta: { textScanFlags: { poi: entry() } } })).toBe(true);
+    expect(isBountyFlagAppealable({ poi: true, meta: { textScanFlags: { poi: entry() } } })).toBe(
+      true
+    );
     expect(isBountyFlagAppealable({ poi: true, meta: null })).toBe(false);
-    expect(isBountyFlagAppealable({ poi: false, meta: { textScanFlags: { poi: entry() } } })).toBe(false);
+    expect(isBountyFlagAppealable({ poi: false, meta: { textScanFlags: { poi: entry() } } })).toBe(
+      false
+    );
   });
 });
 

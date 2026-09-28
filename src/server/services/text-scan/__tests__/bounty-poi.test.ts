@@ -38,11 +38,15 @@ vi.mock('~/server/services/text-scan/actions/appeal-text-hash', async (importOri
   queueTextScanRescan: mockQueueTextScanRescan,
 }));
 
-const { applyBountyPoi, resolveBountyPoiAppeal } = await import('~/server/services/text-scan/actions/bounty-poi');
+const { applyBountyPoi, resolveBountyPoiAppeal } = await import(
+  '~/server/services/text-scan/actions/bounty-poi'
+);
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const sqlOf = (call: unknown[]) => Array.from(call[0] as TemplateStringsArray).join('?');
-const outcome = (poi: Partial<NonNullable<TextScanOutcome['poi']>> | undefined): TextScanOutcome => ({
+const outcome = (
+  poi: Partial<NonNullable<TextScanOutcome['poi']>> | undefined
+): TextScanOutcome => ({
   triggeredLabels: [],
   nsfwLevel: null,
   poi: poi && {
@@ -95,7 +99,9 @@ describe('applyBountyPoi', () => {
     expect(text).toContain(`->'poi' IS NULL`);
     expect(text).toContain(`->'appealGranted'->>'textHash' IS DISTINCT FROM `);
     expect(call.slice(1)).toContain(textScanTextHash(SUBJECT));
-    const entry = JSON.parse(call.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string);
+    const entry = JSON.parse(
+      call.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string
+    );
     expect(entry.names).toEqual(['Jane Doe']);
     expect(entry.textHash).toBe(textScanTextHash(SUBJECT));
   });
@@ -136,10 +142,19 @@ describe('applyBountyPoi', () => {
 });
 
 describe('resolveBountyPoiAppeal', () => {
-  const poiEntry = { at: 'x', workflowId: 'wf-1', reason: 'r', textHash: 'h-text', prev: { availability: 'Public' } };
+  const poiEntry = {
+    at: 'x',
+    workflowId: 'wf-1',
+    reason: 'r',
+    textHash: 'h-text',
+    prev: { availability: 'Public' },
+  };
 
   beforeEach(() => {
-    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({ poi: true, meta: { textScanFlags: { poi: poiEntry } } });
+    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
+      poi: true,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   });
 
@@ -175,7 +190,10 @@ describe('resolveBountyPoiAppeal', () => {
   });
 
   it('refuses to uphold a bounty that is no longer flagged', async () => {
-    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({ poi: false, meta: { textScanFlags: { poi: poiEntry } } });
+    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
+      poi: false,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
     await expect(
       resolveBountyPoiAppeal({ bountyId: 9, uphold: true, userId: 3 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -184,7 +202,9 @@ describe('resolveBountyPoiAppeal', () => {
 
   it('leaves the appeal open when the restore write fails', async () => {
     dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(new Error('boom'));
-    await expect(resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).rejects.toThrow('boom');
+    await expect(resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).rejects.toThrow(
+      'boom'
+    );
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 

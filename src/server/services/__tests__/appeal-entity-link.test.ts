@@ -29,7 +29,11 @@ describe('appealEntityLink', () => {
 
 describe('getAppealDetails', () => {
   it('returns the bounty for a Bounty appeal', async () => {
-    dbMock.dbRead.appeal.findUnique.mockResolvedValue({ id: 1, entityType: EntityType.Bounty, entityId: 9 });
+    dbMock.dbRead.appeal.findUnique.mockResolvedValue({
+      id: 1,
+      entityType: EntityType.Bounty,
+      entityId: 9,
+    });
     dbMock.dbRead.bounty.findUnique.mockResolvedValue({ id: 9, name: 'B', userId: 5 });
     const details = await getAppealDetails({ id: 1 });
     expect(details.entityDetails).toEqual({ id: 9, name: 'B', userId: 5 });
@@ -53,9 +57,19 @@ describe('resolveEntityAppeal — resolved notification key', () => {
     });
 
     dbMock.dbRead.appeal.findMany.mockResolvedValueOnce([appealRow(first)]);
-    await resolveEntityAppeal({ ids: [9], entityType: EntityType.Bounty, status: AppealStatus.Rejected, userId: 3 });
+    await resolveEntityAppeal({
+      ids: [9],
+      entityType: EntityType.Bounty,
+      status: AppealStatus.Rejected,
+      userId: 3,
+    });
     dbMock.dbRead.appeal.findMany.mockResolvedValueOnce([appealRow(second)]);
-    await resolveEntityAppeal({ ids: [9], entityType: EntityType.Bounty, status: AppealStatus.Approved, userId: 3 });
+    await resolveEntityAppeal({
+      ids: [9],
+      entityType: EntityType.Bounty,
+      status: AppealStatus.Approved,
+      userId: 3,
+    });
 
     const keys = mockCreateNotification.mock.calls.map(([arg]) => arg.key);
     expect(keys).toEqual([
@@ -76,11 +90,20 @@ describe('generic appeal row helpers', () => {
   });
 
   it('reopens the existing row for any entity type', async () => {
-    await reopenEntityAppeal({ entityType: EntityType.Bounty, entityId: 9, userId: 5, message: 'm' });
+    await reopenEntityAppeal({
+      entityType: EntityType.Bounty,
+      entityId: 9,
+      userId: 5,
+      message: 'm',
+    });
     const { where, data } = dbMock.dbWrite.appeal.update.mock.calls[0][0];
     expect(where).toEqual({
       entityType_entityId_userId: { entityType: EntityType.Bounty, entityId: 9, userId: 5 },
     });
-    expect(data).toMatchObject({ status: AppealStatus.Pending, appealMessage: 'm', resolvedAt: null });
+    expect(data).toMatchObject({
+      status: AppealStatus.Pending,
+      appealMessage: 'm',
+      resolvedAt: null,
+    });
   });
 });

@@ -21,7 +21,10 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
-  return SearchIndexUpdate.queueUpdate({ indexName: BOUNTIES_SEARCH_INDEX, items: [{ id, action }] });
+  return SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: [{ id, action }],
+  });
 }
 
 export async function applyBountyPoi({

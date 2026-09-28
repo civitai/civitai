@@ -8,19 +8,29 @@ import type * as BountyService from '~/server/services/bounty.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockAssert, mockGetEntries, mockGetBenefactors, mockGetEntryById, mockGetEntryFiles, mockGetComments, mockGetThread, mockGetCount, mockUpsertBounty, mockDeleteBounty } =
-  vi.hoisted(() => ({
-    mockAssert: vi.fn(),
-    mockGetEntries: vi.fn(async () => []),
-    mockGetBenefactors: vi.fn(async () => []),
-    mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
-    mockGetEntryFiles: vi.fn(async () => []),
-    mockGetComments: vi.fn(async () => null),
-    mockGetThread: vi.fn(async () => null),
-    mockGetCount: vi.fn(async () => 0),
-    mockUpsertBounty: vi.fn(),
-    mockDeleteBounty: vi.fn(),
-  }));
+const {
+  mockAssert,
+  mockGetEntries,
+  mockGetBenefactors,
+  mockGetEntryById,
+  mockGetEntryFiles,
+  mockGetComments,
+  mockGetThread,
+  mockGetCount,
+  mockUpsertBounty,
+  mockDeleteBounty,
+} = vi.hoisted(() => ({
+  mockAssert: vi.fn(),
+  mockGetEntries: vi.fn(async () => []),
+  mockGetBenefactors: vi.fn(async () => []),
+  mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
+  mockGetEntryFiles: vi.fn(async () => []),
+  mockGetComments: vi.fn(async () => null),
+  mockGetThread: vi.fn(async () => null),
+  mockGetCount: vi.fn(async () => 0),
+  mockUpsertBounty: vi.fn(),
+  mockDeleteBounty: vi.fn(),
+}));
 
 vi.mock('~/server/services/bounty-visibility', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyVisibility>()),
@@ -82,15 +92,19 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-const { getBountyEntriesHandler, getBountyBenefactorsHandler, addBenefactorUnitAmountHandler, upsertBountyHandler, deleteBountyHandler } = await import('../bounty.controller');
+const {
+  getBountyEntriesHandler,
+  getBountyBenefactorsHandler,
+  addBenefactorUnitAmountHandler,
+  upsertBountyHandler,
+  deleteBountyHandler,
+} = await import('../bounty.controller');
 const {
   getBountyEntryHandler,
   getBountyEntryFilteredFilesHandler,
   upsertBountyEntryHandler,
   submitBountyEntryHandler,
-} = await import(
-  '../bountyEntry.controller'
-);
+} = await import('../bountyEntry.controller');
 const { getCommentsInfiniteHandler, getCommentsThreadDetailsHandler, getCommentCountV2Handler } =
   await import('../commentv2.controller');
 
@@ -103,10 +117,30 @@ beforeEach(() => {
 
 describe('a Private bounty is not reachable through its satellite reads', () => {
   it.each([
-    ['getEntries', () => getBountyEntriesHandler({ input: { id: 9 } as never, ctx: stranger }), mockGetEntries, { bountyId: 9 }],
-    ['getBenefactors', () => getBountyBenefactorsHandler({ input: { id: 9 }, ctx: stranger }), mockGetBenefactors, { bountyId: 9 }],
-    ['entry detail', () => getBountyEntryHandler({ input: { id: 3 }, ctx: stranger }), mockGetEntryById, { entryId: 3 }],
-    ['entry files', () => getBountyEntryFilteredFilesHandler({ input: { id: 3 }, ctx: stranger }), mockGetEntryFiles, { entryId: 3 }],
+    [
+      'getEntries',
+      () => getBountyEntriesHandler({ input: { id: 9 } as never, ctx: stranger }),
+      mockGetEntries,
+      { bountyId: 9 },
+    ],
+    [
+      'getBenefactors',
+      () => getBountyBenefactorsHandler({ input: { id: 9 }, ctx: stranger }),
+      mockGetBenefactors,
+      { bountyId: 9 },
+    ],
+    [
+      'entry detail',
+      () => getBountyEntryHandler({ input: { id: 3 }, ctx: stranger }),
+      mockGetEntryById,
+      { entryId: 3 },
+    ],
+    [
+      'entry files',
+      () => getBountyEntryFilteredFilesHandler({ input: { id: 3 }, ctx: stranger }),
+      mockGetEntryFiles,
+      { entryId: 3 },
+    ],
   ])('%s 404s before reading anything', async (_label, call, downstream, target) => {
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockAssert).toHaveBeenCalledWith(target, { id: 6 });
@@ -114,9 +148,33 @@ describe('a Private bounty is not reachable through its satellite reads', () => 
   });
 
   it.each([
-    ['getInfinite', () => getCommentsInfiniteHandler({ input: { entityType: 'bounty', entityId: 9 } as never, ctx: stranger }), mockGetComments],
-    ['getThreadDetails', () => getCommentsThreadDetailsHandler({ input: { entityType: 'bountyEntry', entityId: 3 } as never, ctx: stranger }), mockGetThread],
-    ['getCount', () => getCommentCountV2Handler({ input: { entityType: 'bounty', entityId: 9 } as never, ctx: stranger }), mockGetCount],
+    [
+      'getInfinite',
+      () =>
+        getCommentsInfiniteHandler({
+          input: { entityType: 'bounty', entityId: 9 } as never,
+          ctx: stranger,
+        }),
+      mockGetComments,
+    ],
+    [
+      'getThreadDetails',
+      () =>
+        getCommentsThreadDetailsHandler({
+          input: { entityType: 'bountyEntry', entityId: 3 } as never,
+          ctx: stranger,
+        }),
+      mockGetThread,
+    ],
+    [
+      'getCount',
+      () =>
+        getCommentCountV2Handler({
+          input: { entityType: 'bounty', entityId: 9 } as never,
+          ctx: stranger,
+        }),
+      mockGetCount,
+    ],
   ])('comments %s on a hidden bounty 404s', async (_label, call, downstream) => {
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(downstream).not.toHaveBeenCalled();
@@ -124,7 +182,10 @@ describe('a Private bounty is not reachable through its satellite reads', () => 
 
   // The control: a comment thread on anything but a bounty never pays for the lookup.
   it('leaves other comment threads alone', async () => {
-    await getCommentsInfiniteHandler({ input: { entityType: 'image', entityId: 1 } as never, ctx: stranger });
+    await getCommentsInfiniteHandler({
+      input: { entityType: 'image', entityId: 1 } as never,
+      ctx: stranger,
+    });
     expect(mockAssert).not.toHaveBeenCalled();
     expect(mockGetComments).toHaveBeenCalled();
   });

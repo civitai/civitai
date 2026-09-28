@@ -150,7 +150,9 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       },
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
-    if (!canViewBounty({ availability: bounty.availability, userId: bounty.user?.id ?? null }, user))
+    if (
+      !canViewBounty({ availability: bounty.availability, userId: bounty.user?.id ?? null }, user)
+    )
       throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {

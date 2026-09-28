@@ -3,14 +3,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { TextScanOutcome } from '~/server/services/text-scan/types';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChangesMock } = vi.hoisted(
-  () => ({
+const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChangesMock } =
+  vi.hoisted(() => ({
     mockSetModelMinor: vi.fn(),
     mockSideEffects: vi.fn(),
     mockCreateNotification: vi.fn(),
     entityChangesMock: vi.fn(),
-  })
-);
+  }));
 
 // Hand-listed: the real model.service pulls the whole model graph (meili, prom, redis) at load.
 vi.mock('~/server/services/model.service', () => ({
@@ -36,9 +35,7 @@ const {
   reassertModelPoiRestrictions,
   stampModelTextScanAppeal,
   POI_LOCKED_PROPERTIES,
-} = await import(
-  '~/server/services/text-scan/actions/model-poi-minor'
-);
+} = await import('~/server/services/text-scan/actions/model-poi-minor');
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
@@ -157,7 +154,9 @@ describe('applyModelPoiMinor — poi', () => {
     const values = call.slice(1);
     expect(values).toContainEqual(POI_LOCKED_PROPERTIES);
     expect(values).toContain(sfwBrowsingLevelsFlag);
-    const entry = JSON.parse(values.find((v) => typeof v === 'string' && v.includes('wf-1')) as string);
+    const entry = JSON.parse(
+      values.find((v) => typeof v === 'string' && v.includes('wf-1')) as string
+    );
     expect(entry).toEqual({
       workflowId: 'wf-1',
       reason: 'Names a real actor.',
@@ -170,7 +169,10 @@ describe('applyModelPoiMinor — poi', () => {
     await run(outcome({ poi: poi() }));
 
     expect(mockSideEffects).toHaveBeenCalledWith(
-      expect.objectContaining({ before: expect.objectContaining({ poi: false }), after: flaggedRow })
+      expect.objectContaining({
+        before: expect.objectContaining({ poi: false }),
+        after: flaggedRow,
+      })
     );
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
     expect(bustPublicModelResponseCache).toHaveBeenCalledWith(MODEL_ID);
@@ -188,7 +190,13 @@ describe('applyModelPoiMinor — poi', () => {
   // Review Focus 1: the notifications worker reuses a Notification row by key, so a key without
   // the workflow would deliver the first flag and swallow every later re-flag.
   it('the key carries the workflow, so a later re-flag reaches the owner', async () => {
-    await applyModelPoiMinor({ entityId: MODEL_ID, workflowId: 'wf-2', outcome: outcome({ poi: poi() }), subject: SUBJECT, textHash: textScanTextHash(SUBJECT) });
+    await applyModelPoiMinor({
+      entityId: MODEL_ID,
+      workflowId: 'wf-2',
+      outcome: outcome({ poi: poi() }),
+      subject: SUBJECT,
+      textHash: textScanTextHash(SUBJECT),
+    });
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:poi:wf-2` })
     );
@@ -238,7 +246,11 @@ describe('applyModelPoiMinor — poi', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       storedModel({
         lockedProperties: ['poi'],
-        meta: { textScanFlags: { poi: { at: 'x', workflowId: 'w', reason: 'r', appealGranted: { at: 'x', by: 1 } } } },
+        meta: {
+          textScanFlags: {
+            poi: { at: 'x', workflowId: 'w', reason: 'r', appealGranted: { at: 'x', by: 1 } },
+          },
+        },
       })
     );
     await run(outcome({ poi: poi() }));
@@ -249,7 +261,9 @@ describe('applyModelPoiMinor — poi', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       storedModel({ lockedProperties: ['poi'], meta: granted('poi', textScanTextHash(SUBJECT)) })
     );
-    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({ contentHash: 'new-prompt-version-hash' });
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      contentHash: 'new-prompt-version-hash',
+    });
     await applyModelPoiMinor({
       entityId: MODEL_ID,
       workflowId: 'wf-new-prompts',
@@ -302,7 +316,9 @@ describe('applyModelPoiMinor — minor', () => {
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:minor:wf-1` })
     );
-    expect(JSON.parse(write.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string)).toMatchObject({
+    expect(
+      JSON.parse(write.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string)
+    ).toMatchObject({
       textHash: textScanTextHash(SUBJECT),
     });
   });
@@ -317,7 +333,10 @@ describe('applyModelPoiMinor — minor', () => {
   it.each([
     ['already minor', { minor: true }],
     ['minor locked', { lockedProperties: ['minor'] }],
-    ['appeal granted on unchanged text', { lockedProperties: ['minor'], meta: granted('minor', textScanTextHash(SUBJECT)) }],
+    [
+      'appeal granted on unchanged text',
+      { lockedProperties: ['minor'], meta: granted('minor', textScanTextHash(SUBJECT)) },
+    ],
   ])('skips when %s', async (_label, over) => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel(over));
     await run(outcome({ minor: minor() }));
@@ -327,7 +346,10 @@ describe('applyModelPoiMinor — minor', () => {
 
   it('re-flags minor and notifies once the text changed after a granted appeal', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
-      storedModel({ lockedProperties: ['minor'], meta: granted('minor', textScanTextHash(SUBJECT)) })
+      storedModel({
+        lockedProperties: ['minor'],
+        meta: granted('minor', textScanTextHash(SUBJECT)),
+      })
     );
     await run(outcome({ minor: minor() }), EDITED);
     const write = dbMock.dbWrite.$executeRaw.mock.calls[0];
@@ -340,7 +362,6 @@ describe('applyModelPoiMinor — minor', () => {
       expect.objectContaining({ key: `model-text-scan-flagged:${MODEL_ID}:minor:wf-1` })
     );
   });
-
 });
 
 describe('applyModelPoiMinor — both labels', () => {
@@ -356,7 +377,12 @@ describe('applyModelPoiMinor — both labels', () => {
 describe('grantModelTextScanPoi', () => {
   beforeEach(() => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
-      storedModel({ poi: true, nsfw: false, sfwOnly: true, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] })
+      storedModel({
+        poi: true,
+        nsfw: false,
+        sfwOnly: true,
+        lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      })
     );
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ ...flaggedRow, poi: false }]);
   });
@@ -417,7 +443,12 @@ describe('stampModelTextScanAppeal', () => {
   });
 
   it('writes nothing for an empty label list', async () => {
-    await stampModelTextScanAppeal({ modelId: MODEL_ID, userId: 3, decision: 'appealUpheld', labels: [] });
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealUpheld',
+      labels: [],
+    });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

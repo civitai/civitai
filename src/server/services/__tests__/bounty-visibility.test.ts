@@ -24,7 +24,9 @@ describe('canViewBounty', () => {
   });
 
   it('does not treat a missing owner as a match for an anonymous viewer', () => {
-    expect(canViewBounty({ availability: Availability.Private, userId: null }, { id: undefined })).toBe(false);
+    expect(
+      canViewBounty({ availability: Availability.Private, userId: null }, { id: undefined })
+    ).toBe(false);
   });
 });
 
@@ -63,21 +65,33 @@ describe('assertBountyVisible', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('404s a private bounty for a stranger, by bounty id and by entry id', async () => {
-    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ availability: Availability.Private, userId: 5 });
-    await expect(assertBountyVisible({ bountyId: 9 }, { id: 6 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      availability: Availability.Private,
+      userId: 5,
+    });
+    await expect(assertBountyVisible({ bountyId: 9 }, { id: 6 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
 
     dbMock.dbRead.bountyEntry.findUnique.mockResolvedValue({
       bounty: { availability: Availability.Private, userId: 5 },
     });
-    await expect(assertBountyVisible({ entryId: 3 }, undefined)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(assertBountyVisible({ entryId: 3 }, undefined)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 
   it('lets the owner through, and a moderator without reading anything', async () => {
-    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ availability: Availability.Private, userId: 5 });
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      availability: Availability.Private,
+      userId: 5,
+    });
     await expect(assertBountyVisible({ bountyId: 9 }, { id: 5 })).resolves.toBeUndefined();
 
     vi.clearAllMocks();
-    await expect(assertBountyVisible({ bountyId: 9 }, { id: 6, isModerator: true })).resolves.toBeUndefined();
+    await expect(
+      assertBountyVisible({ bountyId: 9 }, { id: 6, isModerator: true })
+    ).resolves.toBeUndefined();
     expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
   });
 

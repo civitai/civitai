@@ -19,9 +19,7 @@ export function resolveMinorFlagged({
   minor: boolean | null | undefined;
   meta: ModelMeta | null | undefined;
 }): boolean {
-  return (
-    !!isOwner && !!minor && (!!meta?.minorFlagSnapshot || hasOpenTextScanFlag(meta, 'minor'))
-  );
+  return !!isOwner && !!minor && (!!meta?.minorFlagSnapshot || hasOpenTextScanFlag(meta, 'minor'));
 }
 
 export function resolvePoiFlagged({

@@ -8,12 +8,20 @@ const prepare = (type: keyof Defs, details: MixedObject) =>
 
 describe('text-scan flag notifications', () => {
   it('names the label and links the model page', () => {
-    const poi = prepare('model-text-scan-flagged', { modelId: 7, modelName: 'My Model', label: 'poi' });
+    const poi = prepare('model-text-scan-flagged', {
+      modelId: 7,
+      modelName: 'My Model',
+      label: 'poi',
+    });
     expect(poi?.message).toContain('a real person');
     expect(poi?.message).toContain('request a review');
     expect(poi?.url).toBe('/models/7/my-model');
 
-    const minor = prepare('model-text-scan-flagged', { modelId: 7, modelName: 'My Model', label: 'minor' });
+    const minor = prepare('model-text-scan-flagged', {
+      modelId: 7,
+      modelName: 'My Model',
+      label: 'minor',
+    });
     expect(minor?.message).toContain('a minor');
   });
 

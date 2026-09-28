@@ -215,7 +215,11 @@ describe('createEntityAppealHandler — Model text-scan poi', () => {
 });
 
 describe('createEntityAppealHandler — Bounty', () => {
-  const bountyInput = { entityId: 9, entityType: EntityType.Bounty, message: 'Fictional.' } as const;
+  const bountyInput = {
+    entityId: 9,
+    entityType: EntityType.Bounty,
+    message: 'Fictional.',
+  } as const;
   const mockBountyFindUnique = dbMock.dbRead.bounty.findUnique;
   const flaggedBounty = { userId: 602767, poi: true, meta: { textScanFlags: { poi: poiEntry } } };
 

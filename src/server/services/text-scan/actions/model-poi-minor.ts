@@ -47,7 +47,8 @@ function blockedByGrantOrLock(
   model: { meta: Prisma.JsonValue; lockedProperties: string[] },
   textHash: string
 ) {
-  if (!readTextScanFlags(model.meta)[label]?.appealGranted) return model.lockedProperties.includes(label);
+  if (!readTextScanFlags(model.meta)[label]?.appealGranted)
+    return model.lockedProperties.includes(label);
   return appealGrantCoversText(model.meta, label, textHash);
 }
 
@@ -69,8 +70,12 @@ export async function applyModelPoiMinor({
       })) || notified;
   if (outcome.minor?.newlyDetected)
     notified =
-      (await flagModelMinor({ modelId: entityId, workflowId, reason: outcome.minor.reason, textHash })) ||
-      notified;
+      (await flagModelMinor({
+        modelId: entityId,
+        workflowId,
+        reason: outcome.minor.reason,
+        textHash,
+      })) || notified;
   return { notified };
 }
 
@@ -290,7 +295,13 @@ async function notifyModelOwner({
   return true;
 }
 
-export async function grantModelTextScanPoi({ modelId, userId }: { modelId: number; userId: number }) {
+export async function grantModelTextScanPoi({
+  modelId,
+  userId,
+}: {
+  modelId: number;
+  userId: number;
+}) {
   const before = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
