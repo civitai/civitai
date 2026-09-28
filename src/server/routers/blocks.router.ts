@@ -1411,12 +1411,23 @@ async function reserveBlockBuzzSpendForClaims(
   // ⚠️ THE RESIDUAL, STATED RATHER THAN DISCOVERED LATER: replacing the daily cap means
   // a private run no longer counts against the viewer's 50k/day platform key, so ONE
   // viewer's spend summed across MANY delisted apps is bounded by
-  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by 50k. Measured
-  // 2026-09-28 that product is 9 × 2500 = 22,500, i.e. BELOW the cap it replaces — but
-  // that is a snapshot of a population moderators move, not a guarantee. It is accepted
-  // because the per-APP dimension is separately bounded by the G8 velocity cap
-  // (`reserveAppSpend`), which a private-run token does NOT skip precisely because it is
-  // never `dev`. Re-derive the product before widening the flag past `false`.
+  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the flat 50k.
+  //
+  // 🔴 NO FIGURE IS QUOTED FOR THAT PRODUCT, AND THAT IS DELIBERATE TWICE OVER. It is a
+  // count of a population MODERATORS MOVE — every delist, relist and approval changes it
+  // — so a number written here is a snapshot that reads as a bound, which is the exact
+  // shape of stale claim this subsystem keeps being bitten by. And this repo is public: an
+  // inventory count of which taken-down apps can still spend is not something to publish
+  // for the sake of a comment. DERIVE IT instead, at the moment you need it: the apps
+  // whose `status` is not `approved` and whose `approvedScopes` survive
+  // `clampPrivateRunScopes` with the spend scope intact, times PRIVATE_RUN_BUZZ_CAP.
+  //
+  // It was measured once, before this landed, and came out BELOW the ceiling it replaces
+  // — which is why the trade is accepted rather than merely noted. The durable half of
+  // the argument does not depend on that measurement at all: the per-APP dimension is
+  // separately bounded by the G8 velocity cap (`reserveAppSpend`), which a private-run
+  // token does NOT skip precisely because it is never `dev`. Re-derive before widening
+  // the flag past `false`.
   //
   // Consent leg skipped — see the note on `reservePrivateRunBuzzSpend`.
   if (claims.privateRun === true) {
