@@ -787,16 +787,16 @@ export async function resolveMinorFlagAppeal({
       labels: upheldVerdicts,
     });
 
-  // Before the lifts, so a rescan landing in between sees the grant.
-  if (overturned.length)
+  // Before the lift, so a rescan landing in between sees the grant. The poi grant is stamped by the
+  // same statement that lifts it, so a failed lift leaves the appeal retryable.
+  if (overturned.includes('minor')) {
     await stampModelTextScanAppeal({
       modelId,
       userId,
       decision: 'appealGranted',
-      labels: overturned,
+      labels: ['minor'],
       currentHash,
     });
-  if (overturned.includes('minor')) {
     const snapshot = meta?.minorFlagSnapshot;
     const origin = snapshot?.confirmedFrom ?? snapshot?.source;
     // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
@@ -804,7 +804,7 @@ export async function resolveMinorFlagAppeal({
       await revertMinorHashAutoFlag({ modelId, userId });
     else await setModelMinor({ id: modelId, minor: false, userId });
   }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId });
+  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId, currentHash });
 
   const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({

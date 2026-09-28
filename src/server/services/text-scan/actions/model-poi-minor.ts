@@ -298,9 +298,11 @@ async function notifyModelOwner({
 export async function grantModelTextScanPoi({
   modelId,
   userId,
+  currentHash,
 }: {
   modelId: number;
   userId: number;
+  currentHash: string | null;
 }) {
   const before = await dbWrite.model.findUnique({
     where: { id: modelId },
@@ -337,6 +339,16 @@ export async function grantModelTextScanPoi({
              OR m.minor
              OR p NOT IN ('nsfw', 'sfwOnly')
              OR p IN (SELECT jsonb_array_elements_text(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->'lockedProperties'))
+        ),
+        meta = jsonb_set(
+          m.meta,
+          ARRAY[${TEXT_SCAN_FLAGS_KEY}::text, 'poi', 'appealGranted'],
+          jsonb_build_object(
+            'at', now(),
+            'by', ${userId}::int,
+            'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+            'via', 'appeal'
+          )
         )
     WHERE m.id = ${modelId}
       AND m.poi

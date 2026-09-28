@@ -1569,6 +1569,11 @@ describe('resolveMinorFlagAppeal', () => {
     );
   });
 
+  const grantStamps = () =>
+    mockStampModelTextScanAppeal.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.decision === 'appealGranted');
+
   const poiEntry = {
     at: 'x',
     workflowId: 'wf-1',
@@ -1591,14 +1596,12 @@ describe('resolveMinorFlagAppeal', () => {
       7,
       expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
     );
-    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
-    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      decision: 'appealGranted',
-      labels: ['poi'],
       currentHash: 'h-text',
     });
+    expect(grantStamps()).toEqual([]);
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ status: AppealStatus.Approved })
     );
@@ -1624,9 +1627,7 @@ describe('resolveMinorFlagAppeal', () => {
       ];
     expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
     expect(rollbackOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
-    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ decision: 'appealGranted', labels: ['minor', 'poi'] })
-    );
+    expect(grantStamps()).toEqual([expect.objectContaining({ labels: ['minor'] })]);
     expect(mockResolveEntityAppeal).toHaveBeenCalled();
     expect(mockStampModelTextScanAppeal.mock.invocationCallOrder[0]).toBeLessThan(
       mockResolveEntityAppeal.mock.invocationCallOrder[0]
@@ -1637,7 +1638,7 @@ describe('resolveMinorFlagAppeal', () => {
   it.each([
     ['an auto minor flag', { source: 'text-scan' }, 'rollback'],
     ['a moderator minor flag', { source: 'manual' }, 'unset'],
-  ])('stamps the grant before lifting %s or poi', async (_label, snapshot, path) => {
+  ])('stamps the minor grant before lifting %s', async (_label, snapshot, path) => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,
       poi: true,
@@ -1661,15 +1662,48 @@ describe('resolveMinorFlagAppeal', () => {
         : mockSetModelMinor.mock.invocationCallOrder[0];
     expect(liftOrder, 'minor lift').toBeDefined();
     expect(stampOrder).toBeLessThan(liftOrder);
-    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
-    expect(stampOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
-    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+    expect(grantStamps()).toEqual([
+      {
+        modelId: 42,
+        userId: 7,
+        decision: 'appealGranted',
+        labels: ['minor'],
+        currentHash: 'h-current',
+      },
+    ]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
       modelId: 42,
       userId: 7,
-      decision: 'appealGranted',
-      labels: ['minor', 'poi'],
       currentHash: 'h-current',
     });
+  });
+
+  // A recorded grant reads as lifted, so a grant stamped ahead of a lift that then failed would
+  // leave poi on with nothing able to retry it.
+  it('leaves no poi grant behind when the poi lift fails, so a retry lifts it', async () => {
+    const model = {
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    };
+    mockPrimaryModelFindUnique.mockResolvedValue(model);
+    mockGrantModelTextScanPoi.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).rejects.toThrow(
+      'boom'
+    );
+    expect(grantStamps().flatMap((arg) => arg.labels)).not.toContain('poi');
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+
+    mockPrimaryModelFindUnique.mockResolvedValue({ ...model, minor: false });
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledTimes(2);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
   });
 
   // Review Focus 4.
@@ -1698,13 +1732,15 @@ describe('resolveMinorFlagAppeal', () => {
       7,
       expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
     );
-    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({ modelId: 42, userId: 7 });
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      currentHash: 'h-text',
+    });
     expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'appealUpheld', labels: ['minor'] })
     );
-    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ decision: 'appealGranted', labels: ['poi'] })
-    );
+    expect(grantStamps()).toEqual([]);
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ status: AppealStatus.Approved })
     );
