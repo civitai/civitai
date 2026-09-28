@@ -645,6 +645,23 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
       where: { id: EDITOR },
       select: { deletedAt: true, bannedAt: true },
     });
+
+    // 🔴 AND THE OWNER-BAN READ, POSITIVELY, BECAUSE THE DOCBLOCK ABOVE CLAIMS IT FOLLOWS
+    // THE CALLER'S POOL AND NOTHING WAS ASSERTING THAT. Added in round 4, which caught the
+    // omission as the same shape as round 3's finding one level down: the title and the
+    // docblock read wider than the assertions, in the describe that owns pool selection.
+    //
+    // The mutation this kills is `db.user.findUnique` -> `dbWrite.user.findUnique` at the
+    // owner-ban gate. It SURVIVED everything before this line — the `db: 'write'` row
+    // catches only the MIRROR direction (hardcoding the replica, via
+    // `expect(mockDb.user.findUnique).not.toHaveBeenCalled()`), because in that row the two
+    // pools are the same object. Consequence is mild — reading the primary is the SAFE
+    // direction, costing extra primary load rather than correctness — which is exactly why
+    // it needed pinning deliberately instead of being left to be noticed.
+    expect(mockDb.user.findUnique).toHaveBeenCalledWith({
+      where: { id: OWNER },
+      select: { bannedAt: true },
+    });
   });
 });
 

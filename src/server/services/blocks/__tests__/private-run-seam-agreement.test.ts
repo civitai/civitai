@@ -170,6 +170,11 @@ const SCENARIOS: Scenario[] = [
     // is allowed and both pools are genuinely exercised: it is among the rows that kill
     // the mutant pinning the block resolve to one pool (`{ db: pool }` -> `{ db: 'read' }`),
     // which fails here with the control's own "the mint call must read the PRIMARY".
+    // Measured: that mutant fails 14 of 18 — every row that reaches the block resolve, plus
+    // the negative control — and the only survivors are the three FREE-gate rows
+    // (`anonymous`, `banned viewer`, `flag off`), which is the survivor set the control's
+    // own definition predicts. (A handoff briefly said "eight"; that was a `head`-truncated
+    // list read as a total, so the number is stated here where it can be re-measured.)
     name: 'owner whose session carries an explicit bannedAt: null',
     viewer: { id: OWNER, bannedAt: null, deletedAt: null },
     expectAllowed: true,
