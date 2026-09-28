@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { PRIVATE_RUN_REFUSAL_REASONS } from '~/server/services/blocks/private-run-access.service';
+// Type-only namespace import, hoisted, because an inline `typeof import('…')` is an ERROR under
+// @typescript-eslint/consistent-type-imports — and in a file that is NEW on this branch that is
+// a BLOCKING error: `.github/workflows/lint.yml` lints ADDED files for real and only
+// report-only-lints MODIFIED ones, on the stated reasoning that "new files start clean". The
+// sibling that already solved this is
+// `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`.
+// Erased at compile time, so it does NOT load the module the factory below partially replaces.
+import type * as PrivateRunAccessModule from '~/server/services/blocks/private-run-access.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbWrite = dbMock.dbWrite;
@@ -119,7 +127,7 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => mockDevTunnelServic
 // compared zero refusals. Spreading the original keeps the real tuple and overrides only
 // the function under mock.
 vi.mock('~/server/services/blocks/private-run-access.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/blocks/private-run-access.service')>()),
+  ...(await importOriginal<typeof PrivateRunAccessModule>()),
   resolvePrivateRunAccess: mockPrivateRunAccess.resolvePrivateRunAccess,
 }));
 vi.mock('~/server/logging/mint-audit-stdout', () => mockStdoutAudit);
