@@ -179,11 +179,18 @@ describe('isAllowedImageScanUrl', () => {
   });
 
   /**
-   * Pins the C0/DEL half of `hasAmbiguousAuthority` on the ABSOLUTE branch, which the userinfo
-   * check does NOT cover: WHATWG DELETES an interior tab, so `evil.com<TAB>.civitai.com` parses
-   * to hostname `evil.com.civitai.com` — which `isValidCivitaiImageUrl`'s suffix rule ADMITS,
-   * with an empty `username` — while an RFC-3986 client that does not strip tabs reads the
-   * authority as `evil.com`. Measured; only the byte check refuses it.
+   * BEHAVIOURAL rows for host-splicing on the absolute branch: WHATWG DELETES an interior tab,
+   * so `evil.com<TAB>.civitai.com` parses to hostname `evil.com.civitai.com` — which
+   * `isValidCivitaiImageUrl`'s suffix rule ADMITS, with an empty `username` — while an RFC-3986
+   * client that does not strip tabs reads the authority as `evil.com`.
+   *
+   * ⚠ These rows do NOT isolate any one check, and an earlier version of this comment claimed
+   * they pinned `hasAmbiguousAuthority`'s byte arm. Measured: they stay green when that arm is
+   * narrowed AND when the top-level `hasUrlAmbiguousBytes(url)` is narrowed — they are
+   * DOUBLY masked, and only go red when both are narrowed together. The isolating rows are
+   * elsewhere: the top-level check is pinned by the INTERIOR-control-byte rows above, and
+   * `hasAmbiguousAuthority`'s arm by the `isAllowedAvatarUrl` rows below. Kept because they
+   * assert the end-to-end verdict at zero cost — not as coverage of a specific check.
    */
   it.each([
     [`https://evil.com${String.fromCharCode(9)}.civitai.com/a.png`],

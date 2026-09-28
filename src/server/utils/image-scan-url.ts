@@ -116,9 +116,11 @@ function hasAmbiguousAuthority(parsed: URL, raw: string): boolean {
  *
  * ⚠ It returns a BOOLEAN about a raw string whose `href` may differ from it (uppercase host,
  * `:443`, dot segments). So a consumer that STORES or FORWARDS the raw argument, rather than
- * re-deriving `new URL(x).href`, would persist a value this predicate never approved. Today
- * `verifyAvatar` is the only caller and stores the raw value it validated; if a second caller
- * appears, hand it the normalized href instead.
+ * re-deriving `new URL(x).href`, would persist a value this predicate never approved. There are
+ * two callers — `isAllowedImageScanUrl` below, which forwards the normalized form, and
+ * `verifyAvatar`, the only one that STORES the raw value (into `User.image`). A third caller
+ * that stores should be handed the normalized href instead. 🔴 Nothing mechanically enforces
+ * that; it is prose on a path that persists.
  */
 export function isAllowedAvatarUrl(url: string): boolean {
   let parsed: URL;
@@ -127,6 +129,10 @@ export function isAllowedAvatarUrl(url: string): boolean {
   } catch {
     return false;
   }
+  // ⚠ Currently REDUNDANT, kept deliberately: every entry in AVATAR_URL_PREFIXES begins
+  // `https://`, so the href-prefix test below already forces the scheme, and deleting this line
+  // reddens nothing. It is one comparison, and it stops the scheme becoming implicit in the
+  // prefix list's spelling if an entry is ever added without one.
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   if (hasAmbiguousAuthority(parsed, url)) return false;
   // 🔴 An ENCODED separator does not collapse during href normalization, so

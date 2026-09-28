@@ -105,10 +105,12 @@ describe('edge-url passthrough — one predicate, a declared consumer set', () =
     // pass vacuously against a predicate that no longer makes the decision. Named for what it
     // asserts — it does NOT count occurrences repo-wide, which an earlier title implied.
     expect(read(ALLOWED_TO_SPELL_IT[0])).toMatch(/startsWith\('http'\)/);
-    // Every allowlisted path must EXIST — an entry that no longer resolves silently widens the
-    // growth scan's exemption set. (Asserting the literal string contains its own name, as an
-    // earlier version did, compared a const against a substring of itself and no production
-    // change could redden it.)
+    // Every allowlisted path must EXIST — a TYPO'd or stale exemption silently widens the growth
+    // scan's exempt set, and that is the case this fires on. (Asserting the literal string
+    // contains its own name, as an earlier version did, compared a const against a substring of
+    // itself, so no change could redden it.) ⚠ It does not meaningfully cover "an entry
+    // disappeared": deleting the predicate module reddens `read()` above first, and entry [1] is
+    // this file, which cannot be absent while this runs.
     for (const rel of ALLOWED_TO_SPELL_IT) {
       expect(existsSync(path.join(REPO_ROOT, rel)), `${rel} no longer exists`).toBe(true);
     }
