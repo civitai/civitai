@@ -849,10 +849,14 @@ export function enforceContextBinding(
       }
       case 'buzz:read:self':
       case 'social:tip:self':
+      case 'goods:read:self':
+      case 'goods:purchase:self':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
-        // when /api/v1/blocks/me switched off buzz:read:self (audit I3).
+        // when /api/v1/blocks/me switched off buzz:read:self (audit I3), and
+        // the goods pair joined it because an anonymous viewer has no balance
+        // to charge and no entitlements to hold.
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
@@ -1568,9 +1572,17 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'collections',
   'counts',
   'delete',
+  // `/api/v1/blocks/entitlements` — the viewer's owned-goods read. Static: the
+  // app and the viewer both come from the JWT and there is no per-good path
+  // segment, so this surface has no `:seg` position to lose.
+  'entitlements',
   'estimate',
   'follow',
   'get',
+  // `/api/v1/blocks/goods/purchase` — the digital-goods checkout. Static: the
+  // good id rides the POST body precisely so it never becomes a path segment
+  // and can never fragment the `endpoint` column.
+  'goods',
   // The per-viewer gated image read. Note what is NOT here: an IMAGE ID. The ids
   // ride the query string (`?ids=1,2,3`), which `normalizeEndpoint` strips
   // wholesale, so this surface has no `:seg` position at all and nothing that
@@ -1584,6 +1596,8 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'me',
   'models',
   'poll',
+  // The second segment of `/api/v1/blocks/goods/purchase`. See `goods` above.
+  'purchase',
   // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging
   // cursor and page size ride the POST body, so there is no `:seg` position on
   // this route and nothing per-viewer that could fragment the `endpoint` column.

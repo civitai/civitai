@@ -335,6 +335,15 @@ export const createMultiAccountBuzzTransactionResponse = z.object({
       transactionId: z.string(),
       accountType: buzzAccountTypeFromApiValueSchema,
       amount: z.number(),
+      // The wire type (`CreateMultiTransactionResponse`) declares this REQUIRED,
+      // and omitting it here made zod strip it — so a leg the ledger reported as
+      // a duplicate of an already-occupied external id arrived indistinguishable
+      // from one that moved money, with a plausible `transactionCount` and
+      // `totalAmount` behind it. Optional rather than required because whether
+      // the service sends it on every response is unverified from here, and a
+      // required field would fail the parse for every caller of this endpoint if
+      // it does not; `undefined` therefore means "not reported", never "false".
+      duplicate: z.boolean().optional(),
     })
   ),
   totalAmount: z.number(),

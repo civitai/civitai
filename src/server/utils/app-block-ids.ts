@@ -110,6 +110,20 @@ export function newBlockAuthorFeeAccrualId(): string {
   return `bafa_${newUlid()}`;
 }
 
+/**
+ * App Blocks DIGITAL GOODS. Two prefixes, not one, because the purchase (money)
+ * and the entitlement (what the viewer owns) are separate rows with separate
+ * lifetimes — a refund keeps the purchase and revokes the entitlement — and an
+ * id pasted into the wrong lookup should miss loudly.
+ */
+export function newBlockGoodPurchaseId(): string {
+  return `bgp_${newUlid()}`;
+}
+
+export function newBlockGoodEntitlementId(): string {
+  return `bge_${newUlid()}`;
+}
+
 export function newAppUserScopeGrantId(): string {
   return `augr_${newUlid()}`;
 }

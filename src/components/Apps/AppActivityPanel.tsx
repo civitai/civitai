@@ -81,6 +81,8 @@ const SCOPE_ACTION_LABELS: Record<string, string> = {
   'block:settings:write': 'Write block settings',
   'ai:write:budgeted': 'Submit AI workflow',
   'social:tip:self': 'Tip',
+  'goods:read:self': 'Read owned items',
+  'goods:purchase:self': 'Buy an item',
 };
 
 export function humaniseScopeInvocation(scope: string, endpoint?: string): string {

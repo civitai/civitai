@@ -669,6 +669,9 @@ export interface User {
   blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
+  blockGoodPurchasesAsBuyer?: BlockGoodPurchase[];
+  blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
+  blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
@@ -1921,6 +1924,7 @@ export interface OauthClient {
   spendAttributions?: BlockSpendAttribution[];
   authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
 }
 
@@ -1989,6 +1993,8 @@ export interface AppBlock {
   spendAttributions?: BlockSpendAttribution[];
   authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
+  goodEntitlements?: BlockGoodEntitlement[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
@@ -2379,6 +2385,48 @@ export interface BlockAuthorFeeAccrual {
   settlementKey: string | null;
   accruedAt: Date;
   settledAt: Date | null;
+}
+
+export interface BlockGoodPurchase {
+  id: string;
+  userId: number;
+  user?: User;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string | null;
+  goodId: string;
+  manifestVersion: string;
+  priceBuzz: number;
+  bluePaidBuzz: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  appOwnerShareBuzz: number;
+  platformShareBuzz: number;
+  buzzTransactionId: string;
+  payouts: JsonValue;
+  status: string;
+  refundReason: string | null;
+  refundedAt: Date | null;
+  createdAt: Date;
+  entitlement?: BlockGoodEntitlement | null;
+}
+
+export interface BlockGoodEntitlement {
+  id: string;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  goodId: string;
+  kind: string;
+  payload: JsonValue;
+  purchaseId: string;
+  purchase?: BlockGoodPurchase;
+  grantedAt: Date;
+  revokedAt: Date | null;
+  revokeReason: string | null;
 }
 
 export interface BlockSubscriptionAttribution {

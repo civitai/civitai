@@ -190,9 +190,10 @@ describe('block-scope.constants', () => {
       'collections:read:private',
       'apps:storage:shared:write',
       'posts:write:self',
+      'goods:purchase:self',
     ];
 
-    it('flags exactly the 6 designated sensitive scopes', () => {
+    it('flags exactly the 7 designated sensitive scopes', () => {
       expect([...SENSITIVE_BLOCK_SCOPES].sort()).toEqual([...EXPECTED_SENSITIVE].sort());
       for (const scope of EXPECTED_SENSITIVE) {
         expect(isSensitiveBlockScope(scope)).toBe(true);
@@ -208,6 +209,10 @@ describe('block-scope.constants', () => {
         'apps:storage:shared:read',
         'collections:read:self',
         'collections:write:self',
+        // The READ half of the goods pair. It returns only what the CALLING app
+        // already sold this viewer, so it is not in the sensitive set even
+        // though its sibling `goods:purchase:self` is.
+        'goods:read:self',
       ]) {
         expect(isSensitiveBlockScope(scope)).toBe(false);
       }
