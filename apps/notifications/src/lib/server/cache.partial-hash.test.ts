@@ -245,6 +245,8 @@ describe('unread counter cache: bounded recount', () => {
     seed({ __complete: '0', __floor: '0' }, 3600);
 
     expect(await badge()).toBe(340);
+    const cached = await countNotifications({ userId: USER, unread: true });
+    expect(cached.some((c) => c.floor)).toBe(false);
   });
 
   it('still decrements an exact counter', async () => {

@@ -60,11 +60,12 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
     [FLOOR_FIELD]: floor,
     ...counts
   } = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
-  // A floored hash with no categories left would read as an exact zero.
+  // Reachable despite bustIfFloored (an older build or a racing decrement can empty a floored hash): with no
+  // categories left it would read as an exact zero.
   if (complete === undefined || (floor !== undefined && !Object.keys(counts).length)) {
-    // Bust rather than overwrite: setUser merges, so a stale category the recount no longer returns would
-    // otherwise survive under the new marker.
-    if (Object.keys(counts).length) await bustUser(userId);
+    // Bust rather than overwrite: setUser merges, so a stale category or `__floor` the recount no longer
+    // returns would otherwise survive under the new marker.
+    if (Object.keys(counts).length || floor !== undefined) await bustUser(userId);
     return undefined;
   }
   return Object.entries(counts).map(([category, count]) => {
@@ -111,7 +112,7 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
 }
 
 // Recount rather than adjust a floored hash: `__floor` survives arithmetic, so it would keep reporting floors
-// after the true count fell below the limit, and clearing its last category would leave an empty hash.
+// after the true count fell below the limit, and clearing its last category would leave only the markers.
 async function bustIfFloored(userId: number) {
   const redis = getRedis();
   if (!redis) return false;

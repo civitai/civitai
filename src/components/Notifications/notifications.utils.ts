@@ -140,7 +140,6 @@ export function formatUnreadCount(count: number, isFloor: boolean): string {
   return isFloor ? `${count}+` : `${count}`;
 }
 
-// The bell caps lower than the tabs; a floor still gets its "+" below the cap.
 export function formatBellCount(counts: { all: number; unreadCountsAreFloors?: number }): string {
   if (counts.all > 99) return '99+';
   return counts.unreadCountsAreFloors ? `${counts.all}+` : `${counts.all}`;
@@ -213,8 +212,8 @@ export const useQueryNotificationsCount = () => {
  *
  * 🔴 This set is load-bearing, and the reason is not obvious from the code it
  * guards. The two branches that key off a category name are safe only because
- * they test `category.toLowerCase() in counts` and this key is camelCase —
- * `'pendingplacements'` matches nothing. That is a casing accident, not a
+ * they test `category.toLowerCase() in counts` and every key here (and
+ * `unreadCountsAreFloors`) is camelCase — `'pendingplacements'` matches nothing. That is a casing accident, not a
  * design. Rename this field to lowercase, or add a NotificationCategory that
  * lowercases into it, and the category branch would start subtracting a
  * placement count out of the bell's total.
