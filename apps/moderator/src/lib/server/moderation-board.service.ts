@@ -296,6 +296,11 @@ export type AutoBlockedUser = {
   createdAt: Date;
   bannedAt: Date | null;
   muted: boolean | null;
+  /** From the verdict that opened the scam case; null for mutes made before cases were filed. */
+  scanReason: string | null;
+  scanEntityType: string | null;
+  scanEntityId: number | null;
+  restrictionStatus: string | null;
 };
 
 /**
@@ -330,6 +335,26 @@ export async function getAutoBlockedUsers(limit = 50): Promise<AutoBlockedUser[]
     dbRead
       .selectFrom('ModActivity as ma')
       .innerJoin('User as u', 'u.id', 'ma.entityId')
+      // Lateral LIMIT 1: an account can have several scam cases, and the list keys on `ma.id`.
+      .leftJoinLateral(
+        (eb) =>
+          eb
+            .selectFrom('UserRestriction as ur')
+            .select([
+              'ur.status',
+              sql<string | null>`ur.triggers -> 0 ->> 'reason'`.as('reason'),
+              sql<string | null>`ur.triggers -> 0 ->> 'entityType'`.as('entityType'),
+              sql<number | null>`(ur.triggers -> 0 ->> 'entityId')::int`.as('entityId'),
+            ])
+            .where(sql<boolean>`ur."userId" = ma."entityId"`)
+            .where('ur.type', '=', 'scam')
+            // The case this ModActivity row opened, not one filed after it.
+            .where(sql<boolean>`ur."createdAt" <= ma."createdAt"`)
+            .orderBy('ur.createdAt', 'desc')
+            .limit(1)
+            .as('scan'),
+        (join) => join.onTrue()
+      )
       .select([
         'ma.id',
         'ma.entityId as userId',
@@ -337,6 +362,10 @@ export async function getAutoBlockedUsers(limit = 50): Promise<AutoBlockedUser[]
         'u.username',
         'u.bannedAt',
         'u.muted',
+        'scan.reason as scanReason',
+        'scan.entityType as scanEntityType',
+        'scan.entityId as scanEntityId',
+        'scan.status as restrictionStatus',
       ])
       .where('ma.activity', '=', 'autoMuteScam')
       // Retool had no entityType filter and got away with it because the activity name is unique to
