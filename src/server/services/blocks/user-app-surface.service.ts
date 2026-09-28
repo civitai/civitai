@@ -148,6 +148,15 @@ export type ScopeGrantSurface = {
    * treat a granted-but-not-displayed scope as still granted — `blocks.revokeScopes`
    * deliberately applies no manifest ceiling for the same reason.
    *
+   * 🔴 AND IT IS NOT DERIVABLE FROM `spendScopeGranted`'S ABSENCE, NOR THE REVERSE — BUT THE TWO
+   * ARE ONE FACT. `spendScopeGranted` is exactly `grantedScopes.includes(CONSENT_SPEND_SCOPE)`:
+   * both are written from one `liveGranted` value inside one loop iteration, so they cannot
+   * disagree, and the older field's docblock justifying itself as "NOT derivable" means not
+   * derivable from `scopes` (the app-side set) — which is still true, and was the only set that
+   * existed when it was written. Now that the client reads `grantedScopes` too, the boolean is a
+   * redundant wire field rather than a second derivation; a deletion candidate on a later pass, not
+   * a drift risk. Reported by the reuse lane.
+   *
    * 🔴 IT IS NOW LOAD-BEARING FOR THE CONTROL, NOT ONLY FOR DISPLAY. `blocks.revokeScopes` refuses
    * a scope outside the viewer's live granted set, so `buildScopeConsentRows` intersects this with
    * `revokableScopes` to decide which rows get a Remove button — see that field's docblock for why
@@ -381,8 +390,9 @@ async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>
  * Same app counted across multiple installs + subscriptions collapses to a single row with
  * denormalised counts.
  *
- * 🔴 THREE SOURCES, IN STRICT PRECEDENCE: subscription (`'install'`) > live consent grant
- * (`'consent'`) > activity alone (`'activity'`). Each later leg guards on
+ * 🔴 THREE SOURCES, IN STRICT PRECEDENCE: subscription (`'install'`) > consent grant
+ * (`'consent'`, WHETHER OR NOT IT IS STILL LIVE — see the grant leg's condition) > activity alone
+ * (`'activity'`). Each later leg guards on
  * `!byAppBlock.has(...)`, so an app that satisfies several keeps the RICHEST row — the one
  * carrying its real install counts, subscription scopes and budget. `origin` reports which.
  *
@@ -406,7 +416,12 @@ async function listAppBlocksThatActedOnUser(userId: number): Promise<Set<string>
  *
  * A grant-only app is therefore a first-class row with `modelInstallCount: 0` and no
  * subscription scopes. It is NOT synthesised from the manifest: it exists only when the
- * viewer has a live (non-revoked) grant row, which is their own recorded consent.
+ * viewer has a grant row, which is their own recorded consent.
+ *
+ * ⚠️ "a LIVE (non-revoked) grant row" IS RETRACTED — 4990 removed the `!g.revokedAt` skip, because
+ * on a grant-only app that leg is the only one that can carry the card, so a viewer who withdrew
+ * their last permission lost the app from the page entirely. A fully-revoked grant now gets a row
+ * too. The condition's own comment carries the measurement.
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
   // Post kill_per_model_installs: every install — blanket OR per-model-

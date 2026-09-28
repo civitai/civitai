@@ -479,7 +479,7 @@ describe('no manifest ceiling is applied', () => {
   it('refuses a scope the viewer holds no grant for, storing nothing', async () => {
     grantMock.findUnique.mockResolvedValue(null);
     await expect(caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] })).rejects.toThrow(
-      /have not granted/
+      /do not currently grant/
     );
     expect(grantMock.create).not.toHaveBeenCalled();
     expect(grantMock.update).not.toHaveBeenCalled();
@@ -518,7 +518,7 @@ describe('no manifest ceiling is applied', () => {
       revokedScopes: [SPEND],
     });
     await expect(caller().revokeScopes({ appBlockId: APP, scopes: [SPEND] })).rejects.toThrow(
-      /have not granted/
+      /do not currently grant/
     );
     expect(grantMock.update).not.toHaveBeenCalled();
   });
@@ -535,7 +535,7 @@ describe('no manifest ceiling is applied', () => {
     });
     await expect(
       caller().revokeScopes({ appBlockId: APP, scopes: [POSTS, SPEND] })
-    ).rejects.toThrow(/have not granted/);
+    ).rejects.toThrow(/do not currently grant/);
     expect(grantMock.update).not.toHaveBeenCalled();
   });
 
@@ -543,7 +543,7 @@ describe('no manifest ceiling is applied', () => {
    * 🔴 THE REFUSAL ORDER: an EXEMPT scope gets the exempt sentence, never the not-held one.
    * An exempt scope is never in `granted_scopes` — `partitionByConsent` signs it on the exempt
    * test alone, without recording a grant — so a not-held test placed FIRST would answer every
-   * exempt request with the generic "you have not granted that", losing the only sentence that
+   * exempt request with the generic "you do not currently grant that", losing the only sentence that
    * tells the viewer what governs the permission instead of their consent.
    *
    * MUTATION THAT MUST KILL IT: move the `notHeld` block above the `exempt` block.
@@ -568,6 +568,56 @@ describe('no manifest ceiling is applied', () => {
    * MUTATION THAT MUST KILL IT: drop `db: 'write'` from the `getGrantedScopes` call (its default
    * is the replica).
    */
+  /**
+   * 🔴 THE NOT-HELD CHECK SITS IN FRONT OF THE 412 PATH, AND MUST NOT SWALLOW IT. A database
+   * without `revoked_scopes` is a real, expected state (the migration is hand-applied per
+   * environment), and the answer a viewer must get there is `PRECONDITION_FAILED` with
+   * `CONSENT_REVOKE_UNAVAILABLE_MESSAGE` — "nothing was changed, try again later" — which is the
+   * only honest thing to say about an environment that cannot store a suppression. Adding a read
+   * ahead of the service's own read put a new way to answer first, so this pins that it does not.
+   *
+   * 🔴 IT SURVIVES BECAUSE `readGrantRow` DEGRADES RATHER THAN THROWS, and the call sequence is
+   * the whole mechanism — three reads of the same mocked `findUnique`:
+   *   1. `getGrantedScopes` → `readGrantRow`'s WIDE select (names `revokedScopes`) → P2022.
+   *   2. `readGrantRow`'s NARROW fallback (`grantedScopes`/`revokedAt` only, both of which exist
+   *      on such a database) → SUCCEEDS, reporting `revokedScopes: []`. So the granted set is the
+   *      raw column and the scope reads as HELD — which is correct: on a database that cannot
+   *      record a revocation, nothing can have been revoked.
+   *   3. the service's own read, which selects `revokedScopes` → P2022 → renamed to 412.
+   * 🔴 THE HAZARD IS SPECIFICALLY ONE THE NEW READ CREATED: before it, `readGrantRow` was not on
+   * this procedure's path at all, and the only P2022 the viewer could meet was the one the service
+   * renames. Now a P2022 meets `readGrantRow` FIRST, and its degrade is the only thing between that
+   * and an unhandled error — there is no catch around `getGrantedScopes` here.
+   *
+   * MUTATION THAT KILLS IT (measured): invert `readGrantRow`'s `if (!isMissingColumnError(err))
+   * throw err` so it stops degrading — the raw P2022 escapes `getGrantedScopes` and the viewer gets
+   * an internal error instead of "nothing was changed, try again later".
+   *
+   * ⚠️ TWO MUTANTS THAT **SURVIVE** THIS ARM, RECORDED SO NOBODY READS IT AS WIDER THAN IT IS.
+   * (a) Re-selecting `revokedScopes` in `readGrantRow`'s NARROW fallback: measured SURVIVING,
+   * because `findUnique` is mocked by CALL ORDER and does not inspect the `select` — so this arm
+   * cannot see the fallback's column list, only that a second call succeeds. (b) Wrapping the
+   * `getGrantedScopes` call in `.catch(() => new Set())`: measured SURVIVING, because on this shape
+   * that call does not reject at all, so the catch never runs. Both were written down here as
+   * "must kill it" on first draft and neither did.
+   */
+  it('a PRE-MIGRATION database still answers 412, not the not-held refusal', async () => {
+    const missingColumn = Object.assign(
+      new Error('The column `revoked_scopes` does not exist in the current database.'),
+      { code: 'P2022' }
+    );
+    grantMock.findUnique
+      .mockRejectedValueOnce(missingColumn)
+      .mockResolvedValueOnce({ id: 'augr_1', grantedScopes: [POSTS], revokedAt: null })
+      .mockRejectedValueOnce(missingColumn);
+    await expect(caller().revokeScopes({ appBlockId: APP, scopes: [POSTS] })).rejects.toMatchObject(
+      { code: 'PRECONDITION_FAILED' }
+    );
+    // Nothing was written, which is what the 412's own message promises the viewer.
+    expect(grantMock.update).not.toHaveBeenCalled();
+    expect(grantMock.create).not.toHaveBeenCalled();
+  });
+
   it('reads the granted set from the PRIMARY', async () => {
     dbMock.dbRead.appUserScopeGrant.findUnique.mockReset();
     // 🔴 THE OUTCOME IS SWALLOWED ON PURPOSE, so this arm fails on its OWN assertion. Off the
@@ -584,7 +634,21 @@ describe('no manifest ceiling is applied', () => {
       'the granted-set check read the REPLICA, so a viewer who consents and immediately withdraws ' +
         'is told they never granted the scope'
     ).not.toHaveBeenCalled();
-    expect(grantMock.findUnique).toHaveBeenCalled();
+    /**
+     * 🔴 `toHaveBeenCalledTimes(2)`, NOT `toHaveBeenCalled()` — AND THE BARE FORM MADE THIS ARM
+     * UNABLE TO NAME ITS OWN SUBJECT. `grantMock` is `dbMock.dbWrite.appUserScopeGrant`, which the
+     * SERVICE's own read also uses (`scope-grant.service.ts`), so with the whole `notHeld` block
+     * DELETED the replica assertion above still passes (nothing read the replica) and a bare
+     * `toHaveBeenCalled()` still passes (the service read it). Measured: that mutant left this arm
+     * green, so it was covered only in aggregate by the four refusal arms. Two calls — the router's
+     * granted-set check, then the service's read-modify-write — is the count that makes the arm
+     * self-sufficient.
+     */
+    expect(
+      grantMock.findUnique,
+      'the granted-set check did not read the PRIMARY at all — the router either skipped it or the ' +
+        'refusal block is gone, leaving only the service read'
+    ).toHaveBeenCalledTimes(2);
   });
 });
 

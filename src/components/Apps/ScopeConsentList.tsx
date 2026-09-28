@@ -49,9 +49,11 @@ export type ScopeConsentGrant = {
   scopes: string[];
   /**
    * ⚠️ OPTIONAL, AND NOT AS A CONVENIENCE — A PRE-PHASE-2 SERVER GENUINELY SENDS A ROW WITHOUT THEM.
-   * `listMyScopeGrants` gained these three fields in the same change that added the revoke
-   * procedure, and it always emits all three together, so "some present, some absent" is not a state
-   * the current server can produce.
+   * `listMyScopeGrants` gained `revokedScopes`/`revokableScopes`/`scopesRevokedAt` in the same change
+   * that added the revoke procedure, and 4990 added `grantedScopes` to the set this component reads.
+   * It emits all of them together, so "some present, some absent" is not a state the current server
+   * can produce. ⚠️ This said "these three fields" while the block declares FOUR — a count stated
+   * next to the list it counts, which is the cheapest kind of prose to let rot.
    *
    * ⚠️ THE TRIGGER NAMED HERE WAS WRONG AND IS RETRACTED. It read: *"react-query holds this list at
    * `staleTime: Infinity`, so a tab open across the deploy hands this component a row shaped like

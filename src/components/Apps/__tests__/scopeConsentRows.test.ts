@@ -188,20 +188,75 @@ describe('buildScopeConsentRows', () => {
   });
 
   /**
-   * 🔴 THE EXEMPT SCOPES KEEP `fixed`, AND THIS IS THE ORDERING THE NEW STATE COULD HAVE BROKEN.
-   * No grant is ever recorded for a `CONSENT_EXEMPT_SCOPES` member — `partitionByConsent` signs it
-   * on the exempt test alone, before it looks at the grant — so all seven are ALWAYS outside
-   * `grantedScopes`. If the granted-set test ran before the `revokableScopes` test, every one of
-   * them would relabel to `not-granted` and lose its specific `FIXED_SCOPE_NOTES` sentence, which
-   * is the only place a viewer is told what governs the permission instead of their consent.
+   * 🔴 A SCOPE IN THE **GRANTED** SET BUT NOT IN `revokableScopes` IS `fixed`, AND THIS IS THE ONE
+   * INPUT THAT MAKES "revokable-membership is tested FIRST" OBSERVABLE.
    *
-   * Enumerated over the SERVER's list rather than a sample, for the same reason the note test below
-   * is: membership decides both what mints consent-free and what is un-revokable.
+   * ⚠️ IT EXISTS BECAUSE THE ARM BELOW CANNOT SEE THAT ORDERING, MEASURED. The reorder has TWO
+   * natural spellings and the seven-way exempt arm kills only one of them:
+   *   - spelling B, `!granted.has(scope) ? 'not-granted' : …` — dies on every exempt fixture.
+   *   - spelling A, `granted.has(scope) ? 'revokable' : !revokable.has(scope) ? 'fixed' : …` —
+   *     measured **SURVIVING the whole segment**: 40 unit + 91 component + 85 geometry, all green.
+   * It survives because every `grantedScopes` fixture in this file, in
+   * `ScopeRevoke.browser.test.tsx` and in `AppsWideLayout.geometry.test.tsx` is a SUBSET of its
+   * arm's `revokableScopes`, so the `granted ∖ revokable` region was never built. Reported by the
+   * test-review lane and re-measured rather than taken on its word.
    *
-   * MUTATION THAT MUST KILL IT: move the `granted.has(scope)` test above the `revokable.has(scope)`
-   * test.
+   * 🔴 AND THE REGION IS REACHABLE, WITH THE BLAST RADIUS ALREADY DOCUMENTED ELSEWHERE.
+   * `revokableScopes` is registry-filtered server-side (`.filter(isKnownBlockScope)`) while
+   * `granted_scopes` is NOT — `BlockRegistry.recordInstallConsent` writes
+   * `consentGatedScopes(effective)` with no registry filter. So a scope RETIRED from the
+   * vocabulary but still sitting in an app's `manifest.scopes` AND `approved_scopes` is granted,
+   * displayed, and excluded from `revokableScopes`. Under spelling A that row gets a live Remove
+   * button — and `blocks.revokeScopes` refuses an unknown string ALL-OR-NOTHING, so pressing it
+   * fails the whole call and the viewer can revoke nothing else on that app either. That is the
+   * exact hazard `listMyScopeGrants`' `revokableScopes` docblock was written for.
+   *
+   * MUTATION THAT MUST KILL IT: either spelling of the reorder. This arm kills spelling A; the
+   * exempt arm below kills spelling B.
    */
-  test.each(consentExemptScopeList())('🔴 %s stays `fixed`, never `not-granted`', (scope) => {
+  test('🔴 a GRANTED scope outside revokableScopes is `fixed` — retired-from-registry', () => {
+    const RETIRED = 'block:settings:write';
+    // The precondition, asserted rather than assumed: this really is outside the vocabulary, which
+    // is why the server excludes it from `revokableScopes` while the grant column still holds it.
+    expect(isKnownBlockScope(RETIRED), 'the fixture scope re-entered the registry').toBe(false);
+    const rows = buildScopeConsentRows({
+      scopes: [RETIRED],
+      revokedScopes: [],
+      // Registry-filtered server-side, so the retired scope is absent…
+      revokableScopes: [],
+      // …but `granted_scopes` is not registry-filtered, so it is present.
+      grantedScopes: [RETIRED],
+    });
+    expect(
+      rows,
+      'a registry-retired scope the viewer granted was offered a Remove control. ' +
+        '`blocks.revokeScopes` refuses unknown strings all-or-nothing, so pressing it fails the ' +
+        'whole call and the viewer can revoke NOTHING on that app.'
+    ).toEqual([{ scope: RETIRED, state: 'fixed' }]);
+  });
+
+  /**
+   * 🔴 THE EXEMPT SCOPES KEEP `fixed`. No grant is ever recorded for a `CONSENT_EXEMPT_SCOPES`
+   * member — `partitionByConsent` signs it on the exempt test alone, before it looks at the grant —
+   * so all seven are ALWAYS outside `grantedScopes`. Relabelling them `not-granted` would drop
+   * their specific `FIXED_SCOPE_NOTES` sentences, the only place a viewer is told what governs the
+   * permission instead of their consent.
+   *
+   * ⚠️ WHAT THIS ARM ACTUALLY CHECKS IS NARROWER THAN ITS FIRST WORDING CLAIMED, AND THE WORDING IS
+   * CORRECTED RATHER THAN THE ARM. It said "this is the ordering the new state could have broken",
+   * and it cannot see that: the ladder reaches `fixed` at `!revokable.has(scope)` and never consults
+   * `granted`, so `grantedScopes: []` here is INERT to the verdict — measured, setting it to
+   * `[scope]` (which contradicts this arm's own message) leaves all seven green. The ordering claim
+   * belongs to the retired-scope arm above. What these seven pin is that a scope in NEITHER server
+   * set is `fixed`, for the real exempt population.
+   *
+   * ⚠️ AND THE SEVEN ADD NO MUTANT KILLS OVER ONE ARM: `buildScopeConsentRows` cannot tell the
+   * scopes apart — it branches only on set membership and row order. The enumeration is kept
+   * because it is the real server list and would go red if the exempt set were emptied, not because
+   * seven inputs cover more than one. (The per-scope NOTES genuinely differ, and that is what the
+   * `fixedScopeNote` describe below enumerates for.)
+   */
+  test.each(consentExemptScopeList())('🔴 %s is in neither server set, so `fixed`', (scope) => {
     const rows = buildScopeConsentRows({
       scopes: [scope],
       revokedScopes: [],
@@ -212,9 +267,9 @@ describe('buildScopeConsentRows', () => {
     });
     expect(
       rows,
-      `${scope} is consent-exempt and therefore never in the granted set; labelling it ` +
-        '`not-granted` would drop its FIXED_SCOPE_NOTES sentence, the only place the viewer ' +
-        'learns what governs it instead of their consent'
+      `${scope} is consent-exempt and in neither server set; labelling it \`not-granted\` would ` +
+        'drop its FIXED_SCOPE_NOTES sentence, the only place the viewer learns what governs it ' +
+        'instead of their consent'
     ).toEqual([{ scope, state: 'fixed' }]);
   });
 

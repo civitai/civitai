@@ -3308,10 +3308,20 @@ export const blocksRouter = router({
    * inverse of granting — it needs something to withdraw.
    *
    * 🔴 THE ORDER OF THE THREE REFUSALS IS LOAD-BEARING: unknown → exempt → not-held. An exempt
-   * scope is never in the granted set (`partitionByConsent` signs it without ever recording a
-   * grant), so testing not-held first would answer every exempt request with the generic "you
-   * have not granted this" instead of the specific sentence naming what governs it — which is
-   * the one place the viewer learns why that row has no control.
+   * scope is not in the granted set (`partitionByConsent` signs it on the exempt test alone, before
+   * it looks at the grant), so testing not-held first would answer every exempt request with the
+   * generic "you do not currently grant this" instead of the specific sentence naming what governs
+   * it — which is the one place the viewer learns why that row has no control.
+   *
+   * ⚠️ AND THAT PREMISE IS NOT ENFORCED BY ANY WRITER — recorded because it is the sentence a future
+   * reader would cite when reordering these blocks. `BlockRegistry.recordInstallConsent` does filter
+   * (`consentGatedScopes(effective)`), but `blocks.grantScopes` does NOT: its `toGrant` is
+   * `input.scopes ∩ (manifest.scopes ∩ approvedScopes)` with no exempt filter, so a viewer calling
+   * that `protectedProcedure` directly with a declared exempt scope writes it into
+   * `granted_scopes`. Behaviour is still correct in both directions today — `revokableScopes`
+   * excludes exempt so the row stays `fixed`, and the exempt refusal fires before `notHeld`
+   * regardless — so this is a HAZARD, not a defect. The order is what makes it inert; do not read
+   * the premise as a guarantee. Reported by the correctness lane.
    *
    * 🔴 AND THE UI HALF IS NOT OPTIONAL — tightening the server alone converts a confusing
    * button into a broken one. `buildScopeConsentRows` (`src/components/Apps/scopeConsentRows.ts`)
@@ -3409,6 +3419,17 @@ export const blocksRouter = router({
       // what the page showed. A scope already in `revoked_scopes` is therefore not held, and
       // re-revoking it is refused rather than being a silent no-op write.
       //
+      // ⚠️ THIS READ IS P2022-TOLERANT AND THE SERVICE'S IS NOT, WHICH CHANGES WHICH REFUSAL A
+      // PRE-MIGRATION DATABASE PRODUCES. `readGrantRow` retries with a narrow select and answers
+      // `revokedScopes: []` where the service's read rethrows as `PRECONDITION_FAILED`
+      // (`CONSENT_REVOKE_UNAVAILABLE_MESSAGE`). So on such a database a HELD scope still gets the
+      // 412 — pinned by an arm in `blocks.router.revokeScopes.test.ts` — while a NOT-HELD one now
+      // gets this `BAD_REQUEST` instead. That is the more accurate answer of the two (the scope
+      // genuinely is not conveyed) and the unknown/exempt refusals already pre-empt the 412 the same
+      // way, so it is not new in kind. Named rather than left to be discovered. The degrade is also
+      // the only thing between a P2022 and an unhandled error here: there is no catch around this
+      // call, deliberately, because a masked failure would refuse a legitimate revoke silently.
+      //
       // ⚠️ IT IS A SNAPSHOT, AND THE SERVICE RE-READS THE ROW. Another write by the same viewer
       // between the two reads can make this decision stale — but only by one of their own
       // actions, and the WRITE is still computed from the service's own fresher read, so the
@@ -3422,10 +3443,19 @@ export const blocksRouter = router({
       if (notHeld.length > 0) {
         // ALL-OR-NOTHING, like the unknown and exempt refusals above: a partial write would
         // leave the caller unable to say which half landed.
+        // 🔴 "do not CURRENTLY grant", NOT "have not granted" — AND THE DIFFERENCE IS A FALSE
+        // STATEMENT ABOUT THE VIEWER'S OWN HISTORY. This message renders VERBATIM to the viewer
+        // (a 400, so `client-safe-error.ts` does not rewrite it, and `ScopeRevokeFailureNotice`
+        // prints `failure.message`), and `notHeld` deliberately folds in the ALREADY-REVOKED case
+        // — `getGrantedScopes` subtracts `revoked_scopes`, which is what makes a double-submit a
+        // refusal rather than a no-op write that moves `revoked_scopes_at`. For that arm "you have
+        // not granted that permission" is exactly backwards: they granted it and withdrew it. The
+        // present-tense form is true of every arm this refusal covers — never granted, already
+        // revoked, and a whole-grant `revoked_at`. Reported by the intent lane.
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message:
-            `cannot revoke ${notHeld.join(', ')}: you have not granted ` +
+            `cannot revoke ${notHeld.join(', ')}: you do not currently grant ` +
             `${notHeld.length === 1 ? 'that permission' : 'those permissions'} to this app, so ` +
             `there is nothing to withdraw.`,
         });

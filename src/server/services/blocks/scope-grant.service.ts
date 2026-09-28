@@ -747,7 +747,14 @@ export async function recordScopeGrant(opts: {
     //       read), so the reachable set is narrower than the vocabulary — but still not the
     //       manifest ceiling, which is the only thing this bullet turns on. And revoking the stale
     //       scope WOULD empty the residual, via (a).
-    //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. It has
+    //   (c) The operative fact: on a pre-migration database `revokeScopes` refuses OUTRIGHT. ⚠️ The
+    //       MECHANISM stated here is now only half of it: `blocks.revokeScopes` reads the granted
+    //       set FIRST, via `getGrantedScopes` → `readGrantRow`, which is P2022-TOLERANT and answers
+    //       `revokedScopes: []` from its narrow fallback. So a NOT-HELD scope is refused earlier,
+    //       with `BAD_REQUEST`, and only a HELD one reaches the sentence below. The conclusion is
+    //       unchanged — there is still no revoke to perform — but this bullet has been rewritten
+    //       twice already for exactly this kind of premise error, so the two paths are named.
+    //       This service function has
     //       no early return before its read; that read selects `revokedScopes` and has no narrow
     //       fallback, so the P2022 is rethrown as `PRECONDITION_FAILED` — and the WRITE path
     //       converts the same error through the same helper. So there is no revoke to perform, and

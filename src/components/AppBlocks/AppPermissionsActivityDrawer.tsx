@@ -154,7 +154,8 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              `listMyScopeGrants`.
              ⚠️ THE PREVIOUS SENTENCE HERE — "whose only source is the viewer's OWN
              `block_user_subscriptions` rows" — WAS TRUE WHEN #4722 WROTE IT AND IS NOW FALSE.
-             That function also enumerates live (non-revoked) `app_user_scope_grants` rows, so
+             That function also enumerates `app_user_scope_grants` rows (⚠️ "live (non-revoked)"
+             retracted — 4990 dropped the `revoked_at` skip), so
              a full-page app the viewer CONSENTED to now resolves here instead of falling
              through to the empty label. The contradiction #4722 described — this half claiming
              the viewer granted nothing while `AppActivityPanel` below listed that same app's
@@ -231,7 +232,9 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              and it is EMPTY for an install-backed row carrying no consent grant, so showing it is
              a new field plus a per-row choice of which set to show — not a swap."* The first
              clause is now FALSE: phase 2 added `grantedScopes`, `revokedScopes`, `scopesRevokedAt`
-             and `revokableScopes` to that type, and phase 3 reads two of them right here.
+             and `revokableScopes` to that type, and phase 3 reads two of them right here — THREE
+             since 4990, which threads `grantedScopes` through as well (a control needs the app's
+             consent-gated set AND the viewer's own grant; see `ScopeGrantSurface.revokableScopes`).
              What remains true is the rest, and it is still why the ROW LIST is the app-side
              intersection: `grantedScopes` is empty for an install-backed row carrying no consent
              grant, so rendering it as the list would show nothing for exactly the population that

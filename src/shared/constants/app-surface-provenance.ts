@@ -34,7 +34,10 @@
  * install counts.
  *
  *   · `install`  — the viewer has a `block_user_subscriptions` row (blanket or model-pinned).
- *   · `consent`  — no subscription, but a live (non-revoked) `app_user_scope_grants` row.
+ *   · `consent`  — no subscription, but an `app_user_scope_grants` row. ⚠️ "a LIVE (non-revoked)"
+ *                  is RETRACTED: since 4990 the grant leg no longer skips a row carrying
+ *                  `revoked_at`, so a `consent` row can be one whose grant is wholly withheld.
+ *                  This is the DEFINITION of the field, so it is the line a reader checks.
  *   · `activity` — NEITHER. The app used the viewer's account anyway: a
  *                  `block_scope_invocations` row.
  *

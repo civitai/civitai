@@ -242,7 +242,13 @@ describe('grantedScopes / revokedScopes on ScopeGrantSurface', () => {
     read.appUserScopeGrant.findMany.mockResolvedValue([
       grant({
         grantedScopes: [],
-        revokedScopes: [SPEND, POSTS],
+        // 🔴 STORED OUT OF ORDER, SO THE SERVICE'S `.sort()` IS OBSERVABLE. `listMyScopeGrants` does
+        // `[...(g.revokedScopes ?? [])].sort()`; with a pre-sorted fixture that call is inert and the
+        // assertion below passes with it deleted — measured. `POSTS` sorts before `SPEND`
+        // (`posts:…` > `ai:…`), so storing them reversed makes the sort do work, and the assertion
+        // names the expected order as a LITERAL rather than re-running `.sort()` on the fixture,
+        // which would move with the code it checks.
+        revokedScopes: [SPEND, POSTS].slice().reverse(),
         revokedAt: when,
         revokedScopesAt: when,
         // Non-null on purpose: a stored ceiling is what makes the `buzzBudgetPerDay` assertion
@@ -259,7 +265,10 @@ describe('grantedScopes / revokedScopes on ScopeGrantSurface', () => {
     const [row] = rows;
     expect(row.origin).toBe('consent');
     expect(row.grantedScopes).toEqual([]);
-    expect(row.revokedScopes).toEqual([POSTS, SPEND].sort());
+    expect(
+      row.revokedScopes,
+      'the surface stopped sorting `revoked_scopes`, so row order depends on insertion order'
+    ).toEqual([SPEND, POSTS]);
     // The timestamp the drawer renders as "you last removed a permission on <date>".
     expect(row.scopesRevokedAt).toEqual(when);
     // The app-side row list is untouched — the page still says what the app may be exercised
@@ -273,10 +282,17 @@ describe('grantedScopes / revokedScopes on ScopeGrantSurface', () => {
   });
 
   /**
-   * 🔴 A PARTIAL REVOKE MUST NOT DELETE THE CARD. `revoked_at` is the whole-grant flag and
-   * the grant leg skips rows carrying it; keying that skip on "has any revocation" would make
-   * a viewer's first revoke remove the very row they revoked from — along with every
-   * remaining permission's control.
+   * A PARTIAL REVOKE KEEPS ITS CARD.
+   *
+   * ⚠️ THIS IS NOW AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE LABEL MATTERS BECAUSE
+   * "reads as coverage while providing none" is the failure mode. Its docblock said *"the grant leg
+   * skips rows carrying it; keying that skip on 'has any revocation' would make a viewer's first
+   * revoke remove the very row they revoked from"* — RETRACTED: 4990 removed the skip entirely, so
+   * neither flag gates the card and there is no longer a way to lose it by keying the skip wrongly.
+   * The arm is kept (the operator's brief required it to keep passing, and it still pins that a
+   * partial revoke reports `origin: 'consent'` with the remaining scope) but it now guards an
+   * invariant the bug cannot violate. The live version of this claim is the CARD-SURVIVES assertion
+   * in the whole-grant arm above.
    */
   it('a partially-revoked app still has its row, with the remaining permissions', async () => {
     read.blockUserSubscription.findMany.mockResolvedValue([]);

@@ -923,10 +923,14 @@ describe('scope-grant.service', () => {
       expect(res.grantedScopes).toEqual(['ai:write:budgeted']);
     });
 
-    // 🔴 THE BOUNDARY. `revoked_at` is the WHOLE-GRANT flag and the permissions page skips
-    // rows that carry it, so stamping it on a PARTIAL revoke would make a viewer's first
-    // revoke delete the card they revoked from — along with every remaining permission's
-    // control.
+    // 🔴 THE BOUNDARY, AND THE REASON IS NOT THE ONE ORIGINALLY RECORDED. ⚠️ This read *"the
+    // permissions page skips rows that carry it, so stamping it on a PARTIAL revoke would make a
+    // viewer's first revoke delete the card they revoked from"* — RETRACTED: 4990 removed that skip,
+    // so the card no longer disappears. The boundary still holds, for the reason `revokeScopes`'
+    // own `revokedAt` comment gives: `revoked_at` collapses `liveGrantedScopes` to EMPTY, so
+    // stamping it on a partial revoke would withhold every REMAINING permission the viewer still
+    // grants — and a later `: null` would then re-grant them all with no prompt. Read that comment
+    // before relaxing this; the consequence moved, the guard did not.
     it('does not TOUCH revokedAt while any granted scope remains', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(liveGrant());
       mockDb.appUserScopeGrant.update.mockResolvedValueOnce({});
@@ -1131,10 +1135,17 @@ describe('scope-grant.service', () => {
       expect(res.revoked).toEqual(['ai:write:budgeted']);
     });
 
-    // 🔴 NO ROW ⇒ CREATE ONE. If this no-op'd, the viewer's pre-emptive "no" would be
-    // forgotten and their next install would union the scope in with no prompt — the
-    // resurrection hazard in the shape that is hardest to see, because there is nothing on
-    // screen to suggest the revoke did not stick.
+    // ⚠️ INVARIANT GUARD OVER A BRANCH UNREACHABLE FROM ITS ONLY CALLER, AND THE RATIONALE BELOW IS
+    // RETRACTED. This read: *"NO ROW ⇒ CREATE ONE. If this no-op'd, the viewer's pre-emptive 'no'
+    // would be forgotten and their next install would union the scope in with no prompt."* That
+    // "pre-emptive no" is precisely the requirement 4990 found unattributed and removed:
+    // `blocks.revokeScopes` now refuses any scope outside the viewer's live granted set, and no
+    // grant row means an empty granted set, so this branch cannot be reached through the one caller
+    // that exists. The next three arms (this one, the P2002 recovery and the bounded retry) are
+    // therefore invariant guards over an unreachable write path into a consent ledger — kept
+    // because the service's contract is "records whatever it is told", NOT because the hazard they
+    // describe is live. See `revokeScopes`' own docblock, which says the same thing from the other
+    // side. Do not cite them as evidence the pre-emptive case is supported.
     it('CREATES a suppression row when the viewer holds no grant at all', async () => {
       mockDb.appUserScopeGrant.findUnique.mockResolvedValueOnce(null);
       mockDb.appUserScopeGrant.create.mockResolvedValueOnce({});

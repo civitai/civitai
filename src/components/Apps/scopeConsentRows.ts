@@ -291,6 +291,29 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
  * rather than `fixed`; the harmful path needs a new-registry pod AND a stale bundle AND a brand-new
  * consent-exempt scope already live in an approved manifest). Recorded as a hazard, not a defect.
  */
+/**
+ * The sentence a `not-granted` row carries.
+ *
+ * 🔴 EXPORTED, LIKE EVERY OTHER VIEWER-FACING SENTENCE IN THIS ARC, AND FOR THE REASON THE RULES
+ * GIVE: when the artifact under test IS prose, a guard on WORDS is walkable by REWORDING. Its first
+ * draft was an inline literal in `ScopeConsentAction` asserted with `toMatch(/not granted/i)` — a
+ * guard on two words, which any reword walks straight through. `FIXED_SCOPE_NOTES`,
+ * `CONSENT_REVOKE_UNAVAILABLE_MESSAGE`, `UNGRANTABLE_CONSENT_TOAST` and
+ * `scopeGrantEmptyScopeLabel` are all named for the same reason; this followed its inline
+ * neighbour instead. Reported by the reuse lane.
+ *
+ * ⚠️ IT SAYS "not yet", DELIBERATELY. The state is not permanent — the app can ask at the point of
+ * use and the consent modal grants it, at which point the same row becomes `revokable`. A flat "you
+ * have not granted this" reads as a refusal.
+ *
+ * 🔴 THE SECOND CLAUSE IS A CLAIM ABOUT ANOTHER MODULE, so it is cross-referenced rather than left
+ * to be re-derived: "the app will ask" is `partitionByConsent` returning this scope in `missing`
+ * (`src/server/services/blocks/scope-grant.service.ts`), which the mint publishes as
+ * `missingScopes` and `src/components/AppBlocks/BlockConsentModal.tsx` renders as the consent
+ * prompt. If that path ever stops asking, this sentence becomes false and nothing here would know.
+ */
+export const SCOPE_NOT_GRANTED_NOTE = 'Not granted yet — the app will ask if it needs this.';
+
 export function fixedScopeNote(scope: string): string {
   /**
    * 🔴 `hasOwnProperty`, NEVER A BARE `FIXED_SCOPE_NOTES[scope]` TRUTHINESS TEST — and this repo has

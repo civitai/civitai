@@ -310,16 +310,25 @@ describe('applyRevocations', () => {
    * non-zero value means viewers are withdrawing permissions. Miscounting the consumers is how
    * `applyRevocations`' own docblock came to license returning a clone; it is corrected there too.
    *
-   * BOTH early returns are covered, on purpose: the `new Set()` case exercises
-   * `revoked.size === 0`, the `new Set(['zzz'])` case exercises
-   * `kept.length === claims.scopes.length`. A single arm would leave one of the two mutants alive.
+   * 🔴 ONLY ONE OF THE TWO EARLY RETURNS IS A GUARD, AND THIS DOCBLOCK SAID BOTH WERE.
+   * ⚠️ RETRACTED: *"BOTH early returns are covered, on purpose … A single arm would leave one of the
+   * two mutants alive."* Measured — deleting `if (revoked.size === 0) return claims;` leaves 75
+   * tests green across this file, the bridge suite and the middleware suite, and it is UNKILLABLE
+   * by construction: with an empty revocation set `kept` equals `claims.scopes` in length, so the
+   * SECOND early return catches the same input and returns the same object. That line is a pure
+   * fast path with no observable behaviour — a perf line, not a guard — and the first assertion's
+   * original message named a cause that can never be the cause. The `kept.length` return is the
+   * real guard and the second assertion is what kills it. Reported by the test-review lane; the
+   * miscount is the same shape as the "both callers" error corrected in the paragraph above, one
+   * level down.
    */
   it('returns the same object identity when nothing is revoked', () => {
     const claims = { scopes: ['a', 'b'] };
     expect(
       applyRevocations(claims, new Set()),
-      'the `revoked.size === 0` early return stopped returning the same object; the bridge reads ' +
-        'identity to decide whether this request lost a scope'
+      'an empty revocation set must return the same object — the bridge reads identity to decide ' +
+        'whether this request lost a scope. (Reached via the `kept.length` return, not the ' +
+        '`size === 0` fast path, which is unkillable.)'
     ).toBe(claims);
     expect(
       applyRevocations(claims, new Set(['zzz'])),

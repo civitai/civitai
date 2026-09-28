@@ -311,8 +311,11 @@ export function revokedScopesForToken(
  *
  * Returns the SAME object when nothing was revoked, so the common path allocates nothing.
  *
- * 🔴 THAT IDENTITY IS LOAD-BEARING AND IS A CONTRACT. Both early returns — `revoked.size === 0`
- * and `kept.length === claims.scopes.length` — must keep returning `claims` itself, not a clone.
+ * 🔴 THAT IDENTITY IS LOAD-BEARING AND IS A CONTRACT: `kept.length === claims.scopes.length` must
+ * keep returning `claims` itself, not a clone. ⚠️ The `revoked.size === 0` line above it is a pure
+ * FAST PATH, not a second guard — an empty revocation set produces `kept.length ===
+ * claims.scopes.length`, so deleting it changes nothing observable and no test can kill it
+ * (measured: 75 tests green without it). Do not read it as belt-and-braces for the contract.
  *
  * ⚠️ THE PREVIOUS PARAGRAPH SAID THE OPPOSITE AND IS RETRACTED, VERBATIM SO NOBODY RE-DERIVES IT:
  * *"DO NOT BUILD ON THAT IDENTITY. This used to promise 'a caller can use identity to tell whether

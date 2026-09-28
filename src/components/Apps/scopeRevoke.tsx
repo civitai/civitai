@@ -2,7 +2,7 @@ import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
-import { fixedScopeNote } from '~/components/Apps/scopeConsentRows';
+import { fixedScopeNote, SCOPE_NOT_GRANTED_NOTE } from '~/components/Apps/scopeConsentRows';
 import { BLOCK_SPEND_SCOPE } from '~/shared/constants/block-scope.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showWarningNotification } from '~/utils/notifications';
@@ -484,7 +484,7 @@ export function ScopeConsentAction({
    * 🔴 A SHORT LABEL AND NO CONTROL — NOT SILENCE, AND NOT `fixed`'s NOTE.
    *
    * The app declares this permission and the viewer has never agreed to it, so
-   * `blocks.revokeScopes` refuses it: *"you have not granted that permission to this app, so
+   * `blocks.revokeScopes` refuses it: *"you do not currently grant that permission to this app, so
    * there is nothing to withdraw."* Offering a Remove button here — which this surface did until
    * the granted set was threaded in — meant a live control on a permission never given, whose
    * click wrote a durable suppression that then made a FUTURE consent prompt's grant inert.
@@ -495,14 +495,16 @@ export function ScopeConsentAction({
    * granted by platform policy and bounded by server-side checks, and for a scope nobody granted
    * neither half holds. See `ScopeConsentState` in `scopeConsentRows.ts`.
    *
-   * ⚠️ IT SAYS "not yet", DELIBERATELY. This state is not permanent: the app can ask for the
-   * permission at the point of use and the consent modal will grant it, at which point the same
-   * row becomes `revokable`. A flat "you have not granted this" reads as a refusal.
+   * The sentence itself is `SCOPE_NOT_GRANTED_NOTE`, exported so a test can pin the WHOLE string
+   * rather than a word in it — see its docblock for why, and for the cross-reference its second
+   * clause depends on.
    */
   if (state === 'not-granted') {
     return (
-      <Text size="xs" c="dimmed" data-testid="scope-not-granted-note">
-        Not granted yet — the app will ask if it needs this.
+      // `fs="italic"` to match the `fixed` note directly above and `BlockScopeList`'s own
+      // no-control text — one component was rendering three notes under two italic conventions.
+      <Text size="xs" c="dimmed" fs="italic" data-testid="scope-not-granted-note">
+        {SCOPE_NOT_GRANTED_NOTE}
       </Text>
     );
   }

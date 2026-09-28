@@ -277,7 +277,7 @@ import { AppPermissionsActivityDrawer } from '~/components/AppBlocks/AppPermissi
 // eslint-disable-next-line import/first
 import { ScopeGrantsPanel } from '~/pages/apps/activity';
 // eslint-disable-next-line import/first
-import { FIXED_SCOPE_NOTES } from '~/components/Apps/scopeConsentRows';
+import { FIXED_SCOPE_NOTES, SCOPE_NOT_GRANTED_NOTE } from '~/components/Apps/scopeConsentRows';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -1195,12 +1195,20 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
       said,
       `${name}: rendered nothing at all for a declared-but-ungranted permission`
     ).not.toBeNull();
-    // 🔴 AND IT IS NOT `fixed`'s SENTENCE. The literal fragment is quoted rather than derived, so a
-    // future edit that routes this state through `fixedScopeNote` fails here instead of silently
-    // asserting the permission is platform-granted and permanent.
+    // 🔴 AND IT IS NOT `fixed`'s SENTENCE.
     expect(row.querySelector('[data-testid="scope-fixed-note"]'), name).toBeNull();
     expect(said?.textContent ?? '', name).not.toContain('granted by platform policy');
-    expect(said?.textContent ?? '', name).toMatch(/not granted/i);
+    // 🔴 THE WHOLE NORMALISED STRING, NOT A WORD IN IT. ⚠️ This was `toMatch(/not granted/i)` — a
+    // guard on two words, which any reword of the sentence walks straight through while still
+    // reporting green. The artifact under test IS prose, so the assertion has to pin all of it; a
+    // cosmetic reword then fails this arm, which is the price of a machine-readable claim. Compared
+    // against the exported constant rather than a retyped literal so the two cannot drift, and
+    // `SCOPE_NOT_GRANTED_NOTE`'s own docblock owns what the sentence is allowed to say.
+    expect(
+      (said?.textContent ?? '').trim(),
+      `${name}: the not-granted sentence changed — re-read SCOPE_NOT_GRANTED_NOTE's docblock, ` +
+        'especially the cross-reference its second clause depends on'
+    ).toBe(SCOPE_NOT_GRANTED_NOTE);
   });
 });
 
