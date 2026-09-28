@@ -58,11 +58,19 @@
  * and a restatement of it dropped the "here" — which read as an open question and invited the next
  * reader to answer it in. It IS established, in two places, both read rather than inferred:
  *   - `src/pages/api/v1/block-tokens/index.ts:375-389` — the `resolveDevPageBlockForAuthor` branch's
- *     own docblock. SPEND CONTAINMENT (`:375-382`): the token is self-bound (`sub` = the session
- *     user), so `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
- *     `assertViewerIsAppDeveloper(sub)` plus the per-call (`DEV_BUZZ_BUDGET_CAP`) / per-session /
- *     per-day caps. SCOPE SOURCE (`:383-389`): real spend on a brand-new, never-reviewed app is
- *     additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
+ *     own docblock. SPEND CONTAINMENT: the token is self-bound (`sub` = the session user), so
+ *     `submitWorkflow` spends the AUTHOR's OWN Buzz, bounded by the per-call `buzzBudget` claim
+ *     (`DEV_BUZZ_BUDGET_CAP`) and the aggregate per-user / per-app caps in
+ *     `reserveBlockBuzzSpendForClaims`. SCOPE SOURCE: real spend on a brand-new, never-reviewed
+ *     app is additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
+ *     🔴 CORRECTED 2026-09-27 — and this one mattered most of the three, because this file is
+ *     the LEDGER a reader consults to find out what bounds spend on each mint. It used to say
+ *     that branch was "gated by `assertViewerIsAppDeveloper(sub)`". That call is not on the
+ *     submit path: two module-private helpers of that name exist, in
+ *     `blocks/user-settings.service.ts` and `apps/app-storage.service.ts`, whose only call
+ *     sites are a viewer SETTINGS write and the mod review STORAGE branch. The line numbers
+ *     that used to be cited here are dropped rather than refreshed — they had already drifted,
+ *     and the named function is the durable reference.
  *   - `src/server/services/block-registry.service.ts:2117-2119` — where that flag gate actually
  *     bites: `if (!opts?.unsubmittedSpendAllowed) ephemeralScopes = ephemeralScopes.filter((s) =>
  *     s !== 'ai:write:budgeted')`. ⚠️ It sits in the `else` (BRAND-NEW) branch only. The PENDING

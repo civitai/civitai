@@ -116,6 +116,13 @@ export type BlockAuthorFeeSkip =
   | 'base-unavailable'
   | 'zero-fee'
   | 'self-dealing'
+  /**
+   * A PRIVATE RUN of a delisted / suspended app (owner, accepted collaborator, or
+   * moderator). Returned by `resolveBlockAuthorFeePayee` before the owner is
+   * resolved, so it reaches both the quote and the charge — which means an estimate
+   * and a submit agree, and a reviewer is never SHOWN a fee that will not be taken.
+   */
+  | 'private-run'
   | 'app-missing'
   | 'not-reserved'
   | 'debit-failed'
@@ -210,6 +217,20 @@ export async function quoteBlockAuthorFee(args: {
    * better signal anyway because it cannot be drowned by estimate volume.
    */
   suppressQuoteLogs?: boolean;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. Forwarded to `resolveBlockAuthorFeePayee`, which refuses
+   * with `'private-run'`.
+   *
+   * 🔴 THE QUOTE CARRIES IT TOO, NOT JUST THE CHARGE, AND THAT IS THE ANTI-
+   * DIVERGENCE RULE THIS FILE ALREADY OBEYS. If only the charge refused, a
+   * moderator would be SHOWN a fee on every estimate and then not billed it —
+   * re-creating estimate/submit divergence one layer down, which is precisely what
+   * the disclosure callers exist to remove. Routing it through the shared payee
+   * predicate makes both surfaces agree by construction rather than by two
+   * matching edits.
+   */
+  privateRun?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeQuote> {
   const quote = await quoteBlockAuthorFeeUncounted(args);
@@ -324,6 +345,10 @@ async function quoteBlockAuthorFeeUncounted(
       // does — its two skip lines. This one is wider by exactly this function's
       // `catch`, which is why the two names differ rather than one being reused.
       suppressSkipLogs: args.suppressQuoteLogs,
+      // Forwarded, never re-derived here — the private-run refusal has ONE
+      // spelling, in the payee resolver, so the quote and the accrual cannot
+      // disagree about it.
+      privateRun: args.privateRun,
     });
     if (!payee.payee) return { charge: false, reason: payee.reason };
 
@@ -447,6 +472,16 @@ export async function chargeBlockAuthorFee(args: {
   generationType: string | null;
   /** 🔴 The quote this path actually reserved. A hard ceiling; 0 forbids a charge. */
   reservedAuthorFeeBuzz: number;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. Forwarded into the re-price below, whose payee resolve
+   * refuses with `'private-run'` BEFORE this function reaches the debit.
+   *
+   * 🔴 REFUSED BEFORE THE DEBIT, NOT AFTER IT — the same rule the self-dealing arm
+   * obeys. A refusal after `createBuzzTransactionMany` would have already moved the
+   * reviewer's Buzz and would need `reverseBlockAuthorFee` to undo it.
+   */
+  privateRun?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<ChargeBlockAuthorFeeResult> {
   const result = await chargeBlockAuthorFeeUncounted(args);
@@ -518,6 +553,11 @@ async function chargeBlockAuthorFeeUncounted(
     appId,
     viewerUserId,
     workflowLabel: workflowId,
+    // 🔴 MUST be forwarded. This re-price is the ONLY payee resolve on the charge
+    // path, so dropping it here would let a private run reach the debit at `:530`
+    // even though the estimate correctly refused — the field-exists-but-nothing-
+    // branches-on-it failure, in the one place where it costs real Buzz.
+    privateRun: args.privateRun,
     config: args.config,
   });
   if (!quote.charge) return { charged: false, reason: quote.reason };
@@ -635,6 +675,11 @@ async function chargeBlockAuthorFeeUncounted(
       // 🔴 THE CHARGED AMOUNT, not the computed one — see the clamp note above.
       computation: { ...quote.computation, feeBuzz },
       generationType: args.generationType,
+      // Unreachable-but-forwarded: the quote above already refused a private run,
+      // so this accrual cannot be reached with `privateRun: true` today. Forwarded
+      // anyway so the write-side belt is not silently weaker than the read-side
+      // one if the ordering above ever changes.
+      privateRun: args.privateRun,
     });
   } catch (error) {
     logToAxiom(

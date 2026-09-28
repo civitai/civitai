@@ -202,6 +202,36 @@ export interface SignBlockTokenInput {
    * Absent/false → byte-identical to a normal token (no claim stamped).
    */
   reviewRunForReal?: boolean;
+  /**
+   * PRIVATE-RUN marker. Set ONLY by the (not-yet-built) private-run mint branch,
+   * which serves a DELISTED / SUSPENDED app's already-deployed bundle to its
+   * owner, an accepted listing collaborator, or a moderator — never publicly.
+   *
+   * 🔴 IT IS A MONEY-SAFETY CLAIM, NOT A UX ONE, AND IT IS THE ONLY INPUT THE TWO
+   * ARMS HAVE. A private run is a diagnostic or a takedown review, not a use of
+   * the app, so neither money rail may treat it as one:
+   *   1. `recordSpendAttribution` VOIDS the `block_spend_attribution` row it would
+   *      otherwise write as `tracked`, so a review generation cannot inflate a
+   *      suspended app's owner-visible run count or Buzz total.
+   *   2. `resolveBlockAuthorFeePayee` REFUSES, so the per-generation author fee is
+   *      never quoted, reserved or debited. Without this the reviewer is debited
+   *      and the suspended publisher is credited the same Buzz — the platform takes
+   *      no cut, so it is a straight transfer from the moderator reviewing a
+   *      takedown to the author who was taken down.
+   *
+   * Both arms read the claim only AFTER the RS256 signature is verified, so a
+   * forged `privateRun: true` cannot pass the gate. Stamped only when explicitly
+   * true, so a normal token never carries it and `undefined` is byte-identical to
+   * the pre-feature behaviour.
+   *
+   * 🔴 THIS IS NOT `dev`, AND MUST NEVER BE SET ALONGSIDE IT FOR A NON-OWNER.
+   * `claims.dev === true` SKIPS the per-app velocity reservation in
+   * `reserveBlockBuzzSpendForClaims`, which would hand a moderator an uncapped
+   * per-app spend surface on an app the platform has taken down. `privateRun`
+   * deliberately changes no lifetime and no cap selection — it only closes the two
+   * money rails above.
+   */
+  privateRun?: boolean;
 }
 
 export interface SignBlockTokenResult {
@@ -291,6 +321,13 @@ export class BlockTokenService {
     // Stamped only when explicitly true so a normal token never carries it.
     if (input.reviewRunForReal === true) {
       claims.reviewRunForReal = true;
+    }
+    // PRIVATE-RUN marker — stamped ONLY for a private run of a delisted/suspended
+    // app. Read (after signature validation) by the two money arms: the spend
+    // attribution void and the author-fee refusal. Stamped only when explicitly
+    // true so a normal token never carries it.
+    if (input.privateRun === true) {
+      claims.privateRun = true;
     }
 
     const token = await new SignJWT(claims)

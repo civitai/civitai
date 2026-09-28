@@ -109,6 +109,81 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(withoutPayload.reviewRunForReal).toBeUndefined();
   });
 
+  it('[REG] stamps privateRun:true ONLY when supplied (absent otherwise)', async () => {
+    // The SIGN half of the private-run claim plumbing. The two money arms — the
+    // spend-attribution void and the author-fee refusal — read this claim and
+    // nothing else, so if it is not stamped both arms are inert.
+    const { BlockTokenService } = await import('../block-token.service');
+    const withFlag = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: {},
+      buzzBudget: 137,
+      privateRun: true,
+    });
+    const withoutFlag = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['user:read:self'],
+      ctx: {},
+    });
+    const { payload: withPayload } = await jwtVerify(withFlag.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const { payload: withoutPayload } = await jwtVerify(withoutFlag.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(withPayload.privateRun).toBe(true);
+    expect(withoutPayload.privateRun).toBeUndefined();
+    // 🔴 `privateRun` MUST NOT DRAG `dev` IN WITH IT. `claims.dev === true` SKIPS
+    // the per-app velocity reservation, so a private-run token that also carried
+    // `dev` would hand a moderator an uncapped per-app spend surface on an app the
+    // platform has taken down. The budget (137) is asserted too, so a mutant that
+    // routed privateRun through the dev branch — which would also change the
+    // lifetime — cannot pass by coincidence.
+    expect(withPayload.dev).toBeUndefined();
+    expect(withPayload.buzzBudget).toBe(137);
+  });
+
+  it('[INV] privateRun does not change the token lifetime (the 4h cap is `dev`-only)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const base = {
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['user:read:self'],
+      ctx: {},
+    } as const;
+    const plain = await BlockTokenService.sign({ ...base });
+    const privateRun = await BlockTokenService.sign({ ...base, privateRun: true });
+    // Compare the LIFETIME, not the absolute instant — the two signs happen
+    // milliseconds apart, so asserting equal `expiresAt` would be flaky. Both
+    // decode to the default 15-minute window.
+    const lifetime = async (token: string) => {
+      const { payload } = await jwtVerify(token, publicKey, {
+        issuer: 'civitai',
+        audience: 'civitai-app-block',
+        algorithms: ['RS256'],
+      });
+      return (payload.exp as number) - (payload.iat as number);
+    };
+    expect(await lifetime(privateRun.token)).toBe(await lifetime(plain.token));
+    expect(await lifetime(privateRun.token)).toBe(900);
+  });
+
   it('stamps maxBrowsingLevel + domain claims when supplied (SFW domain)', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const r = await BlockTokenService.sign({

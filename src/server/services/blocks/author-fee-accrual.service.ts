@@ -152,16 +152,27 @@ export type AccrueBlockAuthorFeeInput = {
   computation: BlockAuthorFeeComputation;
   /** The resolved generation type, or null when it could not be established. */
   generationType: string | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — forwarded to
+   * `resolveBlockAuthorFeePayee`, which refuses. Present on this INPUT (and not
+   * only on the charge path) because this function is exported and its contract is
+   * "record that a debit happened": a caller that is not `chargeBlockAuthorFee`
+   * must be able to state the fact, or the write-side belt cannot see it.
+   */
+  privateRun?: boolean;
 };
 
 export type AccrueBlockAuthorFeeResult =
   | { accrued: true; id: string; feeBuzz: number }
-  | { accrued: false; reason: 'zero-fee' | 'self-dealing' | 'app-missing' | 'duplicate' | 'error' };
+  | {
+      accrued: false;
+      reason: 'zero-fee' | 'self-dealing' | 'private-run' | 'app-missing' | 'duplicate' | 'error';
+    };
 
 /** Who this app's fee is owed to, or why nobody is. */
 export type BlockAuthorFeePayee =
   | { payee: true; appOwnerUserId: number }
-  | { payee: false; reason: 'app-missing' | 'self-dealing' };
+  | { payee: false; reason: 'app-missing' | 'self-dealing' | 'private-run' };
 
 /**
  * Resolve the app owner a fee is owed to, and refuse when that owner IS the
@@ -220,8 +231,53 @@ export async function resolveBlockAuthorFeePayee(args: {
    * constant label and differs only by timestamp.
    */
   suppressSkipLogs?: boolean;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. When true nobody is owed a fee, and the refusal is
+   * returned BEFORE the owner is even looked up.
+   *
+   * 🔴 IT LIVES HERE RATHER THAN IN THE CHARGE SERVICE FOR THE SAME REASON THE
+   * SELF-DEALING CHECK DOES: this is the ONE SPELLING, and it has two callers.
+   * Putting it in `quoteBlockAuthorFeeUncounted` alone would leave a direct
+   * `accrueBlockAuthorFee` caller able to write a private-run accrual row — the
+   * exact defence-in-depth-against-a-CALLER argument made above for self-dealing.
+   * Both callers therefore get it from one branch and cannot disagree.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean;
 }): Promise<BlockAuthorFeePayee> {
-  const { appId, viewerUserId, workflowId, suppressSkipLogs } = args;
+  const { appId, viewerUserId, workflowId, suppressSkipLogs, privateRun } = args;
+
+  // 🔴 PRIVATE-RUN EXCLUSION. A private run serves a DELISTED / SUSPENDED app's
+  // deployed bundle to its owner, an accepted listing collaborator, or a
+  // moderator, so that a takedown can be diagnosed or appealed without relisting
+  // the app publicly. It is a REVIEW, not a use — and a delisted app has no users
+  // to charge on the author's behalf.
+  //
+  // 🔴 ITS ONLY LIVE CONSUMER IS A MODERATOR RUN, WHICH IS WHY THIS ARM EXISTS AT
+  // ALL. The owner is already refused one branch below (`self-dealing`), and
+  // collaborators are read-only on this surface by decision — `ai:write:budgeted`
+  // is stripped from an editor's clamp, so an editor cannot reach a generation and
+  // cannot reach this. That leaves the moderator, who IS a third party: without
+  // this branch, reviewing a takedown debits the MODERATOR and credits the
+  // SUSPENDED PUBLISHER the same Buzz, because the platform takes no cut on this
+  // rail. That is a straight transfer from the person reviewing the takedown to the
+  // author who was taken down.
+  //
+  // Placed FIRST, before the owner lookup, for three reasons: the refusal needs no
+  // owner, so it costs no query; a private run must be refused even if the app row
+  // is missing or dangling; and it keeps the two arms below independently
+  // reachable — `app-missing` and `self-dealing` are still the only way an ordinary
+  // (non-private) run can be refused, so neither becomes dead.
+  //
+  // NOT LOGGED. The two arms below log because their rate is a signal about real
+  // traffic; a private run is an operator action that the mint's own audit line
+  // already records with its audience, slug and user, so a second line here would
+  // be duplicate volume carrying strictly less.
+  if (privateRun === true) {
+    return { payee: false, reason: 'private-run' };
+  }
 
   // Resolve + snapshot the app owner. 🔴 AT WRITE TIME, never at settlement: an
   // app that changes hands must not retroactively move earnings already accrued
@@ -293,8 +349,16 @@ export async function resolveBlockAuthorFeePayee(args: {
 export async function accrueBlockAuthorFee(
   input: AccrueBlockAuthorFeeInput
 ): Promise<AccrueBlockAuthorFeeResult> {
-  const { workflowId, appId, appBlockId, viewerUserId, buzzType, computation, generationType } =
-    input;
+  const {
+    workflowId,
+    appId,
+    appBlockId,
+    viewerUserId,
+    buzzType,
+    computation,
+    generationType,
+    privateRun,
+  } = input;
 
   // A zero fee is not an accrual with an amount of zero — it is the absence of a
   // charge. Writing it would put rows in the ledger that can never settle (the
@@ -308,7 +372,12 @@ export async function accrueBlockAuthorFee(
   // or extract it. It is extracted, and `chargeBlockAuthorFee` calls it before it
   // takes any money; this call is the write-side belt for any OTHER caller of
   // this exported function, not a second copy of the rule.
-  const payee = await resolveBlockAuthorFeePayee({ appId, viewerUserId, workflowId });
+  const payee = await resolveBlockAuthorFeePayee({
+    appId,
+    viewerUserId,
+    workflowId,
+    privateRun,
+  });
   if (!payee.payee) return { accrued: false, reason: payee.reason };
 
   const id = newBlockAuthorFeeAccrualId();

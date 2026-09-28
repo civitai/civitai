@@ -430,12 +430,31 @@ async function hasAcceptedSeat(
  * `appListingId: null` and therefore only ever `owner`/`null` — correct, because there
  * is nothing to seat anyone on. The hop costs one query and is paid ONLY on the
  * non-owner path.
+ *
+ * 🔴 `db` IS LOAD-BEARING FOR THE SAME REASON IT IS ON `resolveListingAccess`, AND
+ * FOR ONE MORE. Read that function's note first: an EDITOR never takes the owner
+ * short-circuit, so the seat lookup is the one path that always reaches the
+ * database, and resolving it off a lagging replica turns replication lag into a
+ * spurious "you are not a collaborator". The additional reason here is FRESHNESS OF
+ * STATUS rather than of seats: a caller that gates on a block's CURRENT state —
+ * a moderator resolving a just-suspended app, say — must not read a replica that
+ * still shows the pre-flip row, which is exactly why the token mint reads `dbWrite`
+ * throughout ("so a freshly-suspended block can't be installed through a
+ * replication-lag window").
+ *
+ * Threaded all the way down to the seat lookup, not just to the block lookup —
+ * `hasAcceptedSeat` already accepts the override, and passing it to only one of the
+ * two queries would leave the editor path reading the replica while the block path
+ * read the primary, which is the worst of both.
+ *
+ * DEFAULTS TO `dbRead`, so every existing caller is byte-identical. Additive only.
  */
 export async function resolveAppAccess(
   appBlockId: string,
-  userId: number | null | undefined
+  userId: number | null | undefined,
+  db: AccessDb = dbRead
 ): Promise<AppAccess | null> {
-  const block = await dbRead.appBlock.findUnique({
+  const block = await db.appBlock.findUnique({
     where: { id: appBlockId },
     select: { id: true, app: { select: { userId: true } }, appListing: { select: { id: true } } },
   });
@@ -446,7 +465,7 @@ export async function resolveAppAccess(
   if (typeof userId !== 'number') return { ...base, role: null };
   if (ownerUserId === userId) return { ...base, role: 'owner' };
   if (!appListingId) return { ...base, role: null };
-  const editor = await hasAcceptedSeat(appListingId, userId);
+  const editor = await hasAcceptedSeat(appListingId, userId, db);
   return { ...base, role: editor ? 'editor' : null };
 }
 

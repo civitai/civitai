@@ -376,6 +376,24 @@ export type RecordSpendAttributionInput = {
    * final. Never persisted.
    */
   generationPriceIsCap?: boolean | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. When true the row is written `voided` instead of
+   * `tracked`.
+   *
+   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
+   * a non-resolving synthetic `appId`, which is how the mod review sandbox
+   * excludes both money rails — would also break per-app storage namespacing,
+   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
+   * metric label. So the real ids are kept and the rail is closed explicitly
+   * here. A voided row preserves the audit trail at zero money cost:
+   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
+   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
+   * COUNT and BUZZ SUM a suspended app's owner can see.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -514,6 +532,7 @@ export async function recordSpendAttribution(
     blockInstanceId,
     modelId = null,
     sharedContentKey = null,
+    privateRun = false,
   } = input;
 
   // APP-FACING generation type (`textToImage:txt2img`, `customComfy:inline`, a
@@ -595,13 +614,37 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
-  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
-  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
-  // spend row stays. The void/track distinction is kept because it is the
-  // self-spend / internal-owner marker the analytics reader and any future rail
-  // would both need, and voiding costs nothing.
-  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
+  // Void rows that are zero because of WHO spent/owns, or because the run was not
+  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
+  // "share-pending awaiting a payout-time backpay" — that was the removed spend
+  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
+  // void/track distinction is kept because it is the self-spend / internal-owner /
+  // private-run marker the analytics reader and any future rail would both need,
+  // and voiding costs nothing.
+  //
+  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
+  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
+  // the share columns are already 0), so ordering cannot change what anyone is paid.
+  // What it changes is the LABEL on an owner's own private run, where both this arm
+  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
+  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
+  // moderator — is deliberately NOT on this row; it rides the mint's audit line
+  // instead, so a money/audit table gains no new column and no new enum value.
+  //
+  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
+  // (operator decision, 2026-09-27). It is already legal under
+  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
+  // and no per-environment hand-apply. The cost is that a private run is not
+  // distinguishable from an operator-voided row *in this column* — accepted,
+  // because nothing pays out of this table and the mint audit line carries the
+  // discriminating fields anyway.
+  const voidedReason = privateRun
+    ? 'manual_review'
+    : isSelfSpend
+    ? 'self_spend'
+    : isInternal
+    ? 'internal_owner'
+    : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 

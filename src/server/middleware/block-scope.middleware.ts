@@ -120,6 +120,20 @@ export interface BlockTokenClaims {
    * if present (a non-boolean is rejected outright; absent → treated as false).
    */
   reviewRunForReal?: boolean;
+  /**
+   * PRIVATE-RUN marker — present (true) ONLY on a token minted for a private run of
+   * a DELISTED / SUSPENDED app (owner, accepted listing collaborator, or moderator).
+   * The two MONEY arms read it: `recordSpendAttribution` voids the spend-attribution
+   * row, and `resolveBlockAuthorFeePayee` refuses the per-generation author fee
+   * before any debit. Trustworthy ONLY because the RS256 signature is verified
+   * before it is read. Optional; MUST be a boolean if present (a non-boolean is
+   * rejected outright; absent → treated as false, i.e. an ordinary chargeable run).
+   *
+   * 🔴 ABSENT MUST MEAN "CHARGE NORMALLY", NOT "SUPPRESS". Both arms test
+   * `=== true`, so a missing or garbage claim fails toward the pre-existing
+   * behaviour rather than silently disabling a live money rail for every token.
+   */
+  privateRun?: boolean;
 }
 
 /**
@@ -702,6 +716,14 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // signature-valid `reviewRunForReal:true` is only producible by our own
       // signer (the RS256 signature was already verified above).
       if (claims.reviewRunForReal !== undefined && typeof claims.reviewRunForReal !== 'boolean') {
+        return null;
+      }
+      // PRIVATE-RUN marker shape guard. Optional (absent on every ordinary token);
+      // if PRESENT it MUST be a boolean — a forged/garbage value is rejected
+      // outright so the two money arms can trust it. A signature-valid
+      // `privateRun:true` is only producible by our own signer (the RS256
+      // signature was already verified above).
+      if (claims.privateRun !== undefined && typeof claims.privateRun !== 'boolean') {
         return null;
       }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
