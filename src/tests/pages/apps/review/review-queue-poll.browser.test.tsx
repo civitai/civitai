@@ -62,8 +62,16 @@ type QueryOpts = {
    * 🔴 A VALUE HERE TOO, AND FOR THE SECOND HALF OF THE SAME REASON. This was a
    * `(query) => …` callback so the cursor gate could be applied before the value was
    * chosen; with that gate deleted there is nothing per-query left to decide, so the
-   * option is the bare string. A mutation that restores the callback form fails to
-   * type-check before any assertion runs.
+   * option is the bare string.
+   *
+   * ⚠️ AN EARLIER DRAFT CLAIMED A MUTATION RESTORING THE CALLBACK FORM "fails to
+   * type-check before any assertion runs". IT DOES NOT, and the distinction matters
+   * because it names the wrong guard. `vi.mock`'s string-path overload types its factory
+   * as `Partial<unknown>`, so this local `QueryOpts` never constrains the page at all —
+   * the page is checked against react-query's own option type, which accepts a callback.
+   * What actually catches the mutation is the RUNTIME assertion below, measured: setting
+   * `refetchOnWindowFocus: true` on both queries turns 2 of these tests red. The coverage
+   * is real; only the mechanism was misdescribed.
    */
   refetchOnWindowFocus?: boolean | 'always';
   placeholderData?: unknown;

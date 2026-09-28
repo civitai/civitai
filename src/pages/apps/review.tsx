@@ -125,13 +125,29 @@ export const APPS_REVIEW_POLL_MS = 15_000;
  * would then refresh only the LAST-loaded page while every earlier page silently went
  * stale. But Pending is OLDEST-FIRST (`orderBy: { submittedAt: 'asc' }` in
  * `~/server/services/blocks/publish-request.service`, rendered `direction="asc"` below)
- * and both sources are keyset-paginated on that order — so a NEW submission sorts LAST
- * and lands in exactly the window the last-loaded page's cursor covers, which is the page
- * a poll refreshes. What the earlier pages go stale on is REMOVALS, and they go stale on
- * those identically when nothing polls at all. Polling while paged is therefore a strict
- * information gain over parking. The gate also had no exit: a mod who clicked Load more
- * saw no new submission again until they actioned a review, switched tabs or reloaded,
- * with nothing on screen to say so.
+ * and both sources are keyset-paginated on that order — so a NEW submission sorts LAST.
+ *
+ * ⚠️ THAT LAST STEP DOES NOT REACH AS FAR AS AN EARLIER DRAFT OF THIS PARAGRAPH CLAIMED,
+ * and the overreach is recorded rather than quietly fixed. It said a new submission
+ * "lands in exactly the window the last-loaded page's cursor covers". That holds only
+ * when the last-loaded page is also the FINAL page: both procs take `limit + 1` from the
+ * cursor, so a mod sitting on page 2 of a longer backlog gets a new submission sorted
+ * onto a LATER page, and the refreshed page-2 window never contains it. Polling while
+ * paged is therefore NOT a strict information gain in general.
+ *
+ * What survives, and what actually retires the gate: the earlier pages go stale on
+ * REMOVALS, and they go stale on those identically when nothing polls at all — so
+ * parking bought nothing on the axis it was defended on. And the gate had no exit: a mod
+ * who clicked Load more saw no new submission again until they actioned a review,
+ * switched tabs or reloaded, with nothing on screen to say so.
+ *
+ * MEASURED against production 2026-09-28, because the paged branch is the one every
+ * argument here is about: a cursor exists only past PAGE_LIMIT (50) pending rows in ONE
+ * source, and the historical peak is 9 on each — on-site is additionally capped at one
+ * pending row per slug by the `…_one_pending_per_slug` partial unique index. So no mod
+ * has ever reached this branch. The reasoning above is about correctness, not about an
+ * observed state, and the figures are a snapshot: re-derive them rather than trusting
+ * this line.
  *
  * 🔴 NO ERROR GATE — BECAUSE THIS TAB CARRIES ZERO EXTRA UI, NOT BECAUSE SUCH A PARK
  * WOULD BE UNRECOVERABLE. ⚠️ An earlier revision of this paragraph claimed the latter and
@@ -145,9 +161,17 @@ export const APPS_REVIEW_POLL_MS = 15_000;
  * this page a remount is one click, to Approved and back. The repo also ships a live
  * counter-example ON THIS PAGE: `~/components/Apps/ActivePreviewsPanel` line 57 runs
  * exactly that gate (`refetchInterval: (q) => (q.state.error ? false : 30000)`) with no
- * status row and no Refresh control. So the honest reason the gate is absent is that the
- * chosen design for this tab is zero extra chrome and an unconditional cadence is the
- * smaller thing — the recoverability argument has no force and should not be restated.
+ * status row and no Refresh control.
+ *
+ * ⚠️ THAT COUNTER-EXAMPLE ALSO SINKS THE REPLACEMENT REASON A PREVIOUS DRAFT GAVE, which
+ * was "the chosen design for this tab is zero extra chrome". If a gate needs no chrome in
+ * `ActivePreviewsPanel`, chrome cannot be why it is absent here. The honest position is
+ * narrower than either draft: NOTHING REQUIRES THE GATE'S ABSENCE. An unconditional
+ * cadence is simply the smaller thing, and the UI the gate had acquired here — a status
+ * row and a Refresh control — was removed by an explicit design decision, so the gate
+ * lost the only thing it was buying. A future reader who wants the gate back does not
+ * have to defeat an argument; they have to accept one more branch. Do not restate the
+ * recoverability claim, and do not reach for a third justification in its place.
  * (The contradiction surfaced because the `refetchOnWindowFocus` note below already
  * stated the `isInvalidated` carve-out correctly while this paragraph denied it.)
  */
