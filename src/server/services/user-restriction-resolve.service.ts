@@ -59,9 +59,9 @@ export const RULING_EFFECTS: Partial<Record<UserRestrictionType, RulingEffects>>
  *
  * 🔴 Being the single write path is also why the type refusal lives here rather than at the routes.
  * Everything type-specific — notices, update sources and the overturn effect — comes from
- * `RULING_EFFECTS`; a type without an entry is refused. Five callers reach it (the tRPC router,
- * `/api/mod/restriction/resolve`, and `overturnPendingReviewMute`), and only one of them used to
- * check. See `unwiredRulingReason`.
+ * `RULING_EFFECTS`; a type without an entry is refused. Every caller reaches it (the tRPC router,
+ * `/api/mod/restriction/resolve`, `overturnPendingReviewMute`), and only one of them used to check.
+ * See `unwiredRulingReason`.
  */
 export async function resolveUserRestriction({
   userRestrictionId,
@@ -139,9 +139,9 @@ export async function resolveUserRestriction({
       select: { id: true },
     });
     if (!otherOpenCase) {
-      // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt` (line above),
-      // and leaving it behind on an overturn keeps the account off every leaderboard and makes the
-      // next automatic mute read as a moderator's.
+      // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt`, and leaving
+      // it behind on an overturn keeps the account off every leaderboard and makes the next
+      // automatic mute read as a moderator's.
       const existing = await dbRead.user.findUnique({
         where: { id: restriction.userId },
         select: { meta: true },

@@ -32,8 +32,7 @@ const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 const reportRetention = 14;
 
-// Clavata tags that trigger the scam auto-mute
-const autoMuteTags = ['Impersonating Civitai Staff'];
+const clavataScamAutoMuteTags = ['Impersonating Civitai Staff'];
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -62,7 +61,7 @@ async function autoMuteIfScamAccount({
 }) {
   const cleanup = clavataScamCleanup[type];
   if (!cleanup) return;
-  if (!matches.some((m) => autoMuteTags.includes(m))) return;
+  if (!matches.some((m) => clavataScamAutoMuteTags.includes(m))) return;
 
   const result = await autoMuteScamAccount({
     userId,

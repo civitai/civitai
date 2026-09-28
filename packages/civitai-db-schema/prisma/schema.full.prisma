@@ -7873,8 +7873,8 @@ model UserRestriction {
   userMessage     String?
   userMessageAt   DateTime?
 
-  // NOTE: a partial unique index on (userId) WHERE type = 'scam' AND status = 'Pending' is applied
-  // manually and not modelled: migrations/20260927000000_text_scan_scam_pending_unique/
+  // Unmodelled partial unique index (userId) WHERE type = 'scam' AND status = 'Pending':
+  // see migrations/20260927000000_text_scan_scam_pending_unique/
   @@index([userId])
   @@index([status])
   @@index([type, status])

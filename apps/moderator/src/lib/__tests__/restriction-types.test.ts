@@ -36,8 +36,8 @@ describe('unwiredRulingReason', () => {
    *
    * A value pin does not decay that way. It is the mirror of the main app's own
    * (`expect([...RULINGS_WIRED_FOR]).toEqual(['generation', 'scam'])` in
-   * `src/server/__tests__/pending-review-mute.test.ts`), and widening this list on either side is
-   * supposed to be a deliberate act with the verdict path parameterised first.
+   * `src/server/__tests__/pending-review-mute.test.ts`), and widening this list on either side needs a
+   * `RULING_EFFECTS` entry first.
    */
   it('claims a verdict path for generation and scam and for nothing else', () => {
     expect([...RULINGS_WIRED_FOR]).toEqual(['generation', 'scam']);

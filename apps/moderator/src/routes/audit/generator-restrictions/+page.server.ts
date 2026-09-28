@@ -72,8 +72,8 @@ export const load: PageServerLoad = async ({ url }) => {
 // makes no such decision. `resolve` and `ban` call `unwiredRuling` because they hand the row to a verdict
 // path that only some types have. `flagSuspicious` does not, and should not: it copies selected
 // triggers into the shared suspicious-match list, writes nothing to the account, and tells the user
-// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in — but a scam
-// trigger is not a prompt, so it is filtered out there.
+// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in; scam triggers
+// are excluded because they are not prompts.
 async function restrictionById(id: number): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({
     page: 1,

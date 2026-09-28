@@ -101,9 +101,8 @@ export async function appendScamTrigger(userRestrictionId: number, entry: ScamTr
 }
 
 /**
- * Where a verdict against an account a moderator already muted records its cleanup: one already-
- * resolved `scam` row per account, so the hidden ids stay restorable and the verdict stays deduped,
- * without opening a case nobody needs to rule on. `null` when the verdict is already on it.
+ * One system-resolved `scam` row per moderator-muted account, so its cleanup stays restorable and
+ * deduped without opening a case. `null` if this verdict is already recorded.
  */
 export async function fileScamCleanupRecord(userId: number, entry: ScamTriggerEntry) {
   const existing = await dbWrite.userRestriction.findFirst({

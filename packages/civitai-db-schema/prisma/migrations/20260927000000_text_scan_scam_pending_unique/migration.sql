@@ -1,4 +1,4 @@
--- Text scan 04: one open scam case per user, so concurrent auto-mute verdicts cannot file two.
+-- One open scam case per user, so concurrent auto-mute verdicts cannot file two.
 -- Index only. Apply by hand BEFORE deploying the code that files scam cases, and outside a
 -- transaction (CONCURRENTLY). Unmodelled in schema.full.prisma: the service catches the P2002.
 --
