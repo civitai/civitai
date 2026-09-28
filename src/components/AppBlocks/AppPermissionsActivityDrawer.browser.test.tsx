@@ -111,10 +111,30 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
     trpc: {
+      /**
+       * 🔴 ADDED BY PHASE 3, AND ITS ABSENCE BROKE SIX ARMS IN THIS FILE AT ONCE. The scope
+       * section now renders `ScopeConsentList`, whose `useScopeRevoke` calls `trpc.useUtils()`
+       * to invalidate `listMyScopeGrants` after a revoke — so on a hand-enumerated mock the
+       * whole drawer body threw `TypeError: trpc.useUtils is not a function` and every arm
+       * below failed on a missing element rather than on its own claim.
+       *
+       * ⚠️ THIS IS THE THIRD TIME THIS REPO HAS PAID FOR A HAND-ENUMERATED `trpc` MOCK, and
+       * both `AppsWideLayout.geometry.test.tsx` and `AppActivityPage.browser.test.tsx` moved to
+       * a PROXY for exactly this reason — see the geometry file's factory: *"a literal mock
+       * object fails … for every one nobody remembered, which is a fixture problem masquerading
+       * as a component problem."* Left hand-enumerated here deliberately: this file's arms assert
+       * on the three named SPIES (`grantsSpy`/`buzzSpy`/`scopeSpy`) and their call arguments, so
+       * the enumeration is load-bearing rather than incidental. If a FOURTH procedure is ever
+       * needed, convert the non-spied half to a proxy instead of adding a fifth literal.
+       */
+      useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => {}) } } }),
       blocks: {
         listMyScopeGrants: { useQuery: grantsSpy },
         listMyAppActivity: { useInfiniteQuery: buzzSpy },
         listMyScopeInvocations: { useInfiniteQuery: scopeSpy },
+        // Never fired by any arm in this file — no arm clicks a revoke control — but the hook
+        // CALLS `useMutation` on every render, so an absent entry is the same crash as above.
+        revokeScopes: { useMutation: () => ({ isPending: false, mutate: vi.fn() }) },
       },
       // W13 — AppActivityPanel resolves rich-detail subject-ref ids via these batch lookups.
       // Stubbed rather than omitted: the fixtures DO carry rich rows (`detail.action`), they

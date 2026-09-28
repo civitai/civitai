@@ -21,8 +21,20 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    /**
+     * 🔴 ADDED BY PHASE 3. The drawer's scope section now renders `ScopeConsentList`, whose
+     * `useScopeRevoke` calls `trpc.useUtils()` on every render to invalidate `listMyScopeGrants`
+     * after a revoke. Without these two entries the drawer body threw `TypeError:
+     * trpc.useUtils is not a function`, so the ONE arm in this file that opens it failed with
+     * `Cannot find element with locator: getByTestId('app-permissions-activity-drawer')` — a
+     * message that reads as "the menu item is broken" and says nothing about the real cause.
+     * See `AppPermissionsActivityDrawer.browser.test.tsx`'s factory for the same note and for
+     * why a PROXY is the better shape once a mock like this needs a fourth entry.
+     */
+    useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => {}) } } }),
     blocks: {
       listMyScopeGrants: { useQuery: () => ({ data: [], isLoading: false }) },
+      revokeScopes: { useMutation: () => ({ isPending: false, mutate: vi.fn() }) },
       listMyAppActivity: {
         useInfiniteQuery: () => ({
           data: { pages: [{ items: [], nextCursor: null }] },

@@ -1,7 +1,44 @@
 import { Badge, Group, Stack, Text } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+
+/**
+ * The OPT-IN consent layer — supplied by the two permissions surfaces only.
+ *
+ * 🔴 IT IS OPTIONAL SO THE OTHER TWO CALL SITES CANNOT ACQUIRE A REVOKE CONTROL. `AppSettingsModal`
+ * and `AppListingDetailBody` render this same component from different scope sets (see the
+ * component docstring) and neither is a place a viewer withdraws consent from — the listing body
+ * is a PUBLIC pre-launch disclosure about an app the reader may not even have installed. Omitting
+ * the prop leaves their rendering byte-identical, which is also what keeps
+ * `BlockScopeList.browser.test.tsx`'s exact `children` count of 2 per scope true for them.
+ *
+ * 🔴 AND IT CARRIES NO DECISION — ONLY DATA AND A RENDER PROP. This component does not know what
+ * a revoke is, which scopes are withdrawable, or what the server said; it strikes through the ids
+ * it is told are removed and puts the caller's node in the row. The revokability decision belongs
+ * to the server (`ScopeGrantSurface.revokableScopes`) and is applied in
+ * `src/components/Apps/scopeConsentRows.ts`. A predicate here would be a third place that has to
+ * agree with `CONSENT_EXEMPT_SCOPES`, and it would be the one nobody re-checks.
+ */
+export type BlockScopeListConsent = {
+  /**
+   * Which of the rendered ids the viewer has WITHDRAWN — struck through and dimmed rather than
+   * dropped. Presentation input, not a claim: the caller decides what "revoked" means.
+   */
+  revokedScopes: string[];
+  /**
+   * The per-scope consent affordance (a control, a note, or a removed marker), rendered on its
+   * OWN line beneath the description.
+   *
+   * 🔴 ITS OWN LINE, NOT INSIDE THE BADGE'S `wrap="nowrap"` GROUP — and that is a phase-1
+   * regression guard, not a layout preference. That Group's items share one inline axis, and
+   * Mantine clamps the Badge root to the available inline space; a sibling button in there takes
+   * width from the id at the ~408px drawer, which is the exact axis the truncation fix bought
+   * back. Measured in `AppsWideLayout.geometry.test.tsx`'s drawer arms.
+   */
+  renderScopeAction: (scope: string) => ReactNode;
+};
 
 /**
  * Renders a list of block scope ids as a badge + friendly-description list. Unknown scopes (not
@@ -9,6 +46,9 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  * description map a soft contract so new scopes ship without breaking the UI.
  *
  * 🔴 THIS COMPONENT IS PRESENTATION ONLY AND MAKES NO CLAIM ABOUT WHICH SET IT IS HANDED.
+ * STILL TRUE AFTER THE PER-SCOPE REVOKE CONTROL: the optional `consent` prop (see
+ * `BlockScopeListConsent` above) supplies DATA and a RENDER PROP, so the consent affordance is
+ * built by the caller and this file holds no revoke logic, no mutation and no exempt-set copy.
  * ⚠️ The previous docstring said it was "shared by the install/manage modal … and the
  * /apps/activity panel so the two surfaces never drift". That guarantee was false and is DELETED
  * rather than restated: there are FOUR call sites and they are fed from THREE different sets, by
@@ -68,9 +108,11 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
 export function BlockScopeList({
   scopes,
   emptyLabel = "This app doesn't request any permissions — it only consumes data from the host-bridge postMessage protocol.",
+  consent,
 }: {
   scopes: string[];
   emptyLabel?: string;
+  consent?: BlockScopeListConsent;
 }) {
   if (scopes.length === 0) {
     return (
@@ -89,6 +131,7 @@ export function BlockScopeList({
       {scopes.map((scope) => {
         const desc = SCOPE_DESCRIPTIONS[scope];
         const sensitive = isSensitiveBlockScope(scope);
+        const revoked = consent?.revokedScopes.includes(scope) ?? false;
         return (
           <Stack key={scope} gap={2}>
             {/* `wrap="nowrap"` keeps the "Sensitive" marker BESIDE the id it qualifies: under
@@ -114,10 +157,22 @@ export function BlockScopeList({
               <Badge
                 size="sm"
                 variant="light"
-                color={sensitive ? 'orange' : undefined}
+                /* A revoked id goes GREY as well as struck: `orange` is the "Sensitive" cue and
+                   keeping it on a withdrawn scope reads as a live warning about a permission the
+                   app no longer has. The `SensitiveScopeBadge` beside it still carries that fact
+                   for anyone who needs it. */
+                color={revoked ? 'gray' : sensitive ? 'orange' : undefined}
                 h="auto"
-                classNames={{ label: 'whitespace-normal break-all text-start' }}
+                /* 🔴 `line-through` is APPENDED — the other three utilities are phase 1's
+                   truncation fix and each is killed on its own by a geometry mutant
+                   (`whitespace-normal` lets the label wrap, `break-all` lets it wrap mid-token,
+                   `text-start` un-centres the wrapped id). Do not reorder or replace this string;
+                   add to it. */
+                classNames={{
+                  label: `whitespace-normal break-all text-start${revoked ? ' line-through' : ''}`,
+                }}
                 data-testid="block-scope-id"
+                data-revoked={revoked ? 'true' : undefined}
               >
                 {scope}
               </Badge>
@@ -132,6 +187,12 @@ export function BlockScopeList({
                 (no description)
               </Text>
             )}
+            {/* 🔴 A THIRD CHILD ONLY WHEN `consent` IS PASSED, and the conditional is
+                load-bearing beyond taste: `BlockScopeList.browser.test.tsx` asserts an EXACT
+                `children` length of 2 per scope for the no-consent callers, so an
+                unconditionally-rendered wrapper (even an empty one) would fail that arm for the
+                two call sites this phase does not touch. `null` renders no node at all. */}
+            {consent ? consent.renderScopeAction(scope) : null}
           </Stack>
         );
       })}

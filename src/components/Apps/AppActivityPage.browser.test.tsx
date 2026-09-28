@@ -994,6 +994,15 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
  * now a remedy — the per-scope revoke control — and it is a different action from removing
  * an install, which is exactly why the retracted copy was wrong to conflate them.
  *
+ * 🔴 PHASE 3 HAS NOW SHIPPED THAT REMEDY, AND THIS BLOCK'S SUBJECT NARROWED ACCORDINGLY.
+ * `ScopeConsentList` renders a per-scope revoke control on THIS panel, so the pinned copy no
+ * longer contains the "withdrawing one is not possible yet" clause — see the literal below for
+ * the retraction. What this block still guards is unchanged and is the durable part: the page
+ * must never instruct an UNINSTALL as the way to withdraw a permission. That instruction was
+ * false before the control existed and it is still false now, because the control is here and
+ * the uninstall is on a different tab operating on a different row. The presence pin and the
+ * `REVOKE_BY_UNINSTALL` absence tripwire both survive phase 3 intact; only the literal moved.
+ *
  * 🔴 PINNED AS THE WHOLE NORMALISED STRING, AND MATCHED **EXACTLY**. The artifact under
  * test is PROSE, so a guard on keywords is walkable by rewording — a future edit could
  * reintroduce "remove the install to revoke" without tripping any `/revoke/`-shaped
@@ -1043,12 +1052,26 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
   // page failed these two tests in CI's component tier, which is exactly what a pin on the whole
   // normalised string is for: a copy change cannot land silently. The literal moves because the
   // CLAIM moved; do not relax `exact: true` to avoid updating it.
+  // 🔴 UPDATED BY PHASE 3 BECAUSE THE OLD LITERAL BECAME FALSE, WHICH IS THIS PIN WORKING
+  // RATHER THAN THIS PIN BEING IN THE WAY — for the third time, and the third time for the same
+  // structural reason: the literal moves when the CLAIM moves. The retracted tail read
+  // *"…but it does not withdraw a permission you have already granted — withdrawing one is not
+  // possible yet."* `blocks.revokeScopes` now exists and `ScopeConsentList` renders a per-scope
+  // control on this very panel, so that sentence was a page telling a viewer they cannot do the
+  // thing there is now a button for.
+  //
+  // ⚠️ WHAT SURVIVED THE REWRITE, AND IT IS THE HALF THIS BLOCK WAS BUILT FOR: removing an
+  // install still does NOT withdraw consent — different rows, different operations — so the copy
+  // still says so explicitly, and the `REVOKE_BY_UNINSTALL` tripwire below still guards against
+  // the two being conflated. Only the "impossible" claim is gone.
   const PERMISSIONS_TAB_COPY =
     "The apps you've installed, subscribed to or granted permissions to, plus any app that " +
     'has acted on your account without either — what each one may use, and where you have ' +
-    'it. Removing an install on the Installs tab takes the app off that surface, but it does ' +
-    'not withdraw a permission you have already granted — withdrawing one is not possible ' +
-    'yet. Recent activity is the full record of what apps have actually done on your account.';
+    'it. Where a permission is yours to give, you can remove it here; the app stops being ' +
+    'able to use it straight away, and may ask you for it again next time you open it. ' +
+    'Removing an install on the Installs tab is a different thing and does not withdraw a ' +
+    'permission. Recent activity is the full record of what apps have actually done on your ' +
+    'account.';
 
   /**
    * A string from the ACTIVITY panel, deliberately not from the copy under test. Used as
@@ -1057,7 +1080,7 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
    */
   const ACTIVITY_PANEL_ANCHOR = 'Recent actions apps have taken';
 
-  test('the panel states plainly that withdrawing a permission is not possible', async () => {
+  test('the panel states plainly that a permission you gave can be removed here', async () => {
     // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the
     // DOM without a click — the same property the marketplace-anchor count above relies on.
     mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };

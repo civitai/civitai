@@ -142,6 +142,30 @@ const fixture = vi.hoisted(() => ({
   longScope: 'apps:diagnostics:telemetry:aggregate:write:self:secondary:partition',
   /** The longest REAL scope that also carries a description, for the own-line arm. */
   describedScope: 'apps:storage:shared:write',
+  /**
+   * The one row in the drawer fixture that carries a real phase-3 REVOKE BUTTON.
+   *
+   * `ai:write:budgeted` because it is consent-GATED (so the server would really list it in
+   * `revokableScopes`), KNOWN to the scope registry (so `isKnownBlockScope` keeps it), and
+   * SENSITIVE — which means its row also renders `SensitiveScopeBadge`, making it the widest
+   * badge row in the fixture and therefore the right one to hang a control off when the question
+   * is whether the control competes with the id for inline space at 408px.
+   */
+  revokableScope: 'ai:write:budgeted',
+  /**
+   * The drawer fixture's `revoked_scopes`, as a MUTABLE array the one strike-through arm fills and
+   * empties again.
+   *
+   * 🔴 IT IS EMPTY BY DEFAULT ON PURPOSE — every other drawer arm measures the ORDINARY case, and a
+   * globally-revoked fixture would strike the badge in the arms that read its geometry.
+   *
+   * 🔴 AND IT IS MUTATED IN PLACE, NEVER REASSIGNED. `DATA` is built once inside the `vi.mock`
+   * factory and captures this array by REFERENCE, so `push`/`length = 0` are visible to the next
+   * render while `fixture.drawerRevoked = [...]` would swap the holder and leave the factory
+   * pointing at the old array — a mutation that silently does nothing. Same reason `navState` above
+   * is a mutable holder: vitest browser mode cannot `vi.spyOn` an ESM export.
+   */
+  drawerRevoked: [] as string[],
 }));
 vi.mock('~/components/Apps/useAppsNavSections', () => ({
   useAppsNavSections: () => navState.sections,
@@ -259,7 +283,27 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         origin: 'install',
         // ORDER IS LOAD-BEARING: the grouping arm reads the gap from the described scope's
         // description DOWN to the NEXT scope's id, so the described one has to come first.
-        scopes: [fixture.describedScope, fixture.longScope],
+        // ⚠️ `fixture.revokableScope` is APPENDED, never inserted — the two arms above resolve
+        // `describedScope` then `longScope` as consecutive rows, and putting a third between them
+        // would silently change what `inter` measures.
+        scopes: [fixture.describedScope, fixture.longScope, fixture.revokableScope],
+        // 🔴 THE PHASE-3 CONSENT LAYER, WITHOUT WHICH THE DRAWER ARMS MEASURE THE WRONG TREE.
+        // `ScopeConsentList` renders a per-scope affordance for every row — a control for a
+        // revokable scope, an honest note for the rest — so a fixture carrying none of these
+        // fields would lay the drawer out with no consent row at all and the clipping arm would
+        // be reading a box no viewer gets. Exactly what the server sends:
+        //   - `describedScope` (`apps:storage:shared:write`) is CONSENT-EXEMPT, so the server
+        //     omits it from `revokableScopes` and it renders its `fixedScopeNote`.
+        //   - `longScope` is not in the scope registry at all, so `isKnownBlockScope` excludes it
+        //     too and it takes the GENERIC note — the longest note in the vocabulary, i.e. the
+        //     most demanding case for the drawer's height.
+        //   - `revokableScope` (`ai:write:budgeted`) is consent-gated and known, so it is the one
+        //     row carrying a real "Remove" button at this width.
+        revokableScopes: [fixture.revokableScope],
+        // BY REFERENCE — see `fixture.drawerRevoked`. Empty for every arm but the strike-through
+        // one, which fills it in place and empties it again in a `finally`.
+        revokedScopes: fixture.drawerRevoked,
+        scopesRevokedAt: null,
       },
     ],
     // `OffsiteReportsQueue`: a LONG app name AND a LONG `details`, so the two candidate
@@ -1591,6 +1635,159 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // scope, and nothing measures their geometry.
     expect(px(describedBadge.getBoundingClientRect().height)).toBe(BADGE_ROOT_ONE_LINE);
     await cleanup();
+  });
+
+  /**
+   * 🔴 PHASE 3 — THE REVOKE CONTROL MUST NOT REINTRODUCE THE TRUNCATION PHASE 1 REMOVED.
+   *
+   * This is the arm the phase-3 change exists to be checked by, and the hazard is specific rather
+   * than general: the ONE place a control could have gone is inside `BlockScopeList`'s
+   * `wrap="nowrap"` badge `Group`, beside the id. That Group's items share a single inline axis and
+   * Mantine clamps the Badge root to the inline space left over, so a sibling button in there takes
+   * width directly from the scope id at 408px — which is the exact axis phase 1 bought back. The
+   * implementation puts the affordance on its OWN line beneath the description instead, and this
+   * arm is what makes that a measured property rather than an intention in a comment.
+   *
+   * ⚠️ IT IS NOT A DUPLICATE OF THE CLIPPING ARM ABOVE. That one reads the same box on a tree with
+   * NO consent layer; the fixture now carries one, so both arms run against the consent-bearing
+   * tree and this one adds the two reads that are only meaningful with a control present — the
+   * button really rendered, and it did not land on the id's row.
+   */
+  test('🔴 the revoke control does not narrow the scope id — still unclipped at 408px', async () => {
+    await renderDrawer(WIDE);
+    // Same precondition as every arm here: a scrollbar takes ~15px off the body's inner width and
+    // would fail this with a message about the scope id. It matters MORE now — the consent layer
+    // adds a row per scope, so the drawer is taller than the arms above were written against, and
+    // if that ever pushes it into scrolling this is where it says so.
+    assertDrawerDoesNotScroll();
+
+    // (a) THE CONTROL IS ACTUALLY THERE. Without this the rest of the arm is vacuous: a drawer
+    // that rendered no button trivially does not narrow anything, and this file's own docblock
+    // warns that leading with a hook this change introduces makes an arm red at base for the wrong
+    // reason — so it is asserted HERE rather than in the locator that opens the arm.
+    const control = need<HTMLElement>('.mantine-Drawer-body [data-testid="scope-revoke-button"]');
+    expect(control.dataset.scope, 'the control is on the wrong scope').toBe(fixture.revokableScope);
+    // Exactly one, matching the single-entry `revokableScopes` — a control on an exempt row would
+    // be a lie, and the component tier asserts that by name. Here it keeps the geometry claim
+    // attributable to one box.
+    expect(
+      drawerBody().querySelectorAll('[data-testid="scope-revoke-button"]'),
+      'more controls than the fixture makes revokable'
+    ).toHaveLength(1);
+
+    // (b) IT IS NOT ON THE BADGE'S ROW. The structural half of the hazard, read off the DOM rather
+    // than off geometry, because it is the thing that would CAUSE the narrowing: the control's
+    // nearest scope-row ancestor must not be the `wrap="nowrap"` Group that holds the id.
+    const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
+    if (!controlRow) throw new Error('the revoke control is not inside a scope row');
+    const badgeInSameGroup = control.parentElement?.parentElement?.querySelector(
+      ':scope > [data-testid="block-scope-id"]'
+    );
+    expect(
+      badgeInSameGroup,
+      'the revoke control shares the badge\'s nowrap Group — it will take inline width from the id'
+    ).toBeNull();
+
+    // (c) AND THE OVER-LONG ID IS STILL RENDERED IN FULL, measured the same three ways the phase-1
+    // arm measures it, now with the consent layer in the tree. The direct ellipsis read first.
+    const label = scopeLabel(fixture.longScope);
+    expect(label.textContent).toBe(fixture.longScope);
+    expect(
+      label.scrollWidth,
+      `the scope id paints ${label.scrollWidth}px into ${label.clientWidth}px of label — the ` +
+        "consent layer narrowed it and Mantine's Badge is ellipsising it again"
+    ).toBeLessThanOrEqual(label.clientWidth + 0.5);
+    // The HEIGHT control, which is what stops the read above being vacuous: this id needs more
+    // than one line at 408px, so a fixture that stopped overshooting fails here with a legible
+    // message rather than making the ellipsis read meaningless.
+    expect(
+      px(label.getBoundingClientRect().height),
+      "the scope id fits on one line, which at this length means Mantine's Badge ellipsised it"
+    ).toBeGreaterThan(BADGE_LABEL_ONE_LINE * 1.5);
+    // …and it does not paint past the container.
+    expect(
+      px(label.getBoundingClientRect().right),
+      `the scope id paints past the drawer's ${px(drawerContent().right)} content edge`
+    ).toBeLessThanOrEqual(px(drawerContent().right) + 0.5);
+
+    // (d) NOTHING IN THE CONSENT LAYER PAINTS OUTSIDE THE 408px CONTAINER. The affordances are new
+    // boxes at this width — a button, and the generic note, which is the longest sentence the
+    // vocabulary can put on a row — and a note that overflows is exactly the shape that reads as
+    // "the drawer is broken" without any id being clipped.
+    const edge = px(drawerContent().right);
+    const offenders = Array.from(
+      drawerBody().querySelectorAll<HTMLElement>(
+        '[data-testid="scope-revoke-button"], [data-testid="scope-fixed-note"], ' +
+          '[data-testid="scope-revoked-row"], [data-testid="scope-revoked-at"]'
+      )
+    )
+      .filter((el) => px(el.getBoundingClientRect().right) > edge + 0.5)
+      .map((el) => `${el.dataset.testid ?? el.tagName}@${px(el.getBoundingClientRect().right)}`);
+    expect(offenders, `drawer content edge ${edge}`).toEqual([]);
+
+    // (e) EVERY ROW HAS AN AFFORDANCE OR AN EXPLANATION — no silent row. A count relationship, not
+    // a literal: it fails if the fixture grows a scope the consent layer says nothing about.
+    const rows = Array.from(
+      drawerBody().querySelectorAll<HTMLElement>('[data-testid="block-scope-list"] > *')
+    );
+    expect(rows, 'the fixture rendered no scope rows').toHaveLength(3);
+    const silent = rows.filter(
+      (row) =>
+        !row.querySelector(
+          '[data-testid="scope-revoke-button"], [data-testid="scope-fixed-note"], ' +
+            '[data-testid="scope-revoked-row"]'
+        )
+    );
+    expect(silent.map((r) => r.textContent?.slice(0, 40)), 'rows with no consent affordance').toEqual(
+      []
+    );
+    await cleanup();
+  });
+
+  /**
+   * 🔴 THE STRIKE-THROUGH IS A COMPUTED STYLE, AND THIS IS THE ONLY TIER THAT CAN SEE IT.
+   * `line-through` is a Tailwind utility, and the `component` tier loads no Tailwind — so the
+   * component test asserting the CLASS is a claim about the class attribute, not about ink on the
+   * screen. If the utility ever stops being emitted (a dynamically-composed class name, a content-
+   * glob change, a move to an unscanned file) a withdrawn permission would render identically to a
+   * live one on both surfaces, and only this read would notice. Same argument the `sr-only` arm
+   * above makes for the status pill.
+   */
+  test('🔴 a REVOKED scope id is really struck through, not merely classed', async () => {
+    // A LOCAL fixture override — the shared `DATA` row deliberately has an empty `revokedScopes`
+    // so every arm above measures the ordinary case. Mutated IN PLACE (see `fixture.drawerRevoked`),
+    // because `DATA` captured this array by reference, and restored in a `finally` so a failure
+    // here cannot leave every later arm measuring a struck badge.
+    fixture.drawerRevoked.push(fixture.revokableScope);
+    try {
+      await renderDrawer(WIDE);
+      const label = scopeLabel(fixture.revokableScope);
+      expect(
+        getComputedStyle(label).textDecorationLine,
+        'the withdrawn scope id is not struck through — a revoked permission looks live'
+      ).toContain('line-through');
+      // The POSITIVE CONTROL on that read: a row that is NOT revoked must come back clean, or the
+      // assertion above is satisfied by a stylesheet striking every badge in the list.
+      expect(
+        getComputedStyle(scopeLabel(fixture.longScope)).textDecorationLine,
+        'a live scope id is struck through too — the strike is not keyed on the revoked row'
+      ).not.toContain('line-through');
+      // …and the withdrawn row keeps its marker rather than only its styling.
+      expect(
+        drawerBody().querySelector('[data-testid="scope-revoked-mark"]'),
+        'the withdrawn row has no "Removed" marker'
+      ).not.toBeNull();
+      // …and offers no control, since there is nothing left to withdraw.
+      expect(
+        drawerBody().querySelector(
+          `[data-testid="scope-revoke-button"][data-scope="${fixture.revokableScope}"]`
+        ),
+        'a withdrawn permission still offers a Remove button'
+      ).toBeNull();
+      await cleanup();
+    } finally {
+      fixture.drawerRevoked.length = 0;
+    }
   });
 });
 

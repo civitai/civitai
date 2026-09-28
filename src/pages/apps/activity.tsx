@@ -40,7 +40,8 @@ import type {
   AvailableBlock,
   SubscriptionRecord,
 } from '~/server/schema/blocks/subscription.schema';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { ScopeConsentList } from '~/components/Apps/ScopeConsentList';
+import { SPEND_SCOPE } from '~/components/Apps/scopeRevoke';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import {
   ACTIVITY_TAB_LABELS,
@@ -359,8 +360,11 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
-const SPEND_SCOPE = 'ai:write:budgeted';
+/* The ONE scope in the vocabulary that can spend the viewer's Buzz now lives in
+   `src/components/Apps/scopeRevoke.tsx` and is IMPORTED above, not re-declared here. Phase 3's
+   revoke confirm dialog needs the same literal — revoking it clears the stored daily limit, which
+   the dialog has to say — and two local consts of one scope id is exactly the shape that lets the
+   budget editor and the revoke copy disagree about which scope they are talking about. */
 
 /**
  * The per-app daily Buzz limit, rendered and EDITABLE.
@@ -529,7 +533,15 @@ function AppBudgetControl({
   );
 }
 
-function ScopeGrantsPanel() {
+/**
+ * EXPORTED FOR THE SEAM TEST, and for the same reason `InstalledAppCard` in this file already is:
+ * `src/components/Apps/ScopeRevoke.browser.test.tsx` mounts the REAL page panel beside the REAL
+ * run-frame drawer from ONE fixture and compares the consent DOM they produce. A test-local
+ * re-implementation of this panel would be a third rendering of the permissions list, i.e. exactly
+ * the drift the shared `ScopeConsentList` exists to make impossible — and it would stay green
+ * while the page diverged.
+ */
+export function ScopeGrantsPanel() {
   const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
 
   if (isLoading) {
@@ -609,8 +621,17 @@ function ScopeGrantsPanel() {
                 the app has no access is the one direction a permissions page must never be wrong
                 in. `scopeGrantEmptyScopeLabel` owns both labels so the two consumers of this
                 component cannot drift. */}
-            <BlockScopeList
-              scopes={grant.scopes}
+            {/* 🔴 `ScopeConsentList`, NOT `BlockScopeList` DIRECTLY — and it is the SAME mount
+                `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx` uses, handed the same
+                single `grant` object. It wraps `BlockScopeList` and adds the per-scope revoke
+                control, the app-level "you last removed a permission on <date>" line, and the
+                inline failure notice. The shared component is the anti-drift mechanism: this page
+                and that drawer have already needed three separate one-sided corrections, and a
+                revoke control present on one surface and absent on the other would be a much
+                worse divergence than any of them. `emptyLabel` is still passed per caller — see
+                `scopeGrantEmptyScopeLabel`, which owns the difference. */}
+            <ScopeConsentList
+              grant={grant}
               emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
             />
             {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
@@ -871,20 +892,44 @@ export default function AppActivityPage() {
               empty state to every such viewer, always. Gating it displays nothing that was
               ever displayed.
 
-              🔴 THE COPY BELOW USED TO INSTRUCT AN ACTION THAT DOES NOT DO WHAT THE SENTENCE
+              🔴 THE COPY BELOW ONCE INSTRUCTED AN ACTION THAT DOES NOT DO WHAT THE SENTENCE
               SAID: "to revoke access, remove the install or subscription on the Installs
-              tab". Neither uninstall path touches the consent row.
+              tab". THAT HALF IS STILL TRUE AND IS WHY THE SENTENCE STILL DISTINGUISHES THE TWO
+              OPERATIONS. Neither uninstall path touches the consent row.
               `BlockRegistry.deleteSubscription` deletes the `block_user_subscriptions` row
               and nothing else; `uninstallFromModel` additionally revokes the block INSTANCE
               token, which kills tokens already minted but leaves the grant standing. The
-              grant lives in `app_user_scope_grants`, and the only writes to it anywhere in
-              the repo are in `~/server/services/blocks/scope-grant.service.ts`, both of
-              which set `revokedAt: null` — nothing writes a non-null `revoked_at` and
-              nothing deletes a row. So `getGrantedScopes` keeps returning the same scopes
-              afterwards and the next mint carries them with no fresh prompt. Withdrawing
-              consent is genuinely not implemented; the copy says so rather than pointing at
-              a control that does not do it. Do not soften this back into an instruction
-              until a real revoke path exists. */}
+              grant lives in `app_user_scope_grants`, so an uninstall leaves `getGrantedScopes`
+              returning the same scopes and the next mint carries them with no fresh prompt.
+              Removing an install and withdrawing a permission remain DIFFERENT OPERATIONS on
+              different rows, and the copy must keep saying so.
+
+              ⚠️ WHAT IS RETRACTED — the conclusion that followed, not the paragraph above it.
+              This comment used to end: *"the only writes to it anywhere in the repo are in
+              `~/server/services/blocks/scope-grant.service.ts`, both of which set
+              `revokedAt: null` — nothing writes a non-null `revoked_at` and nothing deletes a
+              row. … Withdrawing consent is genuinely not implemented; the copy says so rather
+              than pointing at a control that does not do it. Do not soften this back into an
+              instruction until a real revoke path exists."* That path NOW EXISTS and every
+              clause of the retracted text is false: `revokeScopes` in that same service is a
+              THIRD writer, it sets a non-null `revoked_at` whenever a revoke empties the
+              granted set, and `granted_scopes` is pruned rather than only unioned.
+
+              🔴 THE MECHANISM THE COPY NOW DESCRIBES, so the next reader can check the sentence
+              against it rather than re-deriving it. `blocks.revokeScopes` writes the suppression
+              to `app_user_scope_grants.revoked_scopes` (the authority over every FUTURE mint,
+              because `getGrantedScopes` subtracts it and `partitionByConsent` then puts the scope
+              in `missing`), AND publishes a fail-closed marker to Redis that
+              `block-scope.middleware` honours on tokens ALREADY minted. That second half is why
+              the copy can say access ends immediately rather than "at the next token refresh".
+              Re-consent clears the suppression deliberately — a revoked scope becomes an explicit
+              PROMPT, not a silent re-grant — so "the app may ask again" is the honest wording and
+              is not a hole. The control itself is `ScopeConsentList`, rendered below and shared
+              with the run-frame drawer.
+
+              🔴 STILL DO NOT write copy pointing at the Installs tab as a way to withdraw a
+              permission. The original defect this comment records is untouched by phase 3: an
+              uninstall still does not revoke, and the revoke control is on THIS tab. */}
           {isActivityTabVisible('permissions', visibility) && (
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
@@ -894,13 +939,20 @@ export default function AppActivityPage() {
                     things the panel could render and is why the gap was invisible: an app that
                     acted on you with none of them was outside what the heading even claimed to
                     cover. */}
+                {/* 🔴 "WITHDRAWING ONE IS NOT POSSIBLE YET" IS GONE BECAUSE IT IS NOW FALSE, and
+                    what replaced it is deliberately narrower than "you can remove anything": some
+                    permissions are granted by platform policy and each of those rows says so
+                    itself (see `fixedScopeNote`). The two-operations distinction is PRESERVED
+                    verbatim in substance — it is the part of the old sentence that is still
+                    true. */}
                 <Text size="sm" c="dimmed">
                   The apps you&apos;ve installed, subscribed to or granted permissions to, plus any
                   app that has acted on your account without either — what each one may use, and
-                  where you have it. Removing an install on the Installs tab takes the app off that
-                  surface, but it does not withdraw a permission you have already granted —
-                  withdrawing one is not possible yet. Recent activity is the full record of what
-                  apps have actually done on your account.
+                  where you have it. Where a permission is yours to give, you can remove it here;
+                  the app stops being able to use it straight away, and may ask you for it again
+                  next time you open it. Removing an install on the Installs tab is a different
+                  thing and does not withdraw a permission. Recent activity is the full record of
+                  what apps have actually done on your account.
                 </Text>
                 <ScopeGrantsPanel />
               </Stack>

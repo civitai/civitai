@@ -1,6 +1,6 @@
 import { Center, Divider, Drawer, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { ScopeConsentList } from '~/components/Apps/ScopeConsentList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { scopeGrantEmptyScopeLabel } from '~/shared/constants/app-surface-provenance';
@@ -12,8 +12,10 @@ import { trpc } from '~/utils/trpc';
  * SINGLE app (`appBlockId`), it shows the viewer:
  *
  *   1. The JWT scopes they've granted THIS app (`blocks.listMyScopeGrants`,
- *      filtered to this app, rendered via the shared `BlockScopeList` — the same
- *      component the /apps/activity "Apps & permissions" tab uses).
+ *      filtered to this app, rendered via the shared `ScopeConsentList` — the same
+ *      component the /apps/activity "Apps & permissions" tab uses, which wraps
+ *      `BlockScopeList` and adds the per-scope REVOKE control, the app-level
+ *      "permissions last changed" line and the revoke failure notice).
  *   2. A per-app action audit timeline (`AppActivityPanel` with the `appBlockId`
  *      drill-down — Buzz attribution + scope-gated call audit interleaved).
  *
@@ -202,12 +204,19 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              ⚠️ AN EARLIER REVISION ALSO SAID "granted ⊆ manifest BY CONSTRUCTION". THAT IS FALSE;
              the containment holds only AT GRANT TIME. Two writes break it afterwards, and they
              compose: `recordScopeGrant` UNIONS on re-consent (`grantedScopes = existing ∪
-             incoming`, `scope-grant.service.ts:232` and `:263`) and nothing ever writes a
-             non-null `revoked_at`, so the granted set only GROWS; meanwhile an approved
+             incoming`, `scope-grant.service.ts:232` and `:263`); meanwhile an approved
              subsequent version replaces `manifest` + `approvedScopes` in place on the same
              `AppBlock` row, while the grant is unique on `(userId, appBlockId)` and survives. So
              a publisher who DROPS a scope in v2 leaves the viewer holding a granted scope that
              is in neither the manifest nor `approvedScopes`.
+             ⚠️ THE CLAUSE "and nothing ever writes a non-null `revoked_at`, so the granted set
+             only GROWS" IS RETRACTED, not merely trimmed — it was true when written and the
+             per-scope revoke falsified it. `revokeScopes` (`scope-grant.service.ts`) writes
+             `granted_scopes ← prior ∖ incoming` and sets `revoked_at` whenever that leaves the
+             set empty, so the granted set now SHRINKS too. The surviving half of the argument is
+             the one that matters here and is unaffected: the union on re-consent plus an
+             in-place manifest replacement still breaks containment in the direction this
+             paragraph is about.
 
              Consequence for this list, in BOTH directions. It OVERSTATES when the effective set
              is wider than what the viewer granted (the ordinary case). It UNDERSTATES when a
@@ -217,13 +226,19 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              show, since nothing else reveals it and a later version re-declaring that scope is
              signed through by `partitionByConsent` with NO fresh prompt.
 
-             Pre-existing, and STILL NOT changed here — the operator decision was taken on a
-             different axis (which app-side set to display) and does not settle the
-             granted-vs-declared question: `grantedScopes` is not on `ScopeGrantSurface` at all,
-             and it is EMPTY for an install-backed row carrying no consent grant, so showing it
-             is a new field plus a per-row choice of which set to show — not a swap. Widening the
-             population makes it the common case rather than a ~4-row edge, so it remains an open
-             decision rather than something silently expanded — see the PR discussion. */
+             Pre-existing, and STILL NOT changed here — but the REASON has changed and the old one
+             is retracted. It used to read: *"`grantedScopes` is not on `ScopeGrantSurface` at all,
+             and it is EMPTY for an install-backed row carrying no consent grant, so showing it is
+             a new field plus a per-row choice of which set to show — not a swap."* The first
+             clause is now FALSE: phase 2 added `grantedScopes`, `revokedScopes`, `scopesRevokedAt`
+             and `revokableScopes` to that type, and phase 3 reads two of them right here.
+             What remains true is the rest, and it is still why the ROW LIST is the app-side
+             intersection: `grantedScopes` is empty for an install-backed row carrying no consent
+             grant, so rendering it as the list would show nothing for exactly the population that
+             has access. The per-row CONSENT STATE — which is what a revoke control needs — is
+             served from `revokableScopes`/`revokedScopes` without changing which rows exist. See
+             `ScopeGrantSurface.grantedScopes`, which settles the same question from the server
+             side and reaches the same split. */
           /* 🔴 THE `emptyLabel` IS NOW ORIGIN-DERIVED, AND THE HARD-CODED STRING IT REPLACES WAS
              WRONG FOR TWO OF THE THREE ROW CLASSES. It read "No permissions recorded from an
              install or consent for this app", which is right when there is no row at all and
@@ -239,8 +254,17 @@ function DrawerBody({ appBlockId, appName }: { appBlockId: string; appName?: str
              running, so it unambiguously has access — "you granted it nothing, here is what it
              did" is true, while the install/consent sentence would imply a relationship that
              is not there. */
-          <BlockScopeList
-            scopes={grant?.scopes ?? []}
+          /* 🔴 `ScopeConsentList`, NOT `BlockScopeList` DIRECTLY — the per-scope revoke control,
+             the "you last removed a permission on <date>" line and the failure notice all live
+             inside it, and `src/pages/apps/activity.tsx` renders the SAME component with the same
+             single `grant` object. That shared mount is the mechanism, not a convention: this
+             drawer and that page have already had three separate one-sided corrections (the
+             empty-scope label, the budget-control comment, the query-error branch), and a revoke
+             control offered on one surface but not the other is a far worse divergence than a
+             stale sentence. `emptyLabel` stays the caller's because the honest sentence for "no
+             scopes" really does differ here — see the block immediately above. */
+          <ScopeConsentList
+            grant={grant}
             emptyLabel={scopeGrantEmptyScopeLabel(grant?.origin ?? 'activity')}
           />
         )}
