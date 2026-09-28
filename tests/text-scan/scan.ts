@@ -70,7 +70,7 @@ export async function waitForTextScan(args: {
 
 /**
  * The ChatMessage EM row is keyed on the window's newest message id — a window being one
- * sender's messages in one chat (plan 04 contract).
+ * sender's messages in one chat.
  */
 export async function chatWindowEmId(chatId: number, senderId: number) {
   const row = await one<{ id: number | null }>(

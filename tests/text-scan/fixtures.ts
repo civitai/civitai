@@ -19,7 +19,7 @@ let cached: z.infer<typeof schema> | undefined;
 export function fixture(key: FixtureKey): string {
   if (!cached) {
     if (!fs.existsSync(FILE))
-      throw new Error(`missing ${FILE}; see plan 07 Task 6 Step 9 for the categories`);
+      throw new Error(`missing ${FILE}; it must hold one sample text per fixture key`);
     const parsed = schema.safeParse(JSON.parse(fs.readFileSync(FILE, 'utf8')));
     if (!parsed.success) throw new Error(`${FILE}: ${z.prettifyError(parsed.error)}`);
     cached = parsed.data;

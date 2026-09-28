@@ -13,7 +13,7 @@ const REQUIRED_PROMPT_KEYS = ['base', 'label:nsfw', 'label:poi', 'label:minor', 
 const DEV_DB_MIN_NEWEST_USER_AGE_S = 600;
 const CLOCK_SKEW_TOLERANCE_MS = 2_000;
 
-// Plan 04's sweep jobs and the KeyValue keys they keep their id cursors under.
+// The scam sweep jobs and the KeyValue keys they keep their id cursors under.
 const SWEEPS = [
   { job: 'text-scan-chat-windows', cursorKey: 'text-scan-chat-cursor', table: 'ChatMessage' },
   { job: 'text-scan-new-users', cursorKey: 'text-scan-new-user-cursor', table: 'User' },
@@ -76,7 +76,7 @@ async function assertPrompts() {
   const prompts = await harness<{ active: Record<string, unknown> }>({ action: 'getPrompts' });
   const missing = REQUIRED_PROMPT_KEYS.filter((k) => !(k in (prompts.active ?? {})));
   if (missing.length)
-    throw new Error(`prompt rows missing: ${missing.join(', ')} (plan 07 Task 4 Step 8)`);
+    throw new Error(`prompt rows missing: ${missing.join(', ')} (insert them with the harness putPrompt action)`);
 }
 
 async function assertModes(expected: 'shadow' | 'active') {
@@ -86,7 +86,7 @@ async function assertModes(expected: 'shadow' | 'active') {
     throw new Error(
       `suite asked for ${expected}, the app resolves ${wrong.join(
         ', '
-      )}: FLIPT_LOCAL_OVERRIDES is not in effect (plan 07 Task 4 Step 7)`
+      )}: FLIPT_LOCAL_OVERRIDES is not in effect (set it in the app worktree .env and restart)`
     );
 }
 
