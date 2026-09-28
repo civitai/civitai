@@ -17,7 +17,8 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconExternalLink } from '@tabler/icons-react';
 import type { MRT_ColumnDef } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
-import { useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
+import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { appealRowState } from '~/components/Moderation/appeal-row-state';
 import { MinorFlagAppealActions } from '~/components/Moderation/MinorFlagAppealActions';
@@ -35,6 +36,8 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
+
+const TABS = ['pending', 'auto', 'appeals'] as const;
 
 // The full queue is fetched in one request; this is a safety cap, not a page size.
 const limit = 1000;
@@ -693,7 +696,12 @@ function AppealsTable() {
 
 export default function MinorHashMatches() {
   const queryUtils = trpc.useUtils();
-  const [tab, setTab] = useState<string>('pending');
+  const router = useRouter();
+  const tab = TABS.find((value) => value === router.query.tab) ?? 'pending';
+  const setTab = (value: string | null) =>
+    router.replace({ query: { ...router.query, tab: value ?? 'pending' } }, undefined, {
+      shallow: true,
+    });
   const { data: autoData } = trpc.moderator.models.queryAutoFlaggedMinorModels.useQuery({ limit });
   const autoCount = autoData?.items.length ?? 0;
   const { data: appealData } = trpc.moderator.models.queryMinorFlagAppeals.useQuery({ limit });
@@ -862,16 +870,28 @@ export default function MinorHashMatches() {
     <Container size="xl">
       <Stack gap="md">
         <div>
-          <Title order={1}>Minor hash matches</Title>
-          <Text c="dimmed" size="sm">
-            Models sharing a byte-identical weight file with a model a moderator already flagged
-            minor. Different-uploader matches wait for review here; same-uploader matches are
-            flagged automatically at scan time and are listed under Auto-flagged. Uploaders
-            contesting a flag appear under Review requested.
-          </Text>
+          {tab === 'appeals' ? (
+            <>
+              <Title order={1}>Model flag appeals</Title>
+              <Text c="dimmed" size="sm">
+                Owners contesting a model flagged as depicting a minor or a real person, whether the
+                flag came from a hash match, the text scan or a moderator.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Title order={1}>Minor hash matches</Title>
+              <Text c="dimmed" size="sm">
+                Models sharing a byte-identical weight file with a model a moderator already flagged
+                minor. Different-uploader matches wait for review here; same-uploader matches are
+                flagged automatically at scan time and are listed under Auto-flagged. Uploaders
+                contesting a flag appear under Review requested.
+              </Text>
+            </>
+          )}
         </div>
 
-        <Tabs value={tab} onChange={(value) => setTab(value ?? 'pending')}>
+        <Tabs value={tab} onChange={setTab}>
           <Tabs.List>
             <Tabs.Tab value="pending">Pending review</Tabs.Tab>
             <Tabs.Tab value="auto">Auto-flagged{autoCount ? ` (${autoCount})` : ''}</Tabs.Tab>

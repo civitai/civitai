@@ -149,11 +149,19 @@
 </script>
 
 <header class="page-header">
-  <h1>Minor Hash Matches</h1>
-  <p>
-    Models sharing a file hash with something a moderator flagged as depicting a minor, what the
-    scanner flagged on its own, and the owners contesting it.
-  </p>
+  {#if data.tab === 'appeals'}
+    <h1>Model Flag Appeals</h1>
+    <p>
+      Owners contesting a model flagged as depicting a minor or a real person, whether the flag came
+      from a hash match, the text scan or a moderator.
+    </p>
+  {:else}
+    <h1>Minor Hash Matches</h1>
+    <p>
+      Models sharing a file hash with something a moderator flagged as depicting a minor, what the
+      scanner flagged on its own, and the owners contesting it.
+    </p>
+  {/if}
 </header>
 
 <nav class="mb-4 flex gap-1 border-b border-dark-4">

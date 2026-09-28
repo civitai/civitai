@@ -31,7 +31,7 @@
 </script>
 
 <header class="page-header">
-  <h1>Bounty POI Appeals</h1>
+  <h1>Bounty Real-Person Appeals</h1>
 </header>
 
 {#if form && 'error' in form && form.error}
