@@ -7,7 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { mapToViolationType, tosReasonLabel } from '~/server/common/tos-reasons';
+import { mapToViolationType, tosReasonUserMessage } from '~/server/common/tos-reasons';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -210,7 +210,7 @@ export const setTosViolationHandler = async ({
         // Only the moderator's own choice — the inferred fallback below is a classification for
         // analytics, and telling someone their image broke a rule the moderator never picked is worse
         // than telling them nothing.
-        ...(violationType ? { reason: tosReasonLabel(violationType) } : {}),
+        ...(violationType ? { reason: tosReasonUserMessage(violationType) } : {}),
       },
     }).catch();
 

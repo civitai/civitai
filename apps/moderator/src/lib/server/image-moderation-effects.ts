@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { civitaiAppUrl } from './civitai-url';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
-import { VIOLATION_LABELS } from '$lib/violations';
+import { violationUserMessage } from '$lib/violations';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
 import { dbRead } from './db';
@@ -343,9 +343,7 @@ export async function applyBlockSideEffects(
       postId: img.postId,
       // The chosen violation only — not the one `trackImageDeleteTos` infers for analytics. Telling
       // someone their image broke a rule no moderator picked is worse than telling them nothing.
-      reason: violationType
-        ? VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS]
-        : undefined,
+      reason: violationType ? violationUserMessage(violationType) : undefined,
     }),
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
