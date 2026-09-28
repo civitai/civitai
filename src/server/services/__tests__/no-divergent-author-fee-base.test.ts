@@ -1462,6 +1462,27 @@ describe('this file filters by depth wherever it matters', () => {
     expect(helperRe.test(`        containsExpression(site, ledgered.baseExpr),`)).toBe(true);
     expect(includesRe.test(`      expect(site.includes('workflowId')).toBe(true);`)).toBe(true);
 
+    // 🔴 AND THE STRONGEST FORM: THE PATTERN IS EXERCISED AGAINST THIS FILE'S OWN REAL
+    // CONTENT, NOT ONLY AGAINST LITERALS. Realistic literals are better than prefixes, but
+    // they are still text I chose — a pattern that fails on some property of the real lines
+    // my literals happen not to have (an indent width, a preceding token, a line break)
+    // would still pass them. So: take every line that IS correctly routed, un-route it in
+    // memory, and assert the pattern catches each one. That closes the gap between "more
+    // demanding than before" and "as demanding as the file".
+    const routedLines = SELF.split('\n').filter((l) => /expect\(ownProps\(site\)\)\./.test(l));
+    expect(
+      routedLines.length,
+      'no routed lines found — this control is testing nothing'
+    ).toBeGreaterThanOrEqual(8);
+    const missed = routedLines
+      .map((l) => l.replace('expect(ownProps(site)).', 'expect(site).'))
+      .filter((l) => !new RegExp(OFFENDER_SRC).test(l));
+    expect(
+      missed,
+      'the offender pattern does not match these REAL lines once un-routed, so it would not ' +
+        'catch them if someone un-routed them for real'
+    ).toEqual([]);
+
     // must NOT match — negatives are exempt by construction, and the routed form is correct
     expect(offenderRe.test(`      expect(site).not.toContain('snapshot');`)).toBe(false);
     expect(offenderRe.test(`      expect(site).not.toMatch(/buzzType:/);`)).toBe(false);
