@@ -1565,22 +1565,16 @@ describe('scope-grant.service', () => {
       expect(isMissingColumnError({ code: 'P2021' })).toBe(false);
       expect(isMissingColumnError({ code: '42P01' })).toBe(false);
       expect(isMissingColumnError({ code: 'P2000', meta: { code: '42P01' } })).toBe(false);
-      // 🔴 INVARIANT GUARDS, NOT REGRESSION COVERAGE — AND THIS COMMENT CLAIMED THE OPPOSITE.
-      // It said "the shapes that used to throw before the `typeof` guard existed". Measured against
-      // the pre-widening body (`(err as {code?: unknown} | null)?.code === 'P2022'`): `null`,
-      // `undefined`, `'P2022'`, `42703` and `{ meta: 'P2022' }` all returned `false` and NONE threw,
-      // because optional chaining already handled them. So the two `typeof` guards are equivalent
-      // mutants — removing either changes no observable answer, and round-11 review scored both
-      // SURVIVED. These FIVE arms pin an invariant the bug never violated; they are worth keeping
-      // and must not be counted as coverage of a defect. (It said "four" for one round, before the
-      // fifth input named above finally got an arm — the prose and the assertions were different
-      // populations, and then the count was.)
+      // 🔴 INVARIANT GUARDS, NOT REGRESSION COVERAGE. Measured against the pre-widening body
+      // (`(err as {code?: unknown} | null)?.code === 'P2022'`), every non-object input below
+      // already returned `false` and none threw, because optional chaining handled them. So the
+      // two `typeof` guards are equivalent mutants — removing either changes no observable
+      // answer. These arms pin an invariant the bug never violated; they are cheap and worth
+      // keeping, and must not be counted as coverage of a defect.
       expect(isMissingColumnError(null)).toBe(false);
       expect(isMissingColumnError(undefined)).toBe(false);
       expect(isMissingColumnError('P2022')).toBe(false);
       expect(isMissingColumnError({ code: 'P2000', meta: 'P2022' })).toBe(false);
-      // The fifth input the comment above names — it had no arm for one round, so the prose and the
-      // assertions were different populations.
       expect(isMissingColumnError(42703)).toBe(false);
     });
   });
@@ -1598,9 +1592,8 @@ describe('scope-grant.service', () => {
    * ⚠️ WHY STRUCTURAL AND NOT BEHAVIOURAL. Pinning this behaviourally needs `vi.mock` on
    * `~/server/logging/client` in a suite that deliberately mocks only the db, and two of this
    * repo's own lint-rule guards police wholesale module mocks. This scan costs one file read, pins
-   * all THREE sites and any future one, and fails when a site is ADDED without the catch — which is
-   * the direction that matters. (It said "BOTH sites" for one round, in the same commit whose
-   * positive-control comment below corrects the very same miscount. Derive, then quote.)
+   * every site present and any future one, and fails when a site is ADDED without the catch — which
+   * is the direction that matters. The site count is derived by the scan itself, not stated here.
    *
    * It reads the SOURCE comment-stripped, so a future `logToAxiom(` written in prose cannot break
    * it — ⚠️ DEFENSIVE ONLY, not a working property: measured, no comment in that module contains
@@ -1612,14 +1605,9 @@ describe('scope-grant.service', () => {
    * vacuously, which is how a guard reads as coverage while providing none.
    *
    * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
-   * SPELLED guard, and it errs in both directions — THREE shapes in the false-FAIL direction (one in
-   * the bullet below, two more in the matcher's own NOT-CLAIMED note) and TWO unclaimable shapes in
-   * the false-PASS one. ⚠️ TWO WRONG COUNTS IN SUCCESSION HERE. It first said "one shape each",
-   * which mis-read its own bullet: the four shapes the false-pass bullet names are ones the matcher
-   * REJECTS — a history of holes CLOSED, not a list of live ones, so only that bullet's last
-   * sentence is a gap. The correction then fixed the false-PASS half and left the false-FAIL half
-   * saying "one", while the file names three. Both measured, by running the shapes through the live
-   * matcher rather than by reading it.
+   * SPELLED guard and it errs in both directions. The shapes are enumerated below rather than
+   * counted — three successive drafts of this paragraph stated a count that was wrong, so the
+   * count is gone and the list is the claim:
    *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
    *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
    *     name, spaced or not, and skips a trailing line comment — it took FOUR drafts, each closing
@@ -1662,21 +1650,19 @@ describe('scope-grant.service', () => {
     }
 
     /**
-     * The handled-rejection predicate, at DESCRIBE scope so the real scan and its positive control
+     * The handled-rejection predicate, at DESCRIBE scope so the real scan and its control arm
      * grade the SAME regex. Two copies would let the guard drift from the thing that certifies it.
      */
     const HANDLED = /^\s*\.catch\s*\((?!(?:\s|\/\/[^\n]*)*(?:\)|undefined\b|null\b|void\b))/;
 
     /**
      * 🔴 EVERY TAIL THAT FOLLOWS A `logToAxiom(...)` CALL IN `source` — THE ONE CODE PATH THE REAL
-     * SCAN AND ITS POSITIVE CONTROL BOTH RUN.
+     * SCAN AND ITS CONTROL ARM BOTH RUN.
      *
-     * Extracted because the control was MEASURED not to cover the scan's own slicing: with the
-     * probe computing its slice independently, reinstating the 4096-character window — the exact
-     * defect round 11 removed — SURVIVED it, and so did reinstating the 40-character one. That is
-     * the "verified in isolation" seam: two halves each tested, the seam between them owned by
-     * nobody. One helper makes a window, a lost site or a broken paren walk fail the control
-     * instead of waiting for a reviewer to re-measure it by hand.
+     * Shared deliberately: a control that computes its own slice is blind to the scan's slicing,
+     * and reinstating either historical scan window then SURVIVED it (measured). One helper means a
+     * reinstated window, a lost site or a broken paren walk fails the control instead of waiting
+     * for a reviewer to re-measure it by hand.
      */
     function callTails(source: string): string[] {
       const src = stripComments(source);
@@ -1735,14 +1721,12 @@ describe('scope-grant.service', () => {
           '— check the regex and the comment stripper before believing a green result here'
       ).toBeGreaterThanOrEqual(3);
       for (const after of sites) {
-        // 🔴 THE BOOLEAN IS THE VERDICT AND THE PREFIX RIDES IN THE MESSAGE. The previous draft
-        // asserted `` `${HANDLED.test(after)} :: ${prefix}` `` against `/^true ::/`, which made the
-        // REPORTING FORMAT part of the verdict — renaming the separator failed the guard, reporting
-        // "does not swallow its own rejection" about a call that handles it perfectly: the
-        // misleading-cause class this file already documents for `endOfCall`, one level up. It also
-        // opened a hardcode surface the plain form never had — replacing `HANDLED.test(after)` with
-        // a literal `true` SURVIVED, because the constant hid inside a template string whose
-        // assertion read `/^true ::/`. Round-12 review.
+        // 🔴 THE BOOLEAN IS THE VERDICT AND THE OFFENDING TAIL RIDES IN THE MESSAGE — do not fold
+        // them back into one asserted string. A previous draft asserted
+        // `` `${HANDLED.test(after)} :: ${prefix}` `` against `/^true ::/`, which made the REPORTING
+        // FORMAT part of the verdict (renaming the separator failed the guard and blamed the call)
+        // and hid a hardcode surface: replacing `HANDLED.test(after)` with a literal `true`
+        // SURVIVED, because the constant sat inside the template string. Measured, round-12 review.
         expect(
           HANDLED.test(after),
           'a logToAxiom call in scope-grant.service.ts does not swallow its own rejection. These ' +
@@ -1797,111 +1781,37 @@ describe('scope-grant.service', () => {
     });
 
     /**
-     * 🔴 THE GUARD'S OWN CORRECTNESS IS PINNED HERE, AND FOR FOUR DRAFTS IT WAS NOT.
+     * 🔴 CAN THE SCAN ABOVE GO RED? THAT IS THE ONLY QUESTION THIS ARM ANSWERS.
      *
-     * The scan above can only fail on what the real module happens to contain, and the real module
-     * contains no pathological `.catch(`. So every hole this matcher has had — and it has had one
-     * per draft — was invisible to CI and found only by a reviewer re-measuring it in a throwaway
-     * script. Round-12 review made that concrete: reinstating the 4096-character window, the exact
-     * defect the previous round removed, SURVIVED the whole suite.
-     *
-     * This arm runs the LIVE pipeline — the same `callTails` (stripper, `indexOf` walk, `endOfCall`,
-     * unbounded slice) and the same `HANDLED` — over synthetic tails whose classification is known,
-     * so a future draft that reintroduces any of those holes fails HERE.
+     * The scan can only fail on what the real module happens to contain, and the real module
+     * contains no pathological `.catch(`. So a matcher hole is invisible to CI: measured,
+     * reinstating the 4096-character scan window — the exact defect round 11 removed — passed the
+     * whole suite. This arm feeds the LIVE pipeline (the same `callTails` and the same `HANDLED`)
+     * a set of tails whose classification is known, in both directions: a HAZARD that passes means
+     * the matcher has a hole, a SAFE shape that fails means it will false-fail on a correct
+     * refactor.
      *
      * 🔴 THE SET IS THE HISTORICAL ONE, NOT AN IMAGINED ONE. Every hazard below actually slipped
-     * through some draft. A battery built from mutations I could think of would have missed the two
-     * that mattered — a trailing line comment surviving the stripper's line-start anchor, and a
-     * whitespace run longer than the scan window — because neither is a shape anyone would guess.
+     * through some draft of this matcher. A battery built from mutations one can think of would
+     * have missed the two that mattered — a trailing line comment surviving the stripper's
+     * line-start anchor, and a whitespace run longer than the scan window.
      *
-     * 🔴 WHAT THIS ARM STILL CANNOT SEE — A CLASS, NOT A LIST, and the first draft of this
-     * paragraph named two instances and read as exhaustive. The class is **any mutation of an arm's
-     * own scaffolding**: its verdict (hardcoding the scan's `HANDLED.test(after)` to `true`, or this
-     * arm's `HANDLED.test(tails[0])` to `kind === 'SAFE'`), its own history ledger
-     * (`HISTORICAL_SCAN_WINDOWS` shortened, which only loosens the `WIDE.length` floor — measured
-     * SURVIVING, and the reason that list is written as history rather than derived; LENGTHENING it
-     * with a bogus value false-FAILS loudly, which is the safe direction), its loop
-     * bounds (`cases.slice(0, 0)`,
-     * which satisfies every floor and asserts nothing), or its own sanity assertions (deleting this
-     * arm's `tails.length === 1` check, which is what catches a probe/module divergence). No amount
-     * of cross-grading fixes any of them: a guard cannot guard its own assertion. Every one is
-     * conspicuous in a diff, which is the whole defence.
+     * 🔴 WHAT IT CANNOT SEE: any mutation of its own scaffolding — the probe list edited, the loop
+     * bounds narrowed, the verdict hardcoded. A guard cannot guard its own assertion, and the
+     * layers of ledger, floor and content pins that once sat here only raised the cost of such an
+     * edit from two places to four. Every one of them is conspicuous in a diff, and a diff is
+     * where this is meant to be caught. Do not re-add them.
      *
-     * Also surviving, for a different reason — the component is INERT rather than unguarded:
-     * `stripComments` reduced to the identity function, or applied only to long inputs so probe and
-     * module diverge. Stripping is provably the identity for every probe body here, because the
-     * line-comment replace is line-start-anchored and no probe carries a block comment. The
-     * stripper is defence against a future prose mention of the call shape, not a working part
-     * today.
-     *
-     * Also surviving, and a third reason again: a helper mutation that is EQUIVALENT on the current
-     * source. De-duplicating `callTails`' return (`[...new Set(tails)]`) survives, because the three
-     * module tails are provably distinct — each runs to EOF from a different offset — and every
-     * probe yields exactly one. It is not a hole; it is a mutation that cannot change an answer.
-     *
-     * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
-     * reverted to draft 1 or draft 3, a matcher matching everything or nothing, dropping the walk's
-     * is-this-a-call guard, and any ONE-PLACE substitution or relabel inside the probe set all go
-     * red — on this arm, on the scan, or on both. ⚠️ "Any ONE-PLACE substitution" was itself still
-     * too wide: swapping a wide probe for the LITERAL text `<WIDE>` is one place and normalises to
-     * the same ledger key, which survived until the pre-normalisation assertion beside the content
-     * pin was added. Three successive drafts of this sentence over-claimed; read the assertions,
-     * not the sentence. ⚠️ That said "any substitution or relabel", flat,
-     * and round-17 review measured it false: a COORDINATED substitution of the wide entries in both
-     * `cases` and `LEDGER` survived, with the window reinstated, which is the round-14 attack in
-     * coordinated form. The content pin beside the ledger closes that route; see it.
+     * Also not covered, because the component is INERT rather than unguarded: `stripComments` is
+     * provably the identity for every probe below (the line-comment replace is line-start-anchored
+     * and no probe carries a block comment). It is defence against a future prose mention of the
+     * call shape, not a working part today.
      */
-    it('POSITIVE CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
-      /**
-       * 🔴 LOAD-BEARING, AND UNPINNED FOR ONE ROUND. Two ledger entries exist solely to exercise a
-       * whitespace run longer than any scan window the guard has ever had — and BOTH sides of the
-       * ledger normalise that run to `<WIDE>`, so shrinking `WIDE` keeps the ledger perfectly equal
-       * while destroying the property those entries test. Measured by round-15 review:
-       * `' '.repeat(5)` alone SURVIVED, and so did that plus either historical window reinstated.
-       * That is exactly the class the count floors fell to, moved one level up — the instrument
-       * consistent about a shape that no longer tests anything.
-       *
-       * So the window history is named, and the run is asserted to exceed all of it.
-       *
-       * ⚠️ THE FLOOR PINS THE RUN'S **SIZE**; THE WIDE ENTRIES PIN ITS **COMPOSITION** — and that
-       * division is load-bearing in a way nothing recorded until round-16 review measured it.
-       * `WIDE.length > max(...)` alone does not stop `WIDE` becoming something long that is not a
-       * whitespace run. Which entry catches which shape, measured per shape rather than asserted in
-       * a group (round-17 review found the group claim over-credited one entry):
-       *   - prefixed with `undefined`, `null`, `)` or `void 0` → caught by the **SAFE** entry
-       *     `.catch(${WIDE}() => {})`, which stops being handler-shaped. Remove that entry and
-       *     these four reopen — measured: all four then SURVIVE.
-       *   - `'x'.repeat(5000)` → caught by the **HAZARD** entry `.catch(${WIDE})`, because a
-       *     non-whitespace run makes `.catch(xxx…)` pass the matcher. It survives the SAFE entry's
-       *     removal, so the earlier "remove that entry and the composition half reopens" was true
-       *     of the prefixes only.
-       *
-       * ⚠️ AND THE 904-CHARACTER MARGIN IS NOT THE MECHANISM — do not read it as needed. The
-       * truncation slices the tail INCLUDING the 7-character `.catch(` prefix, which makes the
-       * requirement LOOSER, not tighter: a run of only `W − 7` already pushes the closing `)` past
-       * a window of `W`. Derived over every run length — the minimum that hides the `)` is **33**
-       * for the 40 window (32 does not) and **4089** for the 4096 one (4088 does not).
-       *
-       * ⚠️ AN EARLIER DRAFT CALLED THAT A "ONE-CHARACTER MARGIN", WHICH WAS BOTH THE WRONG NUMBER
-       * AND THE WRONG QUANTITY — the tail is `.catch(` (7) + the run + `)`, so at a run of exactly
-       * `W` the `)` is the **eighth** character dropped, not the first and not the seventh (an
-       * intermediate draft said seven, off by one, in the paragraph whose whole subject is a
-       * previously-wrong figure — derived for both windows: run 40 → tail 48, run 4096 → tail 4104,
-       * 8 beyond either way). And
-       * "one character" is a fact about the FLOOR: `> max` admits 4097 as its smallest legal value.
-       * Adopted from a review report without re-deriving it, which is the class this file keeps
-       * correcting. Measurements that DO hold: floor relaxed to `>=`, a run of exactly 4096 plus the
-       * 4096 window → red, and green with no window, so the red is attributable to the window; 4097
-       * alone under the `>` floor → green; 4097 plus the 4096 window → red. The floor is
-       * deliberately stricter than the mechanism needs.
-       */
-      const HISTORICAL_SCAN_WINDOWS = [40, 4096];
+    it('CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
+      // Longer than every scan window this guard has ever had (40, then 4096) — that is the whole
+      // point of the three `WIDE` probes, so do not shrink it. A truncated tail makes the negative
+      // lookahead succeed, which turns a hazard into a pass at whatever width is chosen.
       const WIDE = ' '.repeat(5000);
-      expect(
-        WIDE.length,
-        'the wide-whitespace probes no longer exceed every scan window this guard has had, so they ' +
-          'assert nothing — and the ledger cannot see it, because both sides normalise the run'
-      ).toBeGreaterThan(Math.max(...HISTORICAL_SCAN_WINDOWS));
       const cases: Array<[kind: 'HAZARD' | 'SAFE', tail: string]> = [
         // Pass-throughs: the rejection stays unhandled. Each passed at least one earlier draft.
         ['HAZARD', ''],
@@ -1927,176 +1837,13 @@ describe('scope-grant.service', () => {
         ['SAFE', '.catch(nullHandler)'],
         ['SAFE', '.catch(voidHandler)'],
       ];
-      // 🔴 A LEDGER, NOT COUNTS — AND TWO SUCCESSIVE FLOOR DRAFTS EACH CLOSED AN INSTANCE WHILE
-      // LEAVING THE CLASS OPEN. A count cannot distinguish WHICH shapes from HOW MANY, so no floor
-      // value fixes this:
-      //   draft 1, `HAZARD >= 8` against a derived 10 — round-13 review swapped the two `WIDE`
-      //     hazards for SAFE cases (all floors still satisfied: 18 / 8 / 10) and, with the
-      //     4096-character window reinstated, the defect this arm exists to catch was invisible.
-      //   draft 2, floors AT the derived counts (18 / 10 / 8) — round-14 review swapped the same two
-      //     for SAME-KIND hazards the matcher trivially rejects (`.catch()`, `.catch(  )`). Every
-      //     count stays exactly satisfied, the wide-whitespace coverage is gone, and the window
-      //     SURVIVED again at BOTH historical widths. Raising 8→10 had only closed the
-      //     HAZARD→SAFE route, which is the one that moves a number.
-      //
-      // Set equality against a named ledger is the instrument that cannot be walked BY A ONE-PLACE
-      // EDIT: it fails on a substitution, on a relabel, on shrinkage AND on growth — a shape added
-      // without a ledger entry is a finding, which no floor can express. ⚠️ It said "cannot be
-      // walked" flat, and that over-claimed: a COORDINATED edit to `cases` and `LEDGER` together
-      // walks it, measured. That is the irreducible floor of any ledger — it buys visibility in a
-      // diff, not impossibility — and the two properties below cover the two ways a coordinated
-      // edit can still look untouched. It is also what the sibling guard in
-      // `no-unguarded-block-rest-token.test.ts` already uses for `ANY_TOKEN_ROUTES`, in both
-      // directions, for exactly this reason.
-      //
-      // Adding a shape here is deliberate: put it in `cases` AND in `LEDGER`, and the loop below
-      // then asserts it classifies correctly. `<WIDE>` stands in for the wide-whitespace run so the
-      // ledger stays readable — the token, not its length, which `WIDE.length` above owns.
-      //
-      // ⚠️ THE TOKEN COLLIDES, HARMLESSLY, AND THE DIAGNOSTIC NOW PRINTS BOTH FAILURES ALIKE. A tail
-      // containing the LITERAL text `<WIDE>` normalises to the same ledger key as a real wide run,
-      // and since the loop's diagnostic uses the same token it reports both the same way. Not
-      // exploitable FOR THE HAZARD ENTRIES: a literal-text tail passes the matcher while labelled
-      // HAZARD, so the LOOP catches it — not the ledger, which sees no difference. ⚠️ THAT REASONING
-      // DOES NOT TRANSFER TO THE **SAFE** ENTRY, and an earlier draft of this note concluded "not
-      // exploitable" flat: handler-shaped plus labelled SAFE means nothing fires at all. The
-      // pre-normalisation assertion after the content pin is what closes that; see it. Recorded
-      // because the older `<5000 spaces>` token made the collision more contrived, so this is a
-      // real loss that came with removing a stated figure.
-      const LEDGER = [
-        'HAZARD ""',
-        'HAZARD ".catch()"',
-        'HAZARD ".catch( )"',
-        'HAZARD ".catch(undefined)"',
-        'HAZARD ".catch( undefined )"',
-        'HAZARD ".catch(null)"',
-        'HAZARD ".catch(void 0)"',
-        'HAZARD ".catch( // why\\n)"',
-        'HAZARD ".catch(<WIDE>)"',
-        'HAZARD ".catch(<WIDE>undefined)"',
-        'SAFE ".catch(() => {})"',
-        'SAFE ".catch( () => {} )"',
-        'SAFE ".catch(String)"',
-        'SAFE ".catch((e) => void e)"',
-        'SAFE ".catch( // why\\n () => {})"',
-        'SAFE ".catch(<WIDE>() => {})"',
-        'SAFE ".catch(nullHandler)"',
-        'SAFE ".catch(voidHandler)"',
-      ];
-      expect(
-        cases.map(([k, t]) => `${k} ${JSON.stringify(t.replace(WIDE, '<WIDE>'))}`).sort(),
-        'the probe set no longer matches its ledger. A shape REMOVED or RELABELLED means this arm ' +
-          'silently stopped covering a hazard some earlier draft of the matcher actually passed — ' +
-          'that is how two floor drafts each re-hid the scan-window defect. A shape ADDED means the ' +
-          'ledger is stale: add it, and the loop below will grade it.'
-      ).toEqual([...LEDGER].sort());
-      // 🔴 AND NO ENTRY MAY REPEAT. Pointing one `cases` entry at a shape already present, with the
-      // matching ledger edit, keeps BOTH arrays 18 long and sorted-equal while deleting a shape —
-      // nastier than a plain removal precisely because nothing looks touched. Measured SURVIVING by
-      // round-15 review. Distinctness is the property a length cannot express.
-      expect(
-        new Set(LEDGER).size,
-        'a ledger entry is duplicated, so the probe set covers fewer shapes than it appears to — ' +
-          'the length stays 18 and the equality above still holds'
-      ).toBe(LEDGER.length);
-      // 🔴 AND THE WIDE ENTRIES ARE PINNED BY CONTENT — THE THIRD COORDINATED ROUTE, AND THE ONE
-      // THAT REOPENED THE ROUND-14 ATTACK. Set equality plus distinctness plus the `WIDE.length`
-      // floor still admit a COORDINATED substitution: swap the two wide HAZARDs for DISTINCT,
-      // trivially-rejected same-kind hazards in `cases` AND `LEDGER` together, and every one of
-      // those properties holds — count 18, all distinct, the floor untouched — while the
-      // wide-whitespace coverage is gone. Measured SURVIVING by round-17 review, and SURVIVING with
-      // the 4096 window reinstated: the round-14 attack in coordinated form.
-      //
-      // These three shapes are the only reason `WIDE` exists, so they are named rather than
-      // counted. This is the same lesson as the count floors one level further in: a property that
-      // quantifies the probe set cannot protect a specific member of it.
-      //
-      // 🔴 AND THIS IS NOT IMPOSSIBILITY EITHER — SAY SO, BECAUSE THIS FILE HAS OVER-CLAIMED TWICE
-      // ALREADY. This pin raised the coordinated-edit cost from TWO places to THREE; the
-      // pre-normalisation assertion below raises it to **FOUR**. Measured at each stage: removing
-      // the SAFE wide entry from `cases` + `LEDGER` while leaving this pin → RED; from all three,
-      // with the assertion below neutralised → SURVIVES; from all three WITH it → RED; from all
-      // four → SURVIVES, and then prefixing `WIDE` survives too, so the composition half reopens
-      // at four.
-      //
-      // ⚠️ AN EARLIER DRAFT ENDED "three coordinated places is the floor — do not add a fourth copy
-      // expecting a different outcome", AND THE SAME COMMIT FALSIFIED IT: the fourth copy is
-      // precisely what makes the 3-place removal red. The measurement was taken before the
-      // assertion below existed and was not re-taken after. Four coordinated places in one diff is
-      // the floor now, and a diff is still where it is meant to be caught.
-      expect(
-        LEDGER.filter((e) => e.includes('<WIDE>')).sort(),
-        'the wide-whitespace probes were substituted or removed. They are the only entries that ' +
-          'exercise a run longer than any historical scan window, and every other property here — ' +
-          'set equality, distinctness, the length floor — survives their coordinated replacement.'
-      ).toEqual(
-        [
-          'HAZARD ".catch(<WIDE>)"',
-          'HAZARD ".catch(<WIDE>undefined)"',
-          'SAFE ".catch(<WIDE>() => {})"',
-        ].sort()
-      );
-      // 🔴 AND `cases` IS CHECKED **PRE-NORMALISATION**, BECAUSE EVERYTHING ABOVE IS BLIND BY
-      // CONSTRUCTION. `.replace(WIDE, '<WIDE>')` is a NO-OP on a tail that already contains the
-      // literal text `<WIDE>`, so swapping a wide probe for that literal — ONE place, `cases` only —
-      // normalises to the very same ledger key. Set equality holds, distinctness holds, the
-      // `WIDE.length` floor holds, and the content pin holds because `LEDGER` was never touched.
-      //
-      // For the HAZARD entries the loop catches it (literal text is handler-shaped while labelled
-      // HAZARD). For the SAFE entry that SAME property is the exploit: handler-shaped and labelled
-      // SAFE, so nothing fires — measured SURVIVING, and surviving with `WIDE` then prefixed by
-      // `undefined`, i.e. the composition coverage is gone. ⚠️ PRE-EXISTING, not introduced by the
-      // pin; what was new was the prose asserting it shut ("any ONE-PLACE substitution … all go
-      // red", and "not exploitable … the LOOP catches it", whose reasoning covers only the HAZARD
-      // case). Round-18 review. A comment that stops the next person looking is the shape this file
-      // keeps producing — ⚠️ and an earlier draft called this "its fifth instance" with no
-      // population named, which is the thing `Counts are stated WITH their population` forbids two
-      // hundred lines up. Enumerated, the instances this file itself records are: the stripper
-      // presented as a working property; "cannot be walked" flat; "each is caught by the SAFE
-      // entry"; "any substitution or relabel" flat; "any ONE-PLACE substitution" too wide; and "not
-      // exploitable" flat — six, and "fifth" was reachable only by merging two. The ordinal is gone;
-      // the shape is the durable part.
-      //
-      // 🔴 IT IS THE ONLY **LEDGER-SIDE** ASSERTION THAT READS THE TAILS BEFORE THE RUN IS ERASED —
-      // and an earlier draft said "the only one in the arm", which this very comment block
-      // contradicts five lines up. The LOOP reads them raw too (`callTails` gets the tail verbatim;
-      // normalisation appears only in `shown`, which is display-only), which is exactly why the
-      // HAZARD literal was already caught and the SAFE one was not. Measured both ways: with this
-      // assertion neutralised, the HAZARD swap is still RED via the loop and the SAFE swap SURVIVES.
-      //
-      // 🔴 AND IT PINS THE NORMALISED KEY, NOT THE KIND. `.map(([k]) => k)` against
-      // `['HAZARD','HAZARD','SAFE']` pins containment and kind only, so a coordinated 3-place
-      // REPOSITIONING walks it — measured: moving the run to AFTER the handler survived, and
-      // survived with `WIDE` then prefixed, i.e. the composition coverage went while removal needed
-      // four places. Keying on the same normalised string the pin uses equalises the floor at four
-      // for every route. The kinds multiset also could not tell the two wide HAZARDs apart.
-      expect(
-        cases
-          .filter(([, t]) => t.includes(WIDE))
-          .map(([k, t]) => `${k} ${JSON.stringify(t.replace(WIDE, '<WIDE>'))}`)
-          .sort(),
-        'a wide probe no longer contains the actual run, or the run moved within it — the ' +
-          'normalisation erases the run, so the ledger and its content pin cannot tell a real wide ' +
-          'tail from literal `<WIDE>` text, nor a run before `.catch(` from one inside it'
-      ).toEqual(
-        [
-          'HAZARD ".catch(<WIDE>)"',
-          'HAZARD ".catch(<WIDE>undefined)"',
-          'SAFE ".catch(<WIDE>() => {})"',
-        ].sort()
-      );
-
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
         // computes its own slice is blind to the scan's slicing, which is how both historical
         // windows survived this arm's first draft.
         const tails = callTails(`logToAxiom({ a: 1 })${tail};`);
-        // 🔴 DERIVED, NOT STATED — AND IT SAID `<5000 spaces>` AS A LITERAL. The `WIDE.length`
-        // assertion above deliberately admits ANY run over the largest historical window, so a
-        // hardcoded figure is wrong exactly in the cases that assertion was added for: measured, a
-        // 4,097-space run and a 5,009-character non-whitespace run both printed "<5000 spaces>". A
-        // number stated rather than derived, in the one place a reader ACTS on it. Matching the
-        // ledger's own token removes the figure instead of re-deriving it.
+        // The run is collapsed for display only — a 5,000-space diagnostic is unreadable. The
+        // token is deliberately not a stated length, which would go stale the moment `WIDE` moves.
         const shown = JSON.stringify(tail.replace(WIDE, '<WIDE>'));
         expect(tails.length, `the pipeline found ${tails.length} calls, not 1, for ${shown}`).toBe(
           1
