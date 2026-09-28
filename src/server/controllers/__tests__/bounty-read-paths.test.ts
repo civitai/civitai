@@ -4,10 +4,11 @@ import type * as BountyEntryService from '~/server/services/bountyEntry.service'
 import type * as BountyBenefactorService from '~/server/services/bountyBenefactor.service';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import type * as BountyService from '~/server/services/bounty.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockAssert, mockGetEntries, mockGetBenefactors, mockGetEntryById, mockGetEntryFiles, mockGetComments, mockGetThread, mockGetCount } =
+const { mockAssert, mockGetEntries, mockGetBenefactors, mockGetEntryById, mockGetEntryFiles, mockGetComments, mockGetThread, mockGetCount, mockUpsertBounty, mockDeleteBounty } =
   vi.hoisted(() => ({
     mockAssert: vi.fn(),
     mockGetEntries: vi.fn(async () => []),
@@ -17,6 +18,8 @@ const { mockAssert, mockGetEntries, mockGetBenefactors, mockGetEntryById, mockGe
     mockGetComments: vi.fn(async () => null),
     mockGetThread: vi.fn(async () => null),
     mockGetCount: vi.fn(async () => 0),
+    mockUpsertBounty: vi.fn(),
+    mockDeleteBounty: vi.fn(),
   }));
 
 vi.mock('~/server/services/bounty-visibility', async (importOriginal) => ({
@@ -28,6 +31,11 @@ vi.mock('~/server/services/bountyEntry.service', async (importOriginal) => ({
   getAllEntriesByBountyId: mockGetEntries,
   getEntryById: mockGetEntryById,
   getBountyEntryFilteredFiles: mockGetEntryFiles,
+}));
+vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BountyService>()),
+  upsertBounty: mockUpsertBounty,
+  deleteBountyById: mockDeleteBounty,
 }));
 vi.mock('~/server/services/bountyBenefactor.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyBenefactorService>()),
@@ -74,7 +82,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-const { getBountyEntriesHandler, getBountyBenefactorsHandler, addBenefactorUnitAmountHandler } = await import('../bounty.controller');
+const { getBountyEntriesHandler, getBountyBenefactorsHandler, addBenefactorUnitAmountHandler, upsertBountyHandler, deleteBountyHandler } = await import('../bounty.controller');
 const {
   getBountyEntryHandler,
   getBountyEntryFilteredFilesHandler,
@@ -147,5 +155,26 @@ describe('a Private bounty is not reachable through its satellite reads', () => 
     await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockAssert).toHaveBeenCalledWith({ bountyId: 9 }, { id: 6 });
     expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('bounty write responses', () => {
+  const row = {
+    id: 9,
+    name: 'B',
+    meta: { textScanFlags: { poi: { reason: 'r', names: ['Jane Doe'] } } },
+  };
+  const ctx = { user: { id: 5 }, track: { bounty: vi.fn(async () => undefined) } } as never;
+
+  it('upsert never returns meta', async () => {
+    mockUpsertBounty.mockResolvedValue(row);
+    const result = await upsertBountyHandler({ input: { id: 9 } as never, ctx });
+    expect(result).toEqual({ id: 9, name: 'B' });
+  });
+
+  it('delete never returns meta', async () => {
+    mockDeleteBounty.mockResolvedValue(row);
+    const result = await deleteBountyHandler({ input: { id: 9 }, ctx });
+    expect(result).toEqual({ id: 9, name: 'B' });
   });
 });

@@ -61,12 +61,14 @@ const MODERATOR_ID = 9;
 function mockStored({
   lockedProperties = [] as string[],
   complete = false,
-}: { lockedProperties?: string[]; complete?: boolean } = {}) {
+  poi = false,
+}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
     entryLimit: null,
     complete,
+    poi,
     lockedProperties,
     _count: { entries: 0 },
   });
@@ -132,10 +134,10 @@ describe('updateBountyById — lock enforcement', () => {
   });
 
   it('ignores locks the client claims — only the stored row decides what is locked', async () => {
-    await updateBountyById({ ...baseUpdate, poi: true, lockedProperties: ['poi'] } as never);
+    await updateBountyById({ ...baseUpdate, nsfw: true, lockedProperties: ['nsfw'] } as never);
 
     const data = updateData();
-    expect(data.poi).toBe(true);
+    expect(data.nsfw).toBe(true);
     expect(data).not.toHaveProperty('lockedProperties');
   });
 
@@ -296,5 +298,30 @@ describe('upsertBounty — create path', () => {
     const data = createData();
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
+  });
+});
+
+describe('updateBountyById — poi', () => {
+  it('refuses an owner turning poi on', async () => {
+    await expect(updateBountyById({ ...baseUpdate, poi: true } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockDbWrite.bounty.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner re-save a bounty that is already poi', async () => {
+    mockStored({ poi: true });
+    await updateBountyById({ ...baseUpdate, poi: true } as never);
+    expect(mockDbWrite.bounty.update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator set poi', async () => {
+    await updateBountyById({
+      ...baseUpdate,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      poi: true,
+    } as never);
+    expect(updateData().poi).toBe(true);
   });
 });

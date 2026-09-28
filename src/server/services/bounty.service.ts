@@ -382,6 +382,7 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
+          poi: true,
           lockedProperties: true,
           _count: { select: { entries: true } },
         },
@@ -394,6 +395,10 @@ export const updateBountyById = async ({
         storedLockedProperties: existing.lockedProperties,
         isModerator,
       });
+      if (data.poi && !existing.poi && !isModerator)
+        throw throwBadRequestError(
+          'The creation of bounties intended to depict an actual person is prohibited.'
+        );
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)

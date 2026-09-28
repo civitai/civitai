@@ -345,7 +345,8 @@ export const upsertBountyHandler = async ({
     if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
-    return bounty;
+    const { meta: _meta, ...publicBounty } = bounty;
+    return publicBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -370,7 +371,8 @@ export const deleteBountyHandler = async ({
     // Let it run in the background
     ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleLogError);
 
-    return deleted;
+    const { meta: _meta, ...publicBounty } = deleted;
+    return publicBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
