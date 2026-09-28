@@ -213,10 +213,10 @@ export const useQueryNotificationsCount = () => {
  * 🔴 This set is load-bearing, and the reason is not obvious from the code it
  * guards. The two branches that key off a category name are safe only because
  * they test `category.toLowerCase() in counts` and every key here (and
- * `unreadCountsAreFloors`) is camelCase — `'pendingplacements'` matches nothing. That is a casing accident, not a
- * design. Rename this field to lowercase, or add a NotificationCategory that
- * lowercases into it, and the category branch would start subtracting a
- * placement count out of the bell's total.
+ * `unreadCountsAreFloors`) is camelCase — `'pendingplacements'` matches
+ * nothing. That is a casing accident, not a design. Rename one of these keys
+ * to lowercase, or add a NotificationCategory that lowercases into one, and
+ * the category branch would start subtracting it out of the bell's total.
  *
  * The blanket branch has no such accident protecting it: it iterates every key,
  * so a non-category count added to this payload is zeroed by one click on "mark

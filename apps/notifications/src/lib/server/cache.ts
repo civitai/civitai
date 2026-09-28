@@ -60,8 +60,8 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
     [FLOOR_FIELD]: floor,
     ...counts
   } = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
-  // Reachable despite bustIfFloored (an older build or a racing decrement can empty a floored hash): with no
-  // categories left it would read as an exact zero.
+  // An older build or a decrement racing bustIfFloored can still empty a floored hash, which would read as
+  // an exact zero.
   if (complete === undefined || (floor !== undefined && !Object.keys(counts).length)) {
     // Bust rather than overwrite: setUser merges, so a stale category or `__floor` the recount no longer
     // returns would otherwise survive under the new marker.
