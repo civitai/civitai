@@ -5,7 +5,9 @@ import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ModeratorLookupIcon } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -80,10 +82,18 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         </Badge>
                       )}
                       {currentUser?.isModerator && (
-                        <RemoveResource
-                          imageId={imageId}
-                          modelVersionId={resource.modelVersionId}
-                        />
+                        <>
+                          {/* Version-scoped, not model-scoped: an image names the exact version that
+                              produced it, and that is the row a report about this image is about. */}
+                          <ModeratorLookupIcon
+                            path={moderatorModelVersionLookupPath(resource.modelVersionId)}
+                            label="Lookup version"
+                          />
+                          <RemoveResource
+                            imageId={imageId}
+                            modelVersionId={resource.modelVersionId}
+                          />
+                        </>
                       )}
                     </div>
                   )}

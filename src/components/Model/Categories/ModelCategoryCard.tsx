@@ -36,6 +36,8 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -237,6 +239,19 @@ function ModelCategoryCardContent({
   }
 
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
+
+  // Unshifted to the top, matching `ModelCardContextMenu` — the lookup is the item a moderator opens
+  // this menu FOR, and it is the way out to the moderator app rather than another action on the card.
+  if (currentUser?.isModerator) {
+    contextMenuItems.unshift({
+      key: 'lookup-model',
+      component: (
+        <ModeratorLookupMenuItem key="lookup-model" path={moderatorModelLookupPath(data.id)}>
+          Lookup Model
+        </ModeratorLookupMenuItem>
+      ),
+    });
+  }
 
   if (setMenuItems) {
     contextMenuItems = setMenuItems(data, contextMenuItems);

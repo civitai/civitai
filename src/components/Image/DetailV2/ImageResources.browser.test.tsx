@@ -47,8 +47,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     useUtils: () => ({ image: { getGenerationData: { setData: vi.fn() } } }),
   },
 }));
+let isModerator = false;
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, isModerator: false }),
+  useCurrentUser: () => ({ id: 1, isModerator }),
 }));
 
 import { ImageResources } from './ImageResources';
@@ -60,6 +61,7 @@ const PANEL_WIDTH = 320;
 
 afterEach(() => {
   modelName = SPACED_NAME;
+  isModerator = false;
 });
 
 async function renderPanel() {
@@ -151,5 +153,34 @@ describe('ImageResources row at a narrow panel width', () => {
     // it produces is VERTICAL — scrollWidth stays equal to clientWidth.
     const name = nameText();
     expect(name.scrollHeight).toBeGreaterThan(name.clientHeight);
+  });
+});
+
+/**
+ * The moderator affordance on each resource row. An image names the exact VERSION that produced it,
+ * which is the row a report about the image is about — and before this there was no way from an image
+ * to that version's moderation state at all.
+ *
+ * Asserted on the href rather than on the icon: the failure this catches is not "the button vanished"
+ * but "the button goes somewhere wrong" — a model id where a version id belongs sends a moderator to a
+ * real, unrelated page, and `?mv=` is what stops the id being re-read as a model at the other end.
+ */
+describe('the moderator lookup on a resource row', () => {
+  test('is absent for a non-moderator', async () => {
+    await renderPanel();
+
+    expect(document.body.querySelector('li a[href*="model-lookup"]')).toBeNull();
+  });
+
+  test('links a moderator to the resource VERSION, by the unambiguous param', async () => {
+    isModerator = true;
+    await renderPanel();
+
+    const link = document.body.querySelector('li a[href*="model-lookup"]') as HTMLAnchorElement;
+    expect(link, 'no moderator lookup link on the resource row').toBeTruthy();
+    // `mv=10`, the fixture's modelVersionId — NOT `q=10`, which resolves model-first, and not the
+    // modelId 100.
+    expect(link.getAttribute('href')).toContain('/retool/model-lookup?mv=10');
+    expect(link.getAttribute('target')).toBe('_blank');
   });
 });

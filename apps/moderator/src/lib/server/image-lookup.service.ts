@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
 import { getImagesForPost, type BulkBatch } from './bulk-image.service';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
@@ -77,13 +78,7 @@ export type ImageReportRow = {
   statusSetBy: string | null;
 };
 
-export type ImageModActivity = {
-  id: number;
-  activity: string;
-  createdAt: Date;
-  moderatorId: number | null;
-  moderatorUsername: string | null;
-};
+export type ImageModActivity = ModActivityRow;
 
 export type { ImageReactionRow };
 
@@ -400,32 +395,5 @@ async function getReports(imageId: number): Promise<ImageReportRow[]> {
   }));
 }
 
-// Retool ran `SELECT * FROM "ModActivity" WHERE "entityId" = <id>` with NO entityType. That is wrong,
-// not just slow: entity ids are per-type, so an image id collides with report/model/user rows and the
-// panel showed moderator actions taken on unrelated entities. The index is
-// (entityType, entityId, createdAt), so filtering by type is also what makes this an index scan.
-async function getModActivity(
-  imageId: number,
-  limit = 50
-): Promise<{ rows: ImageModActivity[]; truncated: boolean }> {
-  const rows = await dbRead
-    .selectFrom('ModActivity')
-    .select(['id', 'activity', 'createdAt', 'userId'])
-    .where('entityType', '=', 'image')
-    .where('entityId', '=', imageId)
-    .orderBy('createdAt', 'desc')
-    .limit(limit + 1)
-    .execute();
-
-  const truncated = rows.length > limit;
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
-  const page = rows.slice(0, limit).map((r) => ({
-    id: r.id,
-    activity: r.activity,
-    createdAt: r.createdAt,
-    moderatorId: r.userId,
-    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-  }));
-
-  return { rows: page, truncated };
-}
+const getModActivity = (imageId: number, limit = 50) =>
+  getModActivityFor('image', [imageId], limit);
