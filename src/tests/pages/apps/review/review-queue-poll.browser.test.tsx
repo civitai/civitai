@@ -49,8 +49,6 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as IsClientMod from '~/providers/IsClientProvider';
 import type * as CurrentUserMod from '~/hooks/useCurrentUser';
 
-/** The shape the page hands `useQuery` — only the field this file is about. */
-type FakeQuery = { state: { error: unknown } };
 type QueryOpts = {
   /**
    * 🔴 A VALUE, NOT A CALLBACK, AND THE TYPE IS THE ASSERTION. The interval used to be
@@ -60,7 +58,14 @@ type QueryOpts = {
    * runs.
    */
   refetchInterval?: number | false;
-  refetchOnWindowFocus?: (query: FakeQuery) => boolean | 'always';
+  /**
+   * 🔴 A VALUE HERE TOO, AND FOR THE SECOND HALF OF THE SAME REASON. This was a
+   * `(query) => …` callback so the cursor gate could be applied before the value was
+   * chosen; with that gate deleted there is nothing per-query left to decide, so the
+   * option is the bare string. A mutation that restores the callback form fails to
+   * type-check before any assertion runs.
+   */
+  refetchOnWindowFocus?: boolean | 'always';
   placeholderData?: unknown;
 };
 
@@ -191,9 +196,6 @@ async function settle() {
   await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
 }
 
-/** A stand-in for the `Query` react-query hands the focus callback. */
-const asQuery = (error: unknown = null): FakeQuery => ({ state: { error } });
-
 /** The options object each query was handed, or a loud failure if the mock is not wired. */
 function opts() {
   if (!capturedOpts.onsite || !capturedOpts.offsite) {
@@ -240,12 +242,19 @@ beforeEach(() => {
 
 describe('🔴 the poll is WIRED — not merely decided correctly somewhere', () => {
   /**
-   * 🔴 THE GAP THIS CLOSES, AND WHY IT IS THE MOST IMPORTANT SUITE IN THIS FILE.
-   * `appsReviewQueuePoll.test.ts` pins the DECISION; every other test here pins what the
-   * component does with a fetch that is already happening. Neither can see whether the
-   * decision is ever CONSULTED. Delete both `refetchInterval` lines and both
-   * `refetchOnWindowFocus` blocks from the page and every one of those tests stays green
-   * — over a queue that never polls. The suite would assert a falsehood, fully green.
+   * 🔴 THE GAP THIS CLOSES, AND WHY IT IS THE MOST IMPORTANT SUITE IN THIS FILE. Every
+   * other test here pins what the component does with a fetch that is already happening;
+   * none of them can see whether the queue is WIRED to poll at all. Delete both
+   * `refetchInterval` lines and both `refetchOnWindowFocus` lines from the page and every
+   * one of those tests stays green — over a queue that never polls. The suite would assert
+   * a falsehood, fully green.
+   *
+   * (There is no longer a companion unit suite. The poll was decided by an exported
+   * `computeReviewQueuePollInterval` helper with `appsReviewQueuePoll.test.ts` pinning it;
+   * deleting the cursor gate left the helper with zero inputs and nothing to decide, so
+   * both went. The cadence is now the exported constant `APPS_REVIEW_POLL_MS`, read from
+   * the real module below — so a renamed or deleted constant fails the import rather than
+   * passing vacuously.)
    *
    * So these read the options object each query was actually handed.
    */
@@ -261,21 +270,23 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
 
   test('🔴 THE POLL KEEPS TICKING THROUGH AN ERROR — the queue self-heals', async () => {
     /**
-     * 🔴 THE INVERSE OF A GUARD THIS FILE USED TO CARRY, AND THE BEHAVIOURAL CLAIM THE
-     * WHOLE STRIP-BACK RESTS ON. An earlier revision parked the interval on the query's own
-     * error. Under the repo-wide `staleTime: Infinity` that park was PERMANENT — the timer
-     * is cleared, `refetchOnReconnect` resolves through `isStale()` which is never true for
-     * a query holding data, `shouldLoadOnMount` needs `data === undefined` so a remount does
-     * nothing, and `state.error` is only cleared by a successful fetch. A one-off 502 froze
-     * the queue until a full page reload, and a status row plus a Refresh button existed
-     * only to hand that recovery back.
+     * 🔴 THE INVERSE OF A GUARD THIS FILE USED TO CARRY. An earlier revision parked the
+     * interval on the query's own error, and the docblock justifying that park claimed it
+     * was UNRECOVERABLE under the repo-wide `staleTime: Infinity`. ⚠️ That claim was FALSE
+     * and is not the reason the gate is gone — a background error sets `isInvalidated` on
+     * the existing data (query-core 5.101.0 `query.js:386-388`), `isStaleByTime` returns
+     * `true` for an invalidated query (`query.js:134`), and `refetchOnReconnect` defaults
+     * to `true`, so a reconnect recovers it; so does a remount, which `keepMounted={false}`
+     * makes one click. `~/components/Apps/ActivePreviewsPanel` line 57 runs exactly that
+     * gate today with no resume UI at all. The gate is gone because this tab's chosen
+     * design is zero extra chrome, which an unconditional cadence needs least of.
      *
-     * With no error gate, a transient failure costs one tick: the interval still names the
-     * cadence, so the timer fires again 15s later and the next successful response clears
-     * the error on its own. The mutant this kills is the restoration of that gate in either
-     * shape — a `(query) => query.state.error ? false : MS` callback, or an `hasError` input
-     * re-added to the helper. The error fixture is set on BOTH sources, because the gate it
-     * guards against was per-query.
+     * What this test pins is the consequence either way: a transient failure costs one
+     * tick, because the interval still names the cadence and the next successful response
+     * clears the error on its own. The mutant it kills is the restoration of that gate in
+     * any shape — a `(query) => query.state.error ? false : MS` callback most obviously.
+     * The error fixture is set on BOTH sources, because the gate it guards against was
+     * per-query.
      */
     queryState.onsite.error = { message: 'INTERNAL_SERVER_ERROR' };
     queryState.offsite.error = { message: 'INTERNAL_SERVER_ERROR' };
@@ -292,43 +303,27 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     }
   });
 
-  test('🔴 the wired interval PARKS once the queue is paged — the end-to-end cursor case', async () => {
-    // The one arm nothing else in this branch covers end to end: the unit test passes
-    // `hasCursor` as a bare boolean, and no behavioural test pages the component and then
-    // observes a consequence. Here the cursor is moved by a real click on Load more.
-    renderWithProviders(<Harness />);
-    await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
-    expect(opts().onsite.refetchInterval).not.toBe(false);
-
-    queryState.onsite.isFetching = true;
-    loadMore().click();
-    await settle();
-
-    // 🔴 BOTH sources park, not just the one whose cursor moved. The merged list is partly
-    // frozen the moment EITHER source is paged, so a per-source gate here would leave the
-    // un-paged source polling live rows in beside frozen ones.
-    for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval, `${label} kept polling while the queue was paged`).toBe(false);
-    }
-  });
-
-  test('🔴 OFF-SITE ALONE STILL PAGES AND STILL PARKS — the inverted fixture', async () => {
+  test('🔴 OFF-SITE ALONE STILL PAGES, AND PAGING DOES NOT CHANGE THE CADENCE', async () => {
     /**
      * 🔴 THE ONE ARM WHERE THE OFF-SITE SOURCE IS THE *SOLE* ACTOR, AND THE REASON IT HAD
      * TO EXIST. Every other test in this file gives the on-site source the next page —
      * including the one that gives off-site a page too, which hands it one ALONGSIDE
      * on-site's, never INSTEAD. So every off-site disjunct in a paging-shaped `||` was
-     * dead weight that no assertion could see. Three mutants survived the whole 16-test
-     * suite, and I ran each before writing this:
+     * dead weight that no assertion could see. Mutants survived several review rounds in
+     * that blind spot, and the two this fixture still kills are:
      *
-     *   • `hasAnyCursor = onsiteCursor != null`      — the cursor gate's own docblock names
-     *     this exact state (on-site exhausted, off-site deeper) as its reason for existing,
-     *     and under the mutant the queue keeps polling over frozen off-site rows while the
-     *     row reads "Auto-refreshing every 15s".
      *   • deleting `onLoadMore`'s off-site branch — off-site paging silently never happens;
      *     Load more looks like it works because the on-site half grows.
-     *   • `hasMore={onsiteNext != null}`             — an off-site-only remainder unmounts
+     *   • `hasMore={onsiteNext != null}`           — an off-site-only remainder unmounts
      *     the control and the rest of the queue becomes unreachable.
+     *
+     * ⚠️ THE PARKING ASSERTION THIS TEST USED TO CARRY IS GONE, AND THE FIXTURE STAYED.
+     * It asserted that paging either source stopped the poll. That gate has been deleted:
+     * Pending is oldest-first and keyset-paginated on that order, so a NEW submission sorts
+     * LAST and arrives in the window the last-loaded cursor covers — the very page a poll
+     * refreshes. The assertion is inverted rather than dropped, because "the cadence is
+     * unchanged while paged" is now the behaviour worth pinning, and it kills the
+     * re-introduction of the gate in any shape.
      *
      * ⚠️ IT AWAITS THE COUNT LINE, NOT THE LOAD-MORE CONTROL, AND THAT IS DELIBERATE. The
      * count line renders unconditionally; the Load-more button does not. Awaiting the
@@ -341,8 +336,9 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
 
     renderWithProviders(<Harness />);
     await expect.element(page.getByTestId(COUNT_TESTID)).toBeInTheDocument();
-    expect(opts().offsite.refetchInterval, 'the queue was not polling to begin with').not.toBe(
-      false
+    const { APPS_REVIEW_POLL_MS } = await import('~/pages/apps/review');
+    expect(opts().offsite.refetchInterval, 'the queue was not polling to begin with').toBe(
+      APPS_REVIEW_POLL_MS
     );
 
     // An off-site-only remainder must still offer the control.
@@ -357,9 +353,16 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     expect(inputs().offsite.cursor, 'the off-site cursor never advanced').toBe('offsite-cursor-2');
     expect(inputs().onsite.cursor, 'the on-site cursor moved without a next page').toBe(undefined);
 
-    // …and paging ONE source parks the whole merged list, which is the global gate.
+    // …and paging changes NOTHING about the cadence, on either source.
     for (const [label, o] of Object.entries(opts())) {
-      expect(o.refetchInterval, `${label} kept polling on an off-site page`).toBe(false);
+      expect(
+        o.refetchInterval,
+        `${label} stopped polling once the queue was paged — the cursor gate is back`
+      ).toBe(APPS_REVIEW_POLL_MS);
+      expect(
+        o.refetchOnWindowFocus,
+        `${label} stopped refetching on focus once the queue was paged`
+      ).toBe('always');
     }
   });
 
@@ -393,13 +396,14 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
 
   test('🔴 refetchOnWindowFocus is `always`, NOT `true` — `true` would be silently inert', async () => {
     /**
-     * 🔴 THE HALF OF THIS CLAIM THAT SURVIVED THE STRIP-BACK, AND IT IS THE LOAD-BEARING
-     * HALF. This test used to also pin that the focus trigger ignores the error gate; there
-     * is no error gate any more, so that arm went with it. What remains is the option's
-     * VALUE, and it is worth more than it looks.
+     * 🔴 THE HALF OF THIS CLAIM THAT SURVIVED TWO STRIP-BACKS, AND IT IS THE LOAD-BEARING
+     * HALF. This test used to also pin that the focus trigger ignores the error gate, and
+     * then that it still honours the cursor gate; neither gate exists any more, so both
+     * arms went with them. What remains is the option's VALUE, and it is worth more than
+     * it looks.
      *
      * `src/utils/trpc.ts` sets `staleTime: Infinity` repo-wide. query-core 5.101.0 resolves
-     * this option in `shouldFetchOn` (`queryObserver.js:453`) as
+     * this option in `shouldFetchOn` (`queryObserver.js:450-453`) as
      *
      *     value === 'always' || (value !== false && isStale(query, options))
      *
@@ -410,7 +414,7 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
      * short-circuits ahead of that staleness check.
      *
      * That is why the failure message below names `true` explicitly: a reviewer "tidying"
-     * the callback down to a bare `true` is the realistic mutation, it looks strictly
+     * the string down to a bare `true` is the realistic mutation, it looks strictly
      * simpler, and without this test the only symptom is a queue that quietly stops
      * refreshing on tab reveal.
      */
@@ -418,29 +422,12 @@ describe('🔴 the poll is WIRED — not merely decided correctly somewhere', ()
     await expect.element(page.getByTestId('apps-unified-review-load-more')).toBeInTheDocument();
 
     for (const [label, o] of Object.entries(opts())) {
-      expect(typeof o.refetchOnWindowFocus, `${label} got no refetchOnWindowFocus`).toBe(
-        'function'
-      );
       expect(
-        o.refetchOnWindowFocus!(asQuery()),
+        o.refetchOnWindowFocus,
         `${label}: refetchOnWindowFocus must be the string 'always', not true — under the ` +
           'repo-wide staleTime: Infinity, query-core gates `true` on isStale(), which is ' +
           'never true for a query holding data, so `true` is INERT after the first load'
       ).toBe('always');
-    }
-
-    // …but PAGED still parks the focus trigger, because refreshing only the last-loaded
-    // page is the half-frozen list the cursor gate refuses, on any trigger. This is why the
-    // option is a callback rather than the bare string: `'always'` short-circuits the cursor
-    // gate too, so the gate has to be applied before the value is chosen.
-    queryState.onsite.isFetching = true;
-    loadMore().click();
-    await settle();
-    for (const [label, o] of Object.entries(opts())) {
-      expect(
-        o.refetchOnWindowFocus!(asQuery()),
-        `${label} would refetch a paged queue on focus`
-      ).toBe(false);
     }
   });
 
@@ -625,9 +612,9 @@ describe('Load more APPENDS — the accumulators, which every other fixture here
    *     setOnsiteCursor(onsiteNext);  // ← pinned by the capturedInput assertions
    *
    * — and the whole suite could see only the second. Deleting either accumulator write left
-   * all 17 tests green, as did dropping `mergeById` from `onsiteItems` entirely. In
-   * production that means page 2 REPLACES page 1: the moderator clicks Load more and the
-   * first 50 rows vanish from the queue, while the cursor, `hasMore` and the status row all
+   * every other test in this file green, as did dropping `mergeById` from `onsiteItems`
+   * entirely. In production that means page 2 REPLACES page 1: the moderator clicks Load
+   * more and the first 50 rows vanish from the queue, while the cursor and `hasMore` both
    * stay correct — every signal the rest of this file reads is unchanged.
    *
    * BOTH sources page here, deliberately. An on-site-only fixture leaves the off-site
@@ -668,12 +655,12 @@ describe('Load more APPENDS — the accumulators, which every other fixture here
      * inside `onLoadMore`, and `onsitePage` looks like the obvious simplification.
      *
      * From the THIRD page on it drops every page but the last — the same vanishing-rows
-     * defect this block is named for, one turn deeper, and with the cursor, `hasMore` and
-     * the status row all still reading correctly.
+     * defect this block is named for, one turn deeper, and with the cursor and `hasMore`
+     * both still reading correctly.
      */
     expect(
       loadMoreIsSpinning().disabled,
-      'pendingAction stuck — the second click would be swallowed, printing the same count a ' +
+      '`loadingMore` stuck — the second click would be swallowed, printing the same count a ' +
         'dropped-page bug does'
     ).toBe(false);
 

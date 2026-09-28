@@ -114,54 +114,43 @@ const PAGE_LIMIT = 50;
  */
 export const APPS_REVIEW_POLL_MS = 15_000;
 
-/**
- * Poll the visible queue, but stop dead while the mod has paged past page 1.
+/*
+ * 🔴 THE POLL HAS NO REFUSALS — IT IS THE CONSTANT ABOVE, UNCONDITIONALLY, ON BOTH
+ * PENDING QUERIES. Two gates were shipped and both have since been deleted. Each argument
+ * is recorded here rather than dropped, because they are the arguments a future reader
+ * will re-derive and re-add.
  *
- * 🔴 ONE REFUSAL, AND IT IS BEHAVIOURAL RATHER THAN DEFENSIVE. `cursor` is part of the
- * tRPC query key, so after "Load more" the page-1 query is UNMOUNTED and the `onsiteAcc` /
- * `offsiteAcc` accumulators holding its rows are frozen React state. A poll at that point
- * would refresh only the LAST-loaded page while every earlier page silently went stale —
- * strictly worse than not polling, because the list would look live and be partly frozen.
- * Auto-refresh is therefore live in the DEFAULT view only (one 50-row page per source
- * covers this queue) and yields to explicit paging.
+ * 🔴 NO CURSOR GATE — THE ARGUMENT FOR ONE WAS BACKWARDS FOR THIS QUEUE. An earlier
+ * revision parked the poll whenever either source held a cursor, reasoning that a poll
+ * would then refresh only the LAST-loaded page while every earlier page silently went
+ * stale. But Pending is OLDEST-FIRST (`orderBy: { submittedAt: 'asc' }` in
+ * `~/server/services/blocks/publish-request.service`, rendered `direction="asc"` below)
+ * and both sources are keyset-paginated on that order — so a NEW submission sorts LAST
+ * and lands in exactly the window the last-loaded page's cursor covers, which is the page
+ * a poll refreshes. What the earlier pages go stale on is REMOVALS, and they go stale on
+ * those identically when nothing polls at all. Polling while paged is therefore a strict
+ * information gain over parking. The gate also had no exit: a mod who clicked Load more
+ * saw no new submission again until they actioned a review, switched tabs or reloaded,
+ * with nothing on screen to say so.
  *
- * 🔴 THERE IS DELIBERATELY NO ERROR REFUSAL, AND ITS ABSENCE IS WHAT MAKES THIS QUEUE
- * SELF-HEALING. An earlier revision parked the poll on any query error, reasoning that
- * `retry: false` plus a hard `UNAUTHORIZED` would otherwise re-fire a guaranteed-dead
- * request every 15s. But the gate could not tell a permanent `UNAUTHORIZED` from a one-off
- * 502, and under the repo-wide `staleTime: Infinity` (`src/utils/trpc.ts`) that park was
- * PERMANENT: the interval is cleared, `refetchOnReconnect` resolves through `isStale()`
- * which is never true for a query holding data, and `shouldLoadOnMount`
- * (`queryObserver.js:444-446`) needs `data === undefined` so remounting the tab does
- * nothing either. `state.error` is only cleared by a successful fetch — so a blip parked
- * the queue until a full page reload. Every piece of UI this page briefly grew (a status
- * row, a Refresh control, a deferred invalidate) existed only to hand back the recovery
- * that gate had taken away. Letting the timer keep ticking through an error is both
- * smaller and strictly better: the next tick retries, and a genuinely dead request costs
- * one in-flight fetch per 15s on a page a moderator is actively looking at.
- *
- * Exported and pure so the decision is unit-testable without a query client — the same
- * shape as `computeAgentReviewPollInterval` in `~/components/Apps/AgentReviewPanel`. It
- * has three call sites (both queries' `refetchInterval`, and `focusDecision` below), which
- * is why a one-input predicate is still a named function rather than an inline ternary:
- * one rule, one place.
- *
- * ⚠️ The return type is `number | false`, and `false` is the value to use — but NOT because
- * `0` would poll "as fast as possible". It would not: `#updateRefetchInterval`
- * (query-core 5.101.0 `queryObserver.js:211`) returns early on `=== 0` exactly as it does
- * for `false`, and `#computeRefetchInterval` coerces `undefined` to `false` at `:206`, so
- * all three are "no timer" today. `false` is required because it is the only one of the
- * three that is unambiguous at every call site and in the exported type — a `0` reads as
- * a cadence someone forgot to fill in, and `undefined` reads as "not configured". An
- * earlier revision of this paragraph asserted the as-fast-as-possible behaviour as fact;
- * it was wrong, and a reviewer who checked it would have concluded the guard was
- * pointless. The unit test pins `false` specifically, which is the contract that survives
- * a version bump changing any of that.
+ * 🔴 NO ERROR GATE — BECAUSE THIS TAB CARRIES ZERO EXTRA UI, NOT BECAUSE SUCH A PARK
+ * WOULD BE UNRECOVERABLE. ⚠️ An earlier revision of this paragraph claimed the latter and
+ * it was FALSE, in both mechanisms it named. `refetchOnReconnect` defaults to `true`
+ * (`queryClient.js:271-272` — `networkMode !== 'always'`), and it does NOT resolve
+ * through a staleness check that a query holding data can never pass: a background error
+ * sets `isInvalidated: true` on the existing data (query-core 5.101.0 `query.js:386-388`,
+ * in-source comment "flag existing data as invalidated if we get a background error"),
+ * and `isStaleByTime` returns `true` for an invalidated query whatever the `staleTime`
+ * (`query.js:134`). Remounting recovers it too — and with `Tabs keepMounted={false}` on
+ * this page a remount is one click, to Approved and back. The repo also ships a live
+ * counter-example ON THIS PAGE: `~/components/Apps/ActivePreviewsPanel` line 57 runs
+ * exactly that gate (`refetchInterval: (q) => (q.state.error ? false : 30000)`) with no
+ * status row and no Refresh control. So the honest reason the gate is absent is that the
+ * chosen design for this tab is zero extra chrome and an unconditional cadence is the
+ * smaller thing — the recoverability argument has no force and should not be restated.
+ * (The contradiction surfaced because the `refetchOnWindowFocus` note below already
+ * stated the `isInvalidated` carve-out correctly while this paragraph denied it.)
  */
-export function computeReviewQueuePollInterval(input: { hasCursor: boolean }): number | false {
-  if (input.hasCursor) return false;
-  return APPS_REVIEW_POLL_MS;
-}
 
 /** Append `page` onto `accumulated`, dropping ids already present (defensive dedup
  *  in case Load-more double-fires before a fetch settles). */
@@ -400,7 +389,7 @@ export function UnifiedPendingTab({
    * for Load more would find it dead about as often as not.
    *
    * It is a boolean rather than a `'loadMore' | 'refresh' | null` union because the
-   * Refresh control this page briefly carried is gone (see the helper's docblock) and its
+   * Refresh control this page briefly carried is gone (see `APPS_REVIEW_POLL_MS`) and its
    * arm was the only other member. Clearing is one-directional: nothing here ever SETS the
    * flag from a background signal, and the effect below clears it as soon as the pair is
    * idle, so it cannot stick.
@@ -411,79 +400,57 @@ export function UnifiedPendingTab({
    * `fetchNextPage()` call, so it is already false for a poll and a focus refetch — exactly
    * the discrimination the paragraph above hand-rolls. Both procs already satisfy the
    * contract with no server change (optional `cursor` in, `nextCursor` out), and the
-   * moderator-queue idiom is `src/pages/moderator/challenges.tsx`. That switch also
-   * REFRAMES the `hasCursor` refusal: `infiniteQueryBehavior.js` re-fetches every loaded
-   * page from the first on an undirected refetch, so the "a poll refreshes only the LAST
-   * page" argument is a property of THIS hand-rolled accumulator, not of polling — the gate
-   * would survive as a cost choice (N sequential requests per source per tick), which is a
-   * smaller and different claim than the one documented on the helper. Deliberately NOT
-   * done here: it is a rewrite of the tab's paging, and it would leave Pending and History
-   * on two different paging mechanisms.
+   * moderator-queue idiom is `src/pages/moderator/challenges.tsx`. That switch would also
+   * widen what a poll REFRESHES: `infiniteQueryBehavior.js` re-fetches every loaded page
+   * from the first on an undirected refetch, where this hand-rolled accumulator refreshes
+   * only the last-loaded page — strictly more data per tick, at N sequential requests per
+   * source. Deliberately NOT done here: it is a rewrite of the tab's paging, and it would
+   * leave Pending and History on two different paging mechanisms.
    */
   const [loadingMore, setLoadingMore] = useState(false);
-
-  /**
-   * 🔴 THE CURSOR GATE IS A PROPERTY OF THE MERGED LIST, SO IT IS THE **OR** OF BOTH
-   * SOURCES — NOT EACH QUERY'S OWN CURSOR.
-   *
-   * The two sources are independently keyset-paginated and are almost never the same
-   * depth, so "Load more" routinely advances one and leaves the other alone (a source
-   * whose `nextCursor` is already null never moves). With a per-source gate, that parks
-   * the paged source and leaves the OTHER one polling — which produces exactly the state
-   * `computeReviewQueuePollInterval`'s own docblock exists to prevent: a single list whose
-   * off-site rows are live and whose on-site rows are frozen accumulator state, looking
-   * current and being half stale. One page of either source is enough to make the whole
-   * list partly frozen, so the whole list stops polling.
-   */
-  const hasAnyCursor = onsiteCursor != null || offsiteCursor != null;
-
-  /**
-   * 🔴 `'always'`, NOT `true`, AND THE DIFFERENCE IS THE WHOLE OPTION. DO NOT "TIDY" IT.
-   *
-   * A deliberate per-query override of the repo-wide `refetchOnWindowFocus: false` in
-   * `src/utils/trpc.ts`: coming back to the tab is the strongest signal a mod is about to
-   * act on this list, and a stale row is exactly what gets mis-clicked. But the repo ALSO
-   * sets `staleTime: Infinity` there, and `true` is gated on staleness — `shouldFetchOn`
-   * (query-core 5.101.0 `queryObserver.js:453`) returns `value === 'always' || (value
-   * !== false && isStale(query, options))`, and `isStale` is `query.isStaleByTime(Infinity)`,
-   * which is `false` whenever the query holds data and is not invalidated. So a plain `true`
-   * is SILENTLY INERT in precisely the state it was added for — it would fire only before
-   * the first successful load, and nothing about the option's spelling would say so.
-   * `'always'` short-circuits ahead of that staleness check.
-   *
-   * ⚠️ `src/hooks/useIsLive.ts` pairs the option with an explicit `staleTime` instead, and
-   * that is NOT equivalent — it is the nearest precedent, not the same behaviour. `true` +
-   * a finite `staleTime` DEDUPES rapid refocus; `'always'` refetches on every
-   * hidden→visible transition. The difference is negligible for two low-volume queries at
-   * human alt-tab speed, and it is stated rather than glossed because it is a real
-   * behavioural divergence from the simpler form.
-   *
-   * 🔴 IT IS A CALLBACK BECAUSE `'always'` SHORT-CIRCUITS THE CURSOR GATE TOO, AND THAT
-   * GATE MUST SURVIVE ON THIS TRIGGER AS WELL. Taken bare, a queue paged past page 1 would
-   * refresh only its last-loaded page on every tab reveal, which is exactly the half-frozen
-   * list the cursor gate refuses. So the same one-input predicate the interval uses decides
-   * this too, and only the returned VALUE differs.
-   *
-   * `refetchIntervalInBackground` stays UNSET. ⚠️ Precisely: the TIMER is not paused —
-   * `#updateRefetchInterval` (`queryObserver.js:208-219`) keeps a plain `setInterval` and
-   * the CALLBACK skips the fetch while the document is hidden. Nothing here depends on the
-   * difference, but do not reason from it that returning to a tab restarts the cadence
-   * from zero; it does not.
-   */
-  const focusDecision = () =>
-    computeReviewQueuePollInterval({ hasCursor: hasAnyCursor }) === false
-      ? (false as const)
-      : ('always' as const);
 
   const onsiteQuery = trpc.blocks.listPendingRequests.useQuery(
     { limit: PAGE_LIMIT, cursor: onsiteCursor },
     {
       enabled,
       retry: false,
-      // 🔴 NOT GATED ON THIS QUERY'S ERROR — that is what makes the queue self-healing
-      // rather than permanently parked on a blip. See the helper's docblock.
-      refetchInterval: computeReviewQueuePollInterval({ hasCursor: hasAnyCursor }),
-      refetchOnWindowFocus: () => focusDecision(),
+      // 🔴 UNCONDITIONAL — gated on neither this query's error nor the paging cursor.
+      // Both refusals were shipped and both were deleted; the arguments are on
+      // `APPS_REVIEW_POLL_MS` above.
+      refetchInterval: APPS_REVIEW_POLL_MS,
+      /**
+       * 🔴 `'always'`, NOT `true`, AND THE DIFFERENCE IS THE WHOLE OPTION. DO NOT "TIDY"
+       * IT.
+       *
+       * A deliberate per-query override of the repo-wide `refetchOnWindowFocus: false` in
+       * `src/utils/trpc.ts`: coming back to the tab is the strongest signal a mod is about
+       * to act on this list, and a stale row is exactly what gets mis-clicked. But the
+       * repo ALSO sets `staleTime: Infinity` there, and `true` is gated on staleness —
+       * `shouldFetchOn` (query-core 5.101.0 `queryObserver.js:450-453`) returns
+       * `value === 'always' || (value !== false && isStale(query, options))`, and `isStale`
+       * is `query.isStaleByTime(Infinity)`, which is `false` whenever the query holds data
+       * and is not invalidated. So a plain `true` is SILENTLY INERT in precisely the state
+       * it was added for — it would fire only before the first successful load, and nothing
+       * about the option's spelling would say so. `'always'` short-circuits ahead of that
+       * staleness check.
+       *
+       * ⚠️ `src/hooks/useIsLive.ts` pairs the option with an explicit `staleTime` instead,
+       * and that is NOT equivalent — it is the nearest precedent, not the same behaviour.
+       * `true` + a finite `staleTime` DEDUPES rapid refocus; `'always'` refetches on every
+       * hidden→visible transition. The difference is negligible for two low-volume queries
+       * at human alt-tab speed, and it is stated rather than glossed because it is a real
+       * behavioural divergence from the simpler form.
+       *
+       * It is a plain value rather than a callback because there is nothing per-query left
+       * for a callback to read: the cursor gate that used to make this a decision is gone.
+       *
+       * `refetchIntervalInBackground` stays UNSET. ⚠️ Precisely: the TIMER is not paused —
+       * `#updateRefetchInterval` (`queryObserver.js:208-219`) keeps a plain `setInterval`
+       * and the CALLBACK skips the fetch while the document is hidden. Nothing here depends
+       * on the difference, but do not reason from it that returning to a tab restarts the
+       * cadence from zero; it does not.
+       */
+      refetchOnWindowFocus: 'always',
       /**
        * 🔴 WITHOUT THIS, THE LOAD-MORE SPINNER RENDERS IN NO REACHABLE STATE — the control
        * it belongs to is UNMOUNTED for the whole fetch it is meant to describe.
@@ -516,10 +483,10 @@ export function UnifiedPendingTab({
       enabled,
       retry: false,
       // Identical wiring to the on-site query above; the reasoning lives on
-      // `computeReviewQueuePollInterval`, `focusDecision` and the `placeholderData`
-      // docblock rather than being restated here.
-      refetchInterval: computeReviewQueuePollInterval({ hasCursor: hasAnyCursor }),
-      refetchOnWindowFocus: () => focusDecision(),
+      // `APPS_REVIEW_POLL_MS` and in that query's `refetchOnWindowFocus` /
+      // `placeholderData` docblocks rather than being restated here.
+      refetchInterval: APPS_REVIEW_POLL_MS,
+      refetchOnWindowFocus: 'always',
       placeholderData: keepPreviousData,
     }
   );
@@ -590,7 +557,8 @@ export function UnifiedPendingTab({
   /*
    * 🔴 ZERO EXTRA CHROME, AND THAT IS THE CHOSEN DESIGN RATHER THAN AN OMISSION. The tab
    * renders the list and nothing else: the queue simply repaints itself every 15s, and on
-   * a tab reveal. Rows here are whole-row-clickable (`~/components/Apps/UnifiedReviewList`),
+   * a tab reveal — in every state, paged or not, since the cursor gate was deleted.
+   * Rows here are whole-row-clickable (`~/components/Apps/UnifiedReviewList`),
    * so a silent repaint can move a row under the cursor mid-click — that hazard was weighed
    * against a status line and a Refresh button and knowingly accepted, because the poll is
    * self-healing and a mod therefore never needs a manual resume path. An earlier revision
