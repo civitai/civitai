@@ -608,10 +608,20 @@ describe('PageBlockHost — the app takes the whole width, at every display size
       expect(gutterLeft, `at ${w}x${h} the host has been shifted right`).toBe(0);
       expect(gutterRight, `at ${w}x${h} the host has been shifted left`).toBe(0);
 
+      // ⚠️ THIS MESSAGE SAID "the auto margins resolved non-zero" AND THERE ARE NO AUTO
+      // MARGINS ANY MORE — retracted. `margin-inline: auto` existed only to centre a capped
+      // column and was deleted with the cap, so a non-zero value here can no longer be an
+      // auto margin resolving against leftover space; it is a margin arriving from somewhere
+      // that has no business setting one. The assertion is unchanged and still correct — only
+      // its explanation was a claim about a deleted mechanism, which is the exact class this
+      // suite retracts elsewhere and the one the round that deleted the mechanism missed here.
       const cs = getComputedStyle(host);
       expect(
         [cs.marginLeft, cs.marginRight],
-        `at ${w}x${h} the auto margins resolved non-zero`
+        `at ${w}x${h} the app column resolved a non-zero inline margin (${cs.marginLeft} / ` +
+          `${cs.marginRight}). Nothing in the host declares one: the \`margin-inline: auto\` ` +
+          'that used to centre a capped column is gone with the cap, so this is coming from a ' +
+          'stylesheet, a substituted component, or a width bound that reintroduced centring.'
       ).toEqual(['0px', '0px']);
     }
   );
@@ -675,8 +685,12 @@ describe('PageBlockHost — the app takes the whole width, at every display size
       hostWidth,
       `at 932x430 the app column is ${hostWidth}px inside a ${parentWidth}px parent while the ` +
         'display-cutout insets are 47px a side. Something in the chain has started SPENDING ' +
-        'those insets on in-flow page content — a `padding-inline`, a `margin-inline` or a ' +
-        'bound derived from them. The shell pays the TOP inset only, on purpose: paying ' +
+        'those insets on in-flow page content — a `margin-inline` or a bound derived from ' +
+        'them, or (in THIS harness only) a `padding-inline`. ⚠️ READ THE PADDING ASSERTION ' +
+        'BELOW BEFORE CONCLUDING THIS ONE COVERS PADDING: this harness is `content-box`, so a ' +
+        'padding-based inset widens the box and fails HERE, but production is `border-box`, ' +
+        'where the identical regression leaves this width correct and only the padding read ' +
+        'catches it. The shell pays the TOP inset only, on purpose: paying ' +
         'left/right here would inset every full-page App Block by ~47px a side on a notched ' +
         'phone in landscape and nowhere else, which is the worst possible shape for a bug ' +
         'report. If that payment is deliberate, it belongs in the shell with its own test, not ' +

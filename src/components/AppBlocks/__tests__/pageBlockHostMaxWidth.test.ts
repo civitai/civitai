@@ -19,15 +19,22 @@ import { stripComments as stripTsComments } from '../../../../test/strip-comment
  * gets the viewport; an app that wants a centred column sets one inside its own iframe
  * document.
  *
- * ⚠️ THIS FILE USED TO GUARD A MECHANISM, AND IT NO LONGER HAS ONE TO GUARD — WHICH IS
- * WHY IT DROPPED FROM **10 ARMS TO 3**, AND THAT SHRINKAGE IS THE CORRECTNESS SIGNAL.
- * 🔴 THE ARM COUNT IS THE FIGURE; AN EARLIER VERSION OF THIS SENTENCE SAID "~4x SHORTER"
- * AND NO READING OF THE LINE COUNTS SUPPORTS IT — 1,352 → 711 is 1.9x, and against
- * `main`'s pre-PR 706 this file is 1.007x **LONGER**, because the deleted arms' record
- * moved into prose. Retracted rather than recomputed: a multiplier over line counts is the
- * wrong instrument for "it guards less", and this paragraph is the one whose argument IS
- * the number — in a file that elsewhere says a comment which counts is a comment that goes
- * stale, and retracts two prior count errors for exactly this reason. In two stages: a
+ * ⚠️ THIS FILE USED TO GUARD A MECHANISM AND NO LONGER HAS ONE TO GUARD, WHICH IS WHY IT
+ * GUARDS LESS — AND THIS PARAGRAPH DELIBERATELY STATES NO NUMBER FOR THAT. Read the
+ * `it(...)` titles for the authoritative set; a count stated beside the thing it counts
+ * drifts on the next edit.
+ *
+ * 🔴 THE REASON THAT IS A RULE HERE RATHER THAN A PREFERENCE: THREE SUCCESSIVE VERSIONS OF
+ * THIS SENTENCE CARRIED A WRONG FIGURE, AND THE THIRD WAS INVALIDATED BY ITS OWN COMMIT.
+ * It said "~4x SHORTER" (no reading of the line counts supported it). That was corrected to
+ * a line-count pair and an arm count — and the very edit that corrected it added a positive
+ * control and ~350 lines of comment, so the new figures were stale before they were pushed.
+ * A count of this file, written INSIDE this file, is measured against a revision the same
+ * commit is busy changing. That is not a discipline problem to try harder at; it is the
+ * wrong instrument. The counts that remain in this file are all of OTHER things — arm
+ * totals beside a recorded mutation result, which are what makes such a result re-readable.
+ *
+ * In two stages: a
  * 1600px `--app-page-max-width` default with a per-app CSS ledger apps could OPT OUT of;
  * then the default at `none` with the ledger re-pointed so a rule would CAP one app
  * instead. The second stage's retained lever is now deleted — property, `var()` read,
@@ -245,10 +252,14 @@ function isDescendant(
  *     width: '100%',
  *     ...CAP_STYLE,
  *
- * to the FRAME's style object left this whole file **3 passed (3)**, byte-identical to
- * baseline, while the app rendered letterboxed at 1600px and centred again — the exact
- * regression this file exists to catch. Only the report-only browser tier saw it
- * (`5 failed | 9 passed`). The attribute-level check above did not fire because a
+ * to the FRAME's style object left this whole file GREEN — **3 passed of 3 arms, at the
+ * revision before this readability check existed** — byte-identical to baseline, while the
+ * app rendered letterboxed at 1600px and centred again, the exact regression this file
+ * exists to catch. Only the report-only browser tier saw it (`5 failed | 9 passed of 14`).
+ * With the check, the same mutant now dies here: **1 failed | 3 passed of 4 arms**, on the
+ * readability assertion's own message. (Both figures carry their arm total because this
+ * file's arm count has changed twice; re-run rather than trusting either.) The
+ * attribute-level check above did not fire because a
  * `SpreadAssignment` is not a `JsxSpreadAttribute`, and the width regex did not fire
  * because `...CAP_STYLE` contains no `max-width`. The docblock above claimed
  * `{...capProps}` was covered "on any `JsxSpreadAttribute`", which was true of the
@@ -483,17 +494,26 @@ describe('the full-page App Block host declares no width bound', () => {
       // deliberately so: `width: '100%'` is legitimate on both elements and a pattern that caught
       // it would fire on correct code. But the arm's title claims "no width bound … in any
       // spelling", and a HARD width is a bound. Measured by a review round: changing the frame's
-      // `width: '100%'` to `width: '1600px'` left this file **3 passed (3)** while the browser
-      // tier went **12 failed | 2 passed** — it fails even the below-1600 reference arms, i.e. it
-      // is a WORSE regression than the 1600px cap this change removed, and the node tier could
-      // not see it. The content element was incidentally protected by its verbatim box-model pin;
-      // the frame had nothing.
+      // `width: '100%'` to `width: '1600px'` left this file green — **3 passed of 3 arms, at the
+      // revision before this pin** — while the browser tier went **12 failed | 2 passed of 14**:
+      // it fails even the below-1600 reference arms, i.e. it is a WORSE regression than the
+      // 1600px cap this change removed, and the node tier could not see it. The content element
+      // was incidentally protected by its verbatim box-model pin; the frame had nothing.
       //
-      // ⚠️ A VALUE PIN, NOT AN ABSENCE PIN, AND THAT IS THE NARROWEST HONEST FORM. Absence would
-      // be wrong (both elements must fill their parent, so both SHOULD declare `width`), and a
-      // "not a px value" pattern would have to enumerate units. `'100%'` is the one value that
-      // means "be my parent's measure", so pinning it says exactly what the requirement says.
-      // A deliberate change to e.g. `'100dvw'` has to come here and argue.
+      // ⚠️ A VALUE PIN, AND IT PASSES WHEN `width` IS ABSENT — SAID PLAINLY, BECAUSE AN EARLIER
+      // WORDING IMPLIED OTHERWISE. It read "both elements must fill their parent, so both SHOULD
+      // declare `width`", which reads as though a REMOVED `width` were caught here. It is not:
+      // `widthDecl === null` short-circuits to the expected value and this assertion passes.
+      // That is deliberate rather than an oversight — removing `width: '100%'` does not CAP
+      // anything (both boxes sit in a `column` flex parent with the default stretch alignment,
+      // so they still fill it), and this arm's subject is width BOUNDS. The content element's
+      // removal is caught anyway by its verbatim box-model pin; the frame's is not caught by
+      // anything, and is not a bound.
+      //
+      // What the pin does cover is the value: `'100%'` is the one that means "be my parent's
+      // measure", so a px, `vw` or `ch` value fails. A deliberate change to e.g. `'100dvw'` has
+      // to come here and argue. A "not a px value" pattern was rejected — it would have to
+      // enumerate units, and the next unit is the one it misses.
       const widthDecl =
         /(?:^|[,{[\s])['"`]?width['"`]?\s*\]?\s*:\s*([^,}\n]+)/i.exec(
           stripTsComments(readableStyleOf(element, testid))
@@ -986,9 +1006,12 @@ describe('the full-page App Block host declares no width bound', () => {
       .map((a) => a.name.getText());
     expect(
       ['data-app-page-frame', 'data-block-id'].filter((n) => !frameAttrs.includes(n)),
-      'the host root no longer stamps a marker this gate selects on. `hostCapRule` above filters ' +
-        'globals.css to rules naming `data-app-page-frame`, `data-block-id` or ' +
-        '`app-page-content`; with a marker gone, a rule could never name it, so the `[]` this ' +
+      'the host root no longer stamps `data-app-page-frame` and/or `data-block-id` — the two ' +
+        "of `hostCapRule`'s three markers that reach production as real attributes, and the " +
+        'only two this assertion checks. (The third, `app-page-content`, reaches the DOM only ' +
+        'as a `data-testid`, which the production compiler strips, so it is deliberately NOT ' +
+        'checked here: a shipped rule keyed on it is inert whether or not the host renders it.) ' +
+        'With a checked marker gone, no rule in globals.css could name it, so the `[]` this ' +
         'gate reports would carry no information about the shipped DOM while its synthetic ' +
         'controls stayed green. Either keep the attribute, or narrow `hostCapRule` to the ' +
         'markers that remain — in the same commit, deliberately.'

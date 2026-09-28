@@ -323,7 +323,9 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * citations needs to land somewhere that says what happened rather than on an absence.
  * ⚠️ BE PRECISE ABOUT THE TENSE, BECAUSE THIS CHANGE INVALIDATED ITS OWN JUSTIFICATION: the
  * commit that deleted the lever rewrote those four files too, so exactly ONE live citation
- * of the name remains (`PageBlockHostMaxWidth.browser.test.tsx`). A reader arriving here is
+ * of the name remains OUTSIDE THIS FILE (`PageBlockHostMaxWidth.browser.test.tsx`; three
+ * more are in this tombstone and its neighbours here, which is not a citation TO anywhere
+ * and is why the qualifier matters). A reader arriving here is
  * now arriving from git history or from the globals.css pointer, not from a live reference.
  * The tombstone is still worth keeping — it is the landing for both — but the "four other
  * files" sentence describes the moment of deletion, not today.
