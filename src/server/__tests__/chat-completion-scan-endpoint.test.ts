@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 // Side-effect imports: the canonical mocks the handler's graph reaches at import time.
 import '~/__tests__/mocks/logging.mock';
@@ -14,12 +15,17 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   insertTextScanPrompt: vi.fn(),
   setTextScanConfig: vi.fn(),
 }));
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 
 const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
 const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
   await import('~/server/services/text-scan/prompt');
+const { getTextScanMode, TEXT_SCAN_FLAG } = await import('~/server/services/text-scan/mode');
 
 registerTextScanProfile({
   entityType: 'Post',
@@ -264,5 +270,17 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(
       (await call({ action: 'scanEntity', entityType: 'Bounty', entityId: 1 }))._status()
     ).toBe(400);
+  });
+
+  it('getModes reports the mode the server resolves for every entity type', async () => {
+    vi.mocked(getTextScanMode).mockImplementation(async (entityType) =>
+      entityType === 'ChatMessage' ? 'off' : 'shadow'
+    );
+    const res = await call({ action: 'getModes' });
+    expect(res._status()).toBe(200);
+    const { modes } = res._body() as { modes: Record<string, string> };
+    expect(Object.keys(modes).sort()).toEqual(Object.keys(TEXT_SCAN_FLAG).sort());
+    expect(modes.ChatMessage).toBe('off');
+    expect(modes.Article).toBe('shadow');
   });
 });

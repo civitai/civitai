@@ -64,6 +64,10 @@
  *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
  *     per-label firing counts. Text below the profile's minChars is not sent.
  *
+ *   { "action": "getModes" }
+ *     The text-scan mode (off / shadow / active) this server resolves for each
+ *     entity type, local Flipt overrides included.
+ *
  * Label definitions and policy text are INPUTS, never defaults in this file.
  * `labels` are bare names; pass any definitions via `labelDefinitions` or
  * `systemPrompt` at call time.

@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
+import { getTextScanMode, TEXT_SCAN_FLAG } from '~/server/services/text-scan/mode';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
@@ -26,6 +27,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'putConfig',
   'scanEntity',
   'batchEntities',
+  'getModes',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -83,6 +85,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     concurrency: z.number().int().min(1).max(8).default(3),
     wait: z.number().int().min(1).max(120).default(90),
   }),
+  z.object({ action: z.literal('getModes') }),
 ]);
 
 export type TextScanHarnessInput = z.infer<typeof textScanHarnessSchema>;
@@ -223,6 +226,16 @@ export async function runTextScanHarnessAction(
           firing,
           results,
         },
+      };
+    }
+
+    case 'getModes': {
+      // Model and Bounty creates evaluate id 0 (their id does not exist yet).
+      const entityTypes = Object.keys(TEXT_SCAN_FLAG) as TextScanEntityType[];
+      const modes = await Promise.all(entityTypes.map((type) => getTextScanMode(type, 0)));
+      return {
+        kind: 'json',
+        body: { modes: Object.fromEntries(entityTypes.map((type, i) => [type, modes[i]])) },
       };
     }
   }
