@@ -1401,6 +1401,18 @@ describe('this file filters by depth wherever it matters', () => {
     // `expect(site).toContain(` / `.toMatch(` and `containsExpression(site,` are the
     // three spellings this file uses. The negative forms carry `.not.` and are excluded
     // by the pattern itself rather than by an allowlist.
+    //
+    // ⚠️ BE PRECISE ABOUT *WHICH* PART DOES THAT, because a mutation sweep proved the
+    // obvious reading wrong. What excludes `.not.` is the LITERAL `\.` sitting
+    // immediately before the alternation: in `expect(site).not.toContain(` the text after
+    // `expect(site).` is `not.`, not a matcher name, so the pattern cannot match. The
+    // `(?!not\.)` lookahead in `OFFENDER_SRC` is therefore REDUNDANT — measured: removing
+    // it changes the verdict on none of `expect(site).toContain(`,
+    // `expect(site).not.toContain(`, `expect(site).not.toMatch(` or
+    // `expect(site).resolves.toContain(`. It is kept as defensive belt and as a statement
+    // of intent, but it is an EQUIVALENT MUTANT: do not expect the control below to catch
+    // its removal, and do not read that control's passing `.not.` assertions as evidence
+    // the lookahead works.
     const offenders = [
       ...SELF.matchAll(new RegExp(OFFENDER_SRC, 'g')),
       ...SELF.matchAll(new RegExp(HELPER_SRC, 'g')),
