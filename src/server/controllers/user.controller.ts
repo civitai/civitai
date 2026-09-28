@@ -4,7 +4,6 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
-import type { NotificationCategory } from '~/server/common/enums';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -59,6 +58,7 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -311,16 +311,6 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       })),
     ]);
 
-    const reduced = unreadCount.reduce(
-      (acc, { category, count }) => {
-        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = Number(count);
-        acc['all'] += Number(count);
-        return acc;
-      },
-      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
-    );
-
     // `pendingPlacements` rides along here rather than getting its own query:
     // this is the one request that already runs once per session for every
     // signed-in user (`staleTime: Infinity`, see useQueryNotificationsCount),
@@ -334,7 +324,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
     // invariant for adding another non-category key to this payload lives.
     return {
-      ...reduced,
+      ...summarizeUnreadCounts(unreadCount),
       // One number for the menu entry, and the split for the segmented control
       // on the placements page — the entry points at both queues now, so a
       // sticker-only count would under-report the thing it links to.

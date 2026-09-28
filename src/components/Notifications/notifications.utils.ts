@@ -134,6 +134,23 @@ export function clearAnnouncements(
   dismiss.creator(creatorIds);
 }
 
+/**
+ * Nothing above 1,000 is shown anywhere. A floor is a count the server stopped short of: the true
+ * number is at least this, so it carries a "+".
+ */
+export function formatUnreadCount(count: number, isFloor: boolean): string {
+  if (count >= 1000) return '1k+';
+  return isFloor ? `${count}+` : `${count}`;
+}
+
+// Announcements are counted client-side and exactly; only the server's notification counts can be floors.
+export function formatTabCount(tab: string, counts: Record<string, number>): string {
+  return formatUnreadCount(
+    counts[tab.toLowerCase()] ?? 0,
+    tab !== 'announcements' && !!counts.unreadCountsAreFloors
+  );
+}
+
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -167,6 +184,7 @@ export const useQueryNotificationsCount = () => {
         system: 0,
         buzz: 0,
         announcements: 0,
+        unreadCountsAreFloors: 0,
         // Queues waiting on this user, for the user-menu badges. Carried on
         // this query rather than its own, and kept out of `all` — `all` is the
         // bell, and a pending placement is not an unread notification.
