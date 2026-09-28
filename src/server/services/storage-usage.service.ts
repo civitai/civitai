@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 export type StoragePublicStatus = 'public' | 'notPublic';
@@ -36,6 +37,8 @@ export const MEDIA_CLAIM_LIMIT = 1;
 export const MEDIA_JOB_LOCK_SECONDS = 10 * 60;
 export const MEDIA_TICK_BUDGET_MS = 8 * 60 * 1000;
 export const MEDIA_LEASE_MINUTES = 45;
+// A literal, not a bind: Prisma binds a JS number as int8 and make_interval takes int4 (42883).
+const MEDIA_LEASE_INTERVAL = Prisma.raw(`make_interval(mins => ${MEDIA_LEASE_MINUTES})`);
 
 // Bound as a parameter: inline, its backslash would have to survive both the JS template and the SQL
 // string literal, which treat it differently. 13 digits (~9 TB) keeps a forged size from overflowing.
@@ -337,7 +340,7 @@ export async function claimMediaRollups(limit = MEDIA_CLAIM_LIMIT) {
       SELECT "userId" FROM "UserStorageRollup"
       WHERE ("imagesComputedAt" IS NULL OR "imagesRequestedAt" > "imagesComputedAt")
         AND "imagesRequestedAt" IS NOT NULL
-        AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - make_interval(mins => ${MEDIA_LEASE_MINUTES}))
+        AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - ${MEDIA_LEASE_INTERVAL})
       ORDER BY "imagesRequestedAt"
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
