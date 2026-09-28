@@ -7,19 +7,25 @@ import type { PrivateRunPageBlockResolution } from '~/server/services/block-regi
 // loads, never WHICH function runs, so the anti-drift property this whole file rests on
 // is untouched.
 //
-// Two reasons, and the first is a measured breakage rather than a preference:
-//  1. `app-access.service` pulls a heavy graph — `app-listing-assets.service` →
-//     `app-listing.service` → `cache-helpers` → `createLogger`, which reads
-//     `env.LOGGING` AT MODULE SCOPE. A static edge from this file therefore drags that
-//     initialisation into every consumer of the private-run predicate, including the
-//     page-token mint, and it threw in two existing mint suites the moment the edge
-//     existed. That is a real signal about the edge, not a test-fixture problem to
-//     paper over: the mint is the app-launch critical path and had no such dependency.
-//  2. The flag ships BASE-OFF, so in production today every request refuses at gate (1)
-//     before any role resolve. A static import would make every one of them pay to load
-//     that graph in order to do nothing. The mint's own neighbours already apply exactly
-//     this pattern for exactly this reason ("dynamic import so the flag module isn't
-//     eager-loaded on the prod-mint import path").
+// Two reasons. 🔴 THEY ARE ORDERED BY WEIGHT, AND AN EARLIER VERSION OF THIS COMMENT
+// HAD THEM THE OTHER WAY ROUND — corrected after review pointed out that the reason I
+// led with is a TEST-ENVIRONMENT fact, not a production cost:
+//  1. THE REAL REASON. The flag ships BASE-OFF, so in production today every request
+//     refuses at gate (1) before any role resolve. A static import would make every one
+//     of them pay module-eval of `app-listing-assets` + `app-listing.service` +
+//     `cache-helpers` and their transitive deps in order to do nothing. The mint's own
+//     neighbours already apply exactly this pattern for exactly this reason ("dynamic
+//     import so the flag module isn't eager-loaded on the prod-mint import path").
+//  2. HOW IT WAS FOUND, which is weaker than it first looked. `app-access.service` pulls
+//     `app-listing-assets.service` → `app-listing.service` → `cache-helpers` →
+//     `createLogger`, which reads `env.LOGGING` AT MODULE SCOPE — and that THREW in two
+//     existing mint suites the moment a static edge existed. ⚠️ In production it could
+//     not have thrown: the mint already imports `~/env/server` for the token keys. So
+//     this was a test-fixture symptom that pointed at a real graph edge, not a
+//     production failure — worth recording as the discovery route, not as the argument.
+// Node's module cache makes a repeat `await import()` a resolved-promise microtask, so
+// deferring does not move a per-request cost onto the hot path; the first private-run
+// role resolve per pod pays the subgraph's module-eval inside one request, once.
 //
 // `import type` is erased, so the `AccessDb` type below creates NO load-time edge.
 import type { AccessDb } from '~/server/services/blocks/app-access.service';
@@ -73,16 +79,29 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * consumer of `reason` outside tests, and that line goes to Axiom and stdout.
  */
 
-/** Ordered exactly as the predicate evaluates them; see `resolvePrivateRunAccess`. */
-export type PrivateRunRefusalReason =
-  | 'flag-off'
-  | 'viewer-ineligible'
-  | 'no-app'
-  | 'approved'
-  | 'not-a-page'
-  | 'no-role'
-  | 'owner-banned'
-  | 'not-deployed';
+/**
+ * Every refusal this predicate can produce, ORDERED exactly as it evaluates them.
+ *
+ * 🔴 A RUNTIME TUPLE, WITH THE TYPE DERIVED FROM IT — not a type with a hand-copied list
+ * beside it. Types are erased, so a test that enumerates these reasons against a
+ * hand-written array stays GREEN when a ninth member is added to the union and has no
+ * coverage, under a comment claiming the enumeration is complete. The access-matrix test
+ * derives its completeness check from this tuple, so adding a reason without a row is a
+ * failing test rather than a silent gap. Same shape as `PRIVATE_RUN_AUDIENCES`.
+ */
+export const PRIVATE_RUN_REFUSAL_REASONS = [
+  'flag-off',
+  'viewer-ineligible',
+  'no-app',
+  'approved',
+  'not-a-page',
+  'no-role',
+  'owner-banned',
+  'not-deployed',
+  'no-iframe-src',
+] as const;
+
+export type PrivateRunRefusalReason = (typeof PRIVATE_RUN_REFUSAL_REASONS)[number];
 
 export type PrivateRunAccess =
   | {
@@ -116,12 +135,15 @@ export type PrivateRunAccess =
  *     access to a banned publisher's app deliberately: reviewing what a banned
  *     publisher shipped is the job. Placed AFTER the role resolve because it needs
  *     the audience to know whether it applies at all.
- *  6. `not-deployed` — LAST, and the placement is the whole reason its guard is
+ *  6. `not-deployed` — and the placement is the whole reason its guard is
  *     testable. A private run serves the app's DEPLOYED bundle; an app with
  *     `currentVersionDeployedAt == null` has no origin behind it, so the iframe would
  *     time out and pollute the render metrics. If this sat before the role resolve,
  *     the "unrelated viewer + undeployed app" fixture would kill its mutant for the
  *     WRONG reason and the guard would never be shown to work on its own terms.
+ *  7. `no-iframe-src` — nothing to host. Moved in from the SSR route, which applied it
+ *     AFTER the predicate while the mint never applied it at all; last because it is the
+ *     only gate that depends on nothing but the manifest.
  *
  * ── THE SEAT ASYMMETRY THAT MAKES THE `editor` AUDIENCE WORK ──────────────────
  * `AUTHORABLE_LISTING_STATUSES` blocks GRANTING a seat (or ACCEPTING an invite) on a
@@ -188,9 +210,41 @@ export async function resolvePrivateRunAccess(args: {
   if (viewer.bannedAt || viewer.deletedAt) {
     return { allowed: false, reason: 'viewer-ineligible' };
   }
+  // 🔴 AND AN AUTHORITATIVE RE-READ, BECAUSE THE SESSION IS NOT AUTHORITATIVE FOR
+  // `deletedAt`. A `SessionUser` may or may not carry it depending on the auth path, so
+  // the session check above is a cheap pre-filter, not the decision.
+  //
+  // ⚠️ IT LIVES HERE RATHER THAN IN THE MINT, AND THAT PLACEMENT IS THE FIX FOR AN
+  // SSR↔MINT ASYMMETRY — in the one feature built to prevent those. The mint performed
+  // this read and the SSR route did not, so a soft-deleted viewer whose session lacked
+  // `deletedAt` got a FULL RENDER of a delisted app (its name, page title, iframe origin
+  // and declared scopes) and only then failed at the mint. No token, so the app could not
+  // boot — but the single place the two callers disagreed produced a DISCLOSURE rather
+  // than a refusal, which is exactly the class this predicate exists to make impossible.
+  // Moving it in also removes one of four near-identical copies of this read.
+  const viewerRow = await db.user.findUnique({
+    where: { id: viewer.id },
+    select: { deletedAt: true, bannedAt: true },
+  });
+  if (!viewerRow || viewerRow.deletedAt || viewerRow.bannedAt) {
+    return { allowed: false, reason: 'viewer-ineligible' };
+  }
 
-  // (3) THE BLOCK. One query; three named refusals (see the resolver's docblock for
-  // why these are not one bare null).
+  // (3) THE BLOCK. Three named refusals (see the resolver's docblock for why these are
+  // not one bare null).
+  //
+  // ⚠️ THIS COMMENT USED TO SAY "One query", AND THAT WAS WRONG — corrected because the
+  // number is what the next person will price a change against. The schema does NOT
+  // enable Prisma's `relationJoins`, so each nested to-one relation in a `select` is a
+  // SEPARATE round trip: this resolve is THREE (the block row, its `app` for the owner
+  // id, its `appListing` for the audit-only status). `resolveAppAccess` below re-reads
+  // the same block with the same two relations, and the owner-ban read is a fourth
+  // statement — so a full owner resolve is ~7 round trips, not 3. All are single-row
+  // index lookups (`blockId` is unique, `id` is the pk), so the cost is round-trip
+  // COUNT, not plan quality, and at this surface's volume it is accepted rather than
+  // optimised. `block-approval.service.ts` deliberately avoids the same mechanism ten
+  // lines from a near-identical select; if this surface ever gets real traffic, that is
+  // the pattern to copy.
   const resolved = await BlockRegistry.resolvePrivateRunPageBlock(by, { db: pool });
   if (!resolved.ok) return { allowed: false, reason: resolved.reason };
   const block = resolved.block;
@@ -216,7 +270,16 @@ export async function resolvePrivateRunAccess(args: {
     // stranger, and a PENDING or REJECTED seat — the `ACCEPTED` filter is the consent
     // gate and is not widened here.
     if (!access || access.role == null) return { allowed: false, reason: 'no-role' };
-    audience = access.role === 'owner' ? 'owner' : 'editor';
+    // 🔴 AN ASSIGNMENT, NOT A TERNARY, AND THE CHANGE IS A GUARD RATHER THAN A TIDY-UP.
+    // This used to read `access.role === 'owner' ? 'owner' : 'editor'`, which rewrote a
+    // value into itself: a non-null `AppAccess['role']` is exactly
+    // `AppRole = 'owner' | 'editor'`. Because `PrivateRunAudience` is now declared as
+    // `AppRole | 'moderator'`, this line type-checks as a direct assignment — and a
+    // future THIRD `AppRole` becomes a COMPILE ERROR here instead of being silently
+    // collapsed into `'editor'`. That collapse would have been safe on power (editor is
+    // the read-only audience) and wrong on truth: it would mislabel the mint's audit
+    // line and the chrome copy for a role nobody had considered.
+    audience = access.role;
   }
 
   // (5) PUBLISHER BAN — owner and editor only; moderators keep access by design.
@@ -248,6 +311,20 @@ export async function resolvePrivateRunAccess(args: {
   // The caller maps this to the same bare refusal as every other reason.
   if (block.currentVersionDeployedAt == null) {
     return { allowed: false, reason: 'not-deployed' };
+  }
+
+  // (7) NOTHING TO HOST. A resolved app whose manifest carries no usable `iframe.src`
+  // has no origin to point the host at.
+  //
+  // ⚠️ THIS MOVED IN FROM THE SSR ROUTE, for the same reason the viewer re-read did: the
+  // route refused on it AFTER calling the predicate and the mint never refused on it at
+  // all, so the two callers could disagree — SSR 404s while the mint issues a token for
+  // a page nobody can reach. That is the polarity the seam's own docblock names as the
+  // second failure direction ("a token is mintable for a page nobody can reach"), and a
+  // capability with no UI and no audit trail is worth closing even though it moves no
+  // money. Both callers now inherit it.
+  if (!block.iframeSrc) {
+    return { allowed: false, reason: 'no-iframe-src' };
   }
 
   return { allowed: true, audience, block };

@@ -103,7 +103,19 @@ function wire(opts: { block?: unknown; seatFor?: number | null; ownerBannedAt?: 
     db.appCollaborator.findFirst.mockImplementation(async (args: any) =>
       opts.seatFor != null && args?.where?.userId === opts.seatFor ? { userId: opts.seatFor } : null
     );
-    db.user.findUnique.mockResolvedValue({ bannedAt: opts.ownerBannedAt ?? null });
+    // 🔴 KEYED ON `where.id`, BECAUSE THE PREDICATE NOW READS `users` TWICE — once for
+    // the VIEWER (the authoritative soft-delete/ban re-read, moved in from the mint to
+    // close an SSR↔mint asymmetry) and once for the OWNER (the publisher-ban gate). A
+    // single `mockResolvedValue` served both, so an `ownerBannedAt` fixture made the
+    // VIEWER look banned and every owner-ban row refused for the wrong reason. Keying on
+    // the id is what keeps the two reads distinguishable — the same reason `dbRead` and
+    // `dbWrite` are distinct objects here.
+    db.user.findUnique.mockImplementation(async (args: any) => {
+      const id = args?.where?.id;
+      if (id === OWNER) return { bannedAt: opts.ownerBannedAt ?? null, deletedAt: null };
+      // Every other id is the viewer: eligible unless the row says otherwise.
+      return { bannedAt: null, deletedAt: null };
+    });
   }
 }
 
@@ -163,8 +175,19 @@ const SCENARIOS: Scenario[] = [
     expectAllowed: false,
   },
   {
-    name: 'banned publisher, owner viewer',
+    // Refused as `viewer-ineligible` rather than `owner-banned` — for the owner audience
+    // the viewer IS the owner, so the earlier viewer gate is the refuser. The agreement
+    // assertion below compares the REASON, so this scenario also pins that both callers
+    // agree about WHICH gate refused, not merely that they both refused.
+    name: 'banned publisher, owner viewer (refused at the VIEWER gate)',
     viewer: { id: OWNER },
+    ownerBannedAt: new Date('2026-09-01'),
+    expectAllowed: false,
+  },
+  {
+    name: 'banned publisher, UNBANNED editor viewer (refused at the OWNER-ban gate)',
+    viewer: { id: EDITOR },
+    seatFor: EDITOR,
     ownerBannedAt: new Date('2026-09-01'),
     expectAllowed: false,
   },
@@ -220,10 +243,15 @@ describe('SSR and the mint cannot disagree [REG]', () => {
       // reasons unrelated to the code. The first draft of this file made exactly that
       // mistake and the assertion failed with "expected vi.fn() to be called at least
       // once" — a test that was measuring its own scaffolding.
-      const reachesTheResolve =
-        (s.flag ?? true) &&
-        s.viewer != null &&
-        (s.viewer as { bannedAt?: Date }).bannedAt === undefined;
+      // 🔴 DERIVED FROM THE RESULT, NOT RE-DERIVED FROM THE FIXTURE. The gates that
+      // refuse BEFORE the block read are exactly those whose reason is `flag-off` or
+      // `viewer-ineligible` — and that set grew when the authoritative viewer re-read
+      // moved into the predicate, which immediately broke a hand-derived version of this
+      // condition (a banned OWNER now refuses at the viewer gate, so no pool is read,
+      // while the fixture-based predicate still said "reaches the resolve"). Reading the
+      // reason keeps this control correct as the gate order changes.
+      const preBlockReasons = ['flag-off', 'viewer-ineligible'];
+      const reachesTheResolve = ssr.allowed || !preBlockReasons.includes(ssr.reason);
       if (reachesTheResolve) {
         expect(mockDb.appBlock.findFirst, 'the SSR call must read the REPLICA').toHaveBeenCalled();
         expect(
@@ -249,15 +277,47 @@ describe('SSR and the mint cannot disagree [REG]', () => {
     expect(SCENARIOS.filter((s) => !s.expectAllowed).length).toBeGreaterThan(5);
   });
 
-  it('🔴 NEGATIVE CONTROL: the harness CAN observe a disagreement', () => {
-    // The assertion `ssr.allowed === mint.allowed` is only a guard if an unequal pair
-    // would fail it. Proven directly on the comparison rather than by corrupting the
-    // predicate — the point is that the ASSERTION discriminates, and a test that never
-    // shows its own comparison failing is a test of nothing.
-    const a = { allowed: true as const, audience: 'owner' as const };
-    const b = { allowed: false as const, reason: 'no-role' as const };
-    expect(() => expect(a.allowed).toBe(b.allowed)).toThrow();
-    const c = { allowed: true as const, audience: 'editor' as const };
-    expect(() => expect(a.audience).toBe(c.audience)).toThrow();
+  it('🔴 NEGATIVE CONTROL: the harness CAN observe a real disagreement', async () => {
+    // ⚠️ THIS REPLACED A CONTROL THAT TESTED VITEST. The first version built two object
+    // literals and asserted `expect(() => expect(a.allowed).toBe(b.allowed)).toThrow()`
+    // — i.e. that `expect` throws on unequal values. It touched neither the predicate,
+    // nor the wiring, nor the two pools, so it could not tell a working harness from one
+    // wired to nothing, which is precisely the claim a negative control makes.
+    //
+    // This drives the REAL predicate through the REAL wiring with the two pools
+    // DISAGREEING — the replica sees the app, the primary does not — and asserts the
+    // comparison the per-scenario rows use actually goes red. That is the only form of
+    // this control that proves anything about this file.
+    const row = blockRow();
+    mockDb.appBlock.findFirst.mockImplementation(async () => row);
+    mockWriteDb.appBlock.findFirst.mockImplementation(async () => null);
+    for (const db of [mockDb, mockWriteDb]) {
+      db.appBlock.findUnique.mockResolvedValue({
+        id: APP_BLOCK,
+        app: { userId: OWNER },
+        appListing: { id: 'apl_seam' },
+      });
+      db.appCollaborator.findFirst.mockResolvedValue(null);
+      db.user.findUnique.mockResolvedValue({ bannedAt: null });
+    }
+
+    const ssr = await resolvePrivateRunAccess({
+      by: { slug: SLUG },
+      viewer: { id: OWNER } as never,
+      db: 'read',
+      privateRunEnabled: true,
+    });
+    const mint = await resolvePrivateRunAccess({
+      by: { appBlockId: APP_BLOCK },
+      viewer: { id: OWNER } as never,
+      db: 'write',
+      privateRunEnabled: true,
+    });
+
+    // The pools really did diverge, which is what makes the next assertion meaningful.
+    expect(ssr.allowed).toBe(true);
+    expect(mint.allowed).toBe(false);
+    // 🔴 AND THE COMPARISON THE ROWS ABOVE USE WOULD HAVE CAUGHT IT.
+    expect(() => expect(ssr.allowed).toBe(mint.allowed)).toThrow();
   });
 });

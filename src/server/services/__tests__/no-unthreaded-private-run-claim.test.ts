@@ -7,6 +7,8 @@ import {
   enclosingDecl,
   topLevelPropertyText,
 } from '~/test-utils/routerSourceRegions';
+import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
+import { BlockTokenService } from '~/server/services/block-token.service';
 
 /**
  * THE SEAM GUARD FOR THE PRIVATE-RUN MONEY ARMS — and the only guard in this
@@ -300,32 +302,101 @@ describe('the private-run claim is threaded to every money call site', () => {
     ).toBeLessThan(devSkipAt);
   });
 
-  it('[INV] privateRun still selects no LIFETIME — the half of the docblock that holds', () => {
-    // The lifetime half of the signer's claim SURVIVED the mint and is the half worth
-    // keeping: a private-run token takes the ordinary 900s default, never the `dev` 4h.
-    // A long-lived token on an app the platform has taken down is precisely what a
-    // delist is supposed to stop, and the `dev` lifetime is 16× the default.
+  /**
+   * ⚠️ THIS TEST WAS REWRITTEN BECAUSE ITS FIRST VERSION WAS VACUOUS, AND THE FAILURE
+   * MODE IS WORTH KEEPING ON THE RECORD.
+   *
+   * It read the signer's source and asserted `privateRun` was absent from a ±600-byte
+   * window around `indexOf('BLOCK_TOKEN_LIFETIMES_SECONDS')`. `indexOf` returns the
+   * FIRST occurrence — which in that file is the IMPORT STATEMENT on line 5. So the
+   * window was bytes 0–832: the import block and two re-exports. The actual lifetime
+   * selection is ~300 lines further down and was never in the window, and a mutant that
+   * put `input.privateRun ? 14400 : …` directly into the selector was NOT detected.
+   *
+   * The lesson is not "widen the window": a source scan anchored on a token that also
+   * appears in an import is anchored on the import. The property is behavioural and the
+   * signer is trivially callable, so it is now asserted behaviourally.
+   */
+  it('🔴 [REG] the private-run RESERVATION uses its OWN key prefix and TTL', () => {
+    // ⚠️ ADDED BECAUSE THE RESERVATION HELPER WAS ENTIRELY UNMUTATED. The arm test above
+    // pins that the cap arm EXISTS and WHERE it sits; nothing pinned what it COMPUTES.
+    // `privateRunBuzzCapKey` is module-private, so a wrong prefix or a wrong TTL
+    // survived everything.
     //
-    // Read from the SIGNER, not the router — this is a property of
-    // `BlockTokenService.sign`'s lifetime selection, and the signer's own suite pins
-    // the positive behaviour. This is the structural converse: the claim is not even
-    // mentioned in the region that picks a TTL.
-    const signer = readFileSync(
-      path.join(process.cwd(), 'src/server/services/block-token.service.ts'),
-      'utf8'
-    );
-    const code = blankComments(signer);
-    const ttlRegion = code.indexOf('BLOCK_TOKEN_LIFETIMES_SECONDS');
-    expect(ttlRegion, 'the lifetime table must still be referenced in the signer').toBeGreaterThan(
-      0
-    );
-    // The selection happens in a small window around the lifetime table lookup; bound
-    // it generously and assert the claim is absent from the whole window rather than
-    // guessing an exact expression.
-    const window = code.slice(Math.max(0, ttlRegion - 600), ttlRegion + 600);
-    expect(window, 'privateRun must not participate in lifetime selection').not.toContain(
-      'privateRun'
-    );
+    // 🔴 THE PREFIX IS THE PART THAT MATTERS, not the field order. Swapping
+    // `${userId}:${appBlockId}` still yields a unique key per pair, so it is harmless.
+    // Reusing the REVIEW cap's prefix is not: a moderator's review-sandbox session and
+    // their private run of the same app would then draw down ONE counter, and the two
+    // ceilings answer different questions (vetting a SUBMISSION vs diagnosing a
+    // TAKEN-DOWN APP). Asserted structurally because the helper cannot be reached.
+    // ⚠️ SLICED DIRECTLY, NOT VIA `declRegions`, and the reason is that helper's own
+    // regex: it matches `async function <name>(` or a two-space `<name>: …Procedure`.
+    // `privateRunBuzzCapKey` is a PLAIN `function`, so it is invisible to it — the first
+    // draft asked for it and got `undefined`, and the draft before that used
+    // `enclosingDecl` (which maps an OFFSET to a name) and got an unrelated neighbour's
+    // name back. Read a helper's signature, not its name.
+    function region(decl: string): string {
+      const at = source.indexOf(decl);
+      expect(at, `${decl} must still exist under this name`).toBeGreaterThan(0);
+      // To the next top-level declaration, so the region is this function's body only.
+      const after = source.slice(at + decl.length);
+      const nextFn = after.search(/\n(?:async )?function |\nconst /);
+      return after.slice(0, nextFn === -1 ? undefined : nextFn);
+    }
+
+    const keyBuilder = region('function privateRunBuzzCapKey');
+    expect(keyBuilder).toContain('REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP');
+    // 🔴 And NOT the review cap's namespace — the discriminating half.
+    expect(keyBuilder).not.toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
+
+    // The window: a per-app cumulative ceiling is meaningless without one, and it must
+    // be the ~25h the shared `reserveCumulativeBuzzKey` primitive re-arms on, matching
+    // every sibling cap.
+    expect(source).toContain('const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;');
+
+    // And the reserve helper passes THAT ttl, not a sibling's.
+    const reserve = region('async function reservePrivateRunBuzzSpend');
+    expect(reserve).toContain('PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS');
+    expect(reserve).toContain('reserveCumulativeBuzzKey');
+  });
+
+  it('[INV] privateRun selects no LIFETIME — the half of the signer docblock that holds', () => {
+    // The lifetime half of the signer's claim SURVIVED the mint (the CAP half did not —
+    // see the arm above). It is the half worth keeping: a private-run token takes the
+    // ordinary 900s default, never the `dev` 4h, and a long-lived token on an app the
+    // platform has taken down is precisely what a delist is meant to stop. 16× matters.
+    //
+    // Asserted against the LIFETIME TABLE rather than a literal, so a legitimate change
+    // to the default moves the expectation with it instead of reddening this test.
+    const privateRunTtl = BLOCK_TOKEN_LIFETIMES_SECONDS.default;
+    expect(privateRunTtl).toBe(900);
+    expect(BLOCK_TOKEN_LIFETIMES_SECONDS.dev).toBe(4 * 60 * 60);
+    // The two must differ, or "it does not take the dev lifetime" is unobservable.
+    expect(privateRunTtl).not.toBe(BLOCK_TOKEN_LIFETIMES_SECONDS.dev);
+  });
+
+  it('[REG] a signed private-run token EXPIRES on the 900s default, not the dev 4h', async () => {
+    // The behavioural half, and the one the vacuous version was pretending to be. Signs
+    // a real token through the real signer and reads the returned `expiresAt`.
+    const before = Date.now();
+    const res = await BlockTokenService.sign({
+      userId: 991,
+      blockId: 'lifetime-fixture',
+      appId: 'appblk-lifetime-fixture',
+      appBlockId: 'apb_lifetime',
+      blockInstanceId: 'page_apb_lifetime',
+      scopes: ['user:read:self'],
+      ctx: { slotId: 'app.page', entityType: 'none' },
+      privateRun: true,
+      privateRunAudience: 'moderator',
+    });
+    const ttlSeconds = Math.round((new Date(res.expiresAt).getTime() - before) / 1000);
+    // Allow a couple of seconds of clock/IO slack, and bound it on BOTH sides — an
+    // upper bound alone would pass for a 5s token, a lower bound alone for the dev 4h.
+    expect(ttlSeconds).toBeGreaterThanOrEqual(895);
+    expect(ttlSeconds).toBeLessThanOrEqual(905);
+    // 🔴 THE DISCRIMINATING ASSERTION: nowhere near the dev lifetime.
+    expect(ttlSeconds).toBeLessThan(BLOCK_TOKEN_LIFETIMES_SECONDS.dev);
   });
 
   it('[REG] the router threads the claim exactly as many times as there are governed call sites', () => {

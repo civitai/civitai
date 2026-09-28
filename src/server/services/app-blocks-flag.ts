@@ -603,6 +603,39 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * 🔴 DO NOT COMPOSE THIS WITH `isAppBlocksAuthorEnabled`. That flag asks "is this
  * caller an app AUTHOR", which would refuse a moderator who has never published an
  * app — i.e. exactly the audience this surface exists for.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────
+ * 🔴 PRECONDITION BEFORE THIS FLAG IS SET TO ANYTHING OTHER THAN `false`.
+ *
+ * An operator decision on this feature is that a moderator's private run is FULLY
+ * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
+ * the owner's analytics. The first two are delivered (the private route deliberately
+ * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD IS
+ * NOT, in two places, and both are visible in the publisher's own dashboard:
+ *
+ *   1. `block_spend_attribution` — a private run's row is correctly VOIDED, but the
+ *      two owner-visible reads in `app-analytics.service.ts` carry no `status`
+ *      predicate, so a voided row still counts as a run and its Buzz still sums.
+ *      The `status <> 'voided'` filter was deliberately HELD (it drops the large
+ *      majority of existing rows at once, and a second consumer of that table lives
+ *      outside this repo) — a product decision, not an oversight.
+ *   2. `block_scope_invocations` — written by `withBlockScope` for every scoped call
+ *      with the real `app_block_id` and the VIEWER's `user_id`, and read into the
+ *      owner's panel by five unfiltered queries including a `count(DISTINCT
+ *      user_id)`. There is no marker on those rows to filter on, so closing this
+ *      half needs a migration.
+ *
+ * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
+ * in a docblock on the attribution arm and in a merged PR body — neither of which is
+ * read by the person who opens Flipt, in a different repository, to widen a flag. The
+ * condition is inert while the base value is `false`: with the flag off both surfaces
+ * refuse before resolving anything, so no private-run row of either kind can exist.
+ * It becomes live the moment this value is anything else.
+ *
+ * So, before widening: either land both filters, or record the operator decision that
+ * owner-visible analytics should keep counting private runs. Do not widen on the
+ * assumption that the void alone delivers the invisibility — it does not.
+ * ────────────────────────────────────────────────────────────────────────────────
  */
 export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
 

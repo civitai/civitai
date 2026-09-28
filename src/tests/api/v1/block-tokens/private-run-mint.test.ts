@@ -370,6 +370,8 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
     await invoke(BODY());
     const [event, fields] = mockStdoutAudit.emitMintAuditToStdout.mock.calls[0];
     expect(event).toBe('app-blocks.private-run.mint');
+    // The discriminating half: a grant must NOT ride the refusal event.
+    expect(event).not.toBe('app-blocks.private-run.mint-refused');
     expect(fields).toMatchObject({
       outcome: 'granted',
       audience: 'moderator',
@@ -433,6 +435,36 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
     }
   });
 
+  it('🔴 a `flag-off` refusal emits NO audit at all — the log-amplification decision', async () => {
+    // That gate is answered before any DB read, so it is the cheapest request in the set
+    // and the one a signed-in prober can issue for any `page_<anything>` id. With the
+    // flag off — the shipping state — auditing it would write two records per such
+    // request carrying no information. Asserted, not just commented, because the SSR
+    // route and the mint took OPPOSITE decisions on the same enumerable input before
+    // review caught it.
+    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
+      allowed: false,
+      reason: 'flag-off',
+    });
+    const res = await invoke(BODY());
+    expect(res._status).toBe(404);
+    expect(mockStdoutAudit.emitMintAuditToStdout).not.toHaveBeenCalled();
+  });
+
+  it('every OTHER refusal reason IS audited — the control on the row above', async () => {
+    // Without this, the `flag-off` assertion passes against a branch that audits
+    // nothing at all, which would lose the whole forensic trail the feature depends on.
+    for (const reason of ['no-role', 'owner-banned', 'not-deployed', 'no-iframe-src']) {
+      mockStdoutAudit.emitMintAuditToStdout.mockClear();
+      mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason });
+      await invoke(BODY());
+      expect(mockStdoutAudit.emitMintAuditToStdout, `reason=${reason}`).toHaveBeenCalledWith(
+        'app-blocks.private-run.mint-refused',
+        expect.objectContaining({ outcome: 'refused', reason })
+      );
+    }
+  });
+
   it('🔴 POSITIVE CONTROL: the comparison CAN distinguish a different response', async () => {
     // Without this, a harness that produced an identical empty object for every call
     // would make the test above uniformly, meaninglessly green. Same comparison, same
@@ -468,7 +500,12 @@ describe('🔴 PHASE 3 — NO EXISTENCE ORACLE: every refusal is byte-identical 
     expect(res._body).toEqual({ error: 'Page app not found' });
     expect(JSON.stringify(res._body)).not.toContain('no-role');
     const [event, fields] = mockStdoutAudit.emitMintAuditToStdout.mock.calls.at(-1)!;
-    expect(event).toBe('app-blocks.private-run.mint');
+    // 🔴 A DISTINCT EVENT NAME FROM THE GRANT. The refusal rides
+    // `app-blocks.private-run.mint-refused`, not the grant's name with an `outcome`
+    // field — see the emit site for the two reasons (a log store counts refusals without
+    // parsing a field; and the mint-audit call-site ledger enumerates emit sites as a
+    // LIST, so one name from two sites reddens it).
+    expect(event).toBe('app-blocks.private-run.mint-refused');
     expect(fields).toMatchObject({ outcome: 'refused', reason: 'no-role' });
   });
 });
@@ -551,35 +588,25 @@ describe('PHASE 3 refuses before it resolves anything [REG]', () => {
     expect(mockTokenService.sign.mock.calls[0][0].blockInstanceId).toBe('page_apb_other');
   });
 
-  it('a soft-deleted account never mints, even on an allowed verdict (M1 parity)', async () => {
-    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
-      allowed: true,
-      audience: 'moderator',
-      block: BLOCK(),
-    });
-    mockDbWrite.user.findUnique.mockResolvedValue({
-      deletedAt: new Date('2026-01-01'),
-      bannedAt: null,
-    });
-    const res = await invoke(BODY());
-    expect(res._status).toBe(404);
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
-  });
-
-  it('a banned account never mints, even on an allowed verdict', async () => {
-    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
-      allowed: true,
-      audience: 'moderator',
-      block: BLOCK(),
-    });
-    mockDbWrite.user.findUnique.mockResolvedValue({
-      deletedAt: null,
-      bannedAt: new Date('2026-01-01'),
-    });
-    const res = await invoke(BODY());
-    expect(res._status).toBe(404);
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
-  });
+  /**
+   * ⚠️ TWO TESTS WERE REMOVED FROM HERE, AND SAYING SO IS THE POINT.
+   *
+   * They stubbed `dbWrite.user.findUnique` to a soft-deleted / banned row and asserted
+   * the mint refused. That worked while the MINT performed its own authoritative
+   * viewer re-read — and that read was exactly the SSR↔mint asymmetry review found: the
+   * mint had it, the SSR route did not, so a soft-deleted viewer whose session lacked
+   * `deletedAt` got a full render of a delisted app before failing at the mint.
+   *
+   * The read moved INTO `resolvePrivateRunAccess`, so both callers now inherit it and
+   * the property is no longer the mint's to assert. This file mocks the predicate at its
+   * module seam, so a stub on `dbWrite` here would now assert nothing — it would be a
+   * test that passes because the code it named no longer runs, which is worse than no
+   * test. The property is covered behaviourally in
+   * `blocks/__tests__/private-run-access.service.test.ts` (the banned/soft-deleted viewer
+   * rows, keyed on `where.id` so the viewer and owner reads are distinguishable) and the
+   * mint's side of it is the `viewer-ineligible` row in the no-existence-oracle describe
+   * above.
+   */
 
   it('the flag is evaluated FOR THE CALLER and threaded into the predicate', async () => {
     // Not "the flag is read" — that the CALLER'S evaluated value is what the predicate

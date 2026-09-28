@@ -655,16 +655,22 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
-  // App Blocks — PRIVATE RUN of a delisted / suspended app (`/apps/private-run/<slug>`),
-  // for its owner, an accepted listing collaborator, or a moderator. `availability: []`
-  // (NOT `['mod']`) so the whole surface is dark end-to-end on merge and stays dark until
-  // the `app-blocks-private-run-enabled` row is created in Flipt: `['mod']` would open a
-  // status bypass on taken-down apps for every moderator the moment this ships, which is
-  // the opposite of shipping it behind a base-off flag. The Flipt key is the only
-  // on-switch AND the only kill-switch. Mirrors the `appBlocksAgenticReview` precedent
-  // directly above, and pairs with the server-side `isAppBlocksPrivateRunEnabled` gate
-  // that both the SSR route and the PHASE 3 page-token mint evaluate for the caller.
-  appBlocksPrivateRun: { availability: [], fliptKey: 'app-blocks-private-run-enabled' },
+  // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
+  // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
+  // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
+  // directly and REQUIRES a `SessionUser`, so it denies an anonymous caller by type
+  // rather than falling back to the flag's base value the way a registry entry's global
+  // evaluation would. It is therefore strictly stronger than an `availability: []` entry
+  // for the one property such an entry would buy.
+  //
+  // An entry was written here first, mirroring `appBlocksAgenticReview` above, and
+  // REMOVED after review found it had zero readers: nothing consumes
+  // `features.appBlocksPrivateRun`, while every `fliptKey`'d entry is eagerly evaluated
+  // by `computeFeatureFlags` on every SSR render sitewide. So it cost one wasm
+  // evaluation per unique (user, host, region) per cache window, on requests that have
+  // nothing to do with App Blocks, and bought nothing — the unbranched-field shape this
+  // repo's own guards forbid. Add an entry if and when a CLIENT component needs to
+  // branch on it.
   // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
   // flag-gated, deep-linkable full page that re-hosts the existing on-site review
   // body (today a modal on `/apps/review`) so mods can open, share, and refresh a

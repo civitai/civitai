@@ -5,6 +5,7 @@ import {
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { BlockTokenService } from '~/server/services/block-token.service';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
  * SHARED dev-scoped block-token mint belt (App Dev Tunnel).
@@ -471,20 +472,82 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
 export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['social:tip:self']);
 
 /**
+ * The scope ceiling for a PRIVATE RUN of a delisted / suspended app.
+ *
+ * 🔴 THIS EXISTS BECAUSE COMPOSING `clampTunnelDeclaredScopes` WAS WRONG, AND THE BUG
+ * IT FIXES IS THE SHARPEST ONE THIS FEATURE HAD. That clamp's ceiling is
+ * `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, which is the AUTHOR-FACING set: the dev tunnel is
+ * owner-only, so it can safely grant an author scopes over the author's OWN account and
+ * content. A private run admits a MODERATOR and an accepted COLLABORATOR — neither is
+ * the author — and the tunnel ceiling handed them `posts:write:self`,
+ * `collections:write:self`, `collections:read:private` and `goods:read:self` on an app
+ * the platform has TAKEN DOWN. The worst reachable consequence was a taken-down app
+ * publishing a real, feed-visible, reward-earning Post under the REVIEWING MODERATOR'S
+ * byline.
+ *
+ * 🔴 THE CEILING IS THEREFORE DERIVED FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`,
+ * NOT INVENTED. That set is the repo's already-reviewed answer to the structurally
+ * identical question — a non-owner running someone else's non-approved app against
+ * their own session — and its written reasoning transfers verbatim, in particular for
+ * the scope this feature most needed excluded:
+ *
+ *   `posts:write:self` — "PUBLIC, feed-visible, reward-earning content published under
+ *   the REVIEWING MOD'S name. The run-for-real gate consents the mod to SPEND their own
+ *   Buzz; it does not consent them to become the author of an unapproved app's output
+ *   on their public profile."
+ *
+ * A private run is that case on an app already taken down, i.e. strictly stronger
+ * grounds. Deriving rather than copying means a future tightening of the review set
+ * tightens this one too, and a `satisfies` check below pins the containment so the two
+ * cannot drift apart silently.
+ *
+ * ── THE TWO DELIBERATE SUBTRACTIONS ─────────────────────────────────────────────
+ * `apps:storage:read` and `apps:storage:write` are in the review set and are REMOVED
+ * here. They function under run-for-real ONLY because `resolveStorageContext` resolves a
+ * disposable, per-publish-request `apprev_<pubreq>` schema for a token carrying the
+ * signed `reviewRunForReal` claim. It grants no such exemption for `privateRun`, so on
+ * this surface a storage call would resolve against the REAL app schema or refuse
+ * outright — and granting a scope whose proc then refuses it is worse than not granting
+ * it, because the block's UI offers a control that cannot work. (Net effect is unchanged
+ * from the tunnel ceiling, which also excludes both.)
+ *
+ * ── ONE AUDIENCE-BLIND SET, NOT THREE ───────────────────────────────────────────
+ * The OWNER gets this same narrow ceiling, even though the dev-tunnel precedent would
+ * grant them more. Two reasons: the owner already HAS the dev tunnel for author-facing
+ * work on their own app (and PHASE 2 routes them there whenever a tunnel exists), and a
+ * takedown is precisely the state in which the app's output should not be published.
+ * One set for three audiences also removes a per-audience allowlist matrix — the thing
+ * most likely to be got wrong later. The only audience-conditional rule on this surface
+ * is the single `ai:write:budgeted` strip for an editor, in `clampPrivateRunScopes`.
+ */
+export const PRIVATE_RUN_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set(
+  [...REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST].filter(
+    (s) => s !== 'apps:storage:read' && s !== 'apps:storage:write'
+  )
+);
+
+/**
  * PRIVATE RUN — the SINGLE clamp for a private run of a delisted / suspended app.
  *
  * Three steps, in this order, and each is a STRIP rather than an error (a refusal
  * would be an existence oracle; a narrower token is not):
  *
- *   1. `clampTunnelDeclaredScopes(approvedScopes)` — VERBATIM, and the source is the
- *      `approved_scopes` COLUMN, never the re-published manifest. 🔴 THE LOAD-BEARING
- *      INVARIANT IS THE SAME ONE THE DEV-TUNNEL BRANCH RESTS ON: `approvedScopes` is
- *      written ONLY by the mod-approval flow, so a non-empty value means a moderator
- *      signed those scopes off at some point, and an app with `approvedScopes: []`
- *      mints a VALID token that can spend NOTHING — `clampTunnelDeclaredScopes([])`
+ *   1. `clampDevScopes` against `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST`, sourced from the
+ *      `approved_scopes` COLUMN and never the re-published manifest. 🔴 THE
+ *      LOAD-BEARING INVARIANT IS THE SAME ONE THE DEV-TUNNEL BRANCH RESTS ON:
+ *      `approvedScopes` is written ONLY by the mod-approval flow, so a non-empty value
+ *      means a moderator signed those scopes off at some point, and an app with
+ *      `approvedScopes: []` mints a VALID token that can spend NOTHING — the clamp
  *      cannot invent `ai:write:budgeted`. A suspended publisher editing their manifest
  *      therefore cannot widen their own private-run token. Zero-scope is a legitimate
  *      state, not an error: such an app renders read-only rather than 403ing.
+ *
+ *      ⚠️ THIS STEP USED TO BE `clampTunnelDeclaredScopes`, AND THAT WAS THE BUG. The
+ *      tunnel ceiling is author-facing and owner-only; composing it handed a MODERATOR
+ *      and an accepted COLLABORATOR `posts:write:self`, `collections:write:self`,
+ *      `collections:read:private` and `goods:read:self` on a taken-down app. See
+ *      `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST` for the full finding and why the ceiling is
+ *      now derived from the reviewed NON-OWNER allowlist instead.
  *   2. `PRIVATE_RUN_FORBIDDEN_SCOPES` — the third-rail strip. See that set.
  *   3. The EDITOR read-only strip — see below.
  *
@@ -509,10 +572,26 @@ export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['socia
  */
 export function clampPrivateRunScopes(
   approvedScopes: string[],
-  audience: 'owner' | 'editor' | 'moderator'
+  audience: PrivateRunAudience
 ): string[] {
-  // (1) The identical audited belt the dev-tunnel owned-non-approved branch uses.
-  let granted = clampTunnelDeclaredScopes(approvedScopes);
+  // (1) The SAME audited `clampDevScopes` belt every other mint path runs through —
+  //     known-vocabulary filter, allowlist, PAGE_FORBIDDEN_SCOPES, the spend gate and
+  //     the forced `user:read:self` — but against the PRIVATE-RUN ceiling rather than
+  //     the author-facing tunnel one. See `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST`.
+  //
+  //     `oauthAllowed: null` — there is no bearer credential on this path, so there is
+  //     no OAuth bitmask ceiling to intersect (identical to the tunnel clamp).
+  //     `spendEntitled/spendRequested: true` — the app's approved snapshot DECLARING
+  //     `ai:write:budgeted` is the request; spend is bounded at runtime by the
+  //     self-bound `sub`, the per-call `buzzBudget` and the per-(viewer, app) aggregate
+  //     ceiling. The editor strip at step 3 is what makes that audience read-only.
+  let granted = clampDevScopes({
+    scopeSource: approvedScopes,
+    oauthAllowed: null,
+    spendEntitled: true,
+    spendRequested: true,
+    allowlist: PRIVATE_RUN_MINT_SCOPE_ALLOWLIST,
+  });
   // (2) Third-rail strip — every audience, including the owner and moderators.
   granted = granted.filter((s) => !PRIVATE_RUN_FORBIDDEN_SCOPES.has(s));
   // (3) Editor read-only.
@@ -666,7 +745,7 @@ export async function signPrivateRunPageToken(opts: {
   blockInstanceId: string;
   granted: string[];
   buzzBudget: number | undefined;
-  audience: 'owner' | 'editor' | 'moderator';
+  audience: PrivateRunAudience;
 }): Promise<Awaited<ReturnType<typeof BlockTokenService.sign>>> {
   const ctx: Record<string, unknown> = {
     slotId: PAGE_SLOT_ID,

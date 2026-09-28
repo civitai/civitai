@@ -84,6 +84,35 @@ export type BlockHostSurface =
   | 'private-run';
 
 /**
+ * Where a block's own client router may push a sub-path, per surface.
+ *
+ * 🔴 A TOTAL `Record`, NOT A TERNARY, AND THAT IS THE WHOLE VALUE OF IT. `PageBlockHost`
+ * handles a block's `NAVIGATE` request by pushing `<base>/<slug>/<path>`, and the base
+ * was originally derived with `surface === 'private-run' ? … : '/apps/run'`. A default
+ * branch on a surface union silently gives every FUTURE surface the public run route —
+ * which for a non-public surface is a route that 404s, i.e. a block's first in-app
+ * navigation makes the app vanish. As a total record, adding a member to
+ * `BlockHostSurface` is a COMPILE ERROR here until someone decides where that surface's
+ * deep links belong, which is the same guarantee the union's own docblock claims for
+ * `PageBlockHost` call sites.
+ *
+ * ⚠️ `dev-tunnel` MAPS TO THE PUBLIC RUN ROUTE, AND THAT IS PRE-EXISTING RATHER THAN
+ * INTENDED. Only `reviewMode` returns early from that handler, so a dev-tunnel host does
+ * reach it and does push `/apps/run/<slug>` — pushing the author off their tunnel onto
+ * the public route. Recorded as `'/apps/run'` here because that IS today's behaviour and
+ * this change must not alter it; naming it is what makes it fixable. `null` is reserved
+ * for a surface that should drop the navigation instead, which is probably what the dev
+ * tunnel and the review preview both want.
+ */
+export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> = {
+  'model-slot': null,
+  'page-run': '/apps/run',
+  'dev-tunnel': '/apps/run',
+  'review-preview': '/apps/run',
+  'private-run': '/apps/private-run',
+};
+
+/**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`
  * (whichever the surface knows — the model slot has a `blockId`, the page host
  * has both).

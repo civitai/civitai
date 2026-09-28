@@ -927,28 +927,62 @@ async function tryPrivateRunMint(args: {
   // unauthenticated prober whether a slug exists and whether it is theirs.
   if (!access.allowed) {
     // AUDIT THE REFUSAL. Same dual sink as the grant, so "who tried to privately run
-    // what, and which gate stopped them" is answerable. Flags and identifiers only.
-    const refusalAudit = {
-      outcome: 'refused',
-      reason: access.reason,
-      userId,
-      appBlockId,
-    };
-    req.log?.info('app-blocks.private-run.mint', refusalAudit);
-    emitMintAuditToStdout('app-blocks.private-run.mint', refusalAudit);
+    // what, and which gate stopped them" is answerable — and it is the only place that
+    // question CAN be answered, because the response is a bare 404 that says nothing.
+    // Flags and identifiers only.
+    //
+    // 🔴 EXCEPT `flag-off`, WHICH IS DELIBERATELY NOT LOGGED, AND THE REASON IS VOLUME
+    // RATHER THAN TASTE. That gate is answered before any database read, so it is the
+    // CHEAPEST request in the set and the one an unauthenticated-but-signed-in prober
+    // can issue for any `page_<anything>` id that the public mint and PHASE 2 both
+    // miss. With the flag off — the shipping state — logging it would write two records
+    // per such request, forever, carrying no information at all: "the feature is
+    // disabled" is already known from the flag. The SSR route declines to log for
+    // exactly this reason, and the two surfaces taking opposite decisions on the same
+    // enumerable input is what review caught.
+    //
+    // Every OTHER reason is logged, because each of them means a real app was resolved
+    // and a real gate refused a real viewer — which is the abuse-investigation question.
+    //
+    // 🔴 A SEPARATE EVENT NAME FROM THE GRANT, NOT `outcome` ON ONE NAME. Two reasons,
+    // and the second is the one that decided it. (a) A log store can then count
+    // refusals without parsing a field. (b) `mint-audit-stdout.call-site-ledger`
+    // enumerates emit sites as a LIST, not a set, so it also implicitly asserts ONE
+    // site per event name — emitting one name from two sites made that ledger red, and
+    // the alternative was to dedupe its comparison, which would have quietly removed a
+    // property it was enforcing. Splitting the name keeps that guard intact.
+    //
+    // 🔴 AND THE NAME CONTAINS "mint" ON PURPOSE. That ledger's Axiom-side scan filters
+    // its population with `/mint/i`, deliberately a SUBSTRING match because an anchored
+    // suffix was once escapable by spelling. A ledgered event NOT containing "mint" is
+    // the inverse hole: it appears in the stdout population, is filtered out of the
+    // Axiom one, and reads as "mirrored but the rich sink was dropped". `mint-refused`
+    // satisfies the filter and is the accurate name — this IS a refused mint — so the
+    // guard needed no widening.
+    if (access.reason !== 'flag-off') {
+      const refusalAudit = {
+        outcome: 'refused',
+        reason: access.reason,
+        userId,
+        appBlockId,
+      };
+      req.log?.info('app-blocks.private-run.mint-refused', refusalAudit);
+      emitMintAuditToStdout('app-blocks.private-run.mint-refused', refusalAudit);
+    }
     return 'continue';
   }
 
   const app = access.block;
 
-  // M1 soft-delete / ban parity with the prod path and PHASE 2. The predicate already
-  // refused on the SESSION's `bannedAt`/`deletedAt`, but a `SessionUser` may or may not
-  // carry `deletedAt` depending on the auth path, so the authoritative re-read stays.
-  const userRow = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: { deletedAt: true, bannedAt: true },
-  });
-  if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
+  // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
+  // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
+  // copy (the fourth in this file), which is what created the asymmetry review found:
+  // the mint re-read the row authoritatively and the SSR route did not, so a
+  // soft-deleted viewer whose session lacked `deletedAt` got a full render and only then
+  // failed here. One read in the shared predicate serves both callers and removes the
+  // copy. Do not re-add it: a second read cannot make the answer more true, and a
+  // divergence between the two callers is the one defect this predicate exists to
+  // prevent.
 
   // SCOPES — the approved snapshot through the private-run clamp. See
   // `clampPrivateRunScopes` for all three steps and why the editor strip is there.

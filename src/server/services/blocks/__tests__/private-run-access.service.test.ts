@@ -40,7 +40,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDb = dbMock.dbRead;
 const mockWriteDb = dbMock.dbWrite;
 
-const { resolvePrivateRunAccess } = await import(
+const { resolvePrivateRunAccess, PRIVATE_RUN_REFUSAL_REASONS } = await import(
   '~/server/services/blocks/private-run-access.service'
 );
 
@@ -64,8 +64,14 @@ const viewers = {
   editor: { id: EDITOR } as Viewer,
   stranger: { id: STRANGER } as Viewer,
   moderator: { id: MOD, isModerator: true } as Viewer,
-  bannedViewer: { id: STRANGER, bannedAt: new Date('2026-01-01') } as Viewer,
-  deletedViewer: { id: STRANGER, deletedAt: new Date('2026-01-01') } as Viewer,
+  // 🔴 THESE TWO USE THE *OWNER'S* ID, NOT THE STRANGER'S, AND THAT IS THE FIX FOR A
+  // REAL HOLE. They previously reused `STRANGER`, so in both rows the role gate would
+  // ALSO have refused — meaning no row existed in which viewer-eligibility was the only
+  // thing refusing, which is exactly where that gate does work nothing else does. With
+  // the owner's id, a mutant that deletes the eligibility check lets the row through as
+  // `allowed: true, audience: 'owner'` instead of quietly landing on `no-role`.
+  bannedViewer: { id: OWNER, bannedAt: new Date('2026-01-01') } as Viewer,
+  deletedViewer: { id: OWNER, deletedAt: new Date('2026-01-01') } as Viewer,
   /** A moderator who is ALSO the owner — must resolve as `moderator` (checked first). */
   modOwner: { id: OWNER, isModerator: true } as Viewer,
 };
@@ -105,10 +111,35 @@ function wire(opts: { block?: unknown; seatFor?: number | null; ownerBannedAt?: 
       app: { userId: OWNER },
       appListing: { id: LISTING },
     });
-    db.appCollaborator.findFirst.mockImplementation(async (args: any) =>
-      opts.seatFor != null && args?.where?.userId === opts.seatFor ? { userId: opts.seatFor } : null
-    );
-    db.user.findUnique.mockResolvedValue({ bannedAt: opts.ownerBannedAt ?? null });
+    // 🔴 THE MOCK HONOURS `where.status`, AND THAT IS NOT COSMETIC FIDELITY. It
+    // previously keyed on `userId` alone, so a row's stored STATUS was invisible to it:
+    // the "pending seat" and "rejected seat" rows below modelled the row being ABSENT,
+    // not a row present with a non-accepted status. Deleting `status: ACCEPTED` from
+    // `hasAcceptedSeat` — the consent gate those rows claim to pin — killed nothing.
+    // Honouring the filter is what makes them assert what their names say.
+    db.appCollaborator.findFirst.mockImplementation(async (args: any) => {
+      const w = args?.where ?? {};
+      if (opts.seatFor == null) return null;
+      if (w.userId !== opts.seatFor) return null;
+      // The row EXISTS with `opts.seatStatus`; the query only matches when it asks for
+      // that status. `hasAcceptedSeat` asks for `'accepted'`.
+      const stored = opts.seatStatus ?? 'accepted';
+      if (w.status !== undefined && w.status !== stored) return null;
+      return { userId: opts.seatFor };
+    });
+    // 🔴 KEYED ON `where.id`, BECAUSE THE PREDICATE NOW READS `users` TWICE — once for
+    // the VIEWER (the authoritative soft-delete/ban re-read, moved in from the mint to
+    // close an SSR↔mint asymmetry) and once for the OWNER (the publisher-ban gate). A
+    // single `mockResolvedValue` served both, so an `ownerBannedAt` fixture made the
+    // VIEWER look banned and every owner-ban row refused for the wrong reason. Keying on
+    // the id is what keeps the two reads distinguishable — the same reason `dbRead` and
+    // `dbWrite` are distinct objects here.
+    db.user.findUnique.mockImplementation(async (args: any) => {
+      const id = args?.where?.id;
+      if (id === OWNER) return { bannedAt: opts.ownerBannedAt ?? null, deletedAt: null };
+      // Every other id is the viewer: eligible unless the row says otherwise.
+      return { bannedAt: null, deletedAt: null };
+    });
   }
 }
 
@@ -134,6 +165,7 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
     viewer: Viewer | undefined;
     block?: unknown;
     seatFor?: number | null;
+    seatStatus?: string;
     ownerBannedAt?: Date | null;
     flag?: boolean;
     expected: Record<string, unknown>;
@@ -209,27 +241,53 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
       expected: { allowed: false, reason: 'no-role' },
     },
     {
+      // The row EXISTS, with `status: 'pending'`. It is the ACCEPTED filter inside
+      // `hasAcceptedSeat` that refuses it — which is only observable because the seat
+      // mock honours `where.status`.
       name: 'PENDING seat → no-role (the ACCEPTED filter is the consent gate)',
       viewer: viewers.editor,
-      // The collaborator row exists but not with `status: 'accepted'`, which is what
-      // `hasAcceptedSeat`'s filter expresses — modelled by the seat lookup missing.
-      seatFor: null,
+      seatFor: EDITOR,
+      seatStatus: 'pending',
       expected: { allowed: false, reason: 'no-role' },
     },
     {
       name: 'REJECTED seat → no-role (same filter, different stored status)',
       viewer: viewers.editor,
+      seatFor: EDITOR,
+      seatStatus: 'rejected',
+      expected: { allowed: false, reason: 'no-role' },
+    },
+    {
+      name: 'NO seat row at all → no-role (absence, distinct from a non-accepted row)',
+      viewer: viewers.editor,
       seatFor: null,
       expected: { allowed: false, reason: 'no-role' },
     },
     {
-      name: 'BANNED OWNER + owner viewer → owner-banned',
+      // 🔴 `viewer-ineligible`, NOT `owner-banned`, AND THAT IS THE TRUTH RATHER THAN A
+      // CONCESSION. For the `owner` audience the viewer IS the owner, so a banned owner
+      // is a banned VIEWER and gate (2) refuses before the owner-ban gate is reached.
+      // This row asserted `owner-banned` while the predicate's viewer check read only
+      // the SESSION; moving the authoritative re-read into the predicate made the
+      // earlier gate the real refuser, which is the correct order — the ban is a fact
+      // about the person making the request.
+      //
+      // ⚠️ CONSEQUENCE WORTH KNOWING: the `owner-banned` gate's OBSERVABLE effect is
+      // therefore the EDITOR case (an unbanned collaborator on a banned publisher's
+      // app). Its `audience !== 'moderator'` condition is kept rather than narrowed to
+      // `=== 'editor'` because it reads as "moderators are the exception" and is
+      // defence-in-depth if the viewer gate is ever reordered — but a reader should not
+      // expect the owner path to exercise it.
+      name: 'BANNED OWNER viewing their OWN app → viewer-ineligible (the viewer gate is earlier)',
       viewer: viewers.owner,
       ownerBannedAt: new Date('2026-09-01'),
-      expected: { allowed: false, reason: 'owner-banned' },
+      expected: { allowed: false, reason: 'viewer-ineligible' },
     },
     {
-      name: 'BANNED OWNER + editor viewer → owner-banned (the app is what was taken down)',
+      // THE row that reaches `owner-banned`: the viewer is an UNBANNED editor, so gate
+      // (2) passes and the publisher-ban gate is the refuser. The app itself is what was
+      // taken down, which is why an innocent collaborator is refused too.
+      name: 'BANNED OWNER + UNBANNED editor viewer → owner-banned (the app was taken down)',
       viewer: viewers.editor,
       seatFor: EDITOR,
       ownerBannedAt: new Date('2026-09-01'),
@@ -240,6 +298,21 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
       viewer: viewers.moderator,
       ownerBannedAt: new Date('2026-09-01'),
       expected: { allowed: true, audience: 'moderator' },
+    },
+    {
+      // The gate moved in from the SSR route. Placed last in the predicate because it
+      // depends on nothing but the manifest.
+      name: 'no iframe.src → no-iframe-src (nothing to host)',
+      viewer: viewers.owner,
+      block: blockRow({
+        manifest: {
+          name: 'Seed Explorer',
+          scopes: [],
+          page: { path: '/', title: 'Seed' },
+          iframe: { sandbox: 'allow-scripts' },
+        },
+      }),
+      expected: { allowed: false, reason: 'no-iframe-src' },
     },
     {
       name: 'NOT DEPLOYED → not-deployed, for an otherwise fully-eligible owner',
@@ -275,7 +348,12 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
 
   for (const row of rows) {
     it(row.name, async () => {
-      wire({ block: row.block, seatFor: row.seatFor, ownerBannedAt: row.ownerBannedAt });
+      wire({
+        block: row.block,
+        seatFor: row.seatFor,
+        seatStatus: row.seatStatus,
+        ownerBannedAt: row.ownerBannedAt,
+      });
       const res = await resolvePrivateRunAccess({
         by: { appBlockId: APP_BLOCK },
         viewer: row.viewer as never,
@@ -304,23 +382,26 @@ describe('resolvePrivateRunAccess — the access matrix [REG]', () => {
     expect(new Set(allowed.map((r) => r.expected.audience))).toEqual(
       new Set(['owner', 'editor', 'moderator'])
     );
-    // Every refusal reason the predicate can produce must appear at least once.
+    // 🔴 EVERY refusal reason the predicate can produce must appear at least once — and
+    // the expected set is DERIVED from the exported runtime tuple, not hand-copied.
+    // Types are erased, so a hand-written list stays green when a NINTH reason is added
+    // to the union and has no row, against a comment claiming completeness. Deriving is
+    // what makes the claim true; `PRIVATE_RUN_REFUSAL_REASONS` is the same
+    // tuple-as-source-of-truth shape `PRIVATE_RUN_AUDIENCES` uses one module over.
     expect(new Set(refused.map((r) => r.expected.reason))).toEqual(
-      new Set([
-        'flag-off',
-        'viewer-ineligible',
-        'no-app',
-        'approved',
-        'not-a-page',
-        'no-role',
-        'owner-banned',
-        'not-deployed',
-      ])
+      new Set(PRIVATE_RUN_REFUSAL_REASONS)
     );
   });
 });
 
-describe('resolvePrivateRunAccess — guard REACHABILITY [REG]', () => {
+describe('resolvePrivateRunAccess — guard REACHABILITY [INV]', () => {
+  /**
+   * ⚠️ RELABELLED FROM [REG] TO [INV], and the correction is worth stating: reachability
+   * is a property of the GATE ORDER, which is an invariant this code establishes rather
+   * than a regression it fixes. Calling it [REG] undersold what these tests are — they
+   * are the most valuable describe in the file, because a guard no fixture can reach
+   * passes a mutation sweep while providing nothing, and no [REG] label can buy that.
+   */
   /**
    * 🔴 A GUARD THAT NEVER EXECUTES PASSES A MUTATION SWEEP. These tests prove each
    * guard is REACHED with a fixture that no EARLIER check rejects — which is a
@@ -375,18 +456,79 @@ describe('resolvePrivateRunAccess — guard REACHABILITY [REG]', () => {
     expect(mockWriteDb.user.findUnique).toHaveBeenCalled();
   });
 
-  it('🔴 the OWNER-BAN gate is REACHED, and is SKIPPED for a moderator', async () => {
-    wire({ ownerBannedAt: new Date('2026-09-01') });
-    const asOwner = await resolvePrivateRunAccess({
+  it('🔴 the OWNER-BAN read is keyed on the OWNER, not the VIEWER', async () => {
+    // ⚠️ THE WHOLE MATRIX ABOVE PASSES WITH THIS MUTATED, WHICH IS WHY THIS TEST EXISTS.
+    // Every `user.findUnique` assertion in this file was args-blind
+    // (`toHaveBeenCalled()`), so `where: { id: block.ownerUserId }` →
+    // `where: { id: viewer.id }` survived all 22 rows — INCLUDING the row whose entire
+    // point is that the OWNER's ban refuses an unbanned EDITOR. The service docblock
+    // states the property; nothing pinned it.
+    //
+    // The fixture makes the two ids distinguishable on purpose: the viewer is the
+    // EDITOR (4002) and the owner is OWNER (4001), so a swapped key reads a different
+    // row and the assertion names which.
+    wire({ seatFor: EDITOR, ownerBannedAt: null });
+    await resolvePrivateRunAccess({
       by: { appBlockId: APP_BLOCK },
-      viewer: viewers.owner as never,
+      viewer: viewers.editor as never,
       db: 'write',
       privateRunEnabled: true,
     });
-    expect(asOwner).toEqual({ allowed: false, reason: 'owner-banned' });
+    // The OWNER-ban read: keyed on the owner, and identifiable by its narrower select
+    // (`{ bannedAt }`) — the VIEWER read legitimately asks about the editor's own id with
+    // `{ deletedAt, bannedAt }`, so the id alone no longer discriminates the two.
+    expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
+      where: { id: OWNER },
+      select: { bannedAt: true },
+    });
+    // 🔴 THE DISCRIMINATING HALF: the owner-ban read must NEVER be asked about the
+    // VIEWER. This is the assertion that kills `where: { id: viewer.id }`.
+    expect(mockWriteDb.user.findUnique).not.toHaveBeenCalledWith({
+      where: { id: EDITOR },
+      select: { bannedAt: true },
+    });
+  });
 
-    // The moderator arm must not even take the read — that is the cheap, observable
-    // proof that the skip is a real branch and not an accident of the ban value.
+  it('🔴 the SEAT read is keyed on the LISTING and the VIEWER, with the ACCEPTED status', async () => {
+    // Same class one query over: the seat mock keyed only on `userId`, so a mutant
+    // resolving the seat against the BLOCK id rather than the listing id — or dropping
+    // the status filter — survived. Pin all three terms of the query.
+    wire({ seatFor: EDITOR });
+    await resolvePrivateRunAccess({
+      by: { appBlockId: APP_BLOCK },
+      viewer: viewers.editor as never,
+      db: 'write',
+      privateRunEnabled: true,
+    });
+    expect(mockWriteDb.appCollaborator.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appListingId: LISTING,
+          userId: EDITOR,
+          status: 'accepted',
+        }),
+      })
+    );
+  });
+
+  it('🔴 the OWNER-BAN gate is REACHED, and is SKIPPED for a moderator', async () => {
+    // 🔴 AN EDITOR, NOT THE OWNER. For the `owner` audience the viewer IS the owner, so a
+    // banned owner is refused at the earlier VIEWER gate and this guard is never
+    // reached — using the owner here would have tested the wrong gate while reading as a
+    // test of this one. An UNBANNED editor is the fixture that reaches it.
+    wire({ seatFor: EDITOR, ownerBannedAt: new Date('2026-09-01') });
+    const asEditor = await resolvePrivateRunAccess({
+      by: { appBlockId: APP_BLOCK },
+      viewer: viewers.editor as never,
+      db: 'write',
+      privateRunEnabled: true,
+    });
+    expect(asEditor).toEqual({ allowed: false, reason: 'owner-banned' });
+
+    // The moderator arm must not take the OWNER read — the cheap, observable proof that
+    // the skip is a real branch and not an accident of the ban value. It DOES still take
+    // the VIEWER read (every audience does), so the assertion names the owner read by its
+    // narrower select rather than asserting the spy was never called at all.
     for (const db of [mockDb, mockWriteDb]) db.user.findUnique.mockClear();
     const asMod = await resolvePrivateRunAccess({
       by: { appBlockId: APP_BLOCK },
@@ -395,7 +537,15 @@ describe('resolvePrivateRunAccess — guard REACHABILITY [REG]', () => {
       privateRunEnabled: true,
     });
     expect(asMod.allowed).toBe(true);
-    expect(mockWriteDb.user.findUnique).not.toHaveBeenCalled();
+    expect(mockWriteDb.user.findUnique).not.toHaveBeenCalledWith({
+      where: { id: OWNER },
+      select: { bannedAt: true },
+    });
+    // …and the viewer read DID happen, so the moderator is not exempt from eligibility.
+    expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
+      where: { id: MOD },
+      select: { deletedAt: true, bannedAt: true },
+    });
   });
 });
 

@@ -24,7 +24,11 @@ import {
   USER_SUB_RE,
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
-import { isKnownBlockScope, isPrivateRunAudience } from '~/shared/constants/block-scope.constants';
+import {
+  isKnownBlockScope,
+  isPrivateRunAudience,
+  type PrivateRunAudience,
+} from '~/shared/constants/block-scope.constants';
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
@@ -183,7 +187,7 @@ export interface BlockTokenClaims {
    * an unrecognised value would otherwise fail an `=== 'editor'` test and be treated as
    * an owner, which is the wrong direction for a guard to fail in.
    */
-  privateRunAudience?: 'owner' | 'editor' | 'moderator';
+  privateRunAudience?: PrivateRunAudience;
 }
 
 /**
@@ -821,8 +825,9 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       if (claims.privateRun === true && claims.dev === true) {
         return null;
       }
-      // PRIVATE-RUN AUDIENCE shape guard, in three parts — and the CLOSED-SET test is
-      // the one that matters.
+      // PRIVATE-RUN AUDIENCE shape guard, in TWO parts — and the CLOSED-SET test is
+      // the one that matters. (This said "three parts" and listed two; the count was
+      // wrong, not the guard.)
       //
       // 🔴 `typeof === 'string'` WOULD NOT BE ENOUGH, AND THE FAILURE DIRECTION IS WHY.
       // Two consumers branch on this value: the approval verdict requires a RECOGNISED

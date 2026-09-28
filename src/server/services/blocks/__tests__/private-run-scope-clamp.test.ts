@@ -1,17 +1,31 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   clampPrivateRunScopes,
   clampTunnelDeclaredScopes,
+  parseManifestBuzzBudget,
   PRIVATE_RUN_FORBIDDEN_SCOPES,
+  PRIVATE_RUN_MINT_SCOPE_ALLOWLIST,
   resolveDevBuzzBudget,
   DEV_BUZZ_BUDGET_CAP,
   DEV_BUZZ_BUDGET_DEFAULT,
+} from '~/server/services/blocks/dev-scoped-mint.service';
+import {
+  REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+  TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import { BLOCK_SCOPE_TO_OAUTH_BIT } from '~/shared/constants/block-scope.constants';
 
 /**
  * THE PRIVATE-RUN SCOPE CLAMP — non-widening, the third-rail strip, and the editor
- * read-only strip. All [REG]: `clampPrivateRunScopes` does not exist at `f7f5eb4996`.
+ * read-only strip.
+ *
+ * ⚠️ MOSTLY [REG] — `clampPrivateRunScopes` does not exist at `f7f5eb4996`, so every row
+ * that calls it is red there. The header used to say "All [REG]" and that was an
+ * over-claim: the rows asserting properties of PRE-EXISTING constants are [INV] and are
+ * marked individually. Laundering an invariant into regression coverage is exactly what
+ * this file's own doctrine forbids.
  *
  * 🔴 THE VOCABULARY IS ASSERTED AGAINST `BLOCK_SCOPE_TO_OAUTH_BIT`, NEVER A
  * HAND-WRITTEN LIST. A hand-written list of "the known scopes" drifts from the real
@@ -27,8 +41,78 @@ describe('clampPrivateRunScopes — non-widening [REG]', () => {
     const granted = clampPrivateRunScopes(approved, 'owner');
     expect(granted).toEqual(['models:read:self', 'user:read:self']);
     expect(granted).not.toContain('ai:write:budgeted');
-    expect(granted).not.toContain('posts:write:self');
-    expect(granted).not.toContain('collections:read:private');
+  });
+
+  it('🔴 [REG] the NON-OWNER scopes are refused EVEN WHEN THE SNAPSHOT DECLARES THEM', () => {
+    // ⚠️ THIS TEST EXISTS BECAUSE ITS FIRST VERSION WAS VACUOUS AND THE CODE WAS WRONG.
+    // The row above used to also assert `not.toContain('posts:write:self')` and
+    // `not.toContain('collections:read:private')` — against an input containing NEITHER.
+    // Both assertions passed whatever the clamp did, including with the allowlist step
+    // deleted entirely, and they were the ONLY assertions in the file about those
+    // scopes. They read as coverage for a property that did not hold.
+    //
+    // 🔴 WHAT THEY WERE HIDING: the clamp composed `clampTunnelDeclaredScopes`, whose
+    // ceiling is the AUTHOR-FACING dev-tunnel allowlist. That allowlist includes
+    // `posts:write:self`, `collections:write:self`, `collections:read:private` and
+    // `goods:read:self` — safe for an owner-only surface, and handed straight to a
+    // MODERATOR and an accepted COLLABORATOR here. The worst reachable consequence was a
+    // taken-down app publishing a real, feed-visible, reward-earning Post under the
+    // REVIEWING MODERATOR'S byline.
+    //
+    // The fixture now FEEDS each scope in and watches it be dropped, which is the only
+    // form of this assertion that can fail. Per audience, because the hazard is
+    // audience-shaped.
+    const hostile = [
+      'posts:write:self',
+      'collections:write:self',
+      'collections:read:private',
+      'goods:read:self',
+      'goods:purchase:self',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+      'models:read:self',
+    ];
+    for (const audience of ['owner', 'editor', 'moderator'] as const) {
+      const granted = clampPrivateRunScopes(hostile, audience);
+      for (const denied of hostile.filter((s) => s !== 'models:read:self')) {
+        expect(granted, `audience=${audience} must not receive ${denied}`).not.toContain(denied);
+      }
+      // POSITIVE CONTROL in the same assertion set: a scope that SHOULD survive does,
+      // so this is not a clamp that returns nothing.
+      expect(granted, `audience=${audience}`).toContain('models:read:self');
+    }
+  });
+
+  it('🔴 [INV] the ceiling is DERIVED from the reviewed non-owner allowlist, not invented', () => {
+    // Pins the relationship rather than the members: the private-run ceiling must remain
+    // a SUBSET of `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`, which is the repo's already
+    // reviewed answer to "a non-owner running someone else's non-approved app against
+    // their own session". Deriving means a future tightening of that set tightens this
+    // one too; asserting containment is what stops the two drifting apart if somebody
+    // later spells this list out by hand.
+    for (const s of PRIVATE_RUN_MINT_SCOPE_ALLOWLIST) {
+      expect(
+        REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has(s),
+        `${s} is in the private-run ceiling but not in the reviewed non-owner ceiling`
+      ).toBe(true);
+    }
+    // And the two deliberate subtractions are actually subtracted — otherwise
+    // "derived minus storage" is a comment rather than a fact.
+    expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has('apps:storage:read')).toBe(false);
+    expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has('apps:storage:write')).toBe(false);
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('apps:storage:read')).toBe(true);
+    // Non-empty, or every assertion above is vacuous.
+    expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.size).toBeGreaterThan(2);
+  });
+
+  it('🔴 [REG] it is NOT the author-facing tunnel ceiling — the two must differ', () => {
+    // The discriminating assertion for the whole finding. If someone "simplifies" the
+    // clamp back to `clampTunnelDeclaredScopes`, this is what goes red.
+    expect(TUNNEL_HOST_MINT_SCOPE_ALLOWLIST.has('posts:write:self')).toBe(true);
+    expect(PRIVATE_RUN_MINT_SCOPE_ALLOWLIST.has('posts:write:self')).toBe(false);
+    expect(clampPrivateRunScopes(['posts:write:self'], 'moderator')).toEqual(['user:read:self']);
+    // …while the TUNNEL clamp, correctly for its own owner-only surface, keeps it.
+    expect(clampTunnelDeclaredScopes(['posts:write:self'])).toContain('posts:write:self');
   });
 
   it('🔴 approvedScopes: [] mints a VALID set that can spend NOTHING — not a refusal', () => {
@@ -82,7 +166,35 @@ describe('clampPrivateRunScopes — the THIRD BUZZ RAIL is stripped [REG]', () =
     }
   });
 
-  it('🔴 the strip survives even if the INNER clamp starts passing the scope through', () => {
+  it('🔴 the step-2 STRIP EXISTS IN SOURCE — the only form of this that can fail', () => {
+    // ⚠️ THE TEST BELOW CLAIMS A MUTATION IT DOES NOT PERFORM, and review caught it.
+    // Deleting the `PRIVATE_RUN_FORBIDDEN_SCOPES` filter from `clampPrivateRunScopes`
+    // leaves this whole FILE green, because the allowlist step already drops the tip
+    // scope — so the strip is a no-op TODAY and no behavioural assertion can see it.
+    //
+    // 🔴 SO IT IS LEDGERED IN SOURCE INSTEAD, which is the same remedy
+    // `no-unthreaded-private-run-claim` uses for the same reason: a guard whose value is
+    // entirely in the FUTURE cannot be pinned behaviourally in the present. The day
+    // anyone adds `social:tip:self` to the private-run ceiling for some other reason,
+    // the strip becomes load-bearing — and it will still be there, because this went red
+    // the moment somebody removed it as dead code.
+    const src = readFileSync(
+      join(process.cwd(), 'src/server/services/blocks/dev-scoped-mint.service.ts'),
+      'utf8'
+    );
+    const body = src.slice(src.indexOf('export function clampPrivateRunScopes'));
+    const fnEnd = body.indexOf('\n}');
+    const clampBody = body.slice(0, fnEnd);
+    // Positive control: the region really is the function, not an empty slice.
+    expect(clampBody).toContain('clampDevScopes');
+    expect(clampBody).toContain("audience === 'editor'");
+    // The strip itself.
+    expect(clampBody, 'the step-2 third-rail strip must remain in clampPrivateRunScopes').toContain(
+      'PRIVATE_RUN_FORBIDDEN_SCOPES.has'
+    );
+  });
+
+  it('the strip is a NO-OP today relative to the ceiling — stated, not implied', () => {
     // The redundancy is the point, and this is the test that makes it real rather than
     // a comment. `clampPrivateRunScopes` composes the tunnel belt, which today happens
     // to exclude the tip scope — so the strip is currently a no-op and would SURVIVE a
@@ -182,27 +294,53 @@ describe('private-run budget containment [REG]', () => {
     expect(resolveDevBuzzBudget(granted, undefined, undefined)).toBe(DEV_BUZZ_BUDGET_DEFAULT);
   });
 
-  it('🔴 NaN / Infinity / 0 / negative / non-integer must not produce a usable budget', () => {
-    // In a money path `NaN` is not "a bad number", it is a value that makes EVERY `>`
-    // and `<` guard return false at once — so it must be caught where the number is
-    // PRODUCED, not where it is compared. `Math.min(NaN, cap)` is NaN, and a NaN budget
-    // claim makes the per-call ceiling comparison vacuously permissive.
-    const granted = clampPrivateRunScopes(['ai:write:budgeted'], 'moderator');
-    for (const bad of [NaN, Infinity, -Infinity, 0, -5, 12.5]) {
-      const got = resolveDevBuzzBudget(granted, undefined, bad as number);
-      const usable = typeof got === 'number' && Number.isInteger(got) && got > 0;
-      // A non-positive / non-finite / non-integer input must never yield a usable
-      // positive integer budget. `Infinity` clamps to the cap (safe); `NaN` and the
-      // non-integers are the ones this row exists to make visible.
-      if (bad === Infinity) {
-        expect(got).toBe(DEV_BUZZ_BUDGET_CAP);
-      } else {
-        expect(
-          usable && got === bad,
-          `a budget of ${String(bad)} must not pass through as a usable ceiling`
-        ).toBe(false);
-      }
+  it('🔴 a BAD manifest budget is refused by the PRODUCER, which is where it must be', () => {
+    // ⚠️ THIS TEST REPLACED A TAUTOLOGY, and the tautology is the point of the comment.
+    // It previously computed `usable = typeof got === 'number' && Number.isInteger(got)
+    // && got > 0` and asserted `usable && got === bad` was false. Every input in the set
+    // is non-positive, non-finite or non-integer, so that conjunction is UNSATISFIABLE —
+    // the assertion held for every possible output, including the hazardous ones.
+    //
+    // 🔴 AND THE HAZARDOUS OUTPUTS ARE REAL: `resolveDevBuzzBudget` is `Math.min(bad,
+    // CAP)`, so it returns NaN for NaN, -5 for -5 and 12.5 for 12.5. It is NOT the guard.
+    // The guard is `parseManifestBuzzBudget`, which is where the comment always said it
+    // should be ("caught where the number is PRODUCED") — and which the old test never
+    // called. In a money path NaN is not "a bad number", it is a value that makes every
+    // `>` and `<` comparison return false at once, so proving the PRODUCER refuses it is
+    // the assertion that matters.
+    for (const bad of [NaN, Infinity, -Infinity, 0, -5, 12.5, -0.5]) {
+      expect(
+        parseManifestBuzzBudget({ buzzBudgetPerGen: bad }),
+        `a manifest budget of ${String(bad)} must not be parsed into a usable ceiling`
+      ).toBeUndefined();
     }
+    // Non-numbers too — the manifest is publisher JSON.
+    for (const bad of ['250', null, {}, [], true, undefined]) {
+      expect(parseManifestBuzzBudget({ buzzBudgetPerGen: bad }), String(bad)).toBeUndefined();
+    }
+  });
+
+  it('POSITIVE CONTROL: the producer DOES accept a good budget', () => {
+    // Without this, the loop above passes against a `parseManifestBuzzBudget` that
+    // returns `undefined` unconditionally — i.e. a parser wired to nothing.
+    expect(parseManifestBuzzBudget({ buzzBudgetPerGen: 137 })).toBe(137);
+    expect(parseManifestBuzzBudget({ buzzBudgetPerGen: 1 })).toBe(1);
+  });
+
+  it('⚠️ RECORDED: resolveDevBuzzBudget itself does NOT sanitise — it clamps only', () => {
+    // Pinned as the honest statement of where the guard is NOT, so nobody reads the
+    // rows above as evidence that the whole chain is defensive. If this ever starts
+    // returning `undefined` for NaN, that is an improvement — update this test then.
+    const granted = clampPrivateRunScopes(['ai:write:budgeted'], 'moderator');
+    expect(resolveDevBuzzBudget(granted, undefined, NaN)).toBeNaN();
+    expect(resolveDevBuzzBudget(granted, undefined, -5)).toBe(-5);
+    expect(resolveDevBuzzBudget(granted, undefined, 12.5)).toBe(12.5);
+    // Which is why the MINT must source its budget through the producer. It does:
+    // `parseManifestBuzzBudget(app.manifest.page)` feeds `resolveDevBuzzBudget`, so a
+    // bad manifest value becomes `undefined` and then the flat platform default.
+    expect(
+      resolveDevBuzzBudget(granted, undefined, parseManifestBuzzBudget({ buzzBudgetPerGen: NaN }))
+    ).toBe(DEV_BUZZ_BUDGET_DEFAULT);
   });
 });
 

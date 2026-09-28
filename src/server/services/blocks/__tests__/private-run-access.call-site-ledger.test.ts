@@ -208,8 +208,18 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     // hardcodes `true`.
     for (const f of PREDICATE_CALLERS) {
       const code = CODE.get(f)!;
-      expect(code, `${f} must evaluate the flag`).toContain('isAppBlocksPrivateRunEnabled');
+      // 🔴 THE CALL SHAPE, NOT THE BARE NAME. `toContain('isAppBlocksPrivateRunEnabled')`
+      // was satisfied by the SSR route's static `import { isAppBlocksPrivateRunEnabled }`
+      // on its own — `stripCommentsAndStrings` removes comments and string literals but
+      // not imports. So replacing the evaluation with `const privateRunEnabled = true;`
+      // and leaving the import passed, and the `not.toContain` below does not match that
+      // spelling either. Requiring `…Enabled(` means an import cannot satisfy it.
+      expect(code, `${f} must CALL the flag accessor, not merely import it`).toContain(
+        'isAppBlocksPrivateRunEnabled('
+      );
+      // And it must reach the predicate as a value derived from that call, not a literal.
       expect(code, `${f} must not hardcode the flag`).not.toContain('privateRunEnabled: true');
+      expect(code, `${f} must not hardcode the flag`).not.toContain('privateRunEnabled: false');
     }
   });
 });

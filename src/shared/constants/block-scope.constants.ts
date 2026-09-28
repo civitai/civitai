@@ -25,6 +25,13 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
+// module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
+// so a VALUE import would pull a server path into a module this file's own header keeps
+// deliberately dependency-free and which client code imports. A type-only import is
+// ERASED at compile time and creates no runtime edge at all, so it buys the compile-time
+// binding described at `PrivateRunAudience` below at zero graph cost.
+import type { AppRole } from './app-capabilities.constants';
 
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
@@ -276,7 +283,30 @@ export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
  */
 export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
 
-export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
+/**
+ * 🔴 EVERY DECLARATION OF THIS UNION MUST IMPORT THIS TYPE, NEVER SPELL IT INLINE.
+ *
+ * Six sites originally hand-spelled `'owner' | 'editor' | 'moderator'` — the two clamp
+ * and signer signatures, the two claim declarations, and two page props. The failure
+ * that shape produces is in the UNSAFE direction and is invisible: widening
+ * `PRIVATE_RUN_AUDIENCES` immediately widens `isPrivateRunAudience`, so the verifier
+ * starts ADMITTING a fourth value into fields still typed to three. Claims are a JWT
+ * payload with no compile-time binding, so `claims.privateRunAudience === 'editor'` in
+ * the read-only belt still type-checks — and the new audience silently receives
+ * owner/moderator treatment. That is precisely the failure the claim's own docblock
+ * says it is guarding against; the verifier guard closes the FORGED case, and importing
+ * this type is what closes the WIDENED one.
+ *
+ * ⚠️ It is NOT derived from the tuple above directly. It is `AppRole | 'moderator'`,
+ * because two of the three members ARE the roles `resolveAppAccess` returns, and saying
+ * so is what makes the bridge in the predicate an assignment rather than a ternary that
+ * rewrites a value into itself. A future third `AppRole` then becomes a COMPILE ERROR at
+ * that bridge instead of being silently collapsed into `'editor'` — which would
+ * under-grant (safe) while mislabelling the audit line and the chrome copy (not safe to
+ * leave unnoticed). `PRIVATE_RUN_AUDIENCES` stays the runtime membership source, and the
+ * lockstep test below pins the two against each other so they cannot drift.
+ */
+export type PrivateRunAudience = AppRole | 'moderator';
 
 /**
  * Membership test for the `privateRunAudience` token claim.

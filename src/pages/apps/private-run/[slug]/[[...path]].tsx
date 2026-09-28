@@ -14,6 +14,7 @@ import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-ac
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
  * PRIVATE RUN — `/apps/private-run/<slug>` (+ optional sub-path).
@@ -42,11 +43,22 @@ import { Page } from '~/components/AppLayout/Page';
  *
  * ── WHAT THIS ROUTE DELIBERATELY DOES NOT DO ────────────────────────────────────
  * 🔴 IT DOES NOT CALL `recordAppListingOpen`. A private review run is not a PLAY.
- * Recording it would move a suspended app's play count and its owner-visible
- * analytics — so a moderator quietly reviewing a takedown would show up in the
- * publisher's dashboard as engagement, which is both wrong as a number and a signal to
- * a bad actor that review is happening right now. The audit trail for a private run is
- * the mint's internal `app-blocks.private-run.mint` line, which the owner cannot see.
+ * Recording it would move a suspended app's play count, and a moderator quietly
+ * reviewing a takedown should not appear in the publisher's dashboard at all — that is
+ * both wrong as a number and a signal to a bad actor that review is happening right
+ * now. The audit trail for a private run is the mint's internal
+ * `app-blocks.private-run.mint` line, which the owner cannot see.
+ *
+ * ⚠️ BUT THIS OMISSION DOES NOT BY ITSELF MAKE A PRIVATE RUN INVISIBLE, AND AN EARLIER
+ * VERSION OF THIS PARAGRAPH IMPLIED IT DID. The play count is closed here; the
+ * ANALYTICS half is not. Two other writers still feed the owner-visible panel — the
+ * voided `block_spend_attribution` row (whose owner-visible reads carry no `status`
+ * predicate) and every `block_scope_invocations` row `withBlockScope` writes for a
+ * scoped call, which is read into the engagement count and a `count(DISTINCT
+ * user_id)`. Neither is reachable while the flag is off, and both are a documented
+ * PRECONDITION on widening it (stated at `isAppBlocksPrivateRunEnabled`). Saying so
+ * here matters because this is the comment a reader would otherwise cite as evidence
+ * that the invisibility decision is delivered.
  *
  * It also omits the beta and listing-icon reads the public route performs: both are
  * store-listing chrome, and this app's listing is `removed`.
@@ -79,7 +91,7 @@ interface PageProps {
    * stamps independently from the same predicate; this prop exists so the banner can
    * say something true about why the viewer is here.
    */
-  audience: 'owner' | 'editor' | 'moderator';
+  audience: PrivateRunAudience;
   /**
    * The block's status, for the chrome copy.
    *
@@ -134,8 +146,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!access.allowed) return { notFound: true };
 
     const block = access.block;
-    // A resolved app with no `iframe.src` has nothing to host; same bare refusal.
-    if (!block.iframeSrc) return { notFound: true };
+    // 🔴 NO `iframeSrc` CHECK HERE ANY MORE — the predicate owns it (`no-iframe-src`).
+    // It used to live here, AFTER the predicate, while the mint applied no equivalent —
+    // so the two callers could disagree and the mint could issue a token for a page this
+    // route 404s. Moving it into the shared predicate is the whole point of there being
+    // one; re-adding it here would not be wrong, but it would start the drift again.
+    if (!block.iframeSrc) {
+      // Unreachable: the predicate refuses `no-iframe-src` above. Kept as a typed
+      // narrowing for the `iframeSrc: string` prop rather than a cast, and NOT counted
+      // as a gate — the seam test asserts the predicate is the thing that refuses.
+      return { notFound: true };
+    }
 
     // GATE 4 — MATURITY. Unchanged from the public route, deliberately: the forced-SFW
     // token ceiling plus this host gate. Today every suspended block is `g` except one
@@ -175,10 +196,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
  * The chrome copy. Extracted so the route test can assert the `pending` sentence
  * without rendering Mantine, and so the two facts it must convey stay in one place.
  */
-export function privateRunNotice(args: {
-  audience: 'owner' | 'editor' | 'moderator';
-  status: string;
-}): string {
+export function privateRunNotice(args: { audience: PrivateRunAudience; status: string }): string {
   const why =
     args.audience === 'moderator'
       ? 'You are viewing this app as a moderator.'

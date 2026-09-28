@@ -6157,11 +6157,22 @@ export const blocksRouter = router({
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
+            // 🔴 ONE ARM PER CEILING, BECAUSE THE SENTENCE NAMES THE WINDOW AND THE
+            // SCOPE. A private run reserves against a per-(viewer, app) counter on a
+            // rolling ~25h key, so the `else` below — "already spent today across your
+            // installed apps… daily cap" — described a cap that was not the one
+            // enforced, on the one surface whose users are moderators who will file a
+            // bug about it. `reviewRunForReal` already had its own arm for exactly this
+            // reason; this adds the third.
             error:
               claims.reviewRunForReal === true
                 ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
                   `spent this review session, this generation costs ${cost}, ` +
                   `session cap is ${buzzCap}`
+                : claims.privateRun === true
+                ? `private-run Buzz cap reached: ${total - Math.ceil(cost)} already spent ` +
+                  `on this app's private run, this generation costs ${cost}, ` +
+                  `cap is ${buzzCap} per app`
                 : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
                   `across your installed apps, this generation costs ${cost}, ` +
                   `daily cap is ${buzzCap}`,

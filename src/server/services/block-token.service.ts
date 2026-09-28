@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
 import { ANON_SUBJECT, subjectForUserId } from '~/server/services/block-token-subject';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
@@ -274,7 +275,7 @@ export interface SignBlockTokenInput {
    * silently failing an equality test against `'editor'` and being treated as an
    * owner.
    */
-  privateRunAudience?: 'owner' | 'editor' | 'moderator';
+  privateRunAudience?: PrivateRunAudience;
 }
 
 export interface SignBlockTokenResult {
