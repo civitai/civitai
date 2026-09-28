@@ -3,6 +3,7 @@ import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
+import { AVATAR_URL_PREFIXES } from '~/server/utils/image-scan-url';
 import { constants } from '~/server/common/constants';
 import {
   OnboardingComplete,
@@ -344,15 +345,11 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   }
 };
 
-const validAvatarUrlPrefixes = [
-  'https://cdn.discordapp.com/avatars/',
-  'https://cdn.discordapp.com/embed/avatars/',
-  'https://avatars.githubusercontent.com/u/',
-  'https://lh3.googleusercontent.com/a/',
-];
+// The avatar-host prefixes are shared with the image-scan ingestion allowlist
+// (~/server/utils/image-scan-url) — one list, two consumers, so they cannot drift.
 const verifyAvatar = (avatar: string) => {
   if (avatar.startsWith('http')) {
-    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
+    return AVATAR_URL_PREFIXES.some((prefix) => avatar.startsWith(prefix));
   } else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
 };

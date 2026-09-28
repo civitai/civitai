@@ -3,7 +3,25 @@ import { env } from '~/env/server';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { ImageIngestionUrlBlockedError } from '~/server/utils/image-scan-url';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+
+/**
+ * The orchestrator's failure body echoes the submitted workflow, whose callback entry
+ * carries `?token=$WEBHOOK_TOKEN`. The route is moderator-OR-token gated, so the echo
+ * leaks nothing a token-holder lacks — but it must not hand the token to a moderator
+ * (or to whoever can reach a 502 response body in logs/support screenshots). Strip every
+ * occurrence of the token from the serialized value.
+ */
+export function redactWebhookToken<T>(value: T, token?: string): T {
+  if (value == null || !token) return value;
+  try {
+    // split/join, not a regex — the token may contain regex metacharacters.
+    return JSON.parse(JSON.stringify(value).split(token).join('<redacted>')) as T;
+  } catch {
+    return '<redacted>' as unknown as T;
+  }
+}
 
 /**
  * GET /api/media/ingest/:mediaId
@@ -53,10 +71,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       callbackUrl,
     });
     if (!data) {
-      return res.status(502).json({ error: error ?? 'Ingestion request failed', status, body });
+      return res
+        .status(502)
+        .json({
+          error: error ?? 'Ingestion request failed',
+          status,
+          body: redactWebhookToken(body, env.WEBHOOK_TOKEN),
+        });
     }
     return res.status(200).json({ workflowId: data.id });
   } catch (e) {
+    if (e instanceof ImageIngestionUrlBlockedError) {
+      return res.status(400).json({ error: e.message });
+    }
     const err = e as Error;
     return res.status(500).json({ error: 'Internal Server Error', message: err.message });
   }

@@ -28,6 +28,10 @@ import {
   isDefiniteNotFound,
   resolveDownloadUrl,
 } from '~/utils/delivery-worker';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+} from '~/server/utils/image-scan-url';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -122,6 +126,14 @@ export async function createImageIngestionRequest({
   priority?: Priority;
   type?: MediaType;
 }) {
+  // 🔴 This is the ONE funnel through which the orchestrator is handed a media URL to
+  // fetch from inside the cluster. `getEdgeUrl` forwards absolute http(s)/blob: URLs
+  // through unmodified, so without this guard every path that reaches `Image.url` from
+  // caller input (comics procs, article content media nodes, …) is an SSRF primitive.
+  // `ingestImage` pre-checks the same predicate so it can route the rejection through
+  // the submit-failure machinery; this throw is the backstop for direct callers.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
   const metadata = { imageId };
   const edgeUrl = getEdgeUrl(url, { type });
   // Idempotency key: if a submit returns 500 but actually created the workflow

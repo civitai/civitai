@@ -1,0 +1,93 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { mockSubmitWorkflowWithRetry, mockIsFlipt, mockSubmitWorkflow } = vi.hoisted(() => ({
+  mockSubmitWorkflowWithRetry: vi.fn(),
+  mockIsFlipt: vi.fn(),
+  mockSubmitWorkflow: vi.fn(),
+}));
+
+vi.mock('~/server/services/orchestrator/workflows', () => ({
+  submitWorkflowWithRetry: mockSubmitWorkflowWithRetry,
+}));
+vi.mock('~/server/flipt/client', () => ({
+  FLIPT_FEATURE_FLAGS: { IMAGE_INGESTION_IMAGE_SCANNING: 'image_ingestion_image_scanning' },
+  isFlipt: mockIsFlipt,
+}));
+vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
+// Surface enums consumed at module-load time (mirrors createModelFileScanRequest.test).
+vi.mock('@civitai/client', () => ({
+  submitWorkflow: mockSubmitWorkflow,
+  WorkflowStatus: {},
+  TimeSpan: { fromDays: vi.fn(), fromHours: vi.fn() },
+}));
+
+import {
+  createImageIngestionRequest,
+  imageIngestionLogName,
+} from '~/server/services/orchestrator/orchestrator.service';
+
+const EVIL_URL = 'https://evil.com/scan-me.png';
+const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png';
+
+beforeEach(() => {
+  mockSubmitWorkflowWithRetry.mockReset();
+  mockIsFlipt.mockReset();
+  mockSubmitWorkflow.mockReset();
+});
+
+describe('createImageIngestionRequest URL allowlist (orchestrator funnel)', () => {
+  it('throws before any orchestrator interaction for an off-allowlist absolute URL', async () => {
+    await expect(
+      createImageIngestionRequest({ imageId: 4242, url: EVIL_URL, type: 'image' })
+    ).rejects.toThrow('not on the ingestion allowlist');
+
+    expect(mockSubmitWorkflowWithRetry).not.toHaveBeenCalled();
+    // The rejection must not depend on, or be ordered behind, the Flipt read.
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+  });
+
+  it('submits an allowed relative storage key, resolved onto the edge', async () => {
+    mockSubmitWorkflowWithRetry.mockResolvedValue({
+      data: { id: 'wf-1' },
+      response: undefined,
+      attempts: 1,
+    });
+
+    const { data } = await createImageIngestionRequest({
+      imageId: 4242,
+      url: STORAGE_KEY,
+      type: 'image',
+    });
+
+    expect(data?.id).toBe('wf-1');
+    expect(mockSubmitWorkflowWithRetry).toHaveBeenCalledTimes(1);
+    const body = mockSubmitWorkflowWithRetry.mock.calls[0][0].body;
+    // getEdgeUrl with no name passes the src itself as `name`, re-extending it — so the
+    // src appears twice. Pinned to the literal getEdgeUrl emits.
+    expect(body.arguments.mediaUrl).toBe(
+      'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png/original=true/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.jpeg'
+    );
+  });
+
+  it('submits an allowed avatar url (the only external host class)', async () => {
+    mockSubmitWorkflowWithRetry.mockResolvedValue({
+      data: { id: 'wf-2' },
+      response: undefined,
+      attempts: 1,
+    });
+
+    const { data } = await createImageIngestionRequest({
+      imageId: 4242,
+      url: 'https://lh3.googleusercontent.com/a/AAcHTtf=s96-c',
+      type: 'image',
+    });
+
+    expect(data?.id).toBe('wf-2');
+    expect(mockSubmitWorkflowWithRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the per-lane log-name helper untouched', () => {
+    expect(imageIngestionLogName(false)).toBe('image-ingestion');
+    expect(imageIngestionLogName(true)).toBe('image-scanning-ingestion');
+  });
+});
