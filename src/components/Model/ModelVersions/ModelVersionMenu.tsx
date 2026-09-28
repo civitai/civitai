@@ -25,7 +25,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelVersionMenu({
@@ -344,9 +344,7 @@ export function ModelVersionMenu({
         {currentUser?.isModerator && (
           <>
             <Menu.Label>Moderation</Menu.Label>
-            <ModeratorLookupMenuItem
-              path={moderatorBulkImageManagerPath('modelVersion', modelVersionId)}
-            >
+            <ModeratorLookupMenuItem path={moderatorModelVersionLookupPath(modelVersionId)}>
               Lookup Version
             </ModeratorLookupMenuItem>
             {published && (
