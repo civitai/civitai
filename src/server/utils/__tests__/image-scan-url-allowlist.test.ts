@@ -3,6 +3,7 @@ import {
   ImageIngestionUrlBlockedError,
   isAllowedImageScanUrl,
 } from '~/server/utils/image-scan-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 
 /**
  * The URL allowlist the image-scan ingestion submit enforces.
@@ -72,6 +73,45 @@ describe('isAllowedImageScanUrl', () => {
     // but URL-parsing failures inside the storage-host branch must not throw.
     expect(() => isAllowedImageScanUrl('http://[')).not.toThrow();
     expect(isAllowedImageScanUrl('http://[')).toBe(false);
+  });
+
+  /**
+   * The allowlist is only a boundary if it gates EXACTLY the set `getEdgeUrl` forwards
+   * unmodified. A URL that this predicate treats as a relative key but `getEdgeUrl`
+   * passes straight through reaches the orchestrator verbatim — and WHATWG URL parsing
+   * accepts a single slash after a special scheme, so `http:/host` is normalized back to
+   * `http://host` at the fetch. These rows are that gap, pinned to literal `false`.
+   */
+  it('rejects scheme forms that getEdgeUrl forwards unmodified but that lack the // separator', () => {
+    expect(isAllowedImageScanUrl('http:/127.0.0.1:6379/')).toBe(false);
+    expect(isAllowedImageScanUrl('http:/169.254.169.254/latest/meta-data/')).toBe(false);
+    expect(isAllowedImageScanUrl('https:/evil.com/a.png')).toBe(false);
+    expect(isAllowedImageScanUrl('http:evil.com/a.png')).toBe(false);
+    expect(isAllowedImageScanUrl('http:\\\\evil.com/a.png')).toBe(false);
+    // Starts with `http`, so forwarded unmodified, but is not an http(s) URL at all.
+    expect(isAllowedImageScanUrl('httpx://evil.com/a.png')).toBe(false);
+  });
+
+  it('still allows our own hosts written with the same slash-light scheme forms', () => {
+    // These normalize onto our storage edge, so forwarding them is harmless; the guard
+    // must reject by HOST, not by rejecting every unusual scheme spelling.
+    expect(isAllowedImageScanUrl('http:/image.civitai.com/a/b.png')).toBe(true);
+  });
+
+  it('keeps treating non-http(s) schemes as relative keys — getEdgeUrl prefixes them', () => {
+    // `file:` / protocol-relative do NOT start with `http`, so getEdgeUrl prefixes them
+    // with our image location and they can only ever 404 on our own edge.
+    expect(isAllowedImageScanUrl('file:///etc/passwd')).toBe(true);
+    expect(isAllowedImageScanUrl('//evil.com/a.png')).toBe(true);
+  });
+
+  it('mirrors getEdgeUrl passthrough exactly — one predicate, three consumers', () => {
+    // Structural: the allowlist and both getEdgeUrl call sites must consume the SAME
+    // predicate. If this drifts, the behavioural rows above stop covering the real seam.
+    expect(isEdgeUrlPassthrough('http:/127.0.0.1:6379/')).toBe(true);
+    expect(isEdgeUrlPassthrough('blob:https://civitai.com/x')).toBe(true);
+    expect(isEdgeUrlPassthrough('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png')).toBe(false);
+    expect(isEdgeUrlPassthrough('file:///etc/passwd')).toBe(false);
   });
 
   it('names the rejected url in the error, never the callback', () => {

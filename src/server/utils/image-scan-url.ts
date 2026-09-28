@@ -1,4 +1,5 @@
 import { isValidCivitaiImageUrl } from '~/utils/article-helpers';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 
 /**
  * Allowlist for the URLs the image-scan ingestion may be pointed at.
@@ -45,9 +46,20 @@ export class ImageIngestionUrlBlockedError extends Error {
 
 export function isAllowedImageScanUrl(url: string): boolean {
   if (!url) return false;
+  // Never fetchable server-side, so only ever a guaranteed-failed workflow. Checked
+  // case-insensitively — strictly stronger than the passthrough test below.
   if (/^blob:/i.test(url)) return false;
-  // Relative — CF UUID keys like `<uuid>/<name>.png` — resolves onto our storage edge.
-  if (!/^https?:\/\//i.test(url)) return true;
+  // 🔴 The set to gate is exactly what `getEdgeUrl` forwards UNMODIFIED — hence the shared
+  // predicate rather than a second spelling of it here. Anything it rewrites is prefixed
+  // with `NEXT_PUBLIC_IMAGE_LOCATION` and can only land on our storage edge, so those
+  // (relative CF keys, and any non-`http` scheme) are allowed outright.
+  //
+  // Do NOT re-narrow this to `/^https?:\/\//`: that requires the `//`, while `getEdgeUrl`
+  // forwards on `startsWith('http')`. Strings in the gap — `http:/127.0.0.1:6379/`,
+  // `http:evil.com/x` — were read as relative keys, forwarded verbatim, and normalized
+  // back to absolute URLs by WHATWG URL parsing at the fetch: the SSRF this module closes.
+  if (!isEdgeUrlPassthrough(url)) return true;
+  if (url.startsWith('blob')) return false;
   if (AVATAR_URL_PREFIXES.some((prefix) => url.startsWith(prefix))) return true;
   return isValidCivitaiImageUrl(url);
 }
