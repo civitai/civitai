@@ -10,16 +10,20 @@ const cleanWords = getCleanedNSFWWords();
 
 export const checkLocalDb = () => {
   console.log(env.DATABASE_URL);
-  if (!(env.DATABASE_URL.includes('localhost:15432') || env.DATABASE_URL.includes('db:5432'))) {
+  // 127.0.0.1 too: on Windows Prisma resolves localhost to ::1, which Docker doesn't publish on.
+  if (
+    !['localhost:15432', '127.0.0.1:15432', 'db:5432'].some((h) => env.DATABASE_URL.includes(h))
+  ) {
     console.error('ERROR: not running with local database server.');
     process.exit(1);
   }
 };
 
 export const checkLocalMeili = () => {
+  const localHosts = ['http://localhost:7700', 'http://127.0.0.1:7700', 'http://meilisearch:7700'];
   if (
-    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.METRICS_SEARCH_HOST ?? '') ||
-    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.SEARCH_HOST ?? '')
+    !localHosts.includes(env.METRICS_SEARCH_HOST ?? '') ||
+    !localHosts.includes(env.SEARCH_HOST ?? '')
   ) {
     console.error('ERROR: not running with local meilisearch server.');
     process.exit(1);
