@@ -1,0 +1,65 @@
+diff --git a/dist/chunk-UC72DUQW.js b/dist/chunk-UC72DUQW.js
+index 0b27de9ea0c8a6c3707dd1b4290a86fe56db38b1..ab3c1104dc3ddb7e751f0d995b3f6389a785394e 100644
+--- a/dist/chunk-UC72DUQW.js
++++ b/dist/chunk-UC72DUQW.js
+@@ -1172,7 +1172,7 @@ function sniffFormat(bytes) {
+ import ExifReader from "exifreader";
+ async function toBytes(input) {
+   if (typeof input === "string") {
+-    const res = await fetch(input);
++    const res = await fetch(input, { credentials: "omit" });
+     if (!res.ok) throw new Error(`Failed to fetch ${input}: ${res.status}`);
+     return new Uint8Array(await res.arrayBuffer());
+   }
+diff --git a/dist/civitai/index.cjs b/dist/civitai/index.cjs
+index f65260d8540a2602de43b63509fd0860692cba4f..e43ef33c8658279ea8a67b70ddff321f3e5d78cf 100644
+--- a/dist/civitai/index.cjs
++++ b/dist/civitai/index.cjs
+@@ -1660,7 +1660,7 @@ function applyPlugins(plugins, baseParsers) {
+ var import_exifreader = __toESM(require("exifreader"), 1);
+ async function toBytes(input) {
+   if (typeof input === "string") {
+-    const res = await fetch(input);
++    const res = await fetch(input, { credentials: "omit" });
+     if (!res.ok) throw new Error(`Failed to fetch ${input}: ${res.status}`);
+     return new Uint8Array(await res.arrayBuffer());
+   }
+diff --git a/dist/image/index.cjs b/dist/image/index.cjs
+index 064c46d16fe5054b3d98c4a0d865b5bf0bcedca9..1cb596add623b7c26e148b8939c76eb5524de073 100644
+--- a/dist/image/index.cjs
++++ b/dist/image/index.cjs
+@@ -1241,7 +1241,7 @@ function sniffFormat(bytes) {
+ var import_exifreader = __toESM(require("exifreader"), 1);
+ async function toBytes(input) {
+   if (typeof input === "string") {
+-    const res = await fetch(input);
++    const res = await fetch(input, { credentials: "omit" });
+     if (!res.ok) throw new Error(`Failed to fetch ${input}: ${res.status}`);
+     return new Uint8Array(await res.arrayBuffer());
+   }
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 20d1f96391f0139772bb0234864054f1d95db754..f658b0045c814c3eff025a0b65eb25cd47b0d400 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1250,7 +1250,7 @@ function sniffFormat(bytes) {
+ var import_exifreader = __toESM(require("exifreader"), 1);
+ async function toBytes(input) {
+   if (typeof input === "string") {
+-    const res = await fetch(input);
++    const res = await fetch(input, { credentials: "omit" });
+     if (!res.ok) throw new Error(`Failed to fetch ${input}: ${res.status}`);
+     return new Uint8Array(await res.arrayBuffer());
+   }
+diff --git a/dist/node.cjs b/dist/node.cjs
+index ad3b7865d8e3e63a1c47ae1572d5007b7fa67b5e..22952bb0824979f039ea4fe58c78c5d6f70bee1c 100644
+--- a/dist/node.cjs
++++ b/dist/node.cjs
+@@ -1196,7 +1196,7 @@ function applyPlugins(plugins, baseParsers) {
+ var import_exifreader = __toESM(require("exifreader"), 1);
+ async function toBytes(input) {
+   if (typeof input === "string") {
+-    const res = await fetch(input);
++    const res = await fetch(input, { credentials: "omit" });
+     if (!res.ok) throw new Error(`Failed to fetch ${input}: ${res.status}`);
+     return new Uint8Array(await res.arrayBuffer());
+   }

@@ -453,7 +453,8 @@
       "utf-8-validate"
     ],
     "patchedDependencies": {
-      "@mantine/hooks": "patches/@mantine__hooks.patch"
+      "@mantine/hooks": "patches/@mantine__hooks.patch",
+      "@civitai/generation-metadata@0.3.0": "patches/@civitai__generation-metadata@0.3.0.patch"
     }
   }
 }
