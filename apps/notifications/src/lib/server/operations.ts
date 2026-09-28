@@ -156,6 +156,10 @@ export function countNotifications(input: {
   return inFlight;
 }
 
+// Past this many rows a recount stops and reports floors: a user with hundreds of thousands unread otherwise
+// scans them all (measured 8-11 s), for a number the UI caps at "1k+".
+export const COUNT_ROW_LIMIT = 10_000;
+
 async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
@@ -163,8 +167,7 @@ async function countNotificationsImpl(input: {
 }): Promise<NotificationCategoryCount[]> {
   const { userId, unread, category } = input;
 
-  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts, seeded here by
-  // setUser and adjusted by the worker's fan-out and by mark-read while it exists. It is keyed on
+  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts. It is keyed on
   // `userId` ONLY — it does not distinguish the `unread` flag or a `category` filter. So it can correctly
   // represent EXACTLY ONE variant of this query: `unread:true` with no category. For any other variant:
   //   - `unread:false` (totals incl. read): there is no worker-maintained "total" counter, so this is
@@ -196,14 +199,20 @@ async function countNotificationsImpl(input: {
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
   const query = await db.cancellableQuery<NotificationCategoryCount>(
-    `SELECT n.category, COUNT(*) AS count
-     FROM "UserNotification" un
-       JOIN "Notification" n ON n."id" = un."notificationId"
-     WHERE ${where.join(' AND ')}
+    `SELECT category, COUNT(*) AS count
+     FROM (
+       SELECT n.category
+       FROM "UserNotification" un
+         JOIN "Notification" n ON n."id" = un."notificationId"
+       WHERE ${where.join(' AND ')}
+       LIMIT ${COUNT_ROW_LIMIT + 1}
+     ) scanned
      GROUP BY category`,
     params
   );
-  const result = await query.result();
+  const rows = await query.result();
+  const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
+  const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
   if (cacheable) await notificationCache.setUser(userId, result);
   return result;
 }

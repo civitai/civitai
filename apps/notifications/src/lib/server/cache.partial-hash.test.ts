@@ -6,7 +6,7 @@ const h = vi.hoisted(() => {
   type Entry = { hash: Map<string, string>; ttl: number };
   const store = new Map<string, Entry>();
   const dbTruth: { rows: { category: string; count: number }[] } = { rows: [] };
-  const dbQueries = { count: 0 };
+  const dbQueries = { count: 0, lastSql: '' };
   // Runs after the recount has taken its snapshot and before it returns: a write that lands mid-query.
   const hooks: { duringQuery?: () => Promise<void> } = {};
 
@@ -19,6 +19,7 @@ const h = vi.hoisted(() => {
   const fakeRedis = {
     hGetAll: async (key: string) => Object.fromEntries(entry(key)?.hash ?? []),
     exists: async (key: string) => (store.has(key) ? 1 : 0),
+    hExists: async (key: string, field: string) => (entry(key)?.hash.has(field) ? 1 : 0),
     expire: async (key: string, seconds: number) => {
       const e = entry(key);
       if (!e) return false;
@@ -53,8 +54,9 @@ const h = vi.hoisted(() => {
   };
 
   const readPool = {
-    cancellableQuery: async () => {
+    cancellableQuery: async (sql: string) => {
       dbQueries.count++;
+      dbQueries.lastSql = sql;
       const snapshot = dbTruth.rows.map((r) => ({ ...r }));
       return {
         result: async () => {
@@ -79,7 +81,7 @@ vi.mock('./lag', () => ({
 vi.mock('./clients/db', () => ({ notifDbWrite: () => h.readPool, notifDbRead: () => h.readPool }));
 
 import { notificationCache } from './cache';
-import { countInFlight, countNotifications } from './operations';
+import { COUNT_ROW_LIMIT, countInFlight, countNotifications } from './operations';
 
 const USER = 7;
 const KEY = `system:notification-counts:${USER}`;
@@ -100,6 +102,7 @@ const badge = async () =>
 beforeEach(() => {
   h.store.clear();
   h.dbQueries.count = 0;
+  h.dbQueries.lastSql = '';
   h.hooks.duringQuery = undefined;
   countInFlight.clear();
   h.dbTruth.rows = [
@@ -180,5 +183,77 @@ describe('unread counter cache: partial hashes', () => {
     await notificationCache.incrementUser(USER, 'Update');
 
     expect(await badge()).toBe(341);
+  });
+});
+
+describe('unread counter cache: bounded recount', () => {
+  const truncated = () => [
+    { category: 'Update', count: COUNT_ROW_LIMIT - 16 },
+    { category: 'Milestone', count: 17 },
+  ];
+
+  it('stops the recount one row past the limit', async () => {
+    await badge();
+
+    expect(h.dbQueries.count).toBe(1);
+    expect(h.dbQueries.lastSql).toMatch(
+      new RegExp(String.raw`LIMIT ${COUNT_ROW_LIMIT + 1}\s*\) scanned`)
+    );
+  });
+
+  it('reports every count as a floor when the recount hits the limit, and caches that', async () => {
+    h.dbTruth.rows = truncated();
+
+    const first = await countNotifications({ userId: USER, unread: true });
+    const cached = await countNotifications({ userId: USER, unread: true });
+
+    expect(first.map((c) => c.floor)).toEqual([true, true]);
+    expect(cached.map((c) => c.floor)).toEqual([true, true]);
+    expect(h.dbQueries.count).toBe(1);
+  });
+
+  it('reports exact counts at exactly the limit', async () => {
+    h.dbTruth.rows = [{ category: 'Update', count: COUNT_ROW_LIMIT }];
+
+    expect(await countNotifications({ userId: USER, unread: true })).toEqual([
+      { category: 'Update', count: COUNT_ROW_LIMIT },
+    ]);
+  });
+
+  it('recounts instead of decrementing a floor', async () => {
+    h.dbTruth.rows = truncated();
+    await badge();
+
+    await notificationCache.decrementUser(USER, 'Milestone');
+
+    expect(snapshot()).toBeUndefined();
+    const recount = await countNotifications({ userId: USER, unread: true });
+    expect(recount.every((c) => c.floor)).toBe(true);
+    expect(h.dbQueries.count).toBe(2);
+  });
+
+  it('recounts instead of clearing a category from a floor', async () => {
+    h.dbTruth.rows = truncated();
+    await badge();
+
+    await notificationCache.clearCategory(USER, 'Update');
+
+    expect(snapshot()).toBeUndefined();
+  });
+
+  it('never serves a floored counter with no categories left as an exact zero', async () => {
+    seed({ __complete: '0', __floor: '0' }, 3600);
+
+    expect(await badge()).toBe(340);
+    const cached = await countNotifications({ userId: USER, unread: true });
+    expect(cached.some((c) => c.floor)).toBe(false);
+  });
+
+  it('still decrements an exact counter', async () => {
+    await badge();
+
+    await notificationCache.decrementUser(USER, 'Update');
+
+    expect(snapshot()?.fields).toEqual({ __complete: '0', Update: '299', Comment: '40' });
   });
 });
