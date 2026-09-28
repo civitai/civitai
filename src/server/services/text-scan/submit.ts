@@ -179,6 +179,7 @@ async function clearStaleVerdict({
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
+  const textHash = textScanTextHash(subject);
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
     entityId,
@@ -187,7 +188,7 @@ async function clearStaleVerdict({
     output,
     promptIds: {},
     model: 'none',
-    textHash: textScanTextHash(subject),
+    textHash,
     meta: subject.meta,
   });
   if (!recorded || mode !== 'active') return;
@@ -199,6 +200,7 @@ async function clearStaleVerdict({
     workflowId: existing.workflowId,
     outcome,
     subject,
+    textHash,
   });
 }
 

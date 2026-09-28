@@ -262,6 +262,8 @@ export type ModerationAdapter = {
     workflowId: string;
     outcome: TextScanOutcome;
     subject: TextScanSubject;
+    /** `textScanTextHash` of the subject as submitted; `subject` is reloaded at callback. */
+    textHash: string;
   }) => Promise<void>;
 
   /**

@@ -7,6 +7,7 @@ import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-sc
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { recordTextScanFailure, recordTextScanSuccess } from '~/server/services/text-scan/record';
 import type { PromptIds, TextScanLabel } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
@@ -135,5 +136,11 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
-  await adapter?.applyTextScan?.({ entityId, workflowId, outcome, subject });
+  await adapter?.applyTextScan?.({
+    entityId,
+    workflowId,
+    outcome,
+    subject,
+    textHash: metadata.textHash ?? textScanTextHash(subject),
+  });
 }
