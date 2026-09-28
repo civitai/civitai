@@ -1612,10 +1612,14 @@ describe('scope-grant.service', () => {
    * vacuously, which is how a guard reads as coverage while providing none.
    *
    * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
-   * SPELLED guard, and it errs in both directions — ONE shape in the false-FAIL direction, and TWO
-   * unclaimable shapes in the false-PASS one. ⚠️ This said "one shape each", which mis-read its own
-   * bullet: the four shapes the false-pass bullet names are ones the matcher REJECTS — a history of
-   * holes CLOSED, not a list of live ones. Only the last sentence of that bullet is a gap.
+   * SPELLED guard, and it errs in both directions — THREE shapes in the false-FAIL direction (one in
+   * the bullet below, two more in the matcher's own NOT-CLAIMED note) and TWO unclaimable shapes in
+   * the false-PASS one. ⚠️ TWO WRONG COUNTS IN SUCCESSION HERE. It first said "one shape each",
+   * which mis-read its own bullet: the four shapes the false-pass bullet names are ones the matcher
+   * REJECTS — a history of holes CLOSED, not a list of live ones, so only that bullet's last
+   * sentence is a gap. The correction then fixed the false-PASS half and left the false-FAIL half
+   * saying "one", while the file names three. Both measured, by running the shapes through the live
+   * matcher rather than by reading it.
    *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
    *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
    *     name, spaced or not, and skips a trailing line comment — it took FOUR drafts, each closing
@@ -1815,7 +1819,8 @@ describe('scope-grant.service', () => {
      * own scaffolding**: its verdict (hardcoding the scan's `HANDLED.test(after)` to `true`, or this
      * arm's `HANDLED.test(tails[0])` to `kind === 'SAFE'`), its own history ledger
      * (`HISTORICAL_SCAN_WINDOWS` shortened, which only loosens the `WIDE.length` floor — measured
-     * SURVIVING, and the reason that list is written as history rather than derived), its loop
+     * SURVIVING, and the reason that list is written as history rather than derived; LENGTHENING it
+     * with a bogus value false-FAILS loudly, which is the safe direction), its loop
      * bounds (`cases.slice(0, 0)`,
      * which satisfies every floor and asserts nothing), or its own sanity assertions (deleting this
      * arm's `tails.length === 1` check, which is what catches a probe/module divergence). No amount
@@ -1850,6 +1855,23 @@ describe('scope-grant.service', () => {
        * consistent about a shape that no longer tests anything.
        *
        * So the window history is named, and the run is asserted to exceed all of it.
+       *
+       * ⚠️ THE FLOOR PINS THE RUN'S **SIZE**; THE SAFE WIDE ENTRY PINS ITS **COMPOSITION** — and
+       * that division is load-bearing in a way nothing recorded until round-16 review measured it.
+       * `WIDE.length > max(...)` alone does not stop `WIDE` becoming something long that is not a
+       * whitespace run: prefixing it with `undefined`, `null`, `)` or making it `'x'.repeat(5000)`
+       * all keep the length legal, and each is caught by the SAFE entry
+       * `.catch(${WIDE}() => {})` going HAZARD-shaped, not by the floor. Remove that entry and the
+       * composition half reopens.
+       *
+       * ⚠️ AND THE 904-CHARACTER MARGIN IS NOT THE MECHANISM — do not read it as needed. The
+       * truncation slices the tail INCLUDING the 7-character `.catch(` prefix, so the closing `)`
+       * lands past the slice with a ONE-character margin. Measured two ways: with the floor relaxed
+       * to `>=`, a run of exactly 4096 plus the 4096 window still catches the hazard; and 4097
+       * alone is correctly green under the `>` floor here. (With `>`, a run of exactly 4096 is
+       * refused by the FLOOR rather than by the classification — which is the floor doing its job,
+       * not evidence about the mechanism.) `> max` is right with room to spare; the room is not
+       * what makes it work.
        */
       const HISTORICAL_SCAN_WINDOWS = [40, 4096];
       const WIDE = ' '.repeat(5000);
@@ -1906,8 +1928,8 @@ describe('scope-grant.service', () => {
       // directions, for exactly this reason.
       //
       // Adding a shape here is deliberate: put it in `cases` AND in `LEDGER`, and the loop below
-      // then asserts it classifies correctly. `<WIDE>` stands in for the 5,000-space run so the
-      // ledger stays readable.
+      // then asserts it classifies correctly. `<WIDE>` stands in for the wide-whitespace run so the
+      // ledger stays readable — the token, not its length, which `WIDE.length` above owns.
       const LEDGER = [
         'HAZARD ""',
         'HAZARD ".catch()"',
@@ -1950,7 +1972,13 @@ describe('scope-grant.service', () => {
         // computes its own slice is blind to the scan's slicing, which is how both historical
         // windows survived this arm's first draft.
         const tails = callTails(`logToAxiom({ a: 1 })${tail};`);
-        const shown = JSON.stringify(tail.replace(WIDE, '<5000 spaces>'));
+        // 🔴 DERIVED, NOT STATED — AND IT SAID `<5000 spaces>` AS A LITERAL. The `WIDE.length`
+        // assertion above deliberately admits ANY run over the largest historical window, so a
+        // hardcoded figure is wrong exactly in the cases that assertion was added for: measured, a
+        // 4,097-space run and a 5,009-character non-whitespace run both printed "<5000 spaces>". A
+        // number stated rather than derived, in the one place a reader ACTS on it. Matching the
+        // ledger's own token removes the figure instead of re-deriving it.
+        const shown = JSON.stringify(tail.replace(WIDE, '<WIDE>'));
         expect(tails.length, `the pipeline found ${tails.length} calls, not 1, for ${shown}`).toBe(
           1
         );
