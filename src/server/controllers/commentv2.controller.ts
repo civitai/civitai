@@ -39,6 +39,7 @@ import {
   getCommentCount,
   getCommentsThreadDetails2,
   getCommentsInfinite,
+  getCommentThreadBounty,
   isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
@@ -59,6 +60,11 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
   try {
     const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    if (!ctx.user?.isModerator) {
+      const bounty = await getCommentThreadBounty(comment.threadId);
+      if (bounty) await assertBountyVisible(bounty, ctx.user);
+    }
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({
