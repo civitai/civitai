@@ -71,13 +71,38 @@ const GRANT = {
   spendScopeGranted: false,
 };
 
-/** The four exempt members this fixture declares — the arm asserts every one BY NAME. */
-const EXEMPT_IN_FIXTURE = [
-  'apps:storage:read',
-  'apps:storage:shared:write',
-  'collections:read:self',
-  'models:read:self',
-];
+/**
+ * The four exempt members this fixture declares, each with a LITERAL fragment its note must carry.
+ *
+ * 🔴 THE FRAGMENTS ARE HARD-CODED ON PURPOSE — DERIVING THEM FROM `FIXED_SCOPE_NOTES` MAKES THE
+ * ASSERTION UNABLE TO FAIL, AND THAT IS NOT HYPOTHETICAL: IT SURVIVED A MEASURED MUTANT. Round 1
+ * fixed the flat-list problem by binding each note to its OWN row, but kept
+ * `expect(note).toBe(FIXED_SCOPE_NOTES[scope])` — so a mutant that SWAPS two entries' keys swapped
+ * the rendered note AND the expectation together, and the whole suite (unit, component, geometry)
+ * stayed green. Measured: `notes-swapped` exchanging `models:read:self` with `collections:read:self`
+ * → 15/15, 33/33, 46/46 all passing.
+ *
+ * So each fragment names the MECHANISM that scope's own server-side gate actually is, taken from the
+ * gate rather than from the map under test. A swap then puts "the page you opened" on a collections
+ * row and "visibility and ownership" on a model row, and both reds.
+ *
+ * ⚠️ FRAGMENTS, NOT WHOLE SENTENCES, and the trade is deliberate: a whole-string literal here would
+ * be a second copy of reviewed prose that reds on every cosmetic reword, which is what
+ * `FIXED_SCOPE_NOTES` is for. A fragment naming the gate is the part that must not move, because it
+ * is the part that would be a lie on another row. They must stay PAIRWISE DISTINCT — a fragment two
+ * scopes share cannot see a swap between them.
+ */
+const EXEMPT_NOTE_MUST_MENTION: Record<string, RegExp> = {
+  // The app's own private per-install store.
+  'apps:storage:read': /private store/i,
+  // `resolveSharedContext`'s min-trust gate + moderation + rate limits, on the WRITE path.
+  'apps:storage:shared:write': /account-trust/i,
+  // Server-side visibility/ownership checks on the collection itself.
+  'collections:read:self': /visibility and ownership/i,
+  // The subject is fixed by the page the block is mounted on.
+  'models:read:self': /the page you opened/i,
+};
+const EXEMPT_IN_FIXTURE = Object.keys(EXEMPT_NOTE_MUST_MENTION);
 
 const m = vi.hoisted(() => ({
   grants: [] as unknown[],
@@ -304,11 +329,18 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
       expect(row, `${name}: ${scope}'s id is not inside a scope row`).toBeTruthy();
       const note = row!.querySelector('[data-testid="scope-fixed-note"]');
       expect(note, `${name}: no note in ${scope}'s OWN row`).toBeTruthy();
+      // The row carries the map's sentence for THIS scope…
+      expect(note!.textContent, `${name}: ${scope}'s row carries a different note`).toBe(
+        FIXED_SCOPE_NOTES[scope]
+      );
+      // 🔴 …AND THE SENTENCE NAMES THIS SCOPE'S OWN GATE, asserted against a LITERAL. The line
+      // above alone cannot see a swap, because both its sides read the same (mutated) map — see
+      // `EXEMPT_NOTE_MUST_MENTION`. This is the line that kills `notes-swapped`.
       expect(
-        note!.textContent,
-        `${name}: ${scope}'s row carries the WRONG note — a note describing a different scope's ` +
-          'server-side gate is the mis-description this map exists to prevent'
-      ).toBe(FIXED_SCOPE_NOTES[scope]);
+        note!.textContent ?? '',
+        `${name}: ${scope}'s row does not name its own server-side gate — it is carrying another ` +
+          "scope's note, which tells the viewer the wrong thing about what governs this permission"
+      ).toMatch(EXEMPT_NOTE_MUST_MENTION[scope]);
     }
     // A DISABLED BUTTON IS THE OTHER REJECTED SHAPE — it says "you could do this if something
     // changed", and nothing the viewer can do will ever make an exempt scope withdrawable. So the
@@ -612,6 +644,29 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
       document.querySelector('[data-testid="scope-revoke-confirm-budget-note"]'),
       `${name}: the budget note rendered for a scope that clears no budget`
     ).toBeNull();
+  });
+});
+
+/**
+ * 🔴 THE CONTROL ON `EXEMPT_NOTE_MUST_MENTION` ITSELF. The fragments only discriminate if each
+ * matches EXACTLY ONE of the four notes — a fragment two notes share cannot see a swap between
+ * those two, and a fragment matching nothing would make its arm pass vacuously (a regex that never
+ * matches is never asserted against, because the row loop would red on the `toBe` first and the
+ * `toMatch` would look redundant). Both failure modes are silent, so they are measured here rather
+ * than assumed, in the tier that needs no DOM.
+ */
+describe('the exempt-note fragments are a usable discriminator', () => {
+  test('each fragment matches exactly ONE of the four notes', () => {
+    const notes = EXEMPT_IN_FIXTURE.map((s) => ({ scope: s, text: FIXED_SCOPE_NOTES[s] ?? '' }));
+    expect(notes.length, 'the fixture lost its exempt scopes').toBe(4);
+    for (const [scope, re] of Object.entries(EXEMPT_NOTE_MUST_MENTION)) {
+      const hits = notes.filter((n) => re.test(n.text)).map((n) => n.scope);
+      expect(
+        hits,
+        `${String(re)} matches ${hits.length} of the four exempt notes — it must match exactly ` +
+          `one (${scope}) or it cannot tell a swapped note from a correct one`
+      ).toEqual([scope]);
+    }
   });
 });
 
