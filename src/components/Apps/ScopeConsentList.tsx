@@ -91,12 +91,19 @@ export function ScopeConsentList({
   const rows = buildScopeConsentRows({
     scopes: grant?.scopes ?? [],
     /**
-     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED. The refetch is deliberately
-     * NOT awaited (see `useScopeRevoke`), so between a successful revoke and the list arriving the
-     * server copy still omits the scope — and without this union the row went straight back to
-     * offering a live "Remove" control for a permission that was already gone, with a confirm dialog
-     * promising to remove it again. `justRevoked` closes that window. Union rather than replace: the
-     * server remains the authority, and once it carries the scope this adds nothing.
+     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED — AND THE UNION IS WHAT MAKES
+     * THE LOCAL CLAIM SELF-EXPIRING, WITH NO TIMER ANYWHERE. The refetch is deliberately not awaited
+     * (see `useScopeRevoke`), so between a successful revoke and the list arriving the server copy
+     * still omits the scope; without the union the row went straight back to offering a live "Remove"
+     * control for a permission already gone, and a confirm dialog promising to remove it again.
+     *
+     * Once the server's payload DOES carry the scope, `new Set` makes the local entry contribute
+     * nothing — it goes inert on DATA rather than being cleared on a settle. That distinction is the
+     * whole round-4 fix: `listMyScopeGrants` reads the REPLICA while the revoke writes the PRIMARY, so
+     * "the refetch settled" does NOT imply "the revocation is in the payload", and clearing on the
+     * settle flipped the row back to a live control inside replication lag — permanently, because
+     * `staleTime: Infinity` means nothing reads again. Full reasoning and the one named residual are
+     * on `justRevoked`.
      */
     revokedScopes: [...new Set([...(grant?.revokedScopes ?? []), ...justRevoked])],
     // 🔴 NOT `?? []` — AND THE COALESCE WAS A REAL DEFECT, NOT A TIDINESS NIT. An absent

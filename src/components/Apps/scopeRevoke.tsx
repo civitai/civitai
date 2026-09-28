@@ -194,11 +194,41 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
    * sticky entry painted "Removed" over it. A surface claiming an app can no longer spend the
    * viewer's Buzz while it can, with a stored daily limit, and no way to withdraw it.
    *
-   * So the entry lives exactly as long as the unknown does: from the successful mutation until the
-   * refetch settles. Both outcomes are then correct — a refetch that SUCCEEDS carries the revocation,
-   * so the row stays "Removed" on the server's authority; a refetch that FAILS drops the local claim
-   * and the row shows the control again, which is the over-report-access direction the rule above
-   * says is the safe one. "The server remains the authority" is now a fact rather than a comment.
+   * 🔴 THE ENTRY GOES INERT ON **DATA**, NOT ON A TIMER, A CLOCK, OR THE REFETCH SETTLING — and the
+   * settle-based version was wrong for a reason no amount of promise-ordering care could fix.
+   *
+   * ⚠️ RETRACTED: round 3 cleared the entry in the invalidate's `.finally`, on the stated guarantee
+   * that *"a refetch that SUCCEEDS carries the revocation, so the row stays 'Removed' on the server's
+   * authority."* THE REFETCH DOES NOT READ THE DATABASE THE REVOKE WROTE TO. `revokeScopes` reads and
+   * writes the grant row on the PRIMARY (`dbWrite` — deliberately, it is a read-modify-write of a
+   * consent ledger); `listMyScopeGrants` reads that same row off the REPLICA (`dbRead`), which
+   * `packages/civitai-db` constructs as a SEPARATE client whenever a replica URL is configured
+   * (`dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true })`). So a refetch can
+   * SUCCEED carrying the PRE-REVOKE row, and clearing on the settle then flipped the row back to a
+   * live "Remove" button with a stale timestamp — reinstating, for the same viewer and the same
+   * click, exactly the confirm-dialog-for-an-already-gone-permission this set exists to prevent.
+   *
+   * 🔴 AND IT DID NOT SELF-HEAL. `src/utils/trpc.ts` sets `staleTime: Infinity` and
+   * `refetchOnWindowFocus: false`, so nothing schedules another read: round 2's bad window was
+   * bounded by the refetch, round 3's by NAVIGATION — on a drawer whose whole point is staying
+   * mounted. This repo argues the same lag twice INSIDE the revoke procedure: `blocks.router.ts`
+   * takes its OAuth teardown gate reads off `dbWrite` because *"the replica version reintroduced the
+   * hole this gate exists to close … a viewer who … withdraws a permission moments later lands
+   * inside replication lag"*. Same row, same actor, same timing. Found by the round-4 lane.
+   *
+   * So there is no clearing step at all. `ScopeConsentList` DERIVES the live override as
+   * `justRevoked ∖ serverRevokedScopes`: while the replica lags, the entry stands and the row reads
+   * "Removed", which is TRUE; the moment the server's payload carries the revocation the entry is
+   * redundant and contributes nothing. No promise ordering, no clock comparison, no timer — which is
+   * the property that makes this the third and, I hope, last shape of this mechanism.
+   *
+   * ⚠️ ONE RESIDUAL, NAMED RATHER THAN HIDDEN: a viewer who RE-GRANTS the same scope strictly inside
+   * replication lag — before the replica ever reports the revocation — leaves an entry the server
+   * will never confirm, so that row reads "Removed" until this component unmounts. That is round 2's
+   * shape in a far narrower window. Closing it needs a signal separating "the replica has not caught
+   * up" from "the row was re-granted", and no field on `ScopeGrantSurface` provides one — both look
+   * identical (`revokedScopes` lacking the scope). A monotonic row version, or a primary-read variant
+   * of `listMyScopeGrants`, would settle it; both are server-side changes this phase is scoped out of.
    */
   const [justRevoked, setJustRevoked] = useState<string[]>([]);
 
@@ -292,12 +322,10 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
                 title: 'Permission removed',
                 message: `${appName} can no longer use ${scope}.`,
               });
-              // Still un-awaited — the viewer has already been told and the spinner must not wait on
-              // it — but the local claim is dropped the moment the server answers, whichever way it
-              // answers. See `justRevoked`.
-              void utils.blocks.listMyScopeGrants
-                .invalidate()
-                .finally(() => setJustRevoked((prev) => prev.filter((s) => s !== scope)));
+              // Un-awaited — the viewer has already been told and the spinner must not wait on it.
+              // The local claim is NOT cleared here; it goes inert on its own once the server's
+              // payload carries the revocation. See `justRevoked`.
+              void utils.blocks.listMyScopeGrants.invalidate();
             },
             (error: { data?: { code?: string }; message?: string }) => {
               const code = error?.data?.code;
@@ -316,13 +344,8 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
               }
               // See the hook docblock: 412 is the only outcome the server states left the row
               // untouched, so it is the only one that buys nothing by re-reading. Un-awaited, and
-              // AFTER the viewer has been told — see the block above. The local claim is dropped when
-              // it settles, exactly as on the success arm.
-              if (code !== 'PRECONDITION_FAILED') {
-                void utils.blocks.listMyScopeGrants
-                  .invalidate()
-                  .finally(() => setJustRevoked((prev) => prev.filter((s) => s !== scope)));
-              }
+              // AFTER the viewer has been told — see the block above.
+              if (code !== 'PRECONDITION_FAILED') void utils.blocks.listMyScopeGrants.invalidate();
             }
           )
           // `finally` rather than clearing in each arm — a spinner that outlives its mutation is

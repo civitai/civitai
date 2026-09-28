@@ -728,20 +728,41 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
       'the fixture mutated — this arm no longer tests the in-flight window'
     ).toEqual(['collections:read:private']);
 
-    // 🔴 THE SECOND HALF, AND THE ONE ROUND 3 EXISTS FOR: once the refetch SETTLES, the local claim
-    // is DROPPED and the server is the authority again. This fixture's server data never changed, so
-    // the control must come back — which is correct, and is the behaviour a sticky `justRevoked`
-    // denied. A permanent local override painted "Removed" over a permission the server reported as
-    // live and withdrawable (reachable after a re-grant, which `grantScopes` performs with
-    // `clearRevocations: true`), leaving a false claim and no way to act on it.
+    // 🔴 THE SECOND HALF, REWRITTEN BY ROUND 4: THE CLAIM EXPIRES ON **DATA**, NOT ON THE SETTLE.
+    // Round 3 asserted that releasing the refetch dropped the local claim, on the belief that a
+    // settled refetch carries the revocation. It does not — `listMyScopeGrants` reads the REPLICA
+    // while the revoke writes the PRIMARY — so clearing on the settle flipped the row back to a live
+    // control inside replication lag, permanently (`staleTime: Infinity`).
+    //
+    // So: releasing the refetch WITHOUT the server carrying the revocation must leave the row
+    // "Removed" — that is the replication-lag case, and it is TRUE.
     m.releaseInvalidate!();
+    await vi.waitFor(() => expect(m.invalidateSpy).toHaveBeenCalled());
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: the row re-offered a control for ${scope} after a refetch that did NOT carry the ` +
+        'revocation — this is the replication-lag case, and the permission really is gone'
+    ).not.toContain(scope);
+
+    // …and once the server's payload DOES carry it, the local entry is redundant rather than
+    // cleared: the row still reads "Removed", now on the server's authority, and exactly ONE mark
+    // exists for it rather than a duplicate.
+    // 🔴 A FRESH OBJECT, NEVER AN IN-PLACE WRITE. `m.grants[0] === GRANT` — the module-level fixture —
+    // so mutating `.revokedScopes` here edited the shared constant and leaked into twelve other
+    // tests in this file (measured: 13 failures, most of them unrelated arms reading a fixture that
+    // had silently grown a second revoked scope). This is the aliasing the round-3 lane warned about
+    // in the assertion three lines up, reproduced by the fix for it.
+    m.grants = [{ ...GRANT, revokedScopes: [...GRANT.revokedScopes, scope] }];
+    m.invalidateSpy.mockClear();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Keep it' }).click();
     await vi.waitFor(() =>
       expect(
-        revokableScopesOnScreen(),
-        `${name}: the local "just revoked" claim outlived the refetch — the server is no longer the ` +
-          'authority for this row'
-      ).toContain(scope)
+        document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+        `${name}: the server-confirmed revocation did not render exactly one mark for ${scope}`
+      ).toBe(GRANT.revokedScopes.length + 1)
     );
+    expect(revokableScopesOnScreen(), name).not.toContain(scope);
   });
 
   test('a SUCCESS announces removal exactly once, and not as a warning', async () => {
