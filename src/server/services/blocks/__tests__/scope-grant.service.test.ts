@@ -1612,7 +1612,10 @@ describe('scope-grant.service', () => {
    * vacuously, which is how a guard reads as coverage while providing none.
    *
    * 🔴 WHAT IT DELIBERATELY DOES NOT CATCH, so nobody reads it as wider than it is. It is a
-   * SPELLED guard, and it errs in BOTH directions by one shape each:
+   * SPELLED guard, and it errs in both directions — ONE shape in the false-FAIL direction, and TWO
+   * unclaimable shapes in the false-PASS one. ⚠️ This said "one shape each", which mis-read its own
+   * bullet: the four shapes the false-pass bullet names are ones the matcher REJECTS — a history of
+   * holes CLOSED, not a list of live ones. Only the last sentence of that bullet is a gap.
    *   - FALSE PASS: `.catch()`, `.catch(undefined)`, `.catch(null)` and `.catch(void 0)` are
    *     pass-throughs that leave the rejection unhandled. The matcher below rejects all four by
    *     name, spaced or not, and skips a trailing line comment — it took FOUR drafts, each closing
@@ -1810,7 +1813,10 @@ describe('scope-grant.service', () => {
      * 🔴 WHAT THIS ARM STILL CANNOT SEE — A CLASS, NOT A LIST, and the first draft of this
      * paragraph named two instances and read as exhaustive. The class is **any mutation of an arm's
      * own scaffolding**: its verdict (hardcoding the scan's `HANDLED.test(after)` to `true`, or this
-     * arm's `HANDLED.test(tails[0])` to `kind === 'SAFE'`), its loop bounds (`cases.slice(0, 0)`,
+     * arm's `HANDLED.test(tails[0])` to `kind === 'SAFE'`), its own history ledger
+     * (`HISTORICAL_SCAN_WINDOWS` shortened, which only loosens the `WIDE.length` floor — measured
+     * SURVIVING, and the reason that list is written as history rather than derived), its loop
+     * bounds (`cases.slice(0, 0)`,
      * which satisfies every floor and asserts nothing), or its own sanity assertions (deleting this
      * arm's `tails.length === 1` check, which is what catches a probe/module divergence). No amount
      * of cross-grading fixes any of them: a guard cannot guard its own assertion. Every one is
@@ -1834,7 +1840,24 @@ describe('scope-grant.service', () => {
      * this arm, on the scan, or on both.
      */
     it('POSITIVE CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
+      /**
+       * 🔴 LOAD-BEARING, AND UNPINNED FOR ONE ROUND. Two ledger entries exist solely to exercise a
+       * whitespace run longer than any scan window the guard has ever had — and BOTH sides of the
+       * ledger normalise that run to `<WIDE>`, so shrinking `WIDE` keeps the ledger perfectly equal
+       * while destroying the property those entries test. Measured by round-15 review:
+       * `' '.repeat(5)` alone SURVIVED, and so did that plus either historical window reinstated.
+       * That is exactly the class the count floors fell to, moved one level up — the instrument
+       * consistent about a shape that no longer tests anything.
+       *
+       * So the window history is named, and the run is asserted to exceed all of it.
+       */
+      const HISTORICAL_SCAN_WINDOWS = [40, 4096];
       const WIDE = ' '.repeat(5000);
+      expect(
+        WIDE.length,
+        'the wide-whitespace probes no longer exceed every scan window this guard has had, so they ' +
+          'assert nothing — and the ledger cannot see it, because both sides normalise the run'
+      ).toBeGreaterThan(Math.max(...HISTORICAL_SCAN_WINDOWS));
       const cases: Array<[kind: 'HAZARD' | 'SAFE', tail: string]> = [
         // Pass-throughs: the rejection stays unhandled. Each passed at least one earlier draft.
         ['HAZARD', ''],
@@ -1872,9 +1895,13 @@ describe('scope-grant.service', () => {
       //     SURVIVED again at BOTH historical widths. Raising 8→10 had only closed the
       //     HAZARD→SAFE route, which is the one that moves a number.
       //
-      // Set equality against a named ledger is the instrument that cannot be walked: it fails on a
-      // substitution, on a relabel, on shrinkage AND on growth — a shape added without a ledger
-      // entry is a finding, which no floor can express. It is also what the sibling guard in
+      // Set equality against a named ledger is the instrument that cannot be walked BY A ONE-PLACE
+      // EDIT: it fails on a substitution, on a relabel, on shrinkage AND on growth — a shape added
+      // without a ledger entry is a finding, which no floor can express. ⚠️ It said "cannot be
+      // walked" flat, and that over-claimed: a COORDINATED edit to `cases` and `LEDGER` together
+      // walks it, measured. That is the irreducible floor of any ledger — it buys visibility in a
+      // diff, not impossibility — and the two properties below cover the two ways a coordinated
+      // edit can still look untouched. It is also what the sibling guard in
       // `no-unguarded-block-rest-token.test.ts` already uses for `ANY_TOKEN_ROUTES`, in both
       // directions, for exactly this reason.
       //
@@ -1908,6 +1935,15 @@ describe('scope-grant.service', () => {
           'that is how two floor drafts each re-hid the scan-window defect. A shape ADDED means the ' +
           'ledger is stale: add it, and the loop below will grade it.'
       ).toEqual([...LEDGER].sort());
+      // 🔴 AND NO ENTRY MAY REPEAT. Pointing one `cases` entry at a shape already present, with the
+      // matching ledger edit, keeps BOTH arrays 18 long and sorted-equal while deleting a shape —
+      // nastier than a plain removal precisely because nothing looks touched. Measured SURVIVING by
+      // round-15 review. Distinctness is the property a length cannot express.
+      expect(
+        new Set(LEDGER).size,
+        'a ledger entry is duplicated, so the probe set covers fewer shapes than it appears to — ' +
+          'the length stays 18 and the equality above still holds'
+      ).toBe(LEDGER.length);
 
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
