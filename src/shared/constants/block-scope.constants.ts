@@ -295,22 +295,29 @@ export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
  * AND already holds viewer-facing consent copy (`BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY`), so it is
  * the one place both sides can reach.
  *
- * ⚠️ THE SERVER SIDE IS DELIBERATELY NOT COLLAPSED INTO THIS ONE, AND THERE IS MORE OF IT THAN AN
- * EARLIER VERSION OF THIS DOCBLOCK COUNTED. It claimed *"the count is server 1 + client 1 = 2, down
- * from server 1 + client 3 = 4"*, which is RETRACTED: it counted only NAMED declarations and missed
- * two UNNAMED server-side copies of the literal, both of them `filter(s => s !== 'ai:write:budgeted')`
- * — `src/server/services/block-registry.service.ts` (ephemeral scopes) and
- * `src/server/services/blocks/dev-scoped-mint.service.ts` (the dev-scoped mint). Measured by the
- * reuse-review lane, the true figures are **5 declarations that own the literal, down to 4**:
- * this one, `CONSENT_SPEND_SCOPE` in `scope-grant.service.ts`, and those two unnamed ones.
+ * ⚠️ THE SERVER SIDE IS DELIBERATELY NOT COLLAPSED INTO THIS ONE, AND **NO COUNT OF THE REMAINING
+ * COPIES IS QUOTED HERE** — because two successive attempts to quote one were both wrong, in the
+ * same direction, and the second was wrong after being "corrected".
+ *   · First: *"server 1 + client 1 = 2, down from server 1 + client 3 = 4"*. RETRACTED — it counted
+ *     only NAMED declarations.
+ *   · Then, on the reuse lane's measurement: *"5 declarations that own the literal, down to 4"*.
+ *     ALSO RETRACTED. A direct enumeration of `'ai:write:budgeted'` across `src/` (excluding tests)
+ *     returns roughly THIRTY live production uses — registry keys, `requiredScope:` values,
+ *     `includes()` checks on minted scope sets, telemetry labels, description-map keys — spread over
+ *     ~20 files. Two named constants and two `filter` calls is not the population.
  *
- * Why the count matters rather than being trivia: a maintainer who believed the old figure would
- * think collapsing `CONSENT_SPEND_SCOPE` into this finishes the job. It does not — the two unnamed
- * filters would still hold the string, and the divergence they produce is an ephemeral or
- * dev-minted token keeping a spend scope the rest of the system has retired. Finishing this means
- * three edits in `src/server/**`, which phase 3 was explicitly scoped out of. Until then the two
- * NAMED constants are asserted equal by `src/components/Apps/__tests__/scopeConsentRows.test.ts`,
- * and that guard can be deleted the moment `CONSENT_SPEND_SCOPE` becomes a re-export.
+ * 🔴 THE REPO ALREADY OWNS THE RIGHT ANSWER AND IT IS A DERIVATION, NOT A NUMBER.
+ * `scope-grant.service.ts` states it on the docblock above `CONSENT_SPEND_SCOPE`:
+ * *"`git grep "'ai:write:budgeted'"` is the authority on what remains"* — and, importantly, that the
+ * `scope:` arguments handed to `recordScopeInvocation` are TELEMETRY LABELS rather than gate
+ * predicates, so they are deliberately literal and must not be swept. Any future consolidation
+ * starts from that grep and that distinction; a figure restated here would be stale before the next
+ * reader trusts it, which has now happened twice in one phase.
+ *
+ * What is true without a count: the two NAMED constants are this one and `CONSENT_SPEND_SCOPE`,
+ * they are asserted equal by `src/components/Apps/__tests__/scopeConsentRows.test.ts`, and that
+ * guard exists only because `scope-grant.service.ts` reaches Prisma and so cannot be imported from
+ * a client surface. It can be deleted the moment `CONSENT_SPEND_SCOPE` becomes a re-export of this.
  *
  * 🔴 THE THREE SURFACES MUST AGREE OR THE BUDGET SILENTLY DETACHES FROM THE SCOPE IT BOUNDS: the
  * grant modal decides whether to offer a budget field, the budget editor decides what to send, and

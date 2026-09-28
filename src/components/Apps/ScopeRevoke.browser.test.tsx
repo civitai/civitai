@@ -131,6 +131,9 @@ const m = vi.hoisted(() => ({
    */
   gated: false,
   release: null as null | (() => void),
+  /** Same idea for the cache invalidation — see the `trpc` factory. */
+  invalidateGated: false,
+  releaseInvalidate: null as null | (() => void),
   notify: undefined as unknown as {
     success: ReturnType<typeof vi.fn>;
     warning: ReturnType<typeof vi.fn>;
@@ -185,7 +188,17 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
  * are the only two fields the hook reads.
  */
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const invalidateSpy = vi.fn(async () => {});
+  /**
+   * 🔴 GATEABLE, because `justRevoked`'s whole lifetime is "until this settles". With an
+   * immediately-resolving invalidate there is no in-flight window to observe at all, and the arm
+   * that tests the window would pass or fail for reasons unrelated to it.
+   */
+  const invalidateSpy = vi.fn(() => {
+    if (!m.invalidateGated) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      m.releaseInvalidate = () => resolve();
+    });
+  });
   m.invalidateSpy = invalidateSpy;
   const grantsQuery = () => ({ data: m.grants, isLoading: false, isError: false });
   /**
@@ -302,6 +315,8 @@ beforeEach(() => {
   m.revokeError = null;
   m.gated = false;
   m.release = null;
+  m.invalidateGated = false;
+  m.releaseInvalidate = null;
   m.invalidateSpy?.mockClear();
   m.notify?.success.mockClear();
   m.notify?.warning.mockClear();
@@ -324,9 +339,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     // grant, so the row would update, the mutation would be refused by the server, and — if the
     // server's refusal were ever relaxed — the app would keep the permission anyway.
     for (const scope of EXEMPT_IN_FIXTURE) {
-      expect(offered, `${name}: a revoke control was offered for the exempt scope ${scope}`).not.toContain(
-        scope
-      );
+      expect(
+        offered,
+        `${name}: a revoke control was offered for the exempt scope ${scope}`
+      ).not.toContain(scope);
     }
     // …and each one explains itself rather than sitting there silent or greyed out.
     //
@@ -435,9 +451,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     // careless rewrite of that template string would drop them — silently, since only an
     // over-long id at 408px shows the difference.
     for (const util of ['whitespace-normal', 'break-all', 'text-start']) {
-      expect(markedLabel!.className, `${name}: phase-1 utility ${util} lost on a revoked row`).toContain(
-        util
-      );
+      expect(
+        markedLabel!.className,
+        `${name}: phase-1 utility ${util} lost on a revoked row`
+      ).toContain(util);
     }
     await expect.element(page.getByTestId('scope-revoked-mark')).toBeVisible();
     // 🔴 THE "WHEN" IS APP-LEVEL AND APPEARS EXACTLY ONCE. `scopesRevokedAt` is ONE timestamp per
@@ -476,8 +493,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
       name
     ).toBe('false');
     // …and the list is NOT re-read, because the server states the row did not move.
-    expect(m.invalidateSpy, `${name}: a 412 re-read a list the server says did not change`).not
-      .toHaveBeenCalled();
+    expect(
+      m.invalidateSpy,
+      `${name}: a 412 re-read a list the server says did not change`
+    ).not.toHaveBeenCalled();
     // The row is still there and still offers the control — the viewer can retry once the
     // migration lands. A crash or a vanished control would both fail here.
     expect(revokableScopesOnScreen(), name).toEqual(
@@ -509,8 +528,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     ).toBe('true');
     // The row DID change, so the list must be re-read — this is what separates the 503 from the
     // 412 above, and reading it off the same spy in both arms is what makes the pair a discriminator.
-    expect(m.invalidateSpy, `${name}: a 503 left the list showing a permission that is gone`)
-      .toHaveBeenCalled();
+    expect(
+      m.invalidateSpy,
+      `${name}: a 503 left the list showing a permission that is gone`
+    ).toHaveBeenCalled();
   });
 
   test('🔴 a SUSPENDED app can still be revoked from — there is no status gate in the UI either', async () => {
@@ -525,9 +546,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     expect(revokableScopesOnScreen().sort(), name).toEqual([...GRANT.revokableScopes].sort());
     await page.getByTestId('scope-revoke-button').first().click();
     await page.getByRole('button', { name: 'Remove permission' }).click();
-    expect(m.revokeCalls, `${name}: a suspended app's permission could not be withdrawn`).toHaveLength(
-      1
-    );
+    expect(
+      m.revokeCalls,
+      `${name}: a suspended app's permission could not be withdrawn`
+    ).toHaveLength(1);
   });
 
   test('the confirm copy states immediacy, re-prompting, and the budget it clears', async () => {
@@ -577,7 +599,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     ).toBe('false');
     // …and NO "Permission removed" notification of either kind. This is the half a `data-degraded`
     // read alone cannot see: the warning toast asserts removal in its TITLE.
-    expect(m.notify.warning, `${name}: announced a removal that did not happen`).not.toHaveBeenCalled();
+    expect(
+      m.notify.warning,
+      `${name}: announced a removal that did not happen`
+    ).not.toHaveBeenCalled();
     expect(m.notify.success, name).not.toHaveBeenCalled();
     // The row keeps its control so the viewer can retry or read the reason.
     expect(revokableScopesOnScreen(), name).toContain(GRANT.revokableScopes[0]);
@@ -595,14 +620,27 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     const [first, second] = revokeButtons();
-    expect(second, 'the fixture needs TWO revokable scopes to tell per-row from global').toBeTruthy();
+    expect(
+      second,
+      'the fixture needs TWO revokable scopes to tell per-row from global'
+    ).toBeTruthy();
     const clicked = first.dataset.scope;
     first.click();
     await page.getByRole('button', { name: 'Remove permission' }).click();
     // Mantine renders a Loader inside the button and sets `data-loading` on it.
-    await expect
-      .element(page.getByTestId('scope-revoke-button').first())
-      .toHaveAttribute('data-loading', 'true');
+    // 🔴 LOCATED BY `data-scope`, NOT `.first()`. Once a successful revoke suppresses its own row's
+    // control, `.first()` resolves to a DIFFERENT button than the one that was clicked — so the
+    // wait was on a state that deletes itself, a race round 2's own fix introduced. Found by the
+    // round-3 test lane.
+    const clickedBtn = () =>
+      document.querySelector<HTMLElement>(
+        `[data-testid="scope-revoke-button"][data-scope="${clicked}"]`
+      );
+    await vi.waitFor(() =>
+      expect(clickedBtn()?.getAttribute('data-loading'), `${name}: ${clicked} never spun`).toBe(
+        'true'
+      )
+    );
     const others = revokeButtons().filter((b) => b.dataset.scope !== clicked);
     for (const other of others) {
       // 🔴 THE OTHER ROWS MUST NOT SPIN — this is what separates per-row keying from a shared
@@ -616,9 +654,14 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     }
     // Release the call and the pending state must clear — the `finally` mutant dies here.
     m.release!();
-    await expect
-      .element(page.getByTestId('scope-revoke-button').first())
-      .not.toHaveAttribute('data-loading', 'true');
+    // The clicked row's control is suppressed by `justRevoked` on success, so assert the spinner is
+    // gone whether the button survived or not — both mean the pending state cleared.
+    await vi.waitFor(() =>
+      expect(
+        clickedBtn()?.getAttribute('data-loading') ?? null,
+        `${name}: ${clicked} is still spinning after the call settled`
+      ).not.toBe('true')
+    );
     for (const other of revokeButtons().filter((b) => b.dataset.scope !== clicked)) {
       expect(
         (other as HTMLButtonElement).disabled,
@@ -636,16 +679,30 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     // which also pointed out the PENDING arm above *pinned* the bad behaviour by asserting the
     // button re-enables the instant the call settles.
     //
-    // The fixture never updates `m.grants`, so this test's world is permanently "the refetch has not
-    // landed" — which is exactly the window under test, held open indefinitely.
+    // 🔴 THE INVALIDATE IS GATED, WHICH IS WHAT MAKES THE WINDOW EXIST. `justRevoked` now lives only
+    // until the refetch settles (round 3 — a sticky entry overrode fresh server data and could paint
+    // "Removed" over a re-granted LIVE permission). So with an immediately-resolving invalidate there
+    // is no window at all, and this arm would be measuring the wrong thing. Holding it open is the
+    // world under test; releasing it, at the bottom, is the second half of the claim.
+    m.invalidateGated = true;
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     const scope = revokableScopesOnScreen()[0];
     expect(scope, 'the fixture has no revokable scope').toBeTruthy();
     await page.getByTestId('scope-revoke-button').first().click();
     await page.getByRole('button', { name: 'Remove permission' }).click();
-    // The row is now marked removed, from local state alone…
-    await expect.element(page.getByTestId('scope-revoked-mark').first()).toBeVisible();
+    // 🔴 WAIT ON THE MARK COUNT GOING 1 -> 2, NOT ON `.first()` BEING VISIBLE. The fixture already
+    // renders ONE revoked row (`collections:read:private`), so `.first()` resolved immediately off
+    // that pre-existing mark and the await was a no-op — it waited for nothing while its comment
+    // claimed to observe the new local state. The following reads are synchronous, so the failure
+    // direction was a false RED rather than a false green, but the sync point was fictional.
+    // Found by the round-3 test lane.
+    await vi.waitFor(() =>
+      expect(
+        document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+        `${name}: the just-revoked row never gained its "Removed" mark`
+      ).toBe(GRANT.revokedScopes.length + 1)
+    );
     // …and offers NO control for that scope, even though `listMyScopeGrants` still reports it as
     // revokable and not revoked.
     expect(
@@ -657,11 +714,30 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     for (const other of others) {
       expect(revokableScopesOnScreen(), `${name}: ${other} lost its control too`).toContain(other);
     }
-    // And the fixture really did NOT change server-side, so the suppression came from local state.
+    // 🔴 THE FIXTURE REALLY DID NOT CHANGE SERVER-SIDE, so the suppression came from local state.
+    // ⚠️ Compared against a LITERAL, not against `GRANT.revokedScopes` — `m.grants[0] === GRANT`, so
+    // the previous form compared an array to ITSELF and could not see an in-place
+    // `GRANT.revokedScopes.push(...)`, which is exactly what its own message ("the fixture mutated")
+    // names. Round-3 test lane.
     expect(
       (m.grants[0] as { revokedScopes: string[] }).revokedScopes,
       'the fixture mutated — this arm no longer tests the in-flight window'
-    ).toEqual(GRANT.revokedScopes);
+    ).toEqual(['collections:read:private']);
+
+    // 🔴 THE SECOND HALF, AND THE ONE ROUND 3 EXISTS FOR: once the refetch SETTLES, the local claim
+    // is DROPPED and the server is the authority again. This fixture's server data never changed, so
+    // the control must come back — which is correct, and is the behaviour a sticky `justRevoked`
+    // denied. A permanent local override painted "Removed" over a permission the server reported as
+    // live and withdrawable (reachable after a re-grant, which `grantScopes` performs with
+    // `clearRevocations: true`), leaving a false claim and no way to act on it.
+    m.releaseInvalidate!();
+    await vi.waitFor(() =>
+      expect(
+        revokableScopesOnScreen(),
+        `${name}: the local "just revoked" claim outlived the refetch — the server is no longer the ` +
+          'authority for this row'
+      ).toContain(scope)
+    );
   });
 
   test('a SUCCESS announces removal exactly once, and not as a warning', async () => {
@@ -673,7 +749,10 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     await page.getByTestId('scope-revoke-button').first().click();
     await page.getByRole('button', { name: 'Remove permission' }).click();
     await vi.waitFor(() => expect(m.notify.success).toHaveBeenCalledTimes(1));
-    expect(m.notify.warning, `${name}: a clean success was announced as a warning`).not.toHaveBeenCalled();
+    expect(
+      m.notify.warning,
+      `${name}: a clean success was announced as a warning`
+    ).not.toHaveBeenCalled();
     // The message names the scope that was actually removed, not the app's whole set.
     expect(String(m.notify.success.mock.calls[0][0].message), name).toContain(scope);
     // …and no inline failure notice on a success.
@@ -721,8 +800,8 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     for (const c of [degradedColour, refusedColour]) {
       expect(
         c,
-        `${name}: the notice set no --text-color at all — Mantine may have changed how \`c\` is ` +
-          'emitted, and this arm is reading the wrong property'
+        `${name}: the notice set no inline \`color\` at all — Mantine may have changed how \`c\` is ` +
+          'emitted (to a class, or to a build-time hex), and this arm is reading the wrong property'
       ).toMatch(/mantine-color/);
     }
     expect(
@@ -846,7 +925,9 @@ describe('the exempt-note fragments are a usable discriminator', () => {
       const hits = notes.filter((n) => re.test(n.text)).map((n) => n.scope);
       expect(
         hits,
-        `${String(re)} matches ${hits.length} of the ${notes.length} notes — it must match exactly ` +
+        `${String(re)} matches ${hits.length} of the ${
+          notes.length
+        } notes — it must match exactly ` +
           `one (${scope}) or it cannot tell a swapped note from a correct one`
       ).toEqual([scope]);
     }
@@ -870,12 +951,7 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
    * than retyped, so it cannot drift from the fixture the rest of the file uses.
    */
   const preMigrationRow = () => {
-    const {
-      revokableScopes: _rs,
-      revokedScopes: _rv,
-      scopesRevokedAt: _at,
-      ...rest
-    } = GRANT;
+    const { revokableScopes: _rs, revokedScopes: _rv, scopesRevokedAt: _at, ...rest } = GRANT;
     return rest;
   };
 

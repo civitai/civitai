@@ -1728,8 +1728,16 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // covers the whole hazard at any depth. What it WOULD do is red on the pure refactor of removing
     // `ScopeConsentAction`'s wrapper `<Group>`. Reported by the round-2 test lane; a guard whose only
     // effect is a false alarm on a safe change is worse than no guard.
-    expect(controlRow.contains(control), 'the control left its own scope row').toBe(true);
-    // The real check, depth-independently: the badge's own parent must not contain it.
+    // ⚠️ A THIRD ASSERTION STOOD HERE AND IS DELETED AS A TAUTOLOGY — `controlRow.contains(control)`.
+    // `controlRow` is `control.closest(...)`, which returns the element itself or an ancestor, and
+    // `Node.contains` is true for self and for descendants — so it was TRUE UNDER EVERY POSSIBLE DOM,
+    // including with the control moved into the badge group (the hazard) or into a DIFFERENT row. The
+    // only falsifiable branch (`closest` → null) is already consumed by the `throw` above it, which
+    // carries a different message. Round 2 replaced a useless depth check with a line that read as a
+    // row-identity guard and checked nothing at all; the round-3 test lane measured it in jsdom.
+    // The hazard is fully covered by the read below, which is depth-independent and genuinely
+    // falsifiable.
+    // The real check: the badge's own parent must not contain it.
     const badgeGroup = scopeBadge(fixture.revokableScope).parentElement;
     expect(badgeGroup, 'the badge has no parent Group').not.toBeNull();
     expect(

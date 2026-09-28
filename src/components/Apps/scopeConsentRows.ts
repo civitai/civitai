@@ -128,13 +128,13 @@ export function buildScopeConsentRows({
     revoked.has(scope)
       ? 'revoked'
       : // The `unknown` test sits AFTER `revoked`, deliberately: a suppression we were told about
-        // is a fact we can still state even on a payload missing `revokableScopes`, and hiding a
-        // known withdrawal would be the one regression this surface must never have.
-        revokable === undefined
-        ? 'unknown'
-        : revokable.has(scope)
-          ? 'revokable'
-          : 'fixed';
+      // is a fact we can still state even on a payload missing `revokableScopes`, and hiding a
+      // known withdrawal would be the one regression this surface must never have.
+      revokable === undefined
+      ? 'unknown'
+      : revokable.has(scope)
+      ? 'revokable'
+      : 'fixed';
 
   const displayed = new Set(scopes);
   const rows: ScopeConsentRow[] = scopes.map((scope) => ({ scope, state: state(scope) }));

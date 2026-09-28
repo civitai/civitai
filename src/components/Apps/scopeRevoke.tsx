@@ -70,8 +70,8 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
   return (
     <Stack gap="xs" data-testid="scope-revoke-confirm-body">
       <Text size="sm">
-        <strong>{appName}</strong> will stop being able to use <code>{scope}</code> straight away
-        — including in a session you already have open.
+        <strong>{appName}</strong> will stop being able to use <code>{scope}</code> straight away —
+        including in a session you already have open.
       </Text>
       <Text size="sm">
         The app may ask you for this permission again the next time you open it. That ask is a
@@ -79,9 +79,9 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
       </Text>
       {scope === BLOCK_SPEND_SCOPE ? (
         <Text size="sm" data-testid="scope-revoke-confirm-budget-note">
-          This also clears the daily Buzz limit you set for this app. A limit on a spend the app
-          can no longer make bounds nothing, and leaving it stored would bring it back as a live
-          limit if you ever re-granted the permission.
+          This also clears the daily Buzz limit you set for this app. A limit on a spend the app can
+          no longer make bounds nothing, and leaving it stored would bring it back as a live limit
+          if you ever re-granted the permission.
         </Text>
       ) : null}
       {/* 🔴 MORE HAPPENS THAN THE SENTENCES ABOVE PROMISE, AND IT HAS TO BE SAID. For an app whose
@@ -101,8 +101,8 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
         need to sign in to it again.
       </Text>
       <Text size="sm" c="dimmed">
-        This does not uninstall the app or remove anything it has already saved — those are
-        separate from the permission.
+        This does not uninstall the app or remove anything it has already saved — those are separate
+        from the permission.
       </Text>
     </Stack>
   );
@@ -175,13 +175,30 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
    * asserting an action it is not performing is exactly what this phase exists to stop. Found by the
    * round-2 correctness lane, which also noted the new PENDING test arm *pinned* the bad behaviour.
    *
-   * ⚠️ DELIBERATELY STICKY FOR THE COMPONENT'S LIFETIME, NOT CLEARED WHEN THE REFETCH LANDS. Once
-   * the server list carries the scope the union is a no-op, so clearing buys nothing; and clearing
-   * on a FAILED refetch would put a live control back on a permission that really is gone. The
-   * residual is the mirror case — a re-consent performed on another surface while this component
-   * stays mounted would keep reading as "Removed" until it unmounts. That is the safe direction for
-   * a consent surface (over-reporting a withdrawal, never under-reporting one) and it self-corrects
-   * on navigation.
+   * 🔴 CLEARED AS SOON AS THE REFETCH SETTLES — IT IS A WINDOW, NOT AN OVERRIDE. An earlier version
+   * held it for the component's lifetime and argued that was "the safe direction for a consent
+   * surface (over-reporting a withdrawal, never under-reporting one)". THAT IS RETRACTED, AND IT WAS
+   * BACKWARDS. `src/pages/apps/activity.tsx` already states the rule for this exact surface:
+   * *"Telling that viewer the app has no access is the one direction a permissions page must never
+   * be wrong in."* Over-reporting a withdrawal IS telling them the app has no access. Two comments
+   * in one component asserting opposite principles, and the sticky one was the wrong half.
+   *
+   * 🔴 IT WAS ALSO PRODUCTION-WRONG, NOT MERELY MIS-ARGUED. `buildScopeConsentRows` tests `revoked`
+   * FIRST, and the `revoked` row renders "Removed", the sentence "You withdrew this", and NO control
+   * — so a permanent entry here overrode fresh server data and left a dead end. A re-grant is a real
+   * path: `blocks.grantScopes` passes `clearRevocations: true`, so after one the server correctly
+   * reports the scope as not-revoked AND revokable. The race-free sequence found by the round-3
+   * correctness lane: revoke in the run-frame drawer (which stays mounted), the block behind it fires
+   * `REQUEST_CONSENT`, the viewer re-grants with a budget, then revokes anything else in the same
+   * drawer — that second revoke's refetch brings back authoritative data saying spend is LIVE, and the
+   * sticky entry painted "Removed" over it. A surface claiming an app can no longer spend the
+   * viewer's Buzz while it can, with a stored daily limit, and no way to withdraw it.
+   *
+   * So the entry lives exactly as long as the unknown does: from the successful mutation until the
+   * refetch settles. Both outcomes are then correct — a refetch that SUCCEEDS carries the revocation,
+   * so the row stays "Removed" on the server's authority; a refetch that FAILS drops the local claim
+   * and the row shows the control again, which is the over-report-access direction the rule above
+   * says is the safe one. "The server remains the authority" is now a fact rather than a comment.
    */
   const [justRevoked, setJustRevoked] = useState<string[]>([]);
 
@@ -266,38 +283,68 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
            * correctness lane; the option-callback form had the same hazard by a different route
            * (`execute` awaits `onSuccess` inside its own `try`).
            */
-          .then(() => {
-            // The local sticky set FIRST, so the row stops offering a control in the same commit as
-            // the toast — see `justRevoked`.
-            setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
-            showSuccessNotification({
-              title: 'Permission removed',
-              message: `${appName} can no longer use ${scope}.`,
-            });
-            void utils.blocks.listMyScopeGrants.invalidate();
-          }, (error: { data?: { code?: string }; message?: string }) => {
-            const code = error?.data?.code;
-            const degraded = code === 'SERVICE_UNAVAILABLE';
-            const message = error?.message ?? 'The permission could not be removed just now.';
-            setFailure({ message, degraded });
-            if (degraded) {
-              // A WARNING, not an error: the permission IS gone. The notification and the inline
-              // notice carry the same server sentence rather than two paraphrases of it.
-              showWarningNotification({ title: 'Permission removed', message });
-              // 🔴 AND IT COUNTS AS REVOKED FOR THE ROW, exactly as a 2xx does. On a 503 Postgres
-              // was written and only the in-flight-token marker failed, so the permission really is
-              // withdrawn — leaving a live "Remove" control on it would be the same misreport as
-              // the success path's, in the arm that is already telling the viewer it is gone.
+          .then(
+            () => {
+              // The local sticky set FIRST, so the row stops offering a control in the same commit as
+              // the toast — see `justRevoked`.
               setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
+              showSuccessNotification({
+                title: 'Permission removed',
+                message: `${appName} can no longer use ${scope}.`,
+              });
+              // Still un-awaited — the viewer has already been told and the spinner must not wait on
+              // it — but the local claim is dropped the moment the server answers, whichever way it
+              // answers. See `justRevoked`.
+              void utils.blocks.listMyScopeGrants
+                .invalidate()
+                .finally(() => setJustRevoked((prev) => prev.filter((s) => s !== scope)));
+            },
+            (error: { data?: { code?: string }; message?: string }) => {
+              const code = error?.data?.code;
+              const degraded = code === 'SERVICE_UNAVAILABLE';
+              const message = error?.message ?? 'The permission could not be removed just now.';
+              setFailure({ message, degraded });
+              if (degraded) {
+                // A WARNING, not an error: the permission IS gone. The notification and the inline
+                // notice carry the same server sentence rather than two paraphrases of it.
+                showWarningNotification({ title: 'Permission removed', message });
+                // 🔴 AND IT COUNTS AS REVOKED FOR THE ROW, exactly as a 2xx does. On a 503 Postgres
+                // was written and only the in-flight-token marker failed, so the permission really is
+                // withdrawn — leaving a live "Remove" control on it would be the same misreport as
+                // the success path's, in the arm that is already telling the viewer it is gone.
+                setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
+              }
+              // See the hook docblock: 412 is the only outcome the server states left the row
+              // untouched, so it is the only one that buys nothing by re-reading. Un-awaited, and
+              // AFTER the viewer has been told — see the block above. The local claim is dropped when
+              // it settles, exactly as on the success arm.
+              if (code !== 'PRECONDITION_FAILED') {
+                void utils.blocks.listMyScopeGrants
+                  .invalidate()
+                  .finally(() => setJustRevoked((prev) => prev.filter((s) => s !== scope)));
+              }
             }
-            // See the hook docblock: 412 is the only outcome the server states left the row
-            // untouched, so it is the only one that buys nothing by re-reading. Un-awaited, and
-            // AFTER the viewer has been told — see the block above.
-            if (code !== 'PRECONDITION_FAILED') void utils.blocks.listMyScopeGrants.invalidate();
-          })
+          )
           // `finally` rather than clearing in each arm — a spinner that outlives its mutation is
           // the failure mode a per-arm reset produces the first time a third arm is added.
-          .finally(() => setPendingScope(null));
+          .finally(() => setPendingScope(null))
+          /**
+           * 🔴 A TERMINAL NO-OP CATCH, AND IT CLOSES A HOLE THE `.then(f, r)` CHANGE OPENED. With the
+           * previous `.then(f).catch(r)`, a throw from the SUCCESS arm fell into `r` — wrong (it
+           * painted "could not remove" over a success), which is why the arms were split. But once
+           * split, a throw from `f`, from `r`, or from the `finally` has NO handler at all: the chain
+           * rejects and the browser reports an unhandled rejection. Not a user-visible lie, so a
+           * strictly better failure than the one it replaced — but still a silent console error on a
+           * consent surface, and it was created by the fix rather than found in the original.
+           *
+           * Swallowing is the right action here rather than reporting: every path into this catch has
+           * ALREADY told the viewer its outcome (a toast, or the inline notice, or both). A second
+           * message derived from a notification helper having thrown would describe the messenger, not
+           * the revoke.
+           */
+          .catch(() => {
+            /* the outcome was already reported by the arm that threw — see above */
+          });
       },
     });
   };
@@ -409,11 +456,15 @@ export function ScopeRevokedAtLine({ scopesRevokedAt }: { scopesRevokedAt: Date 
  * nothing happened — otherwise the outcome is indistinguishable from a silent no-op, which is
  * the single worst result available on a consent surface.
  *
- * ⚠️ THE PRECEDENT FOR THAT DECISION IS `src/components/Apps/AppCollaboratorsPanelView.tsx`, WHICH
- * SPELLS IT AS A MANTINE `Alert` — read that before "fixing" this to match it. Same folder, same
- * job (an inline, persistent, app-level refusal rather than a toast) and the same argument, written
- * independently: *"a transient toast is exactly where a reason goes to die."* `AlertWithIcon` is a
- * third spelling of the same thing, with ~47 consumers elsewhere in the repo.
+ * ⚠️ THE PRECEDENT FOR THAT DECISION IS THE `AppCollaboratorsPanel` PAIR — read it before "fixing"
+ * this to match it. Same folder, same job (an inline, persistent, app-level refusal rather than a
+ * toast) and the same argument, written independently. The argument is in
+ * `src/components/Apps/AppCollaboratorsPanel.tsx`: *"a transient toast is exactly where a reason goes
+ * to die."* The `Alert` that implements it is in the sibling
+ * `src/components/Apps/AppCollaboratorsPanelView.tsx`. ⚠️ An earlier revision credited BOTH to the
+ * View file, so a reader following the pointer for the quote would not have found it — the
+ * round-3 correctness lane caught the misattribution. `AlertWithIcon` is a third spelling of the same
+ * thing, with ~47 consumers elsewhere in the repo.
  *
  * A plain `Text` is used here INSTEAD, for one measured reason: this component renders inside the
  * ~408px run-frame drawer as well as the wide page, and an `Alert`'s icon, border and padding cost

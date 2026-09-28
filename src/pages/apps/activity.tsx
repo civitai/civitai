@@ -360,11 +360,19 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-/* The ONE scope in the vocabulary that can spend the viewer's Buzz now lives in
-   `src/components/Apps/scopeRevoke.tsx` and is IMPORTED above, not re-declared here. Phase 3's
-   revoke confirm dialog needs the same literal — revoking it clears the stored daily limit, which
-   the dialog has to say — and two local consts of one scope id is exactly the shape that lets the
-   budget editor and the revoke copy disagree about which scope they are talking about. */
+/* The ONE scope in the vocabulary that can spend the viewer's Buzz is `BLOCK_SPEND_SCOPE`, imported
+   above from `~/shared/constants/block-scope.constants` and not re-declared here. Three surfaces
+   must agree about it — this budget editor decides what to SEND, `BlockConsentModal` decides whether
+   to OFFER the field, and the revoke dialog says that withdrawing it CLEARS the stored limit — and a
+   local const per surface is exactly the shape that lets them disagree.
+
+   ⚠️ THIS COMMENT SAID THE LITERAL "now lives in `src/components/Apps/scopeRevoke.tsx`" AND THAT WAS
+   THE INVERSE OF WHAT HAPPENED. Round 1 did move it there; round 2 moved it on to shared constants
+   and deleted the alias, precisely so the budget editor would stop taking its spend-scope identity
+   from the revoke feature — and this sentence, sixty lines above the call site, kept pointing at the
+   file whose own docblock now says no such declaration exists. A reader following it landed on the
+   file that tells them the pointer is wrong. The doc-rot gate cannot catch this: the path it named
+   is real. Found by the round-3 correctness lane. */
 
 /**
  * The per-app daily Buzz limit, rendered and EDITABLE.

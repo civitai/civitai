@@ -112,9 +112,9 @@ describe('buildScopeConsentRows', () => {
    */
   test('🔴 ABSENT revokableScopes yields `unknown`; EMPTY yields `fixed`', () => {
     const scopes = ['ai:write:budgeted'];
-    expect(buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: undefined })).toEqual(
-      [{ scope: 'ai:write:budgeted', state: 'unknown' }]
-    );
+    expect(
+      buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: undefined })
+    ).toEqual([{ scope: 'ai:write:budgeted', state: 'unknown' }]);
     expect(buildScopeConsentRows({ scopes, revokedScopes: [], revokableScopes: [] })).toEqual([
       { scope: 'ai:write:budgeted', state: 'fixed' },
     ]);
@@ -224,7 +224,10 @@ describe('fixedScopeNote', () => {
     // test is measuring the retired branch above instead.
     const known = 'posts:write:self';
     expect(isKnownBlockScope(known)).toBe(true);
-    expect(FIXED_SCOPE_NOTES[known], 'this scope gained a specific note — pick another').toBeUndefined();
+    expect(
+      FIXED_SCOPE_NOTES[known],
+      'this scope gained a specific note — pick another'
+    ).toBeUndefined();
     expect(fixedScopeNote(known)).toMatch(/granted by platform policy/i);
   });
 
