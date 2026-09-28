@@ -141,10 +141,6 @@ export const addEntityToShowcaseHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    if (input.entityType !== 'Model' && input.entityType !== 'Image') {
-      throw new Error('Invalid entity type. Only models and images are supported right now');
-    }
-
     await entityExists({
       entityType: input.entityType,
       entityId: input.entityId,
@@ -168,6 +164,7 @@ export const addEntityToShowcaseHandler = async ({
 
     const result = await updateUserProfile({
       userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
       showcaseItems: updatedShowcaseItems,
     });
 
