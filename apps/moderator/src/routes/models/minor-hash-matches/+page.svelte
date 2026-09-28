@@ -21,6 +21,29 @@
   const n = (v: unknown) => (typeof v === 'number' ? v : null);
   const s = (v: unknown) => (typeof v === 'string' ? v : null);
 
+  type TextScanFlagView = {
+    at?: string;
+    workflowId?: string;
+    reason?: string;
+    names?: string[];
+    appealGranted?: unknown;
+  };
+  const FLAG_LABELS = ['minor', 'poi'] as const;
+  const flagsOf = (v: unknown) =>
+    v && typeof v === 'object' ? (v as Partial<Record<'minor' | 'poi', TextScanFlagView>>) : null;
+  // Mirrors hasOpenTextScanFlag: a ruling stub has no workflowId, and a granted verdict is lifted.
+  const poiOpen = (row: Row) => {
+    const poi = flagsOf(row.textScanFlags)?.poi;
+    return row.poi === true && !!poi?.workflowId && !poi.appealGranted;
+  };
+  // Mirrors appealRowState.showHashMatch: a poi-only or text-scan minor row has no hash match, so
+  // there is no detail to fetch.
+  const hasHashDetail = (row: Row) => {
+    if (data.tab !== 'appeals') return true;
+    const source = s(row.flagSource);
+    return source !== null && (s(row.flagConfirmedFrom) ?? source) !== 'text-scan';
+  };
+
   const tabHref = (tab: string) => {
     const url = new URL(page.url);
     url.searchParams.set('tab', tab);
@@ -185,6 +208,13 @@
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
+{#if form && 'rescanQueued' in form && form.rescanQueued}
+  <p class="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-200">
+    Model #{form.modelId}: the owner edited the text while the appeal was open, so it will be scanned
+    again.
+  </p>
+{/if}
+
 <!-- A numeric term is also a user id, so a model with no minor history is not shown — it would put an
      unrelated model's actions beside a queue filtered to some account. -->
 {#if data.lookup && (data.lookup.minor || data.lookup.flaggedAt || data.lookup.clearedAt)}
@@ -254,7 +284,7 @@
       ? 'No unreviewed hash matches.'
       : data.tab === 'auto'
         ? 'Nothing flagged automatically inside the review window.'
-        : 'No open appeals against a minor flag.'}
+        : 'No open appeals against a minor or real-person flag.'}
   </p>
 {:else}
   <ul class="space-y-2">
@@ -278,7 +308,7 @@
           </a>
           <code class="text-xs text-dark-2">#{modelId}</code>
           <Badge variant="secondary">{s(row.status) ?? 'unknown'}</Badge>
-          {#if row.minor === false}
+          {#if row.minor === false && !poiOpen(row)}
             <!-- Reverting from the Auto-flagged tab leaves the appeal open; the row has to say the
                  flag is already gone or a moderator upholds against nothing. -->
             <Badge variant="outline">no longer flagged</Badge>
@@ -304,6 +334,21 @@
         {#if s(row.appealMessage)}
           <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{s(row.appealMessage)}</p>
           <p class="mt-1 text-xs text-dark-2">appealed {dateTime(s(row.appealCreatedAt))}</p>
+        {/if}
+
+        {#if flagsOf(row.textScanFlags)}
+          {@const flags = flagsOf(row.textScanFlags)}
+          {#each FLAG_LABELS as label (label)}
+            {#if flags?.[label]?.workflowId && flags[label]?.reason}
+              <p class="mt-2 text-xs text-dark-2">
+                <Badge variant="outline">text scan · {label === 'poi' ? 'real person' : 'minor'}</Badge>
+                {flags[label]?.reason}
+                {#if flags[label]?.names?.length}
+                  — {flags[label]?.names?.join(', ')}
+                {/if}
+              </p>
+            {/if}
+          {/each}
         {/if}
 
         {#if s(row.hash)}
@@ -332,9 +377,11 @@
         {/if}
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
-          <Button size="xs" variant="outline" onclick={() => toggle(row)}>
-            {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
-          </Button>
+          {#if hasHashDetail(row)}
+            <Button size="xs" variant="outline" onclick={() => toggle(row)}>
+              {expanded.has(modelId) ? 'Hide detail' : 'Detail'}
+            </Button>
+          {/if}
 
           {#if verdict}
             <span class="text-sm text-dark-2">{verdict}</span>
@@ -365,6 +412,28 @@
               <input type="hidden" name="modelId" value={modelId} />
               <Button type="submit" size="xs" variant="destructive">Overturn</Button>
             </form>
+            {#if row.minor === true && poiOpen(row)}
+              <form
+                method="POST"
+                action="?/splitAppeal"
+                use:enhance={submit(modelId, 'Kept minor, lifted real person')}
+              >
+                <input type="hidden" name="modelId" value={modelId} />
+                <input type="hidden" name="minor" value="uphold" />
+                <input type="hidden" name="poi" value="overturn" />
+                <Button type="submit" size="xs" variant="outline">Keep minor, lift real person</Button>
+              </form>
+              <form
+                method="POST"
+                action="?/splitAppeal"
+                use:enhance={submit(modelId, 'Lifted minor, kept real person')}
+              >
+                <input type="hidden" name="modelId" value={modelId} />
+                <input type="hidden" name="minor" value="overturn" />
+                <input type="hidden" name="poi" value="uphold" />
+                <Button type="submit" size="xs" variant="outline">Lift minor, keep real person</Button>
+              </form>
+            {/if}
           {/if}
         </div>
 

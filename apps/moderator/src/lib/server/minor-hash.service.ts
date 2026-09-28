@@ -224,6 +224,8 @@ export type MinorFlagAppealRow = {
   username: string | null;
   status: string;
   minor: boolean;
+  poi: boolean;
+  textScanFlags: unknown;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -243,7 +245,8 @@ export async function getMinorFlagAppealsForReview({ limit, offset = 0, search }
   const rows = await sql<MinorFlagAppealRow>`
     SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
            m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status, m.minor,
+           m.status::text AS status, m.minor, m.poi,
+           m.meta->'textScanFlags' AS "textScanFlags",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
            m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
            -- A moderator affirming an auto-flag rewrites source to 'manual', so this is the only

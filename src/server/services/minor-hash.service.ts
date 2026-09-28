@@ -24,6 +24,8 @@ import {
   hasOpenTextScanFlag,
   hasTextScanVerdict,
   readTextScanFlags,
+  TEXT_SCAN_FLAGS_KEY,
+  type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -674,6 +676,8 @@ export type MinorFlagAppealRow = {
   username: string | null;
   status: string;
   minor: boolean;
+  poi: boolean;
+  textScanFlags: TextScanFlags | null;
   flaggedAt: Date | null;
   flagSource: string | null;
   flagConfirmedFrom: string | null;
@@ -694,7 +698,8 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
   const rows = await dbRead.$queryRaw<MinorFlagAppealRow[]>`
     SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
            m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
-           m.status::text AS status, m.minor,
+           m.status::text AS status, m.minor, m.poi,
+           m.meta->${TEXT_SCAN_FLAGS_KEY} AS "textScanFlags",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
            m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' AS "flagSource",
            -- A moderator affirming an auto-flag rewrites source to 'manual', so this

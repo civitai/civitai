@@ -19,6 +19,7 @@ import type { MRT_ColumnDef } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { appealRowState } from '~/components/Moderation/appeal-row-state';
 import { MinorFlagAppealActions } from '~/components/Moderation/MinorFlagAppealActions';
 import { MinorFlagNoMatchAlert } from '~/components/Moderation/MinorFlagNoMatchAlert';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -30,7 +31,7 @@ import type {
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
@@ -444,7 +445,15 @@ function AutoFlaggedTable() {
   );
 }
 
+const SOURCE_BADGE_COLOR: Record<ReturnType<typeof appealRowState>['sourceLabel'], string> = {
+  Reverted: 'gray',
+  'Text scan': 'blue',
+  Auto: 'orange',
+  Mod: 'grape',
+};
+
 function AppealDetailPanel({ row }: { row: MinorFlagAppealRow }) {
+  const { verdictLabels, showHashMatch } = appealRowState(row);
   return (
     <Stack gap="xs">
       <Stack gap={2} maw={900} className="px-2 pt-2">
@@ -455,7 +464,21 @@ function AppealDetailPanel({ row }: { row: MinorFlagAppealRow }) {
           {row.appealMessage}
         </Text>
       </Stack>
-      <AutoFlaggedDetailPanel row={row} />
+      {verdictLabels.map((label) => {
+        const flag = row.textScanFlags?.[label];
+        if (!flag) return null;
+        return (
+          <Stack key={label} gap={2} maw={900} className="px-2">
+            <Text size="xs" fw={600}>
+              Text scan · {label === 'poi' ? 'real person' : 'minor'}
+              {flag.at ? ` · ${formatDate(flag.at)}` : ''}
+            </Text>
+            <Text size="sm">{flag.reason}</Text>
+            {!!flag.names?.length && <Text size="xs">Names: {flag.names.join(', ')}</Text>}
+          </Stack>
+        );
+      })}
+      {showHashMatch && <AutoFlaggedDetailPanel row={row} />}
     </Stack>
   );
 }
@@ -471,7 +494,13 @@ function AppealsTable() {
   const items = useMemo(() => data?.items ?? [], [data]);
 
   const resolveMutation = trpc.moderator.models.resolveMinorFlagAppeal.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      if (result?.rescanQueued)
+        showSuccessNotification({
+          title: 'Appeal resolved',
+          message:
+            'The uploader edited the text while the appeal was open, so it will be scanned again.',
+        });
       await queryUtils.moderator.models.queryMinorFlagAppeals.invalidate();
       await queryUtils.moderator.models.queryAutoFlaggedMinorModels.invalidate();
       await queryUtils.moderator.models.queryMinorHashMatches.invalidate();
@@ -521,24 +550,17 @@ function AppealsTable() {
         // this is decides how much weight the existing decision carries.
         id: 'flagSource',
         header: 'Flag',
-        accessorFn: (row) => (!row.minor ? 'Reverted' : row.flagSource === 'auto' ? 'Auto' : 'Mod'),
+        accessorFn: (row) => appealRowState(row).sourceLabel,
         size: 110,
         filterVariant: 'multi-select',
-        Cell: ({ row: { original } }) =>
-          !original.minor ? (
-            <Badge size="sm" tt="none" color="gray" variant="light">
-              Reverted
+        Cell: ({ row: { original } }) => {
+          const label = appealRowState(original).sourceLabel;
+          return (
+            <Badge size="sm" tt="none" color={SOURCE_BADGE_COLOR[label]} variant="light">
+              {label}
             </Badge>
-          ) : (
-            <Badge
-              size="sm"
-              tt="none"
-              color={original.flagSource === 'auto' ? 'orange' : 'grape'}
-              variant="light"
-            >
-              {original.flagSource === 'auto' ? 'Auto' : 'Mod'}
-            </Badge>
-          ),
+          );
+        },
       },
       {
         id: 'status',
@@ -615,12 +637,16 @@ function AppealsTable() {
             row={original}
             pending={
               resolveMutation.isPending && resolveMutation.variables?.modelId === original.modelId
-                ? resolveMutation.variables.uphold
+                ? resolveMutation.variables.labels
+                  ? 'split'
+                  : resolveMutation.variables.uphold
                   ? 'uphold'
                   : 'overturn'
                 : undefined
             }
-            onResolve={(uphold) => resolveMutation.mutate({ modelId: original.modelId, uphold })}
+            onResolve={(uphold, labels) =>
+              resolveMutation.mutate({ modelId: original.modelId, uphold, labels })
+            }
           />
         ),
       },

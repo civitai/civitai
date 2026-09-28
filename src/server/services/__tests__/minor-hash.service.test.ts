@@ -1363,6 +1363,15 @@ describe('acceptExpiredMinorAutoFlags', () => {
 });
 
 describe('getMinorFlagAppealsForReview', () => {
+  it('returns poi and the text-scan verdict so a moderator can read the reason', async () => {
+    await getMinorFlagAppealsForReview({ limit: 10 });
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('m.poi');
+    expect(text).toContain('AS "textScanFlags"');
+    expect(values).toContain('textScanFlags');
+  });
+
   it('surfaces appeals against manual flags, not just automated ones', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([]);
 
