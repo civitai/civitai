@@ -268,7 +268,20 @@ export function AppsPageLayout({
               alignSelf: 'flex-start',
             }}
           >
-            <div>
+            {/* 🔴 THE RAIL'S PAINTED SURFACE GOES HERE — ON THE LAYOUT'S OWN WRAPPER, NOT
+                INSIDE `AppsRailNavView`. That component is also rendered into the mobile
+                `Drawer` below, which is already a panel; a surface inside it would be a
+                panel within a panel. This is the existing wrapper, not a new node — the
+                vertical-geometry pins are measured against this DOM shape.
+
+                The class is layout-NEUTRAL by construction (`margin: -8px` cancelling
+                `padding: 8px`, plus an `inset` box-shadow for the hairline) because the
+                aside's width is an INLINE `width` under border-box and the 12-route
+                alignment ledger in `AppsPageLayout.chromeAlignment.browser.test.tsx`
+                asserts the nav's rect to the pixel. The full constraint list — and the
+                measured red the naive `border` + `padding` form produces — is on the class
+                itself in `src/components/Apps/AppsPageLayout.module.scss`. */}
+            <div className={classes.railSurface} data-apps-chrome="rail-surface">
               <Group justify={collapsed ? 'center' : 'flex-end'} gap={0} mb={4}>
                 <Tooltip
                   label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
