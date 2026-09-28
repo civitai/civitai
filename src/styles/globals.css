@@ -132,7 +132,16 @@
    deleted with its subject, which is a SCOPE REDUCTION rather than a fix: the hazard is
    generic to any stylesheet here, so the honest replacement is a repo-wide check over
    every stylesheet, not a ledger-shaped one. Until that exists this paragraph is all there
-   is. */
+   is.
+
+   ⚠️ BE ACCURATE ABOUT WHAT WAS LOST, WHICH IS LESS THAN "a guard for a live defect" —
+   MEASURED AT THE DELETING COMMIT: **no `.css`, `.scss` or `.less` file in this repo, and
+   no attribute selector in any source file, keys on `data-testid` outside a comment.** So
+   the coverage that went was PROSPECTIVE: it protected the next such rule, not a present
+   one, and the deleting commit's message claims slightly more danger for itself than the
+   tree supports. That makes the replacement cheaper to defer — and it does not make the
+   warning above optional, because "zero instances" is the state a guard is deleted in and
+   also the state the first instance arrives in. */
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and

@@ -75,11 +75,18 @@ import type * as TrpcMod from '~/utils/trpc';
  * 🔴 MUTATION CONTROL, RUN AGAINST THIS CONTRACT (recorded here because a mutation result
  * that lives only in a PR description is not evidence anyone can re-read). Putting a bare
  * `maxWidth: 1600` back on the content element in `PageBlockHost.tsx` — the value the old
- * cap used — takes this file to **4 failed | 10 passed of 14 arms**, and the
- * 1620/1905/2560/3440 arms fail with THIS suite's own message ("the app column is 1600px
- * inside a 1620px parent — it is being capped, with 10px of gutter on the left"). A
- * Tailwind `max-w-[1600px]` class is the mirror case and is INVISIBLE here — this harness
- * loads no Tailwind — which is why the node tier pins the class route separately.
+ * cap used — takes this file to **5 failed | 9 passed of 14 arms**: the 1620/1905/2560/3440
+ * arms fail with THIS suite's own message ("the app column is 1600px inside a 1620px parent
+ * — it is being capped, with 10px of gutter on the left"), AND so does
+ * `at 2560x1080 the chrome spans the page and so does the app column`, on its second
+ * assertion (`hostWidth` → `frameWidth`, `expected 1600 to be 2560`). 🔴 THAT FIFTH ARM IS
+ * THE CORRECTION: this figure read "4 failed | 10 passed" because the sentence enumerated
+ * only the `test.each` widths and forgot the chrome/app pair, which is also a width claim.
+ * It is the THIRD time this figure has been wrong — see the retraction below — and it is
+ * the number a future reader uses to decide whether their own run is complete, so RE-RUN
+ * rather than trusting it. A Tailwind `max-w-[1600px]` class is the mirror case and is
+ * INVISIBLE here — this harness loads no Tailwind — which is why the node tier pins the
+ * class route separately.
  *
  * ⚠️ QUOTE THAT FIGURE WITH ITS ARM COUNT, BECAUSE IT WENT STALE TWICE AND THAT IS THE
  * WHOLE HAZARD OF RECORDING A COUNT. It first read "5 failed | 8 passed" (13 arms, i.e.
@@ -688,6 +695,44 @@ describe('PageBlockHost — the app takes the whole width, at every display size
       'at 932x430 the app column resolved a non-zero inline margin. Nothing declares one — ' +
         'the `margin-inline: auto` that used to centre a capped column was deleted with the ' +
         'cap — so a value here means it is coming from a stylesheet or a substituted component.'
+    ).toEqual(['0px', '0px']);
+
+    // 🔴 AND THE PADDING, WHICH IS THE HALF THE GEOMETRY ASSERTIONS ABOVE STRUCTURALLY CANNOT
+    // SEE IN PRODUCTION. A review round measured `paddingInline: 'var(--safe-area-inset-left)'`
+    // on this element: it failed the width assertion above with `1026px inside a 932px parent`
+    // — but read the number, `1026 = 932 + 2×47`. The padding landed OUTSIDE the 100% width,
+    // i.e. THIS HARNESS IS `content-box`, because `test/component-setup.tsx` injects only
+    // `:root` custom properties and never loads `@tailwind base`. Production is `border-box`
+    // (`globals.css`'s `@layer tailwind-preflight { @tailwind base; }`), where the identical
+    // regression leaves `hostWidth === parentWidth`, both gutters 0 and both margins `0px` —
+    // every assertion above green while the app is inset by 47px a side on a notched phone in
+    // landscape and nowhere else.
+    //
+    // So the arm's title and message name three routes ("a `padding-inline`, a
+    // `margin-inline` or a bound") and the geometry assertions covered two of them in
+    // production terms. This reads the padding DIRECTLY, which is box-model-independent and
+    // therefore says the same thing in both environments. ⚠️ It is the one assertion in this
+    // arm whose result does NOT depend on the harness's box model — do not "simplify" it into
+    // the width comparison above, which is exactly where the blind spot was.
+    //
+    // 🔴 AND IT IS REACHABLE, WHICH TOOK A SECOND MUTANT TO SHOW — the naive one does not
+    // reach it. Measured both ways. (a) `paddingInline: 'var(--safe-area-inset-left)'` alone:
+    // the WIDTH assertion above fires first (`1026px inside a 932px parent`) and this line
+    // never executes, so that mutant proves nothing about this assertion — the
+    // earlier-check-always-wins shape, where a guard looks tested and is not. (b) The same
+    // padding PLUS `boxSizing: 'border-box'`, i.e. the production shape: width stays 932, the
+    // gutters stay 0, the margins stay `0px`, every geometry assertion passes, and THIS line
+    // is the only one that fails. (b) is the control that matters, because (b) is what the
+    // deployed cascade does.
+
+    expect(
+      [cs.paddingLeft, cs.paddingRight],
+      'at 932x430 the app column has a non-zero inline PADDING while the display-cutout insets ' +
+        "are 47px a side. Something is spending them on the third-party app's own column. " +
+        'Read this assertion rather than the width one above: under production `border-box` a ' +
+        "padding-based inset does NOT change the element's width, so the geometry assertions " +
+        'above stay green through exactly this regression — they only catch it in this ' +
+        'harness, which is `content-box` because it loads no Tailwind preflight.'
     ).toEqual(['0px', '0px']);
   });
 });

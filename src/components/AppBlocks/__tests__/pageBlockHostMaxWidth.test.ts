@@ -19,8 +19,15 @@ import { stripComments as stripTsComments } from '../../../../test/strip-comment
  * gets the viewport; an app that wants a centred column sets one inside its own iframe
  * document.
  *
- * ⚠️ THIS FILE USED TO GUARD A MECHANISM, AND IT NO LONGER HAS ONE TO GUARD — THAT IS
- * WHY IT IS ~4x SHORTER AND THE SHRINKAGE IS THE CORRECTNESS SIGNAL. In two stages: a
+ * ⚠️ THIS FILE USED TO GUARD A MECHANISM, AND IT NO LONGER HAS ONE TO GUARD — WHICH IS
+ * WHY IT DROPPED FROM **10 ARMS TO 3**, AND THAT SHRINKAGE IS THE CORRECTNESS SIGNAL.
+ * 🔴 THE ARM COUNT IS THE FIGURE; AN EARLIER VERSION OF THIS SENTENCE SAID "~4x SHORTER"
+ * AND NO READING OF THE LINE COUNTS SUPPORTS IT — 1,352 → 711 is 1.9x, and against
+ * `main`'s pre-PR 706 this file is 1.007x **LONGER**, because the deleted arms' record
+ * moved into prose. Retracted rather than recomputed: a multiplier over line counts is the
+ * wrong instrument for "it guards less", and this paragraph is the one whose argument IS
+ * the number — in a file that elsewhere says a comment which counts is a comment that goes
+ * stale, and retracts two prior count errors for exactly this reason. In two stages: a
  * 1600px `--app-page-max-width` default with a per-app CSS ledger apps could OPT OUT of;
  * then the default at `none` with the ledger re-pointed so a rule would CAP one app
  * instead. The second stage's retained lever is now deleted — property, `var()` read,
@@ -229,6 +236,31 @@ function isDescendant(
  *
  * So the two cases are distinguishable and the callers must assert on it: a style this
  * helper cannot read is a REASON TO FAIL, never a reason to pass.
+ *
+ * 🔴 AND THE SAME LESSON APPLIES ONE LEVEL DEEPER — A SPREAD *INSIDE* THE OBJECT LITERAL,
+ * WHICH THIS HELPER USED TO RETURN AS ORDINARY TEXT. Measured by a review round: adding
+ *
+ *     const CAP_STYLE = { maxWidth: 1600, marginInline: 'auto' } as const;
+ *     …
+ *     width: '100%',
+ *     ...CAP_STYLE,
+ *
+ * to the FRAME's style object left this whole file **3 passed (3)**, byte-identical to
+ * baseline, while the app rendered letterboxed at 1600px and centred again — the exact
+ * regression this file exists to catch. Only the report-only browser tier saw it
+ * (`5 failed | 9 passed`). The attribute-level check above did not fire because a
+ * `SpreadAssignment` is not a `JsxSpreadAttribute`, and the width regex did not fire
+ * because `...CAP_STYLE` contains no `max-width`. The docblock above claimed
+ * `{...capProps}` was covered "on any `JsxSpreadAttribute`", which was true of the
+ * attribute form and false of this one.
+ *
+ * ⚠️ IT CANNOT SIMPLY REJECT EVERY INNER SPREAD: the frame legitimately carries
+ * `...(fit === 'fill' ? {…} : {…})`, which is exactly the local idiom that makes the
+ * mutant plausible. So the test is READABILITY, the same test as for the attribute — a
+ * spread of an inline object literal (or of a conditional whose branches are both object
+ * literals) has its contents present in `getText()` and is therefore scanned by every
+ * regex below; a spread of an identifier, a call or a property access does not, and is
+ * the unreadable case that must fail.
  */
 function styleObjectOf(el: ts.JsxOpeningLikeElement): string | null {
   // A spread can carry `style` from anywhere, so its presence means the attribute list
@@ -240,10 +272,76 @@ function styleObjectOf(el: ts.JsxOpeningLikeElement): string | null {
       if (!ts.isJsxExpression(init) || !init.expression) return null;
       // Only an inline OBJECT LITERAL is readable here. An identifier or a call means
       // the value lives somewhere this guard is not looking.
-      return ts.isObjectLiteralExpression(init.expression) ? init.expression.getText() : null;
+      if (!ts.isObjectLiteralExpression(init.expression)) return null;
+      // …and every inner spread must be readable too, or the literal's text is not the
+      // whole declaration set. See the docblock for the measured mutant.
+      const spreadIsReadable = (e: ts.Expression): boolean =>
+        ts.isObjectLiteralExpression(e) ||
+        (ts.isConditionalExpression(e) &&
+          spreadIsReadable(e.whenTrue) &&
+          spreadIsReadable(e.whenFalse)) ||
+        (ts.isParenthesizedExpression(e) && spreadIsReadable(e.expression));
+      for (const p of init.expression.properties) {
+        if (ts.isSpreadAssignment(p) && !spreadIsReadable(p.expression)) return null;
+      }
+      return init.expression.getText();
     }
   }
   return null;
+}
+
+/**
+ * THE FIVE ATTRIBUTE-SHAPED WIDTH ROUTES, AS NAMED PREDICATES OVER ONE ELEMENT.
+ *
+ * 🔴 THESE EXIST AS FUNCTIONS SO THE ARM'S FOUR `toEqual([])` ZEROS CAN HAVE A POSITIVE
+ * CONTROL THAT RUNS THE SAME CODE. Before this, the arm's evidence that its filters could
+ * fire at all was a mutation sweep recorded in a commit message — and the browser suite's
+ * own header states the principle those zeros were violating: *"a mutation result that
+ * lives only in a PR description is not evidence anyone can re-read"*. Worse, two of the
+ * four are vacuous in the ordinary sense as well: neither element carries a `className`
+ * today, so both class filters return `[]` whatever their regexes say, and a broken regex
+ * would be indistinguishable from a clean element. The control below feeds each predicate
+ * a synthetic element it MUST flag.
+ *
+ * Kept as plain functions rather than folded into one "routes" object so each `expect` in
+ * the arm keeps its own route-specific message — which is the thing that makes a failure
+ * actionable, and is why this file has six separate arms instead of one.
+ */
+const attrNames = (el: ts.JsxOpeningLikeElement) =>
+  el.attributes.properties.filter(ts.isJsxAttribute).map((a) => a.name.getText());
+const attrTexts = (el: ts.JsxOpeningLikeElement) =>
+  el.attributes.properties.filter(ts.isJsxAttribute).map((a) => norm(a.getText()));
+
+/** Mantine `maw`/`w` style props — merged into inline style, and they WIN over `style`. */
+const mantineWidthProps = (el: ts.JsxOpeningLikeElement) =>
+  attrNames(el).filter((n) => n === 'maw' || n === 'w');
+/** A Tailwind width utility in a readable `className` string literal. */
+const tailwindWidthClasses = (el: ts.JsxOpeningLikeElement) =>
+  attrTexts(el).filter((a) => /^class(?:Name)?=/.test(a) && /\b(?:max-w-|w-\[)/.test(a));
+/** `component` / `renderRoot` — `Box` is polymorphic, so the tag name is not the root. */
+const polymorphicRootProps = (el: ts.JsxOpeningLikeElement) =>
+  attrNames(el).filter((n) => n === 'component' || n === 'renderRoot');
+/** A `className` the token filter above cannot read, which would pass on a capped element. */
+const unreadableClassName = (el: ts.JsxOpeningLikeElement) =>
+  attrTexts(el).filter((a) => /^class(?:Name)?=/.test(a) && !/^class(?:Name)?=\s*['"]/.test(a));
+
+/** The first JSX opening element in a synthetic TSX snippet — for the controls only. */
+function parseOneElement(tsx: string): ts.JsxOpeningLikeElement {
+  const sf = ts.createSourceFile(
+    'control.tsx',
+    tsx,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+  let found: ts.JsxOpeningLikeElement | undefined;
+  const visit = (n: ts.Node) => {
+    if (!found && (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n))) found = n;
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  expect(found, `control snippet parsed no JSX element: ${tsx}`).toBeDefined();
+  return found!;
 }
 
 /** `styleObjectOf`, failing loudly when the style is not readable. `who` names the element. */
@@ -251,12 +349,18 @@ function readableStyleOf(el: ts.JsxOpeningLikeElement, who: string): string {
   const text = styleObjectOf(el);
   expect(
     text,
-    `the \`${who}\` element's \`style\` is no longer an inline object literal (it was moved to a ` +
-      'variable or another module, computed, or spread in). This guard reads that literal to ' +
-      'decide whether a width bound is declared on the element, so it can no longer answer the ' +
-      'question it exists to answer — and it must fail rather than pass silently, which is ' +
-      'exactly how a re-capped host once shipped green. Either keep the style inline, or ' +
-      're-point this guard at wherever it now lives.'
+    `the \`${who}\` element's \`style\` is no longer FULLY READABLE as an inline object ` +
+      'literal. Either the whole value moved to a variable or another module, was computed, or ' +
+      'was spread in as an attribute — OR the literal is still here but contains a spread this ' +
+      'guard cannot see through (`...SOMETHING`, where SOMETHING is an identifier, a call or a ' +
+      'property access rather than an inline object). This guard reads that literal to decide ' +
+      'whether a width bound is declared on the element, so in either case it can no longer ' +
+      'answer the question it exists to answer — and it must fail rather than pass silently, ' +
+      'which is exactly how a re-capped host shipped green TWICE: once with the style lifted ' +
+      "into a sibling module, and once with `...CAP_STYLE` added to the frame's own literal. " +
+      'Either keep every declaration inline (a spread of an inline object, or of a conditional ' +
+      'whose branches are inline objects, is fine and is scanned), or re-point this guard at ' +
+      'wherever the value now lives.'
   ).not.toBeNull();
   return text!;
 }
@@ -314,9 +418,6 @@ describe('the full-page App Block host declares no width bound', () => {
       ['app-page-frame', frame],
       ['app-page-content', content],
     ] as const) {
-      const attrs = element.attributes.properties.filter(ts.isJsxAttribute);
-      const attrText = attrs.map((attr) => norm(attr.getText()));
-
       // 🔴 WHAT A BOUND ON EACH ELEMENT WOULD DO. Both are now UNOPPOSED — neither declares a
       // `max-width` of its own any more, so there is nothing for a mutant to lose a specificity
       // contest against. ⚠️ THAT IS A CHANGE FROM THE PREVIOUS VERSION OF THIS MESSAGE, which
@@ -377,6 +478,39 @@ describe('the full-page App Block host declares no width bound', () => {
           'max-width at all is the thing being pinned.)'
       ).not.toMatch(/(?:^|[,{[\s])['"`]?max-?(?:width|inline-?size)['"`]?\s*\]?\s*:/i);
 
+      // 🔴 AND A `width` DECLARATION, IF PRESENT, MUST BE EXACTLY `'100%'` — WHICH IS WHAT MAKES
+      // THIS ARM'S TITLE TRUE. The regex above matches `max-width`/`max-inline-size` only, and
+      // deliberately so: `width: '100%'` is legitimate on both elements and a pattern that caught
+      // it would fire on correct code. But the arm's title claims "no width bound … in any
+      // spelling", and a HARD width is a bound. Measured by a review round: changing the frame's
+      // `width: '100%'` to `width: '1600px'` left this file **3 passed (3)** while the browser
+      // tier went **12 failed | 2 passed** — it fails even the below-1600 reference arms, i.e. it
+      // is a WORSE regression than the 1600px cap this change removed, and the node tier could
+      // not see it. The content element was incidentally protected by its verbatim box-model pin;
+      // the frame had nothing.
+      //
+      // ⚠️ A VALUE PIN, NOT AN ABSENCE PIN, AND THAT IS THE NARROWEST HONEST FORM. Absence would
+      // be wrong (both elements must fill their parent, so both SHOULD declare `width`), and a
+      // "not a px value" pattern would have to enumerate units. `'100%'` is the one value that
+      // means "be my parent's measure", so pinning it says exactly what the requirement says.
+      // A deliberate change to e.g. `'100dvw'` has to come here and argue.
+      const widthDecl =
+        /(?:^|[,{[\s])['"`]?width['"`]?\s*\]?\s*:\s*([^,}\n]+)/i.exec(
+          stripTsComments(readableStyleOf(element, testid))
+        ) ?? null;
+      expect(
+        widthDecl === null ? "'100%'" : widthDecl[1].trim().replace(/,$/, ''),
+        `\`${testid}\` declares a \`width\` other than \`'100%'\`. ` +
+          where +
+          'A hard width is a width BOUND, and it is not matched by the `max-width` regex above ' +
+          '(which must let `width: 100%` through, since both elements legitimately declare it). ' +
+          'This is the assertion that makes this arm\'s title — "no width bound … in any ' +
+          'spelling" — a true sentence rather than a claim about `max-width` alone. Measured: a ' +
+          "frame `width: '1600px'` fails 12 of the 14 browser arms, INCLUDING the below-1600 " +
+          'reference arms, so it is worse than the cap this change removed. If the app column ' +
+          "should stop being its parent's measure, that is a deliberate change: make it here."
+      ).toBe("'100%'");
+
       // 🔴 AND NO MANTINE WIDTH STYLE PROP. THIS IS THE CHEAPEST ROUTE OF ALL AND IT SURVIVED
       // THE ROUND THAT CLOSED THE INLINE ONE, because neither element is a `div` — both are
       // `<Box>` from `@mantine/core`, and Mantine's style props are not decoration.
@@ -411,7 +545,7 @@ describe('the full-page App Block host declares no width bound', () => {
       // `<Box maw={appsMeasureCss(measure)}>` in `src/components/Apps/AppsPageLayout.tsx`, i.e.
       // in the Apps neighbourhood itself.
       expect(
-        attrs.map((attr) => attr.name.getText()).filter((n) => n === 'maw' || n === 'w'),
+        mantineWidthProps(element),
         `\`${testid}\` now carries a Mantine width style prop (\`maw\` / \`w\`). ` +
           where +
           '`<Box>` merges style props into the element’s INLINE STYLE and they WIN over the ' +
@@ -431,7 +565,7 @@ describe('the full-page App Block host declares no width bound', () => {
       // read the `style` object, the globals.css gate's corpus is that one file, and the browser
       // harness loads no Tailwind, so the class resolves to nothing there.
       expect(
-        attrText.filter((attr) => /^class(?:Name)?=/.test(attr) && /\b(?:max-w-|w-\[)/.test(attr)),
+        tailwindWidthClasses(element),
         `\`${testid}\` now carries a Tailwind width utility (\`max-w-*\` / \`w-[…]\`). ` +
           where +
           'It is invisible to every other guard here AND to the browser tier, whose harness ' +
@@ -538,9 +672,7 @@ describe('the full-page App Block host declares no width bound', () => {
       // that is adversarial disguise rather than a plausible re-cap, and is deliberately not
       // chased.)
       expect(
-        attrs
-          .map((attr) => attr.name.getText())
-          .filter((n) => n === 'component' || n === 'renderRoot'),
+        polymorphicRootProps(element),
         `\`${testid}\` now carries a \`component\` or \`renderRoot\` prop. Mantine's \`Box\` is ` +
           'POLYMORPHIC and decides its root from either one, so the JSX tag name no longer tells ' +
           'you what renders — both `component={Container}` and ' +
@@ -560,9 +692,7 @@ describe('the full-page App Block host declares no width bound', () => {
       // module constant) contains no literal `max-w-`, the filter returns `[]`, and that arm is
       // GREEN while the element is capped. An unreadable value must FAIL, never pass.
       expect(
-        attrText.filter(
-          (attr) => /^class(?:Name)?=/.test(attr) && !/^class(?:Name)?=\s*['"]/.test(attr)
-        ),
+        unreadableClassName(element),
         `\`${testid}\`'s \`className\` is not a plain string literal, so the width-utility ` +
           'filter above cannot read it and would pass on a capped element. Either inline the ' +
           'classes as a literal, or re-point these assertions at wherever the value now lives — ' +
@@ -572,15 +702,130 @@ describe('the full-page App Block host declares no width bound', () => {
   });
 
   /**
+   * 🔴 POSITIVE CONTROL FOR THE ARM ABOVE — CAN EACH OF ITS PREDICATES FIRE AT ALL?
+   *
+   * The arm reports five ZEROS (`toEqual([])` ×4, plus a readability `null` check), and a
+   * zero from a predicate that can never match is indistinguishable from a clean element.
+   * Until this test existed, the only evidence those predicates worked was a mutation sweep
+   * recorded outside the tree — which the sibling browser suite's own header names as
+   * insufficient: *"a mutation result that lives only in a PR description is not evidence
+   * anyone can re-read"*.
+   *
+   * 🔴 TWO OF THEM WERE VACUOUS IN THE ORDINARY SENSE TOO, WHICH IS THE SHARPER REASON.
+   * Neither host element carries a `className` at all, so BOTH class-shaped filters return
+   * `[]` whatever their regexes say — a typo in either one would have been invisible. The
+   * same holds for `component`/`renderRoot`, which neither element carries.
+   *
+   * ⚠️ SYNTHETIC INPUTS, RUN THROUGH THE EXACT SAME FUNCTIONS the arm calls — not a second
+   * implementation of the same idea. A control that re-spells the predicate it is
+   * controlling tests the spelling, not the predicate. That is why those five live as named
+   * functions above rather than inline in the arm.
+   *
+   * ⚠️ THIS IS A CONTROL, NOT COVERAGE. It says the instruments can move; it says nothing
+   * about the host. The arm above is what reads the host.
+   */
+  it('POSITIVE CONTROL — every predicate the invariant arm reports a zero for can fire', () => {
+    const maw = parseOneElement(`<Box maw={1600} style={{ width: '100%' }} />;`);
+    expect(mantineWidthProps(maw), 'the `maw`/`w` predicate missed `maw={1600}`').toEqual(['maw']);
+    expect(
+      mantineWidthProps(parseOneElement(`<Box w={1600} />;`)),
+      'the `maw`/`w` predicate missed `w={1600}`'
+    ).toEqual(['w']);
+    // `miw` is deliberately NOT in the set — a minimum cannot cap. Controlling the
+    // EXCLUSION too, so a widened predicate is a deliberate edit rather than a drift.
+    expect(
+      mantineWidthProps(parseOneElement(`<Box miw={1600} />;`)),
+      '`miw` is now matched. It sets a MINIMUM, which cannot cap — only force overflow. If ' +
+        "that is wanted, widen the arm's message in the same commit; the message currently " +
+        'says `miw` is deliberately not pinned.'
+    ).toEqual([]);
+
+    expect(
+      tailwindWidthClasses(parseOneElement(`<Box className="max-w-[1600px] mx-auto" />;`)),
+      'the Tailwind predicate missed `max-w-[1600px]`'
+    ).toEqual(['className="max-w-[1600px] mx-auto"']);
+    expect(
+      tailwindWidthClasses(parseOneElement(`<Box className="flex flex-col" />;`)),
+      'the Tailwind predicate flagged a className with no width utility in it — it would ' +
+        'false-fire on ordinary classes.'
+    ).toEqual([]);
+
+    expect(
+      polymorphicRootProps(parseOneElement(`<Box component={Container} />;`)),
+      'the polymorphic-root predicate missed `component={…}`'
+    ).toEqual(['component']);
+    expect(
+      polymorphicRootProps(parseOneElement(`<Box renderRoot={(p) => <Container {...p} />} />;`)),
+      'the polymorphic-root predicate missed `renderRoot={…}` — the route this repo PREFERS, ' +
+        'and the one a first version of the arm left open.'
+    ).toEqual(['renderRoot']);
+
+    expect(
+      unreadableClassName(parseOneElement(`<Box className={CAP_CLASS} />;`)),
+      'the unreadable-className predicate missed `className={IDENT}`, so a capped element ' +
+        'whose classes live in a constant would pass the Tailwind filter silently.'
+    ).toEqual(['className={CAP_CLASS}']);
+    expect(
+      unreadableClassName(parseOneElement(`<Box className="max-w-[1600px]" />;`)),
+      'the unreadable-className predicate flagged a plain string literal, which IS readable — ' +
+        'it would fire on every element carrying ordinary classes.'
+    ).toEqual([]);
+
+    // 🔴 AND THE READABILITY CHECK ITSELF, INCLUDING THE INNER-SPREAD CASE A REVIEW ROUND
+    // MEASURED AS A SURVIVING MUTANT: `...CAP_STYLE` inside the literal left this whole file
+    // green while the app was letterboxed at 1600px and centred. `null` is the "cannot read"
+    // signal every caller turns into a failure.
+    expect(
+      styleObjectOf(parseOneElement(`<Box style={{ width: '100%', ...CAP_STYLE }} />;`)),
+      'an UNREADABLE inner spread (`...IDENT`) is being returned as readable text. Its ' +
+        'contents are not in the literal, so every width regex below scans a string that ' +
+        'cannot contain the cap — the measured mutant that left this file 3/3 green while the ' +
+        'host was re-capped.'
+    ).toBeNull();
+    expect(
+      styleObjectOf(parseOneElement(`<Box style={{ width: '100%', ...OUTER }} {...spread} />;`)),
+      'a `JsxSpreadAttribute` on the element is being returned as readable.'
+    ).toBeNull();
+    expect(
+      styleObjectOf(
+        parseOneElement(`<Box style={{ ...(f ? { flex: 1 } : { height: '100%' }) }} />;`)
+      ),
+      'a READABLE inner spread — a conditional whose branches are inline object literals — is ' +
+        "being rejected. That is the frame's own legitimate idiom " +
+        "(`...(fit === 'fill' ? {…} : {…})`), so rejecting it would fail the arm on correct " +
+        'code; its contents ARE in the literal text and are scanned.'
+    ).not.toBeNull();
+  });
+
+  /**
    * 🔴 `flex: 1` ON THE CONTENT WRAPPER IS LOAD-BEARING AND NOTHING RENDERED CATCHES
    * ITS LOSS — which is why this pins the whole style object rather than one token.
    *
    * Measured by mutation, in a copy: deleting `flex: 1` left the FULL node suite
    * (24,879 tests) AND the full `AppBlocks` browser tier (40 files / 484 tests)
    * green, while the app column and its iframe collapsed to a sliver of their
-   * height. A running App Block reduced to a strip, with every tier green in both
-   * directions. This source pin is the only thing standing between that mutation
-   * and production.
+   * height. A running App Block reduced to a strip.
+   *
+   * 🔴 BUT "THE ONLY THING STANDING BETWEEN THAT MUTATION AND PRODUCTION" IS RETRACTED —
+   * THERE IS A RENDERED GUARD, AND IT IS THE `geometry` TIER. This paragraph said that,
+   * and `PageBlockHost.tsx`'s own `flex: 1` comment still does (left verbatim there
+   * deliberately: `PageBlockHostFillHeight.geometry.test.tsx` BLOCK-QUOTES it, so editing
+   * the sentence would rot the quotation — a ⚠️ retraction is appended beside it instead).
+   * That geometry file was written for this exact mutation and states at its own
+   * "WHAT THIS DOES AND DOES NOT ADD" heading: *"drop `flex: 1` from `app-page-content` →
+   * this file fails with the column at 150px of an 844px frame"*. So the mutation is
+   * caught in TWO places, and the tier enumeration in the sentence above — node + the
+   * `AppBlocks` browser project — is the same omission arm 1 already carves out ("THERE IS
+   * A THIRD RENDERED TIER"); it was corrected there and not here, 100 lines apart in one
+   * file.
+   *
+   * What survives, and is the actual reason this pin is whole-object rather than a `flex`
+   * presence check: the two guards see different things. This one is a claim about the
+   * TEXT of one file and catches the mutation the moment the text changes, on `main`,
+   * where the browser tiers are report-only. The geometry file asserts the CONSEQUENCE and
+   * catches collapses this pin structurally cannot — a parent losing its height, a
+   * `min-height` arriving from the cascade, an ancestor turning `display: block`. Neither
+   * replaces the other; the false part was only ever the word "only".
    *
    * 🔴 THE EXPECTED VALUE IS COMPARED AGAINST THE PARSED `style` ATTRIBUTE, AND THE
    * PIN CONTAINS NO ANCHOR REGEX — that is a correctness property, not tidiness.
@@ -677,9 +922,23 @@ describe('the full-page App Block host declares no width bound', () => {
      */
     const hostCapRule =
       /([^{}]*(?:data-app-page-frame|data-block-id|app-page-content)[^{}]*)\{([^}]*)\}/gi;
+    // 🔴 `max-inline-size` IS MATCHED, AND ITS ABSENCE WAS A ONE-WORD HOLE IN THIS GATE'S OWN
+    // STATED INVARIANT. This file's header names `max-inline-size` as part of the requirement,
+    // and the inline-style arm above spent a review round adding it — while this regex read
+    // `max-width` alone. Measured against the real `offenders()`:
+    // `[data-block-id='x']{max-inline-size:1600px}` returned `[]`. It is the logical-property
+    // equivalent with identical effect in a horizontal writing mode, so the cheapest route this
+    // gate exists to close was open in the spelling the sibling arm had already learned about.
+    //
+    // ⚠️ A BARE `width:` IS STILL NOT MATCHED HERE, DELIBERATELY, AND THAT IS A NARROWER CLAIM
+    // THAN THE INLINE ARM MAKES. On the host's own elements a hard `width` is caught by the value
+    // pin in arm 1. In a CASCADE rule it cannot be: `width: 100%` under a marker selector is
+    // perfectly ordinary, so catching `width: 1600px` would need a value allowlist — the exact
+    // narrowing this file rejects elsewhere for `maxWidth: 'none'`. So this gate covers
+    // `max-width`/`max-inline-size` in globals.css and says so, rather than claiming "any width".
     const offenders = (text: string) =>
       [...text.matchAll(hostCapRule)]
-        .filter(([, , body]) => /(?:^|[;\s])max-width\s*:/i.test(body))
+        .filter(([, , body]) => /(?:^|[;\s])max-(?:width|inline-size)\s*:/i.test(body))
         .map(([, selector]) => selector.trim());
 
     // 🔴 POSITIVE CONTROL — this grep reports a ZERO, and a zero from a pattern that can never
@@ -696,11 +955,52 @@ describe('the full-page App Block host declares no width bound', () => {
         'names and HTML attribute names are both ASCII case-insensitive, so this is a live cap ' +
         'and not a curiosity — it walked the first version of this gate.'
     ).toEqual(['[DATA-APP-PAGE-FRAME] > div']);
+    expect(
+      offenders(`[data-block-id='x'] { max-inline-size: 1600px; }`),
+      'POSITIVE CONTROL FAILED ON THE LOGICAL PROPERTY: the grep missed `max-inline-size`, ' +
+        'which is the same cap in a horizontal writing mode. This exact input returned `[]` ' +
+        'against the version of this gate that matched `max-width` alone, while the file header ' +
+        'already named `max-inline-size` as part of the invariant.'
+    ).toEqual(["[data-block-id='x']"]);
+
+    // 🔴 AND THE CORPUS FILTER'S OWN PREMISE, WHICH NOTHING ELSE PINS SINCE THE LEDGER WENT.
+    // `hostCapRule` only looks at rules whose selector names one of three markers, so this
+    // gate's `[]` is only meaningful while the host actually STAMPS them. The arm that used to
+    // assert that (`stamps BOTH ledger attributes on the host root`) was deleted with the
+    // ledger — correctly, since its stated subject was a per-app rule's selector — but it was
+    // also the only pin on the attributes, and both now have no other consumer in the repo.
+    // Measured: delete `data-app-page-frame` and `data-block-id` from the host and this gate can
+    // never return non-zero again, while BOTH synthetic controls above stay green — they
+    // validate the regex, not the corpus's relevance. That is the reassuring-zero shape this
+    // file guards against everywhere else, reached through the corpus rather than the pattern.
+    //
+    // ⚠️ THE THIRD MARKER IS A TESTID SPELLING AND IS THE WEAK ONE: `app-page-content` reaches
+    // the DOM only as `data-testid`, which `next.config.mjs` strips under
+    // `NODE_ENV === 'production'`. So a production rule keyed on it is inert anyway, and this
+    // gate's real reach in a shipped build rests on the two attributes below. Re-pointed here,
+    // justified by THIS gate rather than by the deleted ledger — if the attributes are removed
+    // (the host's own comment calls them deletion candidates), narrow `hostCapRule` in the same
+    // commit rather than deleting this.
+    const frameAttrs = hostElements()
+      .frame.attributes.properties.filter(ts.isJsxAttribute)
+      .map((a) => a.name.getText());
+    expect(
+      ['data-app-page-frame', 'data-block-id'].filter((n) => !frameAttrs.includes(n)),
+      'the host root no longer stamps a marker this gate selects on. `hostCapRule` above filters ' +
+        'globals.css to rules naming `data-app-page-frame`, `data-block-id` or ' +
+        '`app-page-content`; with a marker gone, a rule could never name it, so the `[]` this ' +
+        'gate reports would carry no information about the shipped DOM while its synthetic ' +
+        'controls stayed green. Either keep the attribute, or narrow `hostCapRule` to the ' +
+        'markers that remain — in the same commit, deliberately.'
+    ).toEqual([]);
 
     expect(
       offenders(css),
-      'a rule in src/styles/globals.css sets a bare `max-width` on a selector naming the app ' +
-        "host's own markers. That caps every full-page App Block (or one of them) without " +
+      'a rule in src/styles/globals.css sets a bare `max-width` or `max-inline-size` on a ' +
+        "selector naming the app host's own markers. (READ WHICH: the message named " +
+        '`max-width` alone for one revision while the body matched both, so check the reported ' +
+        'selector rather than assuming the property.) That caps every full-page App Block ' +
+        '(or one of them) without ' +
         'touching `PageBlockHost.tsx`, so it is invisible to every other assertion in this ' +
         'file AND to the entire browser tier, whose harness does not load the app cascade. The ' +
         'platform is meant to impose no width on a full-page App Block at all: there is no ' +

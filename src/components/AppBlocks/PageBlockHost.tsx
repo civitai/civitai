@@ -317,10 +317,16 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * must document no symbol.
  *
  * 🔴 `APP_PAGE_MAX_WIDTH_PX` USED TO BE DECLARED HERE AND IS GONE — AND SO, NOW, IS THE
- * WHOLE WIDTH MECHANISM IT BELONGED TO. THIS IS THE ONE PLACE THE RECORD LIVES. The
- * constant was cited by name from four other files, and `src/styles/globals.css` now
- * points here rather than the other way round, so a reader arriving from any of those
+ * WHOLE WIDTH MECHANISM IT BELONGED TO. THIS IS THE ONE PLACE THE RECORD LIVES. When the
+ * constant died it was cited by name from four other files, and `src/styles/globals.css`
+ * now points here rather than the other way round, so a reader arriving from one of those
  * citations needs to land somewhere that says what happened rather than on an absence.
+ * ⚠️ BE PRECISE ABOUT THE TENSE, BECAUSE THIS CHANGE INVALIDATED ITS OWN JUSTIFICATION: the
+ * commit that deleted the lever rewrote those four files too, so exactly ONE live citation
+ * of the name remains (`PageBlockHostMaxWidth.browser.test.tsx`). A reader arriving here is
+ * now arriving from git history or from the globals.css pointer, not from a live reference.
+ * The tombstone is still worth keeping — it is the landing for both — but the "four other
+ * files" sentence describes the moment of deletion, not today.
  *
  * THE CONTRACT, IN ONE SENTENCE: the app host box declares NO width bound, in any
  * spelling, on either element. No `max-width`, no `max-inline-size`, no custom property,
@@ -349,6 +355,12 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * `BLOCK_INIT.context` in `src/components/AppBlocks/types.ts` carries no width or measure
  * field for it to read or answer. A lever with no requester, no decision procedure and no
  * route for the affected party to object does not earn the guard surface it needs.
+ * ⚠️ ONE PRECISION ON THAT LAST CLAUSE, because it is stronger in prose than in the type:
+ * `PageContext` declares no width or measure field, and `buildContext()` emits none — but
+ * its supertype `SlotContext` carries `[key: string]: unknown`, so nothing STRUCTURALLY
+ * prevents a producer adding one. The argument rests on the declared fields and what the
+ * host actually emits, not on a closed type. It is unaffected either way (no such field is
+ * emitted, so no guest can read one), but do not cite the type as the enforcement.
  *
  * ⚠️ RETRACTED WITH IT, listed so the sentences are not cited out of history as live: "the
  * mechanism is kept, pointing the other way"; "a future cap is one reviewed rule rather
@@ -377,8 +389,13 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * viewport wider than 1600: 1680, 1728 (a MacBook Pro 16" at default scaling) and 1792 were
  * all capped, by (w − 1600) / 2 a side. A review then found the correction had been written
  * "40–64px", missing that 1792 is 96px — re-committing, one point further out, the exact sin
- * it existed to retract. COMPUTE IT, DO NOT QUOTE IT. And ~1905 was an illustration of a
- * maximised 1080p desktop, never a threshold; the boundary was always the cap value itself.
+ * it existed to retract. COMPUTE IT, DO NOT QUOTE IT — ⚠️ and that instruction is about
+ * quoting a RANGE or a boundary, not about worked examples: `docs/features/app-blocks.md`
+ * deliberately gives publishers `(w − 1600) / 2` **with** 40/64/96 beside it, which is
+ * self-checkable arithmetic rather than a figure standing on its own authority. A reader who
+ * took the instruction at its widest would have read that doc as contradicting this file.
+ * And ~1905 was an illustration of a maximised 1080p desktop, never a threshold; the
+ * boundary was always the cap value itself.
  *
  * ⚠️ THE ONE MEASURE IN THIS REPO A FUTURE CAP PROPOSAL WOULD COLLIDE WITH FIRST:
  * `APPS_TWO_COLUMN_DETAIL_MEASURE` is a BAND, `{min: 1288, max: 1600}`, so on a wide screen
@@ -418,6 +435,19 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * BRANCH TIP, not a deployed ref), nothing in this repo can detect another repo's line
  * numbers rotting, and a stale citation reads as stronger evidence than no citation at all.
  * Re-read the apps, recording refs, if a cap is ever proposed again.
+ *
+ * ⚠️ TWO FIGURES IN THE DELETING COMMIT'S MESSAGE ARE WRONG, CORRECTED HERE BECAUSE A PUSHED
+ * COMMIT MESSAGE CANNOT BE AMENDED ON A SHARED BRANCH AND THE TREE IS THE ONLY PLACE LEFT.
+ * (1) It says those citations numbered "~8". Enumerated at the parent commit there were
+ * **TEN** — `playable-collections` 4, `sensei` 6. The message inherited "~8" from the
+ * request it was executing instead of re-deriving it, in a commit whose own prose two
+ * paragraphs up says COMPUTE IT, DO NOT QUOTE IT. Low stakes (it counts a thing now
+ * deleted) and exactly the class of error this file exists to retract.
+ * (2) It reports the lever's shipped payload as "~3 lines", which is correct — but the
+ * request it was executing said ~10, and the message did not flag that it was correcting
+ * it. The three are `--app-page-max-width: none;`, `maxWidth: 'var(…)'` and
+ * `marginInline: 'auto'`; counting the 4-line CSS comment template gets you 7, and nothing
+ * gets you 10.
  *   · `playable-collections` — a collection PLAYER, unbounded by its own design on every
  *     open-collection surface; it needs nothing from the platform. (Its browse list caps
  *     itself at 960 and is unaffected either way.)
@@ -4550,6 +4580,16 @@ export function PageBlockHost({
           There is no `APP_PAGE_MAX_WIDTH_PX` constant and no `--app-page-max-width`
           custom property any more.
 
+          ⚠️ ONE CONSEQUENCE OF DROPPING THE AUTO MARGINS THAT IS NOT PINNED ANYWHERE, noted
+          because it is invisible today and will not be later. With `margin-inline: auto`
+          gone, this box's cross-axis placement comes from the parent's `align-items`
+          instead of from auto-margin free-space distribution (per Flexbox, cross-axis auto
+          margins suppress `align-self`). The two are indistinguishable while `width: 100%`
+          leaves zero free space AND the host root sets no `align-items` — both true now.
+          The width half of that pair is guarded (the arm and the verbatim pin below); the
+          `align-items` half is not. Adding one to the root is the edit that would make them
+          diverge.
+
           ⚠️ THREE PARAGRAPHS ARE RETRACTED FROM HERE RATHER THAN DELETED SILENTLY, because
           each described a mechanism a reader could otherwise assume is merely dormant.
           (a) "UNCAPPED BY DEFAULT — `--app-page-max-width` is declared `none` on `:root`
@@ -4590,6 +4630,20 @@ export function PageBlockHost({
           that mutation at all. It does not BLOCK it: `main` requires no status check in
           this repo, so what the pin buys is a red run a reviewer has to read (and an
           honest verdict on a push to `main`), not a door that stays shut.
+
+          ⚠️ THE SENTENCE ABOVE IS LEFT VERBATIM BUT "the only thing that CATCHES that
+          mutation at all" IS RETRACTED — THERE IS A RENDERED GUARD.
+          `PageBlockHostFillHeight.geometry.test.tsx` was written for this exact mutation
+          and records that dropping `flex: 1` here fails it "with the column at 150px of an
+          844px frame". The tier enumeration above (node + the `AppBlocks` browser project)
+          omits the `geometry` project, whose setup DOES load the real stylesheets and DOES
+          render this host. The retraction is appended rather than folded into the sentence
+          because that geometry file BLOCK-QUOTES this paragraph verbatim as its own
+          motivation — editing the words here would rot the quotation there, in a file this
+          change does not otherwise touch. What stands: the two guards see different things
+          (this one is a claim about TEXT and stays honest on `main`; that one asserts the
+          CONSEQUENCE and catches collapses a text pin cannot), and the whole-object form of
+          the pin is still the right one for the reason the next paragraph gives.
 
           ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
           NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit

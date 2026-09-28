@@ -528,32 +528,18 @@ old cap bound at any viewport wider than 1600 CSS px — ~10px of gutter a side 
 a side — 40px, 64px and 96px respectively — and now is not; and a wide desktop gets back the several hundred pixels it used to
 be denied.
 
-⚠️ **A follow-up change removed the per-app lever this page used to document, and the
-subsection teaching it is gone.** An earlier revision of this page had an _"If an app
-needs to be capped by the platform"_ section with a copyable CSS snippet
-(`[data-app-page-frame][data-block-id='your-app-slug'] { … }`), a warning never to key
-such a rule on `data-testid`, and a **"Currently capped: nothing"** line. All of it is
-deleted, because the lever itself is:
+⚠️ **A follow-up change removed the per-app lever this page used to document.** An earlier
+revision had an _"If an app needs to be capped by the platform"_ section with a copyable CSS
+snippet, a warning about keying it on the wrong attribute, and a "Currently capped: nothing"
+line. **There is now no way for the platform to set your app's width at all** — not a CSS
+rule, not a ledger, not a manifest field, not an API. Nothing changes for you in practice:
+no app was capped when it was removed, and the advice is the same as above — set your own
+`max-width` if you want one, in your own document, on your own release schedule.
 
-- **There is no way for the platform to set your app's width.** Not a CSS rule, not a
-  ledger, not a manifest field, not an API. If you need a measure, you set it in your own
-  document — which you were going to do anyway, on your own release schedule rather than
-  ours.
-- **Why it went rather than staying available "just in case".** The platform cannot see
-  your layout, so it cannot know what width is right; and a cap applied from the civitai
-  side is something your app can neither observe (the host cascade is cross-origin) nor
-  object to (nothing in `BLOCK_INIT.context` carries a width or a measure). A lever
-  nobody asked for, that the affected party cannot see or contest, is worse than no
-  lever.
-- **What that means for you in practice: nothing changes.** No app was capped when the
-  lever was removed, and the advice above — set your own `max-width` if you want one — is
-  the same advice the page gave before.
-
-The `data-testid` warning is worth keeping even without the snippet: `next.config.mjs`
-strips every `data-testid` from the production DOM, so **any** CSS selector keyed on one
-matches zero elements on civitai.com while working in every local and preview build. That
-is not hypothetical — the old per-app ledger shipped that exact spelling and an app
-rendered letterboxed in production while every test tier passed.
+The snippet is deliberately not reproduced here, not even as an example of what was removed:
+a selector spelled out in a doc is a selector someone copies, and this page would then be
+the only place in the repo to copy one from. (The internal record of why the lever went
+lives in `src/components/AppBlocks/PageBlockHost.tsx`, next to the code.)
 
 ### Manifest re-publish behavior
 
