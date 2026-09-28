@@ -8,12 +8,15 @@ import { includesInappropriate } from '~/utils/metadata/audit';
 //
 // Removing the space makes the rule live, which is a blocking INCREASE on a common word,
 // so the carve-outs are what keep it usable: `babydoll` is lingerie, `baby blue` is a
-// colour, `babylon` is a place, and a `babysitter` is an adult. None names a child.
+// colour, `babylon` is a place, and a `babysitter` is an adult. `baby face` and `baby
+// hairs` describe an adult's features — a facial structure and the wisps at a hairline —
+// and measuring the live rule against a prompt sample found them to be most of what it
+// newly caught. None names a child.
 //
 // The separator class is bounded (`{0,3}`) and matches the audit's own age templates —
 // an unbounded one here is the ReDoS shape #2722/#2727 were about.
 describe('the baby youth noun fires, and its carve-outs hold', () => {
-  it.each(['baby, nude', 'a baby girl, nude', 'babies, nude', 'babyface, nude', 'cute baby, nude'])(
+  it.each(['baby, nude', 'a baby girl, nude', 'babies, nude', 'cute baby, nude'])(
     'blocks %s',
     (prompt) => {
       expect(includesInappropriate({ prompt })).toBe('minor');
@@ -35,6 +38,13 @@ describe('the baby youth noun fires, and its carve-outs hold', () => {
     'baby sitter, nude adult woman',
     'babysitting, nude adult woman',
     'luanababysitter, nude adult woman',
+    // adult facial structure — joined, spaced and hyphenated
+    'babyface, nude adult woman',
+    'baby face, nude adult woman',
+    'baby-faced, nude adult woman',
+    // the wisps at an adult hairline, singular and plural
+    'baby hairs, nude adult woman',
+    'baby hair, nude adult woman',
   ])('does not block %s', (prompt) => {
     expect(includesInappropriate({ prompt })).toBe(false);
   });

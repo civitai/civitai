@@ -95,7 +95,7 @@
     "\\w*kid",
     "kid",
     "\\w*kiddo\\w*",
-    "\\w*ba+b+y(?![^a-zA-Z0-9]{0,3}(?:d[o0]ll|blue|sitt)|lon)\\w*",
+    "\\w*ba+b+y(?![^a-zA-Z0-9]{0,3}(?:d[o0]ll|blue|sitt|face|hair)|lon)\\w*",
     "\\w*ba+bies\\w*",
     "\\w*t[i|o]d+le*r\\w*",
     "\\w*chi*ld\\w*",
