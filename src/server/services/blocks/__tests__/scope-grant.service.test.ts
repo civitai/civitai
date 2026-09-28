@@ -1841,8 +1841,11 @@ describe('scope-grant.service', () => {
      *
      * Everything else IS covered, measured: both historical windows (40 and 4096), the matcher
      * reverted to draft 1 or draft 3, a matcher matching everything or nothing, dropping the walk's
-     * is-this-a-call guard, and any substitution or relabel inside the probe set all go red — on
-     * this arm, on the scan, or on both.
+     * is-this-a-call guard, and any ONE-PLACE substitution or relabel inside the probe set all go
+     * red — on this arm, on the scan, or on both. ⚠️ That said "any substitution or relabel", flat,
+     * and round-17 review measured it false: a COORDINATED substitution of the wide entries in both
+     * `cases` and `LEDGER` survived, with the window reinstated, which is the round-14 attack in
+     * coordinated form. The content pin beside the ledger closes that route; see it.
      */
     it('POSITIVE CONTROL: the live scan pipeline classifies the historical shapes correctly', () => {
       /**
@@ -1856,22 +1859,33 @@ describe('scope-grant.service', () => {
        *
        * So the window history is named, and the run is asserted to exceed all of it.
        *
-       * ⚠️ THE FLOOR PINS THE RUN'S **SIZE**; THE SAFE WIDE ENTRY PINS ITS **COMPOSITION** — and
-       * that division is load-bearing in a way nothing recorded until round-16 review measured it.
+       * ⚠️ THE FLOOR PINS THE RUN'S **SIZE**; THE WIDE ENTRIES PIN ITS **COMPOSITION** — and that
+       * division is load-bearing in a way nothing recorded until round-16 review measured it.
        * `WIDE.length > max(...)` alone does not stop `WIDE` becoming something long that is not a
-       * whitespace run: prefixing it with `undefined`, `null`, `)` or making it `'x'.repeat(5000)`
-       * all keep the length legal, and each is caught by the SAFE entry
-       * `.catch(${WIDE}() => {})` going HAZARD-shaped, not by the floor. Remove that entry and the
-       * composition half reopens.
+       * whitespace run. Which entry catches which shape, measured per shape rather than asserted in
+       * a group (round-17 review found the group claim over-credited one entry):
+       *   - prefixed with `undefined`, `null`, `)` or `void 0` → caught by the **SAFE** entry
+       *     `.catch(${WIDE}() => {})`, which stops being handler-shaped. Remove that entry and
+       *     these four reopen — measured: all four then SURVIVE.
+       *   - `'x'.repeat(5000)` → caught by the **HAZARD** entry `.catch(${WIDE})`, because a
+       *     non-whitespace run makes `.catch(xxx…)` pass the matcher. It survives the SAFE entry's
+       *     removal, so the earlier "remove that entry and the composition half reopens" was true
+       *     of the prefixes only.
        *
        * ⚠️ AND THE 904-CHARACTER MARGIN IS NOT THE MECHANISM — do not read it as needed. The
-       * truncation slices the tail INCLUDING the 7-character `.catch(` prefix, so the closing `)`
-       * lands past the slice with a ONE-character margin. Measured two ways: with the floor relaxed
-       * to `>=`, a run of exactly 4096 plus the 4096 window still catches the hazard; and 4097
-       * alone is correctly green under the `>` floor here. (With `>`, a run of exactly 4096 is
-       * refused by the FLOOR rather than by the classification — which is the floor doing its job,
-       * not evidence about the mechanism.) `> max` is right with room to spare; the room is not
-       * what makes it work.
+       * truncation slices the tail INCLUDING the 7-character `.catch(` prefix, which makes the
+       * requirement LOOSER, not tighter: a run of only `W − 7` already pushes the closing `)` past
+       * a window of `W`. Derived over every run length — the minimum that hides the `)` is **33**
+       * for the 40 window (32 does not) and **4089** for the 4096 one (4088 does not).
+       *
+       * ⚠️ AN EARLIER DRAFT CALLED THAT A "ONE-CHARACTER MARGIN", WHICH WAS BOTH THE WRONG NUMBER
+       * AND THE WRONG QUANTITY — it is seven characters past the slice at a run of exactly `W`, and
+       * "one character" is a fact about the FLOOR: `> max` admits 4097 as its smallest legal value.
+       * Adopted from a review report without re-deriving it, which is the class this file keeps
+       * correcting. Measurements that DO hold: floor relaxed to `>=`, a run of exactly 4096 plus the
+       * 4096 window → red, and green with no window, so the red is attributable to the window; 4097
+       * alone under the `>` floor → green; 4097 plus the 4096 window → red. The floor is
+       * deliberately stricter than the mechanism needs.
        */
       const HISTORICAL_SCAN_WINDOWS = [40, 4096];
       const WIDE = ' '.repeat(5000);
@@ -1930,6 +1944,14 @@ describe('scope-grant.service', () => {
       // Adding a shape here is deliberate: put it in `cases` AND in `LEDGER`, and the loop below
       // then asserts it classifies correctly. `<WIDE>` stands in for the wide-whitespace run so the
       // ledger stays readable — the token, not its length, which `WIDE.length` above owns.
+      //
+      // ⚠️ THE TOKEN COLLIDES, HARMLESSLY, AND THE DIAGNOSTIC NOW PRINTS BOTH FAILURES ALIKE. A tail
+      // containing the LITERAL text `<WIDE>` normalises to the same ledger key as a real wide run,
+      // and since the loop's diagnostic uses the same token it reports both the same way. Not
+      // exploitable: a literal-text tail passes the matcher while labelled HAZARD, so the LOOP
+      // catches it — not the ledger, which sees no difference. Recorded because the older
+      // `<5000 spaces>` token made the collision more contrived, so this is a real, if tiny, loss
+      // that came with removing a stated figure.
       const LEDGER = [
         'HAZARD ""',
         'HAZARD ".catch()"',
@@ -1966,6 +1988,37 @@ describe('scope-grant.service', () => {
         'a ledger entry is duplicated, so the probe set covers fewer shapes than it appears to — ' +
           'the length stays 18 and the equality above still holds'
       ).toBe(LEDGER.length);
+      // 🔴 AND THE WIDE ENTRIES ARE PINNED BY CONTENT — THE THIRD COORDINATED ROUTE, AND THE ONE
+      // THAT REOPENED THE ROUND-14 ATTACK. Set equality plus distinctness plus the `WIDE.length`
+      // floor still admit a COORDINATED substitution: swap the two wide HAZARDs for DISTINCT,
+      // trivially-rejected same-kind hazards in `cases` AND `LEDGER` together, and every one of
+      // those properties holds — count 18, all distinct, the floor untouched — while the
+      // wide-whitespace coverage is gone. Measured SURVIVING by round-17 review, and SURVIVING with
+      // the 4096 window reinstated: the round-14 attack in coordinated form.
+      //
+      // These three shapes are the only reason `WIDE` exists, so they are named rather than
+      // counted. This is the same lesson as the count floors one level further in: a property that
+      // quantifies the probe set cannot protect a specific member of it.
+      //
+      // 🔴 AND THIS IS NOT IMPOSSIBILITY EITHER — SAY SO, BECAUSE THIS FILE HAS OVER-CLAIMED TWICE
+      // ALREADY. The pin raises the coordinated-edit cost from TWO places to THREE; it does not
+      // remove it. Measured: removing the SAFE wide entry from `cases` and `LEDGER` while leaving
+      // this pin → RED; removing it from all three → SURVIVES, and then prefixing `WIDE` with
+      // `undefined` survives too, i.e. the composition half really does reopen once all three
+      // agree. Three coordinated places in one diff is the floor, and a diff is where it is meant
+      // to be caught. Do not add a fourth copy expecting a different outcome.
+      expect(
+        LEDGER.filter((e) => e.includes('<WIDE>')).sort(),
+        'the wide-whitespace probes were substituted or removed. They are the only entries that ' +
+          'exercise a run longer than any historical scan window, and every other property here — ' +
+          'set equality, distinctness, the length floor — survives their coordinated replacement.'
+      ).toEqual(
+        [
+          'HAZARD ".catch(<WIDE>)"',
+          'HAZARD ".catch(<WIDE>undefined)"',
+          'SAFE ".catch(<WIDE>() => {})"',
+        ].sort()
+      );
 
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
