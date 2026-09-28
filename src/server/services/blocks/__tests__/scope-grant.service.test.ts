@@ -2012,12 +2012,18 @@ describe('scope-grant.service', () => {
       // quantifies the probe set cannot protect a specific member of it.
       //
       // 🔴 AND THIS IS NOT IMPOSSIBILITY EITHER — SAY SO, BECAUSE THIS FILE HAS OVER-CLAIMED TWICE
-      // ALREADY. The pin raises the coordinated-edit cost from TWO places to THREE; it does not
-      // remove it. Measured: removing the SAFE wide entry from `cases` and `LEDGER` while leaving
-      // this pin → RED; removing it from all three → SURVIVES, and then prefixing `WIDE` with
-      // `undefined` survives too, i.e. the composition half really does reopen once all three
-      // agree. Three coordinated places in one diff is the floor, and a diff is where it is meant
-      // to be caught. Do not add a fourth copy expecting a different outcome.
+      // ALREADY. This pin raised the coordinated-edit cost from TWO places to THREE; the
+      // pre-normalisation assertion below raises it to **FOUR**. Measured at each stage: removing
+      // the SAFE wide entry from `cases` + `LEDGER` while leaving this pin → RED; from all three,
+      // with the assertion below neutralised → SURVIVES; from all three WITH it → RED; from all
+      // four → SURVIVES, and then prefixing `WIDE` survives too, so the composition half reopens
+      // at four.
+      //
+      // ⚠️ AN EARLIER DRAFT ENDED "three coordinated places is the floor — do not add a fourth copy
+      // expecting a different outcome", AND THE SAME COMMIT FALSIFIED IT: the fourth copy is
+      // precisely what makes the 3-place removal red. The measurement was taken before the
+      // assertion below existed and was not re-taken after. Four coordinated places in one diff is
+      // the floor now, and a diff is still where it is meant to be caught.
       expect(
         LEDGER.filter((e) => e.includes('<WIDE>')).sort(),
         'the wide-whitespace probes were substituted or removed. They are the only entries that ' +
@@ -2043,18 +2049,42 @@ describe('scope-grant.service', () => {
       // pin; what was new was the prose asserting it shut ("any ONE-PLACE substitution … all go
       // red", and "not exploitable … the LOOP catches it", whose reasoning covers only the HAZARD
       // case). Round-18 review. A comment that stops the next person looking is the shape this file
-      // keeps producing, and this is its fifth instance.
+      // keeps producing — ⚠️ and an earlier draft called this "its fifth instance" with no
+      // population named, which is the thing `Counts are stated WITH their population` forbids two
+      // hundred lines up. Enumerated, the instances this file itself records are: the stripper
+      // presented as a working property; "cannot be walked" flat; "each is caught by the SAFE
+      // entry"; "any substitution or relabel" flat; "any ONE-PLACE substitution" too wide; and "not
+      // exploitable" flat — six, and "fifth" was reachable only by merging two. The ordinal is gone;
+      // the shape is the durable part.
       //
-      // This assertion is the only one in the arm that reads the tails BEFORE the run is erased,
-      // which is precisely why it can see what the other three cannot.
+      // 🔴 IT IS THE ONLY **LEDGER-SIDE** ASSERTION THAT READS THE TAILS BEFORE THE RUN IS ERASED —
+      // and an earlier draft said "the only one in the arm", which this very comment block
+      // contradicts five lines up. The LOOP reads them raw too (`callTails` gets the tail verbatim;
+      // normalisation appears only in `shown`, which is display-only), which is exactly why the
+      // HAZARD literal was already caught and the SAFE one was not. Measured both ways: with this
+      // assertion neutralised, the HAZARD swap is still RED via the loop and the SAFE swap SURVIVES.
+      //
+      // 🔴 AND IT PINS THE NORMALISED KEY, NOT THE KIND. `.map(([k]) => k)` against
+      // `['HAZARD','HAZARD','SAFE']` pins containment and kind only, so a coordinated 3-place
+      // REPOSITIONING walks it — measured: moving the run to AFTER the handler survived, and
+      // survived with `WIDE` then prefixed, i.e. the composition coverage went while removal needed
+      // four places. Keying on the same normalised string the pin uses equalises the floor at four
+      // for every route. The kinds multiset also could not tell the two wide HAZARDs apart.
       expect(
         cases
           .filter(([, t]) => t.includes(WIDE))
-          .map(([k]) => k)
+          .map(([k, t]) => `${k} ${JSON.stringify(t.replace(WIDE, '<WIDE>'))}`)
           .sort(),
-        'a wide probe no longer contains the actual run — the normalisation erases the run, so the ' +
-          'ledger and its content pin cannot tell a real wide tail from literal `<WIDE>` text'
-      ).toEqual(['HAZARD', 'HAZARD', 'SAFE']);
+        'a wide probe no longer contains the actual run, or the run moved within it — the ' +
+          'normalisation erases the run, so the ledger and its content pin cannot tell a real wide ' +
+          'tail from literal `<WIDE>` text, nor a run before `.catch(` from one inside it'
+      ).toEqual(
+        [
+          'HAZARD ".catch(<WIDE>)"',
+          'HAZARD ".catch(<WIDE>undefined)"',
+          'SAFE ".catch(<WIDE>() => {})"',
+        ].sort()
+      );
 
       for (const [kind, tail] of cases) {
         // 🔴 THROUGH `callTails`, NOT A HAND-ROLLED COPY OF IT — see its docblock. A probe that
