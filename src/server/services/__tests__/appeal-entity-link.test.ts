@@ -28,15 +28,33 @@ describe('appealEntityLink', () => {
 });
 
 describe('getAppealDetails', () => {
-  it('returns the bounty for a Bounty appeal', async () => {
+  const OWNER = 5;
+  beforeEach(() => {
     dbMock.dbRead.appeal.findUnique.mockResolvedValue({
       id: 1,
+      userId: OWNER,
       entityType: EntityType.Bounty,
       entityId: 9,
+      internalNotes: 'mod-only',
     });
-    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ id: 9, name: 'B', userId: 5 });
-    const details = await getAppealDetails({ id: 1 });
-    expect(details.entityDetails).toEqual({ id: 9, name: 'B', userId: 5 });
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ id: 9, name: 'B', userId: OWNER });
+  });
+
+  it('returns the bounty for a Bounty appeal to its owner', async () => {
+    const details = await getAppealDetails({ id: 1, userId: OWNER, isModerator: false });
+    expect(details.entityDetails).toEqual({ id: 9, name: 'B', userId: OWNER });
+  });
+
+  it('returns any appeal to a moderator', async () => {
+    const details = await getAppealDetails({ id: 1, userId: 77, isModerator: true });
+    expect(details.id).toBe(1);
+  });
+
+  it('is not found for anyone else, before reading the entity', async () => {
+    await expect(getAppealDetails({ id: 1, userId: 6, isModerator: false })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
   });
 });
 
