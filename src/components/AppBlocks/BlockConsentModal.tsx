@@ -45,7 +45,7 @@ interface BlockConsentModalProps {
  * withdrawing this scope CLEARS the stored budget. If the grant modal is looking at a different
  * string from the one the server caps against, a spend path stops being bounded.
  */
-const SPEND_SCOPE = BLOCK_SPEND_SCOPE;
+
 
 /**
  * Lazy-consent surface (A6 / design-gaps C2). Opened on demand when a block
@@ -91,7 +91,7 @@ export default function BlockConsentModal({
 }: BlockConsentModalProps) {
   const dialog = useDialogContext();
   const [error, setError] = useState<string | null>(null);
-  const grantsSpend = missingScopes.includes(SPEND_SCOPE);
+  const grantsSpend = missingScopes.includes(BLOCK_SPEND_SCOPE);
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({

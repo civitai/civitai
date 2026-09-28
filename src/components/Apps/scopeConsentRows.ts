@@ -224,13 +224,43 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
  * nothing at all, is the wrong direction for a consent surface to be wrong in.
  *
  * 🔴 `isKnownBlockScope` IS THE DISCRIMINATOR AND IT COMES FROM THE SHARED REGISTRY, not from a
- * copy. `~/shared/constants/block-scope.constants` is client-safe (that is already why
- * `BlockScopeList` imports `isSensitiveBlockScope` from it) and it is the same predicate the
- * SERVER's `revokableScopes` computation filters on, so the client cannot disagree with the
- * server about which arm a row is in.
+ * local copy. `~/shared/constants/block-scope.constants` is client-safe — that is already why
+ * `BlockScopeList` imports `isSensitiveBlockScope` from it — and it is the same FUNCTION the
+ * server's `revokableScopes` computation filters on.
+ *
+ * ⚠️ "THE CLIENT CANNOT DISAGREE WITH THE SERVER ABOUT WHICH ARM A ROW IS IN" WAS CLAIMED HERE AND
+ * IS TOO STRONG. Same function, but the client runs the BUNDLE's copy of the registry and the server
+ * runs the POD's — and this whole `unknown` state exists because those two can be different versions
+ * during a rollout. So the honest claim is narrower: there is no separately-maintained client list to
+ * drift, which removes the drift that would be permanent and silent. A version skew remains possible
+ * and is transient.
+ *
+ * The skew that would matter is a scope NEWER than the bundle: it lands in the same `!isKnownBlockScope`
+ * arm as a retired one, where the sentence says "no longer in use … the app cannot exercise it" —
+ * understating what the app holds. The round-2 correctness lane looked for a reachable case and did
+ * not find one (a pre-phase-2 server sends no `revokableScopes` at all, so those rows are `unknown`
+ * rather than `fixed`; the harmful path needs a new-registry pod AND a stale bundle AND a brand-new
+ * consent-exempt scope already live in an approved manifest). Recorded as a hazard, not a defect.
  */
 export function fixedScopeNote(scope: string): string {
-  const specific = FIXED_SCOPE_NOTES[scope];
+  /**
+   * 🔴 `hasOwnProperty`, NEVER A BARE `FIXED_SCOPE_NOTES[scope]` TRUTHINESS TEST — and this repo has
+   * already paid for the difference. A plain index read resolves INHERITED `Object.prototype`
+   * members, so `scope === 'toString'` or `'constructor'` returns a FUNCTION, which is truthy and
+   * would then be returned as a React child. `block-scope.constants.ts` carries the same rule for
+   * the same reason, in its own words: use `hasOwnProperty`, never `in`, because "for those keys that
+   * read yields a FUNCTION".
+   *
+   * ⚠️ NOT REACHABLE TODAY, AND GUARDED ANYWAY. `effectiveBlockScopes` is deliberately not
+   * registry-filtered, so the only thing in front of this is submission-time validation — the scope
+   * pattern requires a colon and `block-manifest-validator.service.ts` requires `isKnownBlockScope` —
+   * and neither `toString` nor `constructor` contains a colon. The guard is one call, the failure
+   * mode is a crash on a consent surface, and the hazard class is documented in this repo as having
+   * shipped once already. Reported by the round-2 correctness lane.
+   */
+  const specific = Object.prototype.hasOwnProperty.call(FIXED_SCOPE_NOTES, scope)
+    ? FIXED_SCOPE_NOTES[scope]
+    : undefined;
   if (specific) return specific;
   if (!isKnownBlockScope(scope)) {
     return (

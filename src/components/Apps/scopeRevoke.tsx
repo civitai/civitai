@@ -28,20 +28,18 @@ import { trpc } from '~/utils/trpc';
  */
 
 /**
- * ⚠️ `SPEND_SCOPE` WAS DECLARED HERE AND HAS MOVED TO `~/shared/constants/block-scope.constants`
- * AS `BLOCK_SPEND_SCOPE` — re-exported under the old name only for the two `Apps/` call sites.
+ * ⚠️ NO `SPEND_SCOPE` DECLARATION AND NO RE-EXPORT HERE — read `BLOCK_SPEND_SCOPE` in
+ * `~/shared/constants/block-scope.constants` instead, which is what this file now imports.
  *
- * Phase 3 first moved the literal out of `src/pages/apps/activity.tsx` into this file, on the
- * correct argument that the budget editor and the revoke dialog must agree about which scope they
- * mean. The reuse-review lane pointed out two things that made this the wrong home: a THIRD copy
- * already existed in `src/components/AppBlocks/BlockConsentModal.tsx` with a byte-identical name and
- * doc sentence, so the move consolidated 2→1 while leaving 3 in the tree; and putting a scope id in
- * a module that imports Mantine, `@mantine/modals`, `trpc` and `formatDate` inverts the dependency —
- * the budget editor, which predates revoke, would import its spend-scope identity from the revoke
- * feature. The shared constants module is client-safe, owns the scope vocabulary, and is already
- * imported by all three surfaces. Full reasoning lives on `BLOCK_SPEND_SCOPE`.
+ * Phase 3 declared the literal here, then round 1 moved it to shared constants and left
+ * `export const SPEND_SCOPE = BLOCK_SPEND_SCOPE` behind so `src/pages/apps/activity.tsx` would keep
+ * working. Round 2's reuse lane showed that alias defeated the point: the finding was never "the
+ * literal is in the wrong file", it was that the BUDGET EDITOR — which predates revoke and is
+ * independent of it — took its spend-scope identity from a module that imports `@mantine/core`,
+ * `@mantine/modals`, `trpc` and `formatDate` to render a revoke dialog. Re-exporting preserved that
+ * dependency edge verbatim while the docblock above it claimed the edge was the reason for moving.
+ * A rename is not a consolidation.
  */
-export const SPEND_SCOPE = BLOCK_SPEND_SCOPE;
 
 /**
  * What a revoke actually does, in the viewer's terms — the confirm step's body.
@@ -79,7 +77,7 @@ export function ScopeRevokeConfirmBody({ appName, scope }: { appName: string; sc
         The app may ask you for this permission again the next time you open it. That ask is a
         prompt you have to accept, and accepting it does give the permission back.
       </Text>
-      {scope === SPEND_SCOPE ? (
+      {scope === BLOCK_SPEND_SCOPE ? (
         <Text size="sm" data-testid="scope-revoke-confirm-budget-note">
           This also clears the daily Buzz limit you set for this app. A limit on a spend the app
           can no longer make bounds nothing, and leaving it stored would bring it back as a live
@@ -166,25 +164,56 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
   const utils = trpc.useUtils();
   const [pendingScope, setPendingScope] = useState<string | null>(null);
   const [failure, setFailure] = useState<ScopeRevokeFailure | null>(null);
+  /**
+   * 🔴 SCOPES THIS SESSION HAS SUCCESSFULLY REVOKED, HELD LOCALLY UNTIL THE SERVER LIST CATCHES UP.
+   * Without it the round-1 fix introduced a new defect: clearing `pendingScope` in `.finally` no
+   * longer waits for the refetch (which is the point — see the ordering block below), so for the
+   * duration of those four DB round trips the row still listed the scope as revokable WITH AN
+   * ENABLED "Remove" button. A viewer could press it again and get a confirm dialog saying the app
+   * "will stop being able to use" a permission that was already gone, then a second mutation and a
+   * second success toast. Server-side that is a harmless union write, but a consent surface
+   * asserting an action it is not performing is exactly what this phase exists to stop. Found by the
+   * round-2 correctness lane, which also noted the new PENDING test arm *pinned* the bad behaviour.
+   *
+   * ⚠️ DELIBERATELY STICKY FOR THE COMPONENT'S LIFETIME, NOT CLEARED WHEN THE REFETCH LANDS. Once
+   * the server list carries the scope the union is a no-op, so clearing buys nothing; and clearing
+   * on a FAILED refetch would put a live control back on a permission that really is gone. The
+   * residual is the mirror case — a re-consent performed on another surface while this component
+   * stays mounted would keep reading as "Removed" until it unmounts. That is the safe direction for
+   * a consent surface (over-reporting a withdrawal, never under-reporting one) and it self-corrects
+   * on navigation.
+   */
+  const [justRevoked, setJustRevoked] = useState<string[]>([]);
 
   /**
    * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
-   * CLOSURE, AND THAT IS A CORRECTNESS FIX RATHER THAN A STYLE CHOICE.
+   * CLOSURE. THE REASON IS ORDERING (see the block on the chain below), NOT LIFECYCLE.
    *
-   * `openConfirmModal` renders into the GLOBAL `CustomModalsProvider` (`src/pages/_app.tsx`), so
-   * the dialog outlives this component. If the tree holding the hook unmounts while the dialog is
-   * open — the run-frame drawer closing is the reachable shape — react-query unsubscribes this
-   * `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of the
-   * option callbacks ran: no cache invalidation, no success notification, and critically no 503
-   * warning and no inline failure notice. The permission changed and the viewer was told nothing,
-   * which is the exact outcome `ScopeRevokeFailureNotice`'s docblock calls the worst available on
-   * a consent surface. Found by the correctness-review lane.
+   * ⚠️ A PREVIOUS VERSION OF THIS DOCBLOCK GAVE A DIFFERENT AND FALSE REASON, AND IT IS RETRACTED
+   * RATHER THAN REWORDED. It said: *"the dialog outlives this component … react-query unsubscribes
+   * this `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of
+   * the option callbacks ran … The permission changed and the viewer was told nothing."* Two lanes
+   * independently reported that hazard in round 1 and the round-2 correctness lane RETRACTED it
+   * after reading the installed source: in `@tanstack/query-core@5.101.0`, `Mutation.execute`
+   * awaits `this.options.onSuccess/onError/onSettled` **unconditionally**, with no reference to
+   * `#observers`. The only listener-gated path is `MutationObserver.#notify`, which fires
+   * `#mutateOptions` — the PER-CALL options passed as `mutate(vars, options)`, which this code
+   * never used. Hook options become the MUTATION's options (`useMutation` →
+   * `observer.setOptions` → `mutationCache.build(client, this.options)`), so they would have fired
+   * after unmount. There was nothing to fix.
    *
-   * `mutateAsync` returns a promise from the Mutation itself, not from the observer, so the chain
-   * below runs whether or not this component is still mounted. `utils.*.invalidate` and the
-   * notification helpers are both global singletons, so the two things the viewer actually needs
-   * happen regardless; only the two `setState` calls are lifecycle-bound, and a `setState` on an
-   * unmounted component is a no-op in React 18 rather than a warning.
+   * The premise about the dialog is still true — `openConfirmModal` renders into the global
+   * `CustomModalsProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
+   * conclusion drawn from it was wrong, and a comment asserting a library behaviour that does not
+   * exist is worse than no comment: the next reader trusts it, and the test fixture below was
+   * written to ENFORCE this shape on that false rationale.
+   *
+   * WHAT IS STILL TRUE AND IS THE REAL REASON TO KEEP THIS SHAPE: handling the outcome here is what
+   * lets the viewer be told BEFORE the cache is reconciled, which the option-callback form could not
+   * express (`execute` awaits `onSuccess` before `onSettled`, so an `await invalidate()` inside
+   * `onSuccess` necessarily delayed the spinner). React is 18.3.1, so the two `setState` calls are
+   * no-ops rather than warnings if this does unmount mid-flight — a property worth having, just not
+   * the reason for the design.
    */
   const mutation = trpc.blocks.revokeScopes.useMutation();
 
@@ -227,14 +256,26 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
            * refetch still ran. Once the refetch is off the interactive path, that is polish rather
            * than a fix, and it adds a second writer of this cache entry.
            */
+          /**
+           * 🔴 TWO ARGUMENTS TO `.then`, NOT `.then(...).catch(...)` — AND THE DIFFERENCE IS A REAL
+           * MISREPORT. With a chained `.catch`, anything the SUCCESS arm throws lands in the failure
+           * handler: a throw from `showSuccessNotification`, or a synchronous throw out of
+           * `invalidate()`, would paint the red inline "could not remove" notice over a revoke that
+           * SUCCEEDED. `.then(onFulfilled, onRejected)` scopes the rejection handler to the mutation
+           * itself, which is the only thing it is allowed to be about. Found by the round-2
+           * correctness lane; the option-callback form had the same hazard by a different route
+           * (`execute` awaits `onSuccess` inside its own `try`).
+           */
           .then(() => {
+            // The local sticky set FIRST, so the row stops offering a control in the same commit as
+            // the toast — see `justRevoked`.
+            setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
             showSuccessNotification({
               title: 'Permission removed',
               message: `${appName} can no longer use ${scope}.`,
             });
             void utils.blocks.listMyScopeGrants.invalidate();
-          })
-          .catch((error: { data?: { code?: string }; message?: string }) => {
+          }, (error: { data?: { code?: string }; message?: string }) => {
             const code = error?.data?.code;
             const degraded = code === 'SERVICE_UNAVAILABLE';
             const message = error?.message ?? 'The permission could not be removed just now.';
@@ -243,6 +284,11 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
               // A WARNING, not an error: the permission IS gone. The notification and the inline
               // notice carry the same server sentence rather than two paraphrases of it.
               showWarningNotification({ title: 'Permission removed', message });
+              // 🔴 AND IT COUNTS AS REVOKED FOR THE ROW, exactly as a 2xx does. On a 503 Postgres
+              // was written and only the in-flight-token marker failed, so the permission really is
+              // withdrawn — leaving a live "Remove" control on it would be the same misreport as
+              // the success path's, in the arm that is already telling the viewer it is gone.
+              setJustRevoked((prev) => (prev.includes(scope) ? prev : [...prev, scope]));
             }
             // See the hook docblock: 412 is the only outcome the server states left the row
             // untouched, so it is the only one that buys nothing by re-reading. Un-awaited, and
@@ -256,7 +302,7 @@ export function useScopeRevoke({ appBlockId, appName }: { appBlockId: string; ap
     });
   };
 
-  return { requestRevoke, pendingScope, failure };
+  return { requestRevoke, pendingScope, failure, justRevoked };
 }
 
 /**
@@ -362,6 +408,24 @@ export function ScopeRevokedAtLine({ scopesRevokedAt }: { scopesRevokedAt: Date 
  * "Remove permission" and looked away needs to be able to see, on the surface itself, that
  * nothing happened — otherwise the outcome is indistinguishable from a silent no-op, which is
  * the single worst result available on a consent surface.
+ *
+ * ⚠️ THE PRECEDENT FOR THAT DECISION IS `src/components/Apps/AppCollaboratorsPanelView.tsx`, WHICH
+ * SPELLS IT AS A MANTINE `Alert` — read that before "fixing" this to match it. Same folder, same
+ * job (an inline, persistent, app-level refusal rather than a toast) and the same argument, written
+ * independently: *"a transient toast is exactly where a reason goes to die."* `AlertWithIcon` is a
+ * third spelling of the same thing, with ~47 consumers elsewhere in the repo.
+ *
+ * A plain `Text` is used here INSTEAD, for one measured reason: this component renders inside the
+ * ~408px run-frame drawer as well as the wide page, and an `Alert`'s icon, border and padding cost
+ * roughly 64px of that 408 before any of the message is drawn. The drawer is the width the phase-1
+ * truncation fix was bought back at, so spending it on chrome around a sentence is the wrong trade
+ * there. On the wide page an `Alert` would be the better spelling, and taking one component to two
+ * renderings by container width is a worse trade than one quieter spelling in both.
+ *
+ * 🔴 RECORDED HERE RATHER THAN LEFT AS TASTE, because the divergence is what it is: two spellings
+ * of one decision, 40 lines apart in one folder. Without the cross-reference the next author finds
+ * `AppCollaboratorsPanelView` first, "aligns" this one, and silently narrows the drawer — or adds a
+ * third spelling. Reported by the reuse-review lane, twice.
  */
 export function ScopeRevokeFailureNotice({ failure }: { failure: ScopeRevokeFailure | null }) {
   if (!failure) return null;

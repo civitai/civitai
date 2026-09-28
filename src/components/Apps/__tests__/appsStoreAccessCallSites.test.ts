@@ -536,7 +536,22 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Move the two
     // together or the control stops being one. (No measured ratio quoted here either — see
     // the paragraph above on why those figures drift.)
-    expect(spaceRatio(desynced)).toBeGreaterThan(0.7);
+    // 🔴 MOVED TO 0.73 WITH THE LIVE BOUND. Leaving it at 0.70 while the bound above went to 0.73
+    // BROKE THE CONTROL in exactly the way the paragraph directly above it forbids ("Move the two
+    // together or the control stops being one"): the pair then admitted a 0.03-wide overlap where
+    // BOTH assertions hold, and — measured — the LIVE masked ratio 0.7221 already exceeded 0.70, so
+    // the non-desynced text satisfied the desync control. That is the control being dead, not weak.
+    // Caught by the test-review lane in the same round that introduced it.
+    //
+    // ⚠️ THE LANE'S RECOMMENDATION IS TO RETIRE THE RATIO ENTIRELY, and it is recorded here rather
+    // than acted on. Its case: the bound has been re-cut four times (0.55 → 0.65 → 0.70 → 0.73), the
+    // separation window is now 0.017 wide (live 0.7221 vs control 0.7395) and narrows with every
+    // comment added to `activity.tsx`, and this test's own functional claim — the
+    // `features.appBlocks` occurrence-count equality — fails directly on a desync that blanks live
+    // code, with no proxy to re-cut. Not done here because retiring another change's instrument is
+    // wider than a revoke-UI phase should reach; the numbers are recorded so the next person to trip
+    // it can act instead of nudging again.
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.73);
   });
 
   it('nested quotes, templates and regex literals do not desync it either', () => {

@@ -93,8 +93,18 @@ const GRANT = {
  * scopes share cannot see a swap between them.
  */
 const EXEMPT_NOTE_MUST_MENTION: Record<string, RegExp> = {
-  // The app's own private per-install store.
-  'apps:storage:read': /private store/i,
+  /**
+   * The app's own private per-install store, READ.
+   *
+   * 🔴 `/reaches only/i`, NOT `/private store/i` — AND THE FIRST SPELLING LEFT A LIVE SURVIVOR.
+   * `FIXED_SCOPE_NOTES['apps:storage:write']` ALSO contains "private store", so swapping those two
+   * adjacent entries rendered *"It **writes** only to this app's own private store"* on the
+   * read-only row — a false statement about a read permission — while `/private store/i` still
+   * matched and `toBe(FIXED_SCOPE_NOTES[scope])` still passed, both sides reading the mutated map.
+   * They are the two most swap-prone entries in the map: adjacent, same key prefix, near-identical
+   * sentence shape. Reported by the round-2 test lane as `notes-swapped-storage-read-write`.
+   */
+  'apps:storage:read': /reaches only/i,
   // `resolveSharedContext`'s min-trust gate + moderation + rate limits, on the WRITE path.
   'apps:storage:shared:write': /account-trust/i,
   // Server-side visibility/ownership checks on the collection itself.
@@ -179,13 +189,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   m.invalidateSpy = invalidateSpy;
   const grantsQuery = () => ({ data: m.grants, isLoading: false, isError: false });
   /**
-   * 🔴 `mutateAsync`, NOT `mutate` + OPTION CALLBACKS — AND THE SHAPE IS THE POINT.
-   * `useScopeRevoke` deliberately passes NO `onSuccess`/`onError`/`onSettled` options and handles
-   * the outcome in its own promise chain, because the confirm dialog renders into a global provider
-   * and can outlive the component: an unsubscribed observer would drop every callback and leave a
-   * changed permission unreported. So this mock resolves or REJECTS a promise, exactly as
-   * react-query's `mutateAsync` does, and asserts nothing about options. A mock that kept calling
-   * option callbacks would keep passing if the hook regressed to them.
+   * 🔴 `mutateAsync`, MIRRORING WHAT THE HOOK CALLS — it resolves or REJECTS a promise, exactly as
+   * react-query's `mutateAsync` does, and asserts nothing about option callbacks.
+   *
+   * ⚠️ AN EARLIER DOCBLOCK HERE JUSTIFIED THE SHAPE WITH A REACT-QUERY BEHAVIOUR THAT DOES NOT
+   * EXIST, and the justification is RETRACTED. It said the hook avoids option callbacks "because the
+   * confirm dialog renders into a global provider and can outlive the component: an unsubscribed
+   * observer would drop every callback and leave a changed permission unreported", and concluded
+   * that "a mock that kept calling option callbacks would keep passing if the hook regressed to
+   * them" — i.e. it set out to ENFORCE this shape on a false premise. The round-2 correctness lane
+   * read `@tanstack/query-core@5.101.0`: `Mutation.execute` awaits `onSuccess`/`onError`/`onSettled`
+   * unconditionally, with no reference to `#observers`. Only per-call `mutate(vars, options)`
+   * options are listener-gated, and this code never used those.
+   *
+   * The shape is still correct and this mock is still the right mock — but for the ORDERING reason
+   * documented on the hook (telling the viewer before reconciling the cache, which the option form
+   * could not express), not for a lifecycle reason. Do not re-derive the retracted claim from the
+   * fact that the fixture is written this way.
    */
   const revokeMutation = () => ({
     isPending: false,
@@ -364,6 +384,14 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
   test('🔴 CONFIRMING fires it EXACTLY ONCE, with the right appBlockId and scope', async () => {
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    // 🔴 THE EXPECTED SCOPE IS CAPTURED **BEFORE** THE CLICK. It used to be read afterwards, from
+    // `revokableScopesOnScreen()[0]` — i.e. derived from the post-action DOM, which is the state the
+    // action is supposed to change. That went red the moment a successful revoke started suppressing
+    // its own row's control (correctly): `[0]` then resolved to a DIFFERENT scope and the assertion
+    // compared the payload against the wrong one. An expectation read out of post-action state is
+    // not an expectation.
+    const target = revokableScopesOnScreen()[0];
+    expect(target, 'the fixture has no revokable scope').toBeTruthy();
     await page.getByTestId('scope-revoke-button').first().click();
     await expect.element(page.getByTestId('scope-revoke-confirm-body')).toBeVisible();
     await page.getByRole('button', { name: 'Remove permission' }).click();
@@ -374,7 +402,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
       appBlockId: GRANT.appBlockId,
       // ONE scope, not the app's whole set: the payload is what the server stores as the
       // suppression list, and sending every scope would withdraw permissions the viewer kept.
-      scopes: [revokableScopesOnScreen()[0] ?? '<none>'],
+      scopes: [target],
     });
     // The list is re-read, or the row keeps showing a permission that is gone.
     expect(m.invalidateSpy, `${name}: the grant list was not invalidated`).toHaveBeenCalled();
@@ -599,6 +627,43 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     }
   });
 
+  test('🔴 a just-revoked scope does NOT get its control back while the refetch is in flight', async () => {
+    // 🔴 THE DEFECT THE ROUND-1 PERF FIX INTRODUCED, AND THIS ARM IS THE ONE THAT WOULD HAVE CAUGHT
+    // IT. Clearing `pendingScope` in `.finally` correctly stopped waiting for the refetch — but the
+    // server's grant list still omits the scope until that refetch lands, so the row went back to
+    // `revokable` WITH AN ENABLED BUTTON. A viewer could press Remove again and get a confirm dialog
+    // promising to remove a permission that was already gone. Found by the round-2 correctness lane,
+    // which also pointed out the PENDING arm above *pinned* the bad behaviour by asserting the
+    // button re-enables the instant the call settles.
+    //
+    // The fixture never updates `m.grants`, so this test's world is permanently "the refetch has not
+    // landed" — which is exactly the window under test, held open indefinitely.
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const scope = revokableScopesOnScreen()[0];
+    expect(scope, 'the fixture has no revokable scope').toBeTruthy();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    // The row is now marked removed, from local state alone…
+    await expect.element(page.getByTestId('scope-revoked-mark').first()).toBeVisible();
+    // …and offers NO control for that scope, even though `listMyScopeGrants` still reports it as
+    // revokable and not revoked.
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: offered a second Remove for ${scope} while the refetch was still in flight`
+    ).not.toContain(scope);
+    // The OTHER revokable scope keeps its control — this must suppress one row, not the feature.
+    const others = GRANT.revokableScopes.filter((s) => s !== scope);
+    for (const other of others) {
+      expect(revokableScopesOnScreen(), `${name}: ${other} lost its control too`).toContain(other);
+    }
+    // And the fixture really did NOT change server-side, so the suppression came from local state.
+    expect(
+      (m.grants[0] as { revokedScopes: string[] }).revokedScopes,
+      'the fixture mutated — this arm no longer tests the in-flight window'
+    ).toEqual(GRANT.revokedScopes);
+  });
+
   test('a SUCCESS announces removal exactly once, and not as a warning', async () => {
     // The success notification path was entirely unasserted: deleting it, or swapping the degraded
     // warning for a success, survived every arm.
@@ -613,6 +678,75 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
     expect(String(m.notify.success.mock.calls[0][0].message), name).toContain(scope);
     // …and no inline failure notice on a success.
     expect(document.querySelector('[data-testid="scope-revoke-failure"]'), name).toBeNull();
+  });
+
+  test('🔴 the failure notice LOOKS different for 503 vs a refusal — not just `data-degraded`', async () => {
+    // 🔴 EVERY OTHER ARM READS `data-degraded`, WHICH IS A TEST HOOK THE VIEWER NEVER SEES. Mutating
+    // `c={failure.degraded ? 'orange' : 'red'}` to `'red' : 'red'` therefore survived the whole
+    // suite — asserting the shape of the harness rather than the shape of the thing. The colour is
+    // the notice's ONLY viewer-visible discriminator between "removed, enforcement lagging" and
+    // "refused, nothing changed". Reported by the round-2 test lane.
+    /**
+     * 🔴 THE INLINE `style.color` DECLARATION, NOT `getComputedStyle().color` — AND THE PROPERTY WAS
+     * MEASURED OFF THE RENDERED ELEMENT RATHER THAN GUESSED. Two wrong reads came first, and the
+     * positive control below caught both:
+     *   1. `getComputedStyle(el).color` returned `rgb(0, 0, 0)` for BOTH arms. Mantine's `c` emits
+     *      `color: var(--mantine-color-orange-text)`, and this harness loads no Mantine stylesheet, so
+     *      the var is undefined and every `Text` computes to the same default black. That read could
+     *      not fail for the right reason or the wrong one — it was blind.
+     *   2. `el.style.getPropertyValue('--text-color')` returned `''` — Mantine sets `--text-fz` and
+     *      `--text-lh` as custom properties but the colour as a plain `color` declaration.
+     * Measured from the actual `outerHTML`:
+     *   `style="--text-fz: …; --text-lh: …; color: var(--mantine-color-orange-text);"`
+     * The inline declaration is what the component sets, and it is readable here because it is an
+     * attribute rather than a resolved value.
+     */
+    const read = async (err: { code: string; message: string }) => {
+      m.revokeError = err;
+      render();
+      await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+      await page.getByTestId('scope-revoke-button').first().click();
+      await page.getByRole('button', { name: 'Remove permission' }).click();
+      await expect.element(page.getByTestId('scope-revoke-failure')).toBeVisible();
+      const el = document.querySelector<HTMLElement>('[data-testid="scope-revoke-failure"]')!;
+      const colour = el.style.color;
+      await cleanup();
+      return colour;
+    };
+    const degradedColour = await read({ code: 'SERVICE_UNAVAILABLE', message: 'removed, lagging' });
+    const refusedColour = await read({ code: 'PRECONDITION_FAILED', message: 'nothing changed' });
+    // A POSITIVE CONTROL FIRST: both must carry a real declaration, or comparing them is comparing
+    // two empty strings — the reassuring-zero shape in a style read, which is exactly what the
+    // computed-colour version of this arm did.
+    for (const c of [degradedColour, refusedColour]) {
+      expect(
+        c,
+        `${name}: the notice set no --text-color at all — Mantine may have changed how \`c\` is ` +
+          'emitted, and this arm is reading the wrong property'
+      ).toMatch(/mantine-color/);
+    }
+    expect(
+      degradedColour,
+      `${name}: a 503 and a refusal render the SAME colour (${degradedColour}) — a viewer cannot ` +
+        'tell "removed, enforcement lagging" from "refused, nothing changed"'
+    ).not.toBe(refusedColour);
+  });
+
+  test('🔴 a malformed scopesRevokedAt renders NOTHING, not "Invalid Date"', async () => {
+    // The NaN guard in `ScopeRevokedAtLine` was unreachable from any fixture — `GRANT` carries a real
+    // `Date` and the pre-migration row strips the field — so deleting it left the suite green while a
+    // wire value of the wrong shape would print "Invalid Date" on a consent surface. Reported by the
+    // round-2 test lane.
+    m.grants = [{ ...GRANT, scopesRevokedAt: 'not-a-date' }];
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    expect(
+      document.querySelectorAll('[data-testid="scope-revoked-at"]'),
+      `${name}: rendered a timestamp line from an unparseable value`
+    ).toHaveLength(0);
+    expect(document.body.textContent ?? '', name).not.toContain('Invalid Date');
+    // …and the rest of the list is unaffected — a bad date must not take the controls with it.
+    expect(revokableScopesOnScreen().sort(), name).toEqual([...GRANT.revokableScopes].sort());
   });
 
   test('🔴 the confirm copy discloses the OAuth sign-out, hedged', async () => {
@@ -656,14 +790,63 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render }) => {
  * than assumed, in the tier that needs no DOM.
  */
 describe('the exempt-note fragments are a usable discriminator', () => {
-  test('each fragment matches exactly ONE of the four notes', () => {
-    const notes = EXEMPT_IN_FIXTURE.map((s) => ({ scope: s, text: FIXED_SCOPE_NOTES[s] ?? '' }));
-    expect(notes.length, 'the fixture lost its exempt scopes').toBe(4);
+  /**
+   * 🔴 THE KEY SETS MUST BE TIED TOGETHER OR THIS GUARD SILENTLY BECOMES A 4-OF-N SAMPLE.
+   * `FIXED_SCOPE_NOTES` has seven entries; the fixture declares four of them, so a swap between two
+   * of the three UNFRAGMENTED scopes is invisible here. That is an accepted limit — the fixture
+   * cannot render every scope at a legible drawer width — but it must be an ACCEPTED one rather than
+   * a drifting one: without this arm, adding an eighth note leaves the coverage ratio quietly worse
+   * and nothing says so. The unfragmented set is therefore enumerated explicitly, and gaining a
+   * member reds this test.
+   */
+  const KNOWINGLY_UNFRAGMENTED = [
+    'apps:storage:write',
+    'apps:storage:shared:read',
+    'collections:write:self',
+  ];
+
+  test('🔴 every FIXED_SCOPE_NOTES key is either fragmented or knowingly listed as not', () => {
+    const covered = new Set([...EXEMPT_IN_FIXTURE, ...KNOWINGLY_UNFRAGMENTED]);
+    const uncovered = Object.keys(FIXED_SCOPE_NOTES).filter((s) => !covered.has(s));
+    expect(
+      uncovered,
+      'these notes have no literal fragment binding them to their own row AND are not listed as ' +
+        'knowingly unfragmented — a swap involving one of them would be invisible. Add a fragment ' +
+        'to EXEMPT_NOTE_MUST_MENTION (and to the fixture), or list it in KNOWINGLY_UNFRAGMENTED.'
+    ).toEqual([]);
+    // …and the two sets must not overlap, or a scope could be "covered" by being in both.
+    const overlap = KNOWINGLY_UNFRAGMENTED.filter((s) => s in EXEMPT_NOTE_MUST_MENTION);
+    expect(overlap, 'a scope is both fragmented and listed as unfragmented').toEqual([]);
+  });
+
+  test('every fragmented scope is actually IN the fixture', () => {
+    // 🔴 THE ARM THAT TIES THE MAP TO THE FIXTURE, because the one below cannot. The previous
+    // version asserted `EXEMPT_IN_FIXTURE.length === 4` with the message "the fixture lost its
+    // exempt scopes" — but `EXEMPT_IN_FIXTURE` is `Object.keys(EXEMPT_NOTE_MUST_MENTION)`, so that
+    // was an assertion about the MAP and could not see `GRANT.scopes` at all. Adding a fifth exempt
+    // scope to the fixture, or dropping one from it, left every by-name arm silently not covering it
+    // while the "control" stayed green. Reported by the round-2 test lane.
+    const notInFixture = EXEMPT_IN_FIXTURE.filter((s) => !GRANT.scopes.includes(s));
+    expect(
+      notInFixture,
+      'these scopes have a fragment but are not in GRANT.scopes, so no row is ever rendered for ' +
+        'them and their fragment asserts nothing'
+    ).toEqual([]);
+  });
+
+  test('each fragment matches exactly ONE note — across the WHOLE map, not just the fixture', () => {
+    // 🔴 THE POPULATION IS EVERY ENTRY IN `FIXED_SCOPE_NOTES`, NOT THE FOUR THE FIXTURE RENDERS.
+    // Scoping it to the fixture is what let the `apps:storage:read` ↔ `apps:storage:write` swap
+    // survive: `apps:storage:write` is not in the fixture, so `/private store/i` looked unique among
+    // the four while being ambiguous among the seven — and a swap only needs the OTHER entry to
+    // exist, not to be rendered.
+    const notes = Object.entries(FIXED_SCOPE_NOTES).map(([scope, text]) => ({ scope, text }));
+    expect(notes.length, 'FIXED_SCOPE_NOTES is empty — this control checks nothing').toBe(7);
     for (const [scope, re] of Object.entries(EXEMPT_NOTE_MUST_MENTION)) {
       const hits = notes.filter((n) => re.test(n.text)).map((n) => n.scope);
       expect(
         hits,
-        `${String(re)} matches ${hits.length} of the four exempt notes — it must match exactly ` +
+        `${String(re)} matches ${hits.length} of the ${notes.length} notes — it must match exactly ` +
           `one (${scope}) or it cannot tell a swapped note from a correct one`
       ).toEqual([scope]);
     }

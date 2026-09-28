@@ -1633,11 +1633,15 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     if (!prevRowLastChild) throw new Error('the scope row has no children');
     // A POSITIVE CONTROL ON THE FIX: phase 3 must really have added a third child, or this arm has
     // silently gone back to measuring from the description and the paragraph above is stale.
+    // `>= 3`, not `=== 3`: the exact count is an incidental quantity (a `revoked` or `revokable` row
+    // also has three children, and an `unknown` row has two), while the real guard is the
+    // `.not.toBe(description)` line below. An exact count would red on a safe change to the row's
+    // internals and its message would misdescribe the cause. Round-2 test-lane nit.
     expect(
       prevRow.children.length,
-      'the scope row no longer has a consent child — re-read the comment above, this arm may be ' +
-        'measuring from the description again'
-    ).toBe(3);
+      'the scope row has no consent child — re-read the comment above, this arm may be measuring ' +
+        'from the description again'
+    ).toBeGreaterThanOrEqual(3);
     expect(prevRowLastChild, 'the description is still the row\'s last child').not.toBe(description);
     const nextBadge = scopeBadge(fixture.longScope);
     const inter = px(
@@ -1716,12 +1720,16 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     // test-review lane.
     const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
     if (!controlRow) throw new Error('the revoke control is not inside a scope row');
-    expect(
-      control.parentElement?.parentElement,
-      'the revoke control is not one wrapper deep inside its scope row — this arm can no longer ' +
-        'tell whether it shares the badge\'s nowrap Group'
-    ).toBe(controlRow);
-    // …and, depth-independently, the badge's own parent must not contain it.
+    // ⚠️ A `control.parentElement?.parentElement === controlRow` ASSERTION WAS HERE AND IS DELETED.
+    // Round 1 added it to replace a `querySelector` off the same walk, on the grounds that the walk
+    // encoded an unchecked DOM depth — which was true of the querySelector form. But as an identity
+    // check it buys ZERO additional hazard coverage: `controlRow` is derived from `control`, so it
+    // cannot catch a cross-row misplacement either, and the depth-independent read below already
+    // covers the whole hazard at any depth. What it WOULD do is red on the pure refactor of removing
+    // `ScopeConsentAction`'s wrapper `<Group>`. Reported by the round-2 test lane; a guard whose only
+    // effect is a false alarm on a safe change is worse than no guard.
+    expect(controlRow.contains(control), 'the control left its own scope row').toBe(true);
+    // The real check, depth-independently: the badge's own parent must not contain it.
     const badgeGroup = scopeBadge(fixture.revokableScope).parentElement;
     expect(badgeGroup, 'the badge has no parent Group').not.toBeNull();
     expect(

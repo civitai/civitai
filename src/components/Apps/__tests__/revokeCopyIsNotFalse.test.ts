@@ -83,9 +83,38 @@ const RETRACTED_MECHANISM_CLAUSES = [
 /** The markers this repo uses to mark a claim superseded. */
 const RETRACTION_MARKERS = ['RETRACTED', 'IS RETRACTED', 'WHAT IS RETRACTED', 'USED TO READ'];
 
-/** Collapse runs of whitespace so a JSX line wrap cannot hide a sentence from the match. */
+/**
+ * Collapse the file to one whitespace-normalised string so a line wrap cannot hide a sentence.
+ *
+ * 🔴 IT ALSO STRIPS A LEADING COMMENT MARKER FROM EACH LINE, AND WITHOUT THAT THIS WHOLE FILE WAS
+ * BLIND TO THE DEFECT IT WAS WRITTEN FOR. A collapse-whitespace-only normaliser leaves the `//` of
+ * a wrapped comment line sitting INSIDE the sentence: `src/shared/constants/app-surface-provenance.ts`
+ * really reads
+ *     "…since nothing in the repo writes a // non-null `revoked_at`."
+ * so the clause `nothing in the repo writes a non-null \`revoked_at\`` did not match, and the
+ * retraction-marker guard skipped that path entirely. MEASURED: `includes(clause)` was `false` on
+ * the pre-fix file and `true` once leading markers are stripped.
+ *
+ * That is the worst shape a guard can have — it passed on the one file whose miss motivated it, and
+ * appeared to work only because the same clause happened NOT to wrap in the other two files. A
+ * corpus-wide prose guard in a repo whose comments routinely wrap at 100 columns must be wrap-proof
+ * or it is checking line breaks rather than claims.
+ *
+ * ⚠️ ONLY A **LEADING** MARKER IS STRIPPED — a line-initial double-slash, or a line-initial asterisk
+ * that does not begin a comment terminator — never a double-slash MID-LINE. Otherwise every
+ * "https" URL in the corpus would be mangled, and a URL is exactly the kind of thing a path or copy
+ * assertion might legitimately contain. See the regex on the `.replace` below rather than a copy of
+ * it here: spelling a slash-star pattern inside this block comment TERMINATES THE BLOCK, which is
+ * how an earlier revision of this paragraph turned the whole file into a syntax error and the suite
+ * reported `Transform failed` — an import failure, i.e. zero tests, i.e. the reassuring-zero shape
+ * again.
+ */
 function normalised(relPath: string): string {
-  return readFileSync(join(REPO_ROOT, relPath), 'utf8').replace(/\s+/g, ' ');
+  return readFileSync(join(REPO_ROOT, relPath), 'utf8')
+    .split('\n')
+    .map((line) => line.replace(/^\s*(\/\/|\*(?!\/))\s?/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ');
 }
 
 /**
@@ -164,15 +193,31 @@ describe('the permissions copy no longer claims revocation is impossible', () =>
       expect(text.length, `${relPath} read as empty — this test checks nothing`).toBeGreaterThan(
         200
       );
-      const present = RETRACTED_MECHANISM_CLAUSES.filter((c) => text.includes(c));
-      if (present.length === 0) return; // the file makes no such claim — nothing to mark.
-      const marked = RETRACTION_MARKERS.some((mk) => text.includes(mk));
+      /**
+       * 🔴 THE MARKER MUST BE NEAR THE CLAUSE, NOT MERELY SOMEWHERE IN THE FILE. A file-scoped
+       * `text.includes(marker)` passes for EVERY clause as soon as the file retracts ANY unrelated
+       * thing — and in this corpus almost every long docblock retracts something, so the guard would
+       * have been close to unconditionally green. `UNMARKED_WINDOW` is the span searched either side
+       * of the occurrence; a retraction that is genuinely about this clause sits inside it, while an
+       * unrelated one 40 lines away does not.
+       */
+      const UNMARKED_WINDOW = 700;
+      const unmarked = RETRACTED_MECHANISM_CLAUSES.filter((clause) => {
+        const at = text.indexOf(clause);
+        if (at === -1) return false;
+        const around = text.slice(
+          Math.max(0, at - UNMARKED_WINDOW),
+          at + clause.length + UNMARKED_WINDOW
+        );
+        return !RETRACTION_MARKERS.some((mk) => around.includes(mk));
+      });
       expect(
-        marked,
-        `${relPath} asserts ${JSON.stringify(present)} with NO retraction marker nearby. ` +
-          'That mechanism is false since phase 2: `revokeScopes` writes a non-null `revoked_at`. ' +
-          'Either delete the clause or mark it retracted and give the real reason.'
-      ).toBe(true);
+        unmarked,
+        `${relPath} asserts ${JSON.stringify(unmarked)} with NO retraction marker within ` +
+          `${UNMARKED_WINDOW} chars. That mechanism is false since phase 2: \`revokeScopes\` ` +
+          'writes a non-null `revoked_at`. Either delete the clause, or mark it retracted next to ' +
+          'itself and give the real reason.'
+      ).toEqual([]);
     }
   );
 

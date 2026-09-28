@@ -35,6 +35,26 @@ import { vi } from 'vitest';
  * carry whatever spy the test supplies, so assertions on call arguments are unaffected; what the
  * proxy removes is the ability for an UNMEASURED procedure to crash the render. A test that wants
  * to assert a procedure is never called should spy it explicitly rather than rely on absence.
+ *
+ * ── 🔴 NEVER ASSERT THROUGH THE DEFAULTS. TWO REASONS, BOTH SILENT. ──────────────────────────────
+ *
+ * Reported independently by the round-2 test and perf lanes, and worth stating as a rule rather than
+ * a caveat because both failures read as a legitimate zero:
+ *
+ * 1. **`utilsNode()` mints a FRESH `vi.fn()` on every property access.** It rebuilds its `leaf`
+ *    object per path segment, so `trpc.useUtils().blocks.x.invalidate` is a DIFFERENT spy each time
+ *    it is read. `expect(utils.blocks.x.invalidate).toHaveBeenCalled()` against the default can
+ *    therefore never pass — it reads a permanent, silent 0, which is indistinguishable from "the
+ *    code under test did not invalidate". If you need to assert an invalidate, pass your own stable
+ *    spy via `topLevel.useUtils` (`ScopeRevoke.browser.test.tsx` does exactly this, and the 412-vs-503
+ *    arms depend on it).
+ * 2. **`inertQuery` / `inertInfiniteQuery` / `inertMutation` are module-level SINGLETONS**, so their
+ *    `vi.fn()`s are shared by every un-overridden procedure, in every test, in every file that
+ *    imports this helper — and nothing clears them. A `not.toHaveBeenCalled()` reached through a
+ *    default is contaminated by any earlier test that touched any other default procedure.
+ *
+ * The rule that covers both: **the defaults exist to stop a render crashing, never to be measured.**
+ * Override anything you intend to assert on.
  */
 
 /** The shape every un-overridden query resolves to: loaded, empty, not an error. */

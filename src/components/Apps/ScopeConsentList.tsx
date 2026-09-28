@@ -48,11 +48,20 @@ export type ScopeConsentGrant = {
   name: string;
   scopes: string[];
   /**
-   * ⚠️ OPTIONAL, AND NOT AS A CONVENIENCE — A PRE-PHASE-2 CACHE ENTRY GENUINELY LACKS THEM.
+   * ⚠️ OPTIONAL, AND NOT AS A CONVENIENCE — A PRE-PHASE-2 SERVER GENUINELY SENDS A ROW WITHOUT THEM.
    * `listMyScopeGrants` gained these three fields in the same change that added the revoke
-   * procedure, and react-query holds this list at `staleTime: Infinity`, so a tab open across the
-   * deploy hands this component a row shaped like the OLD surface. `?? []` below is what makes
-   * that render a list with no controls instead of throwing on `.includes` of `undefined`.
+   * procedure, and it always emits all three together, so "some present, some absent" is not a state
+   * the current server can produce.
+   *
+   * ⚠️ THE TRIGGER NAMED HERE WAS WRONG AND IS RETRACTED. It read: *"react-query holds this list at
+   * `staleTime: Infinity`, so a tab open across the deploy hands this component a row shaped like
+   * the OLD surface. `?? []` below is what makes that render a list with no controls instead of
+   * throwing."* Both halves are false. An old tab runs the OLD BUNDLE, in which this component does
+   * not exist, so a stale cache cannot reach it; the reachable trigger is the MIXED-VERSION WINDOW
+   * during a rollout — a new bundle querying a pod still on pre-phase-2 server code. And the `?? []`
+   * it describes is GONE for `revokableScopes`: coalescing absent into empty made every row claim it
+   * could not be withdrawn, so the absence is now carried through as the `unknown` state. See
+   * `buildScopeConsentRows`' parameter docblock.
    */
   revokedScopes?: string[];
   revokableScopes?: string[];
@@ -74,14 +83,22 @@ export function ScopeConsentList({
    * reachable control in that state (no rows means no `renderScopeAction` call), so the
    * placeholders are never read.
    */
-  const { requestRevoke, pendingScope, failure } = useScopeRevoke({
+  const { requestRevoke, pendingScope, failure, justRevoked } = useScopeRevoke({
     appBlockId: grant?.appBlockId ?? '',
     appName: grant?.name ?? 'This app',
   });
 
   const rows = buildScopeConsentRows({
     scopes: grant?.scopes ?? [],
-    revokedScopes: grant?.revokedScopes ?? [],
+    /**
+     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED. The refetch is deliberately
+     * NOT awaited (see `useScopeRevoke`), so between a successful revoke and the list arriving the
+     * server copy still omits the scope — and without this union the row went straight back to
+     * offering a live "Remove" control for a permission that was already gone, with a confirm dialog
+     * promising to remove it again. `justRevoked` closes that window. Union rather than replace: the
+     * server remains the authority, and once it carries the scope this adds nothing.
+     */
+    revokedScopes: [...new Set([...(grant?.revokedScopes ?? []), ...justRevoked])],
     // 🔴 NOT `?? []` — AND THE COALESCE WAS A REAL DEFECT, NOT A TIDINESS NIT. An absent
     // `revokableScopes` made every row `fixed`, so a genuinely withdrawable scope rendered
     // "Can't be withdrawn … granted by platform policy": fail-closed for the action, fail-OPEN

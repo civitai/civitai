@@ -41,7 +41,6 @@ import type {
   SubscriptionRecord,
 } from '~/server/schema/blocks/subscription.schema';
 import { ScopeConsentList } from '~/components/Apps/ScopeConsentList';
-import { SPEND_SCOPE } from '~/components/Apps/scopeRevoke';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import {
   ACTIVITY_TAB_LABELS,
@@ -65,6 +64,7 @@ import {
   BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  BLOCK_SPEND_SCOPE,
 } from '~/shared/constants/block-scope.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -377,7 +377,7 @@ function EmptyState({ label }: { label: string }) {
  * was refused with no recoverable path through the product. The server raise/clear
  * path already existed (`blocks.grantScopes`); nothing was wired to it.
  *
- * 🔴 THE `scopes` PAYLOAD IS DELIBERATELY `[SPEND_SCOPE]` AND MUST STAY THAT WAY.
+ * 🔴 THE `scopes` PAYLOAD IS DELIBERATELY `[BLOCK_SPEND_SCOPE]` AND MUST STAY THAT WAY.
  * `grantScopes` is ADDITIVE over the scope set, so sending the app's manifest scopes
  * here would GRANT every scope the app declares — a silent widening performed by a
  * control that says "limit". Re-sending the one scope the user has already granted
@@ -433,7 +433,7 @@ function AppBudgetControl({
     parsed <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
 
   const save = (next: number | null) =>
-    mutation.mutate({ appBlockId, scopes: [SPEND_SCOPE], buzzBudgetPerDay: next });
+    mutation.mutate({ appBlockId, scopes: [BLOCK_SPEND_SCOPE], buzzBudgetPerDay: next });
 
   if (!editing) {
     return (
