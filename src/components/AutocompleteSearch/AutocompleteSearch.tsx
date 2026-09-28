@@ -34,7 +34,6 @@ import {
   shouldRefineSearchQuery,
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
-import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import {
   autocompleteAvailability,
   useAutocompleteAvailabilityStore,
@@ -53,8 +52,10 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
-import { isDefined, paired } from '~/utils/type-guards';
+import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { SearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
 import {
@@ -64,7 +65,6 @@ import {
 } from '~/components/AutocompleteSearch/autocomplete-query';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
-import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
@@ -128,7 +128,15 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((props, ref) => (
+  <SearchBrowsingScope>
+    <AutocompleteSearchInner {...props} ref={ref} />
+  </SearchBrowsingScope>
+));
+
+AutocompleteSearch.displayName = 'AutocompleteSearch';
+
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -165,28 +173,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(searchTarget);
   }, [searchTarget]);
 
-  const isModels = targetIndex === 'models';
-  const isImages = targetIndex === 'images';
-  const supportsPoi = ['models', 'images'].includes(targetIndex);
-  const supportsMinor = ['models', 'images'].includes(targetIndex);
-  const filters = [
-    isModels && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
-      : null,
-    isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${
-          currentUser?.username
-            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
-            : ''
-        }`
-      : null,
-    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
-    isModels && !currentUser?.isModerator
-      ? `availability != ${Availability.Private}${
-          currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''
-        }`
-      : null,
-  ].filter(isDefined);
+  const filters = buildAutocompleteBaseFilters({
+    targetIndex,
+    addons: browsingSettingsAddons.settings,
+    currentUser,
+  });
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
@@ -267,7 +258,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 });
 
-AutocompleteSearch.displayName = 'AutocompleteSearch';
+AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;

@@ -39,8 +39,8 @@ const FIXTURE: FixtureDoc[] = [
   { objectID: 'xxx-lora', name: 'Hardcore Mix', nsfwLevel: XXX, type: 'LORA' },
 ];
 
-// No BrowsingLevelProvider in the harness, so `useViewerBrowsingLevelDebounced` resolves through
-// the context default — `publicBrowsingLevelsFlag`, i.e. PG alone. Everything else is above it.
+// No BrowsingLevelProvider in the harness, so `useBrowsingLevelDebounced` resolves through the
+// context default — `publicBrowsingLevelsFlag`, i.e. PG alone. Everything else is above it.
 const IN_LEVEL = ['hit-pg-checkpoint', 'hit-pg-lora'];
 const ABOVE_LEVEL = ['hit-pg13-checkpoint', 'hit-r-checkpoint', 'hit-x-lora', 'hit-xxx-lora'];
 
