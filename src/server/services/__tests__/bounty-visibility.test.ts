@@ -1,7 +1,12 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
-import { bountyVisibilityWhere, canViewBounty } from '~/server/services/bounty-visibility';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  assertBountyVisible,
+  bountyVisibilityWhere,
+  canViewBounty,
+} from '~/server/services/bounty-visibility';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const priv = { availability: Availability.Private, userId: 5 };
@@ -51,5 +56,33 @@ describe('bounties search index', () => {
     expect(source).toContain(
       `b."availability" NOT IN ('Unsearchable'::"Availability", 'Private'::"Availability")`
     );
+  });
+});
+
+describe('assertBountyVisible', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('404s a private bounty for a stranger, by bounty id and by entry id', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ availability: Availability.Private, userId: 5 });
+    await expect(assertBountyVisible({ bountyId: 9 }, { id: 6 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    dbMock.dbRead.bountyEntry.findUnique.mockResolvedValue({
+      bounty: { availability: Availability.Private, userId: 5 },
+    });
+    await expect(assertBountyVisible({ entryId: 3 }, undefined)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets the owner through, and a moderator without reading anything', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({ availability: Availability.Private, userId: 5 });
+    await expect(assertBountyVisible({ bountyId: 9 }, { id: 5 })).resolves.toBeUndefined();
+
+    vi.clearAllMocks();
+    await expect(assertBountyVisible({ bountyId: 9 }, { id: 6, isModerator: true })).resolves.toBeUndefined();
+    expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('leaves a missing bounty to the caller', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue(null);
+    await expect(assertBountyVisible({ bountyId: 9 }, null)).resolves.toBeUndefined();
   });
 });

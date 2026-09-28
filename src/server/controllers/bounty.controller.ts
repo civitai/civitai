@@ -36,7 +36,7 @@ import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
-import { canViewBounty } from '~/server/services/bounty-visibility';
+import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -196,6 +196,7 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.id }, ctx.user);
     const limit = input.limit ?? 20;
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (u) => u.id
@@ -313,6 +314,7 @@ export const getBountyBenefactorsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.id }, ctx.user);
     const benefactors = await getAllBenefactorsByBountyId({
       input: { bountyId: input.id },
       select: { unitAmount: true, user: { select: userWithCosmeticsSelect } },
@@ -383,6 +385,7 @@ export const addBenefactorUnitAmountHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.bountyId }, ctx.user);
     const { id: userId } = ctx.user;
     const bountyBenefactor = await addBenefactorUnitAmount({
       ...input,

@@ -12,6 +12,7 @@ import {
 import { getContentOwnerIdForComment } from '~/server/services/block-check.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -45,6 +46,15 @@ import {
   upsertComment,
 } from './../services/commentsv2.service';
 
+async function assertCommentEntityVisible(
+  input: { entityType: string; entityId: number },
+  user: Context['user']
+) {
+  if (input.entityType === 'bounty') await assertBountyVisible({ bountyId: input.entityId }, user);
+  else if (input.entityType === 'bountyEntry')
+    await assertBountyVisible({ entryId: input.entityId }, user);
+}
+
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
     const comment = await getComment({ ...input, isModerator: ctx.user?.isModerator ?? false });
@@ -72,6 +82,7 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx.user);
     const type =
       input.entityType === 'image'
         ? 'Image'
@@ -164,6 +175,7 @@ export const getCommentCountV2Handler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx.user);
     return await getCommentCount({ ...input, isModerator: ctx.user?.isModerator ?? false });
   } catch (error) {
     throw throwDbError(error);
@@ -172,10 +184,13 @@ export const getCommentCountV2Handler = async ({
 
 export const getCommentsThreadDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: CommentConnectorInput;
+  ctx: Context;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx.user);
     return await getCommentsThreadDetails2(input);
   } catch (error) {
     throw throwDbError(error);
@@ -306,6 +321,7 @@ export const getCommentsInfiniteHandler = async ({
   input: GetCommentsInfiniteInput;
 }) => {
   try {
+    await assertCommentEntityVisible(input, ctx.user);
     const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id
