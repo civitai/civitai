@@ -5775,8 +5775,20 @@ for st in mb["states"]:
 # the old wording. A guard that only greps for the stale sentence is walkable by
 # a reword — and it fired on the replacement itself, which quoted the old claim
 # while correcting it.
+#
+# 🔴 THESE NEEDLES ARE A LIVE COUNT AND THEY MOVE WHEN THE CROWD MOVES. They read
+# "2 matchups"/"4 prompts"/"16 grid cells" until 2026-09-27, when a re-measure
+# against 0.4.7 counted a fifth prompt and therefore 20 cells, and this gate
+# FAILED — correctly. That failure IS the mechanism: the gate's job is to make a
+# stale content note impossible to ignore, so when it fires the fix is to
+# RE-COUNT the live board and update BOTH sides, never to relax the needle.
+# 🔴 AND DO NOT SATISFY IT BY QUOTING THE OLD NUMBERS. The caveat legitimately
+# cites the superseded count to show the drift, which means a needle set left at
+# the OLD values would keep passing on the historical clause alone while the
+# current measurement rotted unchecked — the exact walk the comment above warns
+# about, one level up. The needles must name what the board reads TODAY.
 cav = mb.get("_contentCaveat", "")
-for needle in ("2 matchups", "4 prompts", "16 grid cells", "POPULATED"):
+for needle in ("2 matchups", "5 prompts", "20 grid cells", "POPULATED"):
     if needle not in cav:
         bad.append("_contentCaveat does not state the measured content (%r missing) — "
                    "the old note read as a standing veto on shooting this app" % needle)
@@ -6161,10 +6173,17 @@ for slug, form in sorted(FORMS.items()):
                                "the anchor disagree" % (slug, box["y"], want_y))
 
 # plan.py emits the key capture.sh branches on, and ONLY for the optional verb
+# 🔴 THE STATE NAME MOVED 2026-09-27 AND THAT IS WHY IT IS NAMED HERE, NOT INDEXED.
+# It was "grid", one of the three tab-panel states; 0.4.7 deleted the tab strip and
+# the states became three OVERLAYS (grid-contribute / matchup-detail / prompt-detail).
+# This check is about the `optional` key, not about which state carries it, so any
+# state would do — but a name makes the coupling VISIBLE in the diff when the recipe
+# is re-pointed again, where an index would have silently kept passing on whatever
+# state happened to be first.
 p = subprocess.run(["python3", PLAN, os.path.join(RECIPES, "model-benchmarking.json"),
-                    "--observed", OBS, "--state", "grid"], capture_output=True, text=True)
+                    "--observed", OBS, "--state", "grid-contribute"], capture_output=True, text=True)
 if p.returncode != 0:
-    bad.append("model-benchmarking/grid did not plan: %s" % p.stderr[:120])
+    bad.append("model-benchmarking/grid-contribute did not plan: %s" % p.stderr[:120])
 else:
     steps = json.loads(p.stdout)["steps"]
     opt = [s for s in steps if s.get("optional")]
@@ -6174,7 +6193,7 @@ else:
     elif "howto-dismiss" not in " ".join(opt[0]["argv"]):
         bad.append("the optional step is not the how-to dismissal: %s" % opt[0]["argv"])
     if len(clicks) != 2:
-        bad.append("%d click ops, expected the dismissal plus the view switch" % len(clicks))
+        bad.append("%d click ops, expected the dismissal plus the overlay trigger" % len(clicks))
     if any(s.get("optional") for s in clicks if "howto-dismiss" not in " ".join(s["argv"])):
         bad.append("a REQUIRED click was marked optional — every selector miss in "
                    "this recipe would go silent")
