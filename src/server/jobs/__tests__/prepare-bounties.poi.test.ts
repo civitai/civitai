@@ -113,11 +113,15 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
 
     await runPrepareBounties();
 
-    expect(executedStatements.some((sql) => sql.includes('UPDATE "BountyBenefactor"'))).toBe(false);
+    expect(
+      executedStatements.some((sql) => sql.includes('UPDATE "BountyBenefactor"')),
+      `no benefactor award write expected; executed:\n${executedStatements.join('\n')}`
+    ).toBe(false);
     expect(
       executedStatements.some((sql) =>
         /"complete" = true, "refunded" = true WHERE b.id = 7/.test(sql)
-      )
+      ),
+      `expected the refunded claim for bounty 7; executed:\n${executedStatements.join('\n')}`
     ).toBe(true);
     // A supporter who already awarded an entry keeps that award; only the rest is returned.
     expect(mockRefund).toHaveBeenCalledWith(

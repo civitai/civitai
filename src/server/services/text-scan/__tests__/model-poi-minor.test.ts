@@ -393,8 +393,21 @@ describe('grantModelTextScanPoi', () => {
     const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
     expect(text).toContain('poi = FALSE');
     expect(text).toContain(`ARRAY['poi']::text[]`);
-    expect(text).toContain(`WHERE p = 'poi'`);
-    expect(text).toContain(`->'poi'->'prev'->'lockedProperties'`);
+    // nsfw/sfwOnly locks stay while minor holds them, or when they predate the poi flag.
+    expect(text).toMatch(
+      /WHERE p = 'poi'\s+OR m\.minor\s+OR p NOT IN \('nsfw', 'sfwOnly'\)\s+OR p IN \(SELECT jsonb_array_elements_text\(m\.meta->\?->'poi'->'prev'->'lockedProperties'\)\)/
+    );
+  });
+
+  it('restores the pre-poi nsfw and sfwOnly from the snapshot', async () => {
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 });
+    const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(text).toContain(
+      `ELSE COALESCE((m.meta->?->'poi'->'prev'->>'nsfw')::boolean, m.nsfw) END`
+    );
+    expect(text).toContain(
+      `ELSE COALESCE((m.meta->?->'poi'->'prev'->>'sfwOnly')::boolean, m."sfwOnly") END`
+    );
   });
 
   // Review Focus 4.
@@ -431,15 +444,17 @@ describe('stampModelTextScanAppeal', () => {
       userId: 3,
       decision: 'appealGranted',
       labels: ['poi'],
-      currentHash: 'h-text',
+      currentHash: 'h-current',
     });
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
-    expect(text).toContain(`'textHash', COALESCE(`);
+    expect(text).toContain(`'textHash', COALESCE(m.meta->?->l.label->>'textHash', ?::text)`);
     expect(text).toContain(`'via', 'appeal'`);
     expect(call.slice(1)).toContainEqual(['poi']);
-    expect(call.slice(1)).toEqual(expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-text']));
+    expect(call.slice(1)).toEqual(
+      expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-current'])
+    );
   });
 
   it('writes nothing for an empty label list', async () => {
@@ -464,7 +479,7 @@ describe('reassertModelPoiRestrictions', () => {
     const text = sqlOf(call);
     expect(text).toContain('nsfw = FALSE');
     expect(text).toContain('"sfwOnly" = TRUE');
-    expect(text).toContain('AND m.poi');
+    expect(text).toMatch(/AND m\.poi\s+AND \(\s+m\.nsfw\s+OR NOT m\."sfwOnly"/);
     expect(call.slice(1)).toContainEqual(POI_LOCKED_PROPERTIES);
     expect(call.slice(1)).toContain(sfwBrowsingLevelsFlag);
     expect(mockSideEffects).toHaveBeenCalledTimes(1);

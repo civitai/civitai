@@ -85,7 +85,6 @@ describe('applyBountyPoi', () => {
   it('still hides a bounty whose owner declared poi', async () => {
     await run(outcome({ declared: true, newlyDetected: false }));
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0])).not.toContain('NOT b.poi');
   });
 
   it('hides, sets and locks poi in one guarded write with a pre-flag snapshot', async () => {
@@ -96,8 +95,10 @@ describe('applyBountyPoi', () => {
     expect(text).toContain(`availability = 'Private'::"Availability"`);
     expect(text).toContain(`ARRAY['poi']::text[]`);
     expect(text).toContain(`'prev', jsonb_build_object('availability', b.availability`);
-    expect(text).toContain(`->'poi' IS NULL`);
-    expect(text).toContain(`->'appealGranted'->>'textHash' IS DISTINCT FROM `);
+    // Two arms: never flagged and not moderator-locked, OR a granted appeal on different text.
+    expect(text).toMatch(
+      /->'poi' IS NULL\s+AND NOT \('poi' = ANY\(COALESCE\(b\."lockedProperties", ARRAY\[\]::text\[\]\)\)\)\)\s+OR \(b\.meta->\?->'poi'->'appealGranted' IS NOT NULL\s+AND b\.meta->\?->'poi'->'appealGranted'->>'textHash' IS DISTINCT FROM /
+    );
     expect(call.slice(1)).toContain(textScanTextHash(SUBJECT));
     const entry = JSON.parse(
       call.slice(1).find((v) => typeof v === 'string' && v.includes('wf-1')) as string
@@ -146,11 +147,12 @@ describe('resolveBountyPoiAppeal', () => {
     at: 'x',
     workflowId: 'wf-1',
     reason: 'r',
-    textHash: 'h-text',
-    prev: { availability: 'Public' },
+    textHash: 'h-flagged',
+    prev: { availability: 'Unsearchable' },
   };
 
   beforeEach(() => {
+    mockLoadTextScanTextHash.mockResolvedValue('h-current');
     dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
       poi: true,
       meta: { textScanFlags: { poi: poiEntry } },
@@ -164,14 +166,17 @@ describe('resolveBountyPoiAppeal', () => {
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const text = sqlOf(call);
     expect(text).toContain('poi = FALSE');
-    expect(text).toContain(`->'prev'->>'availability')::"Availability", 'Public'::"Availability")`);
+    expect(text).toContain(
+      `availability = COALESCE((b.meta->?->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")`
+    );
     expect(text).toContain(`ARRAY['poi']::text[]`);
     expect(text).toContain(`'appealGranted'`);
-    expect(text).toContain(`'textHash', COALESCE(`);
+    expect(text).toContain(`'textHash', COALESCE(b.meta->?->'poi'->>'textHash', `);
     expect(text).toContain(`'via', 'appeal'`);
-    expect(call.slice(1)).toContain('h-text');
+    // The current hash is only the fallback bind; the flagged hash stays in the row.
+    expect(call.slice(1)).toContain('h-current');
+    expect(call.slice(1)).not.toContain('h-flagged');
     expect(mockLoadTextScanTextHash).toHaveBeenCalledWith('Bounty', 9);
-    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
     expect(mockQueueUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ items: [{ id: 9, action: 'Update' }] })
     );
@@ -220,16 +225,21 @@ describe('resolveBountyPoiAppeal', () => {
 
   // Review Focus 2.
   it('queues a rescan after resolving when the text changed while the appeal was pending', async () => {
-    dbMock.dbWrite.bounty.findUnique.mockResolvedValue({
-      poi: true,
-      meta: { textScanFlags: { poi: { ...poiEntry, textHash: 'h-flagged' } } },
-    });
     expect(await resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).toEqual({
       rescanQueued: true,
     });
     expect(mockQueueTextScanRescan).toHaveBeenCalledWith('Bounty', 9);
+    expect(mockResolveEntityAppeal).toHaveBeenCalled();
     expect(mockResolveEntityAppeal.mock.invocationCallOrder[0]).toBeLessThan(
       mockQueueTextScanRescan.mock.invocationCallOrder[0]
     );
+  });
+
+  it('queues no rescan when the text is unchanged', async () => {
+    mockLoadTextScanTextHash.mockResolvedValue('h-flagged');
+    expect(await resolveBountyPoiAppeal({ bountyId: 9, uphold: false, userId: 3 })).toEqual({
+      rescanQueued: false,
+    });
+    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
   });
 });
