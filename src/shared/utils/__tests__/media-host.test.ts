@@ -11,9 +11,9 @@ const IMAGE_LOCATION = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA';
 
 describe('isMediaHost', () => {
   it('accepts orchestration* first-party hosts', () => {
-    expect(isMediaHost('https://orchestration.civitai.com/v1/consumer/blobs/x', IMAGE_LOCATION)).toBe(
-      true
-    );
+    expect(
+      isMediaHost('https://orchestration.civitai.com/v1/consumer/blobs/x', IMAGE_LOCATION)
+    ).toBe(true);
     expect(isMediaHost('https://orchestration-new.civitai.com/x', IMAGE_LOCATION)).toBe(true);
     expect(isMediaHost('https://orchestration-next.civitai.com/x', IMAGE_LOCATION)).toBe(true);
   });

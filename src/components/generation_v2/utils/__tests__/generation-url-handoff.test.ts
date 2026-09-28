@@ -30,7 +30,9 @@ function encodePayload(params: Record<string, unknown>) {
 
 describe('generation-url-handoff — media URL host gate', () => {
   it('stays permissive for non-URL params (handoff remains a full form snapshot)', () => {
-    const decoded = decodeGenerationHandoff(encodePayload({ prompt: 'a cat', cfgScale: 7, someUnknownKey: 'x' }));
+    const decoded = decodeGenerationHandoff(
+      encodePayload({ prompt: 'a cat', cfgScale: 7, someUnknownKey: 'x' })
+    );
     expect(decoded?.params).toMatchObject({ prompt: 'a cat', cfgScale: 7, someUnknownKey: 'x' });
   });
 
@@ -53,13 +55,17 @@ describe('generation-url-handoff — media URL host gate', () => {
 
   it('keeps first-party orchestrator blob URLs', () => {
     const url = 'https://orchestration.civitai.com/v1/consumer/blobs/abc?sig=s&exp=1';
-    const decoded = decodeGenerationHandoff(encodePayload({ images: [{ url, width: 1, height: 1 }] }));
+    const decoded = decodeGenerationHandoff(
+      encodePayload({ images: [{ url, width: 1, height: 1 }] })
+    );
     expect(decoded?.params.images).toEqual([{ url, width: 1, height: 1 }]);
   });
 
   it('keeps the configured image CDN host', () => {
     const url = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/00000-1/x.png';
-    const decoded = decodeGenerationHandoff(encodePayload({ images: [{ url, width: 1, height: 1 }] }));
+    const decoded = decodeGenerationHandoff(
+      encodePayload({ images: [{ url, width: 1, height: 1 }] })
+    );
     expect(decoded?.params.images).toEqual([{ url, width: 1, height: 1 }]);
   });
 

@@ -90,7 +90,11 @@ describe('mapDataToGraphInput — meta URL host gate', () => {
         prompt: 'p',
         images: [
           { url: 'https://orchestration-new.civitai.com/v1/consumer/blobs/x', width: 1, height: 1 },
-          { url: 'https://orchestration-next.civitai.com/v1/consumer/blobs/y', width: 1, height: 1 },
+          {
+            url: 'https://orchestration-next.civitai.com/v1/consumer/blobs/y',
+            width: 1,
+            height: 1,
+          },
         ],
       },
       []
@@ -100,7 +104,10 @@ describe('mapDataToGraphInput — meta URL host gate', () => {
 
   it('drops non-https URLs even on a first-party host', () => {
     const out = mapDataToGraphInput(
-      { prompt: 'p', images: [{ url: 'http://orchestration.civitai.com/x.png', width: 1, height: 1 }] },
+      {
+        prompt: 'p',
+        images: [{ url: 'http://orchestration.civitai.com/x.png', width: 1, height: 1 }],
+      },
       []
     );
     expect(out.images).toBeUndefined();
