@@ -17,16 +17,21 @@ import {
   subjectTextLength,
   textScanTextHash,
 } from '~/server/services/text-scan/prompt';
+import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import {
   bindTextScanWorkflowId,
   markTextScanPending,
   markTextScanSubmitFailed,
+  recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
 import { buildTextScanResponseFormat } from '~/server/services/text-scan/schema';
 import type {
   PromptIds,
   TextScanEntityType,
   TextScanLabel,
+  TextScanMode,
+  TextScanOutput,
+  TextScanSubject,
 } from '~/server/services/text-scan/types';
 
 export const TEXT_SCAN_CALLBACK_PATH = '/api/webhooks/text-scan-result';
@@ -141,6 +146,62 @@ async function logMissingPrompts(ctx: { entityType: string; entityId: number; ke
   });
 }
 
+const NO_TEXT_REASON = 'No text left to scan.';
+
+// Text removed below the minimum is never submitted, so without this a verdict on the old text
+// would keep raising the rating (or keep a scam flag) with nothing left to justify it.
+async function clearStaleVerdict({
+  entityType,
+  entityId,
+  mode,
+  labels,
+  subject,
+}: {
+  entityType: TextScanEntityType;
+  entityId: number;
+  mode: Exclude<TextScanMode, 'off'>;
+  labels: TextScanLabel[];
+  subject: TextScanSubject;
+}) {
+  const emEntityType = textScanEmEntityType(entityType, mode);
+  const existing = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: emEntityType, entityId } },
+    select: { workflowId: true, status: true, nsfwLevel: true, triggeredLabels: true, result: true },
+  });
+  if (!existing?.workflowId || existing.status !== 'Succeeded') return;
+  if ((existing.result as { version?: number } | null)?.version === undefined) return;
+  if ((existing.nsfwLevel ?? 0) <= 1 && !existing.triggeredLabels.length) return;
+
+  const output: TextScanOutput = {};
+  for (const label of labels) {
+    if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
+    else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
+    else output[label] = { detected: false, reason: NO_TEXT_REASON };
+  }
+  const outcome = evaluateTextScan(output, subject.declared, labels);
+  const recorded = await recordTextScanSuccess({
+    entityType: emEntityType,
+    entityId,
+    workflowId: existing.workflowId,
+    outcome,
+    output,
+    promptIds: {},
+    model: 'none',
+    textHash: textScanTextHash(subject),
+    meta: subject.meta,
+  });
+  if (!recorded || mode !== 'active') return;
+
+  // Imported here: moderation-adapters reaches this module through the text-scan adapter.
+  const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+  await getModerationAdapter(entityType)?.applyTextScan?.({
+    entityId,
+    workflowId: existing.workflowId,
+    outcome,
+    subject,
+  });
+}
+
 export async function scanEntity({
   entityType,
   entityId,
@@ -161,8 +222,10 @@ export async function scanEntity({
 
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return { status: 'skipped', reason: 'missing' };
-  if (subjectTextLength(subject) < (profile.minChars ?? 1))
+  if (subjectTextLength(subject) < (profile.minChars ?? 1)) {
+    await clearStaleVerdict({ entityType, entityId, mode, labels: profile.labels, subject });
     return { status: 'skipped', reason: 'too-short' };
+  }
 
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
 
