@@ -787,17 +787,7 @@ export async function resolveMinorFlagAppeal({
       labels: upheldVerdicts,
     });
 
-  if (overturned.includes('minor')) {
-    const snapshot = meta?.minorFlagSnapshot;
-    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
-    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
-    if (origin === 'auto' || origin === 'text-scan')
-      await revertMinorHashAutoFlag({ modelId, userId });
-    else await setModelMinor({ id: modelId, minor: false, userId });
-    // The minor revert restores the pre-minor state, which may be NSFW.
-    if (model?.poi && !overturned.includes('poi')) await reassertModelPoiRestrictions(modelId);
-  }
-  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId });
+  // Before the lifts, so a rescan landing in between sees the grant.
   if (overturned.length)
     await stampModelTextScanAppeal({
       modelId,
@@ -806,6 +796,15 @@ export async function resolveMinorFlagAppeal({
       labels: overturned,
       currentHash,
     });
+  if (overturned.includes('minor')) {
+    const snapshot = meta?.minorFlagSnapshot;
+    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
+    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
+    if (origin === 'auto' || origin === 'text-scan')
+      await revertMinorHashAutoFlag({ modelId, userId });
+    else await setModelMinor({ id: modelId, minor: false, userId });
+  }
+  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId });
 
   const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
@@ -1016,6 +1015,8 @@ export async function rollbackMinorHashAutoFlags({
                  )
         WHERE id = ${row.modelId}
       `;
+      // Before the image re-mark: the reassert's side effects rewrite every image's minor flag.
+      await reassertModelPoiRestrictions(row.modelId);
 
       if (row.prevMinorImageIds.length) {
         await dbWrite.$executeRaw`

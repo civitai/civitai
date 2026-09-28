@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ModelPoiMinor from '~/server/services/text-scan/actions/model-poi-minor';
 
 // Unit tests for setModelMinor — the moderator "Set as Minor" quick action.
 // model.service.ts has a very large import graph, so most of its transitive
@@ -31,6 +32,11 @@ const { mockStampRuling } = vi.hoisted(() => ({ mockStampRuling: vi.fn() }));
 // Hand-listed: the real module loads every text-scan profile, whose graph this file stubs piecemeal.
 vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
   stampModeratorTextScanRuling: mockStampRuling,
+}));
+const { mockReassertPoi } = vi.hoisted(() => ({ mockReassertPoi: vi.fn() }));
+vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelPoiMinor>()),
+  reassertModelPoiRestrictions: mockReassertPoi,
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
@@ -362,6 +368,36 @@ describe('setModelMinor — unset', () => {
       entityId: MODEL_ID,
       activity: 'unsetMinor',
     });
+  });
+});
+
+// Unset strips the nsfw/sfwOnly locks the poi restriction also depends on.
+describe('setModelMinor — unset on a model that stays poi', () => {
+  it.each([
+    ['poi flagged after minor', [...MINOR_LOCKED_PROPERTIES, 'poi']],
+    ['poi flagged before minor', ['poi', 'nsfw', 'sfwOnly', 'minor']],
+  ])('reasserts the poi restrictions after the unset write (%s)', async (_label, locks) => {
+    mockBefore({ minor: true, poi: true, sfwOnly: true, lockedProperties: locks });
+    mockUpdateReturns({ poi: true });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(mockReassertPoi).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockDbWrite.model.update.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReassertPoi.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not reassert for a model that is not poi, or on a set', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    mockBefore({ poi: true, lockedProperties: ['poi'] });
+    mockUpdateReturns({ poi: true });
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockReassertPoi).not.toHaveBeenCalled();
   });
 });
 

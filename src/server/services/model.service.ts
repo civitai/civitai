@@ -127,6 +127,7 @@ import {
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
@@ -2512,6 +2513,7 @@ export async function setModelMinor({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+  if (!minor && result.poi) await reassertModelPoiRestrictions(id);
 
   return result;
 }

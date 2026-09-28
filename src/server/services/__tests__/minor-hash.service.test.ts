@@ -1074,6 +1074,31 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(values).toContain(MINOR_HASH_CLEARED_KEY);
   });
 
+  // Minor flagged first, poi second: the snapshot's pre-minor state can be NSFW, and restoring it
+  // must not leave a model that is still poi without its restrictions.
+  it('reasserts the poi restrictions after restoring the pre-minor state', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      rollbackRow({ prevNsfw: true, prevSfwOnly: false, prevLockedProperties: [] }),
+    ]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100, modelIds: [200] });
+
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledTimes(1);
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(200);
+    const writeOrder = (fragment: string) =>
+      mockDbWrite.$executeRaw.mock.invocationCallOrder[
+        mockDbWrite.$executeRaw.mock.calls.findIndex((call) =>
+          Array.from(call[0] as TemplateStringsArray)
+            .join('?')
+            .includes(fragment)
+        )
+      ];
+    const reassertOrder = mockReassertModelPoiRestrictions.mock.invocationCallOrder[0];
+    expect(writeOrder('SET nsfw'), 'restore write').toBeLessThan(reassertOrder);
+    // The reassert's side effects rewrite every image's minor flag, so the re-mark must follow it.
+    expect(reassertOrder).toBeLessThan(writeOrder('UPDATE "Image"'));
+  });
+
   it('re-marks prevMinorImageIds back to minor and queues them for search-index update', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ prevMinorImageIds: [123, 456] })]);
 
@@ -1597,16 +1622,54 @@ describe('resolveMinorFlagAppeal', () => {
       mockTrackModActivity.mock.invocationCallOrder[
         mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
       ];
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
     expect(rollbackOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
-    expect(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]).toBeLessThan(
-      mockStampModelTextScanAppeal.mock.invocationCallOrder[0]
-    );
     expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'appealGranted', labels: ['minor', 'poi'] })
     );
+    expect(mockResolveEntityAppeal).toHaveBeenCalled();
     expect(mockStampModelTextScanAppeal.mock.invocationCallOrder[0]).toBeLessThan(
       mockResolveEntityAppeal.mock.invocationCallOrder[0]
     );
+  });
+
+  // A rescan landing between the lift and the stamp would otherwise see no grant and re-flag.
+  it.each([
+    ['an auto minor flag', { source: 'text-scan' }, 'rollback'],
+    ['a moderator minor flag', { source: 'manual' }, 'unset'],
+  ])('stamps the grant before lifting %s or poi', async (_label, snapshot, path) => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', ...snapshot },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockLoadTextScanTextHash.mockResolvedValue('h-current');
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    const stamp = mockStampModelTextScanAppeal.mock.calls.findIndex(
+      ([arg]) => arg.decision === 'appealGranted'
+    );
+    expect(stamp, 'appealGranted stamp').toBeGreaterThanOrEqual(0);
+    const stampOrder = mockStampModelTextScanAppeal.mock.invocationCallOrder[stamp];
+    const liftOrder =
+      path === 'rollback'
+        ? mockDbRead.$queryRaw.mock.invocationCallOrder[0]
+        : mockSetModelMinor.mock.invocationCallOrder[0];
+    expect(liftOrder, 'minor lift').toBeDefined();
+    expect(stampOrder).toBeLessThan(liftOrder);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
+    expect(stampOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      decision: 'appealGranted',
+      labels: ['minor', 'poi'],
+      currentHash: 'h-current',
+    });
   });
 
   // Review Focus 4.
@@ -1763,15 +1826,37 @@ describe('resolveMinorFlagAppeal', () => {
     expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
   });
 
-  // A minor revert restores the pre-minor state, which can be NSFW; a model still poi must not end
-  // up NSFW because minor was flagged first.
-  it('reasserts the poi restrictions after lifting minor on a model that stays poi', async () => {
+  // The reassert lives in the minor-lift paths themselves; the appeal must not add its own.
+  it('reasserts the poi restrictions once, inside the minor revert, on a model that stays poi', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,
       poi: true,
       meta: {
         minorFlagSnapshot: { at: 'x', source: 'text-scan', prevNsfw: true },
         textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 42, prevNsfw: true })]);
+
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: false,
+      userId: 7,
+      labels: { minor: 'overturn', poi: 'uphold' },
+    });
+
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledTimes(1);
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(42);
+    expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+  });
+
+  it('adds no reassert of its own on the plain unset path', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'manual' },
+        textScanFlags: { poi: poiEntry },
       },
     });
 
@@ -1782,18 +1867,11 @@ describe('resolveMinorFlagAppeal', () => {
       labels: { minor: 'overturn', poi: 'uphold' },
     });
 
-    const rollbackOrder =
-      mockTrackModActivity.mock.invocationCallOrder[
-        mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
-      ];
-    expect(rollbackOrder).toBeLessThan(
-      mockReassertModelPoiRestrictions.mock.invocationCallOrder[0]
-    );
-    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(42);
-    expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+    expect(mockSetModelMinor).toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
+    expect(mockReassertModelPoiRestrictions).not.toHaveBeenCalled();
   });
 
-  it('does not reassert poi restrictions when poi is lifted in the same ruling', async () => {
+  it('grants poi after the minor revert when both are lifted, so the grant decides the final state', async () => {
     mockPrimaryModelFindUnique.mockResolvedValue({
       minor: true,
       poi: true,
@@ -1802,10 +1880,15 @@ describe('resolveMinorFlagAppeal', () => {
         textScanFlags: { poi: poiEntry, minor: poiEntry },
       },
     });
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 42 })]);
 
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
-    expect(mockReassertModelPoiRestrictions).not.toHaveBeenCalled();
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalled();
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
+    expect(mockReassertModelPoiRestrictions.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGrantModelTextScanPoi.mock.invocationCallOrder[0]
+    );
   });
 });
 
