@@ -1,4 +1,5 @@
 import {
+  BLOCK_SPEND_SCOPE,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -632,8 +633,20 @@ export function clampPrivateRunScopes(
   // (2) Third-rail strip — every audience, including the owner and moderators.
   granted = granted.filter((s) => !PRIVATE_RUN_FORBIDDEN_SCOPES.has(s));
   // (3) Editor read-only.
+  //
+  // 🔴 `BLOCK_SPEND_SCOPE`, NOT THE LITERAL — and the mixed spelling in this file is
+  // deliberate, not an oversight. That constant landed on `main` while this branch was
+  // open (the viewer-scope-withdrawal work), created precisely because the literal was
+  // declared privately at three client surfaces; its docblock then measured ~30 further
+  // live production uses across ~20 files and states in words that the server-side
+  // collapse is a separate, derivation-driven effort — `git grep "'ai:write:budgeted'"`
+  // is the authority — and that the `scope:` arguments handed to `recordScopeInvocation`
+  // are TELEMETRY LABELS which must NOT be swept. So the pre-existing strip inside
+  // `clampDevScopes` keeps the literal; this NEW site takes the constant, because the
+  // one thing worth not adding is a 31st copy in the same breath as the constant's
+  // arrival.
   if (audience === 'editor') {
-    granted = granted.filter((s) => s !== 'ai:write:budgeted');
+    granted = granted.filter((s) => s !== BLOCK_SPEND_SCOPE);
   }
   return granted;
 }
