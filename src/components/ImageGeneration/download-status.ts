@@ -5,6 +5,7 @@ import {
   formatDownloadEtaShort,
 } from '~/components/ResourceLoad/download-eta';
 import {
+  isBaseWeightsType,
   settledBoostedEtaSeconds,
   settledEtaSeconds,
 } from '~/shared/orchestrator/download-preparation';
@@ -22,6 +23,8 @@ export type DownloadRow = {
   /** The lane's per-download cap. Null when uncapped. */
   rateLimitBytesPerSecond?: number | null;
   sizeBytes?: number | null;
+  /** Whether this download is base-model weights, from the resource's real model type. */
+  isBaseWeights?: boolean;
 };
 
 /** A generation's downloads, told through the one holding it back. */
@@ -36,6 +39,8 @@ export type DownloadSummary = {
   rateLimitBytesPerSecond?: number | null;
   totalBytes: number;
   count: number;
+  /** Whether any pending download is base-model weights — the precondition for offering a boost. */
+  hasBaseWeights: boolean;
 };
 
 /** Undefined for a model with nothing to download — loaded, unsupported, or unreadable. */
@@ -123,7 +128,7 @@ export function isAwaitingDownload(preparation: unknown, preparing: boolean) {
   return !!preparation || preparing;
 }
 
-export function buildDownloadRows<R extends { id: number }>({
+export function buildDownloadRows<R extends { id: number; model?: { type?: string } }>({
   resources,
   preparation,
   preparing,
@@ -144,7 +149,8 @@ export function buildDownloadRows<R extends { id: number }>({
       prepared,
       live?.find((x) => x.modelVersionId === resource.id)
     );
-    return row ? [{ resource, row }] : [];
+    if (!row) return [];
+    return [{ resource, row: { ...row, isBaseWeights: isBaseWeightsType(resource.model?.type) } }];
   });
 }
 
@@ -179,6 +185,7 @@ export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undef
       gating.rateLimitBytesPerSecond !== undefined
         ? gating.rateLimitBytesPerSecond
         : rows.find((r) => r.rateLimitBytesPerSecond !== undefined)?.rateLimitBytesPerSecond,
+    hasBaseWeights: rows.some((r) => r.isBaseWeights === true),
     totalBytes: rows.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0),
     count: rows.length,
   };
@@ -194,6 +201,8 @@ export function isWorthBoosting(
   summary: DownloadSummary | undefined
 ): summary is DownloadSummary & { boostedEtaSeconds: number } {
   if (!summary || summary.lane === BOOSTED_LANE) return false;
+  // The fee is flat per workflow and sized against base-model weights, so some have to be waiting.
+  if (!summary.hasBaseWeights) return false;
   return boostBuysVisibleTime(summary.etaSeconds, summary.boostedEtaSeconds);
 }
 

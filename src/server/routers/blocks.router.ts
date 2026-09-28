@@ -31,6 +31,7 @@ import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  isKnownBlockScope,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -250,6 +251,22 @@ import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.se
 // `updateBlockWorkflowStatus` is dynamic-imported in pollWorkflow (mirrors
 // listMyBlockWorkflows), so nothing beyond the dynamic module needs mocking.
 import type { BlockWorkflowStatus } from '~/server/services/blocks/block-workflows.service';
+// The three-state spend posture read by `reserveBlockBuzzSpendForClaims`. Type-only for
+// the same reason as the two above: the module is `await import`ed on the spend path, so a
+// value import here would pull the consent ledger into this router's load graph and give
+// every suite that mocks it a second specifier to know about.
+import type { ConsentSpendPosture } from '~/server/services/blocks/scope-grant.service';
+// The one scope that can spend the viewer's Buzz. A bare constant, so a value import costs
+// nothing the type-only line above was avoiding.
+import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
+// Two VALUE imports from the consent-revocation module: the marker writer and the message a
+// degraded publish reports. Static rather than dynamic — the module's own graph is Redis +
+// two constants modules, all of which this router already carries, so there is nothing to
+// defer, and a dynamic import for a STRING would be noise.
+import {
+  ConsentRevocation,
+  CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+} from '~/server/services/blocks/consent-revocation.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -1286,11 +1303,25 @@ type BlockBuzzReservation = {
  *     `pubreq_<ULID>` publish-request id, not an AppBlock id. Layering a consent
  *     budget on top would be reading a grant for an app that is not yet approved.
  *
- * FAIL-CLOSED, IN BOTH DIRECTIONS THAT MATTER. A Redis error on the consent leg
+ * REVOKED CONSENT REFUSES — it does NOT fall through to the platform ceiling.
+ *
+ * 🔴 THIS USED TO BE THE INVERSION, AND IT WAS THE EXACT OPPOSITE OF WHAT A REVOKE
+ * SHOULD DO. The consent leg read `getConsentBuzzBudget`, which returns `null` for a
+ * revoked grant just as it does for "no budget set", and the next line was
+ * `if (budget == null) return { ...platform, consent: null }`. So a viewer who revoked
+ * spend consent had their OWN per-app ceiling REMOVED — the app carried on under the
+ * platform's 50,000/day alone for the rest of an already-minted token's life. The
+ * ordering was: the revoke dropped the user's ceiling BEFORE it dropped the scope.
+ * `resolveConsentSpendPosture` exists so the two states are distinguishable, and this
+ * function now throws on `revoked`. Do not "simplify" it back to reading a nullable
+ * number — the null is what could not say "revoked".
+ *
+ * FAIL-CLOSED, IN EVERY DIRECTION THAT MATTERS. A Redis error on the consent leg
  * refunds the platform leg and rethrows, so a failed reservation never leaves the
  * user's daily allowance burned. A DB error reading the budget likewise throws
  * rather than being treated as "no budget": absent means UNBOUNDED-within-50k, so
- * swallowing the error would silently widen the ceiling the user consented to.
+ * swallowing the error would silently widen the ceiling the user consented to. And a
+ * REVOKED grant refuses — with the same refund.
  */
 async function reserveBlockBuzzSpendForClaims(
   claims: BlockTokenClaims,
@@ -1307,16 +1338,36 @@ async function reserveBlockBuzzSpendForClaims(
 
   // From here any throw must undo the platform reservation just taken — otherwise a
   // failed attempt permanently burns the viewer's 50k/day allowance for a spend that
-  // never happened. Same rule the consent-DENY path below obeys.
-  let budget: number | null;
+  // never happened. Same rule the consent-DENY path below obeys, and the REVOKED exit
+  // immediately after this read obeys it too: a refusal is a non-committed exit like any
+  // other, and it is the one most likely to be repeated by a client that keeps retrying.
+  let posture: ConsentSpendPosture;
   try {
-    const { getConsentBuzzBudget } = await import('~/server/services/blocks/scope-grant.service');
-    budget = await getConsentBuzzBudget({ userId, appBlockId: claims.appBlockId });
+    const { resolveConsentSpendPosture } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    posture = await resolveConsentSpendPosture({ userId, appBlockId: claims.appBlockId });
   } catch (e) {
     await refundBlockBuzzSpend(key, cost);
     throw e;
   }
-  if (budget == null) return { ...platform, consent: null };
+
+  if (posture.kind === 'revoked') {
+    await refundBlockBuzzSpend(key, cost);
+    // FORBIDDEN, not a failed-snapshot return: this is an authorization outcome, not a
+    // ceiling being hit. The message names the remedy because the viewer is the one who
+    // caused it and re-consenting is entirely in their hands.
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        posture.reason === 'grant_revoked'
+          ? 'you have revoked this app’s permissions — re-authorize it to let it spend Buzz on your behalf'
+          : 'you have revoked this app’s permission to spend your Buzz — re-authorize it to allow this',
+    });
+  }
+
+  if (posture.kind === 'no-budget') return { ...platform, consent: null };
+  const budget = posture.budget;
 
   try {
     const consent = await reserveConsentBudgetSpend(userId, claims.appBlockId, cost);
@@ -3098,7 +3149,16 @@ export const blocksRouter = router({
       const { recordScopeGrant, getGrantedScopes } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
-      const grantsSpend = toGrant.includes('ai:write:budgeted');
+      // `CONSENT_SPEND_SCOPE`, not the literal — along with the ELEVEN identical
+      // `claims.scopes.includes(...)` spend gates elsewhere in this file.
+      //
+      // ⚠️ THIS COMMENT ONCE SAID "these two were the copies it was written to absorb", and
+      // review counted 15 live literals still in this file against 4 uses of the constant. A
+      // docblock that reads as an enumeration while covering 4 of 19 sites is worse than none,
+      // because it stops the next person looking. The sweep is now done for this file's spend
+      // gates; the remaining literals here are not that predicate (a tag string, a manifest
+      // key, a scope LIST member), which is why they are still spelled.
+      const grantsSpend = toGrant.includes(CONSENT_SPEND_SCOPE);
       const alreadyGrantsSpend =
         !grantsSpend &&
         input.buzzBudgetPerDay !== undefined &&
@@ -3116,13 +3176,23 @@ export const blocksRouter = router({
             appBlockId: input.appBlockId,
             db: 'write',
           })
-        ).has('ai:write:budgeted');
+        ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
-      await recordScopeGrant({
+      const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
+        // 🔴 THE PROMPTED PATH, AND THE ONLY CALLER THAT MAY PASS THIS. A user who just
+        // accepted a consent dialog naming these scopes is re-consenting to them, so any
+        // prior per-scope revocation of exactly those scopes is lifted — and ONLY those
+        // (the service computes `revoked_scopes ∖ scopes`; re-consenting to A must not
+        // resurrect a revoked B). `BlockRegistry.recordInstallConsent` must NEVER pass it:
+        // its scope set is the app's whole consent-gated ceiling, supplied with no prompt,
+        // so honouring a clear there would let an ordinary install silently undo a revoke.
+        // That asymmetry is the defect the suppression list exists to close — see
+        // `revokeScopes` in scope-grant.service.ts.
+        clearRevocations: true,
         // Spread, NOT `buzzBudgetPerDay: input.buzzBudgetPerDay` — the service
         // distinguishes an omitted key (leave the stored value alone) from an
         // explicit `null` (clear it), and passing `undefined` through would collapse
@@ -3131,6 +3201,48 @@ export const blocksRouter = router({
           ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
           : {}),
       });
+      // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
+      // lifted something.
+      //
+      // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
+      // write did not touch revocations — an ordinary consent with nothing suppressed — and
+      // calling `publish` with an empty list there would DELETE a live marker, reopening in
+      // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
+      // suppression really was lifted, and the marker should go so the app stops being refused
+      // before the TTL elapses.
+      //
+      // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
+      // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
+      // review pointed out the round-4 commit had falsified that, and the correction then listed
+      // only the two new cases — which over-corrected, as round 6 measured. All three:
+      //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
+      //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
+      //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
+      //     The original sentence was right about this one.
+      //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
+      //     value: nothing is withheld afterwards, so a stale marker must go.
+      //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
+      //     never reached refusing.
+      // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
+      // database before storage, so no marker can exist to delete — and in the one shape where
+      // one could (migration applied, revoke taken, migration rolled back) deleting it after a
+      // full re-consent is exactly right.
+      //
+      // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
+      // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
+      // token lifetime of refusals on a permission they just re-granted — annoying, and it
+      // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
+      // permission the user withdrew in force, which does not self-correct in any sense the
+      // user can see. So a failure here must not 500 a successful consent write.
+      if (cleared.revokedScopesAfterClear !== null) {
+        await ConsentRevocation.publish({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          revokedScopes: cleared.revokedScopesAfterClear,
+        }).catch(() => {
+          /* see above — widening access is the direction that may safely fail */
+        });
+      }
       if (
         env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
         (block.manifest as { auth?: unknown }).auth === 'oauth'
@@ -3149,6 +3261,340 @@ export const blocksRouter = router({
           input.buzzBudgetPerDay !== undefined && budgetIsMeaningful
             ? input.buzzBudgetPerDay
             : undefined,
+      };
+    }),
+
+  /**
+   * PER-SCOPE REVOKE — the viewer withdraws one permission from one app.
+   *
+   * The mirror image of `grantScopes` above, and deliberately NOT a copy of it: three of
+   * that procedure's gates are absent here, each for a reason that matters.
+   *
+   * 🔴 NO `status === 'approved'` GATE. `grantScopes` has one because granting a scope to
+   * a suspended or deprecated app would be consenting to something that must not run.
+   * REVOKING from one is the opposite action, and `listMyScopeGrants` — the surface this
+   * button lives on — has no status filter, so suspended and deprecated apps are exactly
+   * what a viewer sees listed. Inheriting the gate would have made the apps most worth
+   * withdrawing consent from the only ones you could not withdraw it from. The AppBlock is
+   * still looked up, because the grant row's FK requires it to exist.
+   *
+   * 🔴 NO MANIFEST-CEILING FILTER. `grantScopes` intersects with
+   * `manifest.scopes ∩ approved_scopes` so a host cannot grant itself something the app
+   * never declared. That argument does not transfer: narrowing is always safe, and the
+   * ceiling MOVES — a publisher push replaces `manifest` without re-approval, so a scope
+   * the viewer really granted last month can be outside today's intersection. Filtering
+   * would refuse to revoke exactly those.
+   *
+   * 🔴 REFUSES CONSENT-EXEMPT SCOPES, WITH A SPECIFIC ERROR. `partitionByConsent` signs a
+   * `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it looks at the grant,
+   * so a suppression entry for one would be stored and enforce NOTHING — the UI would
+   * report success and the app would keep the permission. Accepting-and-no-op'ing is the
+   * worst available outcome on a consent surface, so this refuses instead and names the
+   * scope. (The fix is NOT to make revocation override exemption: those seven have their
+   * own server-side gates and the exemption is the #3090 page-token fix.)
+   *
+   * 🔴 REFUSES A SCOPE THE VIEWER DOES NOT CURRENTLY HOLD. ⚠️ THIS USED TO READ *"A scope the
+   * viewer does not currently hold is ACCEPTED, not refused: recording a suppression for a
+   * permission they have never been asked about is a legitimate pre-emptive 'no', and it is
+   * fail-closed — the next install cannot union it in."* RETRACTED. The requirement was
+   * unattributed — it appears in no ask and no review round's subject — and the pre-emptive-no
+   * story is not what the surface in front of it does. `revokableScopes` is computed from the
+   * APP-SIDE set (`consentGatedScopes(displayedScopes).filter(isKnownBlockScope)`) with no
+   * reference to what the viewer granted, so an app could declare `posts:write:self`, the viewer
+   * never consent, and the row still render a live Remove button whose click wrote a durable
+   * suppression for a permission never given. "Fail-closed" is the wrong frame for that: a
+   * suppression is not a neutral no-op, it survives every later install, so a mis-click
+   * silently makes a future consent prompt's grant inert. Withdrawing is now exactly the
+   * inverse of granting — it needs something to withdraw.
+   *
+   * 🔴 THE ORDER OF THE THREE REFUSALS IS LOAD-BEARING: unknown → exempt → not-held. An exempt
+   * scope is not in the granted set (`partitionByConsent` signs it on the exempt test alone, before
+   * it looks at the grant), so testing not-held first would answer every exempt request with the
+   * generic "you do not currently grant this" instead of the specific sentence naming what governs
+   * it — which is the one place the viewer learns why that row has no control.
+   *
+   * ⚠️ AND THAT PREMISE IS NOT ENFORCED BY ANY WRITER — recorded because it is the sentence a future
+   * reader would cite when reordering these blocks. `BlockRegistry.recordInstallConsent` does filter
+   * (`consentGatedScopes(effective)`), but `blocks.grantScopes` does NOT: its `toGrant` is
+   * `input.scopes ∩ (manifest.scopes ∩ approvedScopes)` with no exempt filter, so a viewer calling
+   * that `protectedProcedure` directly with a declared exempt scope writes it into
+   * `granted_scopes`. Behaviour is still correct in both directions today — `revokableScopes`
+   * excludes exempt so the row stays `fixed`, and the exempt refusal fires before `notHeld`
+   * regardless — so this is a HAZARD, not a defect. The order is what makes it inert; do not read
+   * the premise as a guarantee. Reported by the correctness lane.
+   *
+   * 🔴 AND THE UI HALF IS NOT OPTIONAL — tightening the server alone converts a confusing
+   * button into a broken one. `buildScopeConsentRows` (`src/components/Apps/scopeConsentRows.ts`)
+   * takes the viewer's `grantedScopes` and renders a declared-but-not-granted scope in its own
+   * `not-granted` state, with no control. Deliberately NOT done by narrowing `revokableScopes`
+   * server-side to the granted set: that collapses "not granted" into the client's `fixed` state,
+   * whose note asserts the permission is granted by platform policy and bounded by server-side
+   * checks — false for a scope the viewer simply never agreed to, and the exact
+   * true-control/false-copy combination `ScopeConsentState`'s docblock records as the defect
+   * `unknown` was introduced to avoid.
+   */
+  revokeScopes: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        // Same bounds as `grantScopes`, deliberately: the two procedures describe the same
+        // vocabulary and a viewer toggling a row off should not hit a different limit from
+        // the one that turned it on.
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Apps are not available to this account',
+        });
+      }
+      // NO `status` in the select and no status check — see the docblock. The row is read ONLY
+      // to confirm the app exists, because the grant row's FK requires it.
+      //
+      // ⚠️ IT NO LONGER SELECTS `manifest`, AND THE COMMENT THAT SAID IT DID WAS STALE THE MOMENT
+      // THE TEARDOWN STOPPED BRANCHING ON `manifest.auth`. Selecting a JSONB column nothing reads
+      // is the kind of leftover that later reads as a dependency.
+      // `appId` is selected HERE and reused by the teardown gate below — the OAuth client id for
+      // this app. Three reads of this one row is what the previous shape cost (this one, the
+      // gate's, and the callee's own); selecting it once removes one of them. Replica is correct
+      // for THIS read: an `app_blocks` row is not newly written by anything on this path — unlike
+      // the `OauthConsent` row, which the mint writes on the primary and which the gate therefore
+      // must read there.
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { id: true, appId: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+
+      const {
+        revokeScopes: revokeScopesForUser,
+        isConsentExemptScope,
+        getGrantedScopes: getLiveGrantedScopes,
+      } = await import('~/server/services/blocks/scope-grant.service');
+
+      // 🔴 KNOWN SCOPES ONLY, AND THIS IS A HOT-PATH BOUND RATHER THAN TIDINESS. Whatever
+      // lands in `revoked_scopes` is what `ConsentRevocation.publish` writes into the marker,
+      // and `ConsentRevocation.lookup` then GETs and `JSON.parse`s that value on EVERY authed
+      // block request for this (user, app) pair. 32 arbitrary 1–64-char strings per call, with
+      // the array unioned and never pruned, grows both the row and that per-request payload
+      // without bound — self-targeted, but paid on a hot path and parsed under a fail-closed
+      // catch. An unknown string could also never suppress anything: `partitionByConsent`
+      // only ever consults scopes the mint signs.
+      const unknown = input.scopes.filter((s) => !isKnownBlockScope(s));
+      if (unknown.length > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `unknown scope(s): ${unknown.join(', ')}`,
+        });
+      }
+      const exempt = input.scopes.filter((s) => isConsentExemptScope(s));
+      if (exempt.length > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            `cannot revoke ${exempt.join(', ')}: ${
+              exempt.length === 1 ? 'that scope is' : 'those scopes are'
+            } granted by platform policy rather than by your consent, and ` +
+            `${exempt.length === 1 ? 'is' : 'are'} governed by server-side checks on every ` +
+            `request instead. Revoking ${
+              exempt.length === 1 ? 'it' : 'them'
+            } would record a preference that nothing enforces.`,
+        });
+      }
+
+      // 🔴 THE VIEWER MUST CURRENTLY HOLD EVERY SCOPE THEY ARE WITHDRAWING — see the docblock for
+      // why accepting a non-held one was retracted, and for why this test comes THIRD.
+      //
+      // 🔴 `db: 'write'` — THE PRIMARY, for the same reason `grantScopes`' `alreadyGrantsSpend`
+      // check reads it: the write below goes to the primary, so deciding off the replica puts a
+      // viewer who consents and then immediately withdraws inside the replication window, where
+      // this check answers "you never granted that" about a scope they granted seconds ago.
+      //
+      // `getGrantedScopes` is the SHARED projection (`granted_scopes ∖ revoked_scopes`, empty for
+      // a non-null `revoked_at`), not a re-spelling of it — the same function the mint, the
+      // permissions surface and the OAuth mirror all read, so this refusal cannot disagree with
+      // what the page showed. A scope already in `revoked_scopes` is therefore not held, and
+      // re-revoking it is refused rather than being a silent no-op write.
+      //
+      // ⚠️ THIS READ IS P2022-TOLERANT AND THE SERVICE'S IS NOT, WHICH CHANGES WHICH REFUSAL A
+      // PRE-MIGRATION DATABASE PRODUCES. `readGrantRow` retries with a narrow select and answers
+      // `revokedScopes: []` where the service's read rethrows as `PRECONDITION_FAILED`
+      // (`CONSENT_REVOKE_UNAVAILABLE_MESSAGE`). So on such a database a HELD scope still gets the
+      // 412 — pinned by an arm in `blocks.router.revokeScopes.test.ts` — while a NOT-HELD one now
+      // gets this `BAD_REQUEST` instead. That is the more accurate answer of the two (the scope
+      // genuinely is not conveyed) and the unknown/exempt refusals already pre-empt the 412 the same
+      // way, so it is not new in kind. Named rather than left to be discovered. The degrade is also
+      // the only thing between a P2022 and an unhandled error here: there is no catch around this
+      // call, deliberately, because a masked failure would refuse a legitimate revoke silently.
+      //
+      // ⚠️ IT IS A SNAPSHOT, AND THE SERVICE RE-READS THE ROW. Another write by the same viewer
+      // between the two reads can make this decision stale — but only by one of their own
+      // actions, and the WRITE is still computed from the service's own fresher read, so the
+      // ledger cannot end up wrong. Not worth a transaction on a user-initiated mutation.
+      const held = await getLiveGrantedScopes({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        db: 'write',
+      });
+      const notHeld = input.scopes.filter((s) => !held.has(s));
+      if (notHeld.length > 0) {
+        // ALL-OR-NOTHING, like the unknown and exempt refusals above: a partial write would
+        // leave the caller unable to say which half landed.
+        // 🔴 "do not CURRENTLY grant", NOT "have not granted" — AND THE DIFFERENCE IS A FALSE
+        // STATEMENT ABOUT THE VIEWER'S OWN HISTORY. This message renders VERBATIM to the viewer
+        // (a 400, so `client-safe-error.ts` does not rewrite it, and `ScopeRevokeFailureNotice`
+        // prints `failure.message`), and `notHeld` deliberately folds in the ALREADY-REVOKED case
+        // — `getGrantedScopes` subtracts `revoked_scopes`, which is what makes a double-submit a
+        // refusal rather than a no-op write that moves `revoked_scopes_at`. For that arm "you have
+        // not granted that permission" is exactly backwards: they granted it and withdrew it. The
+        // present-tense form is true of every arm this refusal covers — never granted, already
+        // revoked, and a whole-grant `revoked_at`. Reported by the intent lane.
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            `cannot revoke ${notHeld.join(', ')}: you do not currently grant ` +
+            `${notHeld.length === 1 ? 'that permission' : 'those permissions'} to this app, so ` +
+            `there is nothing to withdraw.`,
+        });
+      }
+
+      // POSTGRES FIRST, then the in-flight marker, then the OAuth teardown. The row is the
+      // authority — it governs every FUTURE mint, permanently — while the marker only closes
+      // the window on tokens already in flight and expires by itself within one token
+      // lifetime. So a failure after the row is written leaves the revoke DURABLE but not
+      // immediate, which is recoverable; the reverse order would leave a marker refusing a
+      // permission the ledger still grants, which self-heals into the permission coming back.
+      const result = await revokeScopesForUser({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        scopes: input.scopes,
+      });
+
+      // ── THE IN-FLIGHT MARKER, THEN THE OAUTH MIRROR.
+      //
+      // ⚠️ THE COMMENT ABOVE `revokeScopesForUser` STILL SAID "POSTGRES FIRST, then the durable
+      // OAuth teardown, then Redis" — the round-2 order, which this block then changed. Corrected
+      // there; the real order is Postgres → Redis publish → teardown in a `finally`.
+      //
+      // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
+      // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
+      // real hole (a Redis failure threw past it, so the mirror was never touched), but
+      // `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator
+      // `DELETE` with NO timeout — so a slow orchestrator delayed the "immediate" half of the
+      // revoke for exactly as long as it was slow. That window is the one the 503 below
+      // apologises for. A `finally` gets both: the marker goes out first, and the teardown runs
+      // whether or not it succeeded.
+      //
+      // 🔴 THE ORDER *WITHIN* THE TEARDOWN IS ALSO LOAD-BEARING and lives in the callee: it
+      // deletes the Access/Refresh keys BEFORE the consent row, because a key with no consent row
+      // resolves a null `buzzLimit` — i.e. no cap — in `bearer-token.ts`.
+      let publishFailed = false;
+      try {
+        await ConsentRevocation.publish({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          revokedScopes: result.revokedScopes,
+        });
+      } catch {
+        publishFailed = true;
+      } finally {
+        // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE. It mirrors the grant into a
+        // bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive
+        // this mutation. Deleting it — and the `Access`/`Refresh` keys alongside it — is what
+        // stops them.
+        //
+        // 🔴 GATED ON A MIRROR ACTUALLY EXISTING, NOT ON `manifest.auth` OR AN ENV FLAG, AND NOT
+        // UNCONDITIONAL EITHER. Three stale gates each let a live mirror row survive a revoke:
+        // today's `manifest.auth`, which a publisher push replaces without re-approval (the very
+        // reason this procedure applies no manifest ceiling); `APP_BLOCK_OAUTH_TOKENS_ENABLED`,
+        // which can be switched off after rows exist; and position after the publish. Dropping
+        // all gates closed those but overcorrected — the callee is NOT a no-op without a row (an
+        // earlier comment here claimed it was, and that was false): it does two primary
+        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
+        // regardless. One cheap existence read gates all of it on the only condition that
+        // matters.
+        await (async () => {
+          // 🔴 THE `await import` IS INSIDE THE IIFE, so a chunk-load failure is caught by the
+          // `.catch` below. Outside it, an import rejection turned a SUCCESSFUL revoke into a
+          // generic 500 and — when the publish had failed — discarded the carefully-worded 503.
+          const { revokeOauthConsentForBlock } = await import(
+            '~/server/services/blocks/oauth-consent-sync.service'
+          );
+          // 🔴 `dbWrite` FOR THE GATE READS — AND THE REPLICA VERSION REINTRODUCED THE HOLE THIS
+          // GATE EXISTS TO CLOSE. The mirror is written on the PRIMARY by
+          // `syncOauthConsentFromGrant` at mint time, so a viewer who opens an `auth:"oauth"` app
+          // and withdraws a permission moments later lands inside replication lag: the gate reads
+          // `null`, the teardown is skipped, and the `OauthConsent` bitmask plus the hub's
+          // `Access`/`Refresh` keys SURVIVE the revoke. `grantScopes` makes this exact argument
+          // 230 lines above for the structurally identical decision ("Off the replica this
+          // decision lags the grant it is asking about").
+          //
+          // The app's `appId` comes from the read at the top of the procedure — no second lookup.
+          // 🔴 GATED ON **EITHER** ARTEFACT, NOT ONLY THE CONSENT ROW — because the callee deletes
+          // the api keys FIRST, deliberately (a key with no consent row resolves a null
+          // `buzzLimit`, i.e. NO CAP, in `bearer-token.ts`). So a teardown that dies between its
+          // two writes leaves "keys present, consent gone" = full scope, uncapped — and a gate
+          // that looked only at the consent row would then read `null` on every retry and never
+          // clean them. Checking both makes the teardown idempotent against its own partial
+          // failure.
+          const [mirror, key] = await Promise.all([
+            dbWrite.oauthConsent.findFirst({
+              where: { userId: ctx.user!.id, clientId: block.appId },
+              select: { id: true },
+            }),
+            dbWrite.apiKey.findFirst({
+              where: {
+                userId: ctx.user!.id,
+                clientId: block.appId,
+                type: { in: ['Access', 'Refresh'] },
+              },
+              select: { id: true },
+            }),
+          ]);
+          if (!mirror && !key) return;
+          await revokeOauthConsentForBlock({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+          });
+        })().catch(() => {
+          // Best-effort: the durable row is written and the marker has already gone out, so the
+          // block-token surface is closed either way. Failing the mutation here would tell the
+          // viewer nothing was recorded when the half that governs every future mint was.
+        });
+      }
+
+      // 🔴 PUBLISH FAILURES ARE SURFACED, NOT SWALLOWED — the opposite of the re-publish in
+      // `grantScopes`. This is the NARROWING direction: if the marker is not written, an
+      // already-minted token keeps the revoked scope for up to its remaining life (4h for a dev
+      // token), and the viewer has just been told the permission was removed. Telling them
+      // "recorded, but an in-flight session may keep it for a few minutes" is honest; a silent
+      // success is not.
+      //
+      // 🔴 `SERVICE_UNAVAILABLE` (503), NOT `INTERNAL_SERVER_ERROR`. `client-safe-error.ts`
+      // replaces the message of every `status >= 500 && status !== 503`, so under the 500 this
+      // first threw, the careful wording was discarded one layer below the test that asserted it
+      // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
+      // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      if (publishFailed) {
+        throw new TRPCError({
+          code: 'SERVICE_UNAVAILABLE',
+          message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+        });
+      }
+
+      return {
+        ok: true,
+        // `revoked` is what THIS call newly suppressed; `revokedScopes` is the whole list.
+        // A client re-rendering a permissions row wants the second — echoing only the delta
+        // would make it re-fetch to know the row's real state.
+        revoked: result.revoked,
+        revokedScopes: result.revokedScopes,
+        grantedScopes: result.grantedScopes,
+        fullyRevoked: result.fullyRevoked,
+        budgetCleared: result.budgetCleared,
       };
     }),
 
@@ -3825,7 +4271,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4059,7 +4505,7 @@ export const blocksRouter = router({
     )
     .query(async ({ input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4137,7 +4583,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4324,7 +4770,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit: an app authorized to spend the viewer's
       // Buzz on generation can read the subqueue of gens it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4424,7 +4870,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4552,7 +4998,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit/query: an app authorized to spend the
       // viewer's Buzz on generation can publish the outputs it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -5204,7 +5650,7 @@ export const blocksRouter = router({
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. An
@@ -5498,6 +5944,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         viewerUserId: userId,
         workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+        privateRun: claims.privateRun === true,
         // Unbounded surface — see the flag's own note. The skip lines it silences
         // are re-derived at the submit, once per real generation.
         suppressQuoteLogs: true,
@@ -5646,7 +6093,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
@@ -5941,6 +6388,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         viewerUserId: userId,
         workflowLabel: blockExternalId,
+        privateRun: claims.privateRun === true,
       });
       const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
       // 🔴 KEPT SEPARATE FROM `cost`, AND THE SEPARATION IS LOAD-BEARING. `cost`
@@ -6569,6 +7017,7 @@ export const blocksRouter = router({
           priceIsCap: realizedPriceIsCap,
           generationType: blockGenerationType,
           reservedAuthorFeeBuzz,
+          privateRun: claims.privateRun === true,
         });
 
         void (async () => {
@@ -6645,6 +7094,7 @@ export const blocksRouter = router({
             appId: claims.appId,
             appBlockId: claims.appBlockId,
             blockInstanceId: claims.blockInstanceId,
+            privateRun: claims.privateRun === true,
             modelId: resolved.modelId,
             // GENERIC published-content-author basis: the opaque shared-storage
             // key the app supplied for the content this generation runs on
@@ -8247,7 +8697,7 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
   }
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
@@ -8335,7 +8785,7 @@ async function submitCustomComfyWorkflow(opts: {
   // missing and must not be counted as the gate. It replaces the author-capability
   // belt that used to sit in this slot, keeping the helper safe on its own terms
   // if it ever gains a caller that does not pre-check.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   // The outer proc already gated this, but re-narrow here (defense-in-depth) so
@@ -8937,6 +9387,7 @@ async function submitCustomComfyWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // customComfy is recipe-based (no single user-picked model to attribute).
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
@@ -9154,7 +9605,7 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
   // already rejected a token missing `ai:write:budgeted`, so this line is not
   // reachable with the scope absent — see estimateCustomComfyWorkflow for why it
   // is written anyway, and why it must not be reported as closing a gap.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
@@ -9456,6 +9907,7 @@ async function estimateStepWorkflow(opts: {
     appId: claims.appId,
     viewerUserId: userId,
     workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+    privateRun: claims.privateRun === true,
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
     suppressQuoteLogs: true,
   });
@@ -9752,6 +10204,7 @@ async function submitStepWorkflow(opts: {
     appId: claims.appId,
     viewerUserId: userId,
     workflowLabel: blockExternalId,
+    privateRun: claims.privateRun === true,
   });
   const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
   // 🔴 TWO NUMBERS, BECAUSE THE OVERAGE CORRECTION BELOW COMPARES AGAINST ONE OF
@@ -10293,6 +10746,7 @@ async function submitStepWorkflow(opts: {
       priceIsCap: realizedPriceIsCap,
       generationType: step.id,
       reservedAuthorFeeBuzz,
+      privateRun: claims.privateRun === true,
     });
 
     void (async () => {
@@ -10308,6 +10762,7 @@ async function submitStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // A registry step is not model-based (no user-picked model to attribute).
         modelId: null,
         // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
@@ -10927,6 +11382,7 @@ async function submitPassThroughStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // A pass-through step carries no model binding and no sharedContentKey
         // (its `.strict()` wire shape has neither).
         modelId: null,

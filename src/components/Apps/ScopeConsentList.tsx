@@ -1,0 +1,194 @@
+import { Stack } from '@mantine/core';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { buildScopeConsentRows } from '~/components/Apps/scopeConsentRows';
+import {
+  ScopeConsentAction,
+  ScopeRevokeFailureNotice,
+  ScopeGrantWithheldLine,
+  ScopeRevokedAtLine,
+  useScopeRevoke,
+} from '~/components/Apps/scopeRevoke';
+
+/**
+ * PHASE 3 — the ONE permissions block both surfaces render.
+ *
+ * 🔴 THIS COMPONENT EXISTS SO THE DRAWER AND THE PAGE CANNOT DRIFT, AND THAT IS NOT A
+ * HOUSEKEEPING CLAIM — IT IS THE DEFECT CLASS THIS FILE'S NEIGHBOURS HAVE PRODUCED REPEATEDLY.
+ * `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx` and `src/pages/apps/activity.tsx`
+ * have now had the SAME sentence corrected on one side while the other was missed, in both
+ * directions, three separate times: the empty-scope label (fixed by moving it into
+ * `scopeGrantEmptyScopeLabel`), the "not the manifest, the intersection" comment on the budget
+ * control, and the query-error branch that asserted a denial from a failed read. Each was two
+ * copies of one decision. A revoke control is a far worse thing to have two copies of — the
+ * failure is not a stale sentence but a permission a viewer withdrew on one surface and is still
+ * offered on the other.
+ *
+ * So both callers pass ONE grant object and this component owns every choice below it: which rows
+ * exist, what state each is in, what the control does, where the timestamp goes, and how a
+ * failure renders. The only thing a caller still decides is `emptyLabel`, because the honest
+ * sentence for "no scopes" genuinely differs by surface — see `scopeGrantEmptyScopeLabel`, whose
+ * own docblock owns that difference.
+ */
+
+/**
+ * The fields of `ScopeGrantSurface` this block reads.
+ *
+ * Structural rather than a `Pick<ScopeGrantSurface, …>` import: `ScopeGrantSurface` is declared in
+ * `src/server/services/blocks/user-app-surface.service.ts`, whose module graph reaches Prisma. A
+ * type-only import would be erased at build, but it is also an import every future reader has to
+ * re-verify is type-only — and both callers here are handed the row by a tRPC hook, which is
+ * structurally typed anyway.
+ *
+ * ⚠️ `scopesRevokedAt` ACCEPTS A STRING AS WELL AS A `Date`. The client transformer is superjson
+ * (`src/utils/trpc.ts`), which does revive a `Date` — but this component is also rendered from
+ * component tests whose fixtures are plain objects, and a widened input here costs nothing while
+ * a narrow one would push a cast into every fixture.
+ */
+export type ScopeConsentGrant = {
+  appBlockId: string;
+  name: string;
+  scopes: string[];
+  /**
+   * ⚠️ OPTIONAL, AND NOT AS A CONVENIENCE — A PRE-PHASE-2 SERVER GENUINELY SENDS A ROW WITHOUT THEM.
+   * `listMyScopeGrants` gained `revokedScopes`/`revokableScopes`/`scopesRevokedAt` in the same change
+   * that added the revoke procedure, and 4990 added `grantedScopes` to the set this component reads.
+   * It emits all of them together, so "some present, some absent" is not a state the current server
+   * can produce. ⚠️ This said "these three fields" while the block declares FOUR — a count stated
+   * next to the list it counts, which is the cheapest kind of prose to let rot.
+   *
+   * ⚠️ THE TRIGGER NAMED HERE WAS WRONG AND IS RETRACTED. It read: *"react-query holds this list at
+   * `staleTime: Infinity`, so a tab open across the deploy hands this component a row shaped like
+   * the OLD surface. `?? []` below is what makes that render a list with no controls instead of
+   * throwing."* Both halves are false. An old tab runs the OLD BUNDLE, in which this component does
+   * not exist, so a stale cache cannot reach it; the reachable trigger is the MIXED-VERSION WINDOW
+   * during a rollout — a new bundle querying a pod still on pre-phase-2 server code. And the `?? []`
+   * it describes is GONE for `revokableScopes`: coalescing absent into empty made every row claim it
+   * could not be withdrawn, so the absence is now carried through as the `unknown` state. See
+   * `buildScopeConsentRows`' parameter docblock.
+   */
+  revokedScopes?: string[];
+  revokableScopes?: string[];
+  /**
+   * The viewer's LIVE granted set. Absent together with the two above on a pre-phase-2 payload;
+   * `buildScopeConsentRows` answers `unknown` for that rather than reading a missing set as
+   * "granted nothing". See its parameter docblock.
+   */
+  grantedScopes?: string[];
+  scopesRevokedAt?: Date | string | null;
+  /**
+   * `revoked_at` — the WHOLE-GRANT hold, a DIFFERENT column from `scopesRevokedAt`. Optional
+   * because a pre-4990 server does not send it, and absent is correctly read as "not on hold"
+   * rather than as `unknown`; see `buildScopeConsentRows`' parameter docblock for why this field
+   * degrades differently from the two above it.
+   */
+  grantWithheldAt?: Date | string | null;
+};
+
+export function ScopeConsentList({
+  grant,
+  emptyLabel,
+}: {
+  grant: ScopeConsentGrant | undefined;
+  emptyLabel: string;
+}) {
+  /**
+   * 🔴 THE HOOK IS CALLED UNCONDITIONALLY, WITH PLACEHOLDERS WHEN THERE IS NO GRANT. `grant` is
+   * undefined on the drawer whenever `listMyScopeGrants` holds no row for the app being run, and
+   * an early `return` above this line would make the hook call conditional — which React forbids
+   * and which would crash the drawer on the very next render that DID find a row. There is no
+   * reachable control in that state, so the placeholders are never read.
+   *
+   * ⚠️ THE REASON FOR THAT IS NOT "no rows" ANY MORE, AND THE OLD WORDING SAID SO. With `grant`
+   * undefined the union can still make `rows` non-empty — a `justRevoked` entry survives the grant
+   * going away — so there ARE rows and `renderScopeAction` IS called. The conclusion holds for a
+   * different reason: every row reachable in that state is hard-coded `'revoked'` by
+   * `buildScopeConsentRows`' appended tail, and the `revoked` arm renders a marker and NO control, so
+   * nothing can reach `requestRevoke` with the placeholder `appBlockId`. Reported by the round-5 lane.
+   */
+  const { requestRevoke, pendingScope, failure, justRevoked } = useScopeRevoke({
+    appBlockId: grant?.appBlockId ?? '',
+    appName: grant?.name ?? 'This app',
+    // Read ONLY to latch pending local entries off once the server confirms them — see
+    // `justRevoked`. The row list is still built from `buildScopeConsentRows` below.
+    serverRevokedScopes: grant?.revokedScopes ?? [],
+  });
+
+  const rows = buildScopeConsentRows({
+    scopes: grant?.scopes ?? [],
+    /**
+     * 🔴 THE SERVER'S LIST UNIONED WITH WHAT THIS SESSION JUST REVOKED. The refetch is deliberately
+     * not awaited (see `useScopeRevoke`), so between a successful revoke and the list arriving the
+     * server copy still omits the scope; without the union the row went straight back to offering a
+     * live "Remove" control for a permission already gone, and a confirm dialog promising to remove
+     * it again. That is ALL the union does — it covers the gap; it does not end the local claim.
+     *
+     * ⚠️ THE UNION IS A MASK, NOT AN EXPIRY, AND AN EARLIER VERSION OF THIS BLOCK CLAIMED OTHERWISE.
+     * It said the union "is what makes the local claim SELF-EXPIRING" — that once the payload carried
+     * the scope, `new Set` made the entry "contribute nothing". It contributes nothing to THAT
+     * payload. This is recomputed every render, and `revokedScopes` is not monotonic (a re-grant is
+     * exactly the write that removes a scope from it), so the entry came back the moment a later
+     * payload dropped it. What actually retires an entry is the LATCH in `useScopeRevoke`, which drops
+     * it permanently the first time any payload confirms it. Read `justRevoked` for the full ladder —
+     * three shapes of this mechanism were wrong before this one, each for a different reason.
+     */
+    revokedScopes: [...new Set([...(grant?.revokedScopes ?? []), ...justRevoked])],
+    // 🔴 NOT `?? []` — AND THE COALESCE WAS A REAL DEFECT, NOT A TIDINESS NIT. An absent
+    // `revokableScopes` made every row `fixed`, so a genuinely withdrawable scope rendered
+    // "Can't be withdrawn … granted by platform policy": fail-closed for the action, fail-OPEN
+    // for the copy, i.e. a false statement about the viewer's own consent. Passed through as
+    // `undefined` so `buildScopeConsentRows` can answer `unknown` and render nothing. See that
+    // function's parameter docblock.
+    revokableScopes: grant?.revokableScopes,
+    // 🔴 ALSO NOT `?? []`, AND FOR THE MIRROR-IMAGE REASON. `revokableScopes` is the app's
+    // consent-gated set; this is what the VIEWER agreed to, and `blocks.revokeScopes` refuses a
+    // scope outside it — so without it the row offers a Remove button the server rejects. But
+    // coalescing an ABSENT set to `[]` would claim the viewer granted nothing at all, turning
+    // every row of a pre-phase-2 payload into a false statement about their own consent instead
+    // of the `unknown` silence. Passed through, exactly like `revokableScopes`.
+    grantedScopes: grant?.grantedScopes,
+    // 🔴 THE ONLY THING THAT SEPARATES "you granted this and it is on hold" FROM "you never granted
+    // this" — both report `grantedScopes: []`. Without it this list printed "Not granted yet" over
+    // 21 production rows across 10 users. Unlike the two fields above, absent means "not on hold",
+    // not `unknown`.
+    grantWithheldAt: grant?.grantWithheldAt,
+  });
+  const stateByScope = new Map(rows.map((r) => [r.scope, r.state]));
+
+  return (
+    <Stack gap="xs" data-testid="scope-consent-list">
+      <BlockScopeList
+        // The ROW LIST is `buildScopeConsentRows`' output, not `grant.scopes` — a scope the viewer
+        // revoked and the publisher later dropped from the manifest is in the second and not the
+        // first. See that function's docblock: forgetting a withdrawal is the one thing this
+        // surface must never do.
+        scopes={rows.map((r) => r.scope)}
+        emptyLabel={emptyLabel}
+        consent={{
+          revokedScopes: rows.filter((r) => r.state === 'revoked').map((r) => r.scope),
+          renderScopeAction: (scope) => (
+            <ScopeConsentAction
+              scope={scope}
+              // `?? 'unknown'` can only be reached if `BlockScopeList` were handed a scope this
+              // component did not put in `rows`, which is impossible today. `unknown` is the
+              // right fallback rather than `fixed`: both withhold the control, but `fixed`
+              // ASSERTS the permission is platform-granted and unwithdrawable, and we would have
+              // no basis for saying that about a row we cannot account for. Say nothing instead.
+              state={stateByScope.get(scope) ?? 'unknown'}
+              pendingScope={pendingScope}
+              onRevoke={requestRevoke}
+            />
+          ),
+        }}
+      />
+      {/* 🔴 BEFORE the revoked-at line, deliberately: the hold governs EVERY row on the card while
+          `scopesRevokedAt` is about one past action, and on a migrated database both can be true at
+          once. See `ScopeGrantWithheldLine`. */}
+      <ScopeGrantWithheldLine grantWithheldAt={grant?.grantWithheldAt ?? null} />
+      {/* App-level, once — NOT per row. `scopesRevokedAt` is one timestamp for the whole (user,
+          app) pair, so printing it beside an individual scope would be wrong for every revoke but
+          the latest. The rule and its reasoning live on `ScopeRevokedAtLine`. */}
+      <ScopeRevokedAtLine scopesRevokedAt={grant?.scopesRevokedAt ?? null} />
+      <ScopeRevokeFailureNotice failure={failure} />
+    </Stack>
+  );
+}

@@ -15,6 +15,7 @@ import {
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
+import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -280,6 +281,12 @@ const createTrainingStep = (
   }
 };
 
+const ORCHESTRATOR_REJECTED_CODES = new Set<TRPCError['code']>([
+  'BAD_REQUEST',
+  'UNAUTHORIZED',
+  'TOO_MANY_REQUESTS',
+]);
+
 export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
@@ -430,26 +437,51 @@ export const createTrainingWorkflow = async ({
   // `queryWorkflows` offers. Nothing reads them yet.
   const trainingType = modelVersion.trainingDetails.type;
 
-  const workflow = await submitWorkflow({
-    token,
-    body: {
-      tags: [
-        TRAINING_WORKFLOW_TAG,
-        `modelVersion:${modelVersionId}`,
-        `baseModel:${baseModel}`,
-        ...(trainingType ? [`trainingType:${trainingType}`] : []),
-      ],
-      steps: [stepRun],
-      callbacks: [
-        {
-          url: `${env.WEBHOOK_URL}/resource-training-v2/${modelVersion.modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
-          type: ['workflow:*'],
-        },
-      ],
-      // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
+  // Every submitWorkflow call is its own charged workflow, and the version keeps only the last
+  // workflowId, so a repeat submit strands a paid run. Claim the version atomically first.
+  // NULL is claimable because the extra runs of a multi-run submit are created without a status.
+  const { count: claimed } = await dbWrite.modelVersion.updateMany({
+    where: {
+      id: modelVersionId,
+      OR: [{ trainingStatus: null }, { trainingStatus: TrainingStatus.Pending }],
     },
+    data: { trainingStatus: TrainingStatus.Submitted },
   });
+  if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    workflow = await submitWorkflow({
+      token,
+      body: {
+        tags: [
+          TRAINING_WORKFLOW_TAG,
+          `modelVersion:${modelVersionId}`,
+          `baseModel:${baseModel}`,
+          ...(trainingType ? [`trainingType:${trainingType}`] : []),
+        ],
+        steps: [stepRun],
+        callbacks: [
+          {
+            url: `${env.WEBHOOK_URL}/resource-training-v2/${modelVersion.modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
+            type: ['workflow:*'],
+          },
+        ],
+        // @ts-ignore - BuzzSpendType is properly supported.
+        currencies,
+      },
+    });
+  } catch (e) {
+    // Only a 4xx proves no workflow was created. After a timeout or 5xx one may have been, and
+    // releasing would let a retry charge a second run: a stuck version is the cheaper failure.
+    if (e instanceof TRPCError && ORCHESTRATOR_REJECTED_CODES.has(e.code)) {
+      await dbWrite.modelVersion.updateMany({
+        where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+        data: { trainingStatus: TrainingStatus.Pending },
+      });
+    }
+    throw e;
+  }
 
   await assertWorkflowOwner(workflow, userId, token);
 

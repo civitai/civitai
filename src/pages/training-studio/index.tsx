@@ -10,7 +10,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { canGenerateWithEpochs } from '~/utils/training';
+import { canGenerateWithEpochs, paidMemberHostFlag } from '~/utils/training';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { getAirEcosystem, stringifyAIR } from '~/shared/utils/air';
@@ -100,6 +100,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   // the element can explain the gate instead of a non-member's click silently doing nothing.
   const currentUser = useCurrentUser();
   const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
+  const isPaidMember = paidMemberHostFlag(currentUser);
 
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
@@ -174,6 +175,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           orchestratorMode,
           buzzMode,
           canGenerateUnpublished,
+          isPaidMember,
           pricingUrl: '/pricing',
         },
         hrefFor,
@@ -257,7 +259,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       cancelled = true;
       link.remove();
     };
-  }, [orchestratorEndpoint, orchestratorMode, canGenerate, buzzMode, canGenerateUnpublished]);
+  }, [
+    orchestratorEndpoint,
+    orchestratorMode,
+    canGenerate,
+    buzzMode,
+    canGenerateUnpublished,
+    isPaidMember,
+  ]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
   // is the source of truth, pushed into the element as a property whenever it changes.

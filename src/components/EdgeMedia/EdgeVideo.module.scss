@@ -71,6 +71,15 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  // Autoplay leaves the element paused for a frame or two after load; the delay keeps that from
+  // flashing the button.
+  animation: playButtonIn 150ms ease 200ms backwards;
+}
+
+@keyframes playButtonIn {
+  from {
+    opacity: 0;
+  }
 }
 
 .noFullscreenButton {

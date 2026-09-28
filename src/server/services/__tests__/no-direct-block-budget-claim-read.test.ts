@@ -117,6 +117,25 @@ const ALLOWED_FORMS: AllowedForm[] = [
       'is the read every gate is routed through.',
   },
   {
+    name: 'the consent-strip clear',
+    // `revoked.has(CONSENT_SPEND_SCOPE) && claims.buzzBudget !== undefined` plus the
+    // `buzzBudget: undefined` it writes — one condition and one assignment, both in
+    // `applyRevocations`.
+    re: /claims\.buzzBudget\s*!==\s*undefined/g,
+    files: ['server/services/blocks/consent-revocation.service.ts'],
+    count: 1,
+    why:
+      'The per-scope consent REVOKE, not a gate. When a viewer withdraws `ai:write:budgeted` the ' +
+      'strip removes the scope from the token, and the per-call ceiling has to go with it — ' +
+      'otherwise the claims still advertise a budget for a permission that will now 403, and ' +
+      "`enforceContextBinding`'s spend case treats a positive `buzzBudget` AS that scope's " +
+      'binding. It compares the claim against NO price, so it cannot be a site where a ceiling ' +
+      'decision is skipped; it only ever CLEARS. It lives in `applyRevocations` rather than at ' +
+      'the two token seams precisely so neither can forget it — the first cut cleared it on REST ' +
+      'and not on the bridge, leaving `blocks.getMyViewer` publishing a ceiling for a stripped ' +
+      'scope.',
+  },
+  {
     name: 'the single mint-site write',
     re: /claims\.buzzBudget\s*=\s*input\.buzzBudget;/g,
     files: ['server/services/block-token.service.ts'],

@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import { confirmDownloadBoost } from '~/components/generation_v2/DownloadBoostConfirm';
 import { etasPrintTheSame } from '~/components/ResourceLoad/download-eta';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
+import { isBaseWeightsType } from '~/shared/orchestrator/download-preparation';
+import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
+import { versionIdFromAir } from '~/shared/utils/air';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -10,8 +13,12 @@ import { trpc } from '~/utils/trpc';
  * same whatIf, so the only thing worth refusing is a gain the rendered buckets have swallowed —
  * charging for two identical printed numbers.
  */
-export const isBoostable = (preparation?: DownloadPreparation) =>
+export const isBoostable = (preparation?: DownloadPreparation, hasBaseWeights?: boolean) =>
   !!preparation &&
+  // The fee is flat per workflow and sized against base-model weights, so some have to be waiting.
+  // The caller resolves that from the resources' real model types; an unresolved lookup reads as
+  // "nothing to sell" rather than guessing from the AIR, which cannot answer it.
+  hasBaseWeights === true &&
   preparation.lane !== 'high' &&
   preparation.boostedEtaSeconds != null &&
   !etasPrintTheSame(preparation.etaSeconds, preparation.boostedEtaSeconds);
@@ -33,6 +40,7 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   enabled: boolean;
 }) {
   const [preBoostRevision, setPreBoostRevision] = useState<number | null>(null);
+  const { getResourceData } = useResourceDataContext();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const base = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
@@ -40,7 +48,16 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   });
 
   const preparation = base.data?.preparation;
-  const boostable = isBoostable(preparation);
+  // The real model type, not the AIR: a Checkpoint shipping a standalone denoiser advertises
+  // `diffusionmodel`/`unet` in its AIR, which is every Flux / Wan / ZImage / Anima / Boogu base model.
+  const hasBaseWeights = useMemo(
+    () =>
+      (preparation?.resources ?? []).some((r) =>
+        isBaseWeightsType(getResourceData(versionIdFromAir(r.resource) ?? -1)?.model?.type)
+      ),
+    [preparation, getResourceData]
+  );
+  const boostable = isBoostable(preparation, hasBaseWeights);
 
   const boostedPayload = useMemo(
     () => (queryPayload ? { ...queryPayload, downloadPriority: 'high' } : null),

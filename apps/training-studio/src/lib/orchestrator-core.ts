@@ -95,6 +95,7 @@ interface OutputBlob {
   previewUrl?: string | null;
   blockedReason?: string | null;
   type?: string;
+  nsfwLevel?: string | null;
 }
 interface RawStep {
   $type?: string;
@@ -176,7 +177,12 @@ export async function listGenerations(
       for (const blob of stepBlobsForMedia(step, media)) {
         if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
           seen.add(blob.id);
-          items.push({ blobId: blob.id, url: blob.url, previewUrl: blob.previewUrl ?? blob.url });
+          items.push({
+            blobId: blob.id,
+            url: blob.url,
+            previewUrl: blob.previewUrl ?? blob.url,
+            nsfwLevel: blob.nsfwLevel ?? undefined,
+          });
         }
       }
     }

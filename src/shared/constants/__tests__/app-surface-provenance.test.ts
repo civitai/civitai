@@ -223,7 +223,12 @@ describe('scopeGrantEmptyScopeLabel', () => {
    * accounting for 64 of the 111 calls, and EVERY scope involved is in `CONSENT_EXEMPT_SCOPES` —
    * which `scope-grant.service.ts` documents as needing no prompt because read:self covers public
    * data. So the sentence alleged a failure that had not occurred for 100% of real viewers, and
-   * offered no remedy (nothing writes a non-null `revoked_at`).
+   * offered no remedy. ⚠️ THE PARENTHETICAL USED TO READ *"(nothing writes a non-null
+   * `revoked_at`)"* and that is RETRACTED — `revokeScopes` (`scope-grant.service.ts`) writes
+   * one. The "no remedy" half stands on the other, load-bearing reason: every scope in this
+   * population is CONSENT-EXEMPT, and `blocks.revokeScopes` refuses those by design because a
+   * suppression entry for an exempt scope enforces nothing. An activity-only row still has no
+   * remedy to offer; the reason is exemption, not the absence of a writer.
    *
    * Claim 2 it must not make: "it read ONLY data that needs no separate permission". That is the
    * operator's stated direction and it is TRUE of today's whole population, but this function is

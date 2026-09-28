@@ -178,8 +178,8 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-47 live in `src/server/services/__tests__/no-*.test.ts`:
-`no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock`,
+49 live in `src/server/services/__tests__/no-*.test.ts`:
+`no-agent-ground-truth-write`, `no-bound-make-interval` (a `make_interval` argument in `$queryRaw`/`Prisma.sql` must be inlined with `Prisma.raw` — bound, it arrives as int8 and throws 42883 at runtime, which a mocked-db test cannot see), `no-coerce-boolean-in-api`, `no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock`,
 `no-divergent-active-sales-cap` (SERVER side only: the `model.getActiveSales` parser enforces the id cap, and the chunk size a card surface splits to does not exceed it — it CANNOT see the call site, which is pinned behaviourally by `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, a file in the full unit suite but NOT in `test:lint-rules`, so a `test:lint-rules` run alone does not cover that half; the procedure was rejecting every call from a scrolled feed as an input-validation 400, so no 5xx was recorded and the sale badge simply vanished from the grid), `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount`), `no-divergent-can-generate-derivation`, `no-divergent-coverage-read` (which of `GenerationCoverage`’s two rules answers is chosen in one place per side — `pickCovered` for the columns, `versionCanGenerate` for the indexed pair — so a copy left behind cannot keep answering under the old rule after the flag flips), `no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-generator-readiness` (“can this generate right now” is `generatorLoaded` OR an `ExternalGeneration` version, which has no weights to become resident — reading the column alone tells an API model’s user to wait for a download that never comes, and drops it from the loaded-only filter), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-prompt-derivation` (the prompt-reuse remix threshold has one constant and one option-less verdict function, called by both the client claim check and the server's free-submission gate — it was a default parameter any caller could pass past), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint`, `no-lint-rules-script-drift`,
@@ -202,6 +202,7 @@ stale), `no-unguarded-user-text`, `no-unhydrated-home-block-reactions` (a home b
 `no-unmoderated-blob-retraction` (the ledger of flows allowed to ask the image-cache service to
 destroy an image's SHARED stored object — a cross-account, irreversible act; moderation only),
 `no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
+`no-unthreaded-private-run-claim` (every money call site in `blocks.router.ts` must be fed the verified `claims.privateRun` — the two private-run money arms are branches in SERVICES, so an omitted argument leaves the arm inert at that path while every service unit test stays green; on the `chargeBlockAuthorFee` population an omission debits the reviewer and credits the suspended publisher),
 `no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
 flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
 `no-unroled-image-resource-match` (resource detection must not match an image to a model on
@@ -213,7 +214,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 52 files today.
+`test:lint-rules` names 54 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.

@@ -72,11 +72,13 @@ type Follower = { projectId: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({
+  versions = [],
   scheduled = [],
   newlyLive = [],
   chapters = [],
   followers = [],
 }: {
+  versions?: (Row & { extras: { modelId: number } })[];
   scheduled?: Row[];
   newlyLive?: Row[];
   chapters?: Chapter[];
@@ -89,6 +91,7 @@ const stubReads = ({
     if (sql.includes('"ComicEngagement"'))
       throw new Error('relation "ComicEngagement" does not exist');
     if (sql.includes('"ComicProjectEngagement"')) return followers;
+    if (sql.includes("'hasEarlyAccess'")) return versions;
     if (sql.includes('"ComicChapter"')) return chapters;
     if (sql.includes('JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"')) return scheduled;
     if (sql.includes('FROM "Post" p')) return newlyLive;
@@ -325,5 +328,26 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
     ) as Prisma.Sql;
     expect(interval.sql).toBe('make_interval(mins => 60)');
     expect(interval.values).toEqual([]);
+  });
+});
+
+describe('processScheduledPublishing :: lastVersionAt', () => {
+  // sync_model_to_metric skips a lastVersionAt later than the DB's NOW(); a JS timestamp from a
+  // pod clock running ahead left ModelMetric.lastVersionAt NULL and the model off the Newest feed.
+  it('stamps lastVersionAt from the database clock, not the job clock', async () => {
+    const txExecuteRaw = vi.fn();
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: txExecuteRaw, $queryRaw: vi.fn().mockResolvedValue([]) })
+    );
+    stubReads({ versions: [{ id: 100, userId: 10, extras: { modelId: 42 } }] });
+
+    await runJob();
+
+    const call = txExecuteRaw.mock.calls.find((args) =>
+      (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as string[]).join('?')).toContain('SET "lastVersionAt" = NOW()');
+    expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
   });
 });
