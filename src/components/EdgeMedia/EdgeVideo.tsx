@@ -258,10 +258,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     // The <video> is server-rendered and starts loading before hydration; a cached file can fire
     // every load event (and `playing`) before React attaches its listeners — Firefox does this
     // routinely on reload. Those events are never replayed, so read the element's state on attach.
+    // `key={videoUrl}` attaches a fresh element for a new source, so per-element state starts over.
     const setVideoRef = useCallback(
       (video: HTMLVideoElement | null) => {
         ref.current = video;
         if (!video) return;
+        setLoaded(false);
+        setHasAudioState(false);
+        setAutoplayFailed(false);
+        setUserToggled(false);
         if (video.readyState >= HTMLMediaElement.HAVE_METADATA) markVideoReady();
         setIsPlaying(!video.paused);
       },
