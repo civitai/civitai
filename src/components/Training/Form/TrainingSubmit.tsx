@@ -238,6 +238,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // State lags a burst of clicks, and the confirm modal's onConfirm closes over a stale render,
+  // so only a ref can stop the same version being submitted (and charged) twice.
+  const submitLockRef = useRef(false);
   const [acknowledgedBases, setAcknowledgedBases] = useState<string[]>([]);
 
   const baseModelNameFor = (base: string) =>
@@ -484,6 +488,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const doTraining = trpc.orchestrator.createTraining.useMutation();
 
+  const releaseSubmit = () => {
+    submitLockRef.current = false;
+    setAwaitInvalidate(false);
+  };
+
   const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
       await doTraining.mutateAsync({ modelVersionId, buzzType: selectedType });
@@ -508,7 +517,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         await queryUtils.model.getAvailableTrainingModels.invalidate();
 
         await router.replace(userTrainingDashboardURL);
-        setAwaitInvalidate(false);
+        releaseSubmit();
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
@@ -525,7 +534,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       finishedRuns++;
       if (finishedRuns === runs.length) {
-        setAwaitInvalidate(false);
+        releaseSubmit();
       }
     }
   };
@@ -533,6 +542,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
 
   const handleSubmit = () => {
+    if (submitLockRef.current) return;
+
     // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
     if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
       showNotification({
@@ -659,6 +670,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
 
     const performTransaction = () => {
+      if (submitLockRef.current) return;
+      submitLockRef.current = true;
+      setConfirmOpen(true);
+      let confirmed = false;
+
       return openConfirmModal({
         title: 'Confirm Buzz Transaction',
         children: (
@@ -700,7 +716,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
         centered: true,
         onConfirm: () => {
+          if (confirmed) return;
+          confirmed = true;
           handleConfirm();
+        },
+        onClose: () => {
+          setConfirmOpen(false);
+          if (!confirmed) submitLockRef.current = false;
         },
       });
     };
@@ -718,6 +740,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         title: 'Unsaved training data',
         autoClose: false,
       });
+      releaseSubmit();
       return;
     }
 
@@ -762,7 +785,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
         return;
       }
 
@@ -773,7 +796,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
         });
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
         return;
       }
 
@@ -800,7 +823,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             autoClose: false,
           });
           finishedRuns++;
-          if (finishedRuns === runs.length) setAwaitInvalidate(false);
+          if (finishedRuns === runs.length) releaseSubmit();
           return;
         }
 
@@ -930,7 +953,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             });
             // TODO ideally, mark this as errored and don't leave the screen
             finishedRuns++;
-            if (finishedRuns === runs.length) setAwaitInvalidate(false);
+            if (finishedRuns === runs.length) releaseSubmit();
           }
         }
       } catch (e) {
@@ -943,7 +966,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
-        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        if (finishedRuns === runs.length) releaseSubmit();
       }
     });
   };
@@ -1576,6 +1599,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               !status.available ||
               !allLabeled ||
               awaitInvalidate ||
+              confirmOpen ||
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
               hasIssue ||
