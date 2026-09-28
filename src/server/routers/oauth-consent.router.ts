@@ -7,6 +7,7 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { buzzLimitSchema, type BuzzLimit } from '~/server/schema/api-key.schema';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeBlockGrantsForClient } from '~/server/services/blocks/scope-grant-revocation.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import * as z from 'zod';
 
@@ -137,6 +138,9 @@ export const oauthConsentRouter = router({
       await dbWrite.oauthConsent.delete({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
       });
+
+      // Otherwise the block grant re-mirrors this consent on the next block load.
+      await revokeBlockGrantsForClient({ userId: ctx.user.id, clientId: input.clientId });
 
       // Best-effort: tell the orchestrator the OAuth subject is gone so its
       // stored spend record doesn't linger after the user revokes the app.

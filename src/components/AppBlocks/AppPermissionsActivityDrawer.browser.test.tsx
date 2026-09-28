@@ -22,6 +22,8 @@ const m = vi.hoisted(() => ({
   grantsSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   buzzSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   scopeSpy: undefined as unknown as ReturnType<typeof vi.fn>,
+  withdrawSpy: undefined as unknown as ReturnType<typeof vi.fn>,
+  invalidateGrantsSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   // Store-visibility flags for `AppActivityPanel`'s `App` column. `null` (the default,
   // and what this file rendered under before) is what `useOptionalFeatureFlags` returns
   // outside a provider, which fails CLOSED — so a link test run at the default would be
@@ -100,9 +102,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
   }));
+  const withdrawSpy = vi.fn();
+  const invalidateGrantsSpy = vi.fn(async () => undefined);
   m.grantsSpy = grantsSpy;
   m.buzzSpy = buzzSpy;
   m.scopeSpy = scopeSpy;
+  m.withdrawSpy = withdrawSpy;
+  m.invalidateGrantsSpy = invalidateGrantsSpy;
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
@@ -111,7 +117,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         listMyScopeGrants: { useQuery: grantsSpy },
         listMyAppActivity: { useInfiniteQuery: buzzSpy },
         listMyScopeInvocations: { useInfiniteQuery: scopeSpy },
+        revokeScopeGrant: {
+          useMutation: (opts: { onSuccess?: () => Promise<void> }) => ({
+            isPending: false,
+            mutate: (input: unknown) => {
+              withdrawSpy(input);
+              void opts.onSuccess?.();
+            },
+          }),
+        },
       },
+      useUtils: () => ({ blocks: { listMyScopeGrants: { invalidate: invalidateGrantsSpy } } }),
       // W13 — AppActivityPanel resolves rich-detail subject-ref ids via these
       // batch lookups. Stub them (no rich rows in these fixtures → inert).
       modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
@@ -138,6 +154,35 @@ beforeEach(() => {
   m.grantsSpy?.mockClear();
   m.buzzSpy?.mockClear();
   m.scopeSpy?.mockClear();
+  m.withdrawSpy?.mockClear();
+  m.invalidateGrantsSpy?.mockClear();
+});
+
+describe('AppPermissionsActivityDrawer — withdraw permissions', () => {
+  test('confirms, then revokes THIS app and refreshes the grant list', async () => {
+    m.grants = [{ appBlockId: 'ab-1', slug: 'my-app', name: 'My App', scopes: ['user:read:self'] }];
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={vi.fn()} />
+    );
+
+    await page.getByRole('button', { name: 'Withdraw permissions' }).click();
+    expect(m.withdrawSpy).not.toHaveBeenCalled();
+    await expect.element(page.getByTestId('withdraw-permissions-confirm')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+    expect(m.withdrawSpy).toHaveBeenCalledWith({ appBlockId: 'ab-1' });
+    await vi.waitFor(() => expect(m.invalidateGrantsSpy).toHaveBeenCalled());
+  });
+
+  test('offers no withdrawal when the viewer holds no grant for this app', async () => {
+    m.grants = [{ appBlockId: 'ab-2', slug: 'other', name: 'Other', scopes: ['buzz:read:self'] }];
+    renderWithProviders(
+      <AppPermissionsActivityDrawer appBlockId="ab-1" appName="My App" opened onClose={vi.fn()} />
+    );
+
+    await expect.element(page.getByTestId('app-permissions-activity-drawer')).toBeVisible();
+    expect(page.getByRole('button', { name: 'Withdraw permissions' }).elements()).toHaveLength(0);
+  });
 });
 
 describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activity)', () => {
