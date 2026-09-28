@@ -68,6 +68,7 @@ import type {
   GetMyTrainingModelsSchema,
   LimitOnly,
   MigrateResourceToCollectionInput,
+  MinorFlagSnapshot,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -126,6 +127,7 @@ import {
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
@@ -2333,6 +2335,7 @@ export type ModelMinorActivity =
   | 'setMinor'
   | 'unsetMinor'
   | 'setMinorAutoHash'
+  | 'setMinorTextScan'
   | 'rollbackMinorAutoHash';
 
 export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
@@ -2342,10 +2345,11 @@ export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
 // this the change is unrecoverable, whether a job or a moderator made it.
 // `source` is what lets a bulk rollback undo only the automated flags and leave
 // deliberate moderator decisions alone.
-// Idempotent via the WHERE guard: a re-flag can never clobber the original
-// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// A re-flag of a model that is still minor never clobbers the original pre-state; a snapshot left
+// behind by an unset is replaced, or the new flag would inherit the old one's source and pre-state.
+// Best-effort — losing the snapshot must block a later rollback, not
 // the flag itself, so failures are logged rather than thrown.
-async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+async function captureMinorFlagSnapshot(modelId: number, source: MinorFlagSnapshot['source']) {
   try {
     await dbWrite.$executeRaw`
       UPDATE "Model" m
@@ -2367,7 +2371,7 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
         )
       )
       WHERE m.id = ${modelId}
-        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+        AND (NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY}) OR NOT m.minor)
     `;
   } catch (error) {
     logToAxiom({
@@ -2379,6 +2383,12 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
   }
 }
 
+function minorFlagSource(activity: ModelMinorActivity | undefined): MinorFlagSnapshot['source'] {
+  if (activity === 'setMinorAutoHash') return 'auto';
+  if (activity === 'setMinorTextScan') return 'text-scan';
+  return 'manual';
+}
+
 export async function setModelMinor({
   id,
   minor,
@@ -2386,11 +2396,13 @@ export async function setModelMinor({
   activity,
   tracker,
   isModerator,
+  recordTextScanRuling,
 }: SetModelMinorInput & {
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
   isModerator?: boolean;
+  recordTextScanRuling?: boolean;
 }) {
   const before = await dbRead.model.findUnique({
     where: { id },
@@ -2406,10 +2418,24 @@ export async function setModelMinor({
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
 
+  if (!minor && recordTextScanRuling) {
+    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
+    const { stampModeratorTextScanRuling } = await import(
+      '~/server/services/text-scan/actions/appeal-text-hash'
+    );
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator minor ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
+
   // Must run before the update below and before side effects propagate `minor`
   // to images, or the snapshot records post-flag state.
-  if (minor)
-    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
+  if (minor) await captureMinorFlagSnapshot(id, minorFlagSource(activity));
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2487,6 +2513,7 @@ export async function setModelMinor({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+  if (!minor && result.poi) await reassertModelPoiRestrictions(id);
 
   return result;
 }

@@ -3,6 +3,7 @@
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
   '/api/mod/audit/change-history': () => import('~/pages/api/mod/audit/change-history'),
+  '/api/mod/bounty-poi/resolve-appeal': () => import('~/pages/api/mod/bounty-poi/resolve-appeal'),
   '/api/mod/bounty/repay-award': () => import('~/pages/api/mod/bounty/repay-award'),
   '/api/mod/comment/bulk-delete': () => import('~/pages/api/mod/comment/bulk-delete'),
   '/api/mod/comment/remove-as-tos': () => import('~/pages/api/mod/comment/remove-as-tos'),

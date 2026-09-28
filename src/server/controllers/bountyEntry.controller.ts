@@ -27,6 +27,7 @@ import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyVisible } from '~/server/services/bounty-visibility';
 
 export const getBountyEntryHandler = async ({
   input,
@@ -36,6 +37,7 @@ export const getBountyEntryHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ entryId: input.id }, ctx.user);
     const entry = await getEntryById({
       input,
       select: {
@@ -113,6 +115,7 @@ export const upsertBountyEntryHandler = async ({
 }) => {
   const { id: userId } = ctx.user;
   try {
+    await assertBountyVisible({ bountyId: input.bountyId }, ctx.user);
     const bounty = await getBountyById({
       id: input.bountyId,
       select: { complete: true, entryLimit: true, entries: { select: { userId: true } } },
@@ -223,6 +226,7 @@ export const getBountyEntryFilteredFilesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ entryId: input.id }, ctx.user);
     const files = await getBountyEntryFilteredFiles({
       ...input,
       userId: ctx.user?.id,

@@ -638,6 +638,23 @@ export const getComment = async ({
   return comment;
 };
 
+export async function getCommentThreadBounty(
+  threadId: number
+): Promise<{ bountyId: number } | { entryId: number } | null> {
+  const thread = await dbRead.thread.findUnique({
+    where: { id: threadId },
+    select: {
+      bountyId: true,
+      bountyEntryId: true,
+      rootThread: { select: { bountyId: true, bountyEntryId: true } },
+    },
+  });
+  const bountyId = thread?.bountyId ?? thread?.rootThread?.bountyId;
+  if (bountyId) return { bountyId };
+  const entryId = thread?.bountyEntryId ?? thread?.rootThread?.bountyEntryId;
+  return entryId ? { entryId } : null;
+}
+
 export const deleteComment = ({ id }: { id: number }) => {
   return dbWrite.commentV2.delete({ where: { id } });
 };

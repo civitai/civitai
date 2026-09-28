@@ -13,6 +13,7 @@ type ModelModActivity = {
     | 'setSfwOnly'
     | 'unsetSfwOnly'
     | 'setMinorAutoHash'
+    | 'setMinorTextScan'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch';
 };

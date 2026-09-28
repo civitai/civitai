@@ -17,6 +17,7 @@ vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
 
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { getWorkflow } = await import('@civitai/client');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
@@ -108,6 +109,30 @@ describe('handleTextScanCallback', () => {
         workflowId: 'wf-1',
         outcome: expect.objectContaining({ nsfwLevel: 8 }),
       })
+    );
+  });
+
+  // An edit between submit and callback must not move the hash a flag and its appeal grant compare.
+  it('hands the action the text hash of the subject as submitted', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'Explicit.' } }, undefined, {
+        ...metadata,
+        textHash: 'submitted-hash',
+      }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(adapter.applyTextScan).toHaveBeenCalledWith(
+      expect.objectContaining({ textHash: 'submitted-hash' })
+    );
+  });
+
+  it('falls back to the reloaded subject hash for a workflow submitted without one', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'Explicit.' } }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(adapter.applyTextScan).toHaveBeenCalledWith(
+      expect.objectContaining({ textHash: textScanTextHash({ fields: [], declared: {} }) })
     );
   });
 

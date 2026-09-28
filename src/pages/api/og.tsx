@@ -410,7 +410,7 @@ async function fetchImageData(id: number): Promise<EntityData | null> {
 async function fetchBountyData(id: number): Promise<EntityData | null> {
   const [bounty, metric, connection] = await Promise.all([
     dbRead.bounty.findFirst({
-      where: { id },
+      where: { id, availability: { not: 'Private' } },
       select: {
         name: true,
         description: true,
@@ -522,7 +522,7 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
 
 // Entity types whose visibility the owner can withdraw after a link is shared. They
 // take the short cache below, so revocation is not deferred by the edge.
-const REVOCABLE_TYPES = new Set(['hub']);
+const REVOCABLE_TYPES = new Set(['hub', 'bounty']);
 
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,

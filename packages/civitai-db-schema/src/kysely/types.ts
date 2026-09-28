@@ -1302,6 +1302,7 @@ export type Bounty = {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  meta: unknown | null;
 };
 export type BountyBenefactor = {
   userId: number;

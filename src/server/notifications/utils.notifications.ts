@@ -24,6 +24,7 @@ import { generationMuteNotifications } from '~/server/notifications/generation-m
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
+import { textScanFlagNotifications } from '~/server/notifications/text-scan-flag.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { strikeNotifications } from '~/server/notifications/strike.notifications';
@@ -47,6 +48,7 @@ export const notificationProcessors = {
   ...userJourneyNotifications,
   ...unpublishNotifications,
   ...minorFlagNotifications,
+  ...textScanFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
   ...appListingNotifications,

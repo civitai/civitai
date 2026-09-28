@@ -582,29 +582,41 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
-export function getLatestModelAppeal(modelId: number, userId: number) {
+export function getLatestEntityAppeal({
+  entityType,
+  entityId,
+  userId,
+}: {
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
+}) {
   return dbRead.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, userId },
+    where: { entityType, entityId, userId },
     orderBy: { createdAt: 'desc' },
     select: { status: true, resolvedAt: true },
   });
 }
 
+export function getLatestModelAppeal(modelId: number, userId: number) {
+  return getLatestEntityAppeal({ entityType: EntityType.Model, entityId: modelId, userId });
+}
+
 // `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
 // review a second time can only ever be an update of the row they already have.
-export function reopenModelAppeal({
+export function reopenEntityAppeal({
+  entityType,
   entityId,
   userId,
   message,
 }: {
+  entityType: EntityType;
   entityId: number;
   userId: number;
   message: string;
 }) {
   return dbWrite.appeal.update({
-    where: {
-      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
-    },
+    where: { entityType_entityId_userId: { entityType, entityId, userId } },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -617,6 +629,10 @@ export function reopenModelAppeal({
       resolvedMessage: null,
     },
   });
+}
+
+export function reopenModelAppeal(args: { entityId: number; userId: number; message: string }) {
+  return reopenEntityAppeal({ entityType: EntityType.Model, ...args });
 }
 
 export function getAppealCount({
@@ -637,9 +653,14 @@ function getAppealById({ id, select }: GetByIdInput & { select?: Prisma.AppealSe
   return dbRead.appeal.findUnique({ where: { id }, select });
 }
 
-export async function getAppealDetails({ id }: GetByIdInput) {
+export async function getAppealDetails({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) {
   const appeal = await getAppealById({ id });
-  if (!appeal) throw throwNotFoundError('Appeal not found');
+  if (!appeal || (!isModerator && appeal.userId !== userId))
+    throw throwNotFoundError('Appeal not found');
 
   // Get details based on entityType
   let entityDetails: MixedObject | null = null;
@@ -652,6 +673,12 @@ export async function getAppealDetails({ id }: GetByIdInput) {
       break;
     case EntityType.Model:
       entityDetails = await dbRead.model.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
+    case EntityType.Bounty:
+      entityDetails = await dbRead.bounty.findUnique({
         where: { id: appeal.entityId },
         select: { id: true, name: true, userId: true },
       });
@@ -742,7 +769,7 @@ export async function createEntityAppeal({
 // Display label + (when the entity is publicly reachable) a link for an
 // appealed item, surfaced in the resolution email. Entity types with no public
 // URL fall back to a label-only reference.
-function appealEntityLink(
+export function appealEntityLink(
   entityType: EntityType,
   entityId: number
 ): { url?: string; label: string } {
@@ -751,6 +778,8 @@ function appealEntityLink(
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
       return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+    case EntityType.Bounty:
+      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
@@ -775,6 +804,7 @@ export async function resolveEntityAppeal({
       buzzTransactionId: true,
       status: true,
       userId: true,
+      createdAt: true,
     },
   });
   const affectedIds = appeals.map((a) => a.id);
@@ -869,7 +899,9 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,

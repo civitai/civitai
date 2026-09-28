@@ -27,7 +27,9 @@ export const reportRouter = router({
   getAppealDetails: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
-    .query(({ input }) => getAppealDetails({ ...input })),
+    .query(({ input, ctx }) =>
+      getAppealDetails({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   createAppeal: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)

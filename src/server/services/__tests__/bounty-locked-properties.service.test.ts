@@ -61,12 +61,16 @@ const MODERATOR_ID = 9;
 function mockStored({
   lockedProperties = [] as string[],
   complete = false,
-}: { lockedProperties?: string[]; complete?: boolean } = {}) {
+  poi = false,
+  meta = null as unknown,
+}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
     entryLimit: null,
     complete,
+    poi,
+    meta,
     lockedProperties,
     _count: { entries: 0 },
   });
@@ -132,10 +136,10 @@ describe('updateBountyById — lock enforcement', () => {
   });
 
   it('ignores locks the client claims — only the stored row decides what is locked', async () => {
-    await updateBountyById({ ...baseUpdate, poi: true, lockedProperties: ['poi'] } as never);
+    await updateBountyById({ ...baseUpdate, nsfw: true, lockedProperties: ['nsfw'] } as never);
 
     const data = updateData();
-    expect(data.poi).toBe(true);
+    expect(data.nsfw).toBe(true);
     expect(data).not.toHaveProperty('lockedProperties');
   });
 
@@ -296,5 +300,65 @@ describe('upsertBounty — create path', () => {
     const data = createData();
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
+  });
+});
+
+describe('updateBountyById — poi', () => {
+  it('refuses an owner turning poi on', async () => {
+    await expect(updateBountyById({ ...baseUpdate, poi: true } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockDbWrite.bounty.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner re-save a bounty that is already poi', async () => {
+    mockStored({ poi: true });
+    await updateBountyById({ ...baseUpdate, poi: true } as never);
+    expect(mockDbWrite.bounty.update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator set poi', async () => {
+    await updateBountyById({
+      ...baseUpdate,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      poi: true,
+    } as never);
+    expect(updateData().poi).toBe(true);
+  });
+});
+
+describe('updateBountyById — a moderator clearing a text-scan poi flag', () => {
+  const flagged = {
+    textScanFlags: {
+      poi: {
+        at: 'x',
+        workflowId: 'wf-1',
+        reason: 'r',
+        textHash: 'h-flagged',
+        prev: { availability: 'Unsearchable' },
+      },
+    },
+  };
+  const moderatorEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, poi: false };
+
+  it('restores the pre-flag availability and records a moderator ruling on the flagged text', async () => {
+    mockStored({ poi: true, meta: flagged });
+    await updateBountyById(moderatorEdit as never);
+
+    const data = updateData();
+    expect(data.availability).toBe('Unsearchable');
+    expect(data.meta.textScanFlags.poi).toMatchObject({
+      workflowId: 'wf-1',
+      appealGranted: { by: MODERATOR_ID, textHash: 'h-flagged', via: 'moderator' },
+    });
+  });
+
+  it('touches neither availability nor meta for a poi the text scan did not set', async () => {
+    mockStored({ poi: true, meta: null });
+    await updateBountyById(moderatorEdit as never);
+    const data = updateData();
+    expect(data).not.toHaveProperty('availability');
+    expect(data).not.toHaveProperty('meta');
   });
 });

@@ -16,7 +16,9 @@ import {
   applyModelNsfwTextScan,
   applySystemModelNsfwFlag,
 } from '~/server/services/text-scan/actions/model-nsfw';
+import { applyModelPoiMinor } from '~/server/services/text-scan/actions/model-poi-minor';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { notifyTextScanRatingRaised } from '~/server/services/text-scan/notify';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { removeTags } from '~/utils/string-helpers';
 
@@ -211,7 +213,9 @@ export const modelModerationAdapter: ModerationAdapter = {
     }),
 
   applyTextScan: async (args) => {
-    await applyModelNsfwTextScan(args);
+    const { deferredRatingNotice } = await applyModelNsfwTextScan(args);
+    const { notified } = await applyModelPoiMinor(args);
+    if (deferredRatingNotice && !notified) await notifyTextScanRatingRaised(deferredRatingNotice);
   },
 
   // `output.blocked` is deliberately unread. The submit sends fifteen labels this adapter
