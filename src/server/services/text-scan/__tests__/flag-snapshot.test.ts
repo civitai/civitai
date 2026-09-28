@@ -7,6 +7,7 @@ import {
   isBountyFlagAppealable,
   isModelFlagAppealable,
   isTextScanFlagAppealGranted,
+  isTextScanPoiHidden,
   MAX_FLAG_NAMES,
   MAX_FLAG_REASON_CHARS,
   readTextScanFlags,
@@ -150,5 +151,23 @@ describe('isBountyFlagAppealable', () => {
     expect(isBountyFlagAppealable({ poi: true, meta: { textScanFlags: { poi: entry() } } })).toBe(true);
     expect(isBountyFlagAppealable({ poi: true, meta: null })).toBe(false);
     expect(isBountyFlagAppealable({ poi: false, meta: { textScanFlags: { poi: entry() } } })).toBe(false);
+  });
+});
+
+describe('isTextScanPoiHidden', () => {
+  const open = { textScanFlags: { poi: entry() } };
+
+  it('is true only for a Private poi bounty with an open text-scan poi flag', () => {
+    expect(isTextScanPoiHidden({ poi: true, availability: 'Private', meta: open })).toBe(true);
+    expect(isTextScanPoiHidden({ poi: true, availability: 'Public', meta: open })).toBe(false);
+    expect(isTextScanPoiHidden({ poi: false, availability: 'Private', meta: open })).toBe(false);
+    expect(isTextScanPoiHidden({ poi: true, availability: 'Private', meta: null })).toBe(false);
+    expect(
+      isTextScanPoiHidden({
+        poi: true,
+        availability: 'Private',
+        meta: { textScanFlags: { poi: entry({ appealGranted: { at: 'x', by: 1 } }) } },
+      })
+    ).toBe(false);
   });
 });

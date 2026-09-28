@@ -69,6 +69,7 @@ type BountyRow = {
   refunded: boolean;
   poi: boolean;
   availability: string;
+  meta?: unknown;
 };
 
 let bounty: BountyRow | null;
@@ -97,7 +98,7 @@ function transactionClient(held: (() => void)[]) {
       const sql = strings.join('?');
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       held.push(await rowLock.acquire());
-      return bounty ? [{ ...bounty, meta: null }] : [];
+      return bounty ? [{ meta: null, ...bounty }] : [];
     },
     bountyEntry: {
       findUniqueOrThrow: async () => {
@@ -313,6 +314,20 @@ describe('awardBountyEntry', () => {
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();
+    expect(moved('award')).toBe(0);
+  });
+
+  // A bounty hidden for depicting a real person never pays out, by any path.
+  it('refuses a bounty hidden by an open text-scan poi flag', async () => {
+    Object.assign(bounty!, {
+      poi: true,
+      availability: 'Private',
+      meta: { textScanFlags: { poi: { workflowId: 'wf', reason: 'r', textHash: 'h' } } },
+    });
+    await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(find(5)?.awardedToId).toBeNull();
     expect(moved('award')).toBe(0);
   });
 

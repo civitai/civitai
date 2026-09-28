@@ -27,6 +27,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
@@ -229,6 +230,10 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       if (!bounty || bounty.complete || bounty.refunded) {
         log('error', 'Bounty already complete', { refunded: bounty?.refunded });
         throw throwBadRequestError('Bounty is already complete.');
+      }
+      if (isTextScanPoiHidden(bounty)) {
+        log('error', 'Bounty is hidden pending review');
+        throw throwBadRequestError('This bounty is hidden pending review and cannot be awarded.');
       }
 
       const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({

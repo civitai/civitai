@@ -110,6 +110,11 @@ export function isModelFlagAppealable(model: { minor: boolean; poi: boolean; met
   );
 }
 
+// Hidden by a text-scan poi flag no appeal has granted. Such a bounty never pays out.
+export function isTextScanPoiHidden(bounty: { poi: boolean; availability: string; meta: unknown }) {
+  return bounty.poi && bounty.availability === 'Private' && hasOpenTextScanFlag(bounty.meta, 'poi');
+}
+
 export function isBountyFlagAppealable(bounty: { poi: boolean; meta: unknown }) {
   return bounty.poi && hasOpenTextScanFlag(bounty.meta, 'poi');
 }

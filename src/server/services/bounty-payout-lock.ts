@@ -7,7 +7,6 @@ export type BountyPayoutState = {
   refunded: boolean;
   poi: boolean;
   availability: Availability;
-  /** The bounty's `details` JSON. */
   meta: Prisma.JsonValue | null;
 };
 
@@ -24,7 +23,7 @@ export async function lockBountyForPayout(
       refunded,
       poi,
       availability,
-      details AS meta
+      meta
     FROM "Bounty"
     WHERE id = ${bountyId}
     FOR UPDATE
