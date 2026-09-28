@@ -40,6 +40,10 @@ export interface StudioElementHost {
      *  affordance disables with a membership explanation instead of silently doing nothing. Omit
      *  when the host doesn't know (behaves as before). */
     canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
     /** The host's membership-plans page, linked from that explanation. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;

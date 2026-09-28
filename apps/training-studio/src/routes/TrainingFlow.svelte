@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
+  import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
@@ -75,6 +76,9 @@
   });
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
+  const datasetMature = $derived(
+    images.some((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel))
+  );
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
@@ -225,6 +229,7 @@
       bind:params={runParams}
       bind:presetType
       imageCount={trainableCount}
+      {datasetMature}
       onStart={start}
       onBack={() => (step = 2)}
     />

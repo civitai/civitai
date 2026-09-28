@@ -155,6 +155,8 @@ export interface Img {
   progress: number;
   blobId?: string;
   blobUrl?: string;
+  /** The scan's rating, when known — a mature one means Blue Buzz can't pay for a non-member's run. */
+  nsfwLevel?: string;
   /** A block reason or upload error, shown on the tile. */
   message?: string;
   /** True while an auto-label workflow step for this image is in flight. */
