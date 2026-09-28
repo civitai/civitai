@@ -1,7 +1,7 @@
 /**
  * Text-scan rollout: put a text-scan verdict on the LIVE row of recently-saved entities after the
  * entity goes `active` (shadow verdicts live on a different row key and are never reused).
- * Deleted once every entity is active (plan 06 Part B).
+ * Deleted once every entity is active.
  *
  * POST /api/admin/temp/text-scan-rescan   (moderator session or `Authorization: Bearer <moderator API key>`)
  *   { "entityType": "Post", "entityIds": [...], "concurrency"?: 2, "dryRun"?: true, "force"?: false }

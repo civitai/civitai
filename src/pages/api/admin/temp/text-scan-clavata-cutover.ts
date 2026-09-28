@@ -1,6 +1,6 @@
 /**
  * Text-scan rollout: switch Clavata text moderation off for one entity once its text-scan flag is
- * fully `active`. Deleted with the Clavata text job (plan 06 Part B).
+ * fully `active`. Deleted with the Clavata text job.
  *
  * POST /api/admin/temp/text-scan-clavata-cutover   (moderator session or `Authorization: Bearer <moderator API key>`)
  *   { "action": "status" }
