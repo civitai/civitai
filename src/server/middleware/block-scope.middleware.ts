@@ -120,6 +120,46 @@ export interface BlockTokenClaims {
    * if present (a non-boolean is rejected outright; absent → treated as false).
    */
   reviewRunForReal?: boolean;
+  /**
+   * PRIVATE-RUN marker — present (true) ONLY on a token minted for a private run of
+   * a DELISTED / SUSPENDED app (owner, accepted listing collaborator, or moderator).
+   * The two MONEY arms read it: `recordSpendAttribution` voids the spend-attribution
+   * row, and `resolveBlockAuthorFeePayee` refuses the per-generation author fee
+   * before any debit. Trustworthy ONLY because the RS256 signature is verified
+   * before it is read. Optional; MUST be a boolean if present (a non-boolean is
+   * rejected outright; absent → treated as false, i.e. an ordinary chargeable run).
+   *
+   * 🔴 ABSENT MUST MEAN "CHARGE NORMALLY", NOT "SUPPRESS". Both arms test
+   * `=== true`, so a missing or garbage claim fails toward the pre-existing
+   * behaviour rather than silently disabling a live money rail for every token.
+   * ⚠️ What actually makes that safe is the TOKEN BOUNDARY, not the comparison:
+   * the guard below rejects any non-boolean outright, so neither arm can be
+   * reached with a truthy non-boolean in the first place. A third arm added later
+   * must not rely on truthiness on the strength of this paragraph.
+   *
+   * 🔴 TWO MONEY ARMS READ IT TODAY, BUT THAT IS NOT THE CLOSED SET OF READERS A
+   * PRIVATE RUN NEEDS, AND READING IT AS ONE IS THE EXPENSIVE MISTAKE. A private
+   * run serves a DELISTED / SUSPENDED app's bundle, so it must also pass
+   * `resolveAppBlockApprovalVerdict` (`blocks/block-approval.service.ts`) — the
+   * ONE place that decides which signed claim exempts a token from the
+   * approved-status decision, today only the `dev && reviewRunForReal` PAIR. The
+   * arm for a private run belongs THERE, keyed the same paired way, not
+   * open-coded as a status bypass in a new mint branch: that predicate is
+   * ledgered by `services/__tests__/no-unguarded-block-rest-token.test.ts`, and a
+   * second spelling of it is exactly what that ledger exists to prevent.
+   *
+   * 🔴 AND IT IS NOT THE CLOSED SET OF MONEY RAILS EITHER. `social:tip:self`
+   * (`pages/api/v1/blocks/tip.ts`) moves IRREVERSIBLE Buzz from the viewer to any
+   * `toUserId` the block's own code names, has no status check of its own, and is
+   * not in `PAGE_FORBIDDEN_SCOPES` — so it is refused on a delisted app ONLY by
+   * the approval verdict above. Widening that verdict for a private run admits
+   * this route in the same move. The sibling owner-crediting rail
+   * `goods:purchase:self` is already closed (it requires an approved block).
+   * Whoever adds the mint MUST either strip `social:tip:self` in the private-run
+   * scope clamp or add a third arm; neither is done here, and this PR's "two
+   * money arms" is a statement about the author-fee and attribution rails only.
+   */
+  privateRun?: boolean;
 }
 
 /**
@@ -702,6 +742,30 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // signature-valid `reviewRunForReal:true` is only producible by our own
       // signer (the RS256 signature was already verified above).
       if (claims.reviewRunForReal !== undefined && typeof claims.reviewRunForReal !== 'boolean') {
+        return null;
+      }
+      // PRIVATE-RUN marker shape guard. Optional (absent on every ordinary token);
+      // if PRESENT it MUST be a boolean — a forged/garbage value is rejected
+      // outright so the two money arms can trust it. A signature-valid
+      // `privateRun:true` is only producible by our own signer (the RS256
+      // signature was already verified above).
+      if (claims.privateRun !== undefined && typeof claims.privateRun !== 'boolean') {
+        return null;
+      }
+      // 🔴 THE `privateRun` + `dev` PAIR IS REFUSED HERE TOO, NOT ONLY AT THE SIGNER.
+      // The signer throws on the combination, but that is a PRODUCE-time guard for a
+      // CONSUME-time hazard: `reserveBlockBuzzSpendForClaims` takes an early return on
+      // `claims.dev === true` and skips the platform reservation, and a `dev` token
+      // lives 4h — so a token minted before a signer regression, or by any future
+      // second signer, would spend that whole window uncapped per app with nothing
+      // between mint and spend to stop it.
+      //
+      // This is the same treatment the age cap below already gets, for the same stated
+      // reason: it re-checks a property the signer is supposed to guarantee "so a
+      // signer bug emitting a too-long `exp` is still caught". Refusing the token
+      // outright (rather than dropping one claim) keeps the failure fail-CLOSED and
+      // indistinguishable from any other invalid token, so it leaks no oracle.
+      if (claims.privateRun === true && claims.dev === true) {
         return null;
       }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`

@@ -1227,6 +1227,11 @@ export type BlockSpendAttribution = {
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
    * refund path, so this is never 'refund'/'chargeback'.
+   * 'manual_review' carries TWO senses on this table: an operator void, and a
+   * PRIVATE RUN of a delisted app (the value is reused rather than adding a
+   * 'private_run' member, which would need a hand-applied migration). A
+   * cross-table query cannot tell them apart here; the private-run mint's audit
+   * line is what discriminates. Nothing pays out of this table either way.
    */
   voided_reason: string | null;
   attributed_at: Generated<Timestamp>;
