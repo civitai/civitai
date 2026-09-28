@@ -198,3 +198,45 @@ describe('profile picture replacement (#4272)', () => {
     );
   });
 });
+
+/**
+ * 🔴 `verifyAvatar` consumes the SAME predicate as the image-scan ingestion allowlist
+ * (`isAllowedAvatarUrl`), and these rows pin that BEHAVIOURALLY from this side of the seam.
+ *
+ * Sharing only `AVATAR_URL_PREFIXES` was not enough once: each side open-coded the test that
+ * applies the list, the ingestion side hardened to the normalized href, and this side kept
+ * matching the raw string — so a traversal was refused at ingestion and ACCEPTED here, with a
+ * comment on each side asserting the two could not drift. A unit test of the predicate cannot
+ * catch that regression: reverting this function to a raw `startsWith` passed the entire suite.
+ * These rows are the assertion that actually goes red.
+ *
+ * It matters more here than at ingestion because this path STORES the value: it lands in
+ * `User.image` and is rendered site-wide, with no ingestion or browsing-level gate behind it.
+ */
+const setAvatar = (image: string) =>
+  updateUserHandler({
+    ctx: { user: { id: USER_ID } },
+    input: { id: USER_ID, image },
+  } as never);
+
+describe('verifyAvatar shares the ingestion allowlist predicate', () => {
+  it.each([
+    ['https://cdn.discordapp.com/avatars/../attachments/1/2/e.png'],
+    ['https://cdn.discordapp.com/avatars/..%2fattachments/1/2/e.png'],
+    ['https://cdn.discordapp.com/attachments/1/2/e.png'],
+    [`https://evil.com${String.fromCharCode(9)}.civitai.com/a.png`],
+    ['https://evil.com/a.png'],
+  ])('rejects %j with Invalid avatar URL', async (image) => {
+    await expect(setAvatar(image)).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a real avatar url and a CF Images UUID', async () => {
+    await setAvatar('https://cdn.discordapp.com/avatars/123/abc.png');
+    expect(mockUpdateUserById).toHaveBeenCalled();
+
+    mockUpdateUserById.mockClear();
+    await setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(mockUpdateUserById).toHaveBeenCalled();
+  });
+});

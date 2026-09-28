@@ -179,6 +179,44 @@ describe('isAllowedImageScanUrl', () => {
   });
 
   /**
+   * Pins the C0/DEL half of `hasAmbiguousAuthority` on the ABSOLUTE branch, which the userinfo
+   * check does NOT cover: WHATWG DELETES an interior tab, so `evil.com<TAB>.civitai.com` parses
+   * to hostname `evil.com.civitai.com` — which `isValidCivitaiImageUrl`'s suffix rule ADMITS,
+   * with an empty `username` — while an RFC-3986 client that does not strip tabs reads the
+   * authority as `evil.com`. Measured; only the byte check refuses it.
+   */
+  it.each([
+    [`https://evil.com${String.fromCharCode(9)}.civitai.com/a.png`],
+    [`https://evil.com${String.fromCharCode(10)}.civitai.com/a.png`],
+    [`https://evil.com${String.fromCharCode(13)}.civitai.com/a.png`],
+  ])('rejects an interior control byte splicing an allowed host suffix (%#)', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
+  });
+
+  /**
+   * 🔴 Isolates the C0/DEL half of `hasAmbiguousAuthority`, which is load-bearing ONLY here.
+   * `isAllowedImageScanUrl` refuses these at its own top-level byte check, so a row driven
+   * through it cannot distinguish the wide predicate from the bare backslash test it replaced —
+   * measured: narrowing `hasAmbiguousAuthority` passed the whole suite until this row existed.
+   *
+   * These are the dangerous shape because `verifyAvatar` STORES the raw argument: the tab is
+   * deleted by WHATWG, so `href` lands exactly on an allowed prefix with an empty `username`,
+   * and every other check passes — while the value persisted into `User.image` still carries the
+   * control byte, which the module this check came from documents as a request-splitting /
+   * log-injection primitive.
+   */
+  it.each([
+    [`https://cdn.discord${String.fromCharCode(9)}app.com/avatars/1/a.png`],
+    [`https://cdn.discordapp.com/ava${String.fromCharCode(9)}tars/1/a.png`],
+    [`https://cdn.discordapp.com/avatars/1/a.png${String.fromCharCode(13)}`],
+  ])(
+    'isAllowedAvatarUrl rejects a control byte that normalizes onto an allowed prefix (%#)',
+    (url) => {
+      expect(isAllowedAvatarUrl(url)).toBe(false);
+    }
+  );
+
+  /**
    * The prefix list's stated purpose is excluding `cdn.discordapp.com/attachments/…`,
    * which serves arbitrary user uploads. Tested against the RAW string it does not
    * deliver that: `…/avatars/../attachments/x` passes `startsWith` and resolves to
@@ -195,6 +233,58 @@ describe('isAllowedImageScanUrl', () => {
       expect(isAllowedImageScanUrl(url)).toBe(false);
     }
   );
+
+  /**
+   * A leading ASCII space is the one byte `hasUrlAmbiguousBytes` cannot see (0x20 sits above
+   * the C0 range) and WHATWG strips it, so these are classified as relative keys while
+   * resolving to a foreign host. Brute-forced: U+0020 is the only escaping code point.
+   */
+  it.each([[' http://evil.com/x.png'], [' //evil.com/x.png'], ['  https://evil.com/x.png']])(
+    'rejects %j — a leading space smuggling an authority past the shape test',
+    (url) => {
+      expect(isAllowedImageScanUrl(url)).toBe(false);
+    }
+  );
+
+  it('still allows an interior space, which real delivery filenames carry', () => {
+    expect(isAllowedImageScanUrl('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/my file name.png')).toBe(
+      true
+    );
+  });
+
+  /**
+   * Pins the `hasUrlAmbiguousBytes` widening ON THE RELATIVE BRANCH, where it is the only thing
+   * standing.
+   *
+   * 🔴 The control byte must be INTERIOR. A LEADING one is already refused by the
+   * leading-whitespace test above, so a prefixed row cannot distinguish the wide predicate from
+   * the bare backslash check it replaced — measured: with prefixed rows only, reverting to
+   * `raw.includes('\\')` passed the entire suite. WHATWG DELETES tab/LF/CR from anywhere in a
+   * URL, so `htt<TAB>p://evil.com/x` is not `startsWith('http')`, matches no scheme, does not
+   * start `//` — and resolves to host `evil.com`.
+   */
+  it.each([
+    [`htt${String.fromCharCode(9)}p://evil.com/x.png`],
+    [`htt${String.fromCharCode(10)}p://evil.com/x.png`],
+    [`htt${String.fromCharCode(13)}ps://evil.com/x.png`],
+    [`/${String.fromCharCode(9)}/evil.com/x.png`],
+  ])('rejects an INTERIOR control byte reassembling an authority (%#)', (url) => {
+    expect(isAllowedImageScanUrl(url)).toBe(false);
+  });
+
+  it('rejects an ENCODED separator inside an avatar path, in either case', () => {
+    // WHATWG preserves the case of an existing percent-encoding in `pathname`, so an
+    // upper-case %2F survives a lower-case-only test — and %5C is the backslash spelling.
+    expect(
+      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/..%2Fattachments/1/2/e.png')
+    ).toBe(false);
+    expect(
+      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/..%5cattachments/1/2/e.png')
+    ).toBe(false);
+    expect(
+      isAllowedImageScanUrl('https://cdn.discordapp.com/avatars/..%5Cattachments/1/2/e.png')
+    ).toBe(false);
+  });
 
   it('rejects an ENCODED separator inside an avatar path', () => {
     // `%2f` does not collapse during href normalization, so the prefix still matches while a

@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -23,18 +23,25 @@ import { describe, expect, it } from 'vitest';
  * `startsWith('http'|'blob')`, and an UNDECLARED file in `src/` doing the same. Both were
  * measured against a planted mutation, in both directions.
  *
- * DOES NOT CATCH: a semantically-equivalent respelling — a backtick literal, a regex,
- * `indexOf(...) === 0`, `slice(0,4)`, or deleting the call outright. All of those were
- * measured to survive this guard. It is textual, so only the one spelling is fenced.
+ * DOES NOT CATCH, all measured to survive:
+ *  - a semantically-equivalent respelling — a backtick literal, a regex, `indexOf(...) === 0`,
+ *    `slice(0, 4)` — or deleting the call outright (test 1 passes on the surviving `import`);
+ *  - a SINGLE-arm spelling. The growth scan requires BOTH `http` and `blob` literals in code,
+ *    which it must: 22 files under `src/` legitimately carry one arm today. So a new site that
+ *    decides passthrough on `startsWith('http')` alone is invisible to it;
+ *  - internal whitespace — the growth pattern has no `\s*`, so `startsWith( 'http' )` passes it
+ *    while failing the declared-consumer regex, which does allow spacing.
  *
  * Why that is ACCEPTABLE rather than a hole to widen: the allowlist no longer DEPENDS on this
  * parity for its security property. `isAllowedImageScanUrl` judges shape independently —
- * `SCHEME_PREFIX` plus the leading-`//` test on the relative branch, and `parsed.protocol` on
- * the passthrough branch — so a `getEdgeUrl` widened to forward some new scheme cannot admit
- * it. Gross divergence is caught behaviourally (forcing the predicate to a constant reddens
- * 7 and 3 of the allowlist's rows respectively). This guard's remaining job is the cheap,
- * high-frequency case: someone copy-pasting the old one-liner back in. It is not, and should
- * not be read as, a proof that only one implementation of the boundary exists.
+ * leading-whitespace, `SCHEME_PREFIX` and the leading-`//` test on the relative branch, and
+ * `parsed.protocol` on the passthrough branch — so a `getEdgeUrl` widened to forward some new
+ * scheme cannot admit it. Gross divergence is caught behaviourally: forcing the predicate to
+ * `return false` reddens 7 of the allowlist's rows, and to `return true` reddens 3. This
+ * guard's remaining job is the cheap, high-frequency case — someone copy-pasting the old
+ * one-liner back in — plus recording, in the growth test, that three `apps/` spokes carry
+ * ported copies that structurally cannot import this module. It is not, and must not be read
+ * as, proof that only one implementation of the boundary exists.
  */
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
@@ -95,8 +102,13 @@ describe('edge-url passthrough — one predicate, a declared consumer set', () =
     // pass vacuously against a predicate that no longer makes the decision. Named for what it
     // asserts — it does NOT count occurrences repo-wide, which an earlier title implied.
     expect(read(ALLOWED_TO_SPELL_IT[0])).toMatch(/startsWith\('http'\)/);
-    // And this guard is the only other file allowed to carry the literal.
-    expect(ALLOWED_TO_SPELL_IT[1]).toContain('no-divergent-edge-url-passthrough');
+    // Every allowlisted path must EXIST — an entry that no longer resolves silently widens the
+    // growth scan's exemption set. (Asserting the literal string contains its own name, as an
+    // earlier version did, compared a const against a substring of itself and no production
+    // change could redden it.)
+    for (const rel of ALLOWED_TO_SPELL_IT) {
+      expect(existsSync(path.join(REPO_ROOT, rel)), `${rel} no longer exists`).toBe(true);
+    }
   });
 
   /**

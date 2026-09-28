@@ -113,6 +113,12 @@ function hasAmbiguousAuthority(parsed: URL, raw: string): boolean {
  * href, `verifyAvatar` stayed on the raw string and `…/avatars/../attachments/x` was refused
  * here while still being ACCEPTED there — the arbitrary-upload surface the prefix list
  * exists to exclude, reachable through the avatar path.
+ *
+ * ⚠ It returns a BOOLEAN about a raw string whose `href` may differ from it (uppercase host,
+ * `:443`, dot segments). So a consumer that STORES or FORWARDS the raw argument, rather than
+ * re-deriving `new URL(x).href`, would persist a value this predicate never approved. Today
+ * `verifyAvatar` is the only caller and stores the raw value it validated; if a second caller
+ * appears, hand it the normalized href instead.
  */
 export function isAllowedAvatarUrl(url: string): boolean {
   let parsed: URL;
@@ -128,6 +134,10 @@ export function isAllowedAvatarUrl(url: string): boolean {
   // decodes `%2F` before resolving the path escapes it. Whether any given client does that
   // cannot be settled from this repo, so refuse the shape rather than depend on the answer —
   // a real avatar path never carries an encoded slash or backslash.
+  //
+  // Both the `/i` and the `%5c` arm are load-bearing and separately pinned: WHATWG PRESERVES
+  // the case of an existing percent-encoding in `pathname`, so `%2F` survives a lower-case-only
+  // test, and `%5C` is the backslash spelling of the same escape.
   if (/%2f|%5c/i.test(parsed.pathname)) return false;
   return AVATAR_URL_PREFIXES.some((prefix) => parsed.href.startsWith(prefix));
 }
@@ -174,6 +184,16 @@ export function isAllowedImageScanUrl(url: string): boolean {
     // (src/env/client-schema.ts) and `.filter(Boolean)` drops an empty prefix
     // (edge-url.ts) — so with it unset a scheme- or authority-bearing string would be
     // emitted essentially verbatim. Judge the shape, never the env.
+    // 🔴 A LEADING space is the one byte `hasUrlAmbiguousBytes` cannot see (0x20 is above the
+    // C0 range) and WHATWG strips it, so ` http://evil.com/x` and ` //evil.com/x` are not
+    // `startsWith('http')`, do not match SCHEME_PREFIX, and do not start `//` — yet resolve to
+    // a foreign host. Brute-forced over U+0000–U+02FF: U+0020 is the ONLY code point that
+    // escapes all three tests.
+    //
+    // Only a LEADING run is refused, never an interior one: delivery filenames routinely
+    // contain spaces (see edge-url.ts's srcset note), and a wrong rejection here is permanent
+    // — status 400 stamps ingestion=Error at a retry ceiling of 1.
+    if (/^\s/.test(url)) return false;
     if (SCHEME_PREFIX.test(url)) return false;
     if (url.startsWith('//')) return false;
     return true;

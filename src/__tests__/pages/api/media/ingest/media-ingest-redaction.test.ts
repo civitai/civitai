@@ -196,6 +196,15 @@ describe('GET /api/media/ingest/[mediaId]', () => {
     expect(JSON.stringify(res._json())).not.toContain(TOKEN);
   });
 
+  it('sorts the needles itself, so a shortest-first caller is still safe', () => {
+    // Pins that the sort EXISTS, not just its direction: both production call sites already
+    // pass [callbackUrl, token] — longest first — so reversing the comparator is observable but
+    // deleting it outright was not. A future caller passing them the other way must still be
+    // safe, since stripping the inner token first would leave the surrounding URL structure.
+    const out = JSON.stringify(redactSecrets({ u: CALLBACK }, [TOKEN, CALLBACK]));
+    expect(out).toBe(JSON.stringify({ u: '<redacted>' }));
+  });
+
   it('removes a token-bearing url as ONE redaction, longest needle first', () => {
     // Ascending order would strip the inner token first and leave a mangled URL still
     // carrying its surrounding structure; longest-first collapses the whole thing once.
