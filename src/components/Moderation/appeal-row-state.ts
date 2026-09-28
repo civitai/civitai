@@ -1,6 +1,5 @@
 import {
   hasOpenTextScanFlag,
-  hasTextScanVerdict,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
 
@@ -18,7 +17,7 @@ export function appealRowState(row: AppealRowFlags) {
   const meta = { textScanFlags: row.textScanFlags };
   const poiOpen = row.poi && hasOpenTextScanFlag(meta, 'poi');
   const anyFlagged = row.minor || poiOpen;
-  const verdictLabels = LABELS.filter((label) => hasTextScanVerdict(meta, label));
+  const verdictLabels = LABELS.filter((label) => hasOpenTextScanFlag(meta, label));
   const origin = row.flagConfirmedFrom ?? row.flagSource;
   const sourceLabel = !anyFlagged
     ? 'Reverted'

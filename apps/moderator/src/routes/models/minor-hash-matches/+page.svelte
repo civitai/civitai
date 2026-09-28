@@ -12,6 +12,7 @@
   import { userLookupUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { flagsOf, isOpenVerdict, openVerdicts } from './text-scan-verdicts';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -21,21 +22,8 @@
   const n = (v: unknown) => (typeof v === 'number' ? v : null);
   const s = (v: unknown) => (typeof v === 'string' ? v : null);
 
-  type TextScanFlagView = {
-    at?: string;
-    workflowId?: string;
-    reason?: string;
-    names?: string[];
-    appealGranted?: unknown;
-  };
-  const FLAG_LABELS = ['minor', 'poi'] as const;
-  const flagsOf = (v: unknown) =>
-    v && typeof v === 'object' ? (v as Partial<Record<'minor' | 'poi', TextScanFlagView>>) : null;
-  // Mirrors hasOpenTextScanFlag: a ruling stub has no workflowId, and a granted verdict is lifted.
-  const poiOpen = (row: Row) => {
-    const poi = flagsOf(row.textScanFlags)?.poi;
-    return row.poi === true && !!poi?.workflowId && !poi.appealGranted;
-  };
+  const poiOpen = (row: Row) =>
+    row.poi === true && isOpenVerdict(flagsOf(row.textScanFlags)?.poi);
   // Mirrors appealRowState.showHashMatch: a poi-only or text-scan minor row has no hash match, so
   // there is no detail to fetch.
   const hasHashDetail = (row: Row) => {
@@ -336,20 +324,17 @@
           <p class="mt-1 text-xs text-dark-2">appealed {dateTime(s(row.appealCreatedAt))}</p>
         {/if}
 
-        {#if flagsOf(row.textScanFlags)}
-          {@const flags = flagsOf(row.textScanFlags)}
-          {#each FLAG_LABELS as label (label)}
-            {#if flags?.[label]?.workflowId && flags[label]?.reason}
-              <p class="mt-2 text-xs text-dark-2">
-                <Badge variant="outline">text scan · {label === 'poi' ? 'real person' : 'minor'}</Badge>
-                {flags[label]?.reason}
-                {#if flags[label]?.names?.length}
-                  — {flags[label]?.names?.join(', ')}
-                {/if}
-              </p>
-            {/if}
-          {/each}
-        {/if}
+        {#each openVerdicts(row.textScanFlags) as { label, flag } (label)}
+          {#if flag.reason}
+            <p class="mt-2 text-xs text-dark-2">
+              <Badge variant="outline">text scan · {label === 'poi' ? 'real person' : 'minor'}</Badge>
+              {flag.reason}
+              {#if flag.names?.length}
+                — {flag.names.join(', ')}
+              {/if}
+            </p>
+          {/if}
+        {/each}
 
         {#if s(row.hash)}
           <p class="mt-2 text-xs break-all text-dark-2">

@@ -56,4 +56,26 @@ describe('appealRowState', () => {
     );
     expect(appealRowState(row()).sourceLabel).toBe('Reverted');
   });
+
+  const granted = { ...verdict, appealGranted: { at: 'x', by: 1, textHash: 'h', via: 'appeal' } };
+
+  it('lists only the verdicts still open after a split ruling', () => {
+    const split = row({
+      poi: true,
+      flagSource: 'text-scan',
+      textScanFlags: { minor: granted, poi: verdict },
+    });
+    expect(appealRowState(split).verdictLabels).toEqual(['poi']);
+    expect(appealRowState(split).sourceLabel).toBe('Text scan');
+  });
+
+  it('labels the source from the flag in force once its text-scan verdict is lifted', () => {
+    const reflagged = row({
+      minor: true,
+      flagSource: 'manual',
+      textScanFlags: { minor: granted },
+    });
+    expect(appealRowState(reflagged).verdictLabels).toEqual([]);
+    expect(appealRowState(reflagged).sourceLabel).toBe('Mod');
+  });
 });
