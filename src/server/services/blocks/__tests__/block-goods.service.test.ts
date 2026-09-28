@@ -1776,3 +1776,116 @@ describe('owesOwnerPayout — the owner-payout RE-RUN SET', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * 🔴 THE REFUND MATCHER IS A LEXICOGRAPHIC RANGE, NOT A STRING-PREFIX MATCH —
+ * and the ids the LEDGER STORES are not the ids we send.
+ *
+ * Two facts, both read out of the Buzz service source (`civitai-buzz`,
+ * `src/Civitai.Buzz.Api/Program.cs` at `origin/master` 4148403), because every
+ * earlier round reasoned about a `StartsWith` that does not exist:
+ *
+ *  1. `POST /multi-transactions` STORES `$"{ExternalTransactionIdPrefix}-{accountType}"`
+ *     — it appends `-blue` / `-yellow` AFTER our terminator. `POST /transactions`
+ *     (the single-transaction endpoint the payout legs use) matches
+ *     `ExternalTransactionId` EXACTLY and appends nothing. So a buy leg is
+ *     stored suffixed and a sell leg is stored verbatim.
+ *  2. `POST /multi-transactions/refund` selects
+ *        id >= prefix  AND  id < prefix + "ZZZZZZZZZZZZZ"
+ *     a half-open range with a 13-`Z` sentinel — NOT `StartsWith`.
+ *
+ * Prefix-freedom is SUFFICIENT for a true prefix match, so the existing
+ * argument is not wrong; it is simply not a model of this matcher. These guards
+ * assert the properties that matter against the matcher as implemented, over
+ * the ids as STORED.
+ */
+const REFUND_SENTINEL = 'Z'.repeat(13);
+
+/** The service's range predicate. Ordinal here; see the collation guard below. */
+function refundSweeps(prefix: string, storedId: string): boolean {
+  return storedId >= prefix && storedId < `${prefix}${REFUND_SENTINEL}`;
+}
+
+/** What the LEDGER holds after a purchase by `buyer`, both legs, as stored. */
+function storedLegsFor(buyer: number): { buy: string[]; sell: string[] } {
+  const key = { appBlockId: APP_BLOCK_ID, goodId: GOOD_ID, buyerUserId: buyer };
+  return {
+    // suffixed by the multi endpoint, one leg per account type charged
+    buy: ['blue', 'yellow'].map((c) => `${blockGoodPurchaseKey(key)}-${c}`),
+    // stored verbatim by the single endpoint
+    sell: ['blue', 'yellow'].map((c) =>
+      blockGoodPayoutTransactionId({ ...key, recipientUserId: 7, color: c as never })
+    ),
+  };
+}
+
+describe('the refund range, over the ids the ledger actually STORES', () => {
+  // Deliberately prefix-RELATED buyers: 5 is a decimal prefix of both. This is
+  // the shape that produced the original money bug, so it is the shape the
+  // guard has to be built out of.
+  const BUYERS = [5, 51, 500];
+
+  it('sweeps EVERY leg of its own purchase — a partial sweep under-refunds the buyer', () => {
+    const prefix = blockGoodPurchaseKey({
+      appBlockId: APP_BLOCK_ID,
+      goodId: GOOD_ID,
+      buyerUserId: 5,
+    });
+    const own = storedLegsFor(5).buy;
+    expect(own.length).toBe(2); // the assertion below is vacuous if this is 0
+    for (const leg of own) {
+      expect(refundSweeps(prefix, leg), `own buy leg not swept: ${leg}`).toBe(true);
+    }
+  });
+
+  it('sweeps NO leg of a prefix-related buyer, and no payout leg', () => {
+    const prefix = blockGoodPurchaseKey({
+      appBlockId: APP_BLOCK_ID,
+      goodId: GOOD_ID,
+      buyerUserId: 5,
+    });
+    const foreign = [
+      ...storedLegsFor(51).buy,
+      ...storedLegsFor(51).sell,
+      ...storedLegsFor(500).buy,
+      ...storedLegsFor(500).sell,
+      // buyer 5's OWN payout: reversed against its own recorded row, never
+      // swept by the buyer's refund, or the owner would be debited twice.
+      ...storedLegsFor(5).sell,
+    ];
+    expect(foreign.length).toBe(10);
+    const swept = foreign.filter((id) => refundSweeps(prefix, id));
+    expect(swept, 'the buyer refund reached ids it must not').toEqual([]);
+  });
+
+  it('POSITIVE CONTROL — the OLD unterminated key IS swept across buyers under this matcher', () => {
+    // Without the `:buy` terminator the stem ended in the bare buyer id, so
+    // buyer 5's refund range covered 51 and 500. If this ever returns [] the
+    // two assertions above are measuring nothing.
+    const oldStem = (b: number) => `block-good:${APP_BLOCK_ID}:${GOOD_ID}:${b}`;
+    const swept = [51, 500]
+      .flatMap((b) => ['blue', 'yellow'].map((c) => `${oldStem(b)}-${c}`))
+      .filter((id) => refundSweeps(oldStem(5), id));
+    expect(swept.length).toBe(4);
+  });
+
+  it('every stored continuation sorts BELOW the sentinel — the range cannot truncate a leg', () => {
+    // The sentinel is 13 `Z`s (0x5A). A continuation beginning with a character
+    // ABOVE `Z` — any lowercase letter, or `_` — would sort past the upper bound
+    // and its leg would silently NOT be refunded. Ours begin `-` (0x2D) or `:`
+    // (0x3A). This pins that, so introducing a separator like `_good` is caught
+    // here rather than by an unrefunded buyer.
+    const prefix = blockGoodPurchaseKey({
+      appBlockId: APP_BLOCK_ID,
+      goodId: GOOD_ID,
+      buyerUserId: 5,
+    });
+    const continuations = storedLegsFor(5).buy.map((leg) => leg.slice(prefix.length));
+    expect(continuations).toEqual(['-blue', '-yellow']);
+    for (const c of continuations) {
+      expect(c < REFUND_SENTINEL, `continuation "${c}" sorts at/above the sentinel`).toBe(true);
+    }
+    // NEGATIVE CONTROL: a lowercase separator would break it, and does.
+    expect('_good' < REFUND_SENTINEL).toBe(false);
+  });
+});
