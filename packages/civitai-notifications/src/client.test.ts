@@ -16,11 +16,7 @@ const validRow = {
 
 // A client bound to a mock fetch + a default endpoint, with retry backoff zeroed so tests don't sleep.
 function client(config: NotificationsClientConfig) {
-  return createNotificationsClient({
-    endpoint: 'http://notif.internal',
-    retryBaseMs: 0,
-    ...config,
-  });
+  return createNotificationsClient({ endpoint: 'http://notif.internal', retryBaseMs: 0, ...config });
 }
 
 describe('createNotificationPendingRow', () => {
@@ -114,10 +110,7 @@ describe('read wrappers', () => {
         headers: { 'content-type': 'application/json' },
       })
     );
-    const counts = await client({ fetch: fetchMock }).countNotifications({
-      userId: 1,
-      unread: true,
-    });
+    const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
     expect(counts).toEqual([{ category: 'Comment', count: 3 }]);
   });
 
@@ -128,10 +121,7 @@ describe('read wrappers', () => {
         headers: { 'content-type': 'application/json' },
       })
     );
-    const counts = await client({ fetch: fetchMock }).countNotifications({
-      userId: 1,
-      unread: true,
-    });
+    const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
     expect(counts).toEqual([{ category: 'Update', count: 10001, floor: true }]);
   });
 });
@@ -142,11 +132,9 @@ describe('onFailure sink', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('busy', { status: 503 }));
 
     await expect(
-      client({
-        fetch: fetchMock,
-        retries: 2,
-        onFailure: (f) => failures.push(f),
-      }).createNotification(validRow)
+      client({ fetch: fetchMock, retries: 2, onFailure: (f) => failures.push(f) }).createNotification(
+        validRow
+      )
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toHaveLength(1); // one event, not one-per-attempt
@@ -167,21 +155,14 @@ describe('onFailure sink', () => {
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toEqual([
-      expect.objectContaining({
-        path: '/notifications',
-        status: 400,
-        retryable: false,
-        attempts: 1,
-      }),
+      expect.objectContaining({ path: '/notifications', status: 400, retryable: false, attempts: 1 }),
     ]);
   });
 
   it('does NOT report on success', async () => {
     const failures: any[] = [];
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
-    await client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(
-      validRow
-    );
+    await client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(validRow);
     expect(failures).toHaveLength(0);
   });
 

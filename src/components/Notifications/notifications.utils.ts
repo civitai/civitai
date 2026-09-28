@@ -134,13 +134,16 @@ export function clearAnnouncements(
   dismiss.creator(creatorIds);
 }
 
-/**
- * Nothing above 1,000 is shown anywhere. A floor is a count the server stopped short of: the true
- * number is at least this, so it carries a "+".
- */
+// A floor is a lower bound from a recount that stopped at its row limit, hence the "+".
 export function formatUnreadCount(count: number, isFloor: boolean): string {
   if (count >= 1000) return '1k+';
   return isFloor ? `${count}+` : `${count}`;
+}
+
+// The bell caps lower than the tabs; a floor still gets its "+" below the cap.
+export function formatBellCount(counts: { all: number; unreadCountsAreFloors?: number }): string {
+  if (counts.all > 99) return '99+';
+  return counts.unreadCountsAreFloors ? `${counts.all}+` : `${counts.all}`;
 }
 
 // Announcements are counted client-side and exactly; only the server's notification counts can be floors.
@@ -203,6 +206,10 @@ export const useQueryNotificationsCount = () => {
 /**
  * Keys on the `checkNotifications` payload that are NOT notification category
  * counts, and must survive "mark all as read".
+ *
+ * `unreadCountsAreFloors` is the one non-category key deliberately NOT listed:
+ * mark-all-read zeroes every count, a zero is exact, so the flag must be wiped
+ * with them.
  *
  * 🔴 This set is load-bearing, and the reason is not obvious from the code it
  * guards. The two branches that key off a category name are safe only because

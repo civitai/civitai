@@ -102,6 +102,7 @@ const badge = async () =>
 beforeEach(() => {
   h.store.clear();
   h.dbQueries.count = 0;
+  h.dbQueries.lastSql = '';
   h.hooks.duringQuery = undefined;
   countInFlight.clear();
   h.dbTruth.rows = [
@@ -194,6 +195,7 @@ describe('unread counter cache: bounded recount', () => {
   it('stops the recount one row past the limit', async () => {
     await badge();
 
+    expect(h.dbQueries.count).toBe(1);
     expect(h.dbQueries.lastSql).toMatch(
       new RegExp(String.raw`LIMIT ${COUNT_ROW_LIMIT + 1}\s*\) scanned`)
     );
@@ -218,13 +220,31 @@ describe('unread counter cache: bounded recount', () => {
     ]);
   });
 
-  it('recounts instead of decrementing a floor, so it never turns into an exact number', async () => {
+  it('recounts instead of decrementing a floor', async () => {
     h.dbTruth.rows = truncated();
     await badge();
 
     await notificationCache.decrementUser(USER, 'Milestone');
 
     expect(snapshot()).toBeUndefined();
+    const recount = await countNotifications({ userId: USER, unread: true });
+    expect(recount.every((c) => c.floor)).toBe(true);
+    expect(h.dbQueries.count).toBe(2);
+  });
+
+  it('recounts instead of clearing a category from a floor', async () => {
+    h.dbTruth.rows = truncated();
+    await badge();
+
+    await notificationCache.clearCategory(USER, 'Update');
+
+    expect(snapshot()).toBeUndefined();
+  });
+
+  it('never serves a floored counter with no categories left as an exact zero', async () => {
+    seed({ __complete: '0', __floor: '0' }, 3600);
+
+    expect(await badge()).toBe(340);
   });
 
   it('still decrements an exact counter', async () => {

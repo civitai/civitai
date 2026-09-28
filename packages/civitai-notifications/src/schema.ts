@@ -71,7 +71,7 @@ export type NotificationRow = z.infer<typeof notificationRow>;
 export const notificationCategoryCount = z.object({
   category: notificationCategory,
   count: z.coerce.number(),
-  // The count is a lower bound: the recount stopped at its row limit before reaching every unread row.
+  // The count is a lower bound: the recount stopped at its row limit before reaching every matching row.
   floor: z.boolean().optional(),
 });
 export type NotificationCategoryCount = z.infer<typeof notificationCategoryCount>;

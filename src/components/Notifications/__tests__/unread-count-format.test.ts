@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyMarkReadToCounts,
+  formatBellCount,
   formatTabCount,
   formatUnreadCount,
 } from '~/components/Notifications/notifications.utils';
+import { NotificationCategory } from '~/server/common/enums';
 
 const render = (counts: Record<string, number>, tab: string) => formatTabCount(tab, counts);
 
@@ -25,18 +27,26 @@ describe('a capped count after mark-read', () => {
   it('a decrement on a capped category still renders as capped', () => {
     const next = applyMarkReadToCounts(capped(), { id: 1, category: 'Update' });
 
-    expect(render(next, 'update')).toBe('1k+');
+    expect(render(next, NotificationCategory.Update)).toBe('1k+');
     expect(render(next, 'all')).toBe('1k+');
   });
 
   it('a decrement on a small floored category stays a floor', () => {
     const next = applyMarkReadToCounts(capped(), { id: 1, category: 'Milestone' });
 
-    expect(render(next, 'milestone')).toBe('16+');
+    expect(render(next, NotificationCategory.Milestone)).toBe('16+');
   });
 
   it('never marks the announcements tab as a floor', () => {
     expect(render({ ...capped(), announcements: 3 }, 'announcements')).toBe('3');
+  });
+
+  it('the bell marks a floor below its own cap', () => {
+    const next = applyMarkReadToCounts(capped(), { category: 'Update' });
+
+    expect(formatBellCount(next)).toBe('17+');
+    expect(formatBellCount(capped())).toBe('99+');
+    expect(formatBellCount({ all: 17, unreadCountsAreFloors: 0 })).toBe('17');
   });
 
   it('mark all as read leaves exact zeroes, not floors', () => {

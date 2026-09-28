@@ -1,8 +1,5 @@
-// Per-user unread counter cache. Ported from the monolith's notification-cache.ts — keyed on the SAME
-// redis hash (`system:notification-counts:{userId}`, field = category, plus the `__complete` and
-// `__floor` markers)
-// via @civitai/redis's REDIS_KEYS, so the counts stay consistent now that this app (not the monolith)
-// owns the read/count/mark path. A missing redis client (unconfigured) no-ops the counter side; the
+// Per-user unread counter cache: one redis hash per user (`system:notification-counts:{userId}`), field =
+// category, plus the `__complete` and `__floor` markers. A missing redis client no-ops the counter side; the
 // base-row queries still work.
 
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
@@ -63,7 +60,8 @@ async function getUser(userId: number): Promise<NotificationCategoryCount[] | un
     [FLOOR_FIELD]: floor,
     ...counts
   } = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
-  if (complete === undefined) {
+  // A floored hash with no categories left would read as an exact zero.
+  if (complete === undefined || (floor !== undefined && !Object.keys(counts).length)) {
     // Bust rather than overwrite: setUser merges, so a stale category the recount no longer returns would
     // otherwise survive under the new marker.
     if (Object.keys(counts).length) await bustUser(userId);
@@ -112,15 +110,19 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
   });
 }
 
-async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
+// Recount rather than adjust a floored hash: `__floor` survives arithmetic, so it would keep reporting floors
+// after the true count fell below the limit, and clearing its last category would leave an empty hash.
+async function bustIfFloored(userId: number) {
   const redis = getRedis();
-  if (!redis) return;
-  // A floor minus one is not a count: a decremented floor below 1,000 would render as an exact number.
-  // Recount instead; the bounded query is cheap.
-  if (await withRedisErrorCount('has', () => redis.hExists(userKey(userId), FLOOR_FIELD))) {
-    await bustUser(userId);
-    return;
-  }
+  if (!redis) return false;
+  if (!(await withRedisErrorCount('has', () => redis.hExists(userKey(userId), FLOOR_FIELD))))
+    return false;
+  await bustUser(userId);
+  return true;
+}
+
+async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
+  if (await bustIfFloored(userId)) return;
   await incrementUser(userId, category, -by);
   await slideExpiration(userId);
 }
@@ -135,6 +137,7 @@ async function clearCategory(userId: number, category: NotificationCategory) {
   const redis = getRedis();
   if (!redis) return;
   if (!(await hasUser(userId))) return;
+  if (await bustIfFloored(userId)) return;
   await withRedisErrorCount('clearCategory', () => redis.hDel(userKey(userId), category));
   await slideExpiration(userId);
 }

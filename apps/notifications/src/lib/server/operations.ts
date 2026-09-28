@@ -167,8 +167,7 @@ async function countNotificationsImpl(input: {
 }): Promise<NotificationCategoryCount[]> {
   const { userId, unread, category } = input;
 
-  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts, seeded here by
-  // setUser and adjusted by the worker's fan-out and by mark-read while it exists. It is keyed on
+  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts. It is keyed on
   // `userId` ONLY — it does not distinguish the `unread` flag or a `category` filter. So it can correctly
   // represent EXACTLY ONE variant of this query: `unread:true` with no category. For any other variant:
   //   - `unread:false` (totals incl. read): there is no worker-maintained "total" counter, so this is
