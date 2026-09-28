@@ -705,7 +705,32 @@ export async function purchaseBlockGood(
     //   404 the ledger could not resolve the request at all. Not a funds
     //       verdict, so it must not borrow one.
     //
-    // 🔴 THE 409 ARM IS CURRENTLY UNREACHABLE, AND IS RETAINED DELIBERATELY.
+    // 🔴 WHY THE `else` ARM MAY CLAIM THE FUNDS VERDICT AT ALL — the ternary
+    // looks like it hands every unlisted status "you do not have enough Buzz",
+    // and it does not. `refusal` has exactly ONE consumer, the return inside
+    // `if (knownPreMoney)` below, and `knownPreMoney` is `400 || 409 || 404` —
+    // so the only status that can reach the `else` is 400. 402, 422, every 5xx
+    // and an unreadable status never get here: they fall to the
+    // `charge_unknown` path, which is the fail-safe answer for an attempt whose
+    // ledger effect is not established.
+    //
+    // ⚠ THAT SAFETY IS A COUPLING, NOT A PROPERTY OF THIS TERNARY: it holds
+    // only while `knownPreMoney` and these arms list the same statuses. Widen
+    // `knownPreMoney` by one — a 402, say — and that status silently acquires
+    // the funds answer, which on a status whose ledger effect is unknown is the
+    // one instruction that could double-charge. The test
+    // "only a 400 can reach the insufficient_funds arm" pins the pair so the
+    // widening is a red test rather than a wrong message. (An audit round read
+    // this ternary in isolation and reported the wide hole as already live; it
+    // is not, and the reachability above is why.)
+    //
+    // 🔴 THIS 409 ARM IS UNREACHABLE — BUT `ledger_conflict` AS A REASON IS
+    // LIVE, AND CONFLATING THE TWO IS A MISREADING WORTH HEADING OFF. The
+    // occupied-id case is the one the service DOES produce: 200 with the leg
+    // marked `duplicate: true`, handled further down this function, which
+    // returns `ledger_conflict` with `charge: 'unknown'`. So deleting this arm
+    // would delete a branch, not a reason, and the occupied-id outcome would be
+    // unchanged. The arm is RETAINED DELIBERATELY.
     // `POST /multi-transactions` cannot return 409: measured against
     // `civitai-buzz` `src/Civitai.Buzz.Api/Program.cs` at `origin/master`
     // 4148403, that handler's only exits are 4x BadRequest, one Ok and one

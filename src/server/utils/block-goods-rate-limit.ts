@@ -47,12 +47,27 @@ export type BlockGoodRateLimitResult =
  * Keeping `blockInstanceId` in the key as well as the buyer is deliberate: it
  * preserves the per-app granularity the ceiling was chosen for, so one app
  * misbehaving cannot spend another app's budget for the same viewer.
+ *
+ * ⚠ THE HAZARD ABOVE WAS NOT DISCOVERED HERE. `block-catalog-rate-limit.ts`
+ * records it for the catalog bucket, attributed to clawgate #569, and that
+ * round DEFERRED the fix on purpose — "the number is live and moving it is a
+ * separate decision with its own blast radius". This module departs from that
+ * decision for ONE reason: goods has provably never sold (`block_good_purchase`
+ * is empty), so changing its bucket alters no live behaviour. The deferral
+ * still stands for the catalog, tip and generation buckets.
+ *
+ * Positional, `(blockInstanceId, buyerUserId)`, to match
+ * `checkBlockGoodReadRateLimit` below — its ONLY sibling, in this same file.
+ * An earlier draft took an object and justified it as stopping a transposed
+ * call; that rationale was false (the two parameters are `string` and `number`,
+ * so a swap was already a compile error) and it put two calling conventions in
+ * one module 290 lines apart. Consolidating the two functions would be better
+ * still and is deliberately not attempted here; see the PR.
  */
-export async function checkBlockGoodRateLimit(args: {
-  buyerUserId: number;
-  blockInstanceId: string;
-}): Promise<BlockGoodRateLimitResult> {
-  const { buyerUserId, blockInstanceId } = args;
+export async function checkBlockGoodRateLimit(
+  blockInstanceId: string,
+  buyerUserId: number
+): Promise<BlockGoodRateLimitResult> {
   const key =
     `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods:${blockInstanceId}:${buyerUserId}` as const;
   try {
