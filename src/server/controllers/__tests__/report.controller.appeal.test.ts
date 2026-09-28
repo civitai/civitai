@@ -6,13 +6,17 @@ import type * as ReportService from '~/server/services/report.service';
 const {
   mockGetImageById,
   mockGetLatestModelAppeal,
+  mockGetLatestEntityAppeal,
   mockCreateEntityAppeal,
   mockReopenModelAppeal,
+  mockReopenEntityAppeal,
 } = vi.hoisted(() => ({
   mockGetImageById: vi.fn(),
   mockGetLatestModelAppeal: vi.fn(),
+  mockGetLatestEntityAppeal: vi.fn(),
   mockCreateEntityAppeal: vi.fn(),
   mockReopenModelAppeal: vi.fn(),
+  mockReopenEntityAppeal: vi.fn(),
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -25,8 +29,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/report.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReportService>()),
   getLatestModelAppeal: mockGetLatestModelAppeal,
+  getLatestEntityAppeal: mockGetLatestEntityAppeal,
   createEntityAppeal: mockCreateEntityAppeal,
   reopenModelAppeal: mockReopenModelAppeal,
+  reopenEntityAppeal: mockReopenEntityAppeal,
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
@@ -52,6 +58,8 @@ beforeEach(() => {
   mockGetLatestModelAppeal.mockResolvedValue(null);
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenModelAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
+  mockGetLatestEntityAppeal.mockResolvedValue(null);
+  mockReopenEntityAppeal.mockResolvedValue({ id: 2, status: 'Pending' });
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -181,5 +189,83 @@ describe('createEntityAppealHandler — other entity types are untouched', () =>
     expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ entityId: 77, skipFee: false })
     );
+  });
+});
+
+const poiEntry = { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.' };
+
+describe('createEntityAppealHandler — Model text-scan poi', () => {
+  it('accepts an appeal against an open text-scan poi flag', async () => {
+    mockModelFindUnique.mockResolvedValue({
+      userId: 602767,
+      minor: false,
+      poi: true,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
+    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
+    expect(mockCreateEntityAppeal).toHaveBeenCalledWith(expect.objectContaining({ skipFee: true }));
+  });
+
+  it('refuses a self-declared poi with no text-scan snapshot', async () => {
+    mockModelFindUnique.mockResolvedValue({ userId: 602767, minor: false, poi: true, meta: {} });
+    await expect(
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+describe('createEntityAppealHandler — Bounty', () => {
+  const bountyInput = { entityId: 9, entityType: EntityType.Bounty, message: 'Fictional.' } as const;
+  const mockBountyFindUnique = dbMock.dbRead.bounty.findUnique;
+  const flaggedBounty = { userId: 602767, poi: true, meta: { textScanFlags: { poi: poiEntry } } };
+
+  it('404s a missing bounty and refuses a non-owner', async () => {
+    mockBountyFindUnique.mockResolvedValue(null);
+    await expect(
+      createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    mockBountyFindUnique.mockResolvedValue({ ...flaggedBounty, userId: 1 });
+    await expect(
+      createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('refuses a bounty with no open text-scan flag', async () => {
+    mockBountyFindUnique.mockResolvedValue({ ...flaggedBounty, meta: null });
+    await expect(
+      createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('creates a fee-free appeal the first time', async () => {
+    mockBountyFindUnique.mockResolvedValue(flaggedBounty);
+    await createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() });
+    expect(mockGetLatestEntityAppeal).toHaveBeenCalledWith({
+      entityType: EntityType.Bounty,
+      entityId: 9,
+      userId: 602767,
+    });
+    expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Bounty, entityId: 9, skipFee: true })
+    );
+  });
+
+  it('refuses while one is pending, and reopens the row after a denial', async () => {
+    mockBountyFindUnique.mockResolvedValue(flaggedBounty);
+    mockGetLatestEntityAppeal.mockResolvedValue({ status: 'Pending', resolvedAt: null });
+    await expect(
+      createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    mockGetLatestEntityAppeal.mockResolvedValue({ status: 'Rejected', resolvedAt: new Date() });
+    await createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() });
+    expect(mockReopenEntityAppeal).toHaveBeenCalledWith({
+      entityType: EntityType.Bounty,
+      entityId: 9,
+      userId: 602767,
+      message: 'Fictional.',
+    });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

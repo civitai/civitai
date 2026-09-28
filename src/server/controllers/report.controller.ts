@@ -3,7 +3,6 @@ import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -14,9 +13,15 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
+  getLatestEntityAppeal,
   getLatestModelAppeal,
+  reopenEntityAppeal,
   reopenModelAppeal,
 } from '~/server/services/report.service';
+import {
+  isBountyFlagAppealable,
+  isModelFlagAppealable,
+} from '~/server/services/text-scan/flag-snapshot';
 import {
   isPrismaForeignKeyViolation,
   throwAuthorizationError,
@@ -93,15 +98,14 @@ export async function createEntityAppealHandler({
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({
           where: { id: input.entityId },
-          select: { userId: true, minor: true, meta: true },
+          select: { userId: true, minor: true, poi: true, meta: true },
         });
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
         // Legacy flags carry no snapshot and are deliberately excluded.
-        const meta = model.meta as ModelMeta | null;
-        if (!model.minor || !meta?.minorFlagSnapshot)
-          throw throwBadRequestError('This model is not flagged as depicting a minor');
+        if (!isModelFlagAppealable(model))
+          throw throwBadRequestError('This model has no automated flag to review');
 
         // `Appeal` is unique on (entityType, entityId, userId): creating a second
         // row raises P2002, which is not a TRPCError and reaches the owner as a
@@ -111,6 +115,34 @@ export async function createEntityAppealHandler({
           throw throwBadRequestError('Your review request for this model is already under review');
         if (existing)
           return await reopenModelAppeal({
+            entityId: input.entityId,
+            userId,
+            message: input.message,
+          });
+
+        skipFee = true;
+        break;
+      }
+      case EntityType.Bounty: {
+        const bounty = await dbRead.bounty.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, poi: true, meta: true },
+        });
+        if (!bounty) throw throwNotFoundError('Bounty not found');
+        if (bounty.userId !== userId) throw throwAuthorizationError();
+        if (!isBountyFlagAppealable(bounty))
+          throw throwBadRequestError('This bounty has no automated flag to review');
+
+        const existing = await getLatestEntityAppeal({
+          entityType: EntityType.Bounty,
+          entityId: input.entityId,
+          userId,
+        });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this bounty is already under review');
+        if (existing)
+          return await reopenEntityAppeal({
+            entityType: EntityType.Bounty,
             entityId: input.entityId,
             userId,
             message: input.message,

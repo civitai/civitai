@@ -32,4 +32,9 @@ describe('entity-appeal-resolved — prepareMessage url', () => {
 
     expect(m!.url).toBe('/images/99');
   });
+
+  it('links a resolved Bounty appeal to the bounty, not undefined/<id>', () => {
+    const m = prepare({ entityType: EntityType.Bounty, entityId: 9, status: AppealStatus.Approved });
+    expect(m!.url).toBe('/bounties/9');
+  });
 });
