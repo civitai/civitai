@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as RouteModule from '~/server/services/text-scan/route';
+import type * as NotifyModule from '~/server/services/text-scan/notify';
 
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -15,6 +16,14 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
 vi.mock('~/server/services/text-scan/actions/model-nsfw', () => ({
   applyModelNsfwTextScan: vi.fn(async () => ({ deferredRatingNotice: null })),
   applySystemModelNsfwFlag: vi.fn(),
+}));
+// Hand-listed: the real action reaches model.service, whose graph builds clients at load.
+vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
+  applyModelPoiMinor: vi.fn(async () => ({ notified: false })),
+}));
+vi.mock('~/server/services/text-scan/notify', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotifyModule>()),
+  notifyTextScanRatingRaised: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -118,5 +127,54 @@ describe('submitModelTextModerationBackfill — routed', () => {
   it('submits nothing for a model with no text', async () => {
     expect(await submitModelTextModerationBackfill({ id: 7, name: '' })).toBeNull();
     expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+});
+
+describe('model applyTextScan — poi/minor and the deferred rating notice', () => {
+  const args = {
+    entityId: 1,
+    workflowId: 'wf-1',
+    outcome: { triggeredLabels: [], nsfwLevel: null },
+    subject: { fields: [], declared: {} },
+    textHash: 'h',
+  };
+  const notice = {
+    entityType: 'Model',
+    entityId: 1,
+    userId: 42,
+    level: 4,
+    title: 'M',
+    url: '/models/1',
+    workflowId: 'wf-1',
+  };
+
+  it('hands the same args to the poi/minor action after nsfw', async () => {
+    const { applyModelPoiMinor } = await import(
+      '~/server/services/text-scan/actions/model-poi-minor'
+    );
+    await modelModerationAdapter.applyTextScan!(args as never);
+    expect(applyModelPoiMinor).toHaveBeenCalledWith(args);
+    expect(vi.mocked(applyModelNsfwTextScan).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(applyModelPoiMinor).mock.invocationCallOrder[0]
+    );
+  });
+
+  // Review Focus 6.
+  it('sends the deferred rating notice when the poi/minor action notified nobody', async () => {
+    const { notifyTextScanRatingRaised } = await import('~/server/services/text-scan/notify');
+    vi.mocked(applyModelNsfwTextScan).mockResolvedValueOnce({ deferredRatingNotice: notice });
+    await modelModerationAdapter.applyTextScan!(args as never);
+    expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(notice);
+  });
+
+  it('drops the deferred notice when the owner already got the poi/minor notice', async () => {
+    const { applyModelPoiMinor } = await import(
+      '~/server/services/text-scan/actions/model-poi-minor'
+    );
+    const { notifyTextScanRatingRaised } = await import('~/server/services/text-scan/notify');
+    vi.mocked(applyModelNsfwTextScan).mockResolvedValueOnce({ deferredRatingNotice: notice });
+    vi.mocked(applyModelPoiMinor).mockResolvedValueOnce({ notified: true });
+    await modelModerationAdapter.applyTextScan!(args as never);
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 });
