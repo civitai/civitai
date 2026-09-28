@@ -1469,18 +1469,55 @@ describe('this file filters by depth wherever it matters', () => {
     // would still pass them. So: take every line that IS correctly routed, un-route it in
     // memory, and assert the pattern catches each one. That closes the gap between "more
     // demanding than before" and "as demanding as the file".
-    const routedLines = SELF.split('\n').filter((l) => /expect\(ownProps\(site\)\)\./.test(l));
+    //
+    // 🔴 DERIVED PER PATTERN, NOT ONCE. An earlier version derived only the `expect(...)`
+    // population and left the HELPER pattern on a single chosen literal — and a review round
+    // measured the consequence: narrow `HELPER_SRC` to `containsExpression\(site, ledgered`
+    // (an ordinary tightening edit, since three of the four real helper calls ARE
+    // `ledgered.*`) and un-route the fourth, and the suite reports 37/37 with a real
+    // raw-slice assertion on the fee's own quote ledger. One derivation per pattern is the
+    // only shape that closes that, because each pattern has its own real population.
+    const derived: Array<[string, string, RegExp, number]> = [
+      // [label, the routed spelling to un-route, the pattern it must then match, floor]
+      ['expect(ownProps(site)).', 'expect(ownProps(site)).', new RegExp(OFFENDER_SRC), 8],
+      [
+        'containsExpression(ownProps(site),',
+        'containsExpression(ownProps(site),',
+        new RegExp(HELPER_SRC),
+        4,
+      ],
+    ];
+    for (const [label, routed, re, floor] of derived) {
+      const lines = SELF.split('\n').filter((l) => l.includes(routed));
+      expect(
+        lines.length,
+        `no routed \`${label}\` lines found — this control would be testing nothing`
+      ).toBeGreaterThanOrEqual(floor);
+      const missed = lines
+        .map((l) => l.replace(routed, routed.replace('ownProps(site)', 'site')))
+        .filter((l) => !re.test(l));
+      expect(
+        missed,
+        `the pattern does not match these REAL \`${label}\` lines once un-routed, so it ` +
+          'would not catch them if someone un-routed them for real'
+      ).toEqual([]);
+    }
+
+    // 🔴 `INCLUDES_SRC` CANNOT BE DERIVED, AND THE HONEST MOVE IS TO SAY SO AND PIN THE
+    // REASON. Its real population in the scanned region is ZERO — every `.includes(` there
+    // binds `s` or `c` in an extractor control — so the scan can never witness it and its
+    // entire evidence is the one synthetic literal above. A review round narrowed it to a
+    // specific literal, added a real `expect(site.includes(...))`, and the suite stayed
+    // green; there is no derivation that closes that while the population is empty.
+    //
+    // So the population is ASSERTED empty. The moment someone writes a real one, this fails
+    // and forces them here to add a derivation row above rather than inheriting a pattern
+    // backed by one literal.
+    const realIncludes = SELF.split('\n').filter((l) => /expect\(site\.includes\(/.test(l));
     expect(
-      routedLines.length,
-      'no routed lines found — this control is testing nothing'
-    ).toBeGreaterThanOrEqual(8);
-    const missed = routedLines
-      .map((l) => l.replace('expect(ownProps(site)).', 'expect(site).'))
-      .filter((l) => !new RegExp(OFFENDER_SRC).test(l));
-    expect(
-      missed,
-      'the offender pattern does not match these REAL lines once un-routed, so it would not ' +
-        'catch them if someone un-routed them for real'
+      realIncludes,
+      'a real `expect(site.includes(...))` now exists, so INCLUDES_SRC is no longer ' +
+        'evidence-free by construction: add a derivation row for it in `derived` above'
     ).toEqual([]);
 
     // must NOT match — negatives are exempt by construction, and the routed form is correct
