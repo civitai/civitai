@@ -625,7 +625,6 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      user_id)`. There is no marker on those rows to filter on, so closing this
  *      half needs a migration.
  *
- *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is
  * read by the person who opens Flipt, in a different repository, to widen a flag. The
@@ -641,25 +640,27 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:
  * A REVIEWER'S OWN CONSUMER-SIDE SCOPE REVOCATION SILENTLY NARROWS THEIR PRIVATE RUN.
  *
- * ⚠️ PLACEMENT, BECAUSE IT WAS WRONG FOR ONE COMMIT AND THE DAMAGE WAS TO THE *OTHER*
- * PRECONDITION. This block first went in between the first precondition's numbered items
- * and its two closing paragraphs — so "WHY THIS PARAGRAPH IS IN THIS FILE … recorded only
- * in a docblock on the attribution arm and in a merged PR body" read as being about THIS
- * dependency, for which it is false (this one lived in a test docblock), and the closing
- * two-item checklist appeared to close a docblock carrying three. Inserting a section in
- * the middle of another one silently rewrites what that one's ending refers to.
+ * 🔴 A NEW PRECONDITION GOES BELOW THIS ONE, NEVER BETWEEN THE FIRST ONE'S NUMBERED ITEMS
+ * AND ITS CLOSING PARAGRAPHS — inserting a section inside another silently re-points that
+ * one's ending at the new content.
  *
  * Per-scope consent revocation landed while this surface was being built. Its
  * `shouldConsultMarker` keys on `{ userId, scopes }` alone — it cannot tell a private-run
  * review token from an ordinary install token — and a private-run token has a self-bound
- * subject and always carries a non-exempt scope (`user:read:self` is force-granted and is
- * not consent-exempt; non-editors also keep `ai:write:budgeted`), so the marker IS
- * consulted for EVERY audience, editors included, keyed on the REVIEWER's id and the app's
- * real id. The rows it reads are therefore whatever that person expressed as an ordinary
+ * subject and always carries a non-exempt scope — `user:read:self` is force-granted by the
+ * clamp and is not consent-exempt, which alone is what makes this unconditional — so the
+ * marker IS consulted for EVERY audience, editors included, keyed on the REVIEWER's id and
+ * the app's real id. (Not `ai:write:budgeted`: the clamp only ever filters, so a non-editor
+ * keeps the spend scope only when the approved snapshot declares it, and an app with
+ * `approvedScopes: []` renders read-only for everyone.) The rows it reads are therefore whatever that person expressed as an ordinary
  * CONSUMER of that app, at some earlier point, on a surface unrelated to review.
  *
- * It is SAFE — all three `revokedScopesForToken` arms produce a set to STRIP and none can
- * grant — which is why it was allowed to stand rather than exempted. What is NOT settled is
+ * It cannot WIDEN — all three `revokedScopesForToken` arms produce a set to STRIP and none
+ * can grant — which is why it was allowed to stand rather than exempted. ⚠️ But "narrows" is
+ * not the worst case: an UNREADABLE marker fails CLOSED, as a retryable 503 on the bridge
+ * and at REST for a non-exempt `requiredScope`, so a cache incident makes a private run
+ * refuse outright rather than run read-only. Do not read the heading as bounding the harm at
+ * read-only. What is NOT settled is
  * what the reviewer sees: a moderator who once withdrew the spend scope on this app gets a
  * read-only private run and nothing on screen says why, and the audience for this surface
  * is exactly the population that files bugs about that. Deciding whether the chrome should
@@ -669,11 +670,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * Pinned behaviourally in
  * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
- * (five rows, mutation-verified). ⚠️ It was recorded ONLY in that test's docblock for one
- * commit, while the commit message claimed it was "recorded at the flag accessor as a flip
- * precondition" — false, and false in exactly the way the paragraph above exists to
- * prevent: a `__tests__` docblock is further from the person opening Flipt than either of
- * the two places that paragraph already rules out.
+ * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that is
+ * further from the person opening Flipt than either of the two places the paragraph above
+ * already rules out, and it sat there — described as "recorded at the flag accessor" — while
+ * this block did not yet exist.
  * ────────────────────────────────────────────────────────────────────────────────
  */
 export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';

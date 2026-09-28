@@ -355,27 +355,21 @@ const _appRoleSubsetWitness: _AppRoleIsAPrivateRunAudience = true;
  *   - The TUPLE grows without the type: `isPrivateRunAudience` starts ADMITTING a value
  *     the type says cannot exist, which is the unsafe direction — the verifier lets it
  *     through and the read-only belt's `=== 'editor'` silently treats it as an owner.
- *     🔴 CAUGHT TWICE, AND BOTH HALVES ARE LOAD-BEARING. (a) AT COMPILE TIME BY THIS
- *     LITERAL: because the type is derived from the tuple, growing the tuple moves the
- *     type, and `Record<PrivateRunAudience, true>` then fails — **TS2741** for a single
- *     added member ("Property 'x' is missing"), TS2739 only once TWO or more are missing
- *     — or on an extra witness key as an excess property (TS2353). Codes measured against
- *     this repo's tsc 5.9.2, not recalled. (b) AT RUNTIME BY THE HARDCODED TUPLE LEDGER at
+ *     🔴 CAUGHT TWICE, AND NEITHER HALF IS REDUNDANT — DO NOT DELETE EITHER. (a) AT COMPILE
+ *     TIME BY THIS LITERAL: the type is derived from the tuple, so growing the tuple moves
+ *     the type and `Record<PrivateRunAudience, true>` fails — TS2741 for ONE added member,
+ *     TS2739 only at two or more. The mirror edit (a witness key the tuple lacks) fails
+ *     instead as an excess property, TS2353. Codes measured against this repo's tsc 5.9.2.
+ *     (b) AT RUNTIME BY THE HARDCODED TUPLE LEDGER at
  *     `src/server/middleware/__tests__/block-scope.private-run-claims.test.ts`, which
- *     asserts `PRIVATE_RUN_AUDIENCES` equals the three members literally — so it fails on
- *     a tuple-only edit AND on a typecheck-clean tuple+witness widening, which is the one
- *     shape (a) cannot see.
+ *     asserts `PRIVATE_RUN_AUDIENCES` equals the three members literally.
  *
- *     ⚠️ TWO CORRECTIONS HERE, IN OPPOSITE DIRECTIONS, ONE ROUND APART — which is why the
- *     wording is now this careful. It first credited that runtime row as the catch for a
- *     direction the compiler already owns (over-crediting: reads as coverage, stops anyone
- *     looking). The fix then said "not by any test … no single-line mutation kills it",
- *     which UNDER-credits it and is false: measured, adding a fourth member to the tuple
- *     alone fails two rows in that file, and widening the tuple and the witness together —
- *     typecheck-clean, so invisible to (a) — still fails the literal equality row. Prose
- *     that under-credits a guard invites deleting it, so that was the same error inverted.
- *     The accurate claim: no *typecheck-clean* single-line mutation kills it, and it is the
- *     ONLY artifact that catches the two-line widening.
+ *     🔴 (b) IS THE ONLY THING THAT CATCHES A TUPLE **AND** WITNESS WIDENING — that edit is
+ *     typecheck-clean, so (a) is blind to it, and a widened tuple makes
+ *     `isPrivateRunAudience` admit a value the read-only belt's `=== 'editor'` then treats
+ *     as an owner. (b) also fails on a one-line tuple REORDER or a duplicate member, both
+ *     typecheck-clean and both behaviour-preserving, because `toEqual` on an array is
+ *     order-sensitive — so the guarantee is about WIDENING, not about mutations in general.
  *
  * 🔴 IT LIVES IN PRODUCTION CODE, NOT IN A TEST, AND THAT PLACEMENT IS THE POINT.
  * `tsconfig.json` EXCLUDES `src/**` `__tests__` directories, so a compile-time

@@ -625,12 +625,12 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
     expect(mockDb.appCollaborator.findFirst).toHaveBeenCalled();
     expect(mockWriteDb.appBlock.findFirst).not.toHaveBeenCalled();
 
-    // 🔴 THE GATE-3.5 EXCEPTION, AND THIS IS THE ONLY ROW IN THE REPO THAT CAN SEE IT.
-    // Every OTHER pool assertion on `user.findUnique` lives in a `db: 'write'` row, where
-    // `db === dbWrite` and swapping one for the other is a no-op — so the one-line mutation
-    // `dbWrite.user.findUnique` -> `db.user.findUnique` (verbatim the round-2 finding:
-    // "the authoritative viewer re-read was reading the replica") survived the entire
-    // suite. It is only observable on the READ path, and only here.
+    // 🔴 THE GATE-3.5 EXCEPTION, AND THIS IS THE ONLY ROW THAT CAN SEE IT. Every other
+    // assertion that could pin THIS read's pool sits in a `db: 'write'` row, where the
+    // caller's `db` handle IS `dbWrite`, so `dbWrite.user.findUnique` ->
+    // `db.user.findUnique` is a no-op there and survives. Only observable on the READ path.
+    // (`mockDb` and `mockWriteDb` are distinct objects — see this file's header; what
+    // coincides in a write row is the caller's pool with `dbWrite`, not the two mocks.)
     //
     // The narrower `select` is the discriminator, not the id: the OWNER-ban read
     // legitimately asks the caller's pool about a user with `{ bannedAt }`, and on an
@@ -646,19 +646,16 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
       select: { deletedAt: true, bannedAt: true },
     });
 
-    // 🔴 AND THE OWNER-BAN READ, POSITIVELY, BECAUSE THE DOCBLOCK ABOVE CLAIMS IT FOLLOWS
-    // THE CALLER'S POOL AND NOTHING WAS ASSERTING THAT. Added in round 4, which caught the
-    // omission as the same shape as round 3's finding one level down: the title and the
-    // docblock read wider than the assertions, in the describe that owns pool selection.
-    //
-    // The mutation this kills is `db.user.findUnique` -> `dbWrite.user.findUnique` at the
-    // owner-ban gate. It SURVIVED everything before this line — the `db: 'write'` row
-    // catches only the MIRROR direction (hardcoding the replica, via
-    // `expect(mockDb.user.findUnique).not.toHaveBeenCalled()`), because in that row the two
-    // pools are the same object. Consequence is mild — reading the primary is the SAFE
-    // direction, costing extra primary load rather than correctness — which is exactly why
-    // it needed pinning deliberately instead of being left to be noticed.
+    // 🔴 THE OWNER-BAN READ, AS A PAIR. The positive pins that it follows the caller's pool;
+    // the negative is what keeps the docblock's "every read EXCEPT ONE" true, because without
+    // it the exception ledger can grow from one to two with the suite green — add a second,
+    // `dbWrite`-pinned owner-ban read beside this one (the move gate 3.5 itself made, for the
+    // same "a ban changes the instant it lands" argument) and nothing goes red.
     expect(mockDb.user.findUnique).toHaveBeenCalledWith({
+      where: { id: OWNER },
+      select: { bannedAt: true },
+    });
+    expect(mockWriteDb.user.findUnique).not.toHaveBeenCalledWith({
       where: { id: OWNER },
       select: { bannedAt: true },
     });
