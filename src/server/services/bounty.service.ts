@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  Availability,
   BountyEntryMode,
   Currency,
   ImageIngestionStatus,
@@ -20,6 +21,11 @@ import {
 } from '~/server/services/buzz.service';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
+import {
+  hasOpenTextScanFlag,
+  readTextScanFlags,
+  withTextScanDecision,
+} from '~/server/services/text-scan/flag-snapshot';
 import {
   createEntityImages,
   updateEntityImages,
@@ -383,6 +389,7 @@ export const updateBountyById = async ({
           entryLimit: true,
           complete: true,
           poi: true,
+          meta: true,
           lockedProperties: true,
           _count: { select: { entries: true } },
         },
@@ -399,6 +406,13 @@ export const updateBountyById = async ({
         throw throwBadRequestError(
           'The creation of bounties intended to depict an actual person is prohibited.'
         );
+      // A moderator clearing a text-scan poi flag un-hides the bounty and records the ruling, so
+      // the expiry job pays out as normal and a rescan of the same text does not hide it again.
+      const liftedTextScanPoi =
+        isModerator &&
+        existing.poi &&
+        data.poi === false &&
+        hasOpenTextScanFlag(existing.meta, 'poi');
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)
@@ -424,6 +438,18 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
+          ...(liftedTextScanPoi && {
+            availability:
+              (readTextScanFlags(existing.meta).poi?.prev?.availability as
+                | Availability
+                | undefined) ?? Availability.Public,
+            meta: withTextScanDecision(existing.meta, 'poi', 'appealGranted', {
+              at: new Date().toISOString(),
+              by: userId,
+              textHash: readTextScanFlags(existing.meta).poi?.textHash ?? null,
+              via: 'moderator',
+            }) as Prisma.JsonObject,
+          }),
           entryLimit,
           startsAt,
           expiresAt,

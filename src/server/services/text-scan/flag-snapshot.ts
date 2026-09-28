@@ -88,6 +88,20 @@ export function buildTextScanFlagEntry({
   return entry;
 }
 
+export function withTextScanDecision(
+  meta: unknown,
+  label: TextScanFlagLabel,
+  key: 'appealGranted' | 'appealUpheld',
+  decision: TextScanFlagDecision
+): Record<string, unknown> {
+  const base = isRecord(meta) ? meta : {};
+  const flags = readTextScanFlags(meta);
+  return {
+    ...base,
+    [TEXT_SCAN_FLAGS_KEY]: { ...flags, [label]: { ...flags[label], [key]: decision } },
+  };
+}
+
 export function isModelFlagAppealable(model: { minor: boolean; poi: boolean; meta: unknown }) {
   const hasMinorSnapshot = isRecord(model.meta) && !!model.meta.minorFlagSnapshot;
   return (

@@ -62,13 +62,15 @@ function mockStored({
   lockedProperties = [] as string[],
   complete = false,
   poi = false,
-}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean } = {}) {
+  meta = null as unknown,
+}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
     entryLimit: null,
     complete,
     poi,
+    meta,
     lockedProperties,
     _count: { entries: 0 },
   });
@@ -323,5 +325,40 @@ describe('updateBountyById — poi', () => {
       poi: true,
     } as never);
     expect(updateData().poi).toBe(true);
+  });
+});
+
+describe('updateBountyById — a moderator clearing a text-scan poi flag', () => {
+  const flagged = {
+    textScanFlags: {
+      poi: {
+        at: 'x',
+        workflowId: 'wf-1',
+        reason: 'r',
+        textHash: 'h-flagged',
+        prev: { availability: 'Unsearchable' },
+      },
+    },
+  };
+  const moderatorEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, poi: false };
+
+  it('restores the pre-flag availability and records a moderator ruling on the flagged text', async () => {
+    mockStored({ poi: true, meta: flagged });
+    await updateBountyById(moderatorEdit as never);
+
+    const data = updateData();
+    expect(data.availability).toBe('Unsearchable');
+    expect(data.meta.textScanFlags.poi).toMatchObject({
+      workflowId: 'wf-1',
+      appealGranted: { by: MODERATOR_ID, textHash: 'h-flagged', via: 'moderator' },
+    });
+  });
+
+  it('touches neither availability nor meta for a poi the text scan did not set', async () => {
+    mockStored({ poi: true, meta: null });
+    await updateBountyById(moderatorEdit as never);
+    const data = updateData();
+    expect(data).not.toHaveProperty('availability');
+    expect(data).not.toHaveProperty('meta');
   });
 });

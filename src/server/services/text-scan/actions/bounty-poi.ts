@@ -4,9 +4,21 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { createNotification } from '~/server/services/notification.service';
-import { buildTextScanFlagEntry, TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
+import { resolveEntityAppeal } from '~/server/services/report.service';
+import {
+  loadTextScanTextHash,
+  queueTextScanRescan,
+} from '~/server/services/text-scan/actions/appeal-text-hash';
+import {
+  buildTextScanFlagEntry,
+  hasOpenTextScanFlag,
+  readTextScanFlags,
+  TEXT_SCAN_FLAGS_KEY,
+} from '~/server/services/text-scan/flag-snapshot';
 import type { PoiMinorResult } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
   return SearchIndexUpdate.queueUpdate({ indexName: BOUNTIES_SEARCH_INDEX, items: [{ id, action }] });
@@ -79,4 +91,72 @@ export async function applyBountyPoi({
     workflowId,
   }).catch(() => null);
   return { notified: notify };
+}
+
+export async function resolveBountyPoiAppeal({
+  bountyId,
+  uphold,
+  userId,
+}: {
+  bountyId: number;
+  uphold: boolean;
+  userId: number;
+}) {
+  const bounty = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: { poi: true, meta: true },
+  });
+  let rescanQueued = false;
+
+  if (uphold) {
+    if (!bounty?.poi || !hasOpenTextScanFlag(bounty.meta, 'poi'))
+      throw throwBadRequestError('This bounty is no longer flagged');
+    await dbWrite.$executeRaw`
+      UPDATE "Bounty" b
+      SET meta = jsonb_set(
+        b.meta,
+        ARRAY[${TEXT_SCAN_FLAGS_KEY}::text, 'poi', 'appealUpheld'],
+        jsonb_build_object('at', now(), 'by', ${userId}::int, 'via', 'appeal')
+      )
+      WHERE b.id = ${bountyId} AND b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
+    `;
+  } else {
+    const currentHash = await loadTextScanTextHash('Bounty', bountyId);
+    if (!currentHash)
+      throw throwBadRequestError(
+        "Could not read this bounty's text, so the grant cannot record what it covers. The appeal is still open."
+      );
+    const flaggedHash = readTextScanFlags(bounty?.meta)?.poi?.textHash;
+    rescanQueued = !!flaggedHash && flaggedHash !== currentHash;
+    const restored = await dbWrite.$executeRaw`
+      UPDATE "Bounty" b
+      SET poi = FALSE,
+          availability = COALESCE((b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability"),
+          "lockedProperties" = ARRAY(
+            SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['poi']::text[])
+          ),
+          meta = jsonb_set(
+            b.meta,
+            ARRAY[${TEXT_SCAN_FLAGS_KEY}::text, 'poi', 'appealGranted'],
+            jsonb_build_object(
+              'at', now(),
+              'by', ${userId}::int,
+              'textHash', COALESCE(b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->>'textHash', ${currentHash}::text),
+              'via', 'appeal'
+            )
+          )
+      WHERE b.id = ${bountyId} AND b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
+    `;
+    if (restored) await queueBountyIndex(bountyId, SearchIndexUpdateQueueAction.Update);
+  }
+
+  await resolveEntityAppeal({
+    ids: [bountyId],
+    entityType: EntityType.Bounty,
+    status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    userId,
+  });
+
+  if (rescanQueued) await queueTextScanRescan('Bounty', bountyId);
+  return { rescanQueued };
 }
