@@ -179,7 +179,7 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       expect(includesMinor('young pretty little girl')).toBeTruthy();
     });
 
-    it('includesMinor scales linearly on whitespace-and-newline runs (paragraph lookahead)', () => {
+    it('includesMinor scales linearly on whitespace-and-newline runs', () => {
       expectSubQuadraticScaling(
         'includesMinor newline+space run',
         (n) => 'young\n' + ' '.repeat(n),

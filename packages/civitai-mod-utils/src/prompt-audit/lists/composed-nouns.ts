@@ -8,13 +8,15 @@ import youngWords from './words-young.json';
  * O(n²) backtracking on a long Latin `\w` run, a user-triggerable main-thread DoS. Any
  * finite bound is linear, so the WIDTH is a recall decision alone, never a perf one.
  *
- * The word-run branch deliberately cannot cross a blank line: an adjective and a noun in
- * separate paragraphs describe separate subjects.
+ * 🔴 It crosses blank lines ON PURPOSE, pending the multi-signal scorer. A paragraph-aware
+ * variant — an adjective and a noun in separate paragraphs describing separate subjects —
+ * was written and held: on its own it is a pure recall LOSS on the minor-detection path,
+ * and the case for taking that loss depends on the score absorbing the signal instead.
+ * Do not re-land it as a standalone tidy-up.
  */
-export const composedNounGap =
-  '((?:[\\w|]|[^\\S\\n]|\\n(?![^\\S\\n]{0,200}\\n)){0,200}|[^\\w]{1,200})';
+export const composedNounGap = '([\\s|\\w]{0,200}|[^\\w]{1,200})';
 
-// Width and paragraph semantics are pinned by
+// The width is pinned by
 // src/utils/metadata/__tests__/audit-composed-noun-gap.test.ts.
 export const youngComposedNouns = youngWords.partialNouns.flatMap((word) =>
   youngWords.adjectives.map((adj) => adj + composedNounGap + word)
