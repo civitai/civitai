@@ -456,15 +456,29 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
  * widening admits this route in the same move. So the scope is stripped here, at the
  * mint, which is the belt the widening requires.
  *
- * ⚠️ IT IS ALREADY ABSENT FROM `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, AND THAT IS NOT A
- * REASON TO DROP THIS STRIP. The private-run clamp composes the tunnel belt, so today
- * the strip is redundant — and a redundant guard that is the ONLY thing standing
- * between a delisted app and irreversible Buzz is the one to keep, because the
- * property it protects is not stated anywhere in the tunnel allowlist. Adding
- * `social:tip:self` to that allowlist for a dev-tunnel reason would otherwise silently
- * hand tipping to every private run, on apps the platform has taken down. The
- * redundancy is pinned by a test that asserts the strip survives even when the inner
- * clamp is mutated to pass the scope through.
+ * ⚠️ IT IS ALREADY ABSENT FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`, AND THAT IS
+ * NOT A REASON TO DROP THIS STRIP. The private-run clamp draws its ceiling from the
+ * REVIEW set, so today the strip is a no-op — and a no-op guard that would be the ONLY
+ * thing standing between a delisted app and irreversible Buzz is the one to keep,
+ * because the property it protects is not stated anywhere in that allowlist. Adding
+ * `social:tip:self` to the REVIEW set for a review-sandbox reason is what would
+ * otherwise silently hand tipping to every private run, on apps the platform has taken
+ * down. That is the file to be careful in.
+ *
+ * 🔴 TWO CORRECTIONS HERE, BOTH CAUGHT IN REVIEW, AND THE FIRST ONE POINTED AT THE WRONG
+ * FILE. This paragraph named `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST` — true of the FIRST cut,
+ * when the clamp composed the tunnel belt, and false since round 1 moved it onto the
+ * reviewed non-owner ceiling. Adding the tip scope to the tunnel allowlist now reaches
+ * private-run by nothing at all, so the warning was directing a future editor's caution
+ * at the one file where it no longer matters.
+ *
+ * 🔴 AND IT CLAIMED A TEST THAT CANNOT EXIST: "pinned by a test that asserts the strip
+ * survives even when the inner clamp is mutated to pass the scope through". No test mocks
+ * or mutates `clampDevScopes`, and `private-run-scope-clamp.test.ts` says so in its own
+ * words — deleting this filter leaves that whole file green, because the allowlist step
+ * already drops the scope. What pins the strip is a SOURCE-TEXT ledger in that file, not a
+ * behavioural assertion. That is the honest claim, and it is the dangerous direction to get
+ * wrong: a reader told the strip is behaviourally covered has no reason to look.
  *
  * 🔴 `goods:purchase:self` is deliberately NOT listed: the sibling owner-crediting
  * rail is already closed on its own terms (it requires an approved block), so listing

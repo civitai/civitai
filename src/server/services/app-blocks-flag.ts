@@ -625,6 +625,34 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      user_id)`. There is no marker on those rows to filter on, so closing this
  *      half needs a migration.
  *
+ * ────────────────────────────────────────────────────────────────────────────────
+ * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:
+ * A REVIEWER'S OWN CONSUMER-SIDE SCOPE REVOCATION SILENTLY NARROWS THEIR PRIVATE RUN.
+ *
+ * Per-scope consent revocation landed while this surface was being built. Its
+ * `shouldConsultMarker` keys on `{ userId, scopes }` alone — it cannot tell a private-run
+ * review token from an ordinary install token — and a private-run token has a self-bound
+ * subject and carries non-exempt scopes, so the marker IS consulted, keyed on the
+ * REVIEWER's id and the app's real id. The rows it reads are therefore whatever that
+ * person expressed as an ordinary CONSUMER of that app, at some earlier point, on a
+ * surface that has nothing to do with review.
+ *
+ * It is SAFE — every arm narrows or refuses and none can grant — which is why it was
+ * allowed to stand rather than exempted. What is NOT settled is what the reviewer sees: a
+ * moderator who once withdrew the spend scope on this app gets a read-only private run and
+ * nothing on screen says why, and the audience for this surface is exactly the population
+ * that files bugs about that. Deciding whether the chrome should say so is a call for
+ * whoever widens this flag. Exempting private-run tokens from the marker is the WRONG fix —
+ * it makes a review surface ignore a withdrawal the viewer expressed.
+ *
+ * Pinned behaviourally in
+ * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
+ * (five rows, mutation-verified). ⚠️ Until now it was recorded ONLY in that test's
+ * docblock, while the commit that introduced it claimed it was "recorded at the flag
+ * accessor as a flip precondition" — which was false, and false in the way the paragraph
+ * below exists to prevent: a `__tests__` docblock is further from the person opening Flipt
+ * than either of the two places that paragraph already rules out.
+ *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is
  * read by the person who opens Flipt, in a different repository, to widen a flag. The

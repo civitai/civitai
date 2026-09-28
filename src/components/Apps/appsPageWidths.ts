@@ -434,14 +434,15 @@ export const APPS_FULL_MEASURE_PAGES = [
 
 /**
  * Routes that deliberately have NO `AppsPageLayout` container: they host a
- * full-viewport iframe (the block runtime / the moderator's live preview) or a
- * full-bleed dev shell. Wrapping these in the apps container would letterbox the
- * app being run/reviewed AND put a second chrome band over a third-party app.
+ * full-viewport iframe (the public block runtime, the PRIVATE run of a delisted app, or
+ * the moderator's live preview) or a full-bleed dev shell. Wrapping these in the apps
+ * container would letterbox the app being run/reviewed AND put a second chrome band over
+ * a third-party app.
  *
  * 🔴 "NO CONTAINER" IS ALSO "NO WIDTH BOUND" AGAIN — AND THE INTERVENING CLAIM IS
  * RETRACTED RATHER THAN DELETED, BECAUSE IT WAS TRUE WHILE IT STOOD. This comment
  * first asserted no width bound; it was then corrected to say the opposite, because
- * all three of these routes mount `PageBlockHost` and the host capped ITSELF at
+ * all four of these routes mount `PageBlockHost` and the host capped ITSELF at
  * `--app-page-max-width` (then `1600px`) and centred the app past that. That whole
  * mechanism is GONE — the constant, the custom property, the `var()` read, the auto
  * margins and the per-app CSS ledger that could re-cap one app — so a run page really

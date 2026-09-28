@@ -160,6 +160,20 @@ const SCENARIOS: Scenario[] = [
     viewer: { id: STRANGER, bannedAt: new Date('2026-01-01') },
     expectAllowed: false,
   },
+  {
+    // 🔴 THE ROW THAT EXERCISES THE `!= null` CONTROL. `bannedAt: null` is the shape
+    // Prisma returns for an unbanned user and an entirely natural `SessionUser`, and
+    // production tests TRUTHINESS, so this viewer REACHES the resolve. Under the old
+    // `!== undefined` control it was classified as refused-by-a-free-gate and this row
+    // FAILED on the `else` branch's "neither pool was touched" assertion — a false
+    // failure pointing at the code rather than at the control. Owner audience so the row
+    // is allowed and both pools are genuinely exercised: it is among the rows that kill
+    // the mutant pinning the block resolve to one pool (`{ db: pool }` -> `{ db: 'read' }`),
+    // which fails here with the control's own "the mint call must read the PRIMARY".
+    name: 'owner whose session carries an explicit bannedAt: null',
+    viewer: { id: OWNER, bannedAt: null, deletedAt: null },
+    expectAllowed: true,
+  },
   { name: 'flag off', viewer: { id: OWNER }, flag: false, expectAllowed: false },
   { name: 'no such app', viewer: { id: OWNER }, block: null, expectAllowed: false },
   {
@@ -285,8 +299,25 @@ describe('SSR and the mint cannot disagree [REG]', () => {
       const refusedByAFreeGate =
         (s.flag ?? true) === false ||
         sessionViewer == null ||
-        sessionViewer.bannedAt !== undefined ||
-        sessionViewer.deletedAt !== undefined;
+        // 🔴 `!= null`, NOT `!== undefined`, because production tests TRUTHINESS
+        // (`viewer.bannedAt || viewer.deletedAt`). A `bannedAt: null` fixture — the shape
+        // Prisma returns for an unbanned user, and an entirely natural `SessionUser` —
+        // REACHES the resolve in production, while `!== undefined` classified it as
+        // refused-by-a-free-gate.
+        //
+        // ⚠️ WHAT THAT MISCLASSIFICATION ACTUALLY DID, MEASURED RATHER THAN ASSUMED — and
+        // the first version of this comment got it wrong in the direction that flatters the
+        // fix. It does NOT silently skip the pool assertions: the `else` branch below
+        // asserts NEITHER pool was touched, so a misclassified row FAILS, loudly, with
+        // "expected vi.fn() to not be called at all, but actually been called 1 times".
+        // Verified by reverting this line and running the row added for it. So the defect
+        // was a FALSE FAILURE waiting for someone to write a natural fixture, not a hole —
+        // still worth fixing, because a control that misclassifies blocks legitimate rows
+        // and misattributes the failure to the code under test, but not a coverage gap.
+        // Stated precisely because "it would have silently skipped" is exactly the kind of
+        // claim this file exists to stop shipping.
+        sessionViewer.bannedAt != null ||
+        sessionViewer.deletedAt != null;
       const reachesTheResolve = !refusedByAFreeGate;
       if (reachesTheResolve) {
         expect(mockDb.appBlock.findFirst, 'the SSR call must read the REPLICA').toHaveBeenCalled();

@@ -392,7 +392,9 @@ describe('SEAM: through the REAL primitive', () => {
  * and nothing on screen says why. That is a product decision for whoever flips the flag, NOT a
  * defect to fix here — the alternative (exempting private-run tokens from the marker) means a
  * review surface deliberately ignoring a withdrawal the viewer expressed, which is strictly
- * worse than an unexplained narrowing. Recorded at the flag accessor as a flip precondition.
+ * worse than an unexplained narrowing. Recorded as a flip precondition in
+ * `src/server/services/app-blocks-flag.ts` — which was NOT true when this sentence was
+ * first written (it lived only here, in a test docblock) and is true now.
  *
  * ## Why these are [INV], not [REG]
  *

@@ -297,14 +297,20 @@ export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
  * says it is guarding against; the verifier guard closes the FORGED case, and importing
  * this type is what closes the WIDENED one.
  *
- * ⚠️ It is NOT derived from the tuple above directly. It is `AppRole | 'moderator'`,
- * because two of the three members ARE the roles `resolveAppAccess` returns, and saying
- * so is what makes the bridge in the predicate an assignment rather than a ternary that
- * rewrites a value into itself. A future third `AppRole` then becomes a COMPILE ERROR at
- * that bridge instead of being silently collapsed into `'editor'` — which would
- * under-grant (safe) while mislabelling the audit line and the chrome copy (not safe to
- * leave unnoticed). `PRIVATE_RUN_AUDIENCES` stays the runtime membership source, and the
- * lockstep test below pins the two against each other so they cannot drift.
+ * It IS derived from the tuple above — see the next docblock for why that beat the
+ * alternative. The property the predicate's audience bridge depends on is not the spelling
+ * of this line but `AppRole` being a SUBSET of it, which `_appRoleSubsetWitness` asserts at
+ * compile time; a future third `AppRole` is a COMPILE ERROR there rather than being
+ * silently collapsed into `'editor'` — a collapse that would under-grant (safe) while
+ * mislabelling the audit line and the chrome copy (not safe to leave unnoticed).
+ *
+ * ⚠️ THIS PARAGRAPH USED TO SAY "It is NOT derived from the tuple above directly. It is
+ * `AppRole | 'moderator'`". That declaration was tried and REVERTED in the round-2 fixes,
+ * for the reasons argued below — but the paragraph describing it survived, one line above
+ * the code contradicting it, so a reader met two adjacent docblocks giving opposite
+ * accounts of the same type. Worth naming rather than quietly deleting: the retraction is
+ * the interesting half, and a docblock that describes a reverted design is indistinguishable
+ * from one that is merely out of date.
  */
 export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
 
@@ -349,8 +355,17 @@ const _appRoleSubsetWitness: _AppRoleIsAPrivateRunAudience = true;
  *   - The TUPLE grows without the type: `isPrivateRunAudience` starts ADMITTING a value
  *     the type says cannot exist, which is the unsafe direction — the verifier lets it
  *     through and the read-only belt's `=== 'editor'` silently treats it as an owner.
- *     Caught by the runtime assertion in `block-scope.private-run-claims.test.ts`, which
- *     compares the tuple against these keys.
+ *     🔴 CAUGHT AT COMPILE TIME BY THIS LITERAL, not by any test: because the type is
+ *     derived from the tuple, growing the tuple moves the type, and `Record<
+ *     PrivateRunAudience, true>` then fails on the missing key (TS2739) — or on an extra
+ *     witness key as an excess property (TS2353). ⚠️ This bullet used to credit the
+ *     runtime row in `block-scope.private-run-claims.test.ts`, which CANNOT fail on any
+ *     tree that typechecks and which no single-line mutation kills. That row is still
+ *     worth keeping, but for a different and narrower job: it is the guard against the
+ *     type being RE-DECOUPLED from the tuple, which is what round 2 had to undo. It is
+ *     non-vacuous only under a two-part mutation, and describing it as the catch for a
+ *     direction the compiler already owns was the more expensive kind of wrong — it
+ *     reads as coverage and stops anyone looking.
  *
  * 🔴 IT LIVES IN PRODUCTION CODE, NOT IN A TEST, AND THAT PLACEMENT IS THE POINT.
  * `tsconfig.json` EXCLUDES `src/**` `__tests__` directories, so a compile-time

@@ -211,11 +211,28 @@ export interface BlockTokenClaims {
 /**
  * THE per-call Buzz ceiling a submit gate compares against.
  *
- * ── WHAT IT DOES TODAY: NOTHING A CALLER COULD NOT DO INLINE ────────────────
- * It returns `claims.buzzBudget`, or 0 when no budget was minted. BOTH values of
- * `pricesAuthorFee` return that same number. Routing the four submit gates
- * through it is a no-op on behaviour, and that is the entire intent: it
- * consolidates four copies of one comparison without altering any of them.
+ * ── 🔴 IT IS A MONEY GATE. DO NOT INLINE `claims.buzzBudget` IN ITS PLACE. ───
+ * This section used to say "NOTHING A CALLER COULD NOT DO INLINE … a no-op on
+ * behaviour", and that was TRUE UNTIL THE PRIVATE-RUN SURFACE LANDED and is now
+ * FALSE. The body returns **0 for `privateRunAudience === 'editor'` even when a
+ * budget WAS minted** — that is the one place an accepted collaborator's
+ * read-only private run is enforced on the spend path. So it no longer returns
+ * `claims.buzzBudget`, and routing a gate through it is no longer behaviour-
+ * neutral.
+ *
+ * ⚠️ WHY THE STALE WORDING WAS WORSE THAN A MISSING COMMENT, AND HOW IT SURVIVED:
+ * it is the FIRST thing a reader meets, and it told them the helper was a pure
+ * consolidation. A fifth submit gate written on that understanding open-codes
+ * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
+ * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
+ * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
+ * the belt was added inside a file that ALSO moved on `main`: the paragraph is
+ * still verbatim upstream, where it is correct, so a clean `git merge` could not
+ * see the contradiction. Semantic conflict, zero textual conflict.
+ *
+ * Still true, and still the reason the helper exists: `pricesAuthorFee` does not
+ * change the number for a non-editor, and the four gates were four copies of one
+ * comparison.
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The four gates spell the same comparison and are NOT interchangeable. Two of

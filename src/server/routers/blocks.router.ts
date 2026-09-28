@@ -6501,9 +6501,11 @@ export const blocksRouter = router({
       const quotedGenerationBuzz = whatIfResult.cost?.total ?? 0;
       const cost = quotedGenerationBuzz + reservedAuthorFeeBuzz;
       // `pricesAuthorFee: true` — `cost` carries the author fee (line above).
-      // The helper returns `claims.buzzBudget` either way, so this comparison is
-      // unchanged; the flag classifies the gate, it does not price it. See
-      // `blockPerCallBudget`.
+      // The flag classifies the gate, it does not price it: the helper returns the
+      // SAME number for both of its values, so this comparison is unchanged by it.
+      // 🔴 That is a statement about the FLAG only — the helper is NOT a pass-through
+      // for `claims.buzzBudget`; it returns 0 for an editor's private run whatever was
+      // minted. Do not inline the claim. See `blockPerCallBudget`.
       const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
       if (cost > perCallBudget) {
         return {
@@ -9049,9 +9051,10 @@ async function submitCustomComfyWorkflow(opts: {
   // Deterministic, no orchestrator round-trip.
   // 🔴 `pricesAuthorFee: false` — THIS PATH CHARGES NO AUTHOR FEE (no pre-submit
   // `cost.base` to price one from), so `ceiling` is a raw generation price. The
-  // helper returns `claims.buzzBudget` either way, so this comparison is
-  // unchanged; the flag records that a raised ceiling must never reach here. See
-  // `blockPerCallBudget`.
+  // helper returns the SAME number for both values of the flag, so this comparison
+  // is unchanged by it; the flag records that a raised ceiling must never reach
+  // here. 🔴 It is NOT a pass-through for `claims.buzzBudget` — it returns 0 for an
+  // editor's private run whatever was minted. See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
   if (ceiling > perCallBudget) {
     return {
@@ -10333,7 +10336,9 @@ async function submitStepWorkflow(opts: {
   // (1) Pre-submit gate against the token's per-call budget — now enforced
   // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
   // `pricesAuthorFee: true` — `reserveBuzz` carries the author fee (line above).
-  // Classification only; the helper returns `claims.buzzBudget` either way.
+  // Classification only; the helper returns the same number for both values of the
+  // flag. 🔴 It is NOT a pass-through for `claims.buzzBudget` — it returns 0 for an
+  // editor's private run. See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
   if (reserveBuzz > perCallBudget) {
     return {
@@ -11164,7 +11169,9 @@ async function submitPassThroughStepWorkflow(opts: {
   // reserves below and what the terminal settle bills against. That is why the
   // classification matters even though it changes nothing today — a ceiling
   // raised above what the app declared would be BILLED here, not just compared.
-  // The helper returns `claims.buzzBudget` either way. See `blockPerCallBudget`.
+  // The helper returns the same number for both values of the flag. 🔴 It is NOT a
+  // pass-through for `claims.buzzBudget` — it returns 0 for an editor's private run.
+  // See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
   if (ceiling > perCallBudget) {
     return {

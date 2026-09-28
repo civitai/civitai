@@ -80,7 +80,17 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  */
 
 /**
- * Every refusal this predicate can produce, ORDERED exactly as it evaluates them.
+ * Every refusal this predicate can produce, ordered as it FIRST evaluates them.
+ *
+ * ⚠️ NOT "exactly as it evaluates them", which is what this line used to claim and is not
+ * true of one member: `viewer-ineligible` is produced at TWO positions — the free session
+ * check at gate (2) and the authoritative primary re-read at gate (3.5), which sits AFTER
+ * the block resolve. So a soft-deleted viewer whose session does not yet carry `deletedAt`,
+ * probing a slug that does not exist, gets `no-app` rather than `viewer-ineligible`. That
+ * is the intended ordering (an enumerable probe must not pay for the primary read), but it
+ * means this tuple is an ORDERING OF REASONS, not a trace of evaluation. Nothing consumes
+ * the order today — the mint test only filters the tuple for completeness — and that is
+ * the only reason the stale wording was harmless rather than a bug generator.
  *
  * 🔴 A RUNTIME TUPLE, WITH THE TYPE DERIVED FROM IT — not a type with a hand-copied list
  * beside it. Types are erased, so a test that enumerates these reasons against a
@@ -125,13 +135,13 @@ export type PrivateRunAccess =
  *  2. `viewer-ineligible` (SESSION) — anonymous, or a session that already says banned
  *     or soft-deleted. FREE, and before the app read so a signed-out prober cannot
  *     consume a query per slug.
- *  3.5 `viewer-ineligible` (AUTHORITATIVE) — the same reason, re-checked against the
- *     PRIMARY because the session is not authoritative for `deletedAt`. Deliberately
- *     AFTER the block resolve so an enumerable `no-app` probe does not pay for it.
  *  3. `no-app` / `approved` / `not-a-page` — the block resolve (one query).
  *     `approved` is tested BEFORE the role resolve so the approved case costs no
  *     second query, and because the public path owns it unconditionally: no role can
  *     make an approved app a private-run case.
+ *  3.5 `viewer-ineligible` (AUTHORITATIVE) — the same reason, re-checked against the
+ *     PRIMARY because the session is not authoritative for `deletedAt`. Deliberately
+ *     AFTER the block resolve so an enumerable `no-app` probe does not pay for it.
  *  4. `no-role` — the shared role resolve. A moderator short-circuits it (the
  *     server-stamped session flag), so a mod who is neither owner nor collaborator
  *     still gets in — the audience the whole feature exists for.
@@ -303,8 +313,12 @@ export async function resolvePrivateRunAccess(args: {
     // 🔴 AN ASSIGNMENT, NOT A TERNARY, AND THE CHANGE IS A GUARD RATHER THAN A TIDY-UP.
     // This used to read `access.role === 'owner' ? 'owner' : 'editor'`, which rewrote a
     // value into itself: a non-null `AppAccess['role']` is exactly
-    // `AppRole = 'owner' | 'editor'`. Because `PrivateRunAudience` is now declared as
-    // `AppRole | 'moderator'`, this line type-checks as a direct assignment — and a
+    // `AppRole = 'owner' | 'editor'`. Because `AppRole` is a SUBSET of
+    // `PrivateRunAudience` — asserted at compile time by `_appRoleSubsetWitness`, not by
+    // how the union happens to be spelled — this line type-checks as a direct
+    // assignment. (This comment used to say the type "is now declared as
+    // `AppRole | 'moderator'`"; that declaration was reverted in the round-2 fixes and
+    // the subset witness is what actually carries the property.) And a
     // future THIRD `AppRole` becomes a COMPILE ERROR here instead of being silently
     // collapsed into `'editor'`. That collapse would have been safe on power (editor is
     // the read-only audience) and wrong on truth: it would mislabel the mint's audit

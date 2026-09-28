@@ -107,8 +107,15 @@ export type BlockHostSurface =
  * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
  * assumed, because the ternary this replaced gave every non-private surface
  * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
- * production: its three production mounts are the public run route, the private run
- * route and `/apps/dev/<blockId>`. The model slot is `IframeHost`, a SEPARATE component
+ * production: its FOUR production mounts are the public run route (`page-run`), the
+ * private run route (`private-run`), `/apps/dev/<blockId>` (`dev-tunnel`) and
+ * `~/components/Apps/ReviewBlockPreviewHost` (`review-preview`) — the moderator's live
+ * preview, which the paragraph above names and which this enumeration used to omit.
+ * ⚠️ That omission mattered in the direction that weakens the argument: this list IS the
+ * evidence for the no-behaviour-change claim, and `review-preview` is one of the surfaces
+ * whose base is now LOOKED UP rather than defaulted. It maps to `/apps/run`, which is
+ * exactly what the ternary it replaced produced — so the claim holds, but it now rests on
+ * a complete enumeration rather than one missing its only non-obvious member. The model slot is `IframeHost`, a SEPARATE component
  * with its own message handlers, which uses the string only to call
  * `blockInitFragmentEnabled` directly. So this entry is unreachable today, and `null` is
  * the honest value — a model slot has no page route to deep-link into, so inheriting the

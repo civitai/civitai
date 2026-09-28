@@ -907,8 +907,12 @@ async function tryPrivateRunMint(args: {
   // either direction; the whole mint reads the primary for this reason.
   //
   // 🔴 SOFT-DELETE / BAN ARE RE-READ FROM THE PRIMARY *INSIDE* THE PREDICATE, and this
-  // branch therefore performs NO copy of its own — see the note where PHASE 2's copy
-  // used to be, below. (This comment said the re-read was "kept here too, below" for one
+  // branch therefore performs NO copy of its own — see the note where THIS BRANCH's copy
+  // used to be, below. (It said "PHASE 2's copy" for one commit, which was wrong twice
+  // over: PHASE 2's copies were never removed and are ABOVE, not below —
+  // `tryDevTunnelScopedMint` and `tryDevTunnelOwnedNonApprovedMint` each still hold one.
+  // A reader following that pointer for PHASE 2's check landed on a note saying it had
+  // been deleted.) (This comment said the re-read was "kept here too, below" for one
   // commit after the read had moved; two comments in one function then gave opposite
   // instructions, and the stale one was the first a reader hit while looking for the
   // check. Corrected rather than deleted, because the property it describes — a session

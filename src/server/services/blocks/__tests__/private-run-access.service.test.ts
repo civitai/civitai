@@ -578,11 +578,19 @@ describe('resolvePrivateRunAccess — guard REACHABILITY [INV]', () => {
 
 describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]', () => {
   /**
-   * 🔴 ONE VALUE MUST SELECT THE POOL FOR ALL THREE READS. The block resolve, the role
-   * resolve and the ban read are three separate queries, and a `db` threaded into one
-   * but not the others is the shape where a mint "reads the primary" while its role
-   * check silently reads the replica — which is a 403 on a collaborator's first private
-   * run after a seat write, and unreproducible.
+   * 🔴 ONE VALUE SELECTS THE POOL FOR EVERY READ **EXCEPT ONE**, AND THE EXCEPTION IS
+   * DELIBERATE. The block resolve, the role resolve and the owner-ban read all follow the
+   * caller's `db`, and a `db` threaded into one but not the others is the shape where a
+   * mint "reads the primary" while its role check silently reads the replica — a 403 on a
+   * collaborator's first private run after a seat write, and unreproducible.
+   *
+   * ⚠️ THE HEADING HERE USED TO SAY "ALL THREE READS" AND THAT WAS WRONG IN THE DIRECTION
+   * THAT HID A GAP. There are FOUR reads, and the authoritative viewer re-read (gate 3.5)
+   * goes to `dbWrite` UNCONDITIONALLY — it opts out of the caller's pool on purpose,
+   * because a soft-delete or ban that landed moments ago is exactly the case it exists to
+   * catch and the replica can lag it. Round 2 found that read pointed at the replica; this
+   * describe claimed to own pool selection and could not have caught it, because its only
+   * `db: 'read'` row asserted nothing about `user.findUnique` on either pool.
    */
   it("db: 'write' sends EVERY read to the primary and NONE to the replica", async () => {
     wire({ seatFor: EDITOR });
@@ -605,7 +613,7 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
     expect(mockDb.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it("db: 'read' (the SSR default) sends every read to the REPLICA", async () => {
+  it("db: 'read' (the SSR default) sends every read to the REPLICA except the authoritative viewer re-read", async () => {
     wire({ seatFor: EDITOR });
     const res = await resolvePrivateRunAccess({
       by: { appBlockId: APP_BLOCK },
@@ -616,6 +624,27 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
     expect(mockDb.appBlock.findFirst).toHaveBeenCalled();
     expect(mockDb.appCollaborator.findFirst).toHaveBeenCalled();
     expect(mockWriteDb.appBlock.findFirst).not.toHaveBeenCalled();
+
+    // 🔴 THE GATE-3.5 EXCEPTION, AND THIS IS THE ONLY ROW IN THE REPO THAT CAN SEE IT.
+    // Every OTHER pool assertion on `user.findUnique` lives in a `db: 'write'` row, where
+    // `db === dbWrite` and swapping one for the other is a no-op — so the one-line mutation
+    // `dbWrite.user.findUnique` -> `db.user.findUnique` (verbatim the round-2 finding:
+    // "the authoritative viewer re-read was reading the replica") survived the entire
+    // suite. It is only observable on the READ path, and only here.
+    //
+    // The narrower `select` is the discriminator, not the id: the OWNER-ban read
+    // legitimately asks the caller's pool about a user with `{ bannedAt }`, and on an
+    // owner-audience row it asks about the viewer's own id. `{ deletedAt, bannedAt }` is
+    // the viewer re-read's own shape — the same technique the owner-ban row above uses in
+    // the opposite direction.
+    expect(mockWriteDb.user.findUnique).toHaveBeenCalledWith({
+      where: { id: EDITOR },
+      select: { deletedAt: true, bannedAt: true },
+    });
+    expect(mockDb.user.findUnique).not.toHaveBeenCalledWith({
+      where: { id: EDITOR },
+      select: { deletedAt: true, bannedAt: true },
+    });
   });
 });
 

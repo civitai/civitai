@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Module scope, not a test body: from a body this transform is charged to one test's
 // 60s budget. See vitest.config.mts.
 import '~/pages/apps/private-run/[slug]/[[...path]]';
+// Type-only namespace import: an inline `typeof import('…')` is an ERROR under
+// @typescript-eslint/consistent-type-imports, and this file is an ADDED file, where that
+// gate BLOCKS. Erased at compile time, so it does not load the module mocked below.
+import type * as PrivateRunAccessModule from '~/server/services/blocks/private-run-access.service';
 
 /**
  * THE PRIVATE-RUN SSR ROUTE — `/apps/private-run/<slug>`.
@@ -48,7 +52,13 @@ const { mockResolvePrivateRunAccess, mockFlag } = vi.hoisted(() => ({
   mockResolvePrivateRunAccess: vi.fn<(...a: any[]) => Promise<any>>(),
   mockFlag: vi.fn<(...a: any[]) => Promise<boolean>>(async () => true),
 }));
-vi.mock('~/server/services/blocks/private-run-access.service', () => ({
+// Partial, not wholesale — the SECOND instance of a hazard round 2 fixed once. A one-key
+// factory makes every OTHER export of the module `undefined` at import time, so the day this
+// file (or the route it imports) reads `PRIVATE_RUN_REFUSAL_REASONS`, a loop over it iterates
+// nothing and the assertion passes having compared zero cases. Safe today — the route imports
+// only `resolvePrivateRunAccess` — but "safe today" is what the mint test's factory was too.
+vi.mock('~/server/services/blocks/private-run-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrivateRunAccessModule>()),
   resolvePrivateRunAccess: mockResolvePrivateRunAccess,
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
