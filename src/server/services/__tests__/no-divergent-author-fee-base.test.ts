@@ -1446,18 +1446,31 @@ describe('this file filters by depth wherever it matters', () => {
     const helperRe = new RegExp(HELPER_SRC);
     const includesRe = new RegExp(INCLUDES_SRC);
 
-    // must MATCH — these are the shapes the scan exists to find
-    expect(offenderRe.test('expect(site).toContain(')).toBe(true);
-    expect(offenderRe.test('expect(site).toMatch(')).toBe(true);
-    expect(offenderRe.test('expect(site).toEqual(')).toBe(true);
-    expect(helperRe.test('containsExpression(site, x)')).toBe(true);
-    expect(includesRe.test('expect(site.includes(x))')).toBe(true);
+    // 🔴 FULL, REALISTIC LINES — NOT MINIMAL PREFIXES, AND THE DIFFERENCE IS THE WHOLE
+    // VALUE OF THIS CONTROL. An earlier version fed prefixes ending exactly at the `(` each
+    // pattern ends on (`'expect(site).toContain('`). That blinds it to any mutation which
+    // only fails on LONGER input: appending `$` to `OFFENDER_SRC` — one character — kept
+    // every synthetic assertion green while matching nothing in the real file, and the suite
+    // reported 37/37 with TWO un-routed assertions and a real nested router field present.
+    // Both `$` and `^` were measured that way. The oracle must be at least as demanding as
+    // the scan's actual input, so these are shaped like this file's real lines.
+    expect(offenderRe.test(`    for (const site of charges) expect(site).toContain('x');`)).toBe(
+      true
+    );
+    expect(offenderRe.test(`      expect(site).toMatch(/reservedAuthorFeeBuzz,/);`)).toBe(true);
+    expect(offenderRe.test(`      expect(site).toEqual(['a']);`)).toBe(true);
+    expect(helperRe.test(`        containsExpression(site, ledgered.baseExpr),`)).toBe(true);
+    expect(includesRe.test(`      expect(site.includes('workflowId')).toBe(true);`)).toBe(true);
 
     // must NOT match — negatives are exempt by construction, and the routed form is correct
-    expect(offenderRe.test('expect(site).not.toContain(')).toBe(false);
-    expect(offenderRe.test('expect(site).not.toMatch(')).toBe(false);
-    expect(offenderRe.test('expect(ownProps(site)).toContain(')).toBe(false);
-    expect(helperRe.test('containsExpression(ownProps(site), x)')).toBe(false);
+    expect(offenderRe.test(`      expect(site).not.toContain('snapshot');`)).toBe(false);
+    expect(offenderRe.test(`      expect(site).not.toMatch(/buzzType:/);`)).toBe(false);
+    expect(offenderRe.test(`      expect(ownProps(site)).toContain('baseGenerationBuzz:');`)).toBe(
+      false
+    );
+    expect(helperRe.test(`        containsExpression(ownProps(site), ledgered.capExpr),`)).toBe(
+      false
+    );
   });
 
   it('🔴 every slice loop binds the name the scan keys on', () => {
@@ -1475,12 +1488,29 @@ describe('this file filters by depth wherever it matters', () => {
     // Positive control: the loop pattern must actually find this file's loops.
     expect(
       loops.length,
-      'the loop scan found nothing — the pattern is wrong'
-    ).toBeGreaterThanOrEqual(10);
+      'the loop scan found fewer loops than this file has — the pattern is wrong, or a loop ' +
+        'was written in a shape it does not recognise'
+      // 🔴 THE REAL COUNT, NOT A LOOSE FLOOR. At `>= 10` against the true 11, one loop could
+      // be rewritten into a shape the pattern misses and this control still passed. Bump it
+      // deliberately when you add a loop; a floor that tolerates silent shrinkage is not a
+      // control.
+      //
+      // 11 is DERIVED, and the derivation is worth keeping because a naive grep gives 13:
+      // one of those hits is inside the `ownProps` docblock (prose, and `SELF` has comments
+      // blanked) and one is inside this guard's own realistic control literal (excluded with
+      // the rest of this block by the sentinel). Both exclusions are correct; the number
+      // only looks wrong if you count with a tool that has neither.
+    ).toBeGreaterThanOrEqual(11);
     const wrong = loops
-      .map((m) => ({ bound: m[1], line: SELF.slice(0, m.index).split('\n').length }))
-      // A destructured binding is fine as long as it destructures `site` out.
-      .filter(({ bound }) => (bound.startsWith('{') ? !/\bsite\b/.test(bound) : bound !== 'site'))
+      // `for…of` captures the binding in group 1, `.forEach` in group 2.
+      .map((m) => ({
+        bound: m[1] ?? m[2],
+        line: SELF.slice(0, m.index).split('\n').length,
+      }))
+      // An object OR array pattern is fine as long as it destructures `site` out.
+      .filter(({ bound }) =>
+        bound.startsWith('{') || bound.startsWith('[') ? !/\bsite\b/.test(bound) : bound !== 'site'
+      )
       .map(({ bound, line }) => `${line}: binds \`${bound}\`, not \`site\``);
     expect(
       wrong,
@@ -1504,7 +1534,10 @@ describe('this file filters by depth wherever it matters', () => {
     // magic number that needs bumping is not a property.)
     const tail = blankComments(FULL.slice(cut));
     expect(
-      [...tail.matchAll(/^describe\(/gm)].length,
+      // `/^\s*describe[.(]/` rather than `/^describe\(/`: the stricter form missed an
+      // INDENTED describe and a `describe.each(...)` below the sentinel, both of which a
+      // review round showed pass while carrying a raw positive assertion.
+      [...tail.matchAll(/^\s*describe[.(]/gm)].length,
       'a describe below this block would be excluded from the raw-slice scan. Move it ABOVE.'
     ).toBe(1);
   });
