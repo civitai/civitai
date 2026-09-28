@@ -3931,11 +3931,14 @@ export const queueModelEarlyAccessReindex = async ({ id }: GetByIdInput) => {
  * as a follow-up; the current fan-out side-effect is acceptable for Phase 1.
  */
 export async function bumpModel({ id }: { id: number }) {
-  const updated = await dbWrite.model.update({
-    where: { id },
-    data: { lastVersionAt: new Date() },
-    select: { id: true, userId: true, lastVersionAt: true },
-  });
+  // DB clock for the same reason as process-scheduled-publishing: a value ahead of the DB's
+  // NOW() is dropped by sync_model_to_metric, and the bump never reaches the feed.
+  const [updated] = await dbWrite.$queryRaw<{ id: number; userId: number; lastVersionAt: Date }[]>`
+    UPDATE "Model" SET "lastVersionAt" = NOW(), "updatedAt" = NOW()
+    WHERE id = ${id}
+    RETURNING id, "userId", "lastVersionAt"
+  `;
+  if (!updated) throw throwNotFoundError(`No model with id ${id}`);
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
