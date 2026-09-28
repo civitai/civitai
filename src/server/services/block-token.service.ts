@@ -224,14 +224,57 @@ export interface SignBlockTokenInput {
    * true, so a normal token never carries it and `undefined` is byte-identical to
    * the pre-feature behaviour.
    *
-   * 🔴 THIS IS NOT `dev`, AND MUST NEVER BE SET ALONGSIDE IT FOR A NON-OWNER.
-   * `claims.dev === true` SKIPS the per-app velocity reservation in
-   * `reserveBlockBuzzSpendForClaims`, which would hand a moderator an uncapped
-   * per-app spend surface on an app the platform has taken down. `privateRun`
-   * deliberately changes no lifetime and no cap selection — it only closes the two
-   * money rails above.
+   * 🔴 THIS IS NOT `dev`, AND MUST NEVER BE SET ALONGSIDE IT. `claims.dev === true`
+   * SKIPS the per-app velocity reservation in `reserveBlockBuzzSpendForClaims`, which
+   * would hand a moderator an uncapped per-app spend surface on an app the platform has
+   * taken down. The combination is refused at this signer (it throws) and again at the
+   * verifier.
+   *
+   * ⚠️ CORRECTED WHEN THE MINT LANDED — THIS USED TO SAY `privateRun` "changes no
+   * lifetime and no cap selection", AND THE CAP HALF IS NO LONGER TRUE. It was true
+   * while the claim had no producer. `reserveBlockBuzzSpendForClaims` now has a
+   * `claims.privateRun === true` arm that selects a per-(viewer, appBlockId) cumulative
+   * ceiling (`PRIVATE_RUN_BUZZ_CAP`) in place of the ordinary per-user daily cap —
+   * strictly TIGHTER per app, and deliberately placed ABOVE the `claims.dev` early
+   * return so it can never be skipped. Without an arm of its own a private run would
+   * fall through to the 50k/day platform key, i.e. 20× looser and shared with the
+   * viewer's legitimate app usage.
+   *
+   * ✅ THE LIFETIME HALF STILL HOLDS AND IS STILL PINNED: `privateRun` appears nowhere
+   * in the lifetime selector, so a private-run token takes the ordinary 900s default
+   * rather than the `dev` 4h. That is the half worth keeping, because a long-lived token
+   * on a taken-down app is the thing a delist is supposed to stop.
    */
   privateRun?: boolean;
+  /**
+   * WHICH audience a private run was admitted as. Meaningful ONLY alongside
+   * `privateRun: true`, and refused without it (see the signer).
+   *
+   * 🔴 IT IS BRANCHED ON IN TWO PLACES, WHICH IS WHY IT IS SIGNED AT ALL. PR 1
+   * deliberately did NOT sign this field, because at that point it had no producer and
+   * no consumer, and a signed field nothing branches on is the field-exists-but-nothing-
+   * reads-it shape this feature's own seam guard forbids. It earns its place here:
+   *   1. `resolveAppBlockApprovalVerdict` keys the private-run exemption from the
+   *      approved-status decision on the PAIR — `privateRun === true` AND a recognised
+   *      audience — mirroring how the review-sandbox exemption is keyed on the
+   *      `dev && reviewRunForReal` pair rather than on one boolean. A claim that
+   *      exempts a token from a status gate must not be one flipped bit wide.
+   *   2. The runtime editor read-only belt refuses `'editor'` on the spend path, as
+   *      defence-in-depth behind the mint-time scope strip. Two layers, because the
+   *      mint-time strip is a decision taken once at issue time while this one is
+   *      re-taken per submit.
+   *
+   * 🔴 IT IS NOT ON ANY MONEY ROW, DELIBERATELY. The `block_spend_attribution` void
+   * arm keys on `privateRun` alone and is audience-BLIND, so it holds for whichever
+   * audiences the clamp ends up admitting. The audience rides the mint's audit line
+   * instead, which is where "how many private runs, by whom, on what" is answered.
+   *
+   * Validated as a closed set by the verifier (`isPrivateRunAudience`), so a
+   * signature-valid token carrying a garbage audience is rejected outright rather than
+   * silently failing an equality test against `'editor'` and being treated as an
+   * owner.
+   */
+  privateRunAudience?: 'owner' | 'editor' | 'moderator';
 }
 
 export interface SignBlockTokenResult {
@@ -348,6 +391,25 @@ export class BlockTokenService {
     // true so a normal token never carries it.
     if (input.privateRun === true) {
       claims.privateRun = true;
+    }
+    // 🔴 THE AUDIENCE IS REFUSED WITHOUT THE MARKER, for the same reason the marker is
+    // refused alongside `dev`: a lone `privateRunAudience` would be a claim that looks
+    // like an authorisation and carries none. `resolveAppBlockApprovalVerdict` keys its
+    // status exemption on the PAIR, so a token carrying only the audience would be
+    // exempt from nothing while reading, to anyone inspecting it, as a private-run
+    // token. Refusing the half-stamped shape at the producer keeps the pair the only
+    // representable state.
+    if (input.privateRunAudience !== undefined && input.privateRun !== true) {
+      throw new Error(
+        'block token: privateRunAudience requires privateRun: true — a lone audience ' +
+          'claim exempts a token from nothing and misreads as a private-run token'
+      );
+    }
+    // The audience a private run was admitted as. Stamped only alongside the marker;
+    // read (after signature validation) by the approval-verdict exemption and the
+    // runtime editor read-only belt. Not on any money row — see the input docblock.
+    if (input.privateRun === true && input.privateRunAudience !== undefined) {
+      claims.privateRunAudience = input.privateRunAudience;
     }
 
     const token = await new SignJWT(claims)

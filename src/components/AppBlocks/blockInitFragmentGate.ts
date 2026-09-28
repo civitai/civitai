@@ -75,7 +75,13 @@ export type BlockHostSurface =
   /** The author's dev tunnel, `/apps/dev/<blockId>`. 🔴 Never eligible. */
   | 'dev-tunnel'
   /** Moderator review surfaces (review modal + full-page preview). */
-  | 'review-preview';
+  | 'review-preview'
+  /**
+   * The PRIVATE RUN of a DELISTED / SUSPENDED app, `/apps/private-run/<slug>`, for its
+   * owner, an accepted listing collaborator, or a moderator. 🔴 Never eligible — see
+   * the unconditional refusal in `blockInitFragmentEnabledWith`.
+   */
+  | 'private-run';
 
 /**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`
@@ -274,7 +280,24 @@ export function blockInitFragmentEnabledWith(
   // (1) Unconditional: no allowlist entry can enable a surface that mounts
   //     UNREVIEWED code. See the doc comment above for why identity-keying
   //     cannot express this.
-  if (surface === 'dev-tunnel' || surface === 'review-preview') return false;
+  //
+  //     🔴 `private-run` IS IN THIS SET EVEN THOUGH IT SERVES A *REVIEWED* BUNDLE, and
+  //     the reasoning is worth stating because it does not follow from the heading.
+  //     A private run mounts the app's last APPROVED build — so unlike the two
+  //     surfaces beside it, the code HAS been reviewed. What it has also been is TAKEN
+  //     DOWN. An allowlist here is keyed on blockId/slug, and a block allowlisted for
+  //     production is the SAME id that keeps running privately after a delist, so an
+  //     identity-keyed entry cannot express "not while suspended" any more than it can
+  //     express "not in the tunnel". Given the fast path perturbs `location.hash`
+  //     routing and the reason the app is delisted may be the very behaviour under
+  //     diagnosis, the reviewer should see the app on its ordinary boot path.
+  if (
+    surface === 'dev-tunnel' ||
+    surface === 'review-preview' ||
+    surface === 'private-run'
+  ) {
+    return false;
+  }
 
   // (2) Denylist beats everything below it.
   if (blockId && denylist.has(blockId)) return false;

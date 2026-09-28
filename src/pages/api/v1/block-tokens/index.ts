@@ -50,11 +50,13 @@ import {
   oauthScopeBitsFor,
 } from '~/server/services/blocks/block-oauth-scope';
 import {
+  clampPrivateRunScopes,
   clampTunnelDeclaredScopes,
   FORCED_SFW_CEILING,
   parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   signDevScopedPageToken,
+  signPrivateRunPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import type { SessionUser } from '~/types/session';
 import type { Logger } from '@civitai/next-axiom';
@@ -808,6 +810,225 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   return 'handled';
 }
 
+/**
+ * PHASE 3 — PRIVATE RUN of a DELISTED / SUSPENDED app's ALREADY-DEPLOYED bundle, for
+ * its OWNER, an ACCEPTED listing collaborator, or a MODERATOR.
+ *
+ * ── HOW IT DIFFERS FROM PHASE 2, WHICH IT SITS DIRECTLY AFTER ────────────────────
+ * PHASE 2 (`tryDevTunnelOwnedNonApprovedMint`) serves the OWNER'S LOCAL CODE through an
+ * ACTIVE DEV TUNNEL. PHASE 3 serves the app's DEPLOYED bundle at its real origin, and
+ * requires NO tunnel. The two are MUTUALLY EXCLUSIVE BY CONSTRUCTION in the direction
+ * that matters: PHASE 2 requires a tunnel, so a tunnelled owner is handled there and
+ * never reaches this branch — which is deliberate, because when a tunnel exists the
+ * author's local code is the artifact they asked for. An owner WITHOUT a tunnel falls
+ * through to here and gets the deployed bundle instead of a 404.
+ *
+ * 🔴 ORDERING IS THEREFORE LOAD-BEARING AND NOT ALPHABETICAL. Placing PHASE 3 before
+ * PHASE 2 would silently take the dev tunnel away from every owner of a suspended app:
+ * both branches would match, and the first one wins.
+ *
+ * ── SECURITY INVARIANTS (any failure → 'continue' → the SAME bare 404) ───────────
+ *  1. ACCESS — `resolvePrivateRunAccess`, the ONE predicate the SSR route also calls.
+ *     It resolves the role through the REAL `resolveAppAccess` rather than a
+ *     re-implementation, which is the whole point: the defect that created PHASE 2 was
+ *     an SSR↔mint asymmetry where SSR allowed what the mint refused.
+ *  2. FLAG — `isAppBlocksPrivateRunEnabled`, evaluated FOR THE CALLER, and NOTHING
+ *     ELSE. 🔴 Do NOT add `isAppBlocksAuthorEnabled`: it would refuse a moderator who
+ *     has never published an app, i.e. the audience this branch exists for.
+ *  3. SELF-BOUND — the token `sub` is the VIEWER in every audience, so nobody ever
+ *     spends another user's Buzz. This is the invariant that actually bounds spend
+ *     here; it is not an author-flag re-check.
+ *  4. SCOPES — `clampPrivateRunScopes(app.approvedScopes, audience)`: the moderator-
+ *     approved SNAPSHOT, never the re-published manifest, then the tunnel belt, then
+ *     the tip-rail strip, then the editor read-only strip. An app with
+ *     `approvedScopes: []` mints a VALID token that can spend nothing.
+ *  5. DEPLOY GATE — inside the predicate, LAST. A never-deployed app is refused with
+ *     the bare 404, NOT the public path's `409 'Block is not yet deployed'`, which
+ *     would be an existence oracle.
+ *  6. NO `dev: true` — `reserveAppSpend` (the per-app velocity cap) is skipped for a
+ *     `dev` token, so a `dev` private-run token would hand every admitted viewer an
+ *     uncapped per-app surface on an app the platform has taken down. Enforced three
+ *     times over: here (we call the private-run signer), at the signer (throws), and
+ *     at the verifier (rejects the pair).
+ *  7. NO PUBLIC-PATH BYPASS — `resolvePageBlock` and `resolvePageBlockBySlug` keep
+ *     `status: 'approved'` and are untouched. A suspended app stays non-runnable
+ *     publicly, and the store stays hidden.
+ *
+ * PRODUCT INTENT (this is NOT a suspension bypass): a delist removes the PUBLIC
+ * listing and the PUBLIC run. It does not, and should not, stop the owner iterating to
+ * get the app back into review, a collaborator diagnosing it, or a moderator
+ * reproducing what got it taken down. The action is fully contained — self-bound,
+ * forced-SFW, budget-capped per call AND per (viewer, app), scope-clamped to the prior
+ * approval snapshot with the tip rail removed, flag-gated, and non-public.
+ */
+async function tryPrivateRunMint(args: {
+  req: NextApiRequest & { log?: Logger };
+  res: NextApiResponse;
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+  sessionUser: SessionUser | undefined;
+  userId: number | null;
+}): Promise<'handled' | 'continue'> {
+  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId } = args;
+
+  // Cookie-authed caller only, and the REAL-id namespace only — the synthetic
+  // `ephemeral-*` ids belong to PHASE 2's own branch and have no deployed bundle.
+  if (userId == null || !sessionUser) return 'continue';
+  if (appBlockId.startsWith(EPHEMERAL_APP_ID_PREFIX)) return 'continue';
+  // ⚠️ STRUCTURALLY UNREACHABLE ON THIS PATH, AND SAID SO RATHER THAN LEFT TO READ AS A
+  // GATE. The caller derives `appBlockId` BY SLICING this very string
+  // (`blockInstanceId.slice(PAGE_INSTANCE_PREFIX.length)`) after the handler's own gate
+  // has already required the `page_` prefix — so `page_${appBlockId}` reconstructs
+  // `blockInstanceId` exactly, always, and this comparison can never be true. PHASE 2
+  // carries the identical line with the identical property; this is a copy of that
+  // belt, kept for symmetry with the branch beside it rather than deleted, because the
+  // two branches being byte-comparable is worth more than one dead line is worth
+  // removing.
+  //
+  // 🔴 IT IS DELIBERATELY NOT TESTED, and that is the point of this comment. A test
+  // asserting "a mismatched instance id is refused" CANNOT construct the input on this
+  // path, so it would either pass vacuously or be written against a different branch
+  // and read as coverage for this one. An unreachable guard that nobody has claimed is
+  // tested is harmless; one that appears in a coverage list stops the next person
+  // looking for the real gate — which is the handler's `startsWith` check plus this
+  // derivation.
+  if (blockInstanceId !== `${PAGE_INSTANCE_PREFIX}${appBlockId}`) return 'continue';
+  // Belt-and-suspenders: the page slot must be a real page slot.
+  if (!isPageSlot(slotId)) return 'continue';
+
+  // FLAG, evaluated for THIS caller. Dynamic import so the flag module stays off the
+  // prod-mint import path, matching PHASE 2.
+  const { isAppBlocksPrivateRunEnabled } = await import('~/server/services/app-blocks-flag');
+  const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: sessionUser });
+
+  // ACCESS — the shared predicate. `db: 'write'` so a freshly-suspended, freshly-
+  // relisted or freshly-seated row cannot be read through a replication-lag window in
+  // either direction; the whole mint reads the primary for this reason.
+  //
+  // 🔴 SOFT-DELETE / BAN ARE RE-READ FROM THE DATABASE INSIDE THE PREDICATE'S VIEWER
+  // LEG ONLY AS FAR AS THE SESSION CARRIES THEM, so the explicit `dbWrite` re-read
+  // PHASE 2 performs is kept here too, below, for M1 parity — a session that survived
+  // a soft-delete must not mint.
+  const { resolvePrivateRunAccess } = await import(
+    '~/server/services/blocks/private-run-access.service'
+  );
+  const access = await resolvePrivateRunAccess({
+    by: { appBlockId },
+    viewer: sessionUser,
+    db: 'write',
+    privateRunEnabled,
+  });
+
+  // 🔴 EVERY REFUSAL MAPS TO THE SAME `'continue'`, WHICH THE CALLER TURNS INTO THE
+  // PRE-EXISTING BARE 404. The predicate's `reason` is rich on purpose — it feeds the
+  // audit line below and the guard tests — and it must NEVER reach the response. A
+  // status code or body that varies by reason is an existence oracle: it would tell an
+  // unauthenticated prober whether a slug exists and whether it is theirs.
+  if (!access.allowed) {
+    // AUDIT THE REFUSAL. Same dual sink as the grant, so "who tried to privately run
+    // what, and which gate stopped them" is answerable. Flags and identifiers only.
+    const refusalAudit = {
+      outcome: 'refused',
+      reason: access.reason,
+      userId,
+      appBlockId,
+    };
+    req.log?.info('app-blocks.private-run.mint', refusalAudit);
+    emitMintAuditToStdout('app-blocks.private-run.mint', refusalAudit);
+    return 'continue';
+  }
+
+  const app = access.block;
+
+  // M1 soft-delete / ban parity with the prod path and PHASE 2. The predicate already
+  // refused on the SESSION's `bannedAt`/`deletedAt`, but a `SessionUser` may or may not
+  // carry `deletedAt` depending on the auth path, so the authoritative re-read stays.
+  const userRow = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { deletedAt: true, bannedAt: true },
+  });
+  if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
+
+  // SCOPES — the approved snapshot through the private-run clamp. See
+  // `clampPrivateRunScopes` for all three steps and why the editor strip is there.
+  const granted = clampPrivateRunScopes(app.approvedScopes, access.audience);
+  // BUDGET — the manifest's `page.buzzBudgetPerGen` clamped to the dev cap, defaulting
+  // as every other non-public page path does. Only meaningful if `ai:write:budgeted`
+  // survived the clamp, which it never does for an editor.
+  const manifestBudget = parseManifestBuzzBudget((app.manifest as { page?: unknown }).page);
+  const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
+
+  // SIGN with the app's REAL ids. 🔴 THE REAL IDS ARE A DELIBERATE DIVERGENCE FROM THE
+  // REVIEW SANDBOX, which signs a non-resolving synthetic `pending-<id>` to make both
+  // money rails miss. Copying that here would break three things this surface needs:
+  // per-app storage namespacing (`apps:storage:*` resolves against the real app), the
+  // ban-revocation instance id `page_<appBlockId>` (which this token inherits for
+  // free), and every runtime metric label. The money rails are closed EXPLICITLY
+  // instead, by the signed `privateRun` claim's two arms.
+  //
+  // No OAuth branch: a private run is a first-party diagnostic surface on a taken-down
+  // app, and minting a hub OAuth token for one would widen the credential surface for
+  // no stated need.
+  const result = await signPrivateRunPageToken({
+    userId,
+    signBlockId: app.blockId,
+    signAppId: app.appId,
+    signAppBlockId: app.appBlockId,
+    blockInstanceId,
+    granted,
+    buzzBudget,
+    audience: access.audience,
+  });
+
+  // MINT-TIME AUDIT — the forensic record of granting a (possibly spend-capable) token
+  // for an app the platform has taken down. Never the token itself. DUAL-SINKED to
+  // Axiom AND stdout for the reason given at PHASE 2's audit.
+  //
+  // 🔴 THIS LINE IS WHERE THE AUDIENCE LIVES, and that is a design decision recorded in
+  // two other files: the attribution void arm is deliberately audience-BLIND so it
+  // holds for whichever audiences the clamp admits, so "how many private runs, by whom,
+  // on what" is answerable HERE and nowhere else. `MintAuditFields` permits only flat
+  // scalars and scalar arrays — that narrowness IS the non-throwing guarantee; do not
+  // widen it to carry a nested object.
+  const mintAudit = {
+    outcome: 'granted',
+    status: app.status,
+    listingStatus: app.listingStatus,
+    audience: access.audience,
+    userId,
+    slug: app.blockId,
+    appBlockId: app.appBlockId,
+    scopes: granted,
+    spendGranted: granted.includes('ai:write:budgeted'),
+    kind: 'block',
+  };
+  req.log?.info('app-blocks.private-run.mint', mintAudit);
+  emitMintAuditToStdout('app-blocks.private-run.mint', mintAudit);
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    token: result.token,
+    expiresAt: result.expiresAt,
+    kind: 'block',
+    scopes: granted,
+    // No consent round-trip on this surface: the scope set is the prior approval
+    // snapshot, not a consent-gated request, and a grant would re-mint a WIDER token at
+    // the request of code the platform has taken down.
+    needsConsent: false,
+    missingScopes: [],
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    // Forced-SFW is the DOMAIN half only; see PHASE 2's identical note.
+    effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
+      req,
+      sessionUser,
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+    }),
+  });
+  return 'handled';
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const cors = setSameOriginCors(req, res);
   if (cors === 'handled') return;
@@ -973,7 +1194,25 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         userId,
       });
       if (ownedMint === 'handled') return;
-      // Missing / not-approved / not-a-page app → 404 (never leaks which).
+      // PHASE 3 — PRIVATE RUN of a DELISTED / SUSPENDED app's already-DEPLOYED bundle,
+      // for its owner, an accepted listing collaborator, or a moderator. Requires NO
+      // dev tunnel, which is what makes it mutually exclusive with PHASE 2 above: a
+      // tunnelled owner is already handled there and never arrives here, so the
+      // author's local code keeps winning whenever a tunnel exists. Any non-match /
+      // refusal → 'continue' → the SAME bare 404 below (no role, status, deploy or
+      // existence oracle).
+      const privateRunMint = await tryPrivateRunMint({
+        req,
+        res,
+        appBlockId,
+        blockInstanceId,
+        slotId: slotContext.slotId,
+        sessionUser: session?.user,
+        userId,
+      });
+      if (privateRunMint === 'handled') return;
+      // Missing / not-approved / not-a-page / not-yours / not-deployed app → 404
+      // (never leaks which).
       res.status(404).json({ error: 'Page app not found' });
       return;
     }

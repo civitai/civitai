@@ -243,20 +243,29 @@ describe('the private-run claim is threaded to every money call site', () => {
     });
   });
 
-  it('[INV] the CAP SELECTOR does not read the claim — privateRun changes no cap', () => {
-    // 🔴 THE OTHER HALF OF A CLAIM THE SIGNER MAKES, AND IT WAS PINNED NOWHERE.
-    // `block-token.service.ts`'s docblock asserts that `privateRun` "changes no
-    // lifetime and no cap selection". The LIFETIME half is pinned twice (in the
-    // signer's and the verifier's suites). The CAP half was prose — a review lane
-    // pointed out that nothing checked it.
+  it('[REG] the CAP SELECTOR gives a private run its OWN ceiling, ABOVE the dev skip', () => {
+    // ⚠️ THIS ASSERTION WAS INVERTED WHEN THE MINT LANDED, AND THE INVERSION IS THE
+    // POINT — read this before "restoring" it.
     //
-    // Asserted structurally because `reserveBlockBuzzSpendForClaims` cannot be
-    // invoked without Redis and the whole auth stack. The property is narrow and
-    // exact: that function selects between the review-run-for-real ceiling, the dev
-    // bypass and the ordinary daily + consent legs by reading `claims.reviewRunForReal`
-    // and `claims.dev`. If `privateRun` ever appears inside it, the claim has started
-    // selecting a cap and the signer's docblock is false — which is the dangerous
-    // direction, because the `dev` branch SKIPS the per-app reservation entirely.
+    // Its previous form asserted that `privateRun` appears NOWHERE inside
+    // `reserveBlockBuzzSpendForClaims`, pinning the signer docblock's claim that the
+    // marker "changes no lifetime and no cap selection". That was correct and worth
+    // pinning for exactly as long as the claim had no producer: with nothing setting
+    // `privateRun`, any cap arm would have been dead code, and an arm added
+    // speculatively is how a cap ends up selected by a claim nobody audited.
+    //
+    // The mint changed the premise, not the hazard. A private-run token is NOT `dev`
+    // (the signer throws on the pair and the verifier rejects it), which is what keeps
+    // the per-app velocity reservation alive — and it therefore also means the token
+    // would fall through to the ORDINARY PER-USER DAILY CAP: 50k/day, 20× looser than
+    // the review ceiling, and shared with the viewer's own legitimate app usage. So the
+    // absence this test used to protect had become the defect.
+    //
+    // 🔴 WHAT IS PINNED NOW IS THE ORDER, WHICH IS THE PART THAT CAN SILENTLY BREAK. A
+    // cap arm is visible in review; an arm that sits BELOW the `claims.dev` early return
+    // is not, and there it would never execute for any token that carried both markers.
+    // Ordering is the cheapest of the three layers refusing that pair, and the only one
+    // a reviewer cannot see by reading either guard alone.
     const start = source.indexOf('async function reserveBlockBuzzSpendForClaims');
     expect(start, 'the cap selector must still exist under this name').toBeGreaterThan(0);
     // Bound the region at the next top-level declaration so this reads the function
@@ -268,7 +277,53 @@ describe('the private-run claim is threaded to every money call site', () => {
     // Positive control: the region really is the selector, not an empty slice.
     expect(body).toContain('claims.reviewRunForReal');
     expect(body).toContain('claims.dev');
-    expect(body, 'privateRun must not select a cap — see block-token.service.ts').not.toContain(
+
+    // (a) The arm exists and selects the private-run ceiling — not the daily cap, and
+    //     not the review ceiling (which reserves against a publish-request id).
+    expect(body, 'a private run must select a cap of its own').toContain(
+      'claims.privateRun === true'
+    );
+    expect(body, 'the private-run arm must reserve against the private-run ceiling').toContain(
+      'cap: PRIVATE_RUN_BUZZ_CAP'
+    );
+    expect(body).toContain('reservePrivateRunBuzzSpend(');
+
+    // (b) 🔴 THE ORDER. The private-run arm must appear BEFORE the `claims.dev` early
+    //     return, or a both-markers token gets no cumulative ceiling at all.
+    const privateRunAt = body.indexOf('claims.privateRun === true');
+    const devSkipAt = body.indexOf('if (claims.dev === true) return');
+    expect(devSkipAt, 'the dev early-return must still exist under this shape').toBeGreaterThan(0);
+    expect(
+      privateRunAt,
+      'the privateRun cap arm must precede the claims.dev early return, or a token ' +
+        'carrying both markers takes the dev skip and gets NO cumulative ceiling'
+    ).toBeLessThan(devSkipAt);
+  });
+
+  it('[INV] privateRun still selects no LIFETIME — the half of the docblock that holds', () => {
+    // The lifetime half of the signer's claim SURVIVED the mint and is the half worth
+    // keeping: a private-run token takes the ordinary 900s default, never the `dev` 4h.
+    // A long-lived token on an app the platform has taken down is precisely what a
+    // delist is supposed to stop, and the `dev` lifetime is 16× the default.
+    //
+    // Read from the SIGNER, not the router — this is a property of
+    // `BlockTokenService.sign`'s lifetime selection, and the signer's own suite pins
+    // the positive behaviour. This is the structural converse: the claim is not even
+    // mentioned in the region that picks a TTL.
+    const signer = readFileSync(
+      path.join(process.cwd(), 'src/server/services/block-token.service.ts'),
+      'utf8'
+    );
+    const code = blankComments(signer);
+    const ttlRegion = code.indexOf('BLOCK_TOKEN_LIFETIMES_SECONDS');
+    expect(ttlRegion, 'the lifetime table must still be referenced in the signer').toBeGreaterThan(
+      0
+    );
+    // The selection happens in a small window around the lifetime table lookup; bound
+    // it generously and assert the claim is absent from the whole window rather than
+    // guessing an exact expression.
+    const window = code.slice(Math.max(0, ttlRegion - 600), ttlRegion + 600);
+    expect(window, 'privateRun must not participate in lifetime selection').not.toContain(
       'privateRun'
     );
   });

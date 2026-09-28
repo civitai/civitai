@@ -206,7 +206,14 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);
-  if (verdict === 'ok' || verdict === 'dev_exempt') return;
+  // 🔴 `private_run_exempt` IS ADMITTED HERE, and it is the one exemption that lets a
+  // NON-OWNER reach the bridge on a non-approved app. Listed explicitly rather than
+  // folded into `dev_exempt` upstream so this line is where a reader looking for "who
+  // can drive the bridge on a taken-down app" finds the answer. The containment is
+  // NOT here — it is the mint: a self-bound `sub`, scopes clamped to the app's last
+  // moderator-approved snapshot with the tip rail stripped, a per-call budget and a
+  // per-(viewer, app) aggregate ceiling.
+  if (verdict === 'ok' || verdict === 'dev_exempt' || verdict === 'private_run_exempt') return;
   if (verdict === 'not_found') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   }

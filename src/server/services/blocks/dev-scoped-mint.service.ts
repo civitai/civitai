@@ -441,6 +441,88 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
 }
 
 /**
+ * Scopes never granted on the PRIVATE-RUN surface, whatever the audience.
+ *
+ * 🔴 `social:tip:self` IS THE THIRD BUZZ RAIL, AND IT IS THE REASON THIS SET EXISTS.
+ * The private-run feature closes two money rails with signed-claim arms — the
+ * `block_spend_attribution` void and the author-fee refusal. `social:tip:self` is
+ * neither: `pages/api/v1/blocks/tip.ts` moves IRREVERSIBLE Buzz from the viewer to
+ * any `toUserId` the block's OWN code names, performs no status check of its own, and
+ * is not in `PAGE_FORBIDDEN_SCOPES` (which is empty). On a delisted app it is refused
+ * today by exactly one thing: `resolveAppBlockApprovalVerdict` returning
+ * `not_approved`. A private run has to widen that verdict to render at all — and that
+ * widening admits this route in the same move. So the scope is stripped here, at the
+ * mint, which is the belt the widening requires.
+ *
+ * ⚠️ IT IS ALREADY ABSENT FROM `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, AND THAT IS NOT A
+ * REASON TO DROP THIS STRIP. The private-run clamp composes the tunnel belt, so today
+ * the strip is redundant — and a redundant guard that is the ONLY thing standing
+ * between a delisted app and irreversible Buzz is the one to keep, because the
+ * property it protects is not stated anywhere in the tunnel allowlist. Adding
+ * `social:tip:self` to that allowlist for a dev-tunnel reason would otherwise silently
+ * hand tipping to every private run, on apps the platform has taken down. The
+ * redundancy is pinned by a test that asserts the strip survives even when the inner
+ * clamp is mutated to pass the scope through.
+ *
+ * 🔴 `goods:purchase:self` is deliberately NOT listed: the sibling owner-crediting
+ * rail is already closed on its own terms (it requires an approved block), so listing
+ * it here would imply a protection this set is not providing.
+ */
+export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['social:tip:self']);
+
+/**
+ * PRIVATE RUN — the SINGLE clamp for a private run of a delisted / suspended app.
+ *
+ * Three steps, in this order, and each is a STRIP rather than an error (a refusal
+ * would be an existence oracle; a narrower token is not):
+ *
+ *   1. `clampTunnelDeclaredScopes(approvedScopes)` — VERBATIM, and the source is the
+ *      `approved_scopes` COLUMN, never the re-published manifest. 🔴 THE LOAD-BEARING
+ *      INVARIANT IS THE SAME ONE THE DEV-TUNNEL BRANCH RESTS ON: `approvedScopes` is
+ *      written ONLY by the mod-approval flow, so a non-empty value means a moderator
+ *      signed those scopes off at some point, and an app with `approvedScopes: []`
+ *      mints a VALID token that can spend NOTHING — `clampTunnelDeclaredScopes([])`
+ *      cannot invent `ai:write:budgeted`. A suspended publisher editing their manifest
+ *      therefore cannot widen their own private-run token. Zero-scope is a legitimate
+ *      state, not an error: such an app renders read-only rather than 403ing.
+ *   2. `PRIVATE_RUN_FORBIDDEN_SCOPES` — the third-rail strip. See that set.
+ *   3. The EDITOR read-only strip — see below.
+ *
+ * 🔴 STEP 3 IS AN OPERATOR DECISION TAKEN AGAINST THE ORIGINAL RECOMMENDATION, ON
+ * REVERSIBILITY GROUNDS, AND IT IS THE ONE THING IN THIS FUNCTION MOST LIKELY TO BE
+ * "TIDIED" BY SOMEONE WHO THINKS IT IS AN OVERSIGHT. An accepted collaborator
+ * (`audience: 'editor'`) is READ-ONLY: `ai:write:budgeted` is stripped for them.
+ * Moderators were granted full parity including capped spend with a stated reason —
+ * reproduce generation-path abuse on a takedown. No equivalent reason was found for
+ * collaborators, and the written product intent for the owner-iterating case is about
+ * the OWNER. Parity is cheap to add later and expensive to remove later, so the narrow
+ * option is the correct default until a concrete need appears. Widening is this one
+ * branch plus one row in the access matrix.
+ *
+ * The failure mode is visible and reportable ("I can't run the generation"), never
+ * silent — which is the other half of why the narrow option is safe to pick first.
+ *
+ * ⚠️ IF THIS STRIP IS EVER FORGOTTEN, AN EDITOR IS STILL REFUSED — but by the
+ * author-fee arm, downstream, and only for that rail. Do not read the existence of
+ * that backstop as making this strip optional: it does not bound the editor's OWN
+ * Buzz spend, which is what `ai:write:budgeted` authorises.
+ */
+export function clampPrivateRunScopes(
+  approvedScopes: string[],
+  audience: 'owner' | 'editor' | 'moderator'
+): string[] {
+  // (1) The identical audited belt the dev-tunnel owned-non-approved branch uses.
+  let granted = clampTunnelDeclaredScopes(approvedScopes);
+  // (2) Third-rail strip — every audience, including the owner and moderators.
+  granted = granted.filter((s) => !PRIVATE_RUN_FORBIDDEN_SCOPES.has(s));
+  // (3) Editor read-only.
+  if (audience === 'editor') {
+    granted = granted.filter((s) => s !== 'ai:write:budgeted');
+  }
+  return granted;
+}
+
+/**
  * Extract a resolvable manifest page's declared per-generation Buzz budget
  * (`page.buzzBudgetPerGen`) for use as the DEV-token DEFAULT budget. Returns the
  * positive integer when the manifest declares a valid one, else `undefined` (the
@@ -537,5 +619,75 @@ export async function signDevScopedPageToken(opts: {
     maxBrowsingLevel: FORCED_SFW_CEILING,
     dev: true,
     ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
+  });
+}
+
+/**
+ * SIGN a PRIVATE-RUN page token — a delisted / suspended app's already-deployed
+ * bundle, for its owner, an accepted collaborator, or a moderator.
+ *
+ * Structurally the dev signer above with the same PAGE ctx, the same forced-SFW
+ * ceiling and the same self-bound `sub`. Three deliberate divergences, each of which
+ * is a safety property rather than a preference:
+ *
+ * 🔴 1. `dev` IS NOT SET, AND IT MUST NEVER BE — THIS IS THE SHARPEST HAZARD ON THE
+ * WHOLE FEATURE. `reserveBlockBuzzSpendForClaims` takes an EARLY RETURN on
+ * `claims.dev === true` and skips the per-app velocity reservation (`reserveAppSpend`,
+ * the G8 cap). A `dev` private-run token would therefore hand EVERY admitted viewer
+ * an UNCAPPED per-app spend surface on an app the platform has taken down — the exact
+ * inverse of what a takedown is for. The combination is refused in two more places
+ * (`BlockTokenService.sign` throws on it, and the verifier rejects the pair), so this
+ * is the third of three independent layers; none of them is load-bearing alone.
+ *
+ * 🔴 2. `privateRun: true` IS STAMPED, and it is a MONEY-SAFETY claim, not a UX one.
+ * It is the only input the two money arms have: `recordSpendAttribution` voids the
+ * `block_spend_attribution` row it would otherwise write as `tracked`, and
+ * `resolveBlockAuthorFeePayee` refuses so the viewer-paid author fee is never quoted,
+ * reserved or debited — which is what stops a moderator's wallet paying a suspended
+ * publisher for the privilege of reviewing their own takedown.
+ *
+ * 🔴 3. `privateRunAudience` IS STAMPED, AND IT HAS A REAL CONSUMER — do not read it
+ * as decoration. `resolveAppBlockApprovalVerdict` keys the private-run status
+ * exemption on the PAIR (`privateRun === true` AND a recognised audience), exactly as
+ * it keys the review-sandbox exemption on the `dev && reviewRunForReal` pair, and the
+ * runtime editor read-only belt branches on the `'editor'` value. A signed field that
+ * nothing branches on is not a guard; this one is branched on in both places.
+ *
+ * The budget is the dev-capped value: the per-call ceiling is the same
+ * `DEV_BUZZ_BUDGET_CAP`, because a private run is no more entitled to a large single
+ * submit than an author dogfooding their own app. The AGGREGATE ceiling is separate
+ * and lives in `blocks.router.ts` (`PRIVATE_RUN_BUZZ_CAP`).
+ */
+export async function signPrivateRunPageToken(opts: {
+  userId: number;
+  signBlockId: string;
+  signAppId: string;
+  signAppBlockId: string;
+  blockInstanceId: string;
+  granted: string[];
+  buzzBudget: number | undefined;
+  audience: 'owner' | 'editor' | 'moderator';
+}): Promise<Awaited<ReturnType<typeof BlockTokenService.sign>>> {
+  const ctx: Record<string, unknown> = {
+    slotId: PAGE_SLOT_ID,
+    entityType: 'none',
+  };
+  if (!isPageSlot(PAGE_SLOT_ID)) {
+    throw new Error('page slot misconfigured');
+  }
+  return BlockTokenService.sign({
+    userId: opts.userId,
+    blockId: opts.signBlockId,
+    appId: opts.signAppId,
+    appBlockId: opts.signAppBlockId,
+    blockInstanceId: opts.blockInstanceId,
+    scopes: opts.granted,
+    ctx,
+    buzzBudget: opts.buzzBudget,
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    // 🔴 NO `dev: true`. See divergence 1 above. This is not an omission.
+    privateRun: true,
+    privateRunAudience: opts.audience,
   });
 }

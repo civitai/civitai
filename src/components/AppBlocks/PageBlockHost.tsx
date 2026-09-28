@@ -1864,14 +1864,27 @@ export function PageBlockHost({
       if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
         return;
       }
+      // 🔴 THE ROUTE BASE IS DERIVED FROM `surface`, NOT HARDCODED — and hardcoding it
+      // was a real dead end, not a tidiness issue. A block's own client router pushes
+      // sub-paths through this handler; on the PRIVATE-RUN surface a hardcoded
+      // `/apps/run/<slug>` sends the viewer to the PUBLIC run route, which requires
+      // `status: 'approved'` and therefore **404s for the very suspended app they are
+      // looking at**. The app would work until the first in-app navigation and then
+      // vanish, which reads as "the private-run feature is broken".
+      //
+      // Derived from the one prop that already identifies the mounting surface so the
+      // two cannot drift; the deep-link contract and the fragment-gate decision then
+      // read the same value. `page-run` and every other surface keep the public base
+      // byte-identically.
+      const base = surface === 'private-run' ? '/apps/private-run' : '/apps/run';
       const target = cleaned
-        ? `/apps/run/${encodeURIComponent(slug)}/${cleaned}`
-        : `/apps/run/${encodeURIComponent(slug)}`;
+        ? `${base}/${encodeURIComponent(slug)}/${cleaned}`
+        : `${base}/${encodeURIComponent(slug)}`;
       void router.push(target, undefined, { shallow: true });
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved

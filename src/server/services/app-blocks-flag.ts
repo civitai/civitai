@@ -576,6 +576,44 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
 }
 
 /**
+ * Dedicated kill-switch for the PRIVATE RUN of a DELISTED / SUSPENDED app — the
+ * `/apps/private-run/<slug>` SSR route plus the PHASE 3 page-token mint branch, which
+ * together serve a taken-down app's ALREADY-DEPLOYED bundle to its owner, an accepted
+ * listing collaborator, or a moderator. Never publicly: the public run route and the
+ * public page mint keep their `status: 'approved'` requirement untouched.
+ *
+ * Ship BASE-OFF (`enabled: false`, no rules, no rollouts) and add a moderators-segment
+ * rule at enable time. The flag row lives in `civitai/flipt-state`, NOT here, so the
+ * code merging changes nothing until that row exists — which is the intended state.
+ *
+ * 🔴 `user` IS REQUIRED, AND THAT IS THE FAIL-CLOSED MECHANISM — not a convenience.
+ * The sibling accessors spell `if (!opts?.user) return isFlipt(FLAG)`, and a no-user
+ * global eval returns the flag's **BASE** value rather than denying (measured; see
+ * GLOBAL-EVAL SEMANTICS at the top of this file). That is harmless for a flag whose
+ * base is off today, but it makes the deny conditional on a value in another repo. A
+ * private run is a status bypass on an app the platform has taken down, so the subject
+ * is not optional: this mirrors `isAppBlocksAuthorEnabled`'s required-`user` shape,
+ * which is the only one in this file that denies a missing subject BY TYPE.
+ *
+ * 🔴 NO MODERATOR STATIC FLOOR, unlike `isAppBlocksAuthorEnabled`. There is no
+ * existing mod access to this surface to preserve (it does not exist yet), so an
+ * absent or unreachable Flipt must deny EVERYONE, mods included — the same posture
+ * and the same reasoning as `isAppBlocksDevTunnelEnabled`.
+ *
+ * 🔴 DO NOT COMPOSE THIS WITH `isAppBlocksAuthorEnabled`. That flag asks "is this
+ * caller an app AUTHOR", which would refuse a moderator who has never published an
+ * app — i.e. exactly the audience this surface exists for.
+ */
+export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
+
+export async function isAppBlocksPrivateRunEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_PRIVATE_RUN_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
  * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
  *

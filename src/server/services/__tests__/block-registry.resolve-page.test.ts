@@ -221,3 +221,73 @@ describe('BlockRegistry.resolvePageBlockBySlug — NSFW-app-red-only contentRati
     expect(res?.contentRating).toBeNull();
   });
 });
+
+/**
+ * 🔴 THE MINT-SIDE MIRROR OF THE SSR INVARIANT — and its ABSENCE is what created
+ * `tryDevTunnelOwnedNonApprovedMint`.
+ *
+ * `block-registry.resolve-dev.test.ts` pins one half:
+ * "INVARIANT: the public resolvePageBlockBySlug requires status:approved". That is the
+ * SSR resolver. The MINT resolver, `resolvePageBlock`, had no equivalent — and the
+ * asymmetry between the two sides of exactly this seam is the whole reason a rescue
+ * branch had to be written after the fact. Pinning the invariant on ONE side of a seam
+ * is how you discover the other side disagreed.
+ *
+ * With the private-run surface added, these two resolvers are no longer the only ways to
+ * reach a page app, so the property they guarantee has to be stated rather than assumed:
+ * they remain APPROVED-ONLY, and the non-approved surface is reached exclusively through
+ * `resolvePrivateRunPageBlock` behind `resolvePrivateRunAccess`.
+ */
+describe('BlockRegistry.resolvePageBlock — the MINT-side approved-only invariant [INV]', () => {
+  beforeEach(() => {
+    mockDbWrite.appBlock.findUnique.mockReset();
+  });
+
+  it('INVARIANT: a NON-APPROVED row resolves to null, whatever its status', async () => {
+    // The status gate is POST-query here (unlike `resolvePageBlockBySlug`, which pins it
+    // in the WHERE), so a row IS returned by Prisma and the refusal is the branch. That
+    // makes this the more important of the two to pin behaviourally: there is no WHERE
+    // clause to read, only a branch that could be deleted.
+    for (const status of ['suspended', 'pending', 'deprecated', 'removed', 'draft', '']) {
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
+        id: 'apb_1',
+        blockId: 'hello-page',
+        appId: 'app_1',
+        status,
+        manifest: PAGE_MANIFEST(),
+        approvedScopes: [],
+        currentVersionDeployedAt: new Date('2026-09-01'),
+        app: { allowedScopes: 0 },
+      });
+      expect(
+        await BlockRegistry.resolvePageBlock('apb_1'),
+        `status=${JSON.stringify(status)} must not resolve through the production mint`
+      ).toBeNull();
+    }
+  });
+
+  it('POSITIVE CONTROL: an APPROVED row DOES resolve — the refusal above is not vacuous', async () => {
+    // Without this the loop above would pass against a resolver that returned null for
+    // everything, including a healthy approved app.
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_1',
+      blockId: 'hello-page',
+      appId: 'app_1',
+      status: 'approved',
+      manifest: PAGE_MANIFEST(),
+      approvedScopes: ['models:read:self'],
+      currentVersionDeployedAt: new Date('2026-09-01'),
+      app: { allowedScopes: 0 },
+    });
+    const res = await BlockRegistry.resolvePageBlock('apb_1');
+    expect(res?.appBlock.id).toBe('apb_1');
+    expect(res?.appBlock.status).toBe('approved');
+  });
+
+  it('reads the PRIMARY by default, so a freshly-suspended block cannot slip a lag window', async () => {
+    mockDbWrite.appBlock.findUnique.mockResolvedValue(null);
+    await BlockRegistry.resolvePageBlock('apb_1');
+    expect(mockDbWrite.appBlock.findUnique).toHaveBeenCalled();
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+  });
+});

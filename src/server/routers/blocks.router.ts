@@ -31,6 +31,7 @@ import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -1194,6 +1195,61 @@ async function reserveReviewRunForRealBuzzSpend(
   return { total, key };
 }
 
+// ---- PRIVATE RUN AGGREGATE Buzz cap -----------------------------------------
+//
+// The private-run analog of the run-for-real ceiling above: when the owner of a
+// DELISTED app, or a moderator, runs its deployed bundle privately against their OWN
+// account, the token's per-call `buzzBudget` bounds ONE submit but not a loop of
+// sub-budget submits. This is the cumulative bound: per-(viewer, appBlockId), swapped
+// IN PLACE OF the ordinary per-user daily cap so there is still exactly ONE
+// reserve/refund path per submit and the whole existing refund choreography (which
+// keys off the returned `key`) works unchanged.
+//
+// 🔴 KEYED ON (viewer, appBlockId) — NOT (viewer) AND NOT (app). Per-viewer alone
+// would let one moderator's ceiling be consumed across every delisted app they touch,
+// so reviewing app N would refuse generations on app N+1 for reasons the reviewer
+// cannot see. Per-app alone would let two collaborators draw down one another's
+// allowance on an app neither of them can publish. The pair is the only shape where
+// the number means what the operator would expect it to mean.
+//
+// 🔴 A DIFFERENT REDIS PREFIX FROM THE REVIEW CEILING, and the reservation ids are not
+// even the same KIND: run-for-real reserves against a `pubreq_<ULID>` publish-request
+// id, this against a real `apb_<…>` AppBlock id. Sharing a prefix would let a
+// moderator's review-sandbox session and their private run of the same app consume one
+// another's ceiling.
+//
+// 🔴 THE CONSENT LEG IS DELIBERATELY SKIPPED, exactly as the run-for-real arm skips it.
+// `app_user_scope_grants.buzz_budget_per_day` is the VIEWER'S OWN grant for an app they
+// chose to install; a majority of live grant rows now carry a non-null `revoked_at`, so
+// requiring a consent budget would make this feature dead for most reviewers for
+// reasons entirely unrelated to it — a moderator has no reason to have ever consented
+// to an app they are reviewing the takedown of. The platform ceiling below is the
+// bound, and it is STRICTLY TIGHTER than the 50k/day cap it replaces.
+const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function privateRunBuzzCapKey(
+  userId: number,
+  appBlockId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP}:${userId}:${appBlockId}`;
+}
+
+/**
+ * Atomically reserves `cost` against the (viewer, appBlockId) private-run cumulative
+ * counter. Same shared `reserveCumulativeBuzzKey` primitive as every sibling cap
+ * (atomic INCRBY + first-write-EX + ttl<0 re-arm + self-unwind); fails CLOSED on a
+ * Redis error (throws).
+ */
+async function reservePrivateRunBuzzSpend(
+  userId: number,
+  appBlockId: string,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof privateRunBuzzCapKey> }> {
+  const key = privateRunBuzzCapKey(userId, appBlockId);
+  const total = await reserveCumulativeBuzzKey(key, cost, PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS);
+  return { total, key };
+}
+
 // ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
 //      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
 //
@@ -1300,6 +1356,41 @@ async function reserveBlockBuzzSpendForClaims(
   if (claims.reviewRunForReal === true) {
     const { total, key } = await reserveReviewRunForRealBuzzSpend(userId, claims.appBlockId, cost);
     return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP, consent: null };
+  }
+  // PRIVATE RUN — the THIRD arm, and the one that CANNOT rely on the `dev` skip below.
+  //
+  // 🔴 A PRIVATE-RUN TOKEN NEVER CARRIES `dev: true` (the signer throws on the pair and
+  // the verifier rejects it), precisely so that it does NOT take the `claims.dev` early
+  // return further down — which skips the per-app velocity reservation and would leave a
+  // taken-down app's private surface uncapped per app. So this arm exists to give it a
+  // ceiling of its own rather than letting it fall through to the ordinary per-user
+  // daily cap, which is 20× looser and shared with the viewer's legitimate app usage.
+  //
+  // Placed after `reviewRunForReal` and before the default: the two are mutually
+  // exclusive in practice (a review token is `dev`, which a private-run token cannot
+  // be), and the order is stated rather than relied on so a future third marker does
+  // not silently land between them.
+  //
+  // 🔴 IT MUST STAY *ABOVE* THE `claims.dev` EARLY RETURN, AND THAT ORDERING IS THE
+  // GUARD. Below it, a token that somehow carried both markers would take the `dev`
+  // skip and get NO cumulative ceiling at all. The pair is refused at the signer and
+  // again at the verifier, so this is the third layer — and the cheapest, because it is
+  // just a line number. `no-unthreaded-private-run-claim` asserts this order.
+  //
+  // ⚠️ THE RESIDUAL, STATED RATHER THAN DISCOVERED LATER: replacing the daily cap means
+  // a private run no longer counts against the viewer's 50k/day platform key, so ONE
+  // viewer's spend summed across MANY delisted apps is bounded by
+  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by 50k. Measured
+  // 2026-09-28 that product is 9 × 2500 = 22,500, i.e. BELOW the cap it replaces — but
+  // that is a snapshot of a population moderators move, not a guarantee. It is accepted
+  // because the per-APP dimension is separately bounded by the G8 velocity cap
+  // (`reserveAppSpend`), which a private-run token does NOT skip precisely because it is
+  // never `dev`. Re-derive the product before widening the flag past `false`.
+  //
+  // Consent leg skipped — see the note on `reservePrivateRunBuzzSpend`.
+  if (claims.privateRun === true) {
+    const { total, key } = await reservePrivateRunBuzzSpend(userId, claims.appBlockId, cost);
+    return { total, key, cap: PRIVATE_RUN_BUZZ_CAP, consent: null };
   }
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
   const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };

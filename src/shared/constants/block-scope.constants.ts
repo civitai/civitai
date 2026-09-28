@@ -262,6 +262,56 @@ export function manifestWantsOauthToken(manifest: unknown): boolean {
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
 
 /**
+ * The audiences admitted to a PRIVATE RUN of a delisted / suspended app.
+ *
+ * 🔴 A CLOSED SET, AND THE ORDER OF POWER IS NOT THE ORDER LISTED. `moderator` has
+ * full parity including capped spend; `owner` likewise (self-bound, as the existing
+ * dev-tunnel precedent already is); `editor` — an ACCEPTED `AppCollaborator` seat —
+ * is READ-ONLY by operator decision, delivered by stripping `ai:write:budgeted` in
+ * `clampPrivateRunScopes`. Read that function, not this list, for what each audience
+ * can actually do.
+ *
+ * Client-safe (this module is imported by client code), so the host chrome and the
+ * server mint name the same three values.
+ */
+export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
+
+export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
+
+/**
+ * Membership test for the `privateRunAudience` token claim.
+ *
+ * 🔴 AN OWN-SET TEST OVER A FROZEN TUPLE, NOT an `in` on an object — the sibling
+ * `isKnownBlockScope` used to use `in`, which walks the prototype chain and let 12
+ * inherited `Object.prototype` keys through as "known". The claim arrives from a
+ * VERIFIED token, but the verifier is what calls this, so it must not be the weak
+ * link in its own guard.
+ */
+export function isPrivateRunAudience(value: unknown): value is PrivateRunAudience {
+  return typeof value === 'string' && (PRIVATE_RUN_AUDIENCES as readonly string[]).includes(value);
+}
+
+/**
+ * PRIVATE RUN — the AGGREGATE Buzz ceiling one viewer's OWN account can spend across
+ * ALL private-run generations of ONE delisted app, over the reservation window
+ * (~25h, re-armed on first write). Enforced as a per-(viewer, appBlockId) cumulative
+ * Redis reservation in `blocks.router.ts` (see `reservePrivateRunBuzzSpend`).
+ *
+ * 🔴 TIGHTER THAN `REVIEW_RUN_FOR_REAL_BUZZ_CAP` (5000), ON PURPOSE. A run-for-real
+ * review session is vetting an app the platform is deciding ABOUT; a private run is
+ * of an app the platform has already TAKEN DOWN. The stricter posture is the correct
+ * default for the second case, and it is cheap to widen later. The two values are
+ * also deliberately DIFFERENT so a test asserting the private-run ceiling cannot
+ * pass by accidentally reading the review one.
+ *
+ * SINGLE SOURCE OF TRUTH, defined in this client-safe module so the server
+ * enforcement, the mint and any future consent copy read the identical value. A low
+ * per-call `buzzBudget` alone is NOT sufficient — a hostile app loops sub-budget
+ * calls — so this cumulative ceiling is what actually bounds a private-run session.
+ */
+export const PRIVATE_RUN_BUZZ_CAP = 2500;
+
+/**
  * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
  * a viewer has installed. The abuse ceiling nobody consents to — a per-call
  * `buzzBudget` alone cannot bound an app looping sub-budget submits, so this is

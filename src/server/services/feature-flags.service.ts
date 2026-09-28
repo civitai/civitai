@@ -655,6 +655,16 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Blocks — PRIVATE RUN of a delisted / suspended app (`/apps/private-run/<slug>`),
+  // for its owner, an accepted listing collaborator, or a moderator. `availability: []`
+  // (NOT `['mod']`) so the whole surface is dark end-to-end on merge and stays dark until
+  // the `app-blocks-private-run-enabled` row is created in Flipt: `['mod']` would open a
+  // status bypass on taken-down apps for every moderator the moment this ships, which is
+  // the opposite of shipping it behind a base-off flag. The Flipt key is the only
+  // on-switch AND the only kill-switch. Mirrors the `appBlocksAgenticReview` precedent
+  // directly above, and pairs with the server-side `isAppBlocksPrivateRunEnabled` gate
+  // that both the SSR route and the PHASE 3 page-token mint evaluate for the caller.
+  appBlocksPrivateRun: { availability: [], fliptKey: 'app-blocks-private-run-enabled' },
   // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
   // flag-gated, deep-linkable full page that re-hosts the existing on-site review
   // body (today a modal on `/apps/review`) so mods can open, share, and refresh a

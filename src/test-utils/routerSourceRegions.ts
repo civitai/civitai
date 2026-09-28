@@ -78,6 +78,10 @@ export const MONEY_MARKERS = [
   'reserveConsentBudgetSpend(',
   'reserveCumulativeBuzzKey(',
   'reserveDevSessionBuzz(',
+  // The PRIVATE-RUN cumulative ceiling, per-(viewer, appBlockId). A money primitive by
+  // the same test as its run-for-real sibling below: it COMMITS the viewer's Buzz
+  // against a cap, so a disclosing estimate region that reached it would be reserving.
+  'reservePrivateRunBuzzSpend(',
   'reserveReviewRunForRealBuzzSpend(',
   'settleCustomComfySpend(',
 ] as const;

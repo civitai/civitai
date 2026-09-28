@@ -1971,6 +1971,24 @@ export const REDIS_SYS_KEYS = {
      */
     REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
     /**
+     * PRIVATE RUN — AGGREGATE Buzz-spend ceiling for a private run of a DELISTED /
+     * SUSPENDED app by its owner, an accepted listing collaborator, or a moderator.
+     * Keyed `${PRIVATE_RUN_BUZZ_CAP}:<viewerUserId>:<appBlockId>` so every private-run
+     * generation by one viewer against one app accumulates against a SINGLE ceiling
+     * (`PRIVATE_RUN_BUZZ_CAP`) — a per-call budget alone cannot bound an app looping
+     * sub-budget calls, which is the same hole the sibling caps exist for.
+     *
+     * 🔴 A SEPARATE KEY FROM `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, DELIBERATELY, AND NOT A
+     * TIDINESS CHOICE. That key's reservation id is a `pubreq_<ULID>` PUBLISH-REQUEST
+     * id; this one's is a real `apb_<…>` AppBlock id. Sharing one prefix would let a
+     * moderator's review-sandbox session and their private run of the same app draw
+     * down one another's ceiling, and the two ceilings answer different questions
+     * ("how much may a mod spend vetting this SUBMISSION" vs "…diagnosing this
+     * TAKEN-DOWN APP"). Same atomic INCRBY reserve-and-refund + hard-TTL EX shape as
+     * the sibling BLOCKS caps, on `sysRedis`, fail-CLOSED on a redis error.
+     */
+    PRIVATE_RUN_BUZZ_CAP: 'system:blocks:private-run-buzz-cap',
+    /**
      * CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) Buzz ceiling the VIEWER
      * themselves set at consent time (`app_user_scope_grants.buzz_budget_per_day`).
      * Keyed `${CONSENT_BUDGET}:<userId>:<appBlockId>:<UTC-day>`.
