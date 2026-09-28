@@ -654,13 +654,14 @@ export async function recordSpendAttribution(
   // distinguishable from an operator-voided row *in this column* — accepted,
   // because nothing pays out of this table and the mint audit line carries the
   // discriminating fields anyway.
-  const voidedReason = privateRun === true
-    ? 'manual_review'
-    : isSelfSpend
-    ? 'self_spend'
-    : isInternal
-    ? 'internal_owner'
-    : null;
+  const voidedReason =
+    privateRun === true
+      ? 'manual_review'
+      : isSelfSpend
+      ? 'self_spend'
+      : isInternal
+      ? 'internal_owner'
+      : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 

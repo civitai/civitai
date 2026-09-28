@@ -338,6 +338,31 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(await verifyBlockToken(await signRaw({ privateRun: {} }))).toBeNull();
   });
 
+  it('[REG] REJECTS a token carrying BOTH privateRun and dev — the cap-skip pair', async () => {
+    // 🔴 THE CONSUME-SIDE HALF OF A RULE THE SIGNER ALSO ENFORCES, and it is not
+    // redundant: the signer throws at PRODUCE time, while the hazard is consumed by
+    // `reserveBlockBuzzSpendForClaims`, which skips the platform reservation on
+    // `claims.dev === true`. A `dev` token lives 4h, so a token minted before a
+    // signer regression — or by any future second signer — would spend that window
+    // uncapped per app with nothing in between. Same rationale the age cap below is
+    // re-checked under.
+    //
+    // `signRaw` bypasses `BlockTokenService.sign` entirely, which is what makes this
+    // a real test of the VERIFIER rather than a second test of the signer's throw.
+    expect(await verifyBlockToken(await signRaw({ privateRun: true, dev: true }))).toBeNull();
+  });
+
+  it('[INV] each flag ALONE still verifies — the refusal is the PAIR', async () => {
+    // The negative control. Without it, a mutant rejecting every `privateRun` token
+    // (or every `dev` token) passes the test above while breaking both features.
+    const pr = await verifyBlockToken(await signRaw({ privateRun: true }));
+    expect(pr).not.toBeNull();
+    expect(pr?.privateRun).toBe(true);
+    const dev = await verifyBlockToken(await signRaw({ dev: true }));
+    expect(dev).not.toBeNull();
+    expect(dev?.dev).toBe(true);
+  });
+
   it('[INV] privateRun does NOT widen the token lifetime — only `dev` selects the 4h cap', async () => {
     // Pinned because the two claims sit adjacent in the signer and a future reader
     // could reasonably assume a private run needs the long TTL. It does not: the

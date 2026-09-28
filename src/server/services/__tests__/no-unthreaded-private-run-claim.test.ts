@@ -175,6 +175,25 @@ describe('the private-run claim is threaded to every money call site', () => {
       expect(sites, why).toHaveLength(count);
     });
 
+    it('[INV] no call site is written `fn(<newline>{` — which would hide it from BOTH checks', () => {
+      // 🔴 THE HOLE THAT DEFEATS EVERY OTHER ASSERTION IN THIS FILE AT ONCE. `callSites`
+      // matches the literal `<fn>({`, so a site reformatted as `recordSpendAttribution(\n  {`
+      // is not in `sites` at all — invisible to the COUNT (which would read one fewer
+      // and could be "fixed" by lowering the number) AND to the total. An unthreaded
+      // new site written that way ships green. Prettier's object-hugging is the only
+      // thing preventing it today, which is a convention, not a guard.
+      //
+      // So compare the two spellings: every `<fn>(` in the router must be the `({`
+      // form this ledger can see.
+      const bare = source.split(`${opener.slice(0, -1)}`).length - 1;
+      expect(
+        bare,
+        `${opener.slice(0, -1)} occurs ${bare} times but only ${sites.length} are written ` +
+          `as \`${opener}\`. A call reformatted to put its argument object on the next ` +
+          'line is invisible to every other assertion in this file.'
+      ).toBe(sites.length);
+    });
+
     it('[REG] every call site threads the VERIFIED claim, not a literal', () => {
       // 🔴 CHECKED AT THE ARGUMENT OBJECT'S OWN DEPTH, NOT ANYWHERE IN THE SLICE.
       // A `callSites` slice contains the nested objects and nested calls too, so a

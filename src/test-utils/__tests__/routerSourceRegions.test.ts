@@ -274,6 +274,24 @@ describe('topLevelPropertyText — depth filtering', () => {
     expect(text).toContain('c: 3');
   });
 
+  it('🔴 tracks PARENS, not only braces — a nested call with no braces still blanks', () => {
+    // Without `(` in the increment set every other fixture here still passes, because
+    // each nested span also opens a `{`. This is the one that isolates the paren.
+    const s = callSites("fn({ a: 1, note: label('hidden: yes'), tail: 2 });", 'fn({')[0];
+    expect(s).toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).not.toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).toContain('tail: 2');
+  });
+
+  it('🔴 tracks BRACKETS, not only braces — an array of primitives still blanks', () => {
+    // Same isolation for `[`: the existing array fixture nests an object inside, so
+    // `{` alone would carry it.
+    const s = callSites("fn({ a: 1, list: ['hidden: yes'], tail: 2 });", 'fn({')[0];
+    expect(s).toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).not.toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).toContain('tail: 2');
+  });
+
   it('returns empty for a slice with no object at all', () => {
     expect(topLevelPropertyText('fn(')).toBe('');
   });

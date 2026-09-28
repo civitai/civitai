@@ -11,6 +11,7 @@ import {
   moneyMarkersIn,
   sourceDecls,
   structuralQuoteRole,
+  topLevelPropertyText,
 } from '~/test-utils/routerSourceRegions';
 
 /**
@@ -102,6 +103,28 @@ const pathRegions = declRegions;
  * it a longer identifier or member access. The `(` case is deliberately NOT
  * excluded — `suppressQuoteLogs: true` and friends legitimately abut `,`/`)`.
  */
+/**
+ * The argument object's OWN properties, with every nested object/call blanked.
+ *
+ * 🔴 EVERY FIELD ASSERTION IN THIS FILE GOES THROUGH IT, AND THAT IS A FIX, NOT A
+ * TIDY-UP. A `callSites` slice contains the nested objects and nested calls too, so a
+ * bare `slice.toContain('baseGenerationBuzz: realizedBaseCost')` is satisfied by
+ * `recordSpendAttribution({ …, opts: build({ baseGenerationBuzz: realizedBaseCost }) })`
+ * — with NO top-level field, i.e. the author fee priced off `undefined`, and this
+ * ledger green. The sibling ledger `no-unthreaded-private-run-claim.test.ts` had the
+ * identical hole; when it was closed, `callSites` moved into the shared module and its
+ * docblock now states that a caller asserting a field on the argument object itself
+ * MUST filter by depth. This file is that module's other caller, and was the half where
+ * the contract was still false.
+ *
+ * ⚠️ NEGATIVE assertions (`not.toContain` / `not.toMatch`) are deliberately left on the
+ * RAW slice: nesting makes a negative STRICTER, so filtering there could only weaken
+ * them.
+ */
+function ownProps(site: string): string {
+  return topLevelPropertyText(site);
+}
+
 function containsExpression(haystack: string, needle: string): boolean {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`${escaped}(?![\\w.])`).test(haystack);
@@ -263,7 +286,9 @@ describe('author fee — the spend-attribution seam', () => {
     // Without this, an extractor that silently matched nothing would make every
     // assertion below vacuously true over an empty array.
     expect(sites.length).toBeGreaterThan(0);
-    expect(sites[0]).toContain('workflowId');
+    // EVERY slice, not just the first — an extractor that matched one real site plus
+    // garbage would pass a `sites[0]` check while polluting the count.
+    expect(sites.filter((s) => !s.includes('workflowId'))).toEqual([]);
   });
 
   it('there are exactly FOUR spend-attribution call sites', () => {
@@ -274,12 +299,12 @@ describe('author fee — the spend-attribution seam', () => {
   });
 
   it('every call site passes a base generation cost', () => {
-    for (const site of sites) expect(site).toContain('baseGenerationBuzz:');
+    for (const site of sites) expect(ownProps(site)).toContain('baseGenerationBuzz:');
   });
 
   it('every call site passes the hoisted `realizedBaseCost`, not a cost total', () => {
     for (const site of sites) {
-      expect(site).toContain('baseGenerationBuzz: realizedBaseCost');
+      expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
       expect(site).not.toMatch(
         /baseGenerationBuzz:\s*(buzzAmount|cost\b|snapshot\.cost\?\.total|ceiling|reserveBuzz)/
       );
@@ -295,7 +320,7 @@ describe('author fee — the spend-attribution seam', () => {
     // class of silently-wrong number as feeding `buzzAmount`, and equally
     // invisible downstream, because both are plain Buzz integers.
     for (const site of sites) {
-      expect(site).toContain('generationPriceIsCap: realizedPriceIsCap');
+      expect(ownProps(site)).toContain('generationPriceIsCap: realizedPriceIsCap');
       expect(site).not.toMatch(/generationPriceIsCap:\s*(false|true|null|undefined)\b/);
     }
   });
@@ -459,7 +484,7 @@ describe('author fee — the viewer-charge seam', () => {
     // assertion below vacuously true over two empty arrays.
     expect(charges.length).toBeGreaterThan(0);
     expect(quotes.length).toBeGreaterThan(0);
-    expect(charges[0]).toContain('workflowId');
+    expect(charges.filter((c) => !c.includes('workflowId'))).toEqual([]);
   });
 
   it('the submit-path locator names all four paths (positive control)', () => {
@@ -553,7 +578,7 @@ describe('author fee — the viewer-charge seam', () => {
     // one coercion D6 forbids in both directions. Pinned as the derived name, and
     // as the ABSENCE of any literal.
     for (const site of charges) {
-      expect(site).toContain('buzzType: spendBasis.buzzType');
+      expect(ownProps(site)).toContain('buzzType: spendBasis.buzzType');
       expect(site).not.toMatch(/buzzType:\s*['"]/);
     }
   });
@@ -564,8 +589,8 @@ describe('author fee — the viewer-charge seam', () => {
     // and `undefined` maps to a `base-unavailable` skip, i.e. the fee quietly
     // stops charging on every generation with nothing to say so.
     for (const site of charges) {
-      expect(site).toContain('baseGenerationBuzz: realizedBaseCost');
-      expect(site).toContain('priceIsCap: realizedPriceIsCap');
+      expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
+      expect(ownProps(site)).toContain('priceIsCap: realizedPriceIsCap');
       expect(site).not.toMatch(/baseGenerationBuzz:\s*(snapshot|buzzAmount|cost\b|\d)/);
     }
   });
@@ -755,7 +780,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(quoteOwners.length).toBeGreaterThan(0);
     for (const { path: owner, site } of quoteOwners) {
       expect(owner).not.toBe('<module scope>');
-      expect(site).toContain('appId: claims.appId');
+      expect(ownProps(site)).toContain('appId: claims.appId');
     }
   });
 

@@ -260,8 +260,20 @@ describe('arm A — privateRun voids the spend-attribution row', () => {
     expect(withFalse.voidedReason ?? null).toBeNull();
   });
 
-  it('[REG] a TRUTHY NON-BOOLEAN does not void — the arm tests `=== true`, not truthiness', async () => {
-    // 🔴 THIS TEST EXISTS BECAUSE A MUTANT SURVIVED. Loosening the arm from
+  it('[INV] a TRUTHY NON-BOOLEAN does not void — the arm tests `=== true`, not truthiness', async () => {
+    // 🔴 [INV] BY MEASUREMENT, AND THE MISLABEL IS WORTH RECORDING. This shipped as
+    // [REG] in the round that CORRECTED three other [REG] labels — so the method that
+    // caught those minted a fourth. At the base ref the service contains no
+    // `privateRun` at all and this fixture is neither self-spend nor internal, so base
+    // code already produces `tracked` / `null`: green at base, therefore an invariant
+    // guard against a future loosening, not regression coverage.
+    //
+    // The gap in the method, now closed: the base run checked that no [INV] was RED,
+    // but never that every [REG] was actually red. A label can be wrong in both
+    // directions and only one was being tested for.
+    //
+    // 🔴 IT IS STILL WORTH ITS PLACE, BECAUSE A MUTANT SURVIVED WITHOUT IT. Loosening
+    // the arm from
     // `privateRun === true` back to a bare truthiness check was undetectable: every
     // other fixture here passes a real boolean, for which the two forms are
     // identical, so the mutant was EQUIVALENT against the suite and scored SURVIVED.
@@ -272,9 +284,7 @@ describe('arm A — privateRun voids the spend-attribution row', () => {
     // saw. Under truthiness that silently voids the row and, on the fee rail's
     // equivalent, silently suppresses a live charge. The cast below is how a real
     // caller reaches this state; it is deliberate, not a test smell.
-    await recordSpendAttribution(
-      fakeInput({ privateRun: 'yes' as unknown as boolean })
-    );
+    await recordSpendAttribution(fakeInput({ privateRun: 'yes' as unknown as boolean }));
 
     const data = writtenRow();
     expect(data.status).toBe('tracked');

@@ -359,6 +359,15 @@ export function callSites(source: string, opener: string): string[] {
  * Pass a slice from `callSites`, i.e. starting at the call text and containing the
  * matching `}`. Feed it comment-blanked source (`blankComments`) first, or a brace
  * inside a comment will desync the depth count.
+ *
+ * ⚠️ IT IS A DEPTH COUNTER, NOT A LEXER, AND STRINGS ARE THE UNCOVERED CASE.
+ * `blankComments` blanks comments but deliberately does NOT blank string CONTENTS, so
+ * an unbalanced bracket inside a string literal, template literal or regex character
+ * class shifts the count. The two directions are not equally safe: an unbalanced
+ * OPENER inflates depth and blanks live code, which fails RED (loud, safe); an
+ * unbalanced CLOSER deflates it and could let a nested field read as top-level, which
+ * fails GREEN. No governed call site contains either today — checked — but a consumer
+ * adding a population whose arguments carry such a string must not assume this holds.
  */
 export function topLevelPropertyText(site: string): string {
   const open = site.indexOf('{');

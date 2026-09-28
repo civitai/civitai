@@ -752,6 +752,22 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       if (claims.privateRun !== undefined && typeof claims.privateRun !== 'boolean') {
         return null;
       }
+      // 🔴 THE `privateRun` + `dev` PAIR IS REFUSED HERE TOO, NOT ONLY AT THE SIGNER.
+      // The signer throws on the combination, but that is a PRODUCE-time guard for a
+      // CONSUME-time hazard: `reserveBlockBuzzSpendForClaims` takes an early return on
+      // `claims.dev === true` and skips the platform reservation, and a `dev` token
+      // lives 4h — so a token minted before a signer regression, or by any future
+      // second signer, would spend that whole window uncapped per app with nothing
+      // between mint and spend to stop it.
+      //
+      // This is the same treatment the age cap below already gets, for the same stated
+      // reason: it re-checks a property the signer is supposed to guarantee "so a
+      // signer bug emitting a too-long `exp` is still caught". Refusing the token
+      // outright (rather than dropping one claim) keeps the failure fail-CLOSED and
+      // indistinguishable from any other invalid token, so it leaks no oracle.
+      if (claims.privateRun === true && claims.dev === true) {
+        return null;
+      }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
       // against the type-specific cap so a signer bug emitting a too-long `exp`
