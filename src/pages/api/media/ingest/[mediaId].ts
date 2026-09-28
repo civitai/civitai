@@ -22,6 +22,15 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
  * 🔴 Redacts the whole response object, not one field: `error` comes from the orchestrator
  * and a validation-error payload that echoes submitted fields would carry the same
  * callback entry.
+ *
+ * ⚠ This is KNOWN-VALUE redaction (strip these exact strings). The repo also has PATTERN
+ * redaction in `~/utils/faro/redact.ts` (`redactUrl`, `deepRedact`), which strips any
+ * sensitively-named query param on any embedded URL without needing to know the value — so it
+ * still catches a secret the orchestrator re-serializes (param reorder, re-encoding) where a
+ * whole-URL needle would miss. They are complementary, not substitutes: a bare token not
+ * inside a URL is only caught here. Deliberately not composed, because `deepRedact` carries
+ * Faro-specific tuning; the next route that needs to echo a third-party payload should reach
+ * for that module rather than growing a third facility.
  */
 export function redactSecrets<T>(value: T, secrets: Array<string | undefined>): T {
   if (value == null) return value;
