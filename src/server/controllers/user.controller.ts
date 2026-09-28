@@ -133,6 +133,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
+import { closeScamCasesOpenedBefore } from '~/server/services/scam-case-ledger';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -1232,6 +1233,7 @@ export const toggleMuteHandler = async ({
     entityId: id,
     activity: user.muted ? 'unmute' : 'mute',
   });
+  if (user.muted) await closeScamCasesOpenedBefore(id, new Date());
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',

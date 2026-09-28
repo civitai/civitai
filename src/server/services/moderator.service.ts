@@ -54,6 +54,8 @@ type UserModActivity = {
     | 'setRewardsEligibility'
     | 'removeContent'
     | 'autoMuteScam'
+    // The account was already muted by a moderator, so a scam verdict hid its content and opened no case.
+    | 'scamCleanup'
     | 'mutePendingReview'
     | 'overturnPendingReviewMute'
     | 'mute'

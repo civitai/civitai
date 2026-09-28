@@ -11,9 +11,8 @@ import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { updateUserById } from '~/server/services/user.service';
-import { invalidateSession } from '~/server/auth/session-invalidation';
+import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
+import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
 import { ChatMessageType, JobQueueType, ReportReason } from '~/shared/utils/prisma/enums';
@@ -33,9 +32,8 @@ const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 const reportRetention = 14;
 
-// Tags that trigger auto-mute for new accounts (< autoMuteAccountAgeDays old)
+// Clavata tags that trigger the scam auto-mute
 const autoMuteTags = ['Impersonating Civitai Staff'];
-const autoMuteAccountAgeDays = 7;
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -45,108 +43,40 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
-// Entity types eligible for auto-mute on scam impersonation tags
-const autoMuteEntityTypes: AllModKeys[] = ['Chat', 'Comment', 'CommentV2'];
+const clavataScamCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
+  Chat: 'chatMessages',
+  Comment: 'comments',
+  CommentV2: 'commentsV2',
+};
 
-/**
- * Auto-mute users who match high-confidence scam tags and have new accounts.
- * Applies to Chat, Comment, and CommentV2 entities. Skips moderators.
- */
 async function autoMuteIfScamAccount({
   type,
+  entityId,
   userId,
   matches,
 }: {
   type: AllModKeys;
+  entityId: number;
   userId: number;
   matches: string[];
 }) {
-  if (!autoMuteEntityTypes.includes(type)) return;
-  const hasAutoMuteTag = matches.some((m) => autoMuteTags.includes(m));
-  if (!hasAutoMuteTag) return;
+  const cleanup = clavataScamCleanup[type];
+  if (!cleanup) return;
+  if (!matches.some((m) => autoMuteTags.includes(m))) return;
 
-  log(`Auto-mute check: userId=${userId}, type=${type}, matches=[${matches.join(', ')}]`);
-
-  try {
-    const user = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: { createdAt: true, isModerator: true, muted: true },
-    });
-    if (!user) {
-      log(`Auto-mute skip: user ${userId} not found`);
-      return;
-    }
-    if (user.isModerator) {
-      log(`Auto-mute skip: user ${userId} is moderator`);
-      return;
-    }
-    if (user.muted) {
-      log(`Auto-mute skip: user ${userId} already muted`);
-      return;
-    }
-
-    const accountAgeDays = dayjs().diff(dayjs(user.createdAt), 'day');
-    if (accountAgeDays > autoMuteAccountAgeDays) {
-      log(
-        `Auto-mute skip: user ${userId} account age ${accountAgeDays}d > ${autoMuteAccountAgeDays}d`
-      );
-      return;
-    }
-
-    // Gate the user via `muted` only. `mutedAt` is reserved for moderator
-    // confirmation (uphold) — setting it here would trip the confirm-mutes cron
-    // and cancel the membership before any moderator reviews the auto-mute.
-    await updateUserById({
-      id: userId,
-      data: { muted: true },
-      updateSource: 'entity-moderation:auto-mute-scam',
-    });
-    await invalidateSession(userId, 'moderation');
-
-    // Clean up the scammer's content based on entity type
-    let cleanupSummary: string;
-    if (type === 'Chat') {
-      const deleted = await dbWrite.chatMessage.deleteMany({
-        where: { userId },
-      });
-      cleanupSummary = `deleted ${deleted.count} chat msgs`;
-    } else if (type === 'Comment') {
-      const hidden = await dbWrite.comment.updateMany({
-        where: { userId, hidden: { not: true } },
-        data: { hidden: true },
-      });
-      cleanupSummary = `hidden ${hidden.count} comments`;
-    } else {
-      // CommentV2
-      const hidden = await dbWrite.commentV2.updateMany({
-        where: { userId, hidden: { not: true } },
-        data: { hidden: true },
-      });
-      cleanupSummary = `hidden ${hidden.count} v2 comments`;
-    }
-
-    // Audit trail — track in ModActivity (Postgres) and userActivities (ClickHouse)
-    await trackModActivity(-1, {
-      entityType: 'user',
-      entityId: userId,
-      activity: 'autoMuteScam',
-    });
-    await tracker.userActivity({
-      type: 'Muted',
-      targetUserId: userId,
-      source: `auto-mute-scam (age: ${accountAgeDays}d, tags: ${matches.join(
-        ', '
-      )}, ${cleanupSummary})`,
-    });
-
-    log(
-      `Auto-muted user ${userId} and ${cleanupSummary} (account age: ${accountAgeDays}d, tags: ${matches.join(
-        ', '
-      )})`
-    );
-  } catch (error) {
-    logAx({ message: 'Error auto-muting user', data: { error, userId, matches } });
-  }
+  const result = await autoMuteScamAccount({
+    userId,
+    cleanup,
+    evidence: {
+      source: `clavata:${type}`,
+      dedupeKey: `clavata:${type}:${entityId}:${[...matches].sort().join('|')}`,
+      reason: `tags: ${matches.join(', ')}`,
+      entityType: type,
+      entityId,
+      contentAt: null,
+    },
+  });
+  log(`Auto-mute userId=${userId} type=${type}: ${JSON.stringify(result)}`);
 }
 
 // type PrismaSelectForModel<T extends Uncapitalize<Prisma.ModelName>> =
@@ -460,7 +390,12 @@ const runClavata = async ({
         );
 
         for (const uid of userIdsToCheck) {
-          await autoMuteIfScamAccount({ type, userId: uid, matches });
+          await autoMuteIfScamAccount({
+            type,
+            entityId: Number(metadata.id),
+            userId: uid,
+            matches,
+          });
         }
 
         if (deleteJob) {
