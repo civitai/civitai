@@ -12,6 +12,7 @@ import {
   READ_SCOPE_LABELS,
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
+import classes from '~/components/Apps/AppActivityPanel.module.scss';
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
@@ -298,8 +299,27 @@ export function ActivityAppName({
 function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
   const color =
     statusCode < 300 ? 'green' : statusCode < 400 ? 'blue' : statusCode < 500 ? 'orange' : 'red';
+  // 🔴 THE ONLY CELL VALUE THAT MEANS NOTHING WITHOUT ITS COLUMN HEADER, and the card variant
+  // hides the header. `ActivityStatusBadge`'s sibling renders words ('confirmed', 'voided');
+  // this one renders a bare integer beside a timestamp, so unlabelled it reads as a second
+  // number rather than as an outcome.
+  //
+  // ⚠️ AN `aria-label` HERE WOULD BE INERT, AND THAT WAS TRIED. Mantine's Badge renders a bare
+  // `<div>` with no role, so its computed role is `generic` — for which ARIA 1.2 declares
+  // "Name from: prohibited", i.e. every engine drops an author-supplied name. The attribute is
+  // assertable in a test while naming nothing, which is worse than no label. Visually-hidden
+  // TEXT is real content and is this repo's idiom for it (`AppsRailNav`, `GenerationTabs`,
+  // `AppListingCardSkeleton`).
+  //
+  // 🔴 `sr-only` IS LOAD-BEARING FOR THE WIDE TABLE TOO, which is not obvious. Out of flow the
+  // span contributes nothing to layout, so the ≥768 rows are unchanged — but measured by renaming
+  // the class, a VISIBLE prefix widens the Status column and takes the row from 36.19 to 48.09,
+  // failing four of the pre-existing `no-surplus` arms alongside the one that reads it directly.
+  // The trailing space is likewise load-bearing, for the cross-mount text ledger rather than for
+  // speech: the two are separate text nodes, so removing it yields `HTTP status200`.
   return (
     <Badge size="sm" color={color} variant="light">
+      <span className="sr-only">HTTP status </span>
       {statusCode}
     </Badge>
   );
@@ -500,8 +520,25 @@ export function AppActivityPanel({
     return <EmptyActivity />;
   }
   return (
-    <Stack gap="sm">
-      <Table>
+    /* `classes.panel` is the QUERY CONTAINER the stacked variant is measured against — see
+       `AppActivityPanel.module.scss`. It has to sit on an ancestor of the table, not on the
+       table, because a `@container` rule resolves against the element's ancestors. */
+    <Stack gap="sm" className={classes.panel} data-testid="app-activity-panel">
+      {/* 🔴 EXPLICIT ROLES ON EXACTLY THE FOUR ELEMENTS THE CARD VARIANT RE-BOXES. HTML-AAM maps a
+          table element's role from its box, so a `display` that is not a table value leaves the
+          implicit role unspecified — and the module sets `display: block` on the table, the tbody,
+          the rows and the cells. Without these, below the breakpoint an audit feed can reach
+          assistive tech as a flat run of strings with no row boundaries. Stating them costs
+          nothing above it, where they match what the elements already are.
+          ⚠️ AND NOT ON `thead` / `th`: those were added and REMOVED. The card variant hides the
+          whole thead (`display: none`), which drops it from the accessibility tree whatever its
+          role says, and above the breakpoint its implicit roles already apply — so they were
+          inert in both variants and unassertable in either.
+          ⚠️ THE GUARD IS THE ATTRIBUTE LEDGER in `AppPermissionsActivityDrawer.browser.test.tsx`,
+          which reads all four by name — not a computed-role read, because no tier here resolves an
+          accessibility tree. What is pinned is that the attributes are present, never that a
+          screen reader agrees. */}
+      <Table className={classes.table} role="table">
         {/* 🔴 NO COLUMN LEDGER, DELIBERATELY — this table is EXEMPT in
             `~/components/Apps/appsWideLayout`, and the exemption is the measured outcome
             rather than an omission. Its natural layout already renders every cell on ONE
@@ -510,7 +547,11 @@ export function AppActivityPanel({
             place at the narrow end. Every ledger that meaningfully redistributes at 2560
             wraps a cell at 768, and the one that does NOT (`[16,12,27,25,null]`) lands
             within ~15px per column of natural at 2560 — i.e. it buys nothing. See the
-            EXEMPT entry for the full table of measurements. */}
+            EXEMPT entry for the full table of measurements.
+
+            ⚠️ THAT EXEMPTION IS A CLAIM ABOUT CONTAINERS ≥768 ONLY. Below ~560px this table
+            is not a table at all — the module CSS renders each row as a card — so it is not
+            a ledger question there. A `<colgroup>` would be inert in that variant anyway. */}
         <Table.Thead>
           <Table.Tr>
             <Table.Th>When</Table.Th>
@@ -520,10 +561,10 @@ export function AppActivityPanel({
             <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
-        <Table.Tbody>
+        <Table.Tbody role="rowgroup">
           {items.map((item) => (
-            <Table.Tr key={item.id}>
-              <Table.Td>
+            <Table.Tr key={item.id} role="row">
+              <Table.Td role="cell" data-activity-cell="when">
                 {/* 🔴 RELATIVE, WITH THE ABSOLUTE STAMP STILL ONE HOVER AWAY. "20m ago"
                     is what a reader of an audit feed actually wants — the question is
                     "was this just now?", not "what wall-clock minute was it?".
@@ -548,7 +589,7 @@ export function AppActivityPanel({
                   <DaysFromNow date={item.createdAt} live />
                 </Text>
               </Table.Td>
-              <Table.Td>
+              <Table.Td role="cell" data-activity-cell="app">
                 <Group gap={6} wrap="nowrap">
                   {/* `linkable` is FALSE in per-app drill-down (the run-frame drawer) —
                       see the prop's own docstring: a top-level navigation out of a
@@ -564,7 +605,7 @@ export function AppActivityPanel({
                   )}
                 </Group>
               </Table.Td>
-              <Table.Td>
+              <Table.Td role="cell" data-activity-cell="action">
                 <Text size="xs">
                   {item.kind === 'buzz'
                     ? humaniseActivityAction(item.scope)
@@ -583,7 +624,7 @@ export function AppActivityPanel({
                     : humaniseScopeInvocation(item.scope, item.endpoint)}
                 </Text>
               </Table.Td>
-              <Table.Td>
+              <Table.Td role="cell" data-activity-cell="detail">
                 {item.kind === 'buzz' ? (
                   <Text size="xs">
                     {item.usdAmountCents > 0
@@ -601,7 +642,7 @@ export function AppActivityPanel({
                   </Text>
                 )}
               </Table.Td>
-              <Table.Td>
+              <Table.Td role="cell" data-activity-cell="status">
                 {item.kind === 'buzz' ? (
                   <ActivityStatusBadge status={item.status} />
                 ) : (

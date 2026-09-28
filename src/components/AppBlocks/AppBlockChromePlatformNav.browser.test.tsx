@@ -1,5 +1,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
 // (Marketplace / App activity / My apps / Review). "Review" is gated on
@@ -18,35 +20,22 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => holder.user,
 }));
 
-vi.mock('~/utils/trpc', () => ({
+/**
+ * 🔴 A PROXY, NOT A LITERAL — the whole `blocks` namespace here was inert fixture anyway.
+ *
+ * Phase 3 first patched this by hand (`useUtils` + `revokeScopes`) after `ScopeConsentList`'s
+ * `useScopeRevoke` made the drawer body throw `TypeError: trpc.useUtils is not a function`, which
+ * failed the one arm below on `Cannot find element with locator:
+ * getByTestId('app-permissions-activity-drawer')` — a message that reads as "the menu item is
+ * broken" and names nothing. Converted because this file asserts on NO tRPC spy at all: every
+ * procedure it named existed solely to stop the drawer's subtree crashing, which is exactly what
+ * the shared proxy does for every procedure, including the ones the next change adds. See
+ * `test/trpcProxyStub.ts` for the four-time history behind it.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
-  trpc: {
-    blocks: {
-      listMyScopeGrants: { useQuery: () => ({ data: [], isLoading: false }) },
-      listMyAppActivity: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-      listMyScopeInvocations: {
-        useInfiniteQuery: () => ({
-          data: { pages: [{ items: [], nextCursor: null }] },
-          isLoading: false,
-          hasNextPage: false,
-          isFetchingNextPage: false,
-          fetchNextPage: vi.fn(),
-        }),
-      },
-    },
-    // W13 — AppActivityPanel (mounted by the drawer) resolves rich-detail ids via
-    // these batch lookups. Stub them (empty fixtures → inert).
-    modelVersion: { getVersionsByIds: { useQuery: () => ({ data: undefined }) } },
-    useQueries: () => [],
-  },
+  trpc: makeTrpcProxy(),
 }));
 
 // eslint-disable-next-line import/first
