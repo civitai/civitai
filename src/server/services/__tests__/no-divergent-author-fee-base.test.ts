@@ -114,14 +114,20 @@ function containsExpression(haystack: string, needle: string): boolean {
  * 🔴 EVERY POSITIVE FIELD ASSERTION IN THIS FILE GOES THROUGH IT, AND THAT IS A FIX,
  * NOT A TIDY-UP.
  *
- * ⚠️ THAT SENTENCE WAS FALSE WHEN FIRST WRITTEN, AND A REVIEW ROUND PROVED IT WITH
- * MUTANTS RATHER THAN BY READING. Five assertions were left on the raw slice —
- * `suppressQuoteLogs`, the reversal's `workflowId`, and the three ledgered
- * `baseExpr`/`capExpr`/`typeExpr` — and three of them had surviving nested mutants,
+ * 🔴 THAT SENTENCE WAS FALSE TWICE, SO IT IS NO LONGER A PROMISE — IT IS ASSERTED BY
+ * A TEST AT THE BOTTOM OF THIS FILE ("every positive slice assertion filters by
+ * depth"). Read that guard, not this paragraph.
+ *
+ * The history is the argument for the guard. Round one left FIVE assertions on the
+ * raw slice — `suppressQuoteLogs`, the reversal's `workflowId`, and the three
+ * ledgered `baseExpr`/`capExpr`/`typeExpr` — three with surviving nested mutants,
  * including `typeExpr`, the fee's own lookup key, which this file records as having
- * once survived 821/821. So the comment read as coverage while providing none on
- * exactly the assertions it named. All five are routed through it now. If you add a
- * positive field assertion here, route it too, or this sentence goes false again. A `callSites` slice contains the nested objects and nested calls too, so a
+ * once survived 821/821. Round two claimed to have fixed "every" one and still left
+ * TWO: the charge CEILING (`reservedAuthorFeeBuzz`) and the reversal's
+ * `terminalStatus`, both again proven by surviving mutants rather than by reading.
+ *
+ * Twice is the signal that a prose rule addressed to the next author does not hold a
+ * whole-file invariant. A guard does, and it fails on the line that breaks it. A `callSites` slice contains the nested objects and nested calls too, so a
  * bare `slice.toContain('baseGenerationBuzz: realizedBaseCost')` is satisfied by
  * `recordSpendAttribution({ …, opts: build({ baseGenerationBuzz: realizedBaseCost }) })`
  * — with NO top-level field, i.e. the author fee priced off `undefined`, and this
@@ -554,7 +560,7 @@ describe('author fee — the viewer-charge seam', () => {
     // The ceiling is what makes "priced into the reservation" structural rather
     // than conventional: the charge is clamped to `min(reserved, realized)`, so a
     // path can never bill past the number its own gates were measured against.
-    for (const site of charges) expect(site).toMatch(/reservedAuthorFeeBuzz,/);
+    for (const site of charges) expect(ownProps(site)).toMatch(/reservedAuthorFeeBuzz,/);
   });
 
   it('🔴 every charge site is AWAITED, never fire-and-forget', () => {
@@ -1283,7 +1289,7 @@ describe('author fee — the viewer-charge seam', () => {
     // projection's.)
     for (const site of callSites(source, 'reverseBlockAuthorFee({')) {
       expect(ownProps(site)).toContain('workflowId: input.workflowId');
-      expect(site).toMatch(/terminalStatus: \w+\.status,/);
+      expect(ownProps(site)).toMatch(/terminalStatus: \w+\.status,/);
     }
   });
 
@@ -1314,5 +1320,98 @@ describe('author fee — the viewer-charge seam', () => {
       from = at + 1;
     }
     expect(guarded).toBe(3);
+  });
+});
+
+/**
+ * THE INVARIANT THE DOCBLOCK ON `ownProps` USED TO ONLY PROMISE.
+ *
+ * 🔴 IT IS A TEST BECAUSE THE PROSE WAS FALSE TWICE IN CONSECUTIVE REVIEW ROUNDS, both
+ * times discovered by a surviving nested mutant rather than by anyone reading it. A
+ * sentence telling the next author to route their new assertion cannot fail; this can.
+ *
+ * The property: every POSITIVE assertion in this file that reads a `callSites` slice
+ * must read it through `ownProps`, because a raw slice contains the nested objects and
+ * nested calls too — so `expect(site).toContain('baseGenerationBuzz: realizedBaseCost')`
+ * is satisfied by that field buried one level down with no top-level property at all,
+ * which is the author fee priced off `undefined` with this ledger green.
+ *
+ * NEGATIVE assertions are exempt BY CONSTRUCTION, not by exception: `ownProps` only
+ * ever replaces characters with spaces, so the raw slice is a superset and
+ * `not.toContain` / `not.toMatch` on it is the strictly stronger claim.
+ *
+ * Scoped to the identifier `site`, which is what every slice loop in this file binds.
+ * The extractor positive controls bind `s` and use `s.includes(...)` deliberately —
+ * they assert the EXTRACTOR found real argument objects, not that any field is wired,
+ * so depth is irrelevant to them.
+ */
+describe('this file filters by depth wherever it matters', () => {
+  /**
+   * 🔴 THE SCAN STOPS BEFORE THIS BLOCK, AND THAT BOUND IS NOT OPTIONAL. The guard's own
+   * docblock and regex literals necessarily SPELL the offending forms in order to
+   * describe and match them, so an unbounded scan flags itself — three false positives
+   * on the first run, all inside this describe. A guard that cannot be satisfied gets
+   * deleted, which would be the worst outcome for a property that has already regressed
+   * twice.
+   *
+   * Sliced at the SENTINEL below rather than at a line number, so inserting a test above
+   * cannot silently move the boundary.
+   */
+  const SENTINEL = 'this file filters by depth wherever it matters';
+  const FULL = readFileSync(
+    path.join(process.cwd(), 'src/server/services/__tests__/no-divergent-author-fee-base.test.ts'),
+    'utf8'
+  );
+  const cut = FULL.indexOf(`describe('${SENTINEL}'`);
+  // 🔴 COMMENTS BLANKED FIRST, using this file's own shared helper. The `ownProps`
+  // docblock necessarily SPELLS `expect(site).toContain(...)` in order to explain the
+  // hazard, so a scan over raw text flags the very paragraph that documents the rule —
+  // the second false positive this guard produced against itself. Only CODE can violate
+  // the property, so only code is scanned.
+  const SELF = blankComments(cut === -1 ? FULL : FULL.slice(0, cut));
+
+  it('🔴 no POSITIVE assertion reads a raw `site` slice', () => {
+    // `expect(site).toContain(` / `.toMatch(` and `containsExpression(site,` are the
+    // three spellings this file uses. The negative forms carry `.not.` and are excluded
+    // by the pattern itself rather than by an allowlist.
+    const offenders = [
+      ...SELF.matchAll(/expect\(site\)\.(?!not\.)(toContain|toMatch)\(/g),
+      ...SELF.matchAll(/containsExpression\(site,/g),
+    ].map((m) => {
+      const line = SELF.slice(0, m.index).split('\n').length;
+      return `${line}: ${m[0]}`;
+    });
+
+    expect(
+      offenders,
+      'these read the RAW slice, so a field nested one level down satisfies them. ' +
+        'Wrap the slice in `ownProps(...)`. See the docblock on `ownProps`.'
+    ).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the self-exclusion sentinel is found', () => {
+    // If the describe name is ever changed without updating SENTINEL, `cut` is -1 and the
+    // scan silently widens to the whole file — which would flag this guard's own prose and
+    // read as a real regression. Assert the bound was actually applied.
+    expect(FULL.indexOf(`describe('${SENTINEL}'`)).toBeGreaterThan(0);
+    // `blankComments` preserves length (it writes spaces), so SELF is shorter than FULL
+    // by exactly the excluded tail — which must be this block and nothing more.
+    expect(FULL.length - SELF.length).toBeGreaterThan(0);
+    expect(FULL.length - SELF.length).toBeLessThan(4000);
+  });
+
+  it('POSITIVE CONTROL: the scan can find the depth-filtered forms it expects', () => {
+    // 🔴 Without this, a typo'd pattern would report ZERO offenders forever — a guard
+    // wired to nothing, which is exactly the failure this file exists to prevent
+    // elsewhere. There must be a healthy population of the CORRECT spelling.
+    const routed = [
+      ...SELF.matchAll(/expect\(ownProps\(site\)\)\.(toContain|toMatch)\(/g),
+      ...SELF.matchAll(/containsExpression\(ownProps\(site\),/g),
+    ];
+    expect(routed.length).toBeGreaterThanOrEqual(10);
+    // …and the negative forms it must NOT flag are genuinely present.
+    expect(
+      [...SELF.matchAll(/expect\(site\)\.not\.(toContain|toMatch)\(/g)].length
+    ).toBeGreaterThanOrEqual(4);
   });
 });
