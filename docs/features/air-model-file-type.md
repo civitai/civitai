@@ -28,8 +28,8 @@ addition to) the `ModelType`. This doc enumerates both vocabularies and the bloc
 | | File | Detail |
 |---|---|---|
 | **Produced** | [`stringifyAIR`](../../src/shared/utils/air.ts) | `type: ModelType` → `typeUrnMap[type] ?? 'unknown'` |
-| Generation panel | [`generation.service.ts` `bringItAllTogether`](../../src/server/services/generation/generation.service.ts) | passes `type: resource.model.type` |
-| Resource caches | [`caches.ts`](../../src/server/redis/caches.ts) (`modelVersionResourceCache`) | passes `type: v.model.type` |
+| Generation panel | [`generation.service.ts` `bringItAllTogether`](../../src/server/services/generation/generation.service.ts) | passes `type: resource.model.type` plus the type of the file `getGenerationFile` chooses |
+| Version → AIR | [`resource-air.ts`](../../src/server/utils/resource-air.ts) (`modelVersionToAir`) | passes the model type plus the file `getGenerationFile` chooses; that file's type can override the segment (`fileTypeUrnMap`) |
 | File scanning | [`orchestrator.service.ts`](../../src/server/services/orchestrator/orchestrator.service.ts) | passes `type: modelType` |
 | Public API | `src/pages/api/v1/model-versions/[id].ts`, `.../mini/[id].ts` | emit AIR in responses |
 | Display | [`ModelURN.tsx`](../../src/components/Model/ModelURN/ModelURN.tsx) | user-facing URN on model pages |
@@ -320,7 +320,7 @@ fallback.
 
 ### 5. Backwards compatibility & cache invalidation
 AIRs are persisted widely — image metadata, stored generation params, `continueFromAir` for
-training — and cached in Redis (`modelVersionResourceCache`, resource data cache). Existing AIRs
+training — and cached in Redis (`resourceDataCache`) and by the orchestrator per AIR string. Existing AIRs
 use model-type semantics. New AIRs would mean something different for the same resource, so
 anything that compares/dedups AIRs across old and new data mismatches. Caches keyed on the old
 shape need invalidation.

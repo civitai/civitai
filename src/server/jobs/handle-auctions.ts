@@ -10,7 +10,6 @@ import type {
   DetailsFailedRecurringBid,
   DetailsWonAuction,
 } from '~/server/notifications/auction.notifications';
-import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -448,7 +447,6 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await resourceDataCache.bust(winnerIds);
-    await modelVersionResourceCache.refresh(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 
     log('busted cache', winnerIds.length);

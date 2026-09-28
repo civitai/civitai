@@ -16,6 +16,7 @@ import { coverageColumn, nextCoverageEnabled } from '~/server/services/generatio
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
+import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type {
   LicensingFeeSettlementCurrency,
@@ -40,7 +41,7 @@ export const schema = z.object({
   id: z.coerce.number().int().gt(0).lte(2147483647),
   epoch: z.number().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
-  // hashes, size, AIR with `+<fileId>`) rather than the version's primary file.
+  // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
 });
 
@@ -88,6 +89,7 @@ type FileRow = {
   sizeKB: number;
   name: string;
   hashes: Record<ModelHashType, string>;
+  replacedAt: Date | null;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -199,6 +201,7 @@ export default MixedAuthEndpoint(async function handler(
       mf.metadata, 
       mf."sizeKB", 
       mf.name,
+      mf."replacedAt",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -206,7 +209,7 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
   `;
 
   const { modelFileId } = results.data;
@@ -251,10 +254,8 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
-  // Caller-specified file overrides the version's primary file. Falls back to
-  // primary when modelFileId is omitted, preserving legacy behavior.
-  // Default preferences deliberately — see the note above; this value only ever
-  // decides `useEpochUrl` and, on the epoch arm, names the training file.
+  // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
+  // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
@@ -265,7 +266,7 @@ export default MixedAuthEndpoint(async function handler(
     ? requestedFile
     : modelFileId
     ? visibleFiles.find((f) => f.id === modelFileId)
-    : getPrimaryFile(visibleFiles, filePreferences);
+    : getGenerationFile(visibleFiles, filePreferences);
   if (!targetFile) {
     return res.status(404).json({
       error: modelFileId

@@ -26,7 +26,11 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { modelVersionToAir } from '~/server/utils/resource-air';
+import {
+  modelVersionAirSelect,
+  modelVersionToAir,
+  type GenerationFileCandidate,
+} from '~/server/utils/resource-air';
 import { versionIdFromAir } from '~/shared/utils/air';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
@@ -83,20 +87,19 @@ type VersionForAir = {
   baseModel: string;
   flags: number;
   model: { id: number; name: string; type: ModelType };
-  files: { type: string; scannedAt: Date | null; metadata: BasicFileMetadata }[];
+  files: (GenerationFileCandidate & { scannedAt: Date | null })[];
 };
 
 async function getVersionsForAir(modelVersionIds: number[]) {
   return (await dbRead.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: {
-      id: true,
+      ...modelVersionAirSelect,
       name: true,
-      baseModel: true,
       flags: true,
       usageControl: true,
-      model: { select: { id: true, name: true, type: true } },
-      files: { select: { type: true, scannedAt: true, metadata: true } },
+      model: { select: { ...modelVersionAirSelect.model.select, name: true } },
+      files: { select: { ...modelVersionAirSelect.files.select, scannedAt: true } },
     },
   })) as VersionForAir[];
 }
@@ -119,12 +122,7 @@ function parseAvailability(availability: unknown): ResourceLoadAvailability {
   return parsed.success ? parsed.data : { status: 'unknown' };
 }
 
-/**
- * Live residency for a set of model versions.
- *
- * Uncached on purpose: `modelVersionResourceCache` holds the same `ResourceInfo` on a day-long TTL
- * and throws `availability` away, so it looks like it already has this and does not.
- */
+/** Live residency for a set of model versions. */
 export async function getResourceLoadState(
   modelVersionIds: number[],
   audience: { next: boolean; member: boolean }
@@ -228,19 +226,7 @@ export type ResourceResidency = {
 
 /** One orchestrator grain call per version — the cache's lookup. */
 async function fetchResourceResidency(modelVersionIds: number[]) {
-  // Only what the AIR needs: `getPrimaryFile` scores on each file's type and metadata.
-  const versions = (await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: {
-      id: true,
-      name: true,
-      baseModel: true,
-      flags: true,
-      usageControl: true,
-      model: { select: { id: true, name: true, type: true } },
-      files: { select: { type: true, metadata: true } },
-    },
-  })) as VersionForAir[];
+  const versions = await getVersionsForAir(modelVersionIds);
 
   const entries: Record<number, ResourceResidency> = {};
   const tasks = versions.map((version) => async () => {
