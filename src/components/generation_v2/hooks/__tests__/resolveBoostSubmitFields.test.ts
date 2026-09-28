@@ -86,24 +86,24 @@ describe('isBoostable', () => {
   };
 
   it('offers a boost that would print as faster', () => {
-    expect(isBoostable(preparation)).toBe(true);
+    expect(isBoostable(preparation, true)).toBe(true);
   });
 
   it('withholds it with no preparation at all', () => {
-    expect(isBoostable(undefined)).toBe(false);
+    expect(isBoostable(undefined, true)).toBe(false);
   });
 
   // Already express — there is no higher lane to sell.
   it('withholds it on a workflow already in the high lane', () => {
-    expect(isBoostable({ ...preparation, lane: 'high' })).toBe(false);
+    expect(isBoostable({ ...preparation, lane: 'high' }, true)).toBe(false);
   });
 
   it('withholds it with no boosted ETA', () => {
-    expect(isBoostable({ ...preparation, boostedEtaSeconds: null })).toBe(false);
+    expect(isBoostable({ ...preparation, boostedEtaSeconds: null }, true)).toBe(false);
   });
 
   it('withholds it when the rendered numbers would match', () => {
-    expect(isBoostable({ ...preparation, etaSeconds: 1_400, boostedEtaSeconds: 1_360 })).toBe(
+    expect(isBoostable({ ...preparation, etaSeconds: 1_400, boostedEtaSeconds: 1_360 }, true)).toBe(
       false
     );
   });
@@ -111,6 +111,29 @@ describe('isBoostable', () => {
   // Both ETAs come from one whatIf, so unlike the queue card there is no staleness to guard against
   // — and swapping these arguments must not read as a reason to offer.
   it('still offers when the boosted figure is the larger of the two', () => {
-    expect(isBoostable({ ...preparation, etaSeconds: 300, boostedEtaSeconds: 3_900 })).toBe(true);
+    expect(isBoostable({ ...preparation, etaSeconds: 300, boostedEtaSeconds: 3_900 }, true)).toBe(
+      true
+    );
+  });
+});
+
+describe('isBoostable — checkpoint precondition', () => {
+  const base = {
+    resource: 'urn:air:flux1:lora:civitai:1@2',
+    queuePosition: 2,
+    lane: 'low',
+    etaSeconds: 3_900,
+    boostedEtaSeconds: 300,
+    resources: [],
+  };
+
+  it('withholds the offer when nothing waiting is a checkpoint', () => {
+    expect(isBoostable(base, false)).toBe(false);
+  });
+
+  // An unresolved lookup must read as "nothing to sell", as a boolean, rather than letting an
+  // undefined escape the chain as the return value.
+  it('withholds it, as a boolean, when the type could not be resolved', () => {
+    expect(isBoostable(base, undefined)).toBe(false);
   });
 });
