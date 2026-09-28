@@ -9,6 +9,22 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { resolveEntityAppeal } from '~/server/services/report.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import {
+  loadTextScanTextHash,
+  queueTextScanRescan,
+  stampModeratorTextScanRuling,
+} from '~/server/services/text-scan/actions/appeal-text-hash';
+import {
+  grantModelTextScanPoi,
+  reassertModelPoiRestrictions,
+  stampModelTextScanAppeal,
+} from '~/server/services/text-scan/actions/model-poi-minor';
+import {
+  hasOpenTextScanFlag,
+  hasTextScanVerdict,
+  readTextScanFlags,
+} from '~/server/services/text-scan/flag-snapshot';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export type MinorHashMatch = { modelId: number; userId: number };
@@ -617,10 +633,22 @@ export async function confirmMinorHashAutoFlag({
 export async function revertMinorHashAutoFlag({
   modelId,
   userId,
+  recordTextScanRuling,
 }: {
   modelId: number;
   userId: number;
+  /** A moderator's direct revert; an appeal records its own grant instead. */
+  recordTextScanRuling?: boolean;
 }) {
+  // Before the revert drops the minor lock, so a rescan landing in between sees the ruling.
+  if (recordTextScanRuling && !(await stampModeratorTextScanRuling({ modelId, userId, label: 'minor' })))
+    logToAxiom({
+      type: 'error',
+      name: 'text-scan',
+      message: 'moderator minor ruling not recorded: model text unreadable',
+      modelId,
+    }).catch(() => null);
+
   const report = await rollbackMinorHashAutoFlags({
     dryRun: false,
     limit: 1,
@@ -689,6 +717,11 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
   return { items: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+export type AppealLabel = 'minor' | 'poi';
+export type AppealLabelDecision = 'uphold' | 'overturn';
+
+const LABEL_NOUN: Record<AppealLabel, string> = { minor: 'a minor', poi: 'a real person' };
+
 // The flag decision is written first and the appeal resolved last, so a failure
 // between them leaves the appeal open and visibly unactioned rather than closed
 // against a model nothing happened to.
@@ -696,37 +729,91 @@ export async function resolveMinorFlagAppeal({
   modelId,
   uphold,
   userId,
+  labels,
 }: {
   modelId: number;
   uphold: boolean;
   userId: number;
+  labels?: Partial<Record<AppealLabel, AppealLabelDecision>>;
 }) {
-  if (uphold) {
-    // Another moderator may have reverted the flag since this row was fetched.
-    // Confirming then writes nothing while the appeal still closes Rejected —
-    // telling the owner their request was denied on a model that isn't flagged.
-    // Overturning carries no such gate: it's the only way left to close the row.
-    //
-    // Read from the primary: a revert inside replication lag is exactly the race
-    // this guards, and the replica would still answer "minor". One PK lookup.
-    const model = await dbWrite.model.findUnique({
-      where: { id: modelId },
-      select: { minor: true },
-    });
-    if (!model?.minor)
-      throw throwBadRequestError('This model is no longer flagged as depicting a minor');
+  // Read from the primary: a revert inside replication lag is exactly the race the uphold
+  // guard exists for, and the replica would still answer "flagged". One PK lookup.
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { minor: true, poi: true, meta: true },
+  });
+  const meta = (model?.meta ?? null) as ModelMeta | null;
+  const flagged: AppealLabel[] = [];
+  if (model?.minor) flagged.push('minor');
+  if (model?.poi && hasOpenTextScanFlag(meta, 'poi')) flagged.push('poi');
 
-    await confirmMinorHashAutoFlag({ modelId, userId });
-  } else {
-    await revertMinorHashAutoFlag({ modelId, userId });
+  for (const label of Object.keys(labels ?? {}) as AppealLabel[])
+    if (!flagged.includes(label))
+      throw throwBadRequestError(
+        `This model is no longer flagged as depicting ${LABEL_NOUN[label]}`
+      );
+  // Upholding a lifted flag writes nothing but still tells the owner their request was denied.
+  if (uphold && !labels && !flagged.length)
+    throw throwBadRequestError('This model is no longer flagged');
+
+  const decide = (label: AppealLabel) => labels?.[label] ?? (uphold ? 'uphold' : 'overturn');
+  const upheld = flagged.filter((label) => decide(label) === 'uphold');
+  const overturned = flagged.filter((label) => decide(label) === 'overturn');
+
+  let currentHash: string | null = null;
+  if (overturned.length) {
+    currentHash = await loadTextScanTextHash('Model', modelId);
+    if (!currentHash)
+      throw throwBadRequestError(
+        "Could not read this model's text, so the grant cannot record what it covers. The appeal is still open."
+      );
   }
 
+  if (upheld.includes('minor')) await confirmMinorHashAutoFlag({ modelId, userId });
+  const upheldVerdicts = upheld.filter((label) => hasTextScanVerdict(meta, label));
+  if (upheldVerdicts.length)
+    await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealUpheld',
+      labels: upheldVerdicts,
+    });
+
+  if (overturned.includes('minor')) {
+    const snapshot = meta?.minorFlagSnapshot;
+    const origin = snapshot?.confirmedFrom ?? snapshot?.source;
+    // A moderator's own flag is unset, never rolled back to a pre-state they did not choose.
+    if (origin === 'auto' || origin === 'text-scan')
+      await revertMinorHashAutoFlag({ modelId, userId });
+    else await setModelMinor({ id: modelId, minor: false, userId });
+    // The minor revert restores the pre-minor state, which may be NSFW.
+    if (model?.poi && !overturned.includes('poi')) await reassertModelPoiRestrictions(modelId);
+  }
+  if (overturned.includes('poi')) await grantModelTextScanPoi({ modelId, userId });
+  if (overturned.length)
+    await stampModelTextScanAppeal({
+      modelId,
+      userId,
+      decision: 'appealGranted',
+      labels: overturned,
+      currentHash,
+    });
+
+  const approved = labels ? overturned.length > 0 : !uphold;
   await resolveEntityAppeal({
     ids: [modelId],
     entityType: EntityType.Model,
-    status: uphold ? AppealStatus.Rejected : AppealStatus.Approved,
+    status: approved ? AppealStatus.Approved : AppealStatus.Rejected,
     userId,
   });
+
+  const flags = readTextScanFlags(meta);
+  const rescanQueued = overturned.some((label) => {
+    const flaggedHash = flags[label]?.textHash;
+    return !!flaggedHash && flaggedHash !== currentHash;
+  });
+  if (rescanQueued) await queueTextScanRescan('Model', modelId);
+  return { rescanQueued };
 }
 
 export async function dismissMinorHashMatch({

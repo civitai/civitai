@@ -289,3 +289,160 @@ async function notifyModelOwner({
   });
   return true;
 }
+
+export async function grantModelTextScanPoi({ modelId, userId }: { modelId: number; userId: number }) {
+  const before = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      userId: true,
+      poi: true,
+      minor: true,
+      nsfw: true,
+      sfwOnly: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before?.poi) return false;
+
+  const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
+    UPDATE "Model" m
+    SET poi = FALSE,
+        nsfw = CASE WHEN m.minor THEN m.nsfw
+          ELSE COALESCE((m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'nsfw')::boolean, m.nsfw) END,
+        "sfwOnly" = CASE WHEN m.minor THEN m."sfwOnly"
+          ELSE COALESCE((m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'sfwOnly')::boolean, m."sfwOnly") END,
+        "gallerySettings" = CASE
+          WHEN m.minor THEN m."gallerySettings"
+          WHEN m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'galleryLevel' IS NULL
+            THEN COALESCE(m."gallerySettings", '{}'::jsonb) - 'level'
+          ELSE COALESCE(m."gallerySettings", '{}'::jsonb)
+            || jsonb_build_object('level', (m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'galleryLevel')::int)
+        END,
+        "lockedProperties" = ARRAY(
+          SELECT DISTINCT p
+          FROM unnest(COALESCE(m."lockedProperties", ARRAY[]::text[]) || ARRAY['poi']::text[]) AS p
+          WHERE p = 'poi'
+             OR m.minor
+             OR p NOT IN ('nsfw', 'sfwOnly')
+             OR p IN (SELECT jsonb_array_elements_text(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->'lockedProperties'))
+        )
+    WHERE m.id = ${modelId}
+      AND m.poi
+      AND m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' IS NOT NULL
+    RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
+              m.status, m."gallerySettings", m."lockedProperties"
+  `;
+  if (!after) return false;
+
+  const { applyModelFlagSideEffects } = await loadModelService();
+  await applyModelFlagSideEffects({ before, after });
+  await updateModelNsfwLevels([modelId]);
+  await bustPublicModelResponseCache(modelId);
+
+  await new Tracker()
+    .entityChanges(
+      diffEntityChanges({
+        entityType: 'Model',
+        entityId: modelId,
+        ownerId: before.userId,
+        before: {
+          poi: before.poi,
+          nsfw: before.nsfw,
+          sfwOnly: before.sfwOnly,
+          lockedProperties: before.lockedProperties,
+        },
+        after: {
+          poi: after.poi,
+          nsfw: after.nsfw,
+          sfwOnly: after.sfwOnly,
+          lockedProperties: after.lockedProperties,
+        },
+        actorRole: 'moderator',
+        reason: 'textScanAppealGranted',
+      })
+    )
+    .catch(() => null);
+
+  logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'poi appeal granted',
+    entityType: 'Model',
+    entityId: modelId,
+    moderatorId: userId,
+  }).catch(() => null);
+  return true;
+}
+
+export async function stampModelTextScanAppeal({
+  modelId,
+  userId,
+  decision,
+  labels,
+  currentHash = null,
+}: {
+  modelId: number;
+  userId: number;
+  decision: 'appealGranted' | 'appealUpheld';
+  labels: TextScanFlagLabel[];
+  currentHash?: string | null;
+}) {
+  if (!labels.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+      ${TEXT_SCAN_FLAGS_KEY}, COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}, '{}'::jsonb) || (
+        SELECT jsonb_object_agg(
+          l.label,
+          COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label, '{}'::jsonb) || jsonb_build_object(
+            ${decision}::text, jsonb_build_object(
+              'at', now(),
+              'by', ${userId}::int,
+              'textHash', COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->l.label->>'textHash', ${currentHash}::text),
+              'via', 'appeal'
+            )
+          )
+        )
+        FROM unnest(${labels}::text[]) AS l(label)
+      )
+    )
+    WHERE m.id = ${modelId}
+  `;
+}
+
+export async function reassertModelPoiRestrictions(modelId: number) {
+  const before = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { poi: true, minor: true, nsfw: true, sfwOnly: true, gallerySettings: true },
+  });
+  if (!before?.poi) return false;
+
+  const [after] = await dbWrite.$queryRaw<ModelFlagRow[]>`
+    UPDATE "Model" m
+    SET nsfw = FALSE,
+        "sfwOnly" = TRUE,
+        "gallerySettings" = COALESCE(m."gallerySettings", '{}'::jsonb)
+          || jsonb_build_object('level', ${sfwBrowsingLevelsFlag}::int),
+        "lockedProperties" = ARRAY(
+          SELECT DISTINCT unnest(COALESCE(m."lockedProperties", ARRAY[]::text[]) || ${POI_LOCKED_PROPERTIES}::text[])
+        )
+    WHERE m.id = ${modelId}
+      AND m.poi
+      AND (
+        m.nsfw
+        OR NOT m."sfwOnly"
+        OR (m."gallerySettings"->>'level')::int IS DISTINCT FROM ${sfwBrowsingLevelsFlag}::int
+        OR NOT (COALESCE(m."lockedProperties", ARRAY[]::text[]) @> ${POI_LOCKED_PROPERTIES}::text[])
+      )
+    RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
+              m.status, m."gallerySettings", m."lockedProperties"
+  `;
+  if (!after) return false;
+
+  const { applyModelFlagSideEffects } = await loadModelService();
+  await applyModelFlagSideEffects({ before, after });
+  if (before.nsfw) await updateModelNsfwLevels([modelId]);
+  await bustPublicModelResponseCache(modelId);
+  return true;
+}

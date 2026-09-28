@@ -27,6 +27,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
 }));
+const { mockStampRuling } = vi.hoisted(() => ({ mockStampRuling: vi.fn() }));
+// Hand-listed: the real module loads every text-scan profile, whose graph this file stubs piecemeal.
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
+  stampModeratorTextScanRuling: mockStampRuling,
+}));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
@@ -619,5 +624,40 @@ describe('setModelMinor — change history', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
+  });
+});
+
+// Review Focus 7.
+describe('setModelMinor — moderator ruling on unset', () => {
+  it('a moderator unset records a ruling on the current text, before the unset write', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(true);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+
+    expect(mockStampRuling).toHaveBeenCalledWith({ modelId: MODEL_ID, userId: MODERATOR_ID, label: 'minor' });
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('records no ruling for a rollback-style unset or for a set', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: -1, activity: 'rollbackMinorAutoHash' });
+    mockBefore({});
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID, recordTextScanRuling: true });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+  });
+
+  it('still unsets when the text cannot be read, and logs the miss', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(false);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', modelId: MODEL_ID })
+    );
   });
 });

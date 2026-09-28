@@ -2395,11 +2395,13 @@ export async function setModelMinor({
   activity,
   tracker,
   isModerator,
+  recordTextScanRuling,
 }: SetModelMinorInput & {
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
   isModerator?: boolean;
+  recordTextScanRuling?: boolean;
 }) {
   const before = await dbRead.model.findUnique({
     where: { id },
@@ -2414,6 +2416,21 @@ export async function setModelMinor({
     },
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  if (!minor && recordTextScanRuling) {
+    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
+    const { stampModeratorTextScanRuling } = await import(
+      '~/server/services/text-scan/actions/appeal-text-hash'
+    );
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator minor ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
 
   // Must run before the update below and before side effects propagate `minor`
   // to images, or the snapshot records post-flag state.

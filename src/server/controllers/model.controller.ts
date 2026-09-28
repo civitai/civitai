@@ -1552,6 +1552,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

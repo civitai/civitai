@@ -30,7 +30,13 @@ vi.mock('~/server/clickhouse/tracker', () => ({
   },
 }));
 
-const { applyModelPoiMinor, POI_LOCKED_PROPERTIES } = await import(
+const {
+  applyModelPoiMinor,
+  grantModelTextScanPoi,
+  reassertModelPoiRestrictions,
+  stampModelTextScanAppeal,
+  POI_LOCKED_PROPERTIES,
+} = await import(
   '~/server/services/text-scan/actions/model-poi-minor'
 );
 const { updateModelNsfwLevels } = await import('~/server/services/nsfwLevels.service');
@@ -344,5 +350,104 @@ describe('applyModelPoiMinor — both labels', () => {
       mockSetModelMinor.mock.invocationCallOrder[0]
     );
     expect(mockCreateNotification).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('grantModelTextScanPoi', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      storedModel({ poi: true, nsfw: false, sfwOnly: true, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] })
+    );
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ ...flaggedRow, poi: false }]);
+  });
+
+  // Review Focus 2.
+  it('clears poi and keeps the poi lock so a rescan of the same text cannot put it back', async () => {
+    expect(await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 })).toBe(true);
+    const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(text).toContain('poi = FALSE');
+    expect(text).toContain(`ARRAY['poi']::text[]`);
+    expect(text).toContain(`WHERE p = 'poi'`);
+    expect(text).toContain(`->'poi'->'prev'->'lockedProperties'`);
+  });
+
+  // Review Focus 4.
+  it('never re-opens NSFW on a model that is still minor', async () => {
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 });
+    const text = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(text).toContain('nsfw = CASE WHEN m.minor THEN m.nsfw');
+    expect(text).toContain(`"sfwOnly" = CASE WHEN m.minor THEN m."sfwOnly"`);
+    expect(text).toContain(`WHEN m.minor THEN m."gallerySettings"`);
+  });
+
+  it('runs side effects and levels only when a row changed', async () => {
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 });
+    expect(mockSideEffects).toHaveBeenCalledTimes(1);
+    expect(updateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+
+    vi.clearAllMocks();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    expect(await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 })).toBe(false);
+    expect(mockSideEffects).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a model that is not poi', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: false }));
+    expect(await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3 })).toBe(false);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('stampModelTextScanAppeal', () => {
+  it('stamps only the named labels, with the flagged text hash and the current one as fallback', async () => {
+    await stampModelTextScanAppeal({
+      modelId: MODEL_ID,
+      userId: 3,
+      decision: 'appealGranted',
+      labels: ['poi'],
+      currentHash: 'h-text',
+    });
+    const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+    const text = sqlOf(call);
+    expect(text).toContain('unnest(');
+    expect(text).toContain(`'textHash', COALESCE(`);
+    expect(text).toContain(`'via', 'appeal'`);
+    expect(call.slice(1)).toContainEqual(['poi']);
+    expect(call.slice(1)).toEqual(expect.arrayContaining(['appealGranted', 3, MODEL_ID, 'h-text']));
+  });
+
+  it('writes nothing for an empty label list', async () => {
+    await stampModelTextScanAppeal({ modelId: MODEL_ID, userId: 3, decision: 'appealUpheld', labels: [] });
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('reassertModelPoiRestrictions', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: true, nsfw: true }));
+  });
+
+  it('puts a poi model back to SFW with the poi locks in one guarded write', async () => {
+    expect(await reassertModelPoiRestrictions(MODEL_ID)).toBe(true);
+    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const text = sqlOf(call);
+    expect(text).toContain('nsfw = FALSE');
+    expect(text).toContain('"sfwOnly" = TRUE');
+    expect(text).toContain('AND m.poi');
+    expect(call.slice(1)).toContainEqual(POI_LOCKED_PROPERTIES);
+    expect(call.slice(1)).toContain(sfwBrowsingLevelsFlag);
+    expect(mockSideEffects).toHaveBeenCalledTimes(1);
+    expect(updateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+  });
+
+  it('does nothing for a model that is not poi, or already restricted', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: false }));
+    expect(await reassertModelPoiRestrictions(MODEL_ID)).toBe(false);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(storedModel({ poi: true }));
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    expect(await reassertModelPoiRestrictions(MODEL_ID)).toBe(false);
+    expect(mockSideEffects).not.toHaveBeenCalled();
   });
 });
