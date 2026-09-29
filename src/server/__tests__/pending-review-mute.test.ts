@@ -1014,8 +1014,8 @@ describe('resolveUserRestriction — scam rulings', () => {
     expect(resetProhibitedRequestCount).not.toHaveBeenCalled();
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'scam-restriction-overturned',
-        key: `scam-restriction-overturned:${USER_ID}:${id}`,
+        type: 'review-restriction-overturned',
+        key: `review-restriction-overturned:${USER_ID}:${id}`,
       })
     );
   });
@@ -1031,7 +1031,7 @@ describe('resolveUserRestriction — scam rulings', () => {
     expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
     expect(restoreScamCase).not.toHaveBeenCalled();
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'scam-restriction-upheld' })
+      expect.objectContaining({ type: 'review-restriction-upheld' })
     );
   });
 
@@ -1056,9 +1056,9 @@ describe('resolveUserRestriction — scam rulings', () => {
       type: 'scam',
     });
     expect(result).toMatchObject({ muted: true, deduped: false });
-    expect(PENDING_REVIEW_MUTE_NOTIFICATION.scam).toBe('scam-muted');
+    expect(PENDING_REVIEW_MUTE_NOTIFICATION.scam).toBe('review-muted');
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'scam-muted' })
+      expect.objectContaining({ type: 'review-muted' })
     );
   });
 

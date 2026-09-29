@@ -36,8 +36,8 @@ export const RULING_EFFECTS: Partial<Record<UserRestrictionType, RulingEffects>>
     afterOverturn: ({ userId }) => resetProhibitedRequestCount(userId),
   },
   scam: {
-    upheldNotification: 'scam-restriction-upheld',
-    overturnedNotification: 'scam-restriction-overturned',
+    upheldNotification: 'review-restriction-upheld',
+    overturnedNotification: 'review-restriction-overturned',
     upheldSource: 'moderator:scamRestrictionUpheld',
     overturnedSource: 'moderator:scamRestrictionOverturned',
     afterOverturn: ({ id }) =>

@@ -54,7 +54,7 @@ export const DEFAULT_USER_RESTRICTION_TYPE: UserRestrictionType = 'generation';
 export const PENDING_REVIEW_MUTE_NOTIFICATION: Record<UserRestrictionType, string | null> = {
   generation: 'generation-muted',
   'bot-account': null,
-  scam: 'scam-muted',
+  scam: 'review-muted',
 };
 
 /**

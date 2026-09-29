@@ -1,8 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
-export const scamMuteNotifications = createNotificationProcessor({
-  'scam-muted': {
+export const reviewMuteNotifications = createNotificationProcessor({
+  'review-muted': {
     displayName: 'Account paused for review',
     category: NotificationCategory.System,
     toggleable: false,
@@ -11,7 +11,7 @@ export const scamMuteNotifications = createNotificationProcessor({
         'Your account has been paused while a moderator reviews recent activity on it. You will be notified when the review is complete.',
     }),
   },
-  'scam-restriction-upheld': {
+  'review-restriction-upheld': {
     displayName: 'Account restriction upheld',
     category: NotificationCategory.System,
     toggleable: false,
@@ -21,7 +21,7 @@ export const scamMuteNotifications = createNotificationProcessor({
         : 'The restriction on your account has been reviewed and upheld.',
     }),
   },
-  'scam-restriction-overturned': {
+  'review-restriction-overturned': {
     displayName: 'Account restriction lifted',
     category: NotificationCategory.System,
     toggleable: false,
