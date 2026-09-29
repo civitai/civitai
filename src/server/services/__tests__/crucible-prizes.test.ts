@@ -193,7 +193,7 @@ describe('prize distribution', () => {
     expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
-  it('ignores prize positions beyond the number of entries', async () => {
+  it('splits a place beyond the number of entries among the winners pro rata', async () => {
     setupCrucible({
       entryFee: 100,
       prizePositions: { '1': 40, '2': 30, '3': 20, '4': 10 },
@@ -201,9 +201,9 @@ describe('prize distribution', () => {
 
     const result = await finalizeCrucible(1);
 
-    // Only 3 entries exist, so position 4's 10% is simply not paid.
-    expect(result.finalEntries).toHaveLength(3);
-    expect(result.totalPrizesDistributed).toBe(120 + 90 + 60);
+    // Position 4's 10% scales 40/30/20 up by 100/90; flooring leaves 1 Buzz of dust.
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([133, 100, 66]);
+    expect(result.totalPrizesDistributed).toBe(299);
   });
 
   it('ignores malformed position keys rather than paying NaN', async () => {

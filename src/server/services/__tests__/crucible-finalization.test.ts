@@ -294,6 +294,22 @@ describe('finalizeCrucible — single entry', () => {
     expect(result.finalEntries).toHaveLength(1);
     expect(result.finalEntries[0]).toMatchObject({ entryId: 1, position: 1 });
     expect(result.totalPrizePool).toBe(100);
-    expect(result.finalEntries[0].prizeAmount).toBe(50); // position 1 takes 50%
+    expect(result.finalEntries[0].prizeAmount).toBe(100);
+  });
+});
+
+describe('finalizeCrucible — fewer entries than paid places', () => {
+  it('splits the unfilled places among the winners in proportion to their shares', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: [dbEntry(1, 10, 1_000), dbEntry(2, 11, 2_000)],
+      elos: { 1: 1600, 2: 1400 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    // 50/30/20 with no third place: 50 and 30 scale to 62.5% and 37.5% of the 200 pool.
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([125, 75]);
+    expect(result.totalPrizesDistributed).toBe(200);
   });
 });

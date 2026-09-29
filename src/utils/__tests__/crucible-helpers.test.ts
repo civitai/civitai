@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
+  getCruciblePrizeAmount,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
   getCrucibleUrl,
@@ -99,5 +100,40 @@ describe('getCrucibleStatusBadge', () => {
     expect(getCrucibleStatusBadge(CrucibleStatus.Completed, hoursFromNow(-1), now).label).toBe(
       'Completed'
     );
+  });
+});
+
+describe('getCruciblePrizeAmount', () => {
+  const prizePositions = [
+    { position: 1, percentage: 50 },
+    { position: 2, percentage: 30 },
+    { position: 3, percentage: 20 },
+  ];
+  const amounts = (entryCount: number, positions = prizePositions) =>
+    [1, 2, 3].map((position) =>
+      getCruciblePrizeAmount({
+        position,
+        prizePositions: positions,
+        entryCount,
+        totalPrizePool: 1000,
+      })
+    );
+
+  it('pays each place its own share when every place is filled', () => {
+    expect(amounts(10)).toEqual([500, 300, 200]);
+  });
+
+  it('hands an unfilled place to the winners pro rata', () => {
+    expect(amounts(2)).toEqual([625, 375, 0]);
+    expect(amounts(1)).toEqual([1000, 0, 0]);
+  });
+
+  it('leaves a split that never reached 100% short by the same remainder', () => {
+    const short = [
+      { position: 1, percentage: 60 },
+      { position: 2, percentage: 20 },
+    ];
+    expect(amounts(2, short).slice(0, 2)).toEqual([600, 200]);
+    expect(amounts(1, short)[0]).toBe(800);
   });
 });

@@ -6,7 +6,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { PrizePosition } from '~/utils/crucible-helpers';
+import { getCruciblePrizeAmount, type PrizePosition } from '~/utils/crucible-helpers';
 import { useState } from 'react';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import type { SimpleUser } from '~/server/selectors/user.selector';
@@ -97,16 +97,13 @@ export function CrucibleLeaderboard({
   const prizeMap = new Map<number, PrizePosition>();
   prizePositions.forEach((prize) => prizeMap.set(prize.position, prize));
 
-  // Calculate remaining prize pool for 4th-10th place
-  const top3Percentage = prizePositions
-    .filter((p) => p.position <= 3)
-    .reduce((sum, p) => sum + p.percentage, 0);
-  const remainingPercentage = 100 - top3Percentage;
-  const remainingPrizeAmount = Math.floor((remainingPercentage / 100) * totalPrizePool);
-  const hasRemainingPrize = remainingPercentage > 0;
+  const entryCount = totalCount ?? rankedEntries.length;
+  const prizeFor = (position: number) =>
+    getCruciblePrizeAmount({ position, prizePositions, entryCount, totalPrizePool });
 
-  // Get the range of remaining positions (e.g., "4th - 10th")
   const remainingPositions = prizePositions.filter((p) => p.position > 3);
+  const remainingPrizeAmount = remainingPositions.reduce((sum, p) => sum + prizeFor(p.position), 0);
+  const hasRemainingPrize = remainingPrizeAmount > 0;
   const minRemainingPos =
     remainingPositions.length > 0 ? Math.min(...remainingPositions.map((p) => p.position)) : 4;
   const maxRemainingPos =
@@ -158,7 +155,7 @@ export function CrucibleLeaderboard({
               entry={entry}
               rank={entry.rank}
               prizeInfo={prizeMap.get(entry.rank)}
-              totalPrizePool={totalPrizePool}
+              prizeAmount={prizeFor(entry.rank)}
               isCurrentUser={currentUser?.id === entry.userId}
             />
           ))
@@ -172,8 +169,7 @@ export function CrucibleLeaderboard({
             {remainingPosLabel}
           </Text>
           <Text size="xs" c="dimmed">
-            {remainingPercentage}% ({abbreviateNumber(remainingPrizeAmount)} Buzz)
-            {remainingIsRange ? ' - Divided equally' : ''}
+            {abbreviateNumber(remainingPrizeAmount)} Buzz
           </Text>
         </Box>
       )}
@@ -212,7 +208,7 @@ type LeaderboardEntryItemProps = {
   entry: LeaderboardEntry;
   rank: number;
   prizeInfo?: PrizePosition;
-  totalPrizePool: number;
+  prizeAmount: number;
   isCurrentUser?: boolean;
 };
 
@@ -223,11 +219,10 @@ function LeaderboardEntryItem({
   entry,
   rank,
   prizeInfo,
-  totalPrizePool,
+  prizeAmount,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
   const isTopThree = rank <= 3;
-  const prizeAmount = prizeInfo ? Math.floor((prizeInfo.percentage / 100) * totalPrizePool) : 0;
 
   // Medal colors based on position
   const getMedalStyle = () => {

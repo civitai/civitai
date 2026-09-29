@@ -64,7 +64,11 @@ import { createNotification } from '~/server/services/notification.service';
 import { createPost } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
-import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
+import {
+  getCruciblePrizeAmount,
+  getCrucibleTotalPrizePool,
+  parsePrizePositions,
+} from '~/utils/crucible-helpers';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
@@ -1755,9 +1759,6 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Parse prize positions from JSON
   const prizePositions = parsePrizePositions(crucible.prizePositions);
 
-  // Sort prize positions by position number
-  const sortedPrizePositions = [...prizePositions].sort((a, b) => a.position - b.position);
-
   // ============================================================================
   // Edge Case: 0 entries
   // ============================================================================
@@ -1915,12 +1916,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Assign positions and calculate prize amounts
   const finalizedEntries: FinalizedEntry[] = sortedEntries.map((entry, index) => {
     const position = index + 1;
-
-    // Find prize percentage for this position
-    const prizeConfig = sortedPrizePositions.find((p) => p.position === position);
-    const prizeAmount = prizeConfig
-      ? Math.floor((prizeConfig.percentage / 100) * totalPrizePool)
-      : 0;
+    const prizeAmount = getCruciblePrizeAmount({
+      position,
+      prizePositions,
+      entryCount: sortedEntries.length,
+      totalPrizePool,
+    });
 
     return {
       entryId: entry.entryId,
