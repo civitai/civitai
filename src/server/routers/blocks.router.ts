@@ -657,6 +657,10 @@ async function recordBlockPostInvocation(opts: {
       // A dev token may carry a SYNTHETIC, non-FK-resolving appBlockId; the
       // helper routes that to the nullable-appBlockId retry so the row persists.
       dev: opts.claims.dev === true,
+      // ⚠️ SPELLED `opts.claims` — this is the ONE marker site whose verified claims arrive
+      // on an options bag rather than a local, so the threading ledger accepts two spellings
+      // and neither is a substring of the other.
+      privateRun: opts.claims.privateRun === true,
     });
   } catch {
     /* best-effort: an audit failure never breaks (or slows) a committed post */
@@ -7012,6 +7016,7 @@ export const blocksRouter = router({
           // inert for a synthetic appId, by design). `dev` routes it to the
           // nullable-appBlockId path so the row persists instead of FK-failing.
           dev: claims.dev === true,
+          privateRun: claims.privateRun === true,
         });
       })().catch(() => {
         /* swallowed inside helper */
@@ -9409,6 +9414,7 @@ async function submitCustomComfyWorkflow(opts: {
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
         // + synthetic_app_id path so the pre-approval audit row persists.
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */
@@ -10826,6 +10832,7 @@ async function submitStepWorkflow(opts: {
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */
@@ -11450,6 +11457,7 @@ async function submitPassThroughStepWorkflow(opts: {
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */

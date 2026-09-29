@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  OWNER_VISIBLE_INVOCATION_FILTER,
+  PRIVATE_RUN_INVOCATION_SOURCE,
+} from '~/server/services/blocks/scope-activity-predicate';
 import { hasInstallSlot, type InstallSlotManifest } from '~/shared/constants/slot-registry';
 import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
 
@@ -430,8 +434,85 @@ export async function getMyAppAnalytics({
 
     // ENGAGEMENT — block_scope_invocations. AUTH + scoped-call only. Hits
     // bsi_app_block_invoked_idx (app_block_id, invoked_at).
+    //
+    // 🔴 ALL FIVE `block_scope_invocations` READS BELOW EXCLUDE PRIVATE-RUN ROWS, AND THE
+    // SET MUST STAY COMPLETE. A private run is a moderator (or the owner, or an accepted
+    // collaborator) running a DELISTED app's deployed bundle, and the operator decision is
+    // that it must be invisible to that app's owner INCLUDING IN ANALYTICS — a visible
+    // review run tells a bad actor exactly when review is happening. The invocation row
+    // carries the app's real id and the reviewer's real user id by design, so these
+    // `appBlockId IN (ownedIds)` aggregates are precisely where it lands. Miss ONE of the
+    // five and the leak survives in whichever number that read feeds: the API-call total,
+    // the distinct-active-user count, the error rate's numerator, or either top-5 rollup.
+    // The exclusion is spread from `OWNER_VISIBLE_INVOCATION_FILTER` rather than re-spelled
+    // per read, so the five cannot drift apart; the population is ledgered by
+    // `src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts`.
+    //
+    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. An earlier revision
+    // of this paragraph opened "ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS" with no
+    // such qualifier, sitting a dozen lines above two OTHER rails of the same
+    // owner-visible payload that still disclose a private run — which is the shape that
+    // stops the next person looking. Three review lanes found it independently. The two:
+    //
+    //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
+    //     above carry NO `status` predicate, so a private run's generation writes a
+    //     `voided` / `voidedReason: 'manual_review'` row that is still COUNTED as a run and
+    //     its Buzz still summed here. Deliberately held: see the note in
+    //     `buzz-attribution.service.ts`, which requires that filter to land before the
+    //     private-run surface is ENABLED. ⚠️ And when it does, the naive narrow spelling
+    //     `voidedReason: { not: 'manual_review' }` is a TRAP — that column is nullable and
+    //     NULL is the ordinary `tracked` population, so Prisma's `not` drops every real row
+    //     and zeroes the owner's run count. Use a top-level `NOT: { voidedReason: … }` or
+    //     an explicit `OR` with `null`.
+    //   · 🔴 `views.count` / `views.uniqueViewers` — the ClickHouse `blockRenders` read at
+    //     the bottom of this `Promise.all`, and the SHARPER of the two, because impressions
+    //     are the number an app owner looks at most. A private run MOUNTS THE HOST, so it
+    //     emits a render row like any other view, and `app-views.service.ts` computes
+    //     uniques as `uniqExactIf(userId, isAnon = 0) + uniqExactIf(ip, isAnon = 1)` — so the
+    //     reviewer does not merely inflate a total, they land as an IDENTIFIABLE unique
+    //     viewer on the exact day review happened. That is the operator decision broken on
+    //     the surface with the most owner attention.
+    //
+    //     🔴 THE `source` MARKER STRUCTURALLY CANNOT REACH IT: different store, different
+    //     writer, and — measured — NEITHER writer sees a block token at all. The row is
+    //     written from a CLIENT beacon (`components/AppBlocks/sendBlockRender.ts` →
+    //     `pages/api/track/block-render.ts`) and from `track.router.ts`; grepping both for
+    //     the claim returns nothing, against a positive control on the same command shape
+    //     that returns matches elsewhere, so that zero is a real absence.
+    //
+    //     Two shapes could close it, and BOTH land outside this change: suppress the beacon
+    //     on the private-run host, which is the host wiring the mint PR owns; or carry a
+    //     private-run flag through the beacon schema, both writers and a new ClickHouse
+    //     column. ⚠️ The over-filtering hazard applies here too — excluding too much
+    //     silently deletes the owner's real impression counts.
+    //
+    // 🔴 BOTH ARE FLAG-FLIP PRECONDITIONS, NOT FOLLOW-UPS. Neither is in scope here and
+    // neither is optional: enabling the private-run flag with either open re-opens the
+    // disclosure this whole feature exists to prevent, on a rail nobody is filtering.
+    //
+    // CLOSING CONDITION for each, so they are work items rather than notes: one private run
+    // against a delisted app, then the operator reads that app's own analytics panel and
+    // confirms the number did not move — `runs` / `runs.buzzSpent` for the attribution rail,
+    // `views.count` / `views.uniqueViewers` for this one. That is a named human judgement
+    // over named evidence, and it is the same check either closure shape has to pass.
+    //
+    // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
+    // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the
+    // owner's REAL usage from their own dashboard, which is the worse failure because
+    // nobody reports numbers they never saw. Measured against the live table before
+    // shipping: zero of the rows this filter can see carry the marker, so it changes no
+    // existing number — unlike the `status <> 'voided'` filter deliberately held back on
+    // the attribution table, which would have moved ~9 in 10 owner-visible rows.
+    //
+    // 🔴 THE SPREAD COMES FIRST, AND THAT ORDER IS LOAD-BEARING. `appBlockId: idIn` is the
+    // ONLY thing scoping these reads to the caller's own apps, and a spread placed LAST
+    // wins any key collision — `satisfies Prisma.BlockScopeInvocationWhereInput` constrains
+    // the constant's shape, not which keys it may hold, so a later edit adding `appBlockId`
+    // to the shared filter would silently replace the ownership scope on four aggregates
+    // served to app developers, with no type error and no failing test. Spread first and
+    // the explicit keys always win.
     dbRead.blockScopeInvocation.count({
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
     }),
     dbRead.$queryRaw<Array<{ value: bigint }>>(Prisma.sql`
       SELECT count(DISTINCT "user_id")::bigint AS value
@@ -439,9 +520,11 @@ export async function getMyAppAnalytics({
       WHERE "app_block_id" IN (${Prisma.join(ownedIds)})
         AND "invoked_at" >= ${range.from}
         AND "invoked_at" <= ${range.to}
+        AND "source" <> ${PRIVATE_RUN_INVOCATION_SOURCE}
     `),
     dbRead.blockScopeInvocation.count({
       where: {
+        ...OWNER_VISIBLE_INVOCATION_FILTER,
         appBlockId: idIn,
         invokedAt: rangeFilter,
         statusCode: { gte: 400 },
@@ -449,14 +532,14 @@ export async function getMyAppAnalytics({
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['scope'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
       _count: true,
       orderBy: { _count: { scope: 'desc' } },
       take: 5,
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['endpoint'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
       _count: true,
       orderBy: { _count: { endpoint: 'desc' } },
       take: 5,

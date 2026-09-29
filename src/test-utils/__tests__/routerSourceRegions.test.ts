@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   blankComments,
   callSites,
+  ALL_THREADED_SPELLINGS,
+  ROUTER_THREADED_SPELLINGS,
+  countPrivateRunThreading,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
@@ -294,5 +297,70 @@ describe('topLevelPropertyText — depth filtering', () => {
 
   it('returns empty for a slice with no object at all', () => {
     expect(topLevelPropertyText('fn(')).toBe('');
+  });
+});
+
+describe('private-run threading spellings', () => {
+  /**
+   * 🔴 THE PROPERTY TWO LEDGERS DEPEND ON, PROVEN ONCE HERE. Both assert an EXACT total of
+   * threading occurrences against a ledgered call-site count. That total is only exact if no
+   * accepted spelling is a substring of another — otherwise one site scores twice and the
+   * ledger needs a WRONG number to stay green, which is the failure mode that reads as
+   * working.
+   */
+  it('no spelling is a substring of another', () => {
+    for (const a of ALL_THREADED_SPELLINGS) {
+      for (const b of ALL_THREADED_SPELLINGS) {
+        if (a === b) continue;
+        expect(b, `\`${a}\` must not be a substring of \`${b}\``).not.toContain(a);
+      }
+    }
+  });
+
+  it('the ROUTER set is a strict subset of the full set', () => {
+    // 🔴 THE DIRECTION THAT MATTERS. The router ledger governs sites where the claims object
+    // is always in scope, so it must accept FEWER spellings than the cross-file ledger —
+    // never more. If these ever invert, the stricter guard silently becomes the looser one,
+    // which is exactly what a single shared set did before this split.
+    for (const t of ROUTER_THREADED_SPELLINGS) {
+      expect(ALL_THREADED_SPELLINGS as readonly string[]).toContain(t);
+    }
+    expect(ROUTER_THREADED_SPELLINGS.length).toBeLessThan(ALL_THREADED_SPELLINGS.length);
+    // And the one it must NOT accept: a bare local carries no provenance.
+    expect(ROUTER_THREADED_SPELLINGS as readonly string[]).not.toContain(
+      'privateRun: privateRun === true'
+    );
+  });
+
+  it('counts each spelling once, and a mixed source exactly', () => {
+    // Positive control first: the counter CAN return non-zero, so a zero below would be a
+    // measurement rather than a function wired to nothing.
+    for (const t of ALL_THREADED_SPELLINGS) {
+      expect(countPrivateRunThreading(`a: ${t},`, ALL_THREADED_SPELLINGS)).toBe(1);
+    }
+    const mixed = ALL_THREADED_SPELLINGS.map((t, i) => `k${i}: ${t},`).join(' ');
+    expect(countPrivateRunThreading(mixed, ALL_THREADED_SPELLINGS)).toBe(
+      ALL_THREADED_SPELLINGS.length
+    );
+  });
+
+  it('counting with the ROUTER set ignores the storage-only spelling', () => {
+    // 🔴 THE ASSERTION THAT MAKES THE SET A PARAMETER RATHER THAN DECORATION. If the router
+    // ledger were handed the wider set, its exact total would pass for a site its own
+    // per-site check rejects — a green total over an unguarded value.
+    const local = `k: privateRun: privateRun === true,`;
+    expect(countPrivateRunThreading(local, ALL_THREADED_SPELLINGS)).toBe(1);
+    expect(countPrivateRunThreading(local, ROUTER_THREADED_SPELLINGS)).toBe(0);
+  });
+
+  it('counts a source with no threading as zero', () => {
+    // The negative control. `privateRun` alone must not count — the whole point of pinning
+    // the expression is that `privateRun: false` and a drifted local do NOT qualify.
+    expect(
+      countPrivateRunThreading(
+        'privateRun: false, privateRun: true, privateRun',
+        ALL_THREADED_SPELLINGS
+      )
+    ).toBe(0);
   });
 });

@@ -24,6 +24,28 @@ import { logToAxiom } from '~/server/logging/client';
  * `ip` instead or they collapse into a single phantom viewer. Hence the
  * `uniqExactIf(userId, …) + uniqExactIf(ip, …)` split below.
  *
+ * 🔴 THIS RAIL DOES NOT EXCLUDE PRIVATE RUNS, AND IT IS A FLAG-FLIP PRECONDITION.
+ * A private run of a delisted app — a moderator, the owner, or an accepted listing
+ * collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emits a
+ * `blockRenders` row like any other view and appears in the owner's impressions. Worse than
+ * a total: the uniques split above is computed per `userId`, so the reviewer lands as an
+ * identifiable unique viewer on the exact day review happened. The operator decision for that
+ * feature is that such a run is invisible to the app's owner INCLUDING IN ANALYTICS.
+ *
+ * The sibling `block_scope_invocations` rail solves this with a `source` marker written from
+ * the verified token claim (`blocks/scope-activity-predicate.ts`). That cannot be reused
+ * here: different store, different writer, and NEITHER writer sees a block token — the row
+ * comes from a client beacon (`components/AppBlocks/sendBlockRender.ts` →
+ * `pages/api/track/block-render.ts`) and from `track.router.ts`. Closing it means either
+ * suppressing the beacon on the private-run host, or carrying a flag through the beacon
+ * schema, both writers and a new column.
+ *
+ * ⚠️ Over-filtering is the quieter hazard if you do: excluding too much silently deletes the
+ * owner's real impression counts, and nobody reports numbers they never saw.
+ *
+ * CLOSING CONDITION: one private run against a delisted app, then the operator reads that
+ * app's analytics panel and confirms `views.count` and `views.uniqueViewers` did not move.
+ *
  * 🔴 NEVER interpolate into these queries. The `$query` tagged template on the
  * ClickHouse client formats strings VERBATIM (`formatSqlType` returns the raw
  * value — no quoting, no escaping), so `${id}` is a SQL-injection vector. Every

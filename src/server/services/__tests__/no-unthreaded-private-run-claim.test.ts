@@ -2,8 +2,11 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  ROUTER_THREADED_SPELLINGS,
+  THREADED_FROM_CLAIMS,
   blankComments,
   callSites,
+  countPrivateRunThreading,
   enclosingDecl,
   topLevelPropertyText,
 } from '~/test-utils/routerSourceRegions';
@@ -11,9 +14,17 @@ import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lif
 import { BlockTokenService } from '~/server/services/block-token.service';
 
 /**
- * THE SEAM GUARD FOR THE PRIVATE-RUN MONEY ARMS — and the only guard in this
- * change that is RED at the base ref for a structural reason rather than a
- * behavioural one.
+ * THE SEAM GUARD FOR THE PRIVATE-RUN CLAIM INSIDE `blocks.router.ts`.
+ *
+ * ⚠️ IT WAS "THE MONEY ARMS" GUARD AND IT IS NOT ANY MORE. It gained a fourth population,
+ * `recordScopeInvocation`, which moves no Buzz: that population decides whether a private
+ * run is VISIBLE in the delisted app owner's analytics. The mechanism is identical (an
+ * optional field silently dropped at one of N argument objects) which is why it lives here
+ * rather than in a parallel file, but do not read the counts below as a money inventory.
+ * The invocation population also extends BEYOND this router — four more sites live in the
+ * REST middleware, the storage service and the settings service — and those are ledgered by
+ * `no-unmarked-private-run-invocation.test.ts`. This file remains router-only, so its
+ * totals stay checkable against one source text.
  *
  * ── THE DEFECT CLASS IT EXISTS FOR ──────────────────────────────────────────
  * 🔴 A FIELD THAT EXISTS IN A DTO IS NOT A GUARD — ONLY A BRANCH ON IT IS. Both
@@ -55,12 +66,19 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  * unit run, minutes later, in a file nobody was looking at.
  *
  * ── RED AT BASE — AND EXACTLY WHICH PARTS ───────────────────────────────────
- * At the base ref the router contains ZERO `privateRun:` arguments, so the four
- * THREADING assertions (three per-population + the total) are red there. The three
- * COUNT assertions are NOT: the populations are 4 / 4 / 2 at the base ref too, so
- * those are `[INV]` and are labelled as such. An earlier revision of this paragraph
- * claimed "every `toBe(...)` below fails with 0", which was false and is exactly the
- * kind of sentence that launders an invariant into regression coverage.
+ * ⚠️ THE NUMBERS IN THIS PARAGRAPH WERE STALE FOR ONE PR AND ARE NOT RESTATED AGAIN.
+ * It said "the four THREADING assertions (three per-population + the total)" and "the
+ * three COUNT assertions … 4 / 4 / 2", and quoted a red-at-base total of 22 — all correct
+ * for the PR that wrote it and all wrong the moment a fourth population landed. A count
+ * written into prose is a claim that rots; the `LEDGER` array below is the authority, and
+ * the matrix belongs in the commit that measures it.
+ *
+ * The DURABLE part is the split, which is what stops an invariant being laundered into
+ * regression coverage: the per-population THREADING assertions and the total are `[REG]`
+ * (the router carries no `privateRun:` argument at the ref before the money arms landed),
+ * while the per-population COUNT assertions are `[INV]` — those populations predate this
+ * work, so they are green at base and must never be reported as regression coverage. An
+ * earlier revision claimed "every `toBe(...)` below fails with 0", which was false.
  *
  * ── WHAT THIS LEDGER DOES *NOT* CLOSE ───────────────────────────────────────
  * It closes each of the three populations against growth and shrinkage, but it does
@@ -83,7 +101,29 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
  * correctly wired. The claim is the ONLY legitimate source: it is the only value
  * an RS256 signature has vouched for.
  */
-const THREADED = 'privateRun: claims.privateRun === true';
+const THREADED = THREADED_FROM_CLAIMS;
+
+/**
+ * 🔴 THE ACCEPTED SPELLINGS ARE IMPORTED, NOT RE-DECLARED HERE — and this file takes the
+ * ROUTER set, which is deliberately NARROWER than its cross-file sibling's.
+ *
+ * ⚠️ THE FIRST FIX HERE WAS ONE SHARED LIST, AND IT WAS WRONG IN THE OTHER DIRECTION. The
+ * two files had declared different members over the same router text, so a writer using the
+ * storage-only spelling passed the sibling's per-site check, went uncounted by the total
+ * below, and reddened this file with "add it to LEDGER" — a failure naming the wrong fix.
+ * Unifying the sets removed that, and LOOSENED this ledger, the stricter of the two, to
+ * accept a provenance-free local at sites where the claims object is always in scope.
+ *
+ * Per-consumer sets restore the strictness and re-admit the wrong-fix message in one narrow
+ * case — mitigated because the per-site check fires too and names the accepted spellings.
+ * Stated rather than left implied: a permissive guard is worse than an imprecise message.
+ */
+// 🔴 THE *ROUTER* SET, NOT THE UNION OF BOTH LEDGERS'. Every governed site here has the
+// claims object in scope, so the bare-local spelling the storage path needs is deliberately
+// NOT admissible — admitting it would make this, the stricter of the two ledgers, the more
+// permissive one. A round-2 audit of the de-duplication itself caught that.
+const THREADED_SPELLINGS = ROUTER_THREADED_SPELLINGS;
+const countThreaded = (src: string) => countPrivateRunThreading(src, THREADED_SPELLINGS);
 
 /**
  * The money call sites this ledger governs, with why each one is in the set.
@@ -128,9 +168,26 @@ const LEDGER = [
       'cut on this rail.',
     control: 'reservedAuthorFeeBuzz',
   },
+  {
+    opener: 'recordScopeInvocation({',
+    count: 5,
+    why:
+      'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
+      'seam, not the spend. Five router paths write a `block_scope_invocations` row: the ' +
+      'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
+      "submit and the pass-through submit. That row carries the app's REAL id and the " +
+      "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
+      '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
+      "that appears in a delisted app owner's own analytics, which is exactly the signal " +
+      'the private-run feature exists to withhold. The full cross-file population (nine ' +
+      'sites over four files) is ledgered by ' +
+      '`no-unmarked-private-run-invocation.test.ts`; this entry exists so the TOTAL below ' +
+      'stays an honest count of the router.',
+    control: 'statusCode',
+  },
 ] as const;
 
-describe('the private-run claim is threaded to every money call site', () => {
+describe('the private-run claim is threaded to every governed router call site', () => {
   // Comments blanked FIRST: this file's own docblocks name every identifier below,
   // and several router docblocks discuss these calls in prose. Without blanking,
   // a commented-out call site would count and a deleted one could be masked by
@@ -210,14 +267,19 @@ describe('the private-run claim is threaded to every money call site', () => {
       // That is the field-exists-but-nothing-branches-on-it failure this guard
       // exists to prevent, one nesting level down. A reuse review found it.
       const unthreaded = sites
-        .filter((site) => !topLevelPropertyText(site).includes(THREADED))
+        .filter((site) => !THREADED_SPELLINGS.some((t) => topLevelPropertyText(site).includes(t)))
         .map((site) => enclosingDecl(source, source.indexOf(site)));
 
       expect(
         unthreaded,
-        `these ${opener} call sites do not pass \`${THREADED}\` ` +
-          'as a TOP-LEVEL property of the argument object. ' +
-          'Thread the claim rather than exempting the path: ' +
+        `these ${opener} call sites do not pass the verified private-run claim as a ` +
+          'TOP-LEVEL property of the argument object. Accepted spellings: ' +
+          // 🔴 ALL OF THEM, not just `${THREADED}`. The message used to name the `claims`
+          // spelling alone, which tells a developer standing at the `opts.claims` site to
+          // write an expression that would not compile there — a red test pointing at the
+          // wrong fix, which is the failure mode a guard's message exists to prevent.
+          THREADED_SPELLINGS.map((t) => `\`${t}\``).join(' | ') +
+          '. Thread the claim rather than exempting the path: ' +
           why
       ).toEqual([]);
     });
@@ -429,11 +491,36 @@ describe('the private-run claim is threaded to every money call site', () => {
     // above and be caught only here, which is the signal to add that helper to
     // LEDGER rather than to raise this number.
     const expected = LEDGER.reduce((n, entry) => n + entry.count, 0);
-    const actual = source.split(THREADED).length - 1;
+    const actual = countThreaded(source);
     expect(
       actual,
       `${expected} governed call sites are ledgered above, but the router threads the ` +
         `claim ${actual} times. If a new money helper needs it, add it to LEDGER.`
     ).toBe(expected);
+  });
+
+  it('[INV] the shared spellings are pairwise non-overlapping — the total depends on it', () => {
+    // 🔴 THIS FILE'S EXACT TOTAL RESTS ON IT, SO IT IS CHECKED IN THIS FILE. The full proof
+    // lives in `src/test-utils/__tests__/routerSourceRegions.test.ts` — but that file is not
+    // a `no-*.test.ts`, so it is NOT in the `test:lint-rules` selector, and a precondition
+    // that only runs in the full suite is a precondition nobody sees until minutes later.
+    // If any spelling were a substring of another, one site would score twice and the total
+    // below would need a WRONG number to stay green.
+    for (const a of THREADED_SPELLINGS) {
+      for (const b of THREADED_SPELLINGS) {
+        if (a === b) continue;
+        expect(b, `\`${a}\` must not be a substring of \`${b}\``).not.toContain(a);
+      }
+    }
+  });
+
+  it('[INV] the pinned expression is one of the shared accepted spellings', () => {
+    // 🔴 THE INSTRUMENT CONTROL FOR THE IMPORT. `THREADED` is quoted verbatim in the failure
+    // messages and the negative-control fixture above, so if the shared list ever stopped
+    // containing it those would describe a spelling the counter does not accept — the
+    // per-site checks would keep passing off the OTHER members while the message lied.
+    // The non-overlap property this file's exact total rests on is proven in
+    // `src/test-utils/__tests__/routerSourceRegions.test.ts`, not restated here.
+    expect(THREADED_SPELLINGS).toContain(THREADED);
   });
 });
