@@ -9,9 +9,17 @@ import {
 } from '~/test-utils/routerSourceRegions';
 
 /**
- * THE SEAM GUARD FOR THE PRIVATE-RUN MONEY ARMS — and the only guard in this
- * change that is RED at the base ref for a structural reason rather than a
- * behavioural one.
+ * THE SEAM GUARD FOR THE PRIVATE-RUN CLAIM INSIDE `blocks.router.ts`.
+ *
+ * ⚠️ IT WAS "THE MONEY ARMS" GUARD AND IT IS NOT ANY MORE. It gained a fourth population,
+ * `recordScopeInvocation`, which moves no Buzz: that population decides whether a private
+ * run is VISIBLE in the delisted app owner's analytics. The mechanism is identical (an
+ * optional field silently dropped at one of N argument objects) which is why it lives here
+ * rather than in a parallel file, but do not read the counts below as a money inventory.
+ * The invocation population also extends BEYOND this router — four more sites live in the
+ * REST middleware, the storage service and the settings service — and those are ledgered by
+ * `no-unmarked-private-run-invocation.test.ts`. This file remains router-only, so its
+ * totals stay checkable against one source text.
  *
  * ── THE DEFECT CLASS IT EXISTS FOR ──────────────────────────────────────────
  * 🔴 A FIELD THAT EXISTS IN A DTO IS NOT A GUARD — ONLY A BRANCH ON IT IS. Both
@@ -84,6 +92,23 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
 const THREADED = 'privateRun: claims.privateRun === true';
 
 /**
+ * The SAME expression where the verified claims arrive on an options bag rather than a
+ * local. Exactly one governed site is written that way (`recordBlockPostInvocation`'s
+ * `opts.claims`), and the two spellings are safe to count independently because neither is
+ * a substring of the other: `privateRun: opts.claims…` does not contain
+ * `privateRun: claims…`. Verified by the unit case at the bottom of this file rather than
+ * asserted here.
+ */
+const THREADED_OPTS = 'privateRun: opts.claims.privateRun === true';
+
+/** Every spelling that counts as "the verified claim was threaded". */
+const THREADED_SPELLINGS = [THREADED, THREADED_OPTS] as const;
+
+/** Count occurrences of every accepted spelling across a whole source file. */
+const countThreaded = (src: string) =>
+  THREADED_SPELLINGS.reduce((n, t) => n + (src.split(t).length - 1), 0);
+
+/**
  * The money call sites this ledger governs, with why each one is in the set.
  *
  * 🔴 THE COUNTS ARE THE POINT. Each is the number of call sites on `main` at the
@@ -126,9 +151,26 @@ const LEDGER = [
       'cut on this rail.',
     control: 'reservedAuthorFeeBuzz',
   },
+  {
+    opener: 'recordScopeInvocation({',
+    count: 5,
+    why:
+      'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
+      'seam, not the spend. Five router paths write a `block_scope_invocations` row: the ' +
+      'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
+      'submit and the pass-through submit. That row carries the app\'s REAL id and the ' +
+      "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
+      '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
+      "that appears in a delisted app owner's own analytics, which is exactly the signal " +
+      'the private-run feature exists to withhold. The full cross-file population (nine ' +
+      'sites over four files) is ledgered by ' +
+      '`no-unmarked-private-run-invocation.test.ts`; this entry exists so the TOTAL below ' +
+      'stays an honest count of the router.',
+    control: 'statusCode',
+  },
 ] as const;
 
-describe('the private-run claim is threaded to every money call site', () => {
+describe('the private-run claim is threaded to every governed router call site', () => {
   // Comments blanked FIRST: this file's own docblocks name every identifier below,
   // and several router docblocks discuss these calls in prose. Without blanking,
   // a commented-out call site would count and a deleted one could be masked by
@@ -208,7 +250,9 @@ describe('the private-run claim is threaded to every money call site', () => {
       // That is the field-exists-but-nothing-branches-on-it failure this guard
       // exists to prevent, one nesting level down. A reuse review found it.
       const unthreaded = sites
-        .filter((site) => !topLevelPropertyText(site).includes(THREADED))
+        .filter(
+          (site) => !THREADED_SPELLINGS.some((t) => topLevelPropertyText(site).includes(t))
+        )
         .map((site) => enclosingDecl(source, source.indexOf(site)));
 
       expect(
@@ -282,11 +326,25 @@ describe('the private-run claim is threaded to every money call site', () => {
     // above and be caught only here, which is the signal to add that helper to
     // LEDGER rather than to raise this number.
     const expected = LEDGER.reduce((n, entry) => n + entry.count, 0);
-    const actual = source.split(THREADED).length - 1;
+    const actual = countThreaded(source);
     expect(
       actual,
       `${expected} governed call sites are ledgered above, but the router threads the ` +
         `claim ${actual} times. If a new money helper needs it, add it to LEDGER.`
     ).toBe(expected);
+  });
+
+  it('[INV] the two accepted spellings cannot double-count one site', () => {
+    // 🔴 THE CONTROL FOR `countThreaded`, and the reason the total above is still exact
+    // after gaining a second spelling. If `THREADED` were a SUBSTRING of `THREADED_OPTS`,
+    // the one `opts.claims` site would score 2 and the total would silently need a wrong
+    // number to stay green. It is not, and this pins that rather than leaving it as a
+    // sentence in a docblock.
+    expect(THREADED_OPTS).not.toContain(THREADED);
+    expect(THREADED).not.toContain(THREADED_OPTS);
+    // And the counter agrees on a fixture containing exactly one of each.
+    expect(countThreaded(`a: ${THREADED}, b: ${THREADED_OPTS}`)).toBe(2);
+    // A lone `opts.claims` site counts ONCE, not twice.
+    expect(countThreaded(`a: ${THREADED_OPTS}`)).toBe(1);
   });
 });

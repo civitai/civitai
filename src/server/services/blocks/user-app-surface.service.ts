@@ -14,7 +14,10 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
+import {
+  GLOBAL_SCOPE_ACTIVITY_OR,
+  PRIVATE_RUN_INVOCATION_SOURCE,
+} from '~/server/services/blocks/scope-activity-predicate';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -1333,6 +1336,32 @@ export async function recordScopeInvocation(opts: {
   endpoint: string;
   statusCode: number;
   /**
+   * 🔴 Set from the VERIFIED `privateRun` token claim — a moderator, owner or accepted
+   * listing collaborator running a delisted/suspended app's deployed bundle. When true the
+   * row is written with `source: PRIVATE_RUN_INVOCATION_SOURCE`, which is what every
+   * OWNER-VISIBLE aggregate in `app-analytics.service.ts` excludes.
+   *
+   * ── WHY IT IS A BOOLEAN HERE AND A `source` VALUE IN THE ROW ─────────────────────
+   * ONE RULE, ONE PLACE. Nine call sites feed this helper; if each computed the column
+   * value itself, the mapping from claim to marker would exist nine times and could drift
+   * at any one of them. Call sites thread the claim (the only value an RS256 signature has
+   * vouched for) and this function performs the single mapping, immediately below.
+   *
+   * 🔴 ABSENT MUST MEAN "AN ORDINARY ROW", NOT "SUPPRESS" — it tests `=== true`, so a
+   * missing or garbage value fails toward the pre-existing behaviour. The mirror hazard is
+   * the expensive one: a row wrongly marked private-run VANISHES from its owner's
+   * analytics, and nobody reports numbers they never saw.
+   *
+   * ⚠️ It is NOT a substitute for the `source` field above, and the two are disjoint by
+   * construction: `source: 'external-oauth'` is passed only by the external-OAuth audit,
+   * whose token can never carry a block-token claim. If both ever arrive the private-run
+   * marker WINS — the safer direction, since the cost of a wrongly-marked external-OAuth
+   * row is a row missing from an owner aggregate that never contained it (external-OAuth
+   * rows have no `appBlockId`), while the cost of the reverse is the leak this exists to
+   * close.
+   */
+  privateRun?: boolean;
+  /**
    * App Dev Tunnel Phase 2 — set when the token is a DEV token (`claims.dev`).
    * A dev token MAY carry a SYNTHETIC, non-FK-resolving `appBlockId` (a
    * PRE-APPROVAL app has no AppBlock row: `ephemeral-<slug>` / `page_local_<slug>`
@@ -1361,6 +1390,14 @@ export async function recordScopeInvocation(opts: {
   const detailData: Prisma.InputJsonValue | undefined = isBlockActionDetail(opts.detail)
     ? (opts.detail as unknown as Prisma.InputJsonValue)
     : undefined;
+  // 🔴 THE SINGLE MAPPING from the verified private-run claim to the row's marker, resolved
+  // ONCE here so both the direct INSERT and the synthetic-retry path below write the same
+  // value. Private-run WINS over an explicitly-passed `source` — see the `privateRun`
+  // docblock for why that is the safe direction. `undefined` (the ordinary case) leaves the
+  // key off the row entirely, so every existing call site stays byte-identical and `source`
+  // falls to the DB DEFAULT.
+  const sourceForRow: string | undefined =
+    opts.privateRun === true ? PRIVATE_RUN_INVOCATION_SOURCE : opts.source;
   try {
     // Build the row conditionally so an `'app-block'` call site writes a
     // BYTE-IDENTICAL row to the pre-unification shape (no `oauthClientId` /
@@ -1374,7 +1411,7 @@ export async function recordScopeInvocation(opts: {
       appBlockId: opts.appBlockId,
       blockInstanceId: opts.blockInstanceId,
       ...(opts.oauthClientId !== undefined ? { oauthClientId: opts.oauthClientId } : {}),
-      ...(opts.source !== undefined ? { source: opts.source } : {}),
+      ...(sourceForRow !== undefined ? { source: sourceForRow } : {}),
       scope: opts.scope,
       // Endpoint string is bounded by middleware-side normalisation but
       // belt-and-braces clamp here so a runaway path can't blow the row.
@@ -1416,6 +1453,15 @@ export async function recordScopeInvocation(opts: {
           appBlockId: null,
           syntheticAppId: opts.appBlockId,
           blockInstanceId: opts.blockInstanceId,
+          // 🔴 CARRIED ONTO THE RETRY TOO, even though the pair is refused upstream. The
+          // token verifier rejects `privateRun && dev` outright, and this branch is gated on
+          // `dev`, so a private-run row can never reach here today. It is written anyway so
+          // the marker's correctness does not DEPEND on that refusal holding: if the pair
+          // ever becomes reachable, the row is still marked rather than silently landing
+          // unmarked. Costs one conditional; removes a reasoning dependency between two
+          // files. (The value is `undefined` on every live path, so this key is absent and
+          // the retry row stays byte-identical to what it wrote before.)
+          ...(sourceForRow !== undefined ? { source: sourceForRow } : {}),
           scope: opts.scope,
           endpoint: opts.endpoint.slice(0, 512),
           statusCode: opts.statusCode,

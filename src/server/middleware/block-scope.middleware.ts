@@ -1821,6 +1821,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
               // the nullable-appBlockId path instead of FK-failing + swallowing; a
               // real id persists normally.
               dev: claims.dev === true,
+              // 🔴 THE BROADEST OF THE NINE MARKER SITES — this write fires for EVERY
+              // scope-gated REST call a private-run token makes, so an omission here leaks
+              // the whole REST surface into the delisted app owner's analytics rather than
+              // one path. Threaded from the VERIFIED claim (the boolean-or-reject guard
+              // above is what makes `=== true` sufficient).
+              privateRun: claims.privateRun === true,
             })
           )
           .catch(() => {

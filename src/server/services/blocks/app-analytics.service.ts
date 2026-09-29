@@ -1,5 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import {
+  OWNER_VISIBLE_INVOCATION_FILTER,
+  PRIVATE_RUN_INVOCATION_SOURCE,
+} from '~/server/services/blocks/scope-activity-predicate';
 import { hasInstallSlot, type InstallSlotManifest } from '~/shared/constants/slot-registry';
 import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
 
@@ -430,8 +434,29 @@ export async function getMyAppAnalytics({
 
     // ENGAGEMENT — block_scope_invocations. AUTH + scoped-call only. Hits
     // bsi_app_block_invoked_idx (app_block_id, invoked_at).
+    //
+    // 🔴 ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS, AND THE SET MUST STAY
+    // COMPLETE. A private run is a moderator (or the owner, or an accepted collaborator)
+    // running a DELISTED app's deployed bundle, and the operator decision is that it must
+    // be invisible to that app's owner INCLUDING IN ANALYTICS — a visible review run tells
+    // a bad actor exactly when review is happening. The invocation row carries the app's
+    // real id and the reviewer's real user id by design, so these `appBlockId IN (ownedIds)`
+    // aggregates are precisely where it lands. Miss ONE of the five and the leak survives
+    // in whichever number that read feeds: the API-call total, the distinct-active-user
+    // count, the error rate's numerator, or either top-5 rollup. The exclusion is spread
+    // from `OWNER_VISIBLE_INVOCATION_FILTER` rather than re-spelled per read, so the five
+    // cannot drift apart; the population is ledgered by
+    // `src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts`.
+    //
+    // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
+    // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the
+    // owner's REAL usage from their own dashboard, which is the worse failure because
+    // nobody reports numbers they never saw. Measured against the live table before
+    // shipping: zero of the rows this filter can see carry the marker, so it changes no
+    // existing number — unlike the `status <> 'voided'` filter deliberately held back on
+    // the attribution table, which would have moved ~9 in 10 owner-visible rows.
     dbRead.blockScopeInvocation.count({
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
     }),
     dbRead.$queryRaw<Array<{ value: bigint }>>(Prisma.sql`
       SELECT count(DISTINCT "user_id")::bigint AS value
@@ -439,24 +464,26 @@ export async function getMyAppAnalytics({
       WHERE "app_block_id" IN (${Prisma.join(ownedIds)})
         AND "invoked_at" >= ${range.from}
         AND "invoked_at" <= ${range.to}
+        AND "source" <> ${PRIVATE_RUN_INVOCATION_SOURCE}
     `),
     dbRead.blockScopeInvocation.count({
       where: {
         appBlockId: idIn,
         invokedAt: rangeFilter,
         statusCode: { gte: 400 },
+        ...OWNER_VISIBLE_INVOCATION_FILTER,
       },
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['scope'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
       _count: true,
       orderBy: { _count: { scope: 'desc' } },
       take: 5,
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['endpoint'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter },
+      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
       _count: true,
       orderBy: { _count: { endpoint: 'desc' } },
       take: 5,
