@@ -57,15 +57,21 @@ import { logToAxiom } from '~/server/logging/client';
  *     impression by grepping `private-run.mint` alone MISSES the dev-tunnel case below —
  *     that mount audits under `app-blocks.dev-tunnel.*`.
  *  2. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
- *     `secondary` already skips the insert in both, symmetrically, for the same reason
- *     (a row with no status column that must not be written twice).
- *  3. (b) COSTS A HAND-APPLIED MIGRATION AND BUYS A HAZARD. ⚠️ It is DELIVERABLE — an
- *     earlier revision of this note claimed otherwise and was wrong: `server/clickhouse/
- *     migrations/` is exactly this channel, and `2026-08-17-comic-views.sql` widens a
- *     tracker-written table. But the DDL is applied by hand per environment, so the column
- *     has to land and be verified in every environment BEFORE either writer ships, or the
- *     marker is a silent no-op; and preserving the row then puts the exclusion at the READ,
- *     where over-filtering deletes the owner's own numbers. Suppression has neither cost.
+ *     `secondary` already skips the insert in both, symmetrically.
+ *  3. 🔴 (b) IS STRICTLY DOMINATED, not merely costlier. Neither writer sees a block
+ *     token (above), so (b) cannot derive its marker the way the sibling rail does — it
+ *     would have to call THIS SAME PREDICATE, then write the answer to a new column, then
+ *     filter at the read. That is (a)'s whole mechanism PLUS a hand-applied DDL in every
+ *     environment (`src/server/clickhouse/migrations/` is that channel;
+ *     `2026-08-17-comic-views.sql` widens a tracker-written table) which must land and be
+ *     verified everywhere BEFORE either writer ships or the marker is a silent no-op,
+ *     PLUS a read filter that can over-filter. There is no cheaper or safer version of it.
+ *
+ *     ⚠️ THE ONE THING (b) WOULD BUY: (a) is irreversible at the data layer. A suppressed
+ *     row is never written, so if the decision is ever revised — say "owners see a count
+ *     but not an identity" — there is no history to recover. The mint line is a record of
+ *     the MOUNT, in Axiom/stdout with finite retention, not a per-impression row in a
+ *     durable store. Accepted deliberately; revisit here if the policy softens.
  *
  * The gate is ONE predicate — `blocks/private-run-impression.service.ts` — called by BOTH
  * writers; its docblock carries the derivation, the ordering and the cost. 🔴 The signal is

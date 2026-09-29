@@ -114,12 +114,19 @@ export async function isPrivateRunImpression(args: {
 /**
  * The fail-open health signal. Never throws, never rejects, never awaited.
  *
- * 🔴 IT IS A SEPARATE FUNCTION WITH ITS OWN try/catch BECAUSE A THROW INSIDE A `catch`
- * BLOCK IS NOT CAUGHT BY THAT BLOCK. Inlined, a logging client that failed SYNCHRONOUSLY
- * would escape the gate entirely — and `block-render.ts` awaits this gate with no
- * try/catch of its own, so that is a 500 on a public beacon AND a silently lost
- * impression, which is both failure directions at once. The `.catch` covers the
- * asynchronous half; this `try` covers the synchronous one. Both are load-bearing.
+ * 🔴 ITS OWN try/catch BECAUSE A THROW INSIDE A `catch` BLOCK IS NOT CAUGHT BY THAT
+ * BLOCK. Inlined, a logging client that failed SYNCHRONOUSLY would escape the gate — and
+ * `block-render.ts` awaits it with no try/catch of its own, so that is a 500 on a public
+ * beacon AND a lost impression. ⚠️ NOT REACHABLE TODAY: `logToAxiom` is an `async
+ * function`, which converts a sync throw into a rejection, so this half is an invariant
+ * guard against a future non-async logger rather than a fix for a live escape. Cheap
+ * enough to keep; do not cite it as a bug that was found.
+ *
+ * 🔴 THE `.catch` IS A DIFFERENT MECHANISM, NOT THE ASYNC HALF OF THE SAME ONE. Nobody
+ * awaits this promise, so a rejection would not reach the gate at all — it would be an
+ * UNHANDLED REJECTION. `packages/civitai-axiom` records what that costs: its own client
+ * is called without awaiting by the background jobs pods, and an unhandled rejection
+ * there exited the process — all three pods died at once.
  *
  * 🔴 BUT NOT SILENT. A gate that fails open without a trace means the leak is reopened
  * and nothing says so — the reassuring-zero shape. Bounded: reachable only on the rare

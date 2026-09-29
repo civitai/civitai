@@ -167,6 +167,33 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
    * the behavioural one, which kills that mutant on the tRPC leg.
    */
 
+  it("🔴 the gate is reached with the row's OWN app id, never a neighbouring field", () => {
+    // The argument nobody pinned. `appBlockId: input.blockInstanceId` type-checks (both
+    // are the same bounded string), reads plausibly (the instance id is literally
+    // `page_<appBlockId>`), and changes NO outcome in any suite, because the leaf mocks
+    // answer the same way for any id. In production it would gate on a non-existent app,
+    // refuse `no-app`, and reopen the leak on that writer alone — the asymmetry this
+    // ledger exists to prevent, on the one argument the viewer guard does not cover.
+    //
+    // The allowlisted spellings are exactly the fields each writer already uses to BUILD
+    // the row, so the gate and the insert can never disagree about which app they mean.
+    const ALLOWED_APP_ID_SOURCES = [
+      'appBlockId: result.data.appBlockId',
+      'appBlockId: input.appBlockId',
+    ];
+    for (const f of WRITERS) {
+      const used = CODE.get(f)!.match(/appBlockId\s*:\s*[^,}\n]+/g) ?? [];
+      expect(used.length, `${f} must thread an app id into the gate`).toBeGreaterThan(0);
+      for (const match of used) {
+        const spelling = match.replace(/\s+/g, ' ').trim();
+        expect(
+          ALLOWED_APP_ID_SOURCES,
+          `${f} threads \`${spelling}\` — the gate must see the row's own app id`
+        ).toContain(spelling);
+      }
+    }
+  });
+
   it('the gate is reached with a SERVER-RESOLVED viewer, never a parsed body field', () => {
     // 🔴 ENUMERATE, DO NOT SAMPLE AN ALLOWLIST — the difference between "a good spelling
     // exists" and "no bad one exists", and only the second is the claim. Whitespace is

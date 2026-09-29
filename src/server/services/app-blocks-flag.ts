@@ -637,12 +637,15 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *        (a) THE FLAG KEY MUST EXIST IN `flipt-state`, BASE-OFF. An ABSENT key makes the
  *            evaluation throw — it bypasses the eval cache and logs on every reaching
  *            call — and that gate now sits on the `/api/track/block-render` beacon.
- *        (b) THAT ROUTE HAS NO RATE LIMIT, and once this flag admits anyone, a
- *            signed-in caller choosing an arbitrary `appBlockId` drives the private-run
- *            access predicate (4–9 statements, one on the WRITE PRIMARY) per POST.
- *            Before that change the common beacon path did zero Postgres queries.
- *            Settle it with a rate limit on the route, or by confirming this flag's
- *            rollout admits only the moderators segment.
+ *        (b) 🔴 NEITHER WRITER'S ROUTE HAS A RATE LIMIT — not `/api/track/block-render`,
+ *            and not the `track.blockRender` procedure, which is `publicProcedure` (no
+ *            `rateLimit` in that chain) and is the only proc in its router carrying no
+ *            `requiredScope`. Once this flag admits anyone, a signed-in caller choosing
+ *            an arbitrary `appBlockId` drives the private-run access predicate (4–9
+ *            statements, one on the WRITE PRIMARY) per call, on EITHER. Before that
+ *            change the common beacon path did zero Postgres queries. Settle it for
+ *            BOTH — a rate limit on each, or by confirming this flag's rollout admits
+ *            only the moderators segment.
  *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is

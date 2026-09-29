@@ -280,13 +280,9 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
   });
 
   it('🔴 records the impression when the LOG ITSELF throws', async () => {
-    // The one line inside the catch that can defeat the whole design, and the only leaf
-    // no other case drives. `block-render.ts` awaits this gate with NO try/catch of its
-    // own, resting entirely on "it swallows everything internally" — so if the
-    // observability call is ever made to propagate (by dropping its `.catch`, or by
-    // `await`ing it), a rejecting log transport turns a telemetry failure into a 500 on a
-    // public beacon AND a silently lost impression: both failure directions at once.
-    // These two cases turn that premise from prose into a measurement.
+    // The gate's own observability call is the only leaf no other case drives, and
+    // `block-render.ts` awaits the gate with no try/catch — so "it swallows everything
+    // internally" needs to be a measurement rather than a premise.
     loggingMock.logToAxiom.mockImplementationOnce(() => {
       throw new Error('axiom client exploded');
     });
@@ -295,17 +291,34 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     expect(await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })).toBe(
       false
     );
+    // REACHED the leaf — without this, a gate that short-circuited before logging would
+    // pass this case while measuring nothing.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
   });
 
-  it('🔴 records the impression when the LOG REJECTS', async () => {
-    loggingMock.logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+  it('🔴 records the impression when the LOG REJECTS — and HANDLES the rejection', async () => {
+    // 🔴 `resolves.toBe(false)` ALONE CANNOT SEE THE `.catch`, and neither can an
+    // `unhandledRejection` listener — MEASURED: with the `.catch` deleted, every test
+    // still passed and the test COUNT did not move, so both the per-test result lines and
+    // the count-moved check read green. A dangling rejection is invisible to a harness
+    // built on either.
+    //
+    // So the property is observed DIRECTLY: the gate must ATTACH a rejection handler to
+    // whatever the logger returns. A thenable whose `.catch` is a spy turns "is it
+    // handled?" into a call count. `packages/civitai-axiom` records the cost of getting
+    // this wrong — an unhandled rejection from a non-awaited log call exited three pods
+    // at once.
+    const attachCatch = vi.fn(() => Promise.resolve(undefined));
+    loggingMock.logToAxiom.mockReturnValueOnce({ catch: attachCatch } as unknown as Promise<void>);
     mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('replica unreachable'));
 
-    // `await`ing the gate must not reject — an unhandled rejection here is a 500 on a
-    // public endpoint. Asserted by resolving, not by `.rejects.toThrow()`.
     await expect(
       isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })
     ).resolves.toBe(false);
+    expect(
+      attachCatch,
+      'the gate must attach a rejection handler to the log promise'
+    ).toHaveBeenCalledTimes(1);
   });
 
   it('a NON-Error throw is classified by `typeof`, and still leaks nothing', async () => {

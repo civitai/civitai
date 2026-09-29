@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { sourceFiles } from '../../../../test/source-scan';
+import { stripComments } from '../../../../test/strip-comments';
 
 /**
  * RELATIONSHIP GUARD for the mint-audit DUAL SINK (#3715, step 3 of #3703).
@@ -115,9 +116,7 @@ const FILES = sourceFiles(ROOT);
  * the event names themselves, quoted); only real code may count as an emit site.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripComments(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));

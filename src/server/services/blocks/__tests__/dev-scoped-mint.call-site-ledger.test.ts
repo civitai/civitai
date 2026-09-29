@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { sourceFiles } from '../../../../../test/source-scan';
+import { stripComments } from '../../../../../test/strip-comments';
 
 /**
  * RELATIONSHIP GUARD for the `clampDevScopes` spend ceiling (#3703 step 1).
@@ -60,9 +61,7 @@ const FILES = sourceFiles(ROOT);
  * of it; only real code should count as a call site.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripComments(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));
