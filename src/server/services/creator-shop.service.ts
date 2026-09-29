@@ -78,6 +78,7 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
     select: {
       ...simpleCosmeticSelect,
       videoUrl: true,
+      flags: true,
       creator: { select: userWithCosmeticsSelect },
     },
   },

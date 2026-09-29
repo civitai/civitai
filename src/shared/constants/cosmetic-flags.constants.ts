@@ -1,4 +1,4 @@
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -16,19 +16,15 @@ export const CosmeticFlag = {
 
 export type CosmeticFlagValue = (typeof CosmeticFlag)[keyof typeof CosmeticFlag];
 
-export const cosmeticFlagLabels: Record<number, string> = {
-  [CosmeticFlag.SfwPlacementsOnly]: 'SFW placements only',
-};
-
 export const STICKER_SFW_ONLY_REFUSAL =
   "This sticker can't be placed on mature images, or on images that haven't been rated yet.";
 
 /**
  * Whether a sticker with these flags is kept off this image. The placement
- * guard, the approval guard, the tray and the placement listings all ask this
- * one question, so the threshold lives here and nowhere else.
+ * guard, the approval guard, the tray, the tray's shop and the placement
+ * listings all ask this one question.
  *
- * An unrated image (`nsfwLevel` 0, scan pending) counts as NSFW: a flagged
+ * The threshold is the site's own SFW line, unrated (0) included: a flagged
  * sticker waits for the rating rather than landing on an image that turns out
  * to be XXX.
  */
@@ -40,5 +36,6 @@ export function isStickerKeptOffImage({
   imageNsfwLevel: number;
 }) {
   if (!Flags.hasFlag(cosmeticFlags, CosmeticFlag.SfwPlacementsOnly)) return false;
-  return imageNsfwLevel === 0 || Flags.intersects(imageNsfwLevel, nsfwBrowsingLevelsFlag);
+  // A level that did not arrive as a number is a broken read, not a safe image.
+  return !Number.isInteger(imageNsfwLevel) || !getIsSafeBrowsingLevel(imageNsfwLevel);
 }

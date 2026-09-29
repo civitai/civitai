@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -146,28 +147,35 @@ async function loadPlaceableSticker({
       imageNsfwLevel: number;
     }[]
   >`
-    SELECT c.id, c."createdById", c.flags,
+    SELECT c.id, c."createdById",
            EXISTS (
              SELECT 1 FROM "UserCosmetic" uc
              WHERE uc."cosmeticId" = c.id AND uc."userId" = ${placerId}
            ) AS owned,
-           COALESCE((SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = ${imageId}), 0) AS "imageNsfwLevel"
+           ${stickerImageEligibilityColumns(imageId)}
     FROM "Cosmetic" c
     WHERE c.id = ${cosmeticId} AND c.type = 'Sticker'::"CosmeticType"
   `;
 
   if (!cosmetic) throw throwBadRequestError('placement: that sticker no longer exists');
   if (!cosmetic.owned) throw throwAuthorizationError('placement: you do not own that sticker');
-  if (
-    isStickerKeptOffImage({
-      cosmeticFlags: cosmetic.flags,
-      imageNsfwLevel: cosmetic.imageNsfwLevel,
-    })
-  )
-    throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
+  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
 
   return cosmetic;
 }
+
+/**
+ * The two columns every primary-side SFW check reads, selected against
+ * `"Cosmetic" c`. One fragment so the placement and the approval cannot drift
+ * apart on what a missing image means (unrated, so refused).
+ */
+const stickerImageEligibilityColumns = (imageId: number) => Prisma.sql`
+  c.flags,
+  COALESCE((SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = ${imageId}), 0) AS "imageNsfwLevel"
+`;
+
+const isKeptOffRow = (row: { flags: number; imageNsfwLevel: number }) =>
+  isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel });
 
 export type CreateStickerPlacement = {
   /**
@@ -966,9 +974,13 @@ export async function actOnStickerPlacement({
   if (action === 'remove') return removeApprovedSticker({ placement, userId, isModerator });
 
   // The image may have been rated, or the sticker flagged, since it was placed.
-  // Refused rather than declined: a decline is the owner's judgement and counts
-  // against the placer, and this row simply expires with its full refund.
-  if (action === 'approve') await assertStickerAllowedOnImage(placement);
+  // Nobody can approve it then, so declining it is not the owner's judgement and
+  // takes no fee — the same waiver the remix gallery gives an unshowable host.
+  const keptOff = await isPendingStickerKeptOff(placement);
+  if (action === 'approve' && keptOff)
+    throw throwBadRequestError(
+      'This sticker can no longer go on this image. Decline it and the placer is refunded in full.'
+    );
 
   // Before the settle, so a refused note is never live for the window between
   // the two writes.
@@ -977,28 +989,23 @@ export async function actOnStickerPlacement({
 
   const { settled } = await settlePlacement({
     placementId,
-    action: action === 'approve' ? 'approve' : 'decline',
+    action: action === 'approve' ? 'approve' : keptOff ? 'declineUnshowableHost' : 'decline',
     actorId: userId,
   });
 
   return { settled };
 }
 
-async function assertStickerAllowedOnImage(placement: { targetId: number; data: unknown }) {
+async function isPendingStickerKeptOff(placement: { targetId: number; data: unknown }) {
   const cosmeticId = parseStickerPlacementData(placement.data)?.cosmeticId;
-  if (!cosmeticId) return;
+  if (!cosmeticId) return false;
 
   const [row] = await dbWrite.$queryRaw<{ flags: number; imageNsfwLevel: number }[]>`
-    SELECT c.flags,
-           COALESCE((SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = ${placement.targetId}), 0) AS "imageNsfwLevel"
+    SELECT ${stickerImageEligibilityColumns(placement.targetId)}
     FROM "Cosmetic" c
     WHERE c.id = ${cosmeticId}
   `;
-  if (
-    row &&
-    isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel })
-  )
-    throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
+  return !!row && isKeptOffRow(row);
 }
 
 type ActionablePlacement = {

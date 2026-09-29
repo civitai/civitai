@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -1976,7 +1977,24 @@ describe('a sticker flagged SFW placements only', () => {
       .mockResolvedValueOnce([{ spendable: 3, unlimited: false }]);
   };
 
-  const rawValues = (call: number) => queryRaw.mock.calls[call].slice(1) as unknown[];
+  /** A raw read as Postgres receives it: the text with nested fragments inlined, and its values. */
+  const issuedSql = (call: number) => {
+    const [strings, ...values] = queryRaw.mock.calls[call] as [TemplateStringsArray, ...unknown[]];
+    return Prisma.sql(strings, ...values);
+  };
+
+  /**
+   * The mocks hand back the computed row, so only the statement can show the
+   * guard reads what it thinks it reads. An unquoted alias comes back lowercased
+   * and a dropped column comes back undefined; both would switch the guard off.
+   */
+  const expectEligibilityRead = (call: number, ids: number[]) => {
+    const { sql, values } = issuedSql(call);
+    expect(sql).toContain('c.flags');
+    expect(sql).toContain('AS "imageNsfwLevel"');
+    expect(sql).toMatch(/FROM "Image" i WHERE i\.id = \?/);
+    expect(values).toEqual(expect.arrayContaining(ids));
+  };
 
   describe('placing it', () => {
     it('is refused on an R image, before any row or money', async () => {
@@ -1985,8 +2003,15 @@ describe('a sticker flagged SFW placements only', () => {
       await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
       expect(placementCreate).not.toHaveBeenCalled();
       expect(holdPlacementEscrow).not.toHaveBeenCalled();
-      // The rating read is of the image being placed on, not some other id.
-      expect(rawValues(0)).toContain(IMAGE);
+      expectEligibilityRead(0, [IMAGE, COSMETIC]);
+    });
+
+    it('is refused when the rating did not come back as a number', async () => {
+      queryRaw.mockResolvedValueOnce([
+        { id: COSMETIC, createdById: SELLER, owned: true, flags: CosmeticFlag.SfwPlacementsOnly },
+      ]);
+
+      await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
     });
 
     it('is refused on the free path too', async () => {
@@ -2046,14 +2071,26 @@ describe('a sticker flagged SFW placements only', () => {
 
       await expect(
         actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
-      ).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
+      ).rejects.toThrow(/no longer go on this image/);
       expect(settlePlacement).not.toHaveBeenCalled();
-      expect(rawValues(0)).toEqual(expect.arrayContaining([IMAGE, COSMETIC]));
+      expectEligibilityRead(0, [IMAGE, COSMETIC]);
     });
 
-    it('still lets the owner decline it, which refunds', async () => {
+    // The owner could not have approved it, so a decline is not their judgement
+    // and must not cost the placer the fee.
+    it('declines without a fee when the owner declines it', async () => {
       queryRaw.mockResolvedValue([
         { flags: CosmeticFlag.SfwPlacementsOnly, imageNsfwLevel: NsfwLevel.X },
+      ]);
+
+      await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+      expect(calls).toEqual(['settle:declineUnshowableHost']);
+    });
+
+    it('still charges the fee on an ordinary decline of it on a PG-13 image', async () => {
+      queryRaw.mockResolvedValue([
+        { flags: CosmeticFlag.SfwPlacementsOnly, imageNsfwLevel: NsfwLevel.PG13 },
       ]);
 
       await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
@@ -2091,6 +2128,11 @@ describe('a sticker flagged SFW placements only', () => {
       const rows = await getStickerPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
 
       expect(rows.map((placement) => placement.id)).toEqual([PLAIN_ROW]);
+      // Only the images carrying a flagged sticker are read, by image id.
+      expect(imageFindMany).toHaveBeenCalledTimes(1);
+      expect((imageFindMany.mock.calls[0][0] as { where: unknown }).where).toEqual({
+        id: { in: [IMAGE] },
+      });
     });
 
     it('are still shown to a moderator, who may need to act on them', async () => {
@@ -2129,6 +2171,24 @@ describe('a sticker flagged SFW placements only', () => {
 
     it('are left out of the count, so it agrees with the listing', async () => {
       await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 1 });
+    });
+
+    it('are counted again on a PG-13 image', async () => {
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.PG13 }]);
+
+      await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 2 });
+    });
+
+    it('show on the hover card again on a PG-13 image', async () => {
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.PG13 }]);
+      placementFindFirst.mockResolvedValue({
+        ...row(FLAGGED_ROW, COSMETIC),
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+      await expect(
+        getStickerPlacementDetail({ placementId: FLAGGED_ROW, viewerId: STRANGER })
+      ).resolves.toMatchObject({ id: FLAGGED_ROW });
     });
 
     it('are not available on the hover card, except to a moderator', async () => {
