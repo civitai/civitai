@@ -38,11 +38,11 @@ export const custodySweepJob = createJob(
     const balances = await nowpaymentsCaller.getBalance();
     if (!balances) throw new Error('Failed to fetch NowPayments balance');
 
-    const usdcBalance = balances.find((b) => b.currency === 'usdcbase');
-    const amount = usdcBalance ? parseFloat(usdcBalance.balance) : 0;
+    const usdcBalance = balances.usdcbase;
+    const amount = usdcBalance?.amount ?? 0;
 
     if (isNaN(amount) || amount <= 0) {
-      throw new Error(`Invalid balance value: ${usdcBalance?.balance ?? 'not found'}`);
+      throw new Error(`Invalid balance value: ${usdcBalance?.amount ?? 'not found'}`);
     }
 
     if (amount <= SWEEP_THRESHOLD) {

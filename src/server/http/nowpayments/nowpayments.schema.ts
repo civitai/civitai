@@ -150,10 +150,11 @@ export namespace NOWPayments {
 
   // Balance
   export type BalanceResponse = z.infer<typeof balanceResponseSchema>;
-  export const balanceResponseSchema = z.array(
+  export const balanceResponseSchema = z.record(
+    z.string(),
     z.object({
-      currency: z.string(),
-      balance: z.string(),
+      amount: z.number(),
+      pendingAmount: z.number(),
     })
   );
 
