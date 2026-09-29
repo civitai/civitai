@@ -360,10 +360,14 @@ function wireMocks() {
         (excludedStatus === undefined || r.status !== excludedStatus)
     );
     const tally = new Map<string, number>();
-    for (const r of visible) tally.set(dayKey(r.attributedAt), (tally.get(dayKey(r.attributedAt)) ?? 0) + 1);
+    for (const r of visible)
+      tally.set(dayKey(r.attributedAt), (tally.get(dayKey(r.attributedAt)) ?? 0) + 1);
     return [...tally.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([bucket, value]) => ({ bucket: new Date(`${bucket}T00:00:00Z`), value: BigInt(value) }));
+      .map(([bucket, value]) => ({
+        bucket: new Date(`${bucket}T00:00:00Z`),
+        value: BigInt(value),
+      }));
   });
 }
 
@@ -390,7 +394,8 @@ const analytics = () =>
     to: RANGE_TO,
   });
 
-const seriesValues = (a: Awaited<ReturnType<typeof analytics>>) => a.runs.series.map((p) => p.value);
+const seriesValues = (a: Awaited<ReturnType<typeof analytics>>) =>
+  a.runs.series.map((p) => p.value);
 
 describe('owner-visible run analytics exclude voided attribution rows', () => {
   it('[INV] the evaluator sees the fixture at all (instrument control)', async () => {
@@ -479,7 +484,7 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
-  it('[INV] the ownership bound still applies — a foreign app\'s non-voided row never appears', async () => {
+  it("[INV] the ownership bound still applies — a foreign app's non-voided row never appears", async () => {
     rows = [...SURVIVING, FOREIGN_H];
     const a = await analytics();
     expect(a.runs.count).toBe(7);
