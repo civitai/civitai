@@ -66,6 +66,12 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
   it('marks the row when the verified claim is true', async () => {
     await recordScopeInvocation({ ...ORDINARY, privateRun: true });
     expect(mockCreate).toHaveBeenCalledTimes(1);
+    // 🔴 THE LITERAL FIRST, THEN THE CONSTANT, AND THE ORDER IS THE POINT. Asserting only
+    // against the imported constant is VACUOUS when the constant is absent: a base-ref run
+    // with the predicate module reverted made both sides `undefined` and this case passed
+    // green over a writer that marked nothing. Measured, not hypothesised. The literal is
+    // what makes the case non-vacuous; the constant is what pins writer/reader agreement.
+    expect(writtenData().source).toBe('private-run');
     expect(writtenData().source).toBe(PRIVATE_RUN_INVOCATION_SOURCE);
     // The row is otherwise UNCHANGED — the marker must not become a second synthetic-id
     // mechanism. The real app id is what keeps per-app storage, ban revocation and every
@@ -124,6 +130,9 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
       source: 'external-oauth',
       privateRun: true,
     });
+    // Literal as well as constant — see the first case for why the constant alone is
+    // vacuous when the constant is absent.
+    expect(writtenData().source).toBe('private-run');
     expect(writtenData().source).toBe(PRIVATE_RUN_INVOCATION_SOURCE);
   });
 
@@ -159,6 +168,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     const retry = writtenData(1);
     expect(retry.appBlockId).toBeNull();
     expect(retry.syntheticAppId).toBe('ephemeral-marker-fixture');
+    expect(retry.source).toBe('private-run');
     expect(retry.source).toBe(PRIVATE_RUN_INVOCATION_SOURCE);
   });
 
